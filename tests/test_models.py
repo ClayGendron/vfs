@@ -9,6 +9,7 @@ from grover.fs.diff import apply_diff, compute_diff, reconstruct_version
 from grover.models import (
     Embedding,
     File,
+    FileConnection,
     FileShare,
     FileShareBase,
     FileVersion,
@@ -30,6 +31,9 @@ class TestTableCreation:
 
     def test_grover_edges_table_exists(self, engine):
         assert "grover_edges" in engine.dialect.get_table_names(engine.connect())
+
+    def test_grover_file_connections_table_exists(self, engine):
+        assert "grover_file_connections" in engine.dialect.get_table_names(engine.connect())
 
     def test_grover_embeddings_table_exists(self, engine):
         assert "grover_embeddings" in engine.dialect.get_table_names(engine.connect())
@@ -93,6 +97,17 @@ class TestDefaultFactories:
         assert edge.id
         assert edge.type == "imports"
         assert edge.weight == 1.0
+
+    def test_file_connection_defaults(self, session: Session):
+        conn = FileConnection(source_path="/a.py", target_path="/b.py", type="imports")
+        session.add(conn)
+        session.commit()
+        session.refresh(conn)
+
+        assert conn.id
+        assert conn.type == "imports"
+        assert conn.weight == 1.0
+        assert conn.metadata_json == "{}"
 
     def test_embedding_defaults(self, session: Session):
         emb = Embedding(file_id="xyz", file_version=1, content_hash="abc123")

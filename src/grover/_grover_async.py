@@ -44,7 +44,7 @@ from grover.fs.vfs import VFS
 from grover.graph._rustworkx import RustworkxGraph
 from grover.graph.analyzers import AnalyzerRegistry
 from grover.models.chunks import FileChunk
-from grover.models.edges import GroverEdge
+from grover.models.connections import FileConnection
 from grover.models.embeddings import Embedding
 from grover.models.files import File, FileVersion
 from grover.models.shares import FileShare
@@ -316,7 +316,7 @@ class GroverAsync:
             )
             # Edges table for per-mount graph persistence
             await conn.run_sync(
-                lambda c: GroverEdge.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
+                lambda c: FileConnection.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
             )
 
         if backend is None:
@@ -476,7 +476,7 @@ class GroverAsync:
 
         async with engine.begin() as conn:
             await conn.run_sync(
-                lambda c: GroverEdge.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
+                lambda c: FileConnection.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
             )
             await conn.run_sync(
                 lambda c: Embedding.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]

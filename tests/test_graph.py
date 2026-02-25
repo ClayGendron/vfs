@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from grover.graph import RustworkxGraph
-from grover.models.edges import GroverEdge
+from grover.models.connections import FileConnection
 from grover.models.files import File
 from grover.ref import Ref
 
@@ -524,7 +524,7 @@ class TestToSql:
         await g.to_sql(async_session)
         await async_session.commit()
 
-        result = await async_session.execute(select(GroverEdge))
+        result = await async_session.execute(select(FileConnection))
         rows = result.scalars().all()
         assert len(rows) == 1
         assert rows[0].source_path == "/a.py"
@@ -546,7 +546,7 @@ class TestToSql:
         await g.to_sql(async_session)
         await async_session.commit()
 
-        result = await async_session.execute(select(GroverEdge))
+        result = await async_session.execute(select(FileConnection))
         rows = result.scalars().all()
         assert len(rows) == 1
         assert rows[0].source_path == "/a.py"
@@ -564,7 +564,7 @@ class TestToSql:
 
         from sqlalchemy import select
 
-        result = await async_session.execute(select(GroverEdge))
+        result = await async_session.execute(select(FileConnection))
         rows = result.scalars().all()
         assert len(rows) == 1
         assert rows[0].weight == 5.0
@@ -576,7 +576,7 @@ class TestToSql:
         await g.to_sql(async_session)
         await async_session.commit()
 
-        result = await async_session.execute(select(GroverEdge))
+        result = await async_session.execute(select(FileConnection))
         assert result.scalars().all() == []
 
     async def test_preserves_edge_ids(self, async_session: AsyncSession) -> None:
@@ -588,7 +588,7 @@ class TestToSql:
         await g.to_sql(async_session)
         await async_session.commit()
 
-        result = await async_session.execute(select(GroverEdge))
+        result = await async_session.execute(select(FileConnection))
         row = result.scalars().first()
         assert row is not None
         assert row.id == edge_id
@@ -609,7 +609,7 @@ class TestFromSql:
     async def test_loads_edges(self, async_session: AsyncSession) -> None:
         async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
         async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
-        async_session.add(GroverEdge(source_path="/a.py", target_path="/b.py", type="imports"))
+        async_session.add(FileConnection(source_path="/a.py", target_path="/b.py", type="imports"))
         await async_session.commit()
 
         g = RustworkxGraph()
@@ -652,7 +652,7 @@ class TestFromSql:
         async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
         async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
         async_session.add(
-            GroverEdge(
+            FileConnection(
                 source_path="/a.py",
                 target_path="/b.py",
                 type="imports",
@@ -670,7 +670,7 @@ class TestFromSql:
     async def test_auto_creates_nodes_for_dangling_edges(self, async_session: AsyncSession) -> None:
         # Edge endpoints not in grover_files — from_sql should still load them
         async_session.add(
-            GroverEdge(source_path="/orphan_a.py", target_path="/orphan_b.py", type="imports")
+            FileConnection(source_path="/orphan_a.py", target_path="/orphan_b.py", type="imports")
         )
         await async_session.commit()
 

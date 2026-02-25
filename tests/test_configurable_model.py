@@ -10,7 +10,7 @@ from sqlmodel import SQLModel, select
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.dialect import upsert_file
 from grover.graph import RustworkxGraph
-from grover.models.edges import GroverEdge
+from grover.models.connections import FileConnection
 from grover.models.files import File, FileBase, FileVersionBase
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ class TestGraphWithCustomModel:
             session.add(WikiFile(path="/wiki/a.md", parent_path="/wiki", name="a.md"))
             session.add(WikiFile(path="/wiki/b.md", parent_path="/wiki", name="b.md"))
             session.add(
-                GroverEdge(
+                FileConnection(
                     source_path="/wiki/a.md",
                     target_path="/wiki/b.md",
                     type="links_to",

@@ -21,7 +21,7 @@ class RustworkxGraph:
 
     Wraps a ``rustworkx.PyDiGraph`` with string-path-keyed nodes and provides
     traversal queries (dependents, impacts, path_between) plus async
-    persistence to/from the ``grover_edges`` / ``grover_files`` tables.
+    persistence to/from the ``grover_file_connections`` / ``grover_files`` tables.
 
     Implements the ``GraphStore`` and ``SupportsPersistence`` protocols.
     """
@@ -805,7 +805,7 @@ class RustworkxGraph:
     # ------------------------------------------------------------------
 
     async def to_sql(self, session: AsyncSession) -> None:
-        """Persist the graph to ``grover_edges``.
+        """Persist the graph to ``grover_file_connections``.
 
         Full-sync strategy: upsert all current edges, delete DB edges that are
         no longer present in the in-memory graph.  Caller manages the
@@ -813,12 +813,12 @@ class RustworkxGraph:
         """
         from sqlalchemy import select
 
-        from grover.models.edges import GroverEdge
+        from grover.models.connections import FileConnection
 
-        # Build GroverEdge instances from in-memory graph
-        graph_edges: dict[str, GroverEdge] = {}
+        # Build FileConnection instances from in-memory graph
+        graph_edges: dict[str, FileConnection] = {}
         for _src, _tgt, data in self.edges():
-            edge = GroverEdge(
+            edge = FileConnection(
                 id=data["id"],
                 source_path=data["source"],
                 target_path=data["target"],
@@ -829,7 +829,7 @@ class RustworkxGraph:
             graph_edges[edge.id] = edge
 
         # Find existing DB edge IDs
-        result = await session.execute(select(GroverEdge.id))  # type: ignore[no-matching-overload]
+        result = await session.execute(select(FileConnection.id))  # type: ignore[no-matching-overload]
         db_ids: set[str] = {row[0] for row in result.all()}
 
         # Delete stale edges
@@ -837,7 +837,7 @@ class RustworkxGraph:
         stale_ids = db_ids - graph_ids
         if stale_ids:
             for stale_id in stale_ids:
-                existing = await session.get(GroverEdge, stale_id)
+                existing = await session.get(FileConnection, stale_id)
                 if existing:
                     await session.delete(existing)
 
@@ -850,7 +850,7 @@ class RustworkxGraph:
     async def from_sql(self, session: AsyncSession, file_model: type | None = None) -> None:
         """Load graph state from the database, replacing in-memory state.
 
-        Loads non-deleted file rows as nodes and all ``GroverEdge``
+        Loads non-deleted file rows as nodes and all ``FileConnection``
         rows as edges.  Auto-creates nodes for dangling edge endpoints.
 
         Parameters
@@ -863,7 +863,7 @@ class RustworkxGraph:
         """
         from sqlalchemy import select
 
-        from grover.models.edges import GroverEdge
+        from grover.models.connections import FileConnection
 
         if file_model is None:
             from grover.models.files import File
@@ -887,7 +887,7 @@ class RustworkxGraph:
             )
 
         # Load all edges
-        result = await session.execute(select(GroverEdge))
+        result = await session.execute(select(FileConnection))
         for edge_row in result.scalars().all():
             metadata: dict[str, Any] = json.loads(edge_row.metadata_json)
             self.add_edge(

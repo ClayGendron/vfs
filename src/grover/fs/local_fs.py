@@ -210,9 +210,9 @@ class LocalFileSystem:
                 await conn.run_sync(lambda c: fv_table.create(c, checkfirst=True))
                 await conn.run_sync(lambda c: fc_table.create(c, checkfirst=True))
                 # Create edges table for per-mount graph persistence
-                from grover.models.edges import GroverEdge
+                from grover.models.connections import FileConnection
 
-                edge_table = GroverEdge.__table__  # type: ignore[unresolved-attribute]
+                edge_table = FileConnection.__table__  # type: ignore[unresolved-attribute]
                 await conn.run_sync(lambda c: edge_table.create(c, checkfirst=True))
 
             self._session_factory = async_sessionmaker(
