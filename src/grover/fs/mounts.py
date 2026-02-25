@@ -1,73 +1,31 @@
-"""MountRegistry and MountConfig."""
+"""MountRegistry and Mount integration.
+
+``MountConfig`` is now an alias for :class:`~grover.mount.Mount`.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from grover.mount import Mount
 
 from .exceptions import MountNotFoundError
 from .permissions import Permission
 from .utils import normalize_path
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from .protocol import StorageBackend
-
-
-@dataclass
-class MountConfig:
-    """Configuration for a single mount point."""
-
-    mount_path: str
-    """Virtual path prefix, e.g. "/web", "/my_project"."""
-
-    backend: StorageBackend
-    """Storage backend implementing the StorageBackend protocol."""
-
-    # Session factory — set by GroverAsync.mount() for both DB and local mounts
-    session_factory: Callable[..., AsyncSession] | None = None
-    """Async session factory for UFS-managed sessions.  ``None`` for standalone use."""
-
-    permission: Permission = Permission.READ_WRITE
-    """Default permission for this mount."""
-
-    label: str = ""
-    """Display name for the mount."""
-
-    mount_type: str = "vfs"
-    """Type identifier: "vfs" or "local"."""
-
-    hidden: bool = False
-    """If True, this mount is excluded from ``list_visible_mounts()``."""
-
-    read_only_paths: set[str] = field(default_factory=set)
-    """Paths within this mount that are forced read-only."""
-
-    @property
-    def has_session_factory(self) -> bool:
-        """True when this mount has a UFS-managed session factory."""
-        return self.session_factory is not None
-
-    def __post_init__(self) -> None:
-        self.mount_path = normalize_path(self.mount_path).rstrip("/")
-        if not self.label:
-            self.label = self.mount_path.lstrip("/") or "root"
+# Backward compat — existing code importing MountConfig gets Mount
+MountConfig = Mount
 
 
 class MountRegistry:
     """Registry of active mount points.
 
-    Resolves virtual paths to (MountConfig, relative_path) tuples
+    Resolves virtual paths to ``(Mount, relative_path)`` tuples
     and determines effective permissions for any path.
     """
 
     def __init__(self) -> None:
-        self._mounts: dict[str, MountConfig] = {}
+        self._mounts: dict[str, Mount] = {}
 
-    def add_mount(self, config: MountConfig) -> None:
+    def add_mount(self, config: Mount) -> None:
         """Add or replace a mount point."""
         self._mounts[config.mount_path] = config
 
@@ -76,14 +34,14 @@ class MountRegistry:
         mount_path = normalize_path(mount_path).rstrip("/")
         self._mounts.pop(mount_path, None)
 
-    def resolve(self, virtual_path: str) -> tuple[MountConfig, str]:
+    def resolve(self, virtual_path: str) -> tuple[Mount, str]:
         """Resolve a virtual path to its mount and relative path.
 
         Finds the longest matching mount prefix and strips it.
         """
         virtual_path = normalize_path(virtual_path)
 
-        best_match: MountConfig | None = None
+        best_match: Mount | None = None
         best_len = -1
 
         for mount_path, config in self._mounts.items():
@@ -104,11 +62,11 @@ class MountRegistry:
 
         return best_match, relative
 
-    def list_mounts(self) -> list[MountConfig]:
+    def list_mounts(self) -> list[Mount]:
         """List all registered mounts, sorted by mount_path."""
         return sorted(self._mounts.values(), key=lambda m: m.mount_path)
 
-    def list_visible_mounts(self) -> list[MountConfig]:
+    def list_visible_mounts(self) -> list[Mount]:
         """List non-hidden mounts, sorted by mount_path."""
         return [m for m in self.list_mounts() if not m.hidden]
 
@@ -131,8 +89,8 @@ class MountRegistry:
 
         return mount.permission
 
-    def get_mount(self, mount_path: str) -> MountConfig | None:
-        """Return the MountConfig at *mount_path*, or ``None``."""
+    def get_mount(self, mount_path: str) -> Mount | None:
+        """Return the Mount at *mount_path*, or ``None``."""
         mount_path = normalize_path(mount_path).rstrip("/")
         return self._mounts.get(mount_path)
 

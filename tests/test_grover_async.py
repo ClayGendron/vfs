@@ -319,8 +319,7 @@ class TestGroverAsyncSearch:
     @pytest.mark.asyncio
     async def test_search_returns_failure_without_provider(self, grover_no_search: GroverAsync):
         has_search = any(
-            getattr(m.backend, "_search_engine", None) is not None
-            for m in grover_no_search._registry.list_visible_mounts()
+            m.search is not None for m in grover_no_search._registry.list_visible_mounts()
         )
         if has_search:
             pytest.skip("sentence-transformers is installed; search available")
@@ -497,10 +496,7 @@ class TestGroverAsyncEventHandlers:
         code = 'def unique_search_target():\n    """Locate me after move."""\n    pass\n'
         await grover.write("/project/before.py", code)
         await grover.fs.move("/project/before.py", "/project/after.py")
-        has_search = any(
-            getattr(m.backend, "_search_engine", None) is not None
-            for m in grover._registry.list_visible_mounts()
-        )
+        has_search = any(m.search is not None for m in grover._registry.list_visible_mounts())
         if has_search:
             result = await grover.search("unique_search_target")
             all_paths = [h.path for h in result.hits]
@@ -610,10 +606,7 @@ class TestGroverAsyncUnsupportedFiles:
         # .txt has no Python analyzer, but the whole file should be indexed
         await grover.write("/project/notes.txt", "Important project notes here")
         assert grover.get_graph().has_node("/project/notes.txt")
-        has_search = any(
-            getattr(m.backend, "_search_engine", None) is not None
-            for m in grover._registry.list_visible_mounts()
-        )
+        has_search = any(m.search is not None for m in grover._registry.list_visible_mounts())
         if has_search:
             result = await grover.search("Important project notes")
             assert len(result.hits) >= 1

@@ -280,10 +280,7 @@ class TestSearchQueryApi:
             LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         )
         try:
-            has_search = any(
-                getattr(m.backend, "_search_engine", None) is not None
-                for m in g._registry.list_visible_mounts()
-            )
+            has_search = any(m.search is not None for m in g._registry.list_visible_mounts())
             if has_search:
                 pytest.skip("sentence-transformers is installed; search available")
             result = await g.search("anything")

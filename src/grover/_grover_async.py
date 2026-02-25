@@ -138,13 +138,16 @@ class GroverAsync:
     def _create_search_engine(self) -> SearchEngine | None:
         """Create a new SearchEngine for a mount."""
         if self._explicit_vector_store is not None:
-            return SearchEngine(self._explicit_vector_store, self._embedding_provider)
+            return SearchEngine(
+                vector=self._explicit_vector_store,
+                embedding=self._embedding_provider,
+            )
         if self._embedding_provider is None:
             return None
         from grover.search.stores.local import LocalVectorStore
 
         store = LocalVectorStore(dimension=self._embedding_provider.dimensions)
-        return SearchEngine(store, self._embedding_provider)
+        return SearchEngine(vector=store, embedding=self._embedding_provider)
 
     # ------------------------------------------------------------------
     # Per-mount graph / search resolution
@@ -157,11 +160,10 @@ class GroverAsync:
         except MountNotFoundError:
             msg = f"No mount found for path: {path!r}"
             raise RuntimeError(msg) from None
-        graph = getattr(mount.backend, "_graph", None)
-        if graph is None:
+        if mount.graph is None:
             msg = f"No graph on mount at {mount.mount_path}"
             raise RuntimeError(msg)
-        return graph
+        return mount.graph
 
     def _resolve_search_engine(self, path: str) -> SearchEngine | None:
         """Return the search engine for the mount owning *path*, or None."""
@@ -169,16 +171,15 @@ class GroverAsync:
             mount, _rel = self._registry.resolve(path)
         except MountNotFoundError:
             return None
-        return getattr(mount.backend, "_search_engine", None)
+        return mount.search
 
     def _resolve_graph_any(self, path: str | None = None) -> GraphStore:
         """Get graph for a specific path, or first available mount's graph."""
         if path is not None:
             return self._resolve_graph(path)
         for mount in self._registry.list_visible_mounts():
-            graph = getattr(mount.backend, "_graph", None)
-            if graph is not None:
-                return graph
+            if mount.graph is not None:
+                return mount.graph
         msg = "No graph available on any mount"
         raise RuntimeError(msg)
 
@@ -193,6 +194,81 @@ class GroverAsync:
     # ------------------------------------------------------------------
     # Mount / Unmount
     # ------------------------------------------------------------------
+
+    async def add_mount(
+        self,
+        mount_or_path: Any = None,
+        *,
+        filesystem: StorageBackend | None = None,
+        graph: GraphStore | None = None,
+        search: SearchEngine | None = None,
+        session_factory: Callable[..., AsyncSession] | None = None,
+        permission: Permission = Permission.READ_WRITE,
+        label: str = "",
+        hidden: bool = False,
+        path: str | None = None,
+    ) -> None:
+        """Register a pre-built :class:`~grover.mount.Mount` or build one from kwargs.
+
+        Usage::
+
+            # From a Mount object
+            mount = Mount(path="/project", filesystem=LocalFileSystem(...))
+            await g.add_mount(mount)
+
+            # From keyword arguments
+            await g.add_mount(
+                path="/data",
+                filesystem=DatabaseFileSystem(dialect="postgresql"),
+                graph=RustworkxGraph(),
+            )
+        """
+        from grover.mount import Mount
+
+        if isinstance(mount_or_path, Mount):
+            new_mount = mount_or_path
+        else:
+            # Resolve path: either from positional arg or keyword
+            actual_path = mount_or_path if mount_or_path is not None else path
+            if actual_path is None or filesystem is None:
+                raise ValueError("Provide a Mount object or (path + filesystem)")
+
+            new_mount = Mount(
+                path=actual_path,
+                filesystem=filesystem,
+                graph=graph,
+                search=search,
+                session_factory=session_factory,
+                permission=permission,
+                label=label,
+                hidden=hidden,
+            )
+
+        # Auto-create graph if not provided and not hidden
+        if not new_mount.hidden and new_mount.graph is None:
+            new_mount.graph = RustworkxGraph()
+
+        # Auto-create search engine if not provided and not hidden
+        if not new_mount.hidden and new_mount.search is None:
+            se = self._create_search_engine()
+            if se is not None:
+                new_mount.search = se
+
+        # Call open() on the filesystem if needed
+        if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(
+            new_mount.filesystem, "open"
+        ):
+            await new_mount.filesystem.open()
+
+        self._registry.add_mount(new_mount)
+
+        # Lazily initialise meta_fs on first non-hidden mount
+        if not new_mount.hidden and self._meta_fs is None:
+            await self._init_meta_fs(new_mount.filesystem)
+
+        # Load existing graph + search state for this mount
+        if not new_mount.hidden:
+            await self._load_mount_state(new_mount)
 
     async def mount(
         self,
@@ -263,10 +339,8 @@ class GroverAsync:
 
         # Inject per-mount graph and search engine (skip for hidden meta mount)
         if not hidden:
-            graph = RustworkxGraph()
-            search_engine = self._create_search_engine()
-            config.backend._graph = graph  # type: ignore[union-attr]
-            config.backend._search_engine = search_engine  # type: ignore[union-attr]
+            config.graph = RustworkxGraph()
+            config.search = self._create_search_engine()
 
         # Call open() on the backend BEFORE registering (skip if already opened for LFS)
         if not isinstance(config.backend, LocalFileSystem) and hasattr(config.backend, "open"):
@@ -488,7 +562,7 @@ class GroverAsync:
 
     async def _load_mount_state(self, mount: MountConfig) -> None:
         """Load graph and search state for a single mount."""
-        graph = getattr(mount.backend, "_graph", None)
+        graph = mount.graph
         if graph is None:
             return
 
@@ -510,7 +584,7 @@ class GroverAsync:
                 )
 
         # Load search index from disk
-        search_engine = getattr(mount.backend, "_search_engine", None)
+        search_engine = mount.search
         if search_engine is not None and self._meta_data_dir is not None:
             slug = mount.mount_path.strip("/").replace("/", "_") or "_default"
             search_dir = self._meta_data_dir / "search" / slug
@@ -619,11 +693,11 @@ class GroverAsync:
         except MountNotFoundError:
             return stats
 
-        graph = getattr(mount.backend, "_graph", None)
+        graph = mount.graph
         if graph is None:
             return stats
 
-        search_engine = getattr(mount.backend, "_search_engine", None)
+        search_engine = mount.search
 
         if graph.has_node(path):
             graph.remove_file_subgraph(path)
@@ -1197,7 +1271,7 @@ class GroverAsync:
         # Check if any mount has a search engine
         has_search = False
         for mount in self._registry.list_visible_mounts():
-            if getattr(mount.backend, "_search_engine", None) is not None:
+            if mount.search is not None:
                 has_search = True
                 break
         if not has_search:
@@ -1322,9 +1396,9 @@ class GroverAsync:
         if hasattr(backend, "_read_content"):
             if mount.has_session_factory:
                 async with self._vfs.session_for(mount) as sess:
-                    content: str | None = await backend._read_content(rel_path, sess)  # type: ignore[union-attr]
+                    content: str | None = await backend._read_content(rel_path, sess)
             else:
-                content = await backend._read_content(rel_path, None)  # type: ignore[union-attr]
+                content = await backend._read_content(rel_path, None)
             return content
 
         return None
@@ -1336,7 +1410,7 @@ class GroverAsync:
         """Save per-mount graph and search state."""
         # Save each mount's graph to its own DB
         for mount in self._registry.list_visible_mounts():
-            graph = getattr(mount.backend, "_graph", None)
+            graph = mount.graph
             if graph is not None and mount.has_session_factory:
                 from grover.graph.protocols import SupportsPersistence
 
@@ -1353,7 +1427,7 @@ class GroverAsync:
                         )
 
             # Save search index to disk
-            search_engine = getattr(mount.backend, "_search_engine", None)
+            search_engine = mount.search
             if search_engine is not None and self._meta_data_dir is not None:
                 slug = mount.mount_path.strip("/").replace("/", "_") or "_default"
                 search_dir = self._meta_data_dir / "search" / slug

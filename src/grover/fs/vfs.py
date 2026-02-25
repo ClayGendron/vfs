@@ -10,7 +10,7 @@ from grover.events import EventBus, EventType, FileEvent
 
 from .exceptions import CapabilityNotSupportedError, MountNotFoundError
 from .permissions import Permission
-from .protocol import SupportsReconcile, SupportsSearch, SupportsTrash, SupportsVersions
+from .protocol import SupportsReconcile, SupportsTrash, SupportsVersions
 from .types import (
     DeleteResult,
     EditResult,
@@ -451,7 +451,7 @@ class VFS:
         path: str = "/",
         user_id: str | None = None,
     ) -> list:
-        """Route semantic search to backend(s), aggregate across mounts.
+        """Route semantic search to mount search engine(s), aggregate across mounts.
 
         Returns ``list[SearchResult]`` — the internal Grover search type.
         """
@@ -460,22 +460,28 @@ class VFS:
         if path == "/":
             all_results: list = []
             for mount in self._registry.list_visible_mounts():
-                cap = self.get_capability(mount.backend, SupportsSearch)
-                if cap is None:
+                if mount.search is None:
                     continue
-                async with self.session_for(mount) as sess:
-                    results = await cap.search(query, k, path="/", session=sess, user_id=user_id)
+                results = await mount.search.search(query, k)
                 all_results.extend(results)
             # Sort by score descending, truncate to k
             all_results.sort(key=lambda r: r.score, reverse=True)
             return all_results[:k]
 
         mount, rel_path = self._registry.resolve(path)
-        cap = self.get_capability(mount.backend, SupportsSearch)
-        if cap is None:
+        if mount.search is None:
             return []
-        async with self.session_for(mount) as sess:
-            return await cap.search(query, k, path=rel_path, session=sess, user_id=user_id)
+        results = await mount.search.search(query, k)
+        # Filter by path prefix if not root
+        if rel_path != "/":
+            prefix = rel_path.rstrip("/") + "/"
+            results = [
+                r
+                for r in results
+                if (r.parent_path or r.ref.path).startswith(prefix)
+                or (r.parent_path or r.ref.path) == rel_path.rstrip("/")
+            ]
+        return results
 
     # ------------------------------------------------------------------
     # Write Operations (permission-checked)

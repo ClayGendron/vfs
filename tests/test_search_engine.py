@@ -79,21 +79,21 @@ class AsyncFakeProvider:
 def engine() -> SearchEngine:
     """Engine with sync FakeProvider + LocalVectorStore."""
     store = LocalVectorStore(dimension=_FAKE_DIM)
-    return SearchEngine(store, FakeProvider())
+    return SearchEngine(vector=store, embedding=FakeProvider())
 
 
 @pytest.fixture
 def async_engine() -> SearchEngine:
     """Engine with async FakeProvider + LocalVectorStore."""
     store = LocalVectorStore(dimension=_FAKE_DIM)
-    return SearchEngine(store, AsyncFakeProvider())
+    return SearchEngine(vector=store, embedding=AsyncFakeProvider())
 
 
 @pytest.fixture
 def engine_no_provider() -> SearchEngine:
     """Engine with no embedding provider."""
     store = LocalVectorStore(dimension=_FAKE_DIM)
-    return SearchEngine(store, embedding_provider=None)
+    return SearchEngine(vector=store)
 
 
 # ==================================================================
@@ -295,7 +295,9 @@ class TestPersistence:
         save_dir = str(tmp_path / "index")
         engine.save(save_dir)
 
-        engine2 = SearchEngine(LocalVectorStore(dimension=_FAKE_DIM), FakeProvider())
+        engine2 = SearchEngine(
+            vector=LocalVectorStore(dimension=_FAKE_DIM), embedding=FakeProvider()
+        )
         engine2.load(save_dir)
 
         assert len(engine2) == 2
@@ -310,7 +312,9 @@ class TestPersistence:
         save_dir = str(tmp_path / "index")
         engine.save(save_dir)
 
-        engine2 = SearchEngine(LocalVectorStore(dimension=_FAKE_DIM), FakeProvider())
+        engine2 = SearchEngine(
+            vector=LocalVectorStore(dimension=_FAKE_DIM), embedding=FakeProvider()
+        )
         engine2.load(save_dir)
         results = await engine2.search("unique query text")
         assert results[0].ref.path == "/a.py"
@@ -337,11 +341,11 @@ class TestLifecycle:
 
 
 class TestProperties:
-    def test_store_property(self, engine: SearchEngine):
-        assert isinstance(engine.store, LocalVectorStore)
+    def test_vector_property(self, engine: SearchEngine):
+        assert isinstance(engine.vector, LocalVectorStore)
 
-    def test_embedding_provider_property(self, engine: SearchEngine):
-        assert isinstance(engine.embedding_provider, FakeProvider)
+    def test_embedding_property(self, engine: SearchEngine):
+        assert isinstance(engine.embedding, FakeProvider)
 
-    def test_embedding_provider_none(self, engine_no_provider: SearchEngine):
-        assert engine_no_provider.embedding_provider is None
+    def test_embedding_none(self, engine_no_provider: SearchEngine):
+        assert engine_no_provider.embedding is None

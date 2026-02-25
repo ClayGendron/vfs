@@ -426,7 +426,7 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         await ga.mount("/app", InMemoryBackend())
         # Inject MinimalGraph onto the mounted backend
         mount = next(m for m in ga._registry.list_visible_mounts() if m.mount_path == "/app")
-        mount.backend._graph = MinimalGraph()  # type: ignore[union-attr]
+        mount.graph = MinimalGraph()
         with pytest.raises(CapabilityNotSupportedError):
             ga.pagerank(path="/app")
         with pytest.raises(CapabilityNotSupportedError):

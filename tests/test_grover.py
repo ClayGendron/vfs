@@ -252,8 +252,7 @@ class TestGroverSearch:
 
     def test_search_returns_failure_without_provider(self, grover_no_search: Grover):
         has_search = any(
-            getattr(m.backend, "_search_engine", None) is not None
-            for m in grover_no_search._async._registry.list_visible_mounts()
+            m.search is not None for m in grover_no_search._async._registry.list_visible_mounts()
         )
         if has_search:
             pytest.skip("sentence-transformers is installed; search available")
@@ -335,11 +334,11 @@ class TestGroverEventHandlers:
             "/project/vanish.py",
             "def vanishing_function():\n    pass\n",
         )
-        # Verify it's in search (search engine is now per-mount on the backend)
+        # Verify it's in search (search engine is now per-mount on the Mount)
         mount = next(
             m for m in grover._async._registry.list_visible_mounts() if m.mount_path == "/project"
         )
-        se = getattr(mount.backend, "_search_engine", None)
+        se = mount.search
         assert se is not None
         assert se.has("/project/vanish.py#vanishing_function")
         grover.delete("/project/vanish.py")

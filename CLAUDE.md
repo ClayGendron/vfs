@@ -28,7 +28,7 @@ src/grover/
 │   ├── database_fs.py      # DatabaseFileSystem — pure DB, stateless (web apps/enterprise)
 │   ├── operations.py       # Pure orchestration functions (read, write, edit, delete, move, copy)
 │   ├── user_scoped_fs.py   # UserScopedFileSystem — DBFS subclass with user-scoping, sharing, @shared
-│   ├── mounts.py           # MountRegistry, MountConfig
+│   ├── mounts.py           # MountRegistry, MountConfig (alias for Mount)
 │   ├── sharing.py          # SharingService (path-based share CRUD, permission resolution)
 │   ├── metadata.py         # MetadataService (file lookup, hashing)
 │   ├── versioning.py       # VersioningService (diff storage, reconstruction)
@@ -52,6 +52,11 @@ src/grover/
 │       ├── _retriever.py   # GroverRetriever — BaseRetriever backed by semantic search
 │       ├── _loader.py      # GroverLoader — BaseLoader for RAG document ingestion
 │       └── _store.py       # GroverStore — LangGraph BaseStore for persistent memory
+├── mount/
+│   ├── __init__.py         # Exports: Mount, ProtocolConflictError, ProtocolNotAvailableError
+│   ├── mount.py            # Mount — first-class composition unit (filesystem, graph, search)
+│   ├── protocols.py        # Dispatch protocols (SupportsGlob, SupportsVectorSearch, etc.)
+│   └── errors.py           # ProtocolConflictError, ProtocolNotAvailableError
 ├── graph/
 │   ├── __init__.py         # Exports: RustworkxGraph, GraphStore, SubgraphResult, capability protocols
 │   ├── _rustworkx.py       # RustworkxGraph — rustworkx wrapper (CRUD, algorithms, persistence)
@@ -64,7 +69,7 @@ src/grover/
 │       ├── javascript.py   # JS/TS analyzers (tree-sitter)
 │       └── go.py           # GoAnalyzer (tree-sitter)
 ├── search/
-│   ├── _engine.py          # SearchEngine — orchestrator (EmbeddingProvider + VectorStore)
+│   ├── _engine.py          # SearchEngine — composable orchestrator (vector, embedding, lexical, hybrid)
 │   ├── protocols.py        # EmbeddingProvider, VectorStore, capability protocols
 │   ├── types.py            # VectorEntry, VectorSearchResult, SearchResult, etc.
 │   ├── filters.py          # Filter AST, operators, provider compilers
@@ -104,6 +109,7 @@ tests/                      # pytest + pytest-asyncio (asyncio_mode = "auto")
 ├── test_analyzers.py       # Python/JS/TS/Go code analysis + chunk extraction
 ├── test_search.py          # Extractors, SearchResult, EmbeddingProvider protocol
 ├── test_search_engine.py   # SearchEngine orchestrator tests
+├── test_search_engine_composition.py # SearchEngine composition and supported_protocols() tests
 ├── test_local_vector_store.py # LocalVectorStore (VectorStore protocol) tests
 ├── test_search_protocols.py   # Protocols, types, filter AST tests
 ├── test_embedding_providers.py # OpenAI, SentenceTransformer, LangChain provider tests
@@ -112,6 +118,8 @@ tests/                      # pytest + pytest-asyncio (asyncio_mode = "auto")
 ├── test_events.py          # EventBus registration, dispatch, error handling
 ├── test_models.py          # SQLModel CRUD, defaults, upserts
 ├── test_diff.py            # Diff compute/apply/reconstruct round-trips
+├── test_mount.py           # Mount class construction, dispatch, backward compat
+├── test_mount_dispatch.py  # Protocol dispatch — filesystem, SearchEngine, graph interactions
 ├── test_mounts.py          # MountConfig, MountRegistry, path resolution
 ├── test_fs_types.py        # Result dataclass fields and defaults
 ├── test_query_types.py     # New query response types (frozen immutability, defaults, construction)

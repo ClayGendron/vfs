@@ -335,7 +335,7 @@ class TestVectorMetadata:
         await grover.write("/project/funcs.py", PYTHON_CODE)
 
         mount = _get_mount(grover, "/project")
-        search_engine = mount.backend._search_engine
+        search_engine = mount.search
         assert search_engine is not None
 
         local_store = search_engine._get_local_store()

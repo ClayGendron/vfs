@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from grover.ref import Ref
 from grover.search.types import SearchResult, VectorEntry
@@ -34,11 +34,16 @@ class SearchEngine:
 
     def __init__(
         self,
-        store: VectorStore,
-        embedding_provider: EmbeddingProvider | None = None,
+        *,
+        vector: VectorStore | None = None,
+        embedding: EmbeddingProvider | None = None,
+        lexical: Any | None = None,
+        hybrid: Any | None = None,
     ) -> None:
-        self._store = store
-        self._embedding_provider = embedding_provider
+        self._store: VectorStore | None = vector
+        self._embedding_provider = embedding
+        self._lexical = lexical
+        self._hybrid = hybrid
 
     # ------------------------------------------------------------------
     # High-level operations (what GroverAsync calls)
@@ -192,14 +197,42 @@ class SearchEngine:
     # ------------------------------------------------------------------
 
     @property
-    def store(self) -> VectorStore:
+    def vector(self) -> VectorStore | None:
         """Return the underlying :class:`VectorStore`."""
         return self._store
 
     @property
-    def embedding_provider(self) -> EmbeddingProvider | None:
+    def embedding(self) -> EmbeddingProvider | None:
         """Return the :class:`EmbeddingProvider`, if any."""
         return self._embedding_provider
+
+    @property
+    def lexical(self) -> Any | None:
+        """Return the lexical (full-text) store, if any."""
+        return self._lexical
+
+    def supported_protocols(self) -> set[type]:
+        """Return mount-level dispatch protocols based on configured components.
+
+        Used by :class:`~grover.mount.Mount` to build the dispatch map.
+        """
+        from grover.mount.protocols import (
+            SupportsEmbedding,
+            SupportsHybridSearch,
+            SupportsLexicalSearch,
+            SupportsVectorSearch,
+        )
+
+        protos: set[type] = set()
+        if self._store is not None and self._embedding_provider is not None:
+            protos.add(SupportsVectorSearch)
+        if self._lexical is not None:
+            protos.add(SupportsLexicalSearch)
+        if self._hybrid is not None:
+            protos.add(SupportsHybridSearch)
+        if self._embedding_provider is not None:
+            protos.add(SupportsEmbedding)
+        return protos
 
     # ------------------------------------------------------------------
     # Internal

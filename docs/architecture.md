@@ -45,7 +45,6 @@ class StorageBackend(Protocol):       # Core: read, write, edit, delete, ...
 class SupportsVersions(Protocol):     # list_versions, restore_version, ...
 class SupportsTrash(Protocol):        # list_trash, restore_from_trash, ...
 class SupportsReconcile(Protocol):    # reconcile (sync disk ↔ DB)
-class SupportsSearch(Protocol):       # search (per-mount semantic search)
 class SupportsFileChunks(Protocol):   # replace/delete/list file chunks
 ```
 
@@ -93,23 +92,49 @@ The opposite ordering (commit-first) would create **phantom metadata**: the DB s
 
 **This ordering is intentional and should not be changed.** See [internals/fs.md](internals/fs.md) for the full rationale and history.
 
-## Per-mount graph and search
+## Mount as first-class composition unit
 
-Each mounted backend holds its own `RustworkxGraph` and `SearchEngine` instance, injected at mount time. There is no global graph or search engine on `GroverAsync`.
+`Mount` is the central composition class. Each mount composes three components as **public attributes**:
 
 ```
-Mount "/project" → LocalFileSystem
-    ├── _graph: RustworkxGraph     (own graph instance)
-    └── _search_engine: SearchEngine (own search index)
-
-Mount "/data" → DatabaseFileSystem
-    ├── _graph: RustworkxGraph     (own graph instance)
-    └── _search_engine: SearchEngine (own search index)
+Mount "/project"
+    ├── filesystem: LocalFileSystem    (required — storage backend)
+    ├── graph: RustworkxGraph          (optional — in-memory knowledge graph)
+    └── search: SearchEngine           (optional — vector/lexical search)
 ```
+
+Graph and search are no longer injected as private attributes on the backend. They live on the `Mount` itself, accessible as `mount.graph` and `mount.search`.
+
+**Protocol dispatch**: Mount checks all three components against dispatch protocols at construction time and builds a dispatch map. If two components implement the same protocol, `ProtocolConflictError` is raised. If no component implements a requested protocol, `ProtocolNotAvailableError` is raised when the method is called.
+
+```python
+# Dispatch protocols (mount-level routing)
+SupportsGlob          # glob pattern matching → filesystem
+SupportsGrep          # regex content search → filesystem
+SupportsTree          # directory tree listing → filesystem
+SupportsListDir       # directory listing → filesystem
+SupportsVectorSearch  # semantic search → search engine
+SupportsLexicalSearch # keyword/BM25 search → search engine
+SupportsHybridSearch  # combined search → search engine
+SupportsEmbedding     # text embedding → search engine
+```
+
+**SearchEngine composition**: SearchEngine accepts pluggable components via keyword args:
+
+```python
+SearchEngine(
+    vector=LocalVectorStore(...),     # → satisfies SupportsVectorSearch
+    embedding=OpenAIEmbedding(...),   # → satisfies SupportsEmbedding
+    lexical=SQLiteFullText(...),      # → satisfies SupportsLexicalSearch
+    hybrid=HybridProvider(...),       # → satisfies SupportsHybridSearch
+)
+```
+
+SearchEngine exposes `supported_protocols()` which Mount uses instead of `isinstance()` to determine what dispatch protocols the search component satisfies.
 
 **Graph resolution**: operations like `dependents(path)` resolve the mount from the path, then delegate to that mount's graph. `get_graph(path)` is the public method (replaces the removed `.graph` property).
 
-**Search routing**: `search()` routes through VFS to per-mount backends via the `SupportsSearch` protocol. Root-level searches aggregate results across all mounts; path-scoped searches target a single mount.
+**Search routing**: `search()` routes through VFS, checking `mount.search` on the resolved mount. Root-level searches aggregate results across all mounts; path-scoped searches target a single mount.
 
 **Persistence**: each mount's graph saves to its own database (via `to_sql`/`from_sql`). Search indices save per-mount under `data_dir/search/{mount_slug}/`.
 
