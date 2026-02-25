@@ -24,7 +24,7 @@ class TestFileChunkModel:
     def test_defaults(self, session: Session):
         chunk = FileChunk(
             file_path="/src/main.py",
-            chunk_path="/.grover/chunks/src/main.py::MyClass",
+            chunk_path="/src/main.py#MyClass",
             name="MyClass",
         )
         session.add(chunk)
@@ -33,7 +33,7 @@ class TestFileChunkModel:
 
         assert chunk.id  # UUID string
         assert chunk.file_path == "/src/main.py"
-        assert chunk.chunk_path == "/.grover/chunks/src/main.py::MyClass"
+        assert chunk.chunk_path == "/src/main.py#MyClass"
         assert chunk.name == "MyClass"
         assert chunk.description == ""
         assert chunk.line_start == 0
@@ -58,7 +58,7 @@ class TestFileChunkModel:
         """Insert and query back a FileChunk."""
         chunk = FileChunk(
             file_path="/test.py",
-            chunk_path="/.grover/chunks/test.py::foo",
+            chunk_path="/test.py#foo",
             name="foo",
             line_start=10,
             line_end=20,
@@ -78,7 +78,7 @@ class TestFileChunkModel:
     def test_user_id(self, session: Session):
         chunk = FileChunk(
             file_path="/src/main.py",
-            chunk_path="/.grover/chunks/src/main.py::fn",
+            chunk_path="/src/main.py#fn",
             name="fn",
             user_id="alice",
         )
@@ -91,7 +91,7 @@ class TestFileChunkModel:
         for i in range(3):
             chunk = FileChunk(
                 file_path="/src/main.py",
-                chunk_path=f"/.grover/chunks/src/main.py::fn{i}",
+                chunk_path=f"/src/main.py#fn{i}",
                 name=f"fn{i}",
                 line_start=i * 10,
                 line_end=i * 10 + 9,
@@ -116,7 +116,7 @@ class TestChunkService:
     async def test_replace_inserts(self, service, async_session):
         chunks = [
             {
-                "chunk_path": "/.grover/chunks/a.py::foo",
+                "chunk_path": "/a.py#foo",
                 "name": "foo",
                 "line_start": 1,
                 "line_end": 5,
@@ -124,7 +124,7 @@ class TestChunkService:
                 "content_hash": "h1",
             },
             {
-                "chunk_path": "/.grover/chunks/a.py::bar",
+                "chunk_path": "/a.py#bar",
                 "name": "bar",
                 "line_start": 7,
                 "line_end": 12,
@@ -240,7 +240,7 @@ class TestDatabaseFSChunks:
         dbfs = DatabaseFileSystem()
         chunks = [
             {
-                "chunk_path": "/.grover/chunks/a.py::foo",
+                "chunk_path": "/a.py#foo",
                 "name": "foo",
                 "line_start": 1,
                 "line_end": 5,

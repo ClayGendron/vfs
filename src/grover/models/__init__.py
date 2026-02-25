@@ -1,6 +1,7 @@
 """SQLModel database models for Grover."""
 
 from grover.models.chunks import FileChunk, FileChunkBase
+from grover.models.connections import FileConnection, FileConnectionBase
 from grover.models.edges import GroverEdge
 from grover.models.embeddings import Embedding
 from grover.models.files import (
@@ -17,6 +18,8 @@ __all__ = [
     "FileBase",
     "FileChunk",
     "FileChunkBase",
+    "FileConnection",
+    "FileConnectionBase",
     "FileShare",
     "FileShareBase",
     "FileVersion",

@@ -341,10 +341,10 @@ class TestGroverEventHandlers:
         )
         se = getattr(mount.backend, "_search_engine", None)
         assert se is not None
-        assert se.has("/.grover/chunks/project/vanish_py/vanishing_function.txt")
+        assert se.has("/project/vanish.py#vanishing_function")
         grover.delete("/project/vanish.py")
         # Should be removed from search
-        assert not se.has("/.grover/chunks/project/vanish_py/vanishing_function.txt")
+        assert not se.has("/project/vanish.py#vanishing_function")
 
 
 # ==================================================================

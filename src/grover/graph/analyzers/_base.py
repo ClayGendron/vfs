@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import posixpath
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
+
+from grover.fs.paths import build_chunk_ref
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,14 +57,14 @@ class Analyzer(Protocol):
 def build_chunk_path(parent_path: str, symbol_name: str) -> str:
     """Build the canonical chunk path for a symbol.
 
+    Uses the ``file.py#symbol`` format:
+
     >>> build_chunk_path("/src/auth.py", "login")
-    '/.grover/chunks/src/auth_py/login.txt'
+    '/src/auth.py#login'
     >>> build_chunk_path("/src/auth.py", "Client.connect")
-    '/.grover/chunks/src/auth_py/Client.connect.txt'
+    '/src/auth.py#Client.connect'
     """
-    parent_dir = posixpath.dirname(parent_path)
-    stem = posixpath.basename(parent_path).replace(".", "_")
-    return posixpath.join("/.grover/chunks", parent_dir.lstrip("/"), stem, f"{symbol_name}.txt")
+    return build_chunk_ref(parent_path, symbol_name)
 
 
 def extract_lines(content: str, line_start: int, line_end: int) -> str:

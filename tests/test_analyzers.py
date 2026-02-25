@@ -33,14 +33,14 @@ FIXTURES_DIR = pathlib.Path(__file__).parent / "fixtures" / "repos"
 class TestChunkFile:
     def test_construction(self):
         c = ChunkFile(
-            chunk_path="/.grover/chunks/src/foo_py/bar.txt",
+            chunk_path="/src/foo.py#bar",
             parent_path="/src/foo.py",
             content="def bar(): pass",
             line_start=1,
             line_end=1,
             name="bar",
         )
-        assert c.chunk_path == "/.grover/chunks/src/foo_py/bar.txt"
+        assert c.chunk_path == "/src/foo.py#bar"
         assert c.parent_path == "/src/foo.py"
         assert c.name == "bar"
 
@@ -86,29 +86,25 @@ class TestEdgeData:
 
 class TestBuildChunkPath:
     def test_simple_function(self):
-        assert build_chunk_path("/src/auth.py", "login") == (
-            "/.grover/chunks/src/auth_py/login.txt"
-        )
+        assert build_chunk_path("/src/auth.py", "login") == "/src/auth.py#login"
 
     def test_scoped_name(self):
-        assert build_chunk_path("/src/auth.py", "Client.connect") == (
-            "/.grover/chunks/src/auth_py/Client.connect.txt"
-        )
+        assert build_chunk_path("/src/auth.py", "Client.connect") == ("/src/auth.py#Client.connect")
 
     def test_root_file(self):
-        assert build_chunk_path("/main.py", "run") == ("/.grover/chunks/main_py/run.txt")
+        assert build_chunk_path("/main.py", "run") == "/main.py#run"
 
     def test_deeply_nested_dir(self):
-        assert build_chunk_path("/a/b/c/d.py", "foo") == ("/.grover/chunks/a/b/c/d_py/foo.txt")
+        assert build_chunk_path("/a/b/c/d.py", "foo") == "/a/b/c/d.py#foo"
 
     def test_dotted_filename(self):
         assert build_chunk_path("/src/auth.test.py", "test_login") == (
-            "/.grover/chunks/src/auth_test_py/test_login.txt"
+            "/src/auth.test.py#test_login"
         )
 
     def test_dunder_method(self):
         assert build_chunk_path("/src/cls.py", "MyClass.__init__") == (
-            "/.grover/chunks/src/cls_py/MyClass.__init__.txt"
+            "/src/cls.py#MyClass.__init__"
         )
 
 
@@ -182,7 +178,7 @@ class TestPythonFunctions:
         analyzer = PythonAnalyzer()
         chunks = analyzer.analyze_file("/src/auth.py", self.SAMPLE)[0]
         login_chunk = next(c for c in chunks if c.name == "login")
-        assert login_chunk.chunk_path == "/.grover/chunks/src/auth_py/login.txt"
+        assert login_chunk.chunk_path == "/src/auth.py#login"
 
 
 # ===================================================================
@@ -212,7 +208,7 @@ class TestPythonClasses:
         analyzer = PythonAnalyzer()
         chunks = analyzer.analyze_file("/src/client.py", self.SAMPLE)[0]
         connect = next(c for c in chunks if c.name == "Client.connect")
-        assert connect.chunk_path == "/.grover/chunks/src/client_py/Client.connect.txt"
+        assert connect.chunk_path == "/src/client.py#Client.connect"
 
     def test_class_contains_edge(self):
         analyzer = PythonAnalyzer()
@@ -309,7 +305,7 @@ class TestPythonInheritance:
         edges = analyzer.analyze_file("/src/inh.py", self.SAMPLE)[1]
         inherits = [e for e in edges if e.edge_type == "inherits"]
         for e in inherits:
-            assert e.source.startswith("/.grover/chunks/")
+            assert "#" in e.source  # chunk ref format: file.py#Symbol
 
     def test_metadata(self):
         analyzer = PythonAnalyzer()

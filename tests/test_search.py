@@ -82,7 +82,7 @@ class TestExtractFromChunks:
     def test_maps_chunk_files(self):
         chunks = [
             ChunkFile(
-                chunk_path="/.grover/chunks/a_py/foo.txt",
+                chunk_path="/a.py#foo",
                 parent_path="/a.py",
                 content="def foo(): pass",
                 line_start=1,
@@ -90,7 +90,7 @@ class TestExtractFromChunks:
                 name="foo",
             ),
             ChunkFile(
-                chunk_path="/.grover/chunks/a_py/bar.txt",
+                chunk_path="/a.py#bar",
                 parent_path="/a.py",
                 content="def bar(): pass",
                 line_start=3,
@@ -100,15 +100,15 @@ class TestExtractFromChunks:
         ]
         result = extract_from_chunks(chunks)
         assert len(result) == 2
-        assert result[0].path == "/.grover/chunks/a_py/foo.txt"
+        assert result[0].path == "/a.py#foo"
         assert result[0].content == "def foo(): pass"
         assert result[0].parent_path == "/a.py"
-        assert result[1].path == "/.grover/chunks/a_py/bar.txt"
+        assert result[1].path == "/a.py#bar"
 
     def test_filters_empty_content(self):
         chunks = [
             ChunkFile(
-                chunk_path="/.grover/chunks/a_py/foo.txt",
+                chunk_path="/a.py#foo",
                 parent_path="/a.py",
                 content="def foo(): pass",
                 line_start=1,
@@ -116,7 +116,7 @@ class TestExtractFromChunks:
                 name="foo",
             ),
             ChunkFile(
-                chunk_path="/.grover/chunks/a_py/empty.txt",
+                chunk_path="/a.py#empty",
                 parent_path="/a.py",
                 content="   ",
                 line_start=5,
@@ -126,12 +126,12 @@ class TestExtractFromChunks:
         ]
         result = extract_from_chunks(chunks)
         assert len(result) == 1
-        assert result[0].path == "/.grover/chunks/a_py/foo.txt"
+        assert result[0].path == "/a.py#foo"
 
     def test_preserves_parent_path(self):
         chunks = [
             ChunkFile(
-                chunk_path="/.grover/chunks/b_py/init.txt",
+                chunk_path="/src/b.py#B",
                 parent_path="/src/b.py",
                 content="class B: pass",
                 line_start=1,

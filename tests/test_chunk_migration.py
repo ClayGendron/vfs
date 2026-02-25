@@ -116,7 +116,7 @@ class TestAnalyzeWritesChunkRows:
 
     @pytest.mark.asyncio
     async def test_analyze_no_vfs_chunk_files(self, grover: GroverAsync):
-        """Writing a .py file should NOT create files under /.grover/chunks/."""
+        """Writing a .py file should NOT create VFS chunk files."""
         await grover.write("/project/funcs.py", PYTHON_CODE)
 
         result = await grover.glob("*", path="/.grover/chunks")
