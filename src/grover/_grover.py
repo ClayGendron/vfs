@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-    from grover.fs.query_types import SearchQueryResult
     from grover.fs.types import (
         DeleteResult,
         EditResult,
@@ -29,7 +28,16 @@ if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
-    from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
+    from grover.results import FileSearchResult
+    from grover.search.results import (
+        GlobResult,
+        GrepResult,
+        LexicalSearchResult,
+        ListDirResult,
+        TrashResult,
+        TreeResult,
+        VectorSearchResult,
+    )
 
 
 class Grover:
@@ -263,7 +271,7 @@ class Grover:
     def restore_version(self, path: str, version: int, *, user_id: str | None = None) -> Any:
         return self._run(self._async.restore_version(path, version, user_id=user_id))
 
-    def list_trash(self, *, user_id: str | None = None) -> Any:
+    def list_trash(self, *, user_id: str | None = None) -> TrashResult:
         return self._run(self._async.list_trash(user_id=user_id))
 
     def restore_from_trash(self, path: str, *, user_id: str | None = None) -> Any:
@@ -381,14 +389,59 @@ class Grover:
         return self._async.find_nodes(path=path, **attrs)
 
     # ------------------------------------------------------------------
-    # Search wrapper (sync)
+    # Search wrappers (sync)
     # ------------------------------------------------------------------
 
+    def vector_search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        path: str = "/",
+        user_id: str | None = None,
+    ) -> VectorSearchResult:
+        """Semantic (vector) search over indexed content."""
+        return self._run(self._async.vector_search(query, k, path=path, user_id=user_id))
+
+    def lexical_search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        path: str = "/",
+        user_id: str | None = None,
+    ) -> LexicalSearchResult:
+        """BM25/full-text search over indexed content."""
+        return self._run(self._async.lexical_search(query, k, path=path, user_id=user_id))
+
+    def hybrid_search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        alpha: float = 0.5,
+        path: str = "/",
+        user_id: str | None = None,
+    ) -> FileSearchResult:
+        """Hybrid search combining vector and lexical results."""
+        return self._run(
+            self._async.hybrid_search(query, k, alpha=alpha, path=path, user_id=user_id)
+        )
+
     def search(
-        self, query: str, k: int = 10, *, path: str = "/", user_id: str | None = None
-    ) -> SearchQueryResult:
-        """Semantic search over indexed content."""
-        return self._run(self._async.search(query, k, path=path, user_id=user_id))
+        self,
+        query: str,
+        *,
+        path: str = "/",
+        glob: str | None = None,
+        grep: str | None = None,
+        k: int = 10,
+        user_id: str | None = None,
+    ) -> FileSearchResult:
+        """Composable search pipeline: optional glob/grep → vector search."""
+        return self._run(
+            self._async.search(query, path=path, glob=glob, grep=grep, k=k, user_id=user_id)
+        )
 
     # ------------------------------------------------------------------
     # Index and persistence
@@ -401,6 +454,10 @@ class Grover:
     def save(self) -> None:
         """Persist graph and search index to disk."""
         self._run(self._async.save())
+
+    def sync(self, *, path: str | None = None) -> None:
+        """Reload graph and search index from DB."""
+        self._run(self._async.sync(path=path))
 
     # ------------------------------------------------------------------
     # Properties

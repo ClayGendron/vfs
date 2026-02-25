@@ -607,13 +607,13 @@ class TestTrashScoping:
 
         alice_trash = await auth_grover.list_trash(user_id="alice")
         assert alice_trash.success
-        assert len(alice_trash.entries) == 1
-        assert alice_trash.entries[0].name == "a.md"
+        assert len(alice_trash) == 1
+        assert any(p.endswith("a.md") for p in alice_trash.paths)
 
         bob_trash = await auth_grover.list_trash(user_id="bob")
         assert bob_trash.success
-        assert len(bob_trash.entries) == 1
-        assert bob_trash.entries[0].name == "b.md"
+        assert len(bob_trash) == 1
+        assert any(p.endswith("b.md") for p in bob_trash.paths)
 
     async def test_list_trash_regular_mount_shows_all(self, regular_grover: GroverAsync):
         """Non-user-scoped mount shows all trashed files regardless."""
@@ -624,7 +624,7 @@ class TestTrashScoping:
 
         trash = await regular_grover.list_trash()
         assert trash.success
-        assert len(trash.entries) == 2
+        assert len(trash) == 2
 
     async def test_restore_own_file(self, auth_grover: GroverAsync):
         """User can restore their own trashed file."""
@@ -662,13 +662,13 @@ class TestTrashScoping:
         # Bob's trash still has his file
         bob_trash = await auth_grover.list_trash(user_id="bob")
         assert bob_trash.success
-        assert len(bob_trash.entries) == 1
-        assert bob_trash.entries[0].name == "b.md"
+        assert len(bob_trash) == 1
+        assert any(p.endswith("b.md") for p in bob_trash.paths)
 
         # Alice's trash is now empty
         alice_trash = await auth_grover.list_trash(user_id="alice")
         assert alice_trash.success
-        assert len(alice_trash.entries) == 0
+        assert len(alice_trash) == 0
 
     async def test_empty_trash_regular_mount_deletes_all(self, regular_grover: GroverAsync):
         """Non-user-scoped mount empties all trash."""
@@ -682,4 +682,4 @@ class TestTrashScoping:
         assert result.total_deleted == 2
 
         trash = await regular_grover.list_trash()
-        assert len(trash.entries) == 0
+        assert len(trash) == 0

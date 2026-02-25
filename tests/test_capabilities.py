@@ -340,7 +340,7 @@ class TestCapabilityGating:
         """Aggregation endpoint skips unsupported mounts, returns empty."""
         result = await minimal_grover.list_trash()
         assert result.success
-        assert len(result.entries) == 0
+        assert len(result) == 0
 
     async def test_empty_trash_skips_unsupported(self, minimal_grover: GroverAsync) -> None:
         """Aggregation endpoint skips unsupported mounts, returns success."""
@@ -385,7 +385,7 @@ class TestMixedMounts:
         result = await mixed_grover.list_trash()
         assert result.success
         # Should have the DFS trashed file, MinimalBackend skipped
-        assert len(result.entries) == 1
+        assert len(result) == 1
 
     async def test_versioning_works_on_sql_mount(self, mixed_grover: GroverAsync) -> None:
         await mixed_grover.write("/db/a.txt", "v1")

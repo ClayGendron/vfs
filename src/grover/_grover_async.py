@@ -22,17 +22,11 @@ from grover.fs.protocol import (
     SupportsTrash,
     SupportsVersions,
 )
-from grover.fs.query_types import (
-    ChunkMatch,
-    SearchHit,
-    SearchQueryResult,
-)
 from grover.fs.types import (
     DeleteResult,
     EditResult,
     FileInfo,
     GetVersionContentResult,
-    ListResult,
     ListSharesResult,
     ListVersionsResult,
     MkdirResult,
@@ -51,9 +45,21 @@ from grover.models.connections import FileConnection
 from grover.models.embeddings import Embedding
 from grover.models.files import File, FileVersion
 from grover.models.shares import FileShare
+from grover.results import FileSearchResult
 from grover.search._engine import SearchEngine
 from grover.search.extractors import extract_from_chunks, extract_from_file
-from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
+from grover.search.results import (
+    GlobResult,
+    GrepResult,
+    LexicalEvidence,
+    LexicalSearchResult,
+    ListDirResult,
+    TrashEvidence,
+    TrashResult,
+    TreeResult,
+    VectorEvidence,
+    VectorSearchResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -1478,9 +1484,9 @@ class GroverAsync:
     # Trash operations (absorbed from VFS, capability-gated)
     # ------------------------------------------------------------------
 
-    async def list_trash(self, *, user_id: str | None = None) -> ListResult:
+    async def list_trash(self, *, user_id: str | None = None) -> TrashResult:
         """List all items in trash across all mounts."""
-        all_entries: list[FileInfo] = []
+        combined = TrashResult(success=True, message="")
         for mount in self._registry.list_mounts():
             cap = self._get_capability(mount.backend, SupportsTrash)
             if cap is None:
@@ -1488,13 +1494,20 @@ class GroverAsync:
             async with self._session_for(mount) as sess:
                 result = await cap.list_trash(session=sess, user_id=user_id)
             if result.success:
-                all_entries.extend(self._prefix_file_info(entry, mount) for entry in result.entries)
-        return ListResult(
-            success=True,
-            message=f"Found {len(all_entries)} item(s) in trash",
-            entries=all_entries,
-            path="/__trash__",
-        )
+                mount_entries: dict[str, list[Any]] = {}
+                for entry in result.entries:
+                    fp = self._prefix_path(entry.path, mount.mount_path) or entry.path
+                    ev = TrashEvidence(
+                        strategy="trash",
+                        path=fp,
+                        deleted_at=getattr(entry, "deleted_at", None),
+                        original_path=fp,
+                    )
+                    mount_entries.setdefault(fp, []).append(ev)
+                mount_result = TrashResult(success=True, message="", _entries=mount_entries)
+                combined = combined | mount_result
+        combined.message = f"Found {len(combined)} item(s) in trash"
+        return combined
 
     async def restore_from_trash(self, path: str, *, user_id: str | None = None) -> RestoreResult:
         path = normalize_path(path)
@@ -1848,44 +1861,44 @@ class GroverAsync:
     # Search
     # ------------------------------------------------------------------
 
-    async def search(
-        self, query: str, k: int = 10, *, path: str = "/", user_id: str | None = None
-    ) -> SearchQueryResult:
-        """Semantic search, routed to per-mount search engines."""
+    async def vector_search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        path: str = "/",
+        user_id: str | None = None,
+    ) -> VectorSearchResult:
+        """Semantic (vector) search, routed to per-mount search engines."""
         path = normalize_path(path)
 
-        # Check if any mount has a search engine
-        has_search = False
-        for mount in self._registry.list_visible_mounts():
-            if mount.search is not None:
-                has_search = True
-                break
+        # Check if any mount has a search engine with vector capability
+        has_search = any(mount.search is not None for mount in self._registry.list_visible_mounts())
         if not has_search:
-            return SearchQueryResult(
+            return VectorSearchResult(
                 success=False,
                 message=(
-                    "Search is not available: no embedding provider configured. "
-                    "Install sentence-transformers or pass embedding_provider= "
-                    "to GroverAsync()."
+                    "Vector search is not available: no embedding provider "
+                    "configured. Install sentence-transformers or pass "
+                    "embedding_provider= to GroverAsync()."
                 ),
-                query=query,
-                path=path,
             )
+        # Collect (result, mount_path) pairs — SearchResult is frozen so we
+        # cannot attach attributes to it.  Use a parallel list instead.
         try:
-            # Inline VFS search routing
             if path == "/":
-                all_search_results: list = []
+                tagged: list[tuple[Any, str]] = []
                 for mount in self._registry.list_visible_mounts():
                     if mount.search is None:
                         continue
                     results = await mount.search.search(query, k)
-                    all_search_results.extend(results)
-                all_search_results.sort(key=lambda r: r.score, reverse=True)
-                raw_results = all_search_results[:k]
+                    tagged.extend((r, mount.mount_path) for r in results)
+                tagged.sort(key=lambda t: t[0].score, reverse=True)
+                tagged = tagged[:k]
             else:
                 mount, rel_path = self._registry.resolve(path)
                 if mount.search is None:
-                    raw_results = []
+                    tagged = []
                 else:
                     results = await mount.search.search(query, k)
                     if rel_path != "/":
@@ -1896,66 +1909,176 @@ class GroverAsync:
                             if (r.parent_path or r.ref.path).startswith(prefix)
                             or (r.parent_path or r.ref.path) == rel_path.rstrip("/")
                         ]
-                    raw_results = results
+                    tagged = [(r, mount.mount_path) for r in results]
         except Exception as e:
-            return SearchQueryResult(
+            return VectorSearchResult(
                 success=False,
-                message=f"Search failed: {e}",
-                query=query,
-                path=path,
+                message=f"Vector search failed: {e}",
             )
 
-        # Group results by parent file (document-first)
-        file_groups: dict[str, list[Any]] = {}
-        for r in raw_results:
+        # Build VectorSearchResult with VectorEvidence
+        entries: dict[str, list[Any]] = {}
+        for r, mount_path in tagged:
             file_path = r.parent_path or r.ref.path
-            file_groups.setdefault(file_path, []).append(r)
+            if mount_path and not file_path.startswith(mount_path):
+                file_path = mount_path + file_path
+            snippet = r.content[:200]
+            if len(r.content) > 200:
+                snippet += "..."
+            ev = VectorEvidence(
+                strategy="vector_search",
+                path=file_path,
+                snippet=snippet,
+            )
+            entries.setdefault(file_path, []).append(ev)
 
-        search_hits: list[SearchHit] = []
-        for file_path, results in file_groups.items():
-            chunk_matches_list: list[ChunkMatch] = []
-            max_score = 0.0
-            for r in results:
-                if r.score > max_score:
-                    max_score = r.score
-                # Build snippet: first 200 chars + "..." if truncated
-                snippet = r.content[:200]
-                if len(r.content) > 200:
-                    snippet += "..."
-                # Extract chunk metadata from ref or fallback
-                chunk_name = getattr(r.ref, "chunk_name", None) or r.ref.path.rsplit("/", 1)[-1]
-                line_start = getattr(r.ref, "line_start", None) or 0
-                line_end = getattr(r.ref, "line_end", None) or 0
-                chunk_matches_list.append(
-                    ChunkMatch(
-                        name=chunk_name,
-                        line_start=line_start,
-                        line_end=line_end,
-                        score=r.score,
-                        snippet=snippet,
+        return VectorSearchResult(
+            success=True,
+            message=f"Found matches in {len(entries)} file(s)",
+            _entries=entries,
+        )
+
+    async def lexical_search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        path: str = "/",
+        user_id: str | None = None,
+    ) -> LexicalSearchResult:
+        """BM25/full-text search, routed to per-mount search engines."""
+        path = normalize_path(path)
+
+        try:
+            if path == "/":
+                combined: LexicalSearchResult = LexicalSearchResult(success=True, message="")
+                for mount in self._registry.list_visible_mounts():
+                    if mount.search is None or mount.search.lexical is None:
+                        continue
+                    async with self._session_for(mount) as sess:
+                        fts_results = await mount.search.lexical_search(query, k=k, session=sess)
+                    mount_entries: dict[str, list[Any]] = {}
+                    for ftr in fts_results:
+                        fp = mount.mount_path + ftr.path
+                        ev = LexicalEvidence(
+                            strategy="lexical_search",
+                            path=fp,
+                            snippet=ftr.snippet,
+                        )
+                        mount_entries.setdefault(fp, []).append(ev)
+                    mount_result = LexicalSearchResult(
+                        success=True, message="", _entries=mount_entries
                     )
+                    combined = combined | mount_result
+                combined.message = f"Found matches in {len(combined)} file(s)"
+                return combined
+            else:
+                mount, _rel_path = self._registry.resolve(path)
+                if mount.search is None or mount.search.lexical is None:
+                    return LexicalSearchResult(
+                        success=False,
+                        message="Lexical search not available on this mount",
+                    )
+                async with self._session_for(mount) as sess:
+                    fts_results = await mount.search.lexical_search(query, k=k, session=sess)
+                entries: dict[str, list[Any]] = {}
+                for ftr in fts_results:
+                    fp = mount.mount_path + ftr.path
+                    ev = LexicalEvidence(
+                        strategy="lexical_search",
+                        path=fp,
+                        snippet=ftr.snippet,
+                    )
+                    entries.setdefault(fp, []).append(ev)
+                return LexicalSearchResult(
+                    success=True,
+                    message=f"Found matches in {len(entries)} file(s)",
+                    _entries=entries,
                 )
-            search_hits.append(
-                SearchHit(
-                    path=file_path,
-                    score=max_score,
-                    chunk_matches=tuple(chunk_matches_list),
-                )
+        except Exception as e:
+            return LexicalSearchResult(
+                success=False,
+                message=f"Lexical search failed: {e}",
             )
 
-        # Sort by score desc, truncate to k
-        search_hits.sort(key=lambda h: h.score, reverse=True)
-        search_hits = search_hits[:k]
+    async def hybrid_search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        alpha: float = 0.5,
+        path: str = "/",
+        user_id: str | None = None,
+    ) -> FileSearchResult:
+        """Hybrid search combining vector and lexical results.
 
-        return SearchQueryResult(
-            success=True,
-            message=f"{len(search_hits)} file(s) matched",
-            hits=tuple(search_hits),
-            query=query,
-            path=path,
-            files_matched=len(search_hits),
-            truncated=len(raw_results) >= k,
+        *alpha* controls the blend: 1.0 = pure vector, 0.0 = pure lexical.
+        Falls back to whichever is available if only one is configured.
+        """
+        path = normalize_path(path)
+
+        vec_result: FileSearchResult | None = None
+        lex_result: FileSearchResult | None = None
+
+        has_vector = any(
+            mount.search is not None
+            and mount.search.vector is not None
+            and mount.search.embedding is not None
+            for mount in self._registry.list_visible_mounts()
         )
+        has_lexical = any(
+            mount.search is not None and mount.search.lexical is not None
+            for mount in self._registry.list_visible_mounts()
+        )
+
+        if has_vector:
+            vec_result = await self.vector_search(query, k=k, path=path, user_id=user_id)
+        if has_lexical:
+            lex_result = await self.lexical_search(query, k=k, path=path, user_id=user_id)
+
+        if vec_result is not None and lex_result is not None:
+            return vec_result | lex_result
+        if vec_result is not None:
+            return vec_result
+        if lex_result is not None:
+            return lex_result
+
+        return FileSearchResult(
+            success=False,
+            message="Hybrid search not available: no vector or lexical search configured",
+        )
+
+    async def search(
+        self,
+        query: str,
+        *,
+        path: str = "/",
+        glob: str | None = None,
+        grep: str | None = None,
+        k: int = 10,
+        user_id: str | None = None,
+    ) -> FileSearchResult:
+        """Composable search pipeline: optional glob/grep filters → vector search.
+
+        If *glob* is provided, files are first filtered by glob pattern.
+        If *grep* is provided, files are further filtered by content pattern.
+        Then vector search is applied as the final stage.
+        Results are chained using ``>>`` (intersection/pipeline).
+        """
+        result: FileSearchResult | None = None
+
+        if glob is not None:
+            glob_r = await self.glob(glob, path=path, user_id=user_id)
+            result = glob_r
+
+        if grep is not None:
+            grep_r = await self.grep(grep, path=path, user_id=user_id)
+            result = grep_r if result is None else (result >> grep_r)
+
+        vec_r = await self.vector_search(query, k=k, path=path, user_id=user_id)
+        result = vec_r if result is None else (result >> vec_r)
+
+        return result
 
     # ------------------------------------------------------------------
     # Index and persistence
@@ -2019,6 +2142,19 @@ class GroverAsync:
 
     async def save(self) -> None:
         await self._async_save()
+
+    async def sync(self, *, path: str | None = None) -> None:
+        """Reload graph and search index from DB for a mount or all mounts.
+
+        This is useful after external changes to the database — it
+        re-reads the persisted graph edges and search index from storage.
+        """
+        if path is not None:
+            mount, _rel = self._registry.resolve(normalize_path(path))
+            await self._load_mount_state(mount)
+        else:
+            for mount in self._registry.list_mounts():
+                await self._load_mount_state(mount)
 
     async def _async_save(self) -> None:
         """Save per-mount graph and search state."""

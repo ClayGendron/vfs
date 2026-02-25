@@ -156,15 +156,15 @@ class TestMountInjection:
 
 class TestSearchRouting:
     @pytest.mark.asyncio
-    async def test_search_routes_through_vfs(self, grover: GroverAsync):
-        """search() should use VFS routing."""
+    async def test_vector_search_routes_through_vfs(self, grover: GroverAsync):
+        """vector_search() should use VFS routing."""
         await grover.write("/project/auth.py", 'def authenticate():\n    """Auth."""\n    pass\n')
-        result = await grover.search("authenticate")
+        result = await grover.vector_search("authenticate")
         assert result.success is True
-        assert len(result.hits) >= 1
+        assert len(result) >= 1
 
     @pytest.mark.asyncio
-    async def test_search_single_mount(self, multi_grover: GroverAsync):
+    async def test_vector_search_single_mount(self, multi_grover: GroverAsync):
         """Search scoped to one mount only returns results from that mount."""
         await multi_grover.write(
             "/mount1/auth.py", 'def authenticate():\n    """Auth."""\n    pass\n'
@@ -172,12 +172,11 @@ class TestSearchRouting:
         await multi_grover.write(
             "/mount2/data.py", 'def process_data():\n    """Data."""\n    pass\n'
         )
-        result = await multi_grover.search("authenticate", path="/mount1")
-        paths = [h.path for h in result.hits]
-        assert all("/mount1" in p for p in paths)
+        result = await multi_grover.vector_search("authenticate", path="/mount1")
+        assert all("/mount1" in p for p in result.paths)
 
     @pytest.mark.asyncio
-    async def test_search_cross_mount_aggregation(self, multi_grover: GroverAsync):
+    async def test_vector_search_cross_mount_aggregation(self, multi_grover: GroverAsync):
         """Root search aggregates across mounts."""
         await multi_grover.write(
             "/mount1/mod.py", 'def compute():\n    """Compute stuff."""\n    pass\n'
@@ -185,9 +184,9 @@ class TestSearchRouting:
         await multi_grover.write(
             "/mount2/lib.py", 'def compute_more():\n    """Compute more."""\n    pass\n'
         )
-        result = await multi_grover.search("compute", path="/")
+        result = await multi_grover.vector_search("compute", path="/")
         # Should have results from both mounts
-        assert len(result.hits) >= 2
+        assert len(result) >= 2
 
     @pytest.mark.asyncio
     async def test_mount_has_search_engine(self, grover: GroverAsync):
@@ -303,8 +302,8 @@ class TestPerMountPersistence:
         assert not g2.get_graph("/mount1").has_node("/mount2/b.py")
 
         # Search should also be restored
-        result = await g2.search("alpha", path="/mount1")
-        assert len(result.hits) >= 1
+        result = await g2.vector_search("alpha", path="/mount1")
+        assert len(result) >= 1
 
         await g2.close()
 
@@ -368,11 +367,11 @@ class TestEngineMountGraphSearch:
 
 class TestSearchPathScoping:
     @pytest.mark.asyncio
-    async def test_search_with_subpath(self, grover: GroverAsync):
+    async def test_vector_search_with_subpath(self, grover: GroverAsync):
         """Search with a subpath should filter to that path."""
         await grover.write("/project/src/auth.py", 'def auth():\n    """Auth."""\n    pass\n')
         await grover.write("/project/tests/test.py", 'def test():\n    """Test."""\n    pass\n')
         # Search scoped to /project/src
-        result = await grover.search("auth", path="/project/src")
+        result = await grover.vector_search("auth", path="/project/src")
         # Should find results
         assert result.success is True

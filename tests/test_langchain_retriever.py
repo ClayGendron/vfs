@@ -124,8 +124,7 @@ class TestRetrieverDocumentMetadata:
         assert len(docs) > 0
         doc = docs[0]
         assert "path" in doc.metadata
-        assert "score" in doc.metadata
-        assert isinstance(doc.metadata["score"], float)
+        assert isinstance(doc.metadata["path"], str)
         assert doc.id is not None
         assert isinstance(doc.id, str)
 

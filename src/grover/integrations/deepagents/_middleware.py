@@ -225,15 +225,11 @@ class GroverMiddleware(AgentMiddleware):
             if not result.success:
                 return f"Error: {result.message}"
 
-            if not result.entries:
+            if len(result) == 0:
                 return "Trash is empty."
 
-            lines = [f"Trash ({len(result.entries)} items):"]
-            for entry in result.entries:
-                line = f"  - {entry.path}"
-                if entry.size_bytes is not None:
-                    line += f" ({entry.size_bytes} bytes)"
-                lines.append(line)
+            lines = [f"Trash ({len(result)} items):"]
+            lines.extend(f"  - {path}" for path in result.paths)
             return "\n".join(lines)
 
         return StructuredTool.from_function(
@@ -284,24 +280,24 @@ class GroverMiddleware(AgentMiddleware):
             k: Annotated[int, "Maximum number of results to return"] = 10,
         ) -> str:
             try:
-                result = grover.search(query, k=k)
+                result = grover.vector_search(query, k=k)
             except Exception as e:
                 return f"Error: {e}"
 
             if not result.success:
                 return f"Error: {result.message}"
 
-            if not result.hits:
+            if len(result) == 0:
                 return f"No results found for: {query}"
 
-            lines = [f"Search results for '{query}' ({len(result.hits)} files):"]
-            for i, hit in enumerate(result.hits, 1):
-                line = f"  {i}. {hit.path} (score: {hit.score:.3f})"
+            lines = [f"Search results for '{query}' ({len(result)} files):"]
+            for i, path in enumerate(result.paths, 1):
+                line = f"  {i}. {path}"
                 lines.append(line)
-                # Show snippets from chunk matches
-                for cm in hit.chunk_matches[:3]:  # max 3 chunks per file
-                    snippet = cm.snippet.replace("\n", " ")
-                    lines.append(f"     [{cm.name}] {snippet}")
+                # Show snippets from vector evidence
+                for snippet in result.snippets(path)[:3]:  # max 3 snippets per file
+                    snippet_text = snippet.replace("\n", " ")
+                    lines.append(f"     {snippet_text}")
             return "\n".join(lines)
 
         return StructuredTool.from_function(

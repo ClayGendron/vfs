@@ -118,15 +118,14 @@ class GroverStore(BaseStore):
         # Try semantic search if query is provided
         if op.query:
             try:
-                result = self.grover.search(op.query, k=op.limit + op.offset)
+                result = self.grover.vector_search(op.query, k=op.limit + op.offset)
             except Exception:
                 result = None
 
-            hits = result.hits if result is not None and result.success else ()
+            paths = result.paths if result is not None and result.success else ()
 
             items: list[SearchItem] = []
-            for hit in hits:
-                path = hit.path
+            for path in paths:
                 # Filter to only items under the namespace prefix
                 if not path.startswith(ns_dir + "/"):
                     continue
@@ -152,7 +151,6 @@ class GroverStore(BaseStore):
                         value=value,
                         created_at=now,
                         updated_at=now,
-                        score=hit.score,
                     )
                 )
 

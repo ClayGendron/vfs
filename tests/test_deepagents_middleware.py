@@ -263,8 +263,8 @@ class TestSearchSemantic:
         result = tool.invoke({"query": "authentication login", "k": 5})
         assert isinstance(result, str)
         assert "Search results" in result
-        # Should return at least 1 result
-        assert "score:" in result
+        # Should return at least 1 result with file path
+        assert "/project/" in result
 
     def test_search_semantic_no_results(self, middleware: GroverMiddleware):
         tool = next(t for t in middleware.tools if t.name == "search_semantic")

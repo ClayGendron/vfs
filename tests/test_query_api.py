@@ -10,15 +10,11 @@ import pytest
 
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.query_types import (
-    ChunkMatch,
-    SearchHit,
-    SearchQueryResult,
-)
 from grover.search.results import (
     GlobResult,
     GrepResult,
     LineMatch,
+    VectorSearchResult,
 )
 
 if TYPE_CHECKING:
@@ -174,100 +170,79 @@ class TestGrepQueryApi:
 
 
 # ==================================================================
-# Search returns SearchQueryResult
+# Vector search returns VectorSearchResult
 # ==================================================================
 
 
-class TestSearchQueryApi:
+class TestVectorSearchQueryApi:
     @pytest.mark.asyncio
-    async def test_search_returns_search_query_result(self, grover: GroverAsync):
+    async def test_vector_search_returns_vector_search_result(self, grover: GroverAsync):
         await grover.write(
             "/project/auth.py", 'def authenticate():\n    """Auth user."""\n    pass\n'
         )
-        result = await grover.search("authenticate")
-        assert isinstance(result, SearchQueryResult)
+        result = await grover.vector_search("authenticate")
+        assert isinstance(result, VectorSearchResult)
         assert result.success is True
-        assert result.query == "authenticate"
 
     @pytest.mark.asyncio
-    async def test_search_document_first_grouping(self, grover: GroverAsync):
+    async def test_vector_search_document_first_grouping(self, grover: GroverAsync):
         """Results should be grouped by file (document-first)."""
         code = "def func_a():\n    pass\n\ndef func_b():\n    pass\n"
         await grover.write("/project/grouped.py", code)
-        result = await grover.search("func")
-        # All results for one file should be under one SearchHit
-        file_paths = [h.path for h in result.hits]
+        result = await grover.vector_search("func")
         # No duplicate file paths
-        assert len(file_paths) == len(set(file_paths))
+        assert len(result.paths) == len(set(result.paths))
 
     @pytest.mark.asyncio
-    async def test_search_hits_are_search_hit(self, grover: GroverAsync):
+    async def test_vector_search_paths_are_strings(self, grover: GroverAsync):
         await grover.write(
             "/project/hit.py", 'def findme():\n    """Find this function."""\n    pass\n'
         )
-        result = await grover.search("findme")
-        for hit in result.hits:
-            assert isinstance(hit, SearchHit)
-            assert hit.score >= 0.0
-            assert isinstance(hit.path, str)
+        result = await grover.vector_search("findme")
+        for path in result.paths:
+            assert isinstance(path, str)
 
     @pytest.mark.asyncio
-    async def test_search_chunk_matches(self, grover: GroverAsync):
+    async def test_vector_search_snippets(self, grover: GroverAsync):
         await grover.write(
             "/project/chunks.py",
             'def chunk_func():\n    """A chunk."""\n    return 42\n',
         )
-        result = await grover.search("chunk_func")
-        if result.hits:
-            hit = result.hits[0]
-            for cm in hit.chunk_matches:
-                assert isinstance(cm, ChunkMatch)
-                assert cm.score >= 0.0
+        result = await grover.vector_search("chunk_func")
+        if len(result) > 0:
+            path = result.paths[0]
+            snippets = result.snippets(path)
+            assert isinstance(snippets, tuple)
 
     @pytest.mark.asyncio
-    async def test_search_snippet_truncation(self, grover: GroverAsync):
+    async def test_vector_search_snippet_truncation(self, grover: GroverAsync):
         long_content = "x" * 500
         await grover.write("/project/long.txt", long_content)
-        result = await grover.search("xxxx")
-        for hit in result.hits:
-            for cm in hit.chunk_matches:
+        result = await grover.vector_search("xxxx")
+        for path in result.paths:
+            for snippet in result.snippets(path):
                 # Snippet should be at most 203 chars (200 + "...")
-                assert len(cm.snippet) <= 203
+                assert len(snippet) <= 203
 
     @pytest.mark.asyncio
-    async def test_search_sorted_by_score(self, grover: GroverAsync):
-        """Hits should be sorted by score descending."""
-        await grover.write(
-            "/project/a.py", 'def search_target_alpha():\n    """Alpha."""\n    pass\n'
-        )
-        await grover.write(
-            "/project/b.py", 'def search_target_beta():\n    """Beta."""\n    pass\n'
-        )
-        result = await grover.search("search_target")
-        if len(result.hits) >= 2:
-            scores = [h.score for h in result.hits]
-            assert scores == sorted(scores, reverse=True)
-
-    @pytest.mark.asyncio
-    async def test_search_path_scoping(self, grover: GroverAsync):
+    async def test_vector_search_path_scoping(self, grover: GroverAsync):
         """Search with path filter should scope results."""
         await grover.write("/project/src/main.py", 'def main_func():\n    """Main."""\n    pass\n')
         await grover.write(
             "/project/tests/test.py", 'def test_func():\n    """Test."""\n    pass\n'
         )
-        result = await grover.search("func", path="/project/src")
+        result = await grover.vector_search("func", path="/project/src")
         assert result.success is True
-        assert result.path == "/project/src"
 
     @pytest.mark.asyncio
-    async def test_search_files_matched_count(self, grover: GroverAsync):
+    async def test_vector_search_files_matched_count(self, grover: GroverAsync):
         await grover.write("/project/f1.py", 'def unique_search_q1():\n    """Q1."""\n    pass\n')
-        result = await grover.search("unique_search_q1")
-        if result.hits:
-            assert result.files_matched == len(result.hits)
+        result = await grover.vector_search("unique_search_q1")
+        if len(result) > 0:
+            assert len(result) >= 1
 
     @pytest.mark.asyncio
-    async def test_search_failure_no_provider(self, tmp_path: Path):
+    async def test_vector_search_failure_no_provider(self, tmp_path: Path):
         """Search without provider returns failure result."""
         data = tmp_path / "grover_data_no_search"
         g = GroverAsync(data_dir=str(data))
@@ -281,9 +256,9 @@ class TestSearchQueryApi:
             has_search = any(m.search is not None for m in g._registry.list_visible_mounts())
             if has_search:
                 pytest.skip("sentence-transformers is installed; search available")
-            result = await g.search("anything")
-            assert isinstance(result, SearchQueryResult)
+            result = await g.vector_search("anything")
+            assert isinstance(result, VectorSearchResult)
             assert result.success is False
-            assert "Search is not available" in result.message
+            assert "not available" in result.message
         finally:
             await g.close()

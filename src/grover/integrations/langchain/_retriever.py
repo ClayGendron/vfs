@@ -13,9 +13,9 @@ from grover._grover import Grover
 class GroverRetriever(BaseRetriever):
     """LangChain retriever backed by Grover's semantic search.
 
-    Each :class:`~grover.fs.query_types.SearchHit` is converted to a
-    LangChain :class:`~langchain_core.documents.Document` with metadata
-    containing the file path and similarity score.
+    Each matched file path is converted to a LangChain
+    :class:`~langchain_core.documents.Document` with metadata
+    containing the file path and vector evidence snippets.
 
     Usage::
 
@@ -56,14 +56,14 @@ class GroverRetriever(BaseRetriever):
         (e.g. no embedding provider configured).
         """
         try:
-            result = self.grover.search(query, k=self.k)
+            result = self.grover.vector_search(query, k=self.k)
         except Exception:
             return []
 
         if not result.success:
             return []
 
-        return [self._hit_to_document(hit) for hit in result.hits]
+        return [self._path_to_document(path, result) for path in result.paths]
 
     async def _aget_relevant_documents(
         self,
@@ -75,22 +75,19 @@ class GroverRetriever(BaseRetriever):
         return await asyncio.to_thread(self._get_relevant_documents, query, run_manager=run_manager)
 
     @staticmethod
-    def _hit_to_document(hit: Any) -> Document:
-        """Convert a SearchHit to a LangChain Document."""
+    def _path_to_document(path: str, result: Any) -> Document:
+        """Convert a path from VectorSearchResult to a LangChain Document."""
         metadata: dict[str, object] = {
-            "path": hit.path,
-            "score": hit.score,
+            "path": path,
         }
-        # Include chunk info if available
-        if hit.chunk_matches:
-            metadata["chunks"] = len(hit.chunk_matches)
-
-        # Build page_content from chunk snippets
-        snippets = [cm.snippet for cm in hit.chunk_matches if cm.snippet]
-        page_content = "\n\n".join(snippets) if snippets else hit.path
+        # Build page_content from vector evidence snippets
+        snippets = list(result.snippets(path))
+        if snippets:
+            metadata["chunks"] = len(snippets)
+        page_content = "\n\n".join(snippets) if snippets else path
 
         return Document(
             page_content=page_content,
             metadata=metadata,
-            id=hit.path,
+            id=path,
         )
