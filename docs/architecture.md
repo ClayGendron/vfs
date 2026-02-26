@@ -36,6 +36,32 @@ LocalFileSystem
 
 **Why?** Inheritance creates coupling. When `LocalFileSystem` needs to write to disk and `DatabaseFileSystem` needs to write to a DB column, a shared base class either forces awkward abstractions or leaves half the logic in the subclass anyway. Composition lets each backend wire up exactly the behavior it needs.
 
+## GroverAsync facade structure
+
+`GroverAsync` is split into mixin classes, each in its own file under `src/grover/facade/`. The main class inherits all mixins and defines only `__init__`:
+
+```
+GroverAsync(MountMixin, FileOpsMixin, SearchOpsMixin, GraphOpsMixin,
+            VersionTrashMixin, ShareMixin, ConnectionMixin, IndexMixin)
+```
+
+Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every mixin declares `_ctx: GroverContext` as a class-level annotation so type checkers resolve attribute access.
+
+| Mixin | File | Responsibility |
+|-------|------|---------------|
+| `MountMixin` | `facade/mounting.py` | Mount lifecycle: add, unmount, init meta FS |
+| `FileOpsMixin` | `facade/file_ops.py` | File CRUD: read, write, edit, delete, mkdir, list_dir, move, copy |
+| `SearchOpsMixin` | `facade/search_ops.py` | Queries: glob, grep, tree, vector/lexical/hybrid search |
+| `GraphOpsMixin` | `facade/graph_ops.py` | Graph queries: dependents, dependencies, impacts, pagerank |
+| `VersionTrashMixin` | `facade/version_trash.py` | Versions, trash, reconciliation |
+| `ShareMixin` | `facade/sharing.py` | Share/unshare between users |
+| `ConnectionMixin` | `facade/connections.py` | Manual edge CRUD (persisted through FS) |
+| `IndexMixin` | `facade/indexing.py` | Event handlers, analysis pipeline, indexing, save, close |
+
+`GroverContext` (`facade/context.py`) holds the event bus, mount registry, analyzer registry, embedding/vector config, and helper methods used across all mixins (session management, permission checks, path prefixing, graph/search resolution).
+
+**Why mixins?** Each method exists once — no forwarding stubs or delegation boilerplate. The public API is unchanged: `from grover import GroverAsync` works exactly as before.
+
 ## Capability protocols
 
 Not every backend supports every feature. Rather than checking flags or catching `NotImplementedError`, Grover uses runtime-checkable protocols:
