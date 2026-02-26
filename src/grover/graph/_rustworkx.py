@@ -825,6 +825,7 @@ class RustworkxGraph:
                 type=data["type"],
                 weight=data["weight"],
                 metadata_json=json.dumps(data["metadata"]),
+                path=f"{data['source']}[{data['type']}]{data['target']}",
             )
             graph_edges[edge.id] = edge
 

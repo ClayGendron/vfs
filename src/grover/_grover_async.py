@@ -42,7 +42,6 @@ from grover.graph._rustworkx import RustworkxGraph
 from grover.graph.analyzers import AnalyzerRegistry
 from grover.models.chunks import FileChunk
 from grover.models.connections import FileConnection
-from grover.models.embeddings import Embedding
 from grover.models.files import File, FileVersion
 from grover.models.shares import FileShare
 from grover.mount import Mount
@@ -119,7 +118,7 @@ class GroverAsync:
         self._meta_data_dir: Path | None = None
 
         # Search configuration (per-mount engines created at mount time)
-        self._embedding_provider = self._resolve_embedding_provider(embedding_provider)
+        self._embedding_provider = embedding_provider
         self._explicit_vector_store = vector_store
 
         # Register event handlers
@@ -184,21 +183,6 @@ class GroverAsync:
     # ------------------------------------------------------------------
     # Search / Graph factory helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _resolve_embedding_provider(provider: Any) -> Any:
-        """Return the provider if given, else auto-discover, else None."""
-        if provider is not None:
-            return provider
-        try:
-            from grover.search.providers.sentence_transformers import (
-                SentenceTransformerEmbedding,
-            )
-
-            return SentenceTransformerEmbedding()
-        except Exception:
-            logger.debug("No embedding provider available; search disabled")
-            return None
 
     def _create_search_engine(self, *, lexical: Any | None = None) -> SearchEngine | None:
         """Create a new SearchEngine for a mount."""
@@ -639,9 +623,6 @@ class GroverAsync:
             await conn.run_sync(
                 lambda c: FileConnection.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
             )
-            await conn.run_sync(
-                lambda c: Embedding.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
-            )
 
     # ------------------------------------------------------------------
     # Per-mount state loading
@@ -807,7 +788,7 @@ class GroverAsync:
             if isinstance(mount.filesystem, SupportsFileChunks) and chunks:
                 chunk_dicts = [
                     {
-                        "chunk_path": chunk.chunk_path,
+                        "path": chunk.path,
                         "name": chunk.name,
                         "description": "",
                         "line_start": chunk.line_start,
@@ -824,13 +805,13 @@ class GroverAsync:
 
             for chunk in chunks:
                 graph.add_node(
-                    chunk.chunk_path,
+                    chunk.path,
                     parent_path=path,
                     line_start=chunk.line_start,
                     line_end=chunk.line_end,
                     name=chunk.name,
                 )
-                graph.add_edge(path, chunk.chunk_path, edge_type="contains")
+                graph.add_edge(path, chunk.path, edge_type="contains")
                 stats["chunks_created"] += 1
 
             for edge in edges:

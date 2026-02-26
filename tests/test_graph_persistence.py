@@ -119,7 +119,11 @@ class TestFromSql:
         """Files and connections in the DB should be loaded as nodes and edges."""
         async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
         async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
-        async_session.add(FileConnection(source_path="/a.py", target_path="/b.py", type="imports"))
+        async_session.add(
+            FileConnection(
+                source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
+            )
+        )
         await async_session.flush()
 
         g = RustworkxGraph()
@@ -163,6 +167,7 @@ class TestFromSql:
                 type="imports",
                 weight=3.0,
                 metadata_json=json.dumps({"module": "auth"}),
+                path="/a.py[imports]/b.py",
             )
         )
         await async_session.flush()
@@ -180,7 +185,12 @@ class TestFromSql:
         # Only one file in DB, but edge references two paths
         async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
         async_session.add(
-            FileConnection(source_path="/a.py", target_path="/missing.py", type="imports")
+            FileConnection(
+                source_path="/a.py",
+                target_path="/missing.py",
+                type="imports",
+                path="/a.py[imports]/missing.py",
+            )
         )
         await async_session.flush()
 

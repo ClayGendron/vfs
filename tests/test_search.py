@@ -82,7 +82,7 @@ class TestExtractFromChunks:
     def test_maps_chunk_files(self):
         chunks = [
             ChunkFile(
-                chunk_path="/a.py#foo",
+                path="/a.py#foo",
                 parent_path="/a.py",
                 content="def foo(): pass",
                 line_start=1,
@@ -90,7 +90,7 @@ class TestExtractFromChunks:
                 name="foo",
             ),
             ChunkFile(
-                chunk_path="/a.py#bar",
+                path="/a.py#bar",
                 parent_path="/a.py",
                 content="def bar(): pass",
                 line_start=3,
@@ -108,7 +108,7 @@ class TestExtractFromChunks:
     def test_filters_empty_content(self):
         chunks = [
             ChunkFile(
-                chunk_path="/a.py#foo",
+                path="/a.py#foo",
                 parent_path="/a.py",
                 content="def foo(): pass",
                 line_start=1,
@@ -116,7 +116,7 @@ class TestExtractFromChunks:
                 name="foo",
             ),
             ChunkFile(
-                chunk_path="/a.py#empty",
+                path="/a.py#empty",
                 parent_path="/a.py",
                 content="   ",
                 line_start=5,
@@ -131,7 +131,7 @@ class TestExtractFromChunks:
     def test_preserves_parent_path(self):
         chunks = [
             ChunkFile(
-                chunk_path="/src/b.py#B",
+                path="/src/b.py#B",
                 parent_path="/src/b.py",
                 content="class B: pass",
                 line_start=1,

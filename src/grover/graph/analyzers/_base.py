@@ -12,7 +12,7 @@ from grover.fs.paths import build_chunk_ref
 class ChunkFile:
     """A structural chunk extracted from a source file."""
 
-    chunk_path: str
+    path: str
     parent_path: str
     content: str
     line_start: int

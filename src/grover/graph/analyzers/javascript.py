@@ -136,12 +136,12 @@ def _make_chunk(
     scope: list[str],
 ) -> ChunkFile:
     scoped_name = ".".join([*scope, name])
-    chunk_path = build_chunk_path(parent_path, scoped_name)
+    cpath = build_chunk_path(parent_path, scoped_name)
     line_start = node.start_point.row + 1
     line_end = node.end_point.row + 1
     chunk_content = extract_lines(content, line_start, line_end)
     return ChunkFile(
-        chunk_path=chunk_path,
+        path=cpath,
         parent_path=parent_path,
         content=chunk_content,
         line_start=line_start,
@@ -163,7 +163,7 @@ def _handle_function(
         return
     chunk = _make_chunk(node, name, parent_path, content, scope)
     chunks.append(chunk)
-    edges.append(EdgeData(source=parent_path, target=chunk.chunk_path, edge_type="contains"))
+    edges.append(EdgeData(source=parent_path, target=chunk.path, edge_type="contains"))
 
 
 def _handle_class(
@@ -179,7 +179,7 @@ def _handle_class(
         return
     chunk = _make_chunk(node, name, parent_path, content, scope)
     chunks.append(chunk)
-    edges.append(EdgeData(source=parent_path, target=chunk.chunk_path, edge_type="contains"))
+    edges.append(EdgeData(source=parent_path, target=chunk.path, edge_type="contains"))
 
     # Inheritance from class_heritage
     for child in node.children:
@@ -189,7 +189,7 @@ def _handle_class(
                     base_name = hc.text.decode()
                     edges.append(
                         EdgeData(
-                            source=chunk.chunk_path,
+                            source=chunk.path,
                             target=base_name,
                             edge_type="inherits",
                             metadata={"base_name": base_name},
@@ -217,7 +217,7 @@ def _handle_method(
         return
     chunk = _make_chunk(node, name, parent_path, content, scope)
     chunks.append(chunk)
-    edges.append(EdgeData(source=parent_path, target=chunk.chunk_path, edge_type="contains"))
+    edges.append(EdgeData(source=parent_path, target=chunk.path, edge_type="contains"))
 
 
 def _handle_lexical(
@@ -241,7 +241,7 @@ def _handle_lexical(
         # Use the full lexical_declaration node for line range
         chunk = _make_chunk(node, name, parent_path, content, scope)
         chunks.append(chunk)
-        edges.append(EdgeData(source=parent_path, target=chunk.chunk_path, edge_type="contains"))
+        edges.append(EdgeData(source=parent_path, target=chunk.path, edge_type="contains"))
 
 
 def _collect_imports(

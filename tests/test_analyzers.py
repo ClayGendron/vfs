@@ -33,20 +33,20 @@ FIXTURES_DIR = pathlib.Path(__file__).parent / "fixtures" / "repos"
 class TestChunkFile:
     def test_construction(self):
         c = ChunkFile(
-            chunk_path="/src/foo.py#bar",
+            path="/src/foo.py#bar",
             parent_path="/src/foo.py",
             content="def bar(): pass",
             line_start=1,
             line_end=1,
             name="bar",
         )
-        assert c.chunk_path == "/src/foo.py#bar"
+        assert c.path == "/src/foo.py#bar"
         assert c.parent_path == "/src/foo.py"
         assert c.name == "bar"
 
     def test_frozen(self):
         c = ChunkFile(
-            chunk_path="x",
+            path="x",
             parent_path="y",
             content="z",
             line_start=1,
@@ -178,7 +178,7 @@ class TestPythonFunctions:
         analyzer = PythonAnalyzer()
         chunks = analyzer.analyze_file("/src/auth.py", self.SAMPLE)[0]
         login_chunk = next(c for c in chunks if c.name == "login")
-        assert login_chunk.chunk_path == "/src/auth.py#login"
+        assert login_chunk.path == "/src/auth.py#login"
 
 
 # ===================================================================
@@ -208,7 +208,7 @@ class TestPythonClasses:
         analyzer = PythonAnalyzer()
         chunks = analyzer.analyze_file("/src/client.py", self.SAMPLE)[0]
         connect = next(c for c in chunks if c.name == "Client.connect")
-        assert connect.chunk_path == "/src/client.py#Client.connect"
+        assert connect.path == "/src/client.py#Client.connect"
 
     def test_class_contains_edge(self):
         analyzer = PythonAnalyzer()
@@ -266,7 +266,7 @@ class TestPythonNested:
         analyzer = PythonAnalyzer()
         chunks = analyzer.analyze_file("/src/nested.py", self.SAMPLE)[0]
         inner_method = next(c for c in chunks if c.name == "Outer.Inner.method")
-        assert "Outer.Inner.method" in inner_method.chunk_path
+        assert "Outer.Inner.method" in inner_method.path
 
 
 # ===================================================================

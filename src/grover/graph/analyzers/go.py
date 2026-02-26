@@ -78,14 +78,14 @@ def _handle_function(
     if name == "init":
         return
 
-    chunk_path = build_chunk_path(parent_path, name)
+    cpath = build_chunk_path(parent_path, name)
     line_start = node.start_point.row + 1
     line_end = node.end_point.row + 1
     chunk_content = extract_lines(content, line_start, line_end)
 
     chunks.append(
         ChunkFile(
-            chunk_path=chunk_path,
+            path=cpath,
             parent_path=parent_path,
             content=chunk_content,
             line_start=line_start,
@@ -93,7 +93,7 @@ def _handle_function(
             name=name,
         )
     )
-    edges.append(EdgeData(source=parent_path, target=chunk_path, edge_type="contains"))
+    edges.append(EdgeData(source=parent_path, target=cpath, edge_type="contains"))
 
 
 def _handle_method(
@@ -112,14 +112,14 @@ def _handle_method(
     receiver_type = _extract_receiver_type(node)
     scoped_name = f"{receiver_type}.{method_name}" if receiver_type else method_name
 
-    chunk_path = build_chunk_path(parent_path, scoped_name)
+    cpath = build_chunk_path(parent_path, scoped_name)
     line_start = node.start_point.row + 1
     line_end = node.end_point.row + 1
     chunk_content = extract_lines(content, line_start, line_end)
 
     chunks.append(
         ChunkFile(
-            chunk_path=chunk_path,
+            path=cpath,
             parent_path=parent_path,
             content=chunk_content,
             line_start=line_start,
@@ -127,12 +127,12 @@ def _handle_method(
             name=scoped_name,
         )
     )
-    edges.append(EdgeData(source=parent_path, target=chunk_path, edge_type="contains"))
+    edges.append(EdgeData(source=parent_path, target=cpath, edge_type="contains"))
     if receiver_type:
         edges.append(
             EdgeData(
-                source=chunk_path,
-                target=chunk_path,
+                source=cpath,
+                target=cpath,
                 edge_type="method_of",
                 metadata={"receiver": receiver_type},
             )
@@ -179,7 +179,7 @@ def _handle_type_decl(
             continue
         name = name_node.text.decode()
 
-        chunk_path = build_chunk_path(parent_path, name)
+        cpath = build_chunk_path(parent_path, name)
         line_start = node.start_point.row + 1
         line_end = node.end_point.row + 1
         chunk_content = extract_lines(content, line_start, line_end)
@@ -190,7 +190,7 @@ def _handle_type_decl(
 
         chunks.append(
             ChunkFile(
-                chunk_path=chunk_path,
+                path=cpath,
                 parent_path=parent_path,
                 content=chunk_content,
                 line_start=line_start,
@@ -201,7 +201,7 @@ def _handle_type_decl(
         edges.append(
             EdgeData(
                 source=parent_path,
-                target=chunk_path,
+                target=cpath,
                 edge_type="contains",
                 metadata={"kind": kind},
             )

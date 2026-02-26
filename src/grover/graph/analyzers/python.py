@@ -62,14 +62,14 @@ class PythonAnalyzer:
         scope: list[str],
     ) -> None:
         scoped_name = ".".join([*scope, node.name])
-        chunk_path = build_chunk_path(parent_path, scoped_name)
+        cpath = build_chunk_path(parent_path, scoped_name)
         line_start = node.lineno
         line_end = node.end_lineno or node.lineno
         chunk_content = extract_lines(content, line_start, line_end)
 
         chunks.append(
             ChunkFile(
-                chunk_path=chunk_path,
+                path=cpath,
                 parent_path=parent_path,
                 content=chunk_content,
                 line_start=line_start,
@@ -77,7 +77,7 @@ class PythonAnalyzer:
                 name=scoped_name,
             )
         )
-        edges.append(EdgeData(source=parent_path, target=chunk_path, edge_type="contains"))
+        edges.append(EdgeData(source=parent_path, target=cpath, edge_type="contains"))
 
         # Recurse into nested definitions
         self._visit_body(
@@ -99,14 +99,14 @@ class PythonAnalyzer:
         scope: list[str],
     ) -> None:
         scoped_name = ".".join([*scope, node.name])
-        chunk_path = build_chunk_path(parent_path, scoped_name)
+        cpath = build_chunk_path(parent_path, scoped_name)
         line_start = node.lineno
         line_end = node.end_lineno or node.lineno
         chunk_content = extract_lines(content, line_start, line_end)
 
         chunks.append(
             ChunkFile(
-                chunk_path=chunk_path,
+                path=cpath,
                 parent_path=parent_path,
                 content=chunk_content,
                 line_start=line_start,
@@ -114,7 +114,7 @@ class PythonAnalyzer:
                 name=scoped_name,
             )
         )
-        edges.append(EdgeData(source=parent_path, target=chunk_path, edge_type="contains"))
+        edges.append(EdgeData(source=parent_path, target=cpath, edge_type="contains"))
 
         # Inheritance edges
         for base in node.bases:
@@ -122,7 +122,7 @@ class PythonAnalyzer:
             if base_name:
                 edges.append(
                     EdgeData(
-                        source=chunk_path,
+                        source=cpath,
                         target=base_name,
                         edge_type="inherits",
                         metadata={"base_name": base_name},

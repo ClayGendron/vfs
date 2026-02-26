@@ -37,7 +37,7 @@ def extract_from_chunks(chunks: list[ChunkFile]) -> list[EmbeddableChunk]:
     """
     return [
         EmbeddableChunk(
-            path=chunk.chunk_path,
+            path=chunk.path,
             content=chunk.content,
             parent_path=chunk.parent_path,
             chunk_name=chunk.name,

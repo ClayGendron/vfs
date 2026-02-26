@@ -13,7 +13,11 @@ class TestFileConnectionModel:
         assert "grover_file_connections" in engine.dialect.get_table_names(engine.connect())
 
     def test_defaults(self, session: Session):
-        conn = FileConnection(source_path="/a.py", target_path="/b.py")
+        conn = FileConnection(
+            source_path="/a.py",
+            target_path="/b.py",
+            path="/a.py[]/b.py",
+        )
         session.add(conn)
         session.commit()
         session.refresh(conn)
@@ -21,6 +25,7 @@ class TestFileConnectionModel:
         assert conn.id  # UUID string
         assert conn.source_path == "/a.py"
         assert conn.target_path == "/b.py"
+        assert conn.path == "/a.py[]/b.py"
         assert conn.type == ""
         assert conn.weight == 1.0
         assert conn.metadata_json == "{}"
@@ -33,6 +38,7 @@ class TestFileConnectionModel:
             type="imports",
             weight=0.5,
             metadata_json='{"module": "os"}',
+            path="/a.py[imports]/b.py",
         )
         session.add(conn)
         session.commit()
@@ -47,6 +53,7 @@ class TestFileConnectionModel:
             source_path="/src/auth.py",
             target_path="/src/auth.py#login",
             type="contains",
+            path="/src/auth.py[contains]/src/auth.py#login",
         )
         session.add(conn)
         session.commit()
@@ -60,7 +67,14 @@ class TestFileConnectionModel:
 
     def test_multiple_edges_same_source(self, session: Session):
         for target in ["/b.py", "/c.py", "/d.py"]:
-            session.add(FileConnection(source_path="/a.py", target_path=target, type="imports"))
+            session.add(
+                FileConnection(
+                    source_path="/a.py",
+                    target_path=target,
+                    type="imports",
+                    path=f"/a.py[imports]{target}",
+                )
+            )
         session.commit()
 
         results = session.exec(
@@ -79,11 +93,38 @@ class TestFileConnectionModel:
         assert "custom_connections" in tables
 
     def test_unique_ids(self, session: Session):
-        conn1 = FileConnection(source_path="/a.py", target_path="/b.py")
-        conn2 = FileConnection(source_path="/a.py", target_path="/c.py")
+        conn1 = FileConnection(source_path="/a.py", target_path="/b.py", path="/a.py[]/b.py")
+        conn2 = FileConnection(source_path="/a.py", target_path="/c.py", path="/a.py[]/c.py")
         session.add_all([conn1, conn2])
         session.commit()
         assert conn1.id != conn2.id
+
+    def test_path_is_canonical_identity(self, session: Session):
+        """path field stores the source[type]target canonical identity."""
+        conn = FileConnection(
+            source_path="/x.py",
+            target_path="/y.py",
+            type="imports",
+            path="/x.py[imports]/y.py",
+        )
+        session.add(conn)
+        session.commit()
+        session.refresh(conn)
+        assert conn.path == "/x.py[imports]/y.py"
+
+    def test_path_unique_constraint(self, session: Session):
+        """Duplicate paths should be rejected."""
+        import pytest
+        from sqlalchemy.exc import IntegrityError
+
+        conn1 = FileConnection(source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py")
+        session.add(conn1)
+        session.commit()
+
+        conn2 = FileConnection(source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py")
+        session.add(conn2)
+        with pytest.raises(IntegrityError):
+            session.commit()
 
 
 class TestFileConnectionExports:

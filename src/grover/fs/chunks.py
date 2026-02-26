@@ -39,7 +39,7 @@ class ChunkService:
         for chunk_data in chunks:
             record = model(
                 file_path=file_path,
-                chunk_path=chunk_data.get("chunk_path", ""),
+                path=chunk_data.get("path", ""),
                 name=chunk_data.get("name", ""),
                 description=chunk_data.get("description", ""),
                 line_start=chunk_data.get("line_start", 0),

@@ -13,19 +13,22 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 
+from grover.models.vector import Vector, VectorType
+
 
 class FileChunkBase(SQLModel):
     """Base fields for a file chunk. Subclass with ``table=True`` for a concrete table."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     file_path: str = Field(index=True)
-    chunk_path: str = Field(index=True)
+    path: str = Field(default="", index=True)
     name: str = Field(default="")
     description: str = Field(default="")
     line_start: int = Field(default=0)
     line_end: int = Field(default=0)
     content: str = Field(default="")
     content_hash: str = Field(default="")
+    vector: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
     user_id: str | None = Field(default=None, index=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

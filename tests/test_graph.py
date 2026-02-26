@@ -609,7 +609,11 @@ class TestFromSql:
     async def test_loads_edges(self, async_session: AsyncSession) -> None:
         async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
         async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
-        async_session.add(FileConnection(source_path="/a.py", target_path="/b.py", type="imports"))
+        async_session.add(
+            FileConnection(
+                source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
+            )
+        )
         await async_session.commit()
 
         g = RustworkxGraph()
@@ -657,6 +661,7 @@ class TestFromSql:
                 target_path="/b.py",
                 type="imports",
                 metadata_json=json.dumps({"line": 10, "symbol": "Foo"}),
+                path="/a.py[imports]/b.py",
             )
         )
         await async_session.commit()
@@ -670,7 +675,12 @@ class TestFromSql:
     async def test_auto_creates_nodes_for_dangling_edges(self, async_session: AsyncSession) -> None:
         # Edge endpoints not in grover_files — from_sql should still load them
         async_session.add(
-            FileConnection(source_path="/orphan_a.py", target_path="/orphan_b.py", type="imports")
+            FileConnection(
+                source_path="/orphan_a.py",
+                target_path="/orphan_b.py",
+                type="imports",
+                path="/orphan_a.py[imports]/orphan_b.py",
+            )
         )
         await async_session.commit()
 

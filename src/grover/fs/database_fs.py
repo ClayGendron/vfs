@@ -22,6 +22,7 @@ from grover.search.results import (
 )
 from grover.search.results import LineMatch as SearchLineMatch
 
+from ..models import FileConnectionBase
 from .chunks import ChunkService
 from .directories import DirectoryService
 from .exceptions import GroverError
@@ -89,24 +90,24 @@ class DatabaseFileSystem:
         file_model: type[FileBase] | None = None,
         file_version_model: type[FileVersionBase] | None = None,
         file_chunk_model: type[FileChunkBase] | None = None,
+        file_connection_model: type[FileVersionBase] | None = None,
         schema: str | None = None,
     ) -> None:
-        fm: type[FileBase] = file_model or File
-        fvm: type[FileVersionBase] = file_version_model or FileVersion
-        fcm: type[FileChunkBase] = file_chunk_model or FileChunk
-
         self.dialect = dialect
         self.schema = schema
-        self._file_model = fm
-        self._file_version_model = fvm
-        self._file_chunk_model = fcm
+        self._file_model: type[FileBase] = file_model or File
+        self._file_version_model: type[FileVersionBase] = file_version_model or FileVersion
+        self._file_chunk_model: type[FileChunkBase] = file_chunk_model or FileChunk
+        self._file_connection_model: type[FileConnectionBase] = (
+            file_connection_model or FileConnectionBase
+        )
 
         # Composed services
-        self.metadata = MetadataService(fm)
-        self.versioning = VersioningService(fm, fvm)
-        self.directories = DirectoryService(fm, dialect, schema)
-        self.trash = TrashService(fm, self.versioning, self._delete_content)
-        self.chunks = ChunkService(fcm)
+        self.metadata = MetadataService(self._file_model)
+        self.versioning = VersioningService(self._file_model, self._file_version_model)
+        self.directories = DirectoryService(self._file_model, dialect, schema)
+        self.trash = TrashService(self._file_model, self.versioning, self._delete_content)
+        self.chunks = ChunkService(self._file_chunk_model)
 
     @property
     def file_model(self) -> type[FileBase]:
@@ -119,6 +120,10 @@ class DatabaseFileSystem:
     @property
     def file_chunk_model(self) -> type[FileChunkBase]:
         return self._file_chunk_model
+
+    @property
+    def file_connection_model(self) -> type[FileConnectionBase]:
+        return self._file_connection_model
 
     @staticmethod
     def _require_session(session: AsyncSession | None) -> AsyncSession:

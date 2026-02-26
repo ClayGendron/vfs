@@ -2,7 +2,6 @@
 
 from grover.models.chunks import FileChunk, FileChunkBase
 from grover.models.connections import FileConnection, FileConnectionBase
-from grover.models.embeddings import Embedding
 from grover.models.files import (
     File,
     FileBase,
@@ -10,9 +9,9 @@ from grover.models.files import (
     FileVersionBase,
 )
 from grover.models.shares import FileShare, FileShareBase
+from grover.models.vector import Vector, VectorType
 
 __all__ = [
-    "Embedding",
     "File",
     "FileBase",
     "FileChunk",
@@ -23,4 +22,6 @@ __all__ = [
     "FileShareBase",
     "FileVersion",
     "FileVersionBase",
+    "Vector",
+    "VectorType",
 ]

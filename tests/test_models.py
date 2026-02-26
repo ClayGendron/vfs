@@ -7,7 +7,6 @@ from sqlmodel import Session, SQLModel, select
 
 from grover.fs.diff import apply_diff, compute_diff, reconstruct_version
 from grover.models import (
-    Embedding,
     File,
     FileConnection,
     FileShare,
@@ -30,9 +29,6 @@ class TestTableCreation:
 
     def test_grover_file_connections_table_exists(self, engine):
         assert "grover_file_connections" in engine.dialect.get_table_names(engine.connect())
-
-    def test_grover_embeddings_table_exists(self, engine):
-        assert "grover_embeddings" in engine.dialect.get_table_names(engine.connect())
 
 
 class TestDefaultFactories:
@@ -85,24 +81,21 @@ class TestDefaultFactories:
         assert fv.created_by == "agent"
 
     def test_file_connection_defaults(self, session: Session):
-        conn = FileConnection(source_path="/a.py", target_path="/b.py", type="imports")
+        conn = FileConnection(
+            source_path="/a.py",
+            target_path="/b.py",
+            type="imports",
+            path="/a.py[imports]/b.py",
+        )
         session.add(conn)
         session.commit()
         session.refresh(conn)
 
         assert conn.id
+        assert conn.path == "/a.py[imports]/b.py"
         assert conn.type == "imports"
         assert conn.weight == 1.0
         assert conn.metadata_json == "{}"
-
-    def test_embedding_defaults(self, session: Session):
-        emb = Embedding(file_id="xyz", file_version=1, content_hash="abc123")
-        session.add(emb)
-        session.commit()
-        session.refresh(emb)
-
-        assert emb.id
-        assert emb.model_name == ""
 
     def test_query_round_trip(self, session: Session):
         """Insert and query back a File."""
@@ -141,6 +134,42 @@ class TestDefaultFactories:
 
         assert f.content == "# Hello"
         assert f.content_hash == "abc123"
+
+    def test_file_vector_default_none(self, session: Session):
+        f = File(path="/vec.txt", name="vec.txt", parent_path="/")
+        session.add(f)
+        session.commit()
+        session.refresh(f)
+        assert f.vector is None
+
+    def test_file_version_file_path_field(self, session: Session):
+        fv = FileVersion(
+            file_id="abc",
+            file_path="/hello.txt",
+            version=3,
+            is_snapshot=True,
+            content="v3",
+        )
+        session.add(fv)
+        session.commit()
+        session.refresh(fv)
+        assert fv.file_path == "/hello.txt"
+
+    def test_file_version_path_property(self):
+        fv = FileVersion(file_id="abc", file_path="/hello.txt", version=3)
+        assert fv.path == "/hello.txt@3"
+
+    def test_file_connection_path_format(self, session: Session):
+        conn = FileConnection(
+            source_path="/a.py",
+            target_path="/b.py",
+            type="imports",
+            path="/a.py[imports]/b.py",
+        )
+        session.add(conn)
+        session.commit()
+        session.refresh(conn)
+        assert conn.path == "/a.py[imports]/b.py"
 
 
 # ---------------------------------------------------------------------------

@@ -17,9 +17,15 @@ from sqlmodel import Field, SQLModel
 
 
 class FileConnectionBase(SQLModel):
-    """Base fields for a graph edge. Subclass with ``table=True`` for a concrete table."""
+    """Base fields for a graph edge. Subclass with ``table=True`` for a concrete table.
+
+    The ``path`` field is the canonical edge identity in ``source[type]target``
+    format — unique and indexed. ``source_path`` and ``target_path`` are
+    persisted separately for efficient queries.
+    """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    path: str = Field(default="", unique=True, index=True)
     source_path: str = Field(index=True)
     target_path: str = Field(index=True)
     type: str = Field(default="")

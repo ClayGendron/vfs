@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from grover.models.vector import Vector, VectorType
+
 
 class FileBase(SQLModel):
     """Base fields for a tracked file. Subclass with ``table=True`` for a concrete table."""
@@ -31,6 +33,7 @@ class FileBase(SQLModel):
     line_end: int | None = Field(default=None)
     current_version: int = Field(default=1)
     original_path: str | None = Field(default=None)
+    vector: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
@@ -58,6 +61,7 @@ class FileVersionBase(SQLModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     file_id: str = Field(index=True)
+    file_path: str = Field(default="", index=True)
     version: int = Field(default=1)
     is_snapshot: bool = Field(default=False)
     content: str = Field(default="")
@@ -68,6 +72,11 @@ class FileVersionBase(SQLModel):
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )
+
+    @property
+    def path(self) -> str:
+        """Canonical version path: ``file_path@version``."""
+        return f"{self.file_path}@{self.version}"
 
 
 class FileVersion(FileVersionBase, table=True):

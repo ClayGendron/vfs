@@ -291,6 +291,7 @@ class TestGraphWithCustomModel:
                     source_path="/wiki/a.md",
                     target_path="/wiki/b.md",
                     type="links_to",
+                    path="/wiki/a.md[links_to]/wiki/b.md",
                 )
             )
             await session.commit()
