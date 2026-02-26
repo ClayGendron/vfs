@@ -16,6 +16,7 @@ from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountRegistry
 from grover.fs.permissions import Permission
 from grover.fs.protocol import (
+    SupportsConnections,
     SupportsFileChunks,
     SupportsReBAC,
     SupportsReconcile,
@@ -33,6 +34,7 @@ from grover.mount import Mount
 from grover.search._engine import SearchEngine
 from grover.search.extractors import extract_from_chunks, extract_from_file
 from grover.types import (
+    ConnectionResult,
     DeleteResult,
     EditResult,
     FileInfoResult,
@@ -125,6 +127,8 @@ class GroverAsync:
         self._event_bus.register(EventType.FILE_DELETED, self._on_file_deleted)
         self._event_bus.register(EventType.FILE_MOVED, self._on_file_moved)
         self._event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
+        self._event_bus.register(EventType.CONNECTION_ADDED, self._on_connection_added)
+        self._event_bus.register(EventType.CONNECTION_DELETED, self._on_connection_deleted)
 
     # ------------------------------------------------------------------
     # Session management & helpers (absorbed from VFS)
@@ -642,7 +646,11 @@ class GroverAsync:
                     file_model = getattr(mount.filesystem, "file_model", None) or File
                     async with self._session_for(mount) as session:
                         if session is not None:
-                            await graph.from_sql(session, file_model=file_model)
+                            await graph.from_sql(
+                                session,
+                                file_model=file_model,
+                                path_prefix=mount.path,
+                            )
             except Exception:
                 logger.debug(
                     "No existing graph state to load for %s",
@@ -703,8 +711,9 @@ class GroverAsync:
                     await search_engine.remove_file(event.path, session=sess)
         except RuntimeError:
             pass
-        # Clean up chunk DB rows
+        # Clean up chunk DB rows and connection DB rows
         await self._delete_chunks_for_path(event.path)
+        await self._delete_connections_for_path(event.path)
 
     async def _on_file_moved(self, event: FileEvent) -> None:
         if self._meta_fs is None:
@@ -724,8 +733,9 @@ class GroverAsync:
                         await search_engine.remove_file(event.old_path, session=sess)
             except RuntimeError:
                 pass
-            # Clean up chunk DB rows for old path
+            # Clean up chunk and connection DB rows for old path
             await self._delete_chunks_for_path(event.old_path)
+            await self._delete_connections_for_path(event.old_path)
 
         if "/.grover/" in event.path:
             return
@@ -738,6 +748,32 @@ class GroverAsync:
     async def _on_file_restored(self, event: FileEvent) -> None:
         await self._on_file_written(event)
 
+    async def _on_connection_added(self, event: FileEvent) -> None:
+        """Update the in-memory graph when a connection is persisted through FS."""
+        if event.source_path is None or event.target_path is None or event.connection_type is None:
+            return
+        try:
+            graph = self._resolve_graph(event.source_path)
+        except RuntimeError:
+            return
+        graph.add_edge(
+            event.source_path,
+            event.target_path,
+            edge_type=event.connection_type,
+            weight=event.weight,
+        )
+
+    async def _on_connection_deleted(self, event: FileEvent) -> None:
+        """Update the in-memory graph when a connection is removed from FS."""
+        if event.source_path is None or event.target_path is None:
+            return
+        try:
+            graph = self._resolve_graph(event.source_path)
+        except RuntimeError:
+            return
+        if graph.has_edge(event.source_path, event.target_path):
+            graph.remove_edge(event.source_path, event.target_path)
+
     async def _delete_chunks_for_path(self, path: str) -> None:
         """Delete chunk DB rows for *path* if the backend supports it."""
         try:
@@ -747,6 +783,17 @@ class GroverAsync:
         if isinstance(mount.filesystem, SupportsFileChunks):
             async with self._session_for(mount) as sess:
                 await mount.filesystem.delete_file_chunks(path, session=sess)
+
+    async def _delete_connections_for_path(self, path: str) -> None:
+        """Delete connection DB rows for *path* if the backend supports it."""
+        try:
+            mount, _rel = self._registry.resolve(path)
+        except MountNotFoundError:
+            return
+        conn_svc = getattr(mount.filesystem, "connections", None)
+        if conn_svc is not None:
+            async with self._session_for(mount) as sess:
+                await conn_svc.delete_connections_for_path(sess, path)
 
     # ------------------------------------------------------------------
     # Core pipeline
@@ -813,10 +860,46 @@ class GroverAsync:
                 graph.add_edge(path, chunk.path, edge_type="contains")
                 stats["chunks_created"] += 1
 
-            for edge in edges:
-                meta: dict[str, Any] = dict(edge.metadata)
-                graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
-                stats["edges_added"] += 1
+            # Persist dependency edges through FS (graph updated via event).
+            # "contains" edges are structural (chunk membership) and remain
+            # in-memory only — they are already added to the graph above.
+            dep_edges = [e for e in edges if e.edge_type != "contains"]
+            if isinstance(mount.filesystem, SupportsConnections) and dep_edges:
+                # Delete stale outgoing connections for this source before
+                # re-adding.  Only outgoing (source_path == path) so we
+                # preserve edges from OTHER files that point to this one.
+                conn_svc = getattr(mount.filesystem, "connections", None)
+                if conn_svc is not None:
+                    async with self._session_for(mount) as sess:
+                        await conn_svc.delete_outgoing_connections(sess, path)
+                for edge in dep_edges:
+                    async with self._session_for(mount) as sess:
+                        await mount.filesystem.add_connection(
+                            edge.source,
+                            edge.target,
+                            edge.edge_type,
+                            weight=edge.metadata.get("weight", 1.0) if edge.metadata else 1.0,
+                            metadata=dict(edge.metadata) if edge.metadata else None,
+                            session=sess,
+                        )
+                    # Emit event AFTER session commits (post-commit ordering)
+                    await self._emit(
+                        FileEvent(
+                            event_type=EventType.CONNECTION_ADDED,
+                            path=f"{edge.source}[{edge.edge_type}]{edge.target}",
+                            source_path=edge.source,
+                            target_path=edge.target,
+                            connection_type=edge.edge_type,
+                            weight=edge.metadata.get("weight", 1.0) if edge.metadata else 1.0,
+                        )
+                    )
+                    stats["edges_added"] += 1
+            elif dep_edges:
+                # Fallback: no SupportsConnections, add directly to graph
+                for edge in dep_edges:
+                    meta: dict[str, Any] = dict(edge.metadata)
+                    graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
+                    stats["edges_added"] += 1
 
             if search_engine is not None:
                 embeddable = extract_from_chunks(chunks)
@@ -1667,6 +1750,180 @@ class GroverAsync:
         return total
 
     # ------------------------------------------------------------------
+    # Connection operations (persist through FS, graph updated via events)
+    # ------------------------------------------------------------------
+
+    async def add_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        connection_type: str,
+        *,
+        weight: float = 1.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> ConnectionResult:
+        """Add a connection between two files, persisted through the filesystem.
+
+        The graph is updated via the CONNECTION_ADDED event handler after
+        the DB transaction commits.
+        """
+        source_path = normalize_path(source_path)
+        target_path = normalize_path(target_path)
+
+        try:
+            self._check_writable(source_path)
+        except (PermissionError, MountNotFoundError) as e:
+            return ConnectionResult(
+                success=False,
+                message=str(e),
+                source_path=source_path,
+                target_path=target_path,
+                connection_type=connection_type,
+            )
+
+        try:
+            mount, _rel = self._registry.resolve(source_path)
+        except MountNotFoundError:
+            return ConnectionResult(
+                success=False,
+                message=f"No mount found for path: {source_path}",
+                source_path=source_path,
+                target_path=target_path,
+                connection_type=connection_type,
+            )
+
+        backend = self._get_capability(mount.filesystem, SupportsConnections)
+        if backend is None:
+            return ConnectionResult(
+                success=False,
+                message="Backend does not support connections",
+                source_path=source_path,
+                target_path=target_path,
+                connection_type=connection_type,
+            )
+
+        async with self._session_for(mount) as sess:
+            result = await backend.add_connection(
+                source_path,
+                target_path,
+                connection_type,
+                weight=weight,
+                metadata=metadata,
+                session=sess,
+            )
+
+        # Emit AFTER session commits (post-commit event ordering)
+        if result.success:
+            await self._emit(
+                FileEvent(
+                    event_type=EventType.CONNECTION_ADDED,
+                    path=result.path,
+                    source_path=source_path,
+                    target_path=target_path,
+                    connection_type=connection_type,
+                    weight=weight,
+                )
+            )
+
+        return result
+
+    async def delete_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        *,
+        connection_type: str | None = None,
+    ) -> ConnectionResult:
+        """Delete a connection between two files.
+
+        The graph is updated via the CONNECTION_DELETED event handler after
+        the DB transaction commits.
+        """
+        source_path = normalize_path(source_path)
+        target_path = normalize_path(target_path)
+
+        try:
+            self._check_writable(source_path)
+        except (PermissionError, MountNotFoundError) as e:
+            return ConnectionResult(
+                success=False,
+                message=str(e),
+                source_path=source_path,
+                target_path=target_path,
+                connection_type=connection_type or "",
+            )
+
+        try:
+            mount, _rel = self._registry.resolve(source_path)
+        except MountNotFoundError:
+            return ConnectionResult(
+                success=False,
+                message=f"No mount found for path: {source_path}",
+                source_path=source_path,
+                target_path=target_path,
+                connection_type=connection_type or "",
+            )
+
+        backend = self._get_capability(mount.filesystem, SupportsConnections)
+        if backend is None:
+            return ConnectionResult(
+                success=False,
+                message="Backend does not support connections",
+                source_path=source_path,
+                target_path=target_path,
+                connection_type=connection_type or "",
+            )
+
+        async with self._session_for(mount) as sess:
+            result = await backend.delete_connection(
+                source_path,
+                target_path,
+                connection_type=connection_type,
+                session=sess,
+            )
+
+        # Emit AFTER session commits (post-commit event ordering)
+        if result.success:
+            await self._emit(
+                FileEvent(
+                    event_type=EventType.CONNECTION_DELETED,
+                    path=result.path,
+                    source_path=source_path,
+                    target_path=target_path,
+                    connection_type=connection_type,
+                )
+            )
+
+        return result
+
+    async def list_connections(
+        self,
+        path: str,
+        *,
+        direction: str = "both",
+        connection_type: str | None = None,
+    ) -> list[Any]:
+        """List connections for a path."""
+        path = normalize_path(path)
+
+        try:
+            mount, _rel = self._registry.resolve(path)
+        except MountNotFoundError:
+            return []
+
+        backend = self._get_capability(mount.filesystem, SupportsConnections)
+        if backend is None:
+            return []
+
+        async with self._session_for(mount) as sess:
+            return await backend.list_connections(
+                path,
+                direction=direction,
+                connection_type=connection_type,
+                session=sess,
+            )
+
+    # ------------------------------------------------------------------
     # Graph query wrappers (resolve mount → delegate to backend's graph)
     # ------------------------------------------------------------------
 
@@ -2114,25 +2371,14 @@ class GroverAsync:
                 await self._load_mount_state(mount)
 
     async def _async_save(self) -> None:
-        """Save per-mount graph and search state."""
-        # Save each mount's graph to its own DB
+        """Save per-mount search state.
+
+        Note: graph edges are no longer saved via ``to_sql()`` here.
+        Edge persistence is now handled by the filesystem layer —
+        ``add_connection()`` writes edges to DB, and the graph is a
+        pure in-memory projection loaded via ``from_sql()`` on mount.
+        """
         for mount in self._registry.list_visible_mounts():
-            graph = mount.graph
-            if graph is not None and mount.session_factory is not None:
-                from grover.graph.protocols import SupportsPersistence
-
-                if isinstance(graph, SupportsPersistence):
-                    try:
-                        async with self._session_for(mount) as session:
-                            if session is not None:
-                                await graph.to_sql(session)
-                    except Exception:
-                        logger.debug(
-                            "Failed to save graph for %s",
-                            mount.path,
-                            exc_info=True,
-                        )
-
             # Save search index to disk
             search_engine = mount.search
             if search_engine is not None and self._meta_data_dir is not None:

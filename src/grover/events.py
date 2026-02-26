@@ -20,6 +20,8 @@ class EventType(Enum):
     FILE_DELETED = "file_deleted"
     FILE_MOVED = "file_moved"
     FILE_RESTORED = "file_restored"
+    CONNECTION_ADDED = "connection_added"
+    CONNECTION_DELETED = "connection_deleted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,9 +30,15 @@ class FileEvent:
 
     Attributes:
         event_type: The kind of mutation that occurred.
-        path: Virtual path of the affected file (destination for moves).
+        path: Virtual path of the affected entity. For files this is the
+            file path; for connections it is ``source[type]target``.
         old_path: Previous path (moves only).
         content: File content when available (writes only), None otherwise.
+        user_id: User who triggered the event.
+        source_path: Source file (CONNECTION_ADDED / CONNECTION_DELETED).
+        target_path: Target file (CONNECTION_ADDED / CONNECTION_DELETED).
+        connection_type: Edge type string (CONNECTION_ADDED / CONNECTION_DELETED).
+        weight: Edge weight (CONNECTION_ADDED, default 1.0).
     """
 
     event_type: EventType
@@ -38,6 +46,11 @@ class FileEvent:
     old_path: str | None = None
     content: str | None = None
     user_id: str | None = None
+    # Connection context (CONNECTION_ADDED / CONNECTION_DELETED)
+    source_path: str | None = None
+    target_path: str | None = None
+    connection_type: str | None = None
+    weight: float = 1.0
 
 
 class EventBus:

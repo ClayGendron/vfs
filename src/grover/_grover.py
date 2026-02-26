@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
     from grover.types import (
+        ConnectionResult,
         DeleteResult,
         EditResult,
         FileSearchResult,
@@ -315,6 +316,59 @@ class Grover:
     def list_shared_with_me(self, *, user_id: str) -> ShareSearchResult:
         """List all files shared with the current user."""
         return self._run(self._async.list_shared_with_me(user_id=user_id))
+
+    # ------------------------------------------------------------------
+    # Connection operations
+    # ------------------------------------------------------------------
+
+    def add_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        connection_type: str,
+        *,
+        weight: float = 1.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> ConnectionResult:
+        return self._run(
+            self._async.add_connection(
+                source_path,
+                target_path,
+                connection_type,
+                weight=weight,
+                metadata=metadata,
+            )
+        )
+
+    def delete_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        *,
+        connection_type: str | None = None,
+    ) -> ConnectionResult:
+        return self._run(
+            self._async.delete_connection(
+                source_path,
+                target_path,
+                connection_type=connection_type,
+            )
+        )
+
+    def list_connections(
+        self,
+        path: str,
+        *,
+        direction: str = "both",
+        connection_type: str | None = None,
+    ) -> list[Any]:
+        return self._run(
+            self._async.list_connections(
+                path,
+                direction=direction,
+                connection_type=connection_type,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Graph query wrappers (sync — Graph methods are already sync)

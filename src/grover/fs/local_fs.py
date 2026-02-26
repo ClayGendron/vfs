@@ -22,8 +22,10 @@ from sqlalchemy.ext.asyncio import (
 from sqlmodel import select
 
 from grover.models.chunks import FileChunk
+from grover.models.connections import FileConnection
 from grover.models.files import File, FileVersion
 from grover.types.operations import (
+    ConnectionResult,
     DeleteResult,
     EditResult,
     FileInfoResult,
@@ -53,6 +55,7 @@ from grover.types.search import (
 )
 
 from .chunks import ChunkService
+from .connections import ConnectionService
 from .directories import DirectoryService
 from .exceptions import GroverError
 from .metadata import MetadataService
@@ -141,6 +144,7 @@ class LocalFileSystem:
         self.directories = DirectoryService(fm, "sqlite", schema)
         self.trash = TrashService(fm, self.versioning, self._delete_content)
         self.chunks = ChunkService(fcm)
+        self.connections = ConnectionService(FileConnection)
 
     @property
     def file_model(self) -> type[FileBase]:
@@ -1353,3 +1357,59 @@ class LocalFileSystem:
     ) -> list:
         sess = self._require_session(session)
         return await self.chunks.list_file_chunks(sess, file_path)
+
+    # ------------------------------------------------------------------
+    # Capability: SupportsConnections
+    # ------------------------------------------------------------------
+
+    async def add_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        connection_type: str,
+        *,
+        weight: float = 1.0,
+        metadata: dict | None = None,
+        session: AsyncSession | None = None,
+    ) -> ConnectionResult:
+        sess = self._require_session(session)
+        return await self.connections.add_connection(
+            sess,
+            source_path,
+            target_path,
+            connection_type,
+            weight=weight,
+            metadata=metadata,
+        )
+
+    async def delete_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        *,
+        connection_type: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> ConnectionResult:
+        sess = self._require_session(session)
+        return await self.connections.delete_connection(
+            sess,
+            source_path,
+            target_path,
+            connection_type=connection_type,
+        )
+
+    async def list_connections(
+        self,
+        path: str,
+        *,
+        direction: str = "both",
+        connection_type: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> list:
+        sess = self._require_session(session)
+        return await self.connections.list_connections(
+            sess,
+            path,
+            direction=direction,
+            connection_type=connection_type,
+        )

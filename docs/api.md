@@ -228,6 +228,24 @@ g.contains(path) -> list[Ref]
 | `path_between(source, target)` | Shortest path between two files using Dijkstra (weight-aware). Returns `None` if no path exists. |
 | `contains(path)` | Chunks (functions, classes) contained in this file. Returns nodes connected by `"contains"` edges. |
 
+### Connection Operations
+
+```python
+g.add_connection(source_path, target_path, connection_type, *, weight=1.0, metadata=None) -> ConnectionResult
+g.delete_connection(source_path, target_path, *, connection_type=None) -> ConnectionResult
+g.list_connections(path, *, direction="both", connection_type=None) -> list[FileConnection]
+```
+
+Connections are persisted through the filesystem layer (not directly on the graph). The in-memory graph is updated via `CONNECTION_ADDED` / `CONNECTION_DELETED` events after the DB transaction commits. This makes the filesystem the single source of truth for all persistent edge data.
+
+| Method | Description |
+|--------|-------------|
+| `add_connection(source, target, type)` | Create or update a connection. Returns `ConnectionResult`. The connection path identity is `source[type]target`. |
+| `delete_connection(source, target)` | Delete a connection. If `connection_type` is `None`, deletes all connections between source and target. |
+| `list_connections(path)` | List connections for a path. `direction` can be `"out"`, `"in"`, or `"both"` (default). |
+
+`ConnectionResult` fields: `success`, `message`, `path`, `source_path`, `target_path`, `connection_type`.
+
 ### Graph Algorithms
 
 These convenience methods delegate to the graph backend. They raise `CapabilityNotSupportedError` if the backend doesn't support the required capability protocol.
@@ -909,6 +927,17 @@ from grover.events import EventBus, EventType, FileEvent
 | `FILE_DELETED` | A file is deleted |
 | `FILE_MOVED` | A file is moved or renamed |
 | `FILE_RESTORED` | A file is restored from trash |
+| `CONNECTION_ADDED` | A connection is created or updated |
+| `CONNECTION_DELETED` | A connection is deleted |
+
+`FileEvent` carries optional connection fields for `CONNECTION_ADDED` / `CONNECTION_DELETED` events:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_path` | `str | None` | Source file of the connection |
+| `target_path` | `str | None` | Target file of the connection |
+| `connection_type` | `str | None` | Edge type string |
+| `weight` | `float` | Edge weight (default 1.0) |
 
 ---
 

@@ -208,20 +208,32 @@ This balances storage efficiency (diffs are small) with reconstruction speed (at
 
 ## Graph model
 
-The knowledge graph is an in-memory `rustworkx.PyDiGraph` with string-path-keyed nodes. Edges have a free-form `type` string — there's no enum or schema for edge types.
+The knowledge graph is an in-memory `rustworkx.PyDiGraph` with string-path-keyed nodes. Edges have a free-form `type` string — there's no enum or schema for edge types. **The graph is a pure in-memory projection** — it is populated from the database on mount init and updated via events at runtime.
 
 Built-in conventions:
 
-| Edge type | Meaning |
-|-----------|---------|
-| `"imports"` | File imports another file |
-| `"contains"` | File contains a chunk (function, class) |
-| `"references"` | File references a symbol in another file |
-| `"inherits"` | Class inherits from another class |
+| Edge type | Meaning | Persisted? |
+|-----------|---------|------------|
+| `"imports"` | File imports another file | Yes (through `ConnectionService`) |
+| `"contains"` | File contains a chunk (function, class) | No (in-memory only, rebuilt on analysis) |
+| `"references"` | File references a symbol in another file | Yes |
+| `"inherits"` | Class inherits from another class | Yes |
 
-Code analyzers produce edges automatically. You can also add manual edges with any type string you like.
+Code analyzers produce edges automatically. You can also add manual edges via `add_connection()`.
 
-The graph persists to the `grover_edges` table on `save()` and loads from it on startup. The persistence strategy is full-sync: upsert all in-memory edges, delete any DB edges that are no longer in memory.
+### Filesystem owns connection data
+
+All persistent edges (user-created and analyzer-discovered) are persisted through the filesystem layer via `ConnectionService`, stored in the `grover_file_connections` table. The graph is updated via `CONNECTION_ADDED` / `CONNECTION_DELETED` events after the DB transaction commits:
+
+1. Caller invokes `add_connection(source, target, type)` on `GroverAsync`
+2. `GroverAsync` delegates to the backend's `add_connection()` (through `SupportsConnections`)
+3. `ConnectionService` writes the record to `grover_file_connections`
+4. After the session commits, a `CONNECTION_ADDED` event is emitted
+5. The event handler updates the in-memory graph (`graph.add_edge()`)
+
+On mount init, `from_sql()` loads file nodes from `grover_files` and edges from `grover_file_connections` to populate the graph projection.
+
+**Structural "contains" edges** (file-to-chunk membership) are NOT persisted — they are in-memory only and rebuilt every time a file is analyzed. This keeps the DB clean and avoids conflicts between structural and dependency edges.
 
 ## Analyzer architecture
 

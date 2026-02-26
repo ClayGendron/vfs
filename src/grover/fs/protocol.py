@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.types.operations import (
+        ConnectionResult,
         DeleteResult,
         EditResult,
         FileInfoResult,
@@ -320,6 +321,40 @@ class SupportsReconcile(Protocol):
         *,
         session: AsyncSession | None = None,
     ) -> dict[str, int]: ...
+
+
+@runtime_checkable
+class SupportsConnections(Protocol):
+    """Opt-in: DB-backed file connection storage."""
+
+    async def add_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        connection_type: str,
+        *,
+        weight: float = 1.0,
+        metadata: dict[str, Any] | None = None,
+        session: AsyncSession | None = None,
+    ) -> ConnectionResult: ...
+
+    async def delete_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        *,
+        connection_type: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> ConnectionResult: ...
+
+    async def list_connections(
+        self,
+        path: str,
+        *,
+        direction: str = "both",
+        connection_type: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> list[Any]: ...
 
 
 @runtime_checkable

@@ -40,7 +40,7 @@ async def _failing_handler(event: FileEvent) -> None:
 
 class TestEventType:
     def test_member_count(self) -> None:
-        assert len(EventType) == 4
+        assert len(EventType) == 6
 
     def test_values(self) -> None:
         assert EventType.FILE_WRITTEN.value == "file_written"

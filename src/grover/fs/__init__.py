@@ -15,6 +15,7 @@ from grover.fs.mounts import MountRegistry
 from grover.fs.permissions import Permission
 from grover.fs.protocol import (
     StorageBackend,
+    SupportsConnections,
     SupportsReBAC,
     SupportsReconcile,
     SupportsTrash,
@@ -68,6 +69,7 @@ __all__ = [
     "ShareSearchResult",
     "StorageBackend",
     "StorageError",
+    "SupportsConnections",
     "SupportsReBAC",
     "SupportsReconcile",
     "SupportsTrash",

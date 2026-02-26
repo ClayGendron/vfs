@@ -848,7 +848,13 @@ class RustworkxGraph:
 
         await session.flush()
 
-    async def from_sql(self, session: AsyncSession, file_model: type | None = None) -> None:
+    async def from_sql(
+        self,
+        session: AsyncSession,
+        file_model: type | None = None,
+        *,
+        path_prefix: str = "",
+    ) -> None:
         """Load graph state from the database, replacing in-memory state.
 
         Loads non-deleted file rows as nodes and all ``FileConnection``
@@ -861,6 +867,10 @@ class RustworkxGraph:
         file_model:
             The SQLModel class to query for file nodes.  Defaults to
             :class:`~grover.models.files.File`.
+        path_prefix:
+            Optional prefix to prepend to all DB paths.  DB stores relative
+            paths (e.g. ``/keep.py``) while the in-memory graph uses
+            mount-prefixed absolute paths (e.g. ``/project/keep.py``).
         """
         from sqlalchemy import select
 
@@ -870,6 +880,13 @@ class RustworkxGraph:
             from grover.models.files import File
 
             file_model = File
+
+        def _prefix(p: str) -> str:
+            if not path_prefix:
+                return p
+            if p == "/":
+                return path_prefix
+            return path_prefix + p
 
         # Reset
         self._graph = rustworkx.PyDiGraph()
@@ -881,9 +898,11 @@ class RustworkxGraph:
             select(file_model).where(file_model.deleted_at.is_(None))  # type: ignore[union-attr]
         )
         for file_row in result.scalars().all():
+            raw_path: str = file_row.path  # type: ignore[unresolved-attribute]
+            raw_parent: str | None = file_row.parent_path  # type: ignore[unresolved-attribute]
             self.add_node(
-                file_row.path,  # type: ignore[unresolved-attribute]
-                parent_path=file_row.parent_path,  # type: ignore[unresolved-attribute]
+                _prefix(raw_path),
+                parent_path=_prefix(raw_parent) if raw_parent else None,
                 is_directory=file_row.is_directory,  # type: ignore[unresolved-attribute]
             )
 
@@ -892,8 +911,8 @@ class RustworkxGraph:
         for edge_row in result.scalars().all():
             metadata: dict[str, Any] = json.loads(edge_row.metadata_json)
             self.add_edge(
-                edge_row.source_path,
-                edge_row.target_path,
+                _prefix(edge_row.source_path),
+                _prefix(edge_row.target_path),
                 edge_row.type,
                 weight=edge_row.weight,
                 edge_id=edge_row.id,
