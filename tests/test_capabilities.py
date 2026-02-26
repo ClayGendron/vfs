@@ -434,7 +434,7 @@ class _FailingBackend(MinimalBackend):
 
 
 class TestSessionRollback:
-    """Test that GroverAsync._session_for rolls back on backend exception."""
+    """Test that GroverContext.session_for rolls back on backend exception."""
 
     @pytest.fixture
     async def rollback_grover(self, tmp_path: Path):
@@ -463,7 +463,7 @@ class TestSessionRollback:
         assert result.success
 
         # Resolve the mount and monkey-patch the backend to raise on write
-        mount, _ = grover._registry.resolve("/db/test.txt")
+        mount, _ = grover._ctx.registry.resolve("/db/test.txt")
         original_write = mount.filesystem.write
 
         async def _exploding_write(*args, **kwargs):

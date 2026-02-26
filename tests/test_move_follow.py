@@ -350,7 +350,7 @@ class TestGroverMoveFollow:
     async def test_move_follow_shares_updated(self, grover_with_sharing: GroverAsync):
         """GroverAsync passes sharing through to backend when follow=True."""
         grover = grover_with_sharing
-        mount = grover._registry.get_mount("/ws")
+        mount = grover._ctx.registry.get_mount("/ws")
         assert mount is not None
 
         await grover.write("/ws/doc.md", "content", user_id="alice")
@@ -358,7 +358,7 @@ class TestGroverMoveFollow:
         # Create share at stored path level
         backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
-        async with grover._session_for(mount) as sess:
+        async with grover._ctx.session_for(mount) as sess:
             assert sess is not None
             assert backend._sharing is not None
             await backend._sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
@@ -367,7 +367,7 @@ class TestGroverMoveFollow:
         assert result.success is True
 
         # Verify share updated
-        async with grover._session_for(mount) as sess:
+        async with grover._ctx.session_for(mount) as sess:
             assert sess is not None
             assert backend._sharing is not None
             new_shares = await backend._sharing.list_shares_on_path(sess, "/alice/renamed.md")

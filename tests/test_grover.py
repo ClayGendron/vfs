@@ -94,7 +94,7 @@ class TestGroverConstruction:
         g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
         g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         try:
-            assert g._async._meta_fs is not None
+            assert g._async._ctx.meta_fs is not None
         finally:
             g.close()
 
@@ -106,7 +106,7 @@ class TestGroverConstruction:
         )
         g.add_mount("/project", LocalFileSystem(workspace_dir=workspace))
         try:
-            assert g._async._meta_data_dir == custom_dir
+            assert g._async._ctx.meta_data_dir == custom_dir
         finally:
             g.close()
 
@@ -250,9 +250,8 @@ class TestGroverSearch:
         assert len(result) == 0
 
     def test_vector_search_returns_failure_without_provider(self, grover_no_search: Grover):
-        has_search = any(
-            m.search is not None for m in grover_no_search._async._registry.list_visible_mounts()
-        )
+        mounts = grover_no_search._async._ctx.registry.list_visible_mounts()
+        has_search = any(m.search is not None for m in mounts)
         if has_search:
             pytest.skip("sentence-transformers is installed; search available")
         result = grover_no_search.vector_search("anything")
@@ -335,7 +334,7 @@ class TestGroverEventHandlers:
         )
         # Verify it's in search (search engine is now per-mount on the Mount)
         mount = next(
-            m for m in grover._async._registry.list_visible_mounts() if m.path == "/project"
+            m for m in grover._async._ctx.registry.list_visible_mounts() if m.path == "/project"
         )
         se = mount.search
         assert se is not None
@@ -356,7 +355,7 @@ class TestGroverPersistence:
         grover.save()
 
         # Verify DB has edges
-        data_dir = grover._async._meta_data_dir
+        data_dir = grover._async._ctx.meta_data_dir
         assert data_dir is not None
         db_path = data_dir / "_meta" / "file_versions.db"
         assert db_path.exists()
@@ -365,7 +364,7 @@ class TestGroverPersistence:
         grover.write("/project/saved.txt", "save this content")
         grover.save()
 
-        data_dir = grover._async._meta_data_dir
+        data_dir = grover._async._ctx.meta_data_dir
         assert data_dir is not None
         # Search index saved per-mount under data_dir/search/{slug}
         search_dir = data_dir / "search" / "project"

@@ -248,7 +248,7 @@ class TestVectorSearchQueryApi:
             LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         )
         try:
-            has_search = any(m.search is not None for m in g._registry.list_visible_mounts())
+            has_search = any(m.search is not None for m in g._ctx.registry.list_visible_mounts())
             if has_search:
                 pytest.skip("sentence-transformers is installed; search available")
             result = await g.vector_search("anything")

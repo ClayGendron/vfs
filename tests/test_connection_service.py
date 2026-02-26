@@ -369,7 +369,7 @@ class TestConnectionIntegrationDBFS:
         await g.add_mount("/vfs", fs, session_factory=factory)
 
         for et in EventType:
-            g._event_bus.register(et, handler)
+            g._ctx.event_bus.register(et, handler)
 
         yield g, collected, engine  # type: ignore[misc]
         await g.close()
@@ -509,7 +509,7 @@ class TestConnectionIntegrationLocalFS:
         await g.add_mount("/local", lfs)
 
         for et in EventType:
-            g._event_bus.register(et, handler)
+            g._ctx.event_bus.register(et, handler)
 
         yield g, collected  # type: ignore[misc]
         await g.close()
@@ -582,7 +582,7 @@ class TestAnalyzeIntegrateConnections:
         await g.add_mount("/vfs", fs, session_factory=factory)
 
         for et in EventType:
-            g._event_bus.register(et, handler)
+            g._ctx.event_bus.register(et, handler)
 
         yield g, collected, engine  # type: ignore[misc]
         await g.close()

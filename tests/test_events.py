@@ -240,7 +240,7 @@ class TestEventBusIntegration:
         await g.add_mount("/local", lfs)
 
         for et in EventType:
-            g._event_bus.register(et, handler)
+            g._ctx.event_bus.register(et, handler)
 
         yield g, collected
         await g.close()
@@ -360,7 +360,7 @@ class TestEventBusRestoreIntegration:
         await g.add_mount("/vfs", fs, session_factory=factory)
 
         for et in EventType:
-            g._event_bus.register(et, handler)
+            g._ctx.event_bus.register(et, handler)
 
         yield g, collected
         await g.close()

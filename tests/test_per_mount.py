@@ -100,14 +100,14 @@ class TestMountInjection:
     @pytest.mark.asyncio
     async def test_mount_injects_graph(self, grover: GroverAsync):
         """After mount, mount should have a RustworkxGraph."""
-        mount = next(m for m in grover._registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
         assert mount.graph is not None
         assert isinstance(mount.graph, RustworkxGraph)
 
     @pytest.mark.asyncio
     async def test_mount_injects_search_engine(self, grover: GroverAsync):
         """After mount, mount should have a SearchEngine."""
-        mount = next(m for m in grover._registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
         assert mount.search is not None
         assert isinstance(mount.search, SearchEngine)
 
@@ -121,14 +121,18 @@ class TestMountInjection:
     @pytest.mark.asyncio
     async def test_get_graph_returns_mount_graph(self, grover: GroverAsync):
         """get_graph() returns the mount's graph."""
-        mount = next(m for m in grover._registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
         assert grover.get_graph() is mount.graph
 
     @pytest.mark.asyncio
     async def test_get_graph_with_path(self, multi_grover: GroverAsync):
         """get_graph(path) returns the correct mount's graph."""
-        m1 = next(m for m in multi_grover._registry.list_visible_mounts() if m.path == "/mount1")
-        m2 = next(m for m in multi_grover._registry.list_visible_mounts() if m.path == "/mount2")
+        m1 = next(
+            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
+        )
+        m2 = next(
+            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2"
+        )
         assert multi_grover.get_graph("/mount1/file.py") is m1.graph
         assert multi_grover.get_graph("/mount2/file.py") is m2.graph
 
@@ -136,7 +140,7 @@ class TestMountInjection:
     async def test_hidden_mount_no_graph(self, grover: GroverAsync):
         """Hidden mounts (like /.grover) should not get a graph."""
         meta_mount = next(
-            (m for m in grover._registry.list_mounts() if m.path == "/.grover"),
+            (m for m in grover._ctx.registry.list_mounts() if m.path == "/.grover"),
             None,
         )
         if meta_mount is not None:
@@ -185,7 +189,7 @@ class TestSearchRouting:
     @pytest.mark.asyncio
     async def test_mount_has_search_engine(self, grover: GroverAsync):
         """Mounts with search engines should have mount.search set."""
-        mount = next(m for m in grover._registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
         assert mount.search is not None
         assert isinstance(mount.search, SearchEngine)
 
@@ -200,8 +204,12 @@ class TestPerMountIndexing:
     async def test_write_indexes_correct_mount(self, multi_grover: GroverAsync):
         """Writing a file should populate the correct mount's graph."""
         await multi_grover.write("/mount1/code.py", "def foo():\n    pass\n")
-        m1 = next(m for m in multi_grover._registry.list_visible_mounts() if m.path == "/mount1")
-        m2 = next(m for m in multi_grover._registry.list_visible_mounts() if m.path == "/mount2")
+        m1 = next(
+            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
+        )
+        m2 = next(
+            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2"
+        )
         assert m1.graph.has_node("/mount1/code.py")
         assert not m2.graph.has_node("/mount1/code.py")
 
@@ -209,7 +217,9 @@ class TestPerMountIndexing:
     async def test_delete_cleans_correct_mount(self, multi_grover: GroverAsync):
         """Deleting a file should clean up the correct mount's graph."""
         await multi_grover.write("/mount1/gone.py", "def gone():\n    pass\n")
-        m1 = next(m for m in multi_grover._registry.list_visible_mounts() if m.path == "/mount1")
+        m1 = next(
+            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
+        )
         assert m1.graph.has_node("/mount1/gone.py")
         await multi_grover.delete("/mount1/gone.py")
         assert not m1.graph.has_node("/mount1/gone.py")
@@ -313,7 +323,7 @@ class TestEngineMountGraphSearch:
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         try:
             await g.add_mount("/db", engine=engine)
-            mount = next(m for m in g._registry.list_visible_mounts() if m.path == "/db")
+            mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/db")
             assert isinstance(mount.graph, RustworkxGraph)
             assert isinstance(mount.search, SearchEngine)
 
@@ -342,7 +352,7 @@ class TestEngineMountGraphSearch:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         try:
             await g.add_mount("/sf", session_factory=factory, dialect="sqlite")
-            mount = next(m for m in g._registry.list_visible_mounts() if m.path == "/sf")
+            mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/sf")
             assert isinstance(mount.graph, RustworkxGraph)
         finally:
             await g.close()

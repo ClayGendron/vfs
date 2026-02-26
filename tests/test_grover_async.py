@@ -95,14 +95,14 @@ class TestGroverAsyncLifecycle:
     @pytest.mark.asyncio
     async def test_construction_no_args(self):
         g = GroverAsync()
-        assert g._meta_fs is None  # No mounts yet
+        assert g._ctx.meta_fs is None  # No mounts yet
 
     @pytest.mark.asyncio
     async def test_mount_creates_meta_fs(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
-        assert g._meta_fs is not None
+        assert g._ctx.meta_fs is not None
         await g.close()
 
     @pytest.mark.asyncio
@@ -114,7 +114,7 @@ class TestGroverAsyncLifecycle:
         assert await g.exists("/app/test.txt")
         await g.unmount("/app")
         # Mount should be gone
-        assert not g._registry.has_mount("/app")
+        assert not g._ctx.registry.has_mount("/app")
         await g.close()
 
     @pytest.mark.asyncio
@@ -325,7 +325,7 @@ class TestGroverAsyncSearch:
         self, grover_no_search: GroverAsync
     ):
         has_search = any(
-            m.search is not None for m in grover_no_search._registry.list_visible_mounts()
+            m.search is not None for m in grover_no_search._ctx.registry.list_visible_mounts()
         )
         if has_search:
             pytest.skip("sentence-transformers is installed; search available")
@@ -504,7 +504,7 @@ class TestGroverAsyncEventHandlers:
         code = 'def unique_search_target():\n    """Locate me after move."""\n    pass\n'
         await grover.write("/project/before.py", code)
         await grover.move("/project/before.py", "/project/after.py")
-        has_search = any(m.search is not None for m in grover._registry.list_visible_mounts())
+        has_search = any(m.search is not None for m in grover._ctx.registry.list_visible_mounts())
         if has_search:
             result = await grover.vector_search("unique_search_target")
             # Old path should not appear
@@ -563,7 +563,7 @@ class TestGroverAsyncMountOptions:
 
         # Local mount
         await g.add_mount("/local", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
-        local_mount = next(m for m in g._registry.list_mounts() if m.path == "/local")
+        local_mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/local")
         assert local_mount.mount_type == "local"
 
         # Database mount via session_factory
@@ -572,7 +572,7 @@ class TestGroverAsyncMountOptions:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         await g.add_mount("/db", session_factory=factory, dialect="sqlite")
-        db_mount = next(m for m in g._registry.list_mounts() if m.path == "/db")
+        db_mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/db")
         assert db_mount.mount_type == "vfs"
 
         await g.close()
@@ -613,7 +613,7 @@ class TestGroverAsyncUnsupportedFiles:
         # .txt has no Python analyzer, but the whole file should be indexed
         await grover.write("/project/notes.txt", "Important project notes here")
         assert grover.get_graph().has_node("/project/notes.txt")
-        has_search = any(m.search is not None for m in grover._registry.list_visible_mounts())
+        has_search = any(m.search is not None for m in grover._ctx.registry.list_visible_mounts())
         if has_search:
             result = await grover.vector_search("Important project notes")
             assert len(result) >= 1

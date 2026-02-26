@@ -207,7 +207,7 @@ async def test_async_unmount_requires_exact_mount_path(tmp_path: Path) -> None:
     try:
         await g.add_mount("/app", backend)
         await g.unmount("/app/subpath")
-        assert g._registry.has_mount("/app")
+        assert g._ctx.registry.has_mount("/app")
         assert backend.close_calls == 0
     finally:
         await g.close()
@@ -219,7 +219,7 @@ async def test_async_mount_open_failure_does_not_register_mount(tmp_path: Path) 
     try:
         with pytest.raises(RuntimeError, match="open failed"):
             await g.add_mount("/bad", OpenFailBackend())
-        assert not g._registry.has_mount("/bad")
+        assert not g._ctx.registry.has_mount("/bad")
     finally:
         await g.close()
 
@@ -248,7 +248,7 @@ async def test_async_write_commit_failure_returns_failed_result(tmp_path: Path) 
     g = GroverAsync(data_dir=tmp_path / ".grover_data", embedding_provider=FakeProvider())
     try:
         await g.add_mount("/app", InMemoryBackend())
-        mount = next(m for m in g._registry.list_mounts() if m.path == "/app")
+        mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/app")
         mount.session_factory = BadCommitSession
 
         result = await g.write("/app/file.txt", "hello")
@@ -281,7 +281,7 @@ def test_sync_write_commit_failure_returns_failed_result(tmp_path: Path) -> None
     g = Grover(data_dir=str(tmp_path / ".grover_data"), embedding_provider=FakeProvider())
     try:
         g.add_mount("/app", InMemoryBackend())
-        mount = next(m for m in g._async._registry.list_mounts() if m.path == "/app")
+        mount = next(m for m in g._async._ctx.registry.list_mounts() if m.path == "/app")
         mount.session_factory = BadCommitSession
 
         result = g.write("/app/file.txt", "hello")
@@ -425,7 +425,7 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
     try:
         await ga.add_mount("/app", InMemoryBackend())
         # Inject MinimalGraph onto the mounted backend
-        mount = next(m for m in ga._registry.list_visible_mounts() if m.path == "/app")
+        mount = next(m for m in ga._ctx.registry.list_visible_mounts() if m.path == "/app")
         mount.graph = MinimalGraph()
         with pytest.raises(CapabilityNotSupportedError):
             ga.pagerank(path="/app")

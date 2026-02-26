@@ -244,7 +244,7 @@ class TestSharedAccess:
         granted_by: str = "alice",
     ) -> None:
         """Helper to create a share record directly via SharingService."""
-        mount = grover._registry.get_mount("/ws")
+        mount = grover._ctx.registry.get_mount("/ws")
         assert mount is not None
         backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
@@ -366,7 +366,7 @@ class TestSharedListDir:
         permission: str = "read",
         granted_by: str = "alice",
     ) -> None:
-        mount = grover._registry.get_mount("/ws")
+        mount = grover._ctx.registry.get_mount("/ws")
         assert mount is not None
         backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
@@ -531,7 +531,7 @@ class TestSharedMoveAndCopy:
         permission: str = "read",
         granted_by: str = "alice",
     ) -> None:
-        mount = grover._registry.get_mount("/ws")
+        mount = grover._ctx.registry.get_mount("/ws")
         assert mount is not None
         backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)

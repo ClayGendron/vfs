@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from grover.events import EventBus, EventType, FileEvent
+from grover.facade.context import GroverContext
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.exceptions import (
     CapabilityNotSupportedError,
@@ -35,7 +35,6 @@ from grover.models.connections import FileConnection
 from grover.models.files import File, FileVersion
 from grover.models.shares import FileShare
 from grover.mount import Mount
-from grover.search._engine import SearchEngine
 from grover.search.extractors import extract_from_chunks, extract_from_file
 from grover.types import (
     ConnectionResult,
@@ -69,7 +68,7 @@ from grover.types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import Callable
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -78,12 +77,10 @@ if TYPE_CHECKING:
     from grover.graph.protocols import GraphStore
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.search.fulltext.protocol import FullTextStore
+    from grover.search._engine import SearchEngine
     from grover.search.protocols import EmbeddingProvider, VectorStore
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 _DEFAULT_DATA_DIR = Path.home() / ".grover" / "_default"
 
@@ -113,192 +110,22 @@ class GroverAsync:
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
     ) -> None:
-        self._explicit_data_dir = Path(data_dir) if data_dir else None
-        self._closed = False
-
-        # Core subsystems (sync init)
-        self._event_bus = EventBus()
-        self._registry = MountRegistry()
-        self._analyzer_registry = AnalyzerRegistry()
-
-        # Internal metadata mount — lazily created on first mount()
-        self._meta_fs: LocalFileSystem | None = None
-        self._meta_data_dir: Path | None = None
-
-        # Search configuration (per-mount engines created at mount time)
-        self._embedding_provider = embedding_provider
-        self._explicit_vector_store = vector_store
+        self._ctx = GroverContext(
+            event_bus=EventBus(),
+            registry=MountRegistry(),
+            analyzer_registry=AnalyzerRegistry(),
+            embedding_provider=embedding_provider,
+            explicit_vector_store=vector_store,
+            explicit_data_dir=Path(data_dir) if data_dir else None,
+        )
 
         # Register event handlers
-        self._event_bus.register(EventType.FILE_WRITTEN, self._on_file_written)
-        self._event_bus.register(EventType.FILE_DELETED, self._on_file_deleted)
-        self._event_bus.register(EventType.FILE_MOVED, self._on_file_moved)
-        self._event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
-        self._event_bus.register(EventType.CONNECTION_ADDED, self._on_connection_added)
-        self._event_bus.register(EventType.CONNECTION_DELETED, self._on_connection_deleted)
-
-    # ------------------------------------------------------------------
-    # Session management & helpers (absorbed from VFS)
-    # ------------------------------------------------------------------
-
-    @asynccontextmanager
-    async def _session_for(self, mount: Mount) -> AsyncGenerator[AsyncSession | None]:
-        """Yield a session for the given mount, or ``None`` for non-SQL backends."""
-        if not mount.session_factory is not None:
-            yield None
-            return
-
-        assert mount.session_factory is not None
-        session = mount.session_factory()
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-
-    async def _emit(self, event: FileEvent) -> None:
-        """Emit a file event via the event bus."""
-        await self._event_bus.emit(event)
-
-    def _check_writable(self, virtual_path: str) -> str | None:
-        """Return an error message if *virtual_path* is read-only, else ``None``.
-
-        Replaces the previous raise-based pattern to avoid unnecessary
-        exception overhead in the common (writable) case.
-        """
-        try:
-            perm = self._registry.get_permission(virtual_path)
-        except MountNotFoundError as e:
-            return str(e)
-        if perm == Permission.READ_ONLY:
-            return f"Cannot write to read-only path: {virtual_path}"
-        return None
-
-    @staticmethod
-    def _get_capability(backend: object, protocol: type[T]) -> T | None:
-        """Return *backend* if it satisfies *protocol*, else ``None``."""
-        if isinstance(backend, protocol):
-            return backend
-        return None
-
-    def _prefix_path(self, path: str | None, mount_path: str) -> str | None:
-        if path is None:
-            return None
-        if path == "/":
-            return mount_path
-        return mount_path + path
-
-    def _prefix_file_info(self, info: FileInfoResult, mount: Mount) -> FileInfoResult:
-        prefixed_path = self._prefix_path(info.path, mount.path) or info.path
-        info.path = prefixed_path
-        info.mount_type = mount.mount_type
-        info.permission = self._registry.get_permission(prefixed_path).value
-        return info
-
-    # ------------------------------------------------------------------
-    # Search / Graph factory helpers
-    # ------------------------------------------------------------------
-
-    def _create_search_engine(self, *, lexical: FullTextStore | None = None) -> SearchEngine | None:
-        """Create a new SearchEngine for a mount."""
-        vector: Any = None
-        embedding = self._embedding_provider
-
-        if self._explicit_vector_store is not None:
-            vector = self._explicit_vector_store
-        elif embedding is not None:
-            from grover.search.stores.local import LocalVectorStore
-
-            vector = LocalVectorStore(dimension=embedding.dimensions)
-
-        # If we have nothing at all, no search engine
-        if vector is None and embedding is None and lexical is None:
-            return None
-
-        return SearchEngine(vector=vector, embedding=embedding, lexical=lexical)
-
-    async def _create_fulltext_store(self, config: Mount) -> FullTextStore | None:
-        """Create a FullTextStore for the mount based on its dialect."""
-        from grover.search.fulltext.sqlite import SQLiteFullTextStore
-
-        if isinstance(config.filesystem, LocalFileSystem):
-            engine = getattr(config.filesystem, "_engine", None)
-            if engine is not None:
-                fts = SQLiteFullTextStore(engine=engine)
-                await fts.ensure_table()
-                return fts
-            return None
-
-        if config.session_factory is not None:
-            # Detect dialect from session factory's engine if available
-            sf = config.session_factory
-            bind = getattr(sf, "kw", {}).get("bind", None)
-            if bind is None:
-                bind = getattr(sf, "class_", None)
-                if bind is None:
-                    return None
-                bind = getattr(bind, "bind", None)
-            if bind is None:
-                return None
-
-            from grover.fs.dialect import get_dialect
-
-            dialect = get_dialect(bind)
-            if dialect == "sqlite":
-                fts = SQLiteFullTextStore(engine=bind)
-                await fts.ensure_table()
-                return fts
-            if dialect == "postgresql":
-                from grover.search.fulltext.postgres import PostgresFullTextStore
-
-                fts_pg = PostgresFullTextStore(engine=bind)
-                await fts_pg.ensure_table()
-                return fts_pg
-            if dialect == "mssql":
-                from grover.search.fulltext.mssql import MSSQLFullTextStore
-
-                fts_mssql = MSSQLFullTextStore(engine=bind)
-                await fts_mssql.ensure_table()
-                return fts_mssql
-
-        return None
-
-    # ------------------------------------------------------------------
-    # Per-mount graph / search resolution
-    # ------------------------------------------------------------------
-
-    def _resolve_graph(self, path: str) -> GraphStore:
-        """Return the graph for the mount owning *path*."""
-        try:
-            mount, _rel = self._registry.resolve(path)
-        except MountNotFoundError:
-            msg = f"No mount found for path: {path!r}"
-            raise RuntimeError(msg) from None
-        if mount.graph is None:
-            msg = f"No graph on mount at {mount.path}"
-            raise RuntimeError(msg)
-        return mount.graph
-
-    def _resolve_search_engine(self, path: str) -> SearchEngine | None:
-        """Return the search engine for the mount owning *path*, or None."""
-        try:
-            mount, _rel = self._registry.resolve(path)
-        except MountNotFoundError:
-            return None
-        return mount.search
-
-    def _resolve_graph_any(self, path: str | None = None) -> GraphStore:
-        """Get graph for a specific path, or first available mount's graph."""
-        if path is not None:
-            return self._resolve_graph(path)
-        for mount in self._registry.list_visible_mounts():
-            if mount.graph is not None:
-                return mount.graph
-        msg = "No graph available on any mount"
-        raise RuntimeError(msg)
+        self._ctx.event_bus.register(EventType.FILE_WRITTEN, self._on_file_written)
+        self._ctx.event_bus.register(EventType.FILE_DELETED, self._on_file_deleted)
+        self._ctx.event_bus.register(EventType.FILE_MOVED, self._on_file_moved)
+        self._ctx.event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
+        self._ctx.event_bus.register(EventType.CONNECTION_ADDED, self._on_connection_added)
+        self._ctx.event_bus.register(EventType.CONNECTION_DELETED, self._on_connection_deleted)
 
     def get_graph(self, path: str | None = None) -> GraphStore:
         """Return the graph for the mount owning *path*, or the first available.
@@ -306,7 +133,7 @@ class GroverAsync:
         This replaces the old ``self.graph`` attribute which was removed
         in favour of per-mount graphs.
         """
-        return self._resolve_graph_any(path)
+        return self._ctx.resolve_graph_any(path)
 
     # ------------------------------------------------------------------
     # Mount / Unmount
@@ -424,8 +251,8 @@ class GroverAsync:
 
         # Auto-create search engine if not provided and not hidden
         if not new_mount.hidden and new_mount.search is None:
-            lexical = await self._create_fulltext_store(new_mount)
-            se = self._create_search_engine(lexical=lexical)
+            lexical = await self._ctx.create_fulltext_store(new_mount)
+            se = self._ctx.create_search_engine(lexical=lexical)
             if se is not None:
                 new_mount.search = se
 
@@ -435,10 +262,10 @@ class GroverAsync:
         ):
             await new_mount.filesystem.open()
 
-        self._registry.add_mount(new_mount)
+        self._ctx.registry.add_mount(new_mount)
 
         # Lazily initialise meta_fs on first non-hidden mount
-        if not new_mount.hidden and self._meta_fs is None:
+        if not new_mount.hidden and self._ctx.meta_fs is None:
             assert new_mount.filesystem is not None
             await self._init_meta_fs(new_mount.filesystem)
 
@@ -604,7 +431,7 @@ class GroverAsync:
             raise ValueError("Cannot unmount /.grover")
 
         try:
-            mount, _ = self._registry.resolve(path)
+            mount, _ = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return
 
@@ -615,7 +442,7 @@ class GroverAsync:
         backend = mount.filesystem
         if hasattr(backend, "close"):
             await backend.close()
-        self._registry.remove_mount(path)
+        self._ctx.registry.remove_mount(path)
 
     # ------------------------------------------------------------------
     # Internal metadata mount
@@ -623,28 +450,28 @@ class GroverAsync:
 
     async def _init_meta_fs(self, first_backend: StorageBackend) -> None:
         """Create the internal /.grover metadata mount."""
-        if self._explicit_data_dir is not None:
-            data_dir = self._explicit_data_dir
+        if self._ctx.explicit_data_dir is not None:
+            data_dir = self._ctx.explicit_data_dir
         elif isinstance(first_backend, LocalFileSystem):
             data_dir = first_backend.data_dir
         else:
             data_dir = _DEFAULT_DATA_DIR
 
-        self._meta_data_dir = data_dir
+        self._ctx.meta_data_dir = data_dir
 
-        self._meta_fs = LocalFileSystem(
+        self._ctx.meta_fs = LocalFileSystem(
             workspace_dir=data_dir,
             data_dir=data_dir / "_meta",
         )
 
         # Eagerly init DB
-        await self._meta_fs.open()
+        await self._ctx.meta_fs.open()
 
-        self._registry.add_mount(
+        self._ctx.registry.add_mount(
             Mount(
                 path="/.grover",
-                filesystem=self._meta_fs,
-                session_factory=self._meta_fs.session_factory,
+                filesystem=self._ctx.meta_fs,
+                session_factory=self._ctx.meta_fs.session_factory,
                 mount_type="local",
                 hidden=True,
             )
@@ -654,10 +481,10 @@ class GroverAsync:
         await self._ensure_extra_tables()
 
     async def _ensure_extra_tables(self) -> None:
-        if self._meta_fs is None:
+        if self._ctx.meta_fs is None:
             return
-        await self._meta_fs.open()
-        engine = self._meta_fs.engine
+        await self._ctx.meta_fs.open()
+        engine = self._ctx.meta_fs.engine
         if engine is None:
             return
 
@@ -683,7 +510,7 @@ class GroverAsync:
 
                 if isinstance(graph, SupportsPersistence):
                     file_model = getattr(mount.filesystem, "file_model", None) or File
-                    async with self._session_for(mount) as session:
+                    async with self._ctx.session_for(mount) as session:
                         if session is not None:
                             await graph.from_sql(
                                 session,
@@ -699,9 +526,9 @@ class GroverAsync:
 
         # Load search index from disk
         search_engine = mount.search
-        if search_engine is not None and self._meta_data_dir is not None:
+        if search_engine is not None and self._ctx.meta_data_dir is not None:
             slug = mount.path.strip("/").replace("/", "_") or "_default"
-            search_dir = self._meta_data_dir / "search" / slug
+            search_dir = self._ctx.meta_data_dir / "search" / slug
             meta_file = search_dir / "search_meta.json"
             if meta_file.exists():
                 try:
@@ -718,7 +545,7 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def _on_file_written(self, event: FileEvent) -> None:
-        if self._meta_fs is None:
+        if self._ctx.meta_fs is None:
             return
         if "/.grover/" in event.path:
             return
@@ -732,21 +559,21 @@ class GroverAsync:
             await self._analyze_and_integrate(event.path, content, user_id=event.user_id)
 
     async def _on_file_deleted(self, event: FileEvent) -> None:
-        if self._meta_fs is None:
+        if self._ctx.meta_fs is None:
             return
         if "/.grover/" in event.path:
             return
         try:
-            graph = self._resolve_graph(event.path)
+            graph = self._ctx.resolve_graph(event.path)
             if graph.has_node(event.path):
                 graph.remove_file_subgraph(event.path)
         except RuntimeError:
             pass  # Mount may not have a graph
         try:
-            search_engine = self._resolve_search_engine(event.path)
+            search_engine = self._ctx.resolve_search_engine(event.path)
             if search_engine is not None:
-                mount, _rel = self._registry.resolve(event.path)
-                async with self._session_for(mount) as sess:
+                mount, _rel = self._ctx.registry.resolve(event.path)
+                async with self._ctx.session_for(mount) as sess:
                     await search_engine.remove_file(event.path, session=sess)
         except RuntimeError:
             pass
@@ -755,20 +582,20 @@ class GroverAsync:
         await self._delete_connections_for_path(event.path)
 
     async def _on_file_moved(self, event: FileEvent) -> None:
-        if self._meta_fs is None:
+        if self._ctx.meta_fs is None:
             return
         if event.old_path and "/.grover/" not in event.old_path:
             try:
-                graph = self._resolve_graph(event.old_path)
+                graph = self._ctx.resolve_graph(event.old_path)
                 if graph.has_node(event.old_path):
                     graph.remove_file_subgraph(event.old_path)
             except RuntimeError:
                 pass
             try:
-                search_engine = self._resolve_search_engine(event.old_path)
+                search_engine = self._ctx.resolve_search_engine(event.old_path)
                 if search_engine is not None:
-                    mount, _rel = self._registry.resolve(event.old_path)
-                    async with self._session_for(mount) as sess:
+                    mount, _rel = self._ctx.registry.resolve(event.old_path)
+                    async with self._ctx.session_for(mount) as sess:
                         await search_engine.remove_file(event.old_path, session=sess)
             except RuntimeError:
                 pass
@@ -792,7 +619,7 @@ class GroverAsync:
         if event.source_path is None or event.target_path is None or event.connection_type is None:
             return
         try:
-            graph = self._resolve_graph(event.source_path)
+            graph = self._ctx.resolve_graph(event.source_path)
         except RuntimeError:
             return
         graph.add_edge(
@@ -807,7 +634,7 @@ class GroverAsync:
         if event.source_path is None or event.target_path is None:
             return
         try:
-            graph = self._resolve_graph(event.source_path)
+            graph = self._ctx.resolve_graph(event.source_path)
         except RuntimeError:
             return
         if graph.has_edge(event.source_path, event.target_path):
@@ -816,22 +643,22 @@ class GroverAsync:
     async def _delete_chunks_for_path(self, path: str) -> None:
         """Delete chunk DB rows for *path* if the backend supports it."""
         try:
-            mount, _rel = self._registry.resolve(path)
+            mount, _rel = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return
         if isinstance(mount.filesystem, SupportsFileChunks):
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 await mount.filesystem.delete_file_chunks(path, session=sess)
 
     async def _delete_connections_for_path(self, path: str) -> None:
         """Delete connection DB rows for *path* if the backend supports it."""
         try:
-            mount, _rel = self._registry.resolve(path)
+            mount, _rel = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return
         conn_svc = getattr(mount.filesystem, "connections", None)
         if conn_svc is not None:
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 await conn_svc.delete_connections_for_path(sess, path)
 
     # ------------------------------------------------------------------
@@ -846,7 +673,7 @@ class GroverAsync:
         stats = {"chunks_created": 0, "edges_added": 0}
 
         try:
-            mount, _rel = self._registry.resolve(path)
+            mount, _rel = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return stats
 
@@ -859,12 +686,12 @@ class GroverAsync:
         if graph.has_node(path):
             graph.remove_file_subgraph(path)
         if search_engine is not None:
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 await search_engine.remove_file(path, session=sess)
 
         graph.add_node(path)
 
-        analysis = self._analyzer_registry.analyze_file(path, content)
+        analysis = self._ctx.analyzer_registry.analyze_file(path, content)
 
         if analysis is not None:
             chunks, edges = analysis
@@ -883,7 +710,7 @@ class GroverAsync:
                     }
                     for chunk in chunks
                 ]
-                async with self._session_for(mount) as sess:
+                async with self._ctx.session_for(mount) as sess:
                     await mount.filesystem.replace_file_chunks(
                         path, chunk_dicts, session=sess, user_id=user_id
                     )
@@ -911,7 +738,7 @@ class GroverAsync:
                 # preserve edges from OTHER files that point to this one.
                 conn_svc = getattr(mount.filesystem, "connections", None)
                 if conn_svc is not None:
-                    async with self._session_for(mount) as sess:
+                    async with self._ctx.session_for(mount) as sess:
                         await conn_svc.delete_outgoing_connections(sess, path)
                 for edge in dep_edges:
                     _w: float = (
@@ -919,7 +746,7 @@ class GroverAsync:
                         if edge.metadata
                         else 1.0
                     )
-                    async with self._session_for(mount) as sess:
+                    async with self._ctx.session_for(mount) as sess:
                         await mount.filesystem.add_connection(
                             edge.source,
                             edge.target,
@@ -929,7 +756,7 @@ class GroverAsync:
                             session=sess,
                         )
                     # Emit event AFTER session commits (post-commit ordering)
-                    await self._emit(
+                    await self._ctx.emit(
                         FileEvent(
                             event_type=EventType.CONNECTION_ADDED,
                             path=f"{edge.source}[{edge.edge_type}]{edge.target}",
@@ -950,13 +777,13 @@ class GroverAsync:
             if search_engine is not None:
                 embeddable = extract_from_chunks(chunks)
                 if embeddable:
-                    async with self._session_for(mount) as sess:
+                    async with self._ctx.session_for(mount) as sess:
                         await search_engine.add_batch(embeddable, session=sess)
         else:
             if search_engine is not None:
                 embeddable = extract_from_file(path, content)
                 if embeddable:
-                    async with self._session_for(mount) as sess:
+                    async with self._ctx.session_for(mount) as sess:
                         await search_engine.add_batch(embeddable, session=sess)
 
         return stats
@@ -974,13 +801,13 @@ class GroverAsync:
         user_id: str | None = None,
     ) -> ReadResult:
         path = normalize_path(path)
-        mount, rel_path = self._registry.resolve(path)
+        mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             result = await mount.filesystem.read(
                 rel_path, offset, limit, session=sess, user_id=user_id
             )
-        result.path = self._prefix_path(result.path, mount.path) or result.path
+        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
         return result
 
     async def write(
@@ -992,13 +819,13 @@ class GroverAsync:
         user_id: str | None = None,
     ) -> WriteResult:
         path = normalize_path(path)
-        if err := self._check_writable(path):
+        if err := self._ctx.check_writable(path):
             return WriteResult(success=False, message=err)
 
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
             assert mount.filesystem is not None
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await mount.filesystem.write(
                     rel_path,
                     content,
@@ -1007,9 +834,9 @@ class GroverAsync:
                     session=sess,
                     user_id=user_id,
                 )
-            result.path = self._prefix_path(result.path, mount.path) or result.path
+            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._emit(
+                await self._ctx.emit(
                     FileEvent(
                         event_type=EventType.FILE_WRITTEN,
                         path=path,
@@ -1031,13 +858,13 @@ class GroverAsync:
         user_id: str | None = None,
     ) -> EditResult:
         path = normalize_path(path)
-        if err := self._check_writable(path):
+        if err := self._ctx.check_writable(path):
             return EditResult(success=False, message=err)
 
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
             assert mount.filesystem is not None
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await mount.filesystem.edit(
                     rel_path,
                     old,
@@ -1047,9 +874,9 @@ class GroverAsync:
                     session=sess,
                     user_id=user_id,
                 )
-            result.path = self._prefix_path(result.path, mount.path) or result.path
+            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._emit(
+                await self._ctx.emit(
                     FileEvent(event_type=EventType.FILE_WRITTEN, path=path, user_id=user_id)
                 )
             return result
@@ -1060,27 +887,27 @@ class GroverAsync:
         self, path: str, permanent: bool = False, *, user_id: str | None = None
     ) -> DeleteResult:
         path = normalize_path(path)
-        if err := self._check_writable(path):
+        if err := self._ctx.check_writable(path):
             return DeleteResult(success=False, message=err)
 
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
             assert mount.filesystem is not None
 
-            if not permanent and not self._get_capability(mount.filesystem, SupportsTrash):
+            if not permanent and not self._ctx.get_capability(mount.filesystem, SupportsTrash):
                 return DeleteResult(
                     success=False,
                     message="Trash not supported on this mount. "
                     "Use permanent=True to delete permanently.",
                 )
 
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await mount.filesystem.delete(
                     rel_path, permanent, session=sess, user_id=user_id
                 )
-            result.path = self._prefix_path(result.path, mount.path) or result.path
+            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._emit(
+                await self._ctx.emit(
                     FileEvent(event_type=EventType.FILE_DELETED, path=path, user_id=user_id)
                 )
             return result
@@ -1095,15 +922,17 @@ class GroverAsync:
         user_id: str | None = None,
     ) -> MkdirResult:
         path = normalize_path(path)
-        if err := self._check_writable(path):
+        if err := self._ctx.check_writable(path):
             return MkdirResult(success=False, message=err)
 
-        mount, rel_path = self._registry.resolve(path)
+        mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             result = await mount.filesystem.mkdir(rel_path, parents, session=sess, user_id=user_id)
-        result.path = self._prefix_path(result.path, mount.path) or result.path
-        result.created_dirs = [self._prefix_path(d, mount.path) or d for d in result.created_dirs]
+        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+        result.created_dirs = [
+            self._ctx.prefix_path(d, mount.path) or d for d in result.created_dirs
+        ]
         return result
 
     async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListDirResult:
@@ -1112,9 +941,9 @@ class GroverAsync:
         if path == "/":
             return self._list_root()
 
-        mount, rel_path = self._registry.resolve(path)
+        mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             result = await mount.filesystem.list_dir(rel_path, session=sess, user_id=user_id)
         return result.rebase(mount.path)
 
@@ -1130,7 +959,7 @@ class GroverAsync:
                     )
                 ],
             )
-            for mount in self._registry.list_visible_mounts()
+            for mount in self._ctx.registry.list_visible_mounts()
         ]
         return ListDirResult(
             success=True,
@@ -1144,23 +973,23 @@ class GroverAsync:
         if path == "/":
             return True
 
-        if self._registry.has_mount(path):
+        if self._ctx.registry.has_mount(path):
             return True
 
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return False
 
         assert mount.filesystem is not None
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             return await mount.filesystem.exists(rel_path, session=sess, user_id=user_id)
 
     async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfoResult | None:
         path = normalize_path(path)
 
-        if self._registry.has_mount(path):
-            for mount in self._registry.list_mounts():
+        if self._ctx.registry.has_mount(path):
+            for mount in self._ctx.registry.list_mounts():
                 if mount.path == path:
                     name = mount.path.lstrip("/")
                     return FileInfoResult(
@@ -1172,21 +1001,21 @@ class GroverAsync:
                     )
 
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return None
 
         assert mount.filesystem is not None
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             info = await mount.filesystem.get_info(rel_path, session=sess, user_id=user_id)
         if info is not None:
-            info = self._prefix_file_info(info, mount)
+            info = self._ctx.prefix_file_info(info, mount)
         return info
 
     def get_permission_info(self, path: str) -> tuple[str, bool]:
         path = normalize_path(path)
-        mount, rel_path = self._registry.resolve(path)
-        permission = self._registry.get_permission(path)
+        mount, rel_path = self._ctx.registry.resolve(path)
+        permission = self._ctx.registry.get_permission(path)
         rel_normalized = normalize_path(rel_path)
         is_override = rel_normalized in mount.read_only_paths
         return permission.value, is_override
@@ -1197,30 +1026,30 @@ class GroverAsync:
         src = normalize_path(src)
         dest = normalize_path(dest)
 
-        if err := self._check_writable(src):
+        if err := self._ctx.check_writable(src):
             return MoveResult(success=False, message=err)
-        if err := self._check_writable(dest):
+        if err := self._ctx.check_writable(dest):
             return MoveResult(success=False, message=err)
 
         try:
-            src_mount, src_rel = self._registry.resolve(src)
-            dest_mount, dest_rel = self._registry.resolve(dest)
+            src_mount, src_rel = self._ctx.registry.resolve(src)
+            dest_mount, dest_rel = self._ctx.registry.resolve(dest)
 
             assert src_mount.filesystem is not None
             assert dest_mount.filesystem is not None
             if src_mount is dest_mount:
-                async with self._session_for(src_mount) as sess:
+                async with self._ctx.session_for(src_mount) as sess:
                     result = await src_mount.filesystem.move(
                         src_rel, dest_rel, session=sess, follow=follow, user_id=user_id
                     )
                 result.old_path = (
-                    self._prefix_path(result.old_path, src_mount.path) or result.old_path
+                    self._ctx.prefix_path(result.old_path, src_mount.path) or result.old_path
                 )
                 result.new_path = (
-                    self._prefix_path(result.new_path, dest_mount.path) or result.new_path
+                    self._ctx.prefix_path(result.new_path, dest_mount.path) or result.new_path
                 )
                 if result.success:
-                    await self._emit(
+                    await self._ctx.emit(
                         FileEvent(
                             event_type=EventType.FILE_MOVED,
                             path=dest,
@@ -1231,7 +1060,7 @@ class GroverAsync:
                 return result
 
             # Cross-mount move: read → write → delete (non-atomic)
-            async with self._session_for(src_mount) as src_sess:
+            async with self._ctx.session_for(src_mount) as src_sess:
                 read_result = await src_mount.filesystem.read(
                     src_rel, session=src_sess, user_id=user_id
                 )
@@ -1243,7 +1072,7 @@ class GroverAsync:
             if read_result.content is None:
                 return MoveResult(success=False, message=f"Source file has no content: {src}")
 
-            async with self._session_for(dest_mount) as dest_sess:
+            async with self._ctx.session_for(dest_mount) as dest_sess:
                 write_result = await dest_mount.filesystem.write(
                     dest_rel, read_result.content, session=dest_sess, user_id=user_id
                 )
@@ -1255,7 +1084,7 @@ class GroverAsync:
                     ),
                 )
 
-            async with self._session_for(src_mount) as src_sess:
+            async with self._ctx.session_for(src_mount) as src_sess:
                 delete_result = await src_mount.filesystem.delete(
                     src_rel, permanent=False, session=src_sess, user_id=user_id
                 )
@@ -1265,7 +1094,7 @@ class GroverAsync:
                     message=f"Copied but failed to delete source: {delete_result.message}",
                 )
 
-            await self._emit(
+            await self._ctx.emit(
                 FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src, user_id=user_id)
             )
             return MoveResult(
@@ -1281,29 +1110,29 @@ class GroverAsync:
         src = normalize_path(src)
         dest = normalize_path(dest)
 
-        if err := self._check_writable(dest):
+        if err := self._ctx.check_writable(dest):
             return WriteResult(success=False, message=err)
 
         try:
-            src_mount, src_rel = self._registry.resolve(src)
-            dest_mount, dest_rel = self._registry.resolve(dest)
+            src_mount, src_rel = self._ctx.registry.resolve(src)
+            dest_mount, dest_rel = self._ctx.registry.resolve(dest)
 
             assert src_mount.filesystem is not None
             assert dest_mount.filesystem is not None
             if src_mount is dest_mount:
-                async with self._session_for(src_mount) as sess:
+                async with self._ctx.session_for(src_mount) as sess:
                     result = await src_mount.filesystem.copy(
                         src_rel, dest_rel, session=sess, user_id=user_id
                     )
-                result.path = self._prefix_path(result.path, dest_mount.path) or result.path
+                result.path = self._ctx.prefix_path(result.path, dest_mount.path) or result.path
                 if result.success:
-                    await self._emit(
+                    await self._ctx.emit(
                         FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
                     )
                 return result
 
             # Cross-mount copy: read → write
-            async with self._session_for(src_mount) as src_sess:
+            async with self._ctx.session_for(src_mount) as src_sess:
                 read_result = await src_mount.filesystem.read(
                     src_rel, session=src_sess, user_id=user_id
                 )
@@ -1315,13 +1144,13 @@ class GroverAsync:
             if not read_result.content:
                 return WriteResult(success=False, message=f"Source file has no content: {src}")
 
-            async with self._session_for(dest_mount) as dest_sess:
+            async with self._ctx.session_for(dest_mount) as dest_sess:
                 result = await dest_mount.filesystem.write(
                     dest_rel, read_result.content, session=dest_sess, user_id=user_id
                 )
-            result.path = self._prefix_path(result.path, dest_mount.path) or result.path
+            result.path = self._ctx.prefix_path(result.path, dest_mount.path) or result.path
             if result.success:
-                await self._emit(
+                await self._ctx.emit(
                     FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
                 )
             return result
@@ -1339,9 +1168,9 @@ class GroverAsync:
         try:
             if path == "/":
                 combined = GlobResult(success=True, message="", pattern=pattern)
-                for mount in self._registry.list_visible_mounts():
+                for mount in self._ctx.registry.list_visible_mounts():
                     assert mount.filesystem is not None
-                    async with self._session_for(mount) as sess:
+                    async with self._ctx.session_for(mount) as sess:
                         result = await mount.filesystem.glob(
                             pattern, "/", session=sess, user_id=user_id
                         )
@@ -1351,9 +1180,9 @@ class GroverAsync:
                 combined.pattern = pattern
                 return combined
 
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
             assert mount.filesystem is not None
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await mount.filesystem.glob(
                     pattern, rel_path, session=sess, user_id=user_id
                 )
@@ -1387,13 +1216,13 @@ class GroverAsync:
                 total_matched = 0
                 truncated = False
 
-                for mount in self._registry.list_visible_mounts():
+                for mount in self._ctx.registry.list_visible_mounts():
                     remaining = max_results - total_matches if max_results > 0 else max_results
                     if max_results > 0 and remaining <= 0:
                         truncated = True
                         break
                     assert mount.filesystem is not None
-                    async with self._session_for(mount) as sess:
+                    async with self._ctx.session_for(mount) as sess:
                         result = await mount.filesystem.grep(
                             pattern,
                             "/",
@@ -1445,9 +1274,9 @@ class GroverAsync:
                     truncated=truncated,
                 )
 
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
             assert mount.filesystem is not None
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await mount.filesystem.grep(
                     pattern,
                     rel_path,
@@ -1486,14 +1315,14 @@ class GroverAsync:
                             )
                         ],
                     )
-                    for mount in self._registry.list_visible_mounts()
+                    for mount in self._ctx.registry.list_visible_mounts()
                 ]
                 combined = TreeResult(success=True, message="", candidates=root_candidates)
 
                 if max_depth is None or max_depth > 0:
-                    for mount in self._registry.list_visible_mounts():
+                    for mount in self._ctx.registry.list_visible_mounts():
                         assert mount.filesystem is not None
-                        async with self._session_for(mount) as sess:
+                        async with self._ctx.session_for(mount) as sess:
                             result = await mount.filesystem.tree(
                                 "/", max_depth=max_depth, session=sess, user_id=user_id
                             )
@@ -1505,9 +1334,9 @@ class GroverAsync:
                 )
                 return combined
 
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
             assert mount.filesystem is not None
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await mount.filesystem.tree(
                     rel_path, max_depth=max_depth, session=sess, user_id=user_id
                 )
@@ -1522,13 +1351,13 @@ class GroverAsync:
     async def list_versions(self, path: str, *, user_id: str | None = None) -> VersionResult:
         path = normalize_path(path)
         try:
-            mount, rel_path = self._registry.resolve(path)
-            cap = self._get_capability(mount.filesystem, SupportsVersions)
+            mount, rel_path = self._ctx.registry.resolve(path)
+            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
             if cap is None:
                 raise CapabilityNotSupportedError(
                     f"Mount at {mount.path} does not support versioning"
                 )
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 return await cap.list_versions(rel_path, session=sess, user_id=user_id)
         except CapabilityNotSupportedError as e:
             return VersionResult(success=False, message=str(e))
@@ -1538,13 +1367,13 @@ class GroverAsync:
     ) -> GetVersionContentResult:
         path = normalize_path(path)
         try:
-            mount, rel_path = self._registry.resolve(path)
-            cap = self._get_capability(mount.filesystem, SupportsVersions)
+            mount, rel_path = self._ctx.registry.resolve(path)
+            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
             if cap is None:
                 raise CapabilityNotSupportedError(
                     f"Mount at {mount.path} does not support versioning"
                 )
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 return await cap.get_version_content(
                     rel_path, version, session=sess, user_id=user_id
                 )
@@ -1555,21 +1384,21 @@ class GroverAsync:
         self, path: str, version: int, *, user_id: str | None = None
     ) -> RestoreResult:
         path = normalize_path(path)
-        if err := self._check_writable(path):
+        if err := self._ctx.check_writable(path):
             return RestoreResult(success=False, message=err)
 
         try:
-            mount, rel_path = self._registry.resolve(path)
-            cap = self._get_capability(mount.filesystem, SupportsVersions)
+            mount, rel_path = self._ctx.registry.resolve(path)
+            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
             if cap is None:
                 raise CapabilityNotSupportedError(
                     f"Mount at {mount.path} does not support versioning"
                 )
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
-            result.path = self._prefix_path(result.path, mount.path) or result.path
+            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._emit(
+                await self._ctx.emit(
                     FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
                 )
             return result
@@ -1583,11 +1412,11 @@ class GroverAsync:
     async def list_trash(self, *, user_id: str | None = None) -> TrashResult:
         """List all items in trash across all mounts."""
         combined = TrashResult(success=True, message="")
-        for mount in self._registry.list_mounts():
-            cap = self._get_capability(mount.filesystem, SupportsTrash)
+        for mount in self._ctx.registry.list_mounts():
+            cap = self._ctx.get_capability(mount.filesystem, SupportsTrash)
             if cap is None:
                 continue
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await cap.list_trash(session=sess, user_id=user_id)
             if result.success:
                 rebased = result.rebase(mount.path)
@@ -1597,19 +1426,19 @@ class GroverAsync:
 
     async def restore_from_trash(self, path: str, *, user_id: str | None = None) -> RestoreResult:
         path = normalize_path(path)
-        if err := self._check_writable(path):
+        if err := self._ctx.check_writable(path):
             return RestoreResult(success=False, message=err)
 
         try:
-            mount, rel_path = self._registry.resolve(path)
-            cap = self._get_capability(mount.filesystem, SupportsTrash)
+            mount, rel_path = self._ctx.registry.resolve(path)
+            cap = self._ctx.get_capability(mount.filesystem, SupportsTrash)
             if cap is None:
                 raise CapabilityNotSupportedError(f"Mount at {mount.path} does not support trash")
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await cap.restore_from_trash(rel_path, session=sess, user_id=user_id)
-            result.path = self._prefix_path(result.path, mount.path) or result.path
+            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._emit(
+                await self._ctx.emit(
                     FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
                 )
             return result
@@ -1620,14 +1449,14 @@ class GroverAsync:
         """Empty trash across all mounts.  Skips read-only mounts."""
         total_deleted = 0
         mounts_processed = 0
-        for mount in self._registry.list_mounts():
+        for mount in self._ctx.registry.list_mounts():
             # Skip read-only mounts — empty_trash is a mutation
             if mount.permission == Permission.READ_ONLY:
                 continue
-            cap = self._get_capability(mount.filesystem, SupportsTrash)
+            cap = self._ctx.get_capability(mount.filesystem, SupportsTrash)
             if cap is None:
                 continue
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 result = await cap.empty_trash(session=sess, user_id=user_id)
             if not result.success:
                 return result
@@ -1659,22 +1488,22 @@ class GroverAsync:
         """
 
         path = normalize_path(path)
-        if err := self._check_writable(path):
+        if err := self._ctx.check_writable(path):
             return ShareResult(success=False, message=err)
 
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError as e:
             return ShareResult(success=False, message=str(e))
 
-        cap = self._get_capability(mount.filesystem, SupportsReBAC)
+        cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
             return ShareResult(
                 success=False,
                 message="Backend does not support sharing",
             )
 
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             assert sess is not None
             try:
                 share_info = await cap.share(
@@ -1707,22 +1536,22 @@ class GroverAsync:
         """Remove a share for a file or directory."""
 
         path = normalize_path(path)
-        if err := self._check_writable(path):
+        if err := self._ctx.check_writable(path):
             return ShareResult(success=False, message=err)
 
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError as e:
             return ShareResult(success=False, message=str(e))
 
-        cap = self._get_capability(mount.filesystem, SupportsReBAC)
+        cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
             return ShareResult(
                 success=False,
                 message="Backend does not support sharing",
             )
 
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             assert sess is not None
             removed = await cap.unshare(rel_path, grantee_id, user_id=user_id, session=sess)
 
@@ -1746,18 +1575,18 @@ class GroverAsync:
 
         path = normalize_path(path)
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError as e:
             return ShareSearchResult(success=False, message=str(e))
 
-        cap = self._get_capability(mount.filesystem, SupportsReBAC)
+        cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
             return ShareSearchResult(
                 success=False,
                 message="Backend does not support sharing",
             )
 
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             assert sess is not None
             result = await cap.list_shares_on_path(rel_path, user_id=user_id, session=sess)
 
@@ -1771,11 +1600,11 @@ class GroverAsync:
     ) -> ShareSearchResult:
         """List all files shared with the current user across all mounts."""
         all_candidates: list[FileSearchCandidate] = []
-        for mount in self._registry.list_mounts():
-            cap = self._get_capability(mount.filesystem, SupportsReBAC)
+        for mount in self._ctx.registry.list_mounts():
+            cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
             if cap is None:
                 continue
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 assert sess is not None
                 result = await cap.list_shared_with_me(user_id=user_id, session=sess)
             # Backend returns paths like /@shared/alice/a.md — rebase to mount
@@ -1795,7 +1624,7 @@ class GroverAsync:
     async def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
         """Reconcile disk ↔ DB for capable mounts."""
         total = {"created": 0, "updated": 0, "deleted": 0}
-        mounts = self._registry.list_mounts()
+        mounts = self._ctx.registry.list_mounts()
         if mount_path is not None:
             mount_path = normalize_path(mount_path).rstrip("/")
             mounts = [m for m in mounts if m.path == mount_path]
@@ -1804,10 +1633,10 @@ class GroverAsync:
             # Skip read-only mounts — reconcile is a mutation
             if mount.permission == Permission.READ_ONLY:
                 continue
-            cap = self._get_capability(mount.filesystem, SupportsReconcile)
+            cap = self._ctx.get_capability(mount.filesystem, SupportsReconcile)
             if cap is None:
                 continue
-            async with self._session_for(mount) as sess:
+            async with self._ctx.session_for(mount) as sess:
                 stats = await cap.reconcile(session=sess)
             for k in total:
                 total[k] += stats.get(k, 0)
@@ -1835,7 +1664,7 @@ class GroverAsync:
         source_path = normalize_path(source_path)
         target_path = normalize_path(target_path)
 
-        if err := self._check_writable(source_path):
+        if err := self._ctx.check_writable(source_path):
             return ConnectionResult(
                 success=False,
                 message=err,
@@ -1845,7 +1674,7 @@ class GroverAsync:
             )
 
         try:
-            mount, _rel = self._registry.resolve(source_path)
+            mount, _rel = self._ctx.registry.resolve(source_path)
         except MountNotFoundError:
             return ConnectionResult(
                 success=False,
@@ -1855,7 +1684,7 @@ class GroverAsync:
                 connection_type=connection_type,
             )
 
-        backend = self._get_capability(mount.filesystem, SupportsConnections)
+        backend = self._ctx.get_capability(mount.filesystem, SupportsConnections)
         if backend is None:
             return ConnectionResult(
                 success=False,
@@ -1865,7 +1694,7 @@ class GroverAsync:
                 connection_type=connection_type,
             )
 
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             result = await backend.add_connection(
                 source_path,
                 target_path,
@@ -1877,7 +1706,7 @@ class GroverAsync:
 
         # Emit AFTER session commits (post-commit event ordering)
         if result.success:
-            await self._emit(
+            await self._ctx.emit(
                 FileEvent(
                     event_type=EventType.CONNECTION_ADDED,
                     path=result.path,
@@ -1905,7 +1734,7 @@ class GroverAsync:
         source_path = normalize_path(source_path)
         target_path = normalize_path(target_path)
 
-        if err := self._check_writable(source_path):
+        if err := self._ctx.check_writable(source_path):
             return ConnectionResult(
                 success=False,
                 message=err,
@@ -1915,7 +1744,7 @@ class GroverAsync:
             )
 
         try:
-            mount, _rel = self._registry.resolve(source_path)
+            mount, _rel = self._ctx.registry.resolve(source_path)
         except MountNotFoundError:
             return ConnectionResult(
                 success=False,
@@ -1925,7 +1754,7 @@ class GroverAsync:
                 connection_type=connection_type or "",
             )
 
-        backend = self._get_capability(mount.filesystem, SupportsConnections)
+        backend = self._ctx.get_capability(mount.filesystem, SupportsConnections)
         if backend is None:
             return ConnectionResult(
                 success=False,
@@ -1935,7 +1764,7 @@ class GroverAsync:
                 connection_type=connection_type or "",
             )
 
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             result = await backend.delete_connection(
                 source_path,
                 target_path,
@@ -1945,7 +1774,7 @@ class GroverAsync:
 
         # Emit AFTER session commits (post-commit event ordering)
         if result.success:
-            await self._emit(
+            await self._ctx.emit(
                 FileEvent(
                     event_type=EventType.CONNECTION_DELETED,
                     path=result.path,
@@ -1968,15 +1797,15 @@ class GroverAsync:
         path = normalize_path(path)
 
         try:
-            mount, _rel = self._registry.resolve(path)
+            mount, _rel = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return []
 
-        backend = self._get_capability(mount.filesystem, SupportsConnections)
+        backend = self._ctx.get_capability(mount.filesystem, SupportsConnections)
         if backend is None:
             return []
 
-        async with self._session_for(mount) as sess:
+        async with self._ctx.session_for(mount) as sess:
             return await backend.list_connections(
                 path,
                 direction=direction,
@@ -1990,22 +1819,22 @@ class GroverAsync:
 
     def dependents(self, path: str) -> GraphResult:
         """Return files that depend on *path*."""
-        refs = self._resolve_graph(path).dependents(path)
+        refs = self._ctx.resolve_graph(path).dependents(path)
         return GraphResult.from_refs(refs, strategy="dependents")
 
     def dependencies(self, path: str) -> GraphResult:
         """Return files that *path* depends on."""
-        refs = self._resolve_graph(path).dependencies(path)
+        refs = self._ctx.resolve_graph(path).dependencies(path)
         return GraphResult.from_refs(refs, strategy="dependencies")
 
     def impacts(self, path: str, max_depth: int = 3) -> GraphResult:
         """Return files transitively impacted by changes to *path*."""
-        refs = self._resolve_graph(path).impacts(path, max_depth)
+        refs = self._ctx.resolve_graph(path).impacts(path, max_depth)
         return GraphResult.from_refs(refs, strategy="impacts")
 
     def path_between(self, source: str, target: str) -> GraphResult:
         """Return the shortest path from *source* to *target*."""
-        refs = self._resolve_graph(source).path_between(source, target)
+        refs = self._ctx.resolve_graph(source).path_between(source, target)
         if refs is None:
             return GraphResult(
                 success=True,
@@ -2015,7 +1844,7 @@ class GroverAsync:
 
     def contains(self, path: str) -> GraphResult:
         """Return files contained by *path*."""
-        refs = self._resolve_graph(path).contains(path)
+        refs = self._ctx.resolve_graph(path).contains(path)
         return GraphResult.from_refs(refs, strategy="contains")
 
     # ------------------------------------------------------------------
@@ -2036,7 +1865,7 @@ class GroverAsync:
         """
         from grover.graph.protocols import SupportsCentrality
 
-        graph = self._resolve_graph_any(path)
+        graph = self._ctx.resolve_graph_any(path)
         if not isinstance(graph, SupportsCentrality):
             msg = "Graph backend does not support centrality algorithms"
             raise CapabilityNotSupportedError(msg)
@@ -2064,7 +1893,7 @@ class GroverAsync:
         """All transitive predecessors of *path* in the knowledge graph."""
         from grover.graph.protocols import SupportsTraversal
 
-        graph = self._resolve_graph(path)
+        graph = self._ctx.resolve_graph(path)
         if not isinstance(graph, SupportsTraversal):
             msg = "Graph backend does not support traversal algorithms"
             raise CapabilityNotSupportedError(msg)
@@ -2075,7 +1904,7 @@ class GroverAsync:
         """All transitive successors of *path* in the knowledge graph."""
         from grover.graph.protocols import SupportsTraversal
 
-        graph = self._resolve_graph(path)
+        graph = self._ctx.resolve_graph(path)
         if not isinstance(graph, SupportsTraversal):
             msg = "Graph backend does not support traversal algorithms"
             raise CapabilityNotSupportedError(msg)
@@ -2091,7 +1920,7 @@ class GroverAsync:
         """Extract the subgraph connecting *paths* via shortest paths."""
         from grover.graph.protocols import SupportsSubgraph
 
-        graph = self._resolve_graph_any(paths[0] if paths else None)
+        graph = self._ctx.resolve_graph_any(paths[0] if paths else None)
         if not isinstance(graph, SupportsSubgraph):
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg)
@@ -2109,7 +1938,7 @@ class GroverAsync:
         """Extract the neighborhood subgraph around *path*."""
         from grover.graph.protocols import SupportsSubgraph
 
-        graph = self._resolve_graph(path)
+        graph = self._ctx.resolve_graph(path)
         if not isinstance(graph, SupportsSubgraph):
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg)
@@ -2125,7 +1954,7 @@ class GroverAsync:
         """Find graph nodes matching all attribute predicates."""
         from grover.graph.protocols import SupportsFiltering
 
-        graph = self._resolve_graph_any(path)
+        graph = self._ctx.resolve_graph_any(path)
         if not isinstance(graph, SupportsFiltering):
             msg = "Graph backend does not support filtering"
             raise CapabilityNotSupportedError(msg)
@@ -2148,7 +1977,9 @@ class GroverAsync:
         path = normalize_path(path)
 
         # Check if any mount has a search engine with vector capability
-        has_search = any(mount.search is not None for mount in self._registry.list_visible_mounts())
+        has_search = any(
+            mount.search is not None for mount in self._ctx.registry.list_visible_mounts()
+        )
         if not has_search:
             return VectorSearchResult(
                 success=False,
@@ -2163,7 +1994,7 @@ class GroverAsync:
         try:
             if path == "/":
                 tagged: list[tuple[Any, str]] = []
-                for mount in self._registry.list_visible_mounts():
+                for mount in self._ctx.registry.list_visible_mounts():
                     if mount.search is None:
                         continue
                     results = await mount.search.search(query, k)
@@ -2171,7 +2002,7 @@ class GroverAsync:
                 tagged.sort(key=lambda t: t[0].score, reverse=True)
                 tagged = tagged[:k]
             else:
-                mount, rel_path = self._registry.resolve(path)
+                mount, rel_path = self._ctx.registry.resolve(path)
                 if mount.search is None:
                     tagged = []
                 else:
@@ -2227,10 +2058,10 @@ class GroverAsync:
         try:
             if path == "/":
                 combined: LexicalSearchResult = LexicalSearchResult(success=True, message="")
-                for mount in self._registry.list_visible_mounts():
+                for mount in self._ctx.registry.list_visible_mounts():
                     if mount.search is None or mount.search.lexical is None:
                         continue
-                    async with self._session_for(mount) as sess:
+                    async with self._ctx.session_for(mount) as sess:
                         fts_results = await mount.search.lexical_search(query, k=k, session=sess)
                     mount_entries: dict[str, list[Any]] = {}
                     for ftr in fts_results:
@@ -2250,13 +2081,13 @@ class GroverAsync:
                 combined.message = f"Found matches in {len(combined)} file(s)"
                 return combined
             else:
-                mount, _rel_path = self._registry.resolve(path)
+                mount, _rel_path = self._ctx.registry.resolve(path)
                 if mount.search is None or mount.search.lexical is None:
                     return LexicalSearchResult(
                         success=False,
                         message="Lexical search not available on this mount",
                     )
-                async with self._session_for(mount) as sess:
+                async with self._ctx.session_for(mount) as sess:
                     fts_results = await mount.search.lexical_search(query, k=k, session=sess)
                 entries: dict[str, list[Any]] = {}
                 for ftr in fts_results:
@@ -2301,11 +2132,11 @@ class GroverAsync:
             mount.search is not None
             and mount.search.vector is not None
             and mount.search.embedding is not None
-            for mount in self._registry.list_visible_mounts()
+            for mount in self._ctx.registry.list_visible_mounts()
         )
         has_lexical = any(
             mount.search is not None and mount.search.lexical is not None
-            for mount in self._registry.list_visible_mounts()
+            for mount in self._ctx.registry.list_visible_mounts()
         )
 
         if has_vector:
@@ -2372,7 +2203,7 @@ class GroverAsync:
         if mount_path is not None:
             await self._walk_and_index(mount_path, stats)
         else:
-            for mount in self._registry.list_visible_mounts():
+            for mount in self._ctx.registry.list_visible_mounts():
                 await self._walk_and_index(mount.path, stats)
 
         await self._async_save()
@@ -2382,7 +2213,7 @@ class GroverAsync:
         # Skip read-only mounts — indexing writes chunks, edges, and
         # search entries which are all mutations.
         try:
-            mount, _rel = self._registry.resolve(path)
+            mount, _rel = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return
         if mount.permission == Permission.READ_ONLY:
@@ -2416,14 +2247,14 @@ class GroverAsync:
             return read_result.content
 
         try:
-            mount, rel_path = self._registry.resolve(path)
+            mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return None
 
         backend = mount.filesystem
         if hasattr(backend, "_read_content"):
             if mount.session_factory is not None:
-                async with self._session_for(mount) as sess:
+                async with self._ctx.session_for(mount) as sess:
                     content: str | None = await backend._read_content(rel_path, sess)  # type: ignore[union-attr]
             else:
                 content = await backend._read_content(rel_path, None)  # type: ignore[union-attr]
@@ -2441,10 +2272,10 @@ class GroverAsync:
         re-reads the persisted graph edges and search index from storage.
         """
         if path is not None:
-            mount, _rel = self._registry.resolve(normalize_path(path))
+            mount, _rel = self._ctx.registry.resolve(normalize_path(path))
             await self._load_mount_state(mount)
         else:
-            for mount in self._registry.list_mounts():
+            for mount in self._ctx.registry.list_mounts():
                 await self._load_mount_state(mount)
 
     async def _async_save(self) -> None:
@@ -2455,12 +2286,12 @@ class GroverAsync:
         ``add_connection()`` writes edges to DB, and the graph is a
         pure in-memory projection loaded via ``from_sql()`` on mount.
         """
-        for mount in self._registry.list_visible_mounts():
+        for mount in self._ctx.registry.list_visible_mounts():
             # Save search index to disk
             search_engine = mount.search
-            if search_engine is not None and self._meta_data_dir is not None:
+            if search_engine is not None and self._ctx.meta_data_dir is not None:
                 slug = mount.path.strip("/").replace("/", "_") or "_default"
-                search_dir = self._meta_data_dir / "search" / slug
+                search_dir = self._ctx.meta_data_dir / "search" / slug
                 try:
                     search_engine.save(str(search_dir))
                 except Exception:
@@ -2475,13 +2306,13 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def close(self) -> None:
-        if self._closed:
+        if self._ctx.closed:
             return
-        self._closed = True
+        self._ctx.closed = True
 
         await self._async_save()
         # Close all backends directly
-        for mount in self._registry.list_mounts():
+        for mount in self._ctx.registry.list_mounts():
             if hasattr(mount.filesystem, "close"):
                 try:
                     await mount.filesystem.close()
