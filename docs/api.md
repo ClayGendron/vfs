@@ -486,6 +486,8 @@ Permission.READ_WRITE  # Full access (default)
 Permission.READ_ONLY   # Reads and listings only
 ```
 
+**Read-only enforcement**: When a mount (or path within a mount via `read_only_paths`) is set to `READ_ONLY`, all mutations return a failed Result with `success=False` and a descriptive message — no exceptions are raised. This applies to: `write`, `edit`, `delete`, `mkdir`, `move`, `copy`, `restore_version`, `restore_from_trash`, `share`, `unshare`, `add_connection`, `delete_connection`. Multi-mount operations (`empty_trash`, `reconcile`, `index`) silently skip read-only mounts. Read and query operations (`read`, `glob`, `grep`, `list_dir`, `tree`, `list_connections`, `list_shares`, graph queries, search) are unaffected.
+
 ### Protocols
 
 | Protocol | Methods |
@@ -620,9 +622,10 @@ graph.is_dag() -> bool
 ### Persistence
 
 ```python
-await graph.to_sql(session)    # Save to grover_edges table
-await graph.from_sql(session)  # Load from grover_edges table
+await graph.from_sql(session, path_prefix="/mount")  # Load from grover_files + grover_file_connections
 ```
+
+The graph is a pure in-memory projection. `from_sql()` loads file nodes from `grover_files` and edges from `grover_file_connections`, applying the mount `path_prefix` to convert relative DB paths to absolute graph paths. `to_sql()` remains available as a non-authoritative compatibility internal but is no longer called during `save()` — edge persistence is handled by `ConnectionService`.
 
 ### Analyzers
 

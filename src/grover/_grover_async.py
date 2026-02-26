@@ -156,11 +156,19 @@ class GroverAsync:
         """Emit a file event via the event bus."""
         await self._event_bus.emit(event)
 
-    def _check_writable(self, virtual_path: str) -> None:
-        """Raise ``PermissionError`` if *virtual_path* is on a read-only mount."""
-        perm = self._registry.get_permission(virtual_path)
+    def _check_writable(self, virtual_path: str) -> str | None:
+        """Return an error message if *virtual_path* is read-only, else ``None``.
+
+        Replaces the previous raise-based pattern to avoid unnecessary
+        exception overhead in the common (writable) case.
+        """
+        try:
+            perm = self._registry.get_permission(virtual_path)
+        except MountNotFoundError as e:
+            return str(e)
         if perm == Permission.READ_ONLY:
-            raise PermissionError(f"Cannot write to read-only path: {virtual_path}")
+            return f"Cannot write to read-only path: {virtual_path}"
+        return None
 
     @staticmethod
     def _get_capability(backend: Any, protocol: type[T]) -> T | None:
@@ -863,8 +871,10 @@ class GroverAsync:
             # Persist dependency edges through FS (graph updated via event).
             # "contains" edges are structural (chunk membership) and remain
             # in-memory only — they are already added to the graph above.
+            # Skip connection writes for read-only mounts (defensive).
             dep_edges = [e for e in edges if e.edge_type != "contains"]
-            if isinstance(mount.filesystem, SupportsConnections) and dep_edges:
+            is_writable = mount.permission != Permission.READ_ONLY
+            if isinstance(mount.filesystem, SupportsConnections) and dep_edges and is_writable:
                 # Delete stale outgoing connections for this source before
                 # re-adding.  Only outgoing (source_path == path) so we
                 # preserve edges from OTHER files that point to this one.
@@ -945,10 +955,8 @@ class GroverAsync:
         user_id: str | None = None,
     ) -> WriteResult:
         path = normalize_path(path)
-        try:
-            self._check_writable(path)
-        except PermissionError as e:
-            return WriteResult(success=False, message=str(e))
+        if err := self._check_writable(path):
+            return WriteResult(success=False, message=err)
 
         try:
             mount, rel_path = self._registry.resolve(path)
@@ -985,10 +993,8 @@ class GroverAsync:
         user_id: str | None = None,
     ) -> EditResult:
         path = normalize_path(path)
-        try:
-            self._check_writable(path)
-        except PermissionError as e:
-            return EditResult(success=False, message=str(e))
+        if err := self._check_writable(path):
+            return EditResult(success=False, message=err)
 
         try:
             mount, rel_path = self._registry.resolve(path)
@@ -1015,10 +1021,8 @@ class GroverAsync:
         self, path: str, permanent: bool = False, *, user_id: str | None = None
     ) -> DeleteResult:
         path = normalize_path(path)
-        try:
-            self._check_writable(path)
-        except PermissionError as e:
-            return DeleteResult(success=False, message=str(e))
+        if err := self._check_writable(path):
+            return DeleteResult(success=False, message=err)
 
         try:
             mount, rel_path = self._registry.resolve(path)
@@ -1051,10 +1055,8 @@ class GroverAsync:
         user_id: str | None = None,
     ) -> MkdirResult:
         path = normalize_path(path)
-        try:
-            self._check_writable(path)
-        except PermissionError as e:
-            return MkdirResult(success=False, message=str(e))
+        if err := self._check_writable(path):
+            return MkdirResult(success=False, message=err)
 
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
@@ -1151,11 +1153,10 @@ class GroverAsync:
         src = normalize_path(src)
         dest = normalize_path(dest)
 
-        try:
-            self._check_writable(src)
-            self._check_writable(dest)
-        except PermissionError as e:
-            return MoveResult(success=False, message=str(e))
+        if err := self._check_writable(src):
+            return MoveResult(success=False, message=err)
+        if err := self._check_writable(dest):
+            return MoveResult(success=False, message=err)
 
         try:
             src_mount, src_rel = self._registry.resolve(src)
@@ -1230,10 +1231,8 @@ class GroverAsync:
         src = normalize_path(src)
         dest = normalize_path(dest)
 
-        try:
-            self._check_writable(dest)
-        except PermissionError as e:
-            return WriteResult(success=False, message=str(e))
+        if err := self._check_writable(dest):
+            return WriteResult(success=False, message=err)
 
         try:
             src_mount, src_rel = self._registry.resolve(src)
@@ -1498,10 +1497,8 @@ class GroverAsync:
         self, path: str, version: int, *, user_id: str | None = None
     ) -> RestoreResult:
         path = normalize_path(path)
-        try:
-            self._check_writable(path)
-        except PermissionError as e:
-            return RestoreResult(success=False, message=str(e))
+        if err := self._check_writable(path):
+            return RestoreResult(success=False, message=err)
 
         try:
             mount, rel_path = self._registry.resolve(path)
@@ -1542,10 +1539,8 @@ class GroverAsync:
 
     async def restore_from_trash(self, path: str, *, user_id: str | None = None) -> RestoreResult:
         path = normalize_path(path)
-        try:
-            self._check_writable(path)
-        except PermissionError as e:
-            return RestoreResult(success=False, message=str(e))
+        if err := self._check_writable(path):
+            return RestoreResult(success=False, message=err)
 
         try:
             mount, rel_path = self._registry.resolve(path)
@@ -1564,10 +1559,13 @@ class GroverAsync:
             return RestoreResult(success=False, message=str(e))
 
     async def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
-        """Empty trash across all mounts."""
+        """Empty trash across all mounts.  Skips read-only mounts."""
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():
+            # Skip read-only mounts — empty_trash is a mutation
+            if mount.permission == Permission.READ_ONLY:
+                continue
             cap = self._get_capability(mount.filesystem, SupportsTrash)
             if cap is None:
                 continue
@@ -1603,6 +1601,9 @@ class GroverAsync:
         """
 
         path = normalize_path(path)
+        if err := self._check_writable(path):
+            return ShareResult(success=False, message=err)
+
         try:
             mount, rel_path = self._registry.resolve(path)
         except MountNotFoundError as e:
@@ -1648,6 +1649,9 @@ class GroverAsync:
         """Remove a share for a file or directory."""
 
         path = normalize_path(path)
+        if err := self._check_writable(path):
+            return ShareResult(success=False, message=err)
+
         try:
             mount, rel_path = self._registry.resolve(path)
         except MountNotFoundError as e:
@@ -1739,6 +1743,9 @@ class GroverAsync:
             mounts = [m for m in mounts if m.path == mount_path]
 
         for mount in mounts:
+            # Skip read-only mounts — reconcile is a mutation
+            if mount.permission == Permission.READ_ONLY:
+                continue
             cap = self._get_capability(mount.filesystem, SupportsReconcile)
             if cap is None:
                 continue
@@ -1770,12 +1777,10 @@ class GroverAsync:
         source_path = normalize_path(source_path)
         target_path = normalize_path(target_path)
 
-        try:
-            self._check_writable(source_path)
-        except (PermissionError, MountNotFoundError) as e:
+        if err := self._check_writable(source_path):
             return ConnectionResult(
                 success=False,
-                message=str(e),
+                message=err,
                 source_path=source_path,
                 target_path=target_path,
                 connection_type=connection_type,
@@ -1842,12 +1847,10 @@ class GroverAsync:
         source_path = normalize_path(source_path)
         target_path = normalize_path(target_path)
 
-        try:
-            self._check_writable(source_path)
-        except (PermissionError, MountNotFoundError) as e:
+        if err := self._check_writable(source_path):
             return ConnectionResult(
                 success=False,
-                message=str(e),
+                message=err,
                 source_path=source_path,
                 target_path=target_path,
                 connection_type=connection_type or "",
@@ -2301,7 +2304,12 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def index(self, mount_path: str | None = None) -> dict[str, int]:
-        stats = {"files_scanned": 0, "chunks_created": 0, "edges_added": 0}
+        stats = {
+            "files_scanned": 0,
+            "chunks_created": 0,
+            "edges_added": 0,
+            "files_skipped": 0,
+        }
 
         if mount_path is not None:
             await self._walk_and_index(mount_path, stats)
@@ -2313,6 +2321,16 @@ class GroverAsync:
         return stats
 
     async def _walk_and_index(self, path: str, stats: dict[str, int]) -> None:
+        # Skip read-only mounts — indexing writes chunks, edges, and
+        # search entries which are all mutations.
+        try:
+            mount, _rel = self._registry.resolve(path)
+        except MountNotFoundError:
+            return
+        if mount.permission == Permission.READ_ONLY:
+            logger.debug("Skipping read-only mount for indexing: %s", path)
+            return
+
         result = await self.list_dir(path)
         if not result.success:
             return
@@ -2327,6 +2345,7 @@ class GroverAsync:
             else:
                 content = await self._read_file_content(entry_path)
                 if content is None:
+                    stats["files_skipped"] += 1
                     continue
                 file_stats = await self._analyze_and_integrate(entry_path, content)
                 stats["files_scanned"] += 1

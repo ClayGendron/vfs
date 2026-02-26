@@ -188,7 +188,9 @@ g.read("/code/src/main.py")   # → routes to LocalFileSystem
 g.read("/docs/guide.md")      # → routes to DatabaseFileSystem
 ```
 
-`MountRegistry` resolves paths using longest-prefix matching. Mounts are permission boundaries — a read-only mount rejects all writes regardless of the file path.
+`MountRegistry` resolves paths using longest-prefix matching. Mounts are permission boundaries — a read-only mount rejects all writes regardless of the file path. Sub-mount paths can also be marked read-only via `read_only_paths` on the mount config.
+
+**Permission enforcement model**: The facade layer (`GroverAsync`) checks writability via `_check_writable()` before dispatching to backends. This method returns an error message string for read-only paths (or `None` for writable paths) — it never raises exceptions. Every mutation facade method checks the return value and immediately returns a failed Result (`success=False`) with a descriptive message. Multi-mount operations (`empty_trash`, `reconcile`, `index`) silently skip read-only mounts. Read/query operations are never gated. Additional defensive checks exist in `_analyze_and_integrate` (skips connection DB writes for read-only content) and `_walk_and_index` (skips entire read-only mounts during indexing).
 
 Grover also creates a hidden metadata mount at `/.grover` for internal state (graph edges, search metadata). This mount is excluded from indexing and listing.
 
