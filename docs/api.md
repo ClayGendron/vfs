@@ -141,14 +141,14 @@ g.tree(path="/", *, max_depth=None) -> TreeResult
 ### Versioning
 
 ```python
-g.list_versions(path) -> ListVersionsResult
+g.list_versions(path) -> VersionResult
 g.get_version_content(path, version) -> GetVersionContentResult
 g.restore_version(path, version) -> RestoreResult
 ```
 
 | Method | Description |
 |--------|-------------|
-| `list_versions(path)` | List all versions of a file. Returns `ListVersionsResult` with a list of `VersionInfo`. Versions with `created_by="external"` are synthetic snapshots auto-inserted when an external edit was detected. |
+| `list_versions(path)` | List all versions of a file. Returns `VersionResult` (a `FileSearchResult` subclass) with `candidates` — each candidate's path is `"{file_path}@{version}"` and evidence is `VersionEvidence` with `version`, `content_hash`, `size_bytes`, `created_at`, `created_by`. Versions with `created_by="external"` are synthetic snapshots auto-inserted when an external edit was detected. |
 | `get_version_content(path, version)` | Retrieve the content of a specific version. Returns `GetVersionContentResult`. |
 | `restore_version(path, version)` | Restore a file to a previous version (creates a new version with the old content). Returns `RestoreResult`. |
 
@@ -173,16 +173,16 @@ Available on mounts whose backend implements `SupportsReBAC` (e.g., `UserScopedF
 ```python
 g.share(path, grantee_id, permission="read", *, user_id) -> ShareResult
 g.unshare(path, grantee_id, *, user_id) -> ShareResult
-g.list_shares(path, *, user_id) -> ListSharesResult
-g.list_shared_with_me(*, user_id) -> ListSharesResult
+g.list_shares(path, *, user_id) -> ShareSearchResult
+g.list_shared_with_me(*, user_id) -> ShareSearchResult
 ```
 
 | Method | Description |
 |--------|-------------|
 | `share(path, grantee_id, permission, *, user_id)` | Share a file or directory. `permission` is `"read"` or `"write"`. Only the file owner can create shares. Returns `ShareResult`. |
 | `unshare(path, grantee_id, *, user_id)` | Remove a share. Returns `ShareResult`. |
-| `list_shares(path, *, user_id)` | List all shares on a given path. Returns `ListSharesResult`. |
-| `list_shared_with_me(*, user_id)` | List all files shared with the current user. Paths are returned with `@shared/{owner}/` prefix. Returns `ListSharesResult`. |
+| `list_shares(path, *, user_id)` | List all shares on a given path. Returns `ShareSearchResult` (a `FileSearchResult` subclass) with `candidates` containing `ShareEvidence`. |
+| `list_shared_with_me(*, user_id)` | List all files shared with the current user. Paths are returned with `@shared/{owner}/` prefix. Returns `ShareSearchResult`. |
 
 Shared files are accessible via the `@shared/` virtual namespace:
 
@@ -330,19 +330,30 @@ class SearchResult:
 
 ### Result Types
 
-All filesystem operations return structured result objects rather than raising exceptions.
+Grover has two result families:
+
+- **`FileOperationResult`** — base for content operations (read, write, edit, delete, etc.). Enriched base with `path`, `content`, `message`, `success`, `line_start`, `line_offset`, `version`.
+- **`FileSearchResult`** — base for search/query results. Contains `candidates: list[FileSearchCandidate]` where each candidate has a `path` and `evidence` list. Supports set algebra (`&`, `|`, `-`, `>>`), `rebase()`, `remap_paths()`.
+
+All result types live in `grover.types` (canonical location).
 
 ```python
 from grover import (
-    GlobQueryResult, GlobHit,             # glob() return types
-    GrepQueryResult, GrepHit, LineMatch,  # grep() return types
-    SearchQueryResult, SearchHit, ChunkMatch,  # search() return types
-)
-from grover.fs import (
-    ReadResult, WriteResult, EditResult, DeleteResult,
-    ListResult, MoveResult, RestoreResult,
-    ListVersionsResult, GetVersionContentResult,
-    TreeResult, FileInfo, VersionInfo,
+    # Operation results
+    FileOperationResult, ReadResult, WriteResult, EditResult,
+    DeleteResult, MkdirResult, MoveResult, RestoreResult,
+    GetVersionContentResult, ShareResult, ConnectionResult,
+    FileInfoResult,
+    # Search results
+    FileSearchResult, FileSearchCandidate, Evidence,
+    GlobResult, GrepResult, TreeResult, ListDirResult,
+    TrashResult, VersionResult, ShareSearchResult,
+    VectorSearchResult, LexicalSearchResult, HybridSearchResult,
+    GraphResult, LineMatch,
+    # Query results (frozen, tuple-based)
+    GlobQueryResult, GlobHit,
+    GrepQueryResult, GrepHit,
+    SearchQueryResult, SearchHit, ChunkMatch,
 )
 ```
 
@@ -354,7 +365,7 @@ if result.success:
     print(result.content)       # safe to access
 else:
     print(result.message)       # e.g., "File not found: /project/missing.py"
-    # result.content is None — don't use it
+    # result.content is "" — don't use it
 
 result = g.write("/project/hello.py", "content")
 if result.success:
@@ -363,16 +374,44 @@ if result.success:
 
 This design is intentional: agents running in loops should handle failures gracefully without try/except blocks. Operations never raise exceptions for expected failures (missing files, permission errors, etc.) — they return a result with `success=False` and a descriptive `message`.
 
+#### FileOperationResult subclasses
+
+| Type | Key Fields (beyond base) |
+|------|------------|
+| `ReadResult` | `total_lines`, `lines_read`, `truncated` |
+| `WriteResult` | `created` (bool) |
+| `EditResult` | (base fields sufficient) |
+| `DeleteResult` | `permanent` (bool), `total_deleted` |
+| `MkdirResult` | `created_dirs` (list) |
+| `MoveResult` | `old_path`, `new_path` |
+| `RestoreResult` | `restored_version` |
+| `GetVersionContentResult` | (base has `content` + `version`) |
+| `ShareResult` | `grantee_id`, `permission`, `granted_by` |
+| `ConnectionResult` | `source_path`, `target_path`, `connection_type` |
+| `FileInfoResult` | `name`, `is_directory`, `mime_type`, `size_bytes`, `created_at`, `updated_at`, `permission`, `mount_type` |
+
+#### FileSearchResult subclasses
+
+Each search result contains `candidates: list[FileSearchCandidate]`, where each candidate has a `path: str` and `evidence: list[Evidence]`.
+
+| Type | Evidence Type | Key Evidence Fields |
+|------|--------------|-------------------|
+| `GlobResult` | `GlobEvidence` | `is_directory`, `size_bytes`, `mime_type` |
+| `GrepResult` | `GrepEvidence` | `line_matches: list[LineMatch]` |
+| `TreeResult` | (mixed) | `total_files`, `total_dirs` on result |
+| `ListDirResult` | `ListDirEvidence` | `is_directory`, `size_bytes`, `mime_type` |
+| `TrashResult` | `TrashEvidence` | `deleted_at`, `deleted_by` |
+| `VersionResult` | `VersionEvidence` | `version`, `content_hash`, `size_bytes`, `created_at`, `created_by` |
+| `ShareSearchResult` | `ShareEvidence` | `grantee_id`, `permission`, `granted_by`, `expires_at` |
+| `VectorSearchResult` | `VectorEvidence` | `score`, `content`, `chunk_path` |
+| `LexicalSearchResult` | `LexicalEvidence` | `score`, `snippet` |
+| `HybridSearchResult` | (mixed) | Vector + lexical evidence |
+| `GraphResult` | `GraphEvidence` | `edge_type`, `direction`, `weight` |
+
+#### Query results (frozen, tuple-based)
+
 | Type | Key Fields |
 |------|------------|
-| `ReadResult` | `content`, `file_path`, `total_lines`, `truncated`, `offset` |
-| `WriteResult` | `file_path`, `created` (bool), `version` (int) |
-| `EditResult` | `file_path`, `version` (int) |
-| `DeleteResult` | `file_path`, `permanent` (bool), `total_deleted` |
-| `ListResult` | `entries` (list of `FileInfo`), `path` |
-| `RestoreResult` | `file_path`, `restored_version`, `current_version` |
-| `ListVersionsResult` | `versions` (list of `VersionInfo`) |
-| `GetVersionContentResult` | `content` |
 | `GlobQueryResult` | `hits` (tuple of `GlobHit`), `pattern`, `path` |
 | `GlobHit` | `path`, `is_directory`, `size_bytes`, `mime_type` |
 | `GrepQueryResult` | `hits` (tuple of `GrepHit`), `pattern`, `path`, `files_searched`, `files_matched`, `truncated` |
@@ -381,13 +420,6 @@ This design is intentional: agents running in loops should handle failures grace
 | `SearchQueryResult` | `hits` (tuple of `SearchHit`), `query`, `path`, `files_matched`, `truncated` |
 | `SearchHit` | `path`, `score`, `chunk_matches` (tuple of `ChunkMatch`) |
 | `ChunkMatch` | `name`, `line_start`, `line_end`, `score`, `snippet` |
-| `TreeResult` | `entries` (list of `FileInfo`), `path`, `total_files`, `total_dirs` |
-| `FileInfo` | `path`, `name`, `is_directory`, `size_bytes`, `mime_type`, `version` |
-| `VersionInfo` | `version`, `content_hash`, `size_bytes`, `created_at`, `created_by` |
-| `MoveResult` | `old_path`, `new_path` |
-| `ShareResult` | `share` (`ShareInfo | None`) |
-| `ListSharesResult` | `shares` (list of `ShareInfo`) |
-| `ShareInfo` | `path`, `grantee_id`, `permission`, `granted_by`, `created_at`, `expires_at` |
 
 ---
 
@@ -397,8 +429,6 @@ This design is intentional: agents running in loops should handle failures grace
 from grover.fs import (
     LocalFileSystem,
     DatabaseFileSystem,
-    VFS,
-    MountConfig,
     MountRegistry,
     Permission,
     StorageBackend,
@@ -642,10 +672,10 @@ Grover's search layer is built around three protocol layers — **EmbeddingProvi
 from grover import (
     SearchEngine,
     EmbeddingProvider, VectorStore,
-    VectorEntry, VectorSearchResult, IndexConfig, IndexInfo,
+    VectorEntry, IndexConfig, IndexInfo,
     FilterExpression, eq, gt, and_, or_,
 )
-from grover.search.types import SearchResult  # internal type used by SearchEngine
+from grover.search.types import SearchResult, VectorHit  # internal types used by SearchEngine
 from grover.search.fulltext import FullTextStore, FullTextResult
 ```
 
@@ -670,7 +700,7 @@ Orchestrates embedding, vector storage, and full-text search. This is what `Grov
 | `add_batch(chunks, *, session=None)` | Batch embed and index multiple items |
 | `remove(path, *, session=None)` | Remove a single entry by path |
 | `remove_file(path, *, session=None)` | Remove a file and all its chunks |
-| `search(query, k=10) -> list[SearchResult]` | Embed query and search (vector) |
+| `search(query, k=10) -> list[SearchResult]` | Embed query and search (vector). Returns internal `SearchResult` type. |
 | `lexical_search(query, *, k=10, session=None) -> list[FullTextResult]` | BM25 keyword search |
 | `has(path) -> bool` | Check if a path is indexed |
 | `content_hash(path) -> str | None` | Get the content hash of an indexed entry |
@@ -744,7 +774,7 @@ provider = LangChainEmbedding(embeddings=langchain_embeddings, dimensions=384)
 @runtime_checkable
 class VectorStore(Protocol):
     async def upsert(self, entries: list[VectorEntry], *, namespace: str | None = None) -> UpsertResult: ...
-    async def search(self, vector: list[float], *, k: int = 10, namespace: str | None = None, filter: FilterExpression | None = None, ...) -> list[VectorSearchResult]: ...
+    async def search(self, vector: list[float], *, k: int = 10, namespace: str | None = None, filter: FilterExpression | None = None, ...) -> list[VectorHit]: ...
     async def delete(self, ids: list[str], *, namespace: str | None = None) -> DeleteResult: ...
     async def fetch(self, ids: list[str], *, namespace: str | None = None) -> list[VectorEntry | None]: ...
     async def connect(self) -> None: ...
@@ -827,7 +857,7 @@ class VectorEntry:
     metadata: dict[str, Any]
 
 @dataclass(frozen=True)
-class VectorSearchResult:
+class VectorHit:
     id: str
     score: float
     metadata: dict[str, Any]
@@ -854,7 +884,7 @@ class IndexInfo:
 ## Models
 
 ```python
-from grover.models import File, FileVersion, GroverEdge, Embedding
+from grover.models import File, FileVersion, FileChunk, FileConnection, Embedding
 ```
 
 SQLModel table classes for direct database access if needed.
@@ -863,8 +893,9 @@ SQLModel table classes for direct database access if needed.
 |-------|-------|---------|
 | `File` | `grover_files` | File metadata, content, version tracking, soft-delete |
 | `FileVersion` | `grover_file_versions` | Version snapshots and diffs |
-| `GroverEdge` | `grover_edges` | Graph edge persistence |
-| `Embedding` | `grover_embeddings` | Embedding change detection metadata |
+| `FileChunk` | `grover_file_chunks` | Code chunks (functions, classes) |
+| `FileConnection` | `grover_file_connections` | File-to-file connections/edges |
+| `Embedding` | `grover_embeddings` | Embedding change detection metadata (deprecated — vectors moving to File/FileChunk) |
 
 ### Events
 

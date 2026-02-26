@@ -18,20 +18,24 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
-
-    from .types import (
+    from grover.types.operations import (
         DeleteResult,
         EditResult,
-        FileInfo,
+        FileInfoResult,
         GetVersionContentResult,
-        ListResult,
-        ListVersionsResult,
         MkdirResult,
         MoveResult,
         ReadResult,
         RestoreResult,
         WriteResult,
+    )
+    from grover.types.search import (
+        GlobResult,
+        GrepResult,
+        ListDirResult,
+        TrashResult,
+        TreeResult,
+        VersionResult,
     )
 
 
@@ -91,7 +95,7 @@ class StorageBackend(Protocol):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfo | None: ...
+    ) -> FileInfoResult | None: ...
 
     # ------------------------------------------------------------------
     # Write
@@ -211,7 +215,7 @@ class SupportsVersions(Protocol):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListVersionsResult: ...
+    ) -> VersionResult: ...
 
     async def get_version_content(
         self,
@@ -242,7 +246,7 @@ class SupportsTrash(Protocol):
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> ListResult: ...
+    ) -> TrashResult: ...
 
     async def restore_from_trash(
         self,

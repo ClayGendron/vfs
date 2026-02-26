@@ -14,7 +14,7 @@ import pytest
 from grover._grover import Grover
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph import RustworkxGraph
-from grover.search.results import GraphResult, VectorSearchResult
+from grover.types import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -473,16 +473,16 @@ class TestGroverSyncAuthenticated:
         auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
         result = auth_grover.list_shares("/ws/notes.md", user_id="alice")
         assert result.success is True
-        assert len(result.shares) == 1
+        assert len(result) == 1
 
     def test_list_shared_with_me(self, auth_grover: Grover):
         auth_grover.write("/ws/a.md", "a", user_id="alice")
         auth_grover.share("/ws/a.md", "bob", "read", user_id="alice")
         result = auth_grover.list_shared_with_me(user_id="bob")
         assert result.success is True
-        assert len(result.shares) == 1
+        assert len(result) == 1
         # Path should be an @shared path, not a raw stored path
-        assert result.shares[0].path == "/ws/@shared/alice/a.md"
+        assert result.candidates[0].path == "/ws/@shared/alice/a.md"
 
     def test_move_and_copy(self, auth_grover: Grover):
         auth_grover.write("/ws/src.md", "content", user_id="alice")

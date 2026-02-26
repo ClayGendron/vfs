@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 def _format_graph_result(result: object, label: str) -> str:
     """Format a GraphResult into a readable string."""
-    from grover.search.results import GraphResult
+    from grover.types import GraphResult
 
     if isinstance(result, GraphResult):
         if len(result) == 0:
@@ -97,16 +97,21 @@ class GroverMiddleware(AgentMiddleware):
             if not result.success:
                 return f"Error: {result.message}"
 
-            if not result.versions:
+            if len(result) == 0:
                 return f"No versions found for {path}."
 
-            lines = [f"Version history for {path} ({len(result.versions)} versions):"]
-            for v in result.versions:
-                line = f"  v{v.version}: {v.created_at:%Y-%m-%d %H:%M:%S}"
-                line += f" | {v.size_bytes} bytes | hash={v.content_hash[:12]}"
-                if v.created_by:
-                    line += f" | by {v.created_by}"
-                lines.append(line)
+            lines = [f"Version history for {path} ({len(result)} versions):"]
+            for candidate in result.candidates:
+                from grover.types import VersionEvidence
+
+                for ev in candidate.evidence:
+                    if isinstance(ev, VersionEvidence):
+                        line = f"  v{ev.version}: {ev.created_at:%Y-%m-%d %H:%M:%S}"
+                        line += f" | {ev.size_bytes} bytes | hash={ev.content_hash[:12]}"
+                        if ev.created_by:
+                            line += f" | by {ev.created_by}"
+                        lines.append(line)
+                        break
             return "\n".join(lines)
 
         return StructuredTool.from_function(
@@ -134,7 +139,7 @@ class GroverMiddleware(AgentMiddleware):
             if not result.success:
                 return f"Error: {result.message}"
 
-            if result.content is None:
+            if not result.content:
                 return f"Error: No content found for {path} v{version}."
 
             return f"Content of {path} v{version}:\n{result.content}"
@@ -166,7 +171,7 @@ class GroverMiddleware(AgentMiddleware):
 
             return (
                 f"Restored {path} to v{result.restored_version}. "
-                f"Current version is now v{result.current_version}."
+                f"Current version is now v{result.version}."
             )
 
         return StructuredTool.from_function(
@@ -252,7 +257,7 @@ class GroverMiddleware(AgentMiddleware):
             if not result.success:
                 return f"Error: {result.message}"
 
-            return f"Restored {result.file_path} from trash."
+            return f"Restored {result.path} from trash."
 
         return StructuredTool.from_function(
             name="restore_from_trash",

@@ -7,13 +7,11 @@ __version__ = "0.0.3"
 
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
-from grover.fs.types import ListSharesResult, ShareInfo, ShareResult
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.graph.protocols import GraphStore
 from grover.graph.types import SubgraphResult
 from grover.mount import Mount, ProtocolConflictError, ProtocolNotAvailableError
 from grover.ref import Ref, file_ref
-from grover.results import Evidence, FileOperationResult, FileSearchResult
 from grover.search._engine import SearchEngine
 from grover.search.filters import (
     FilterExpression,
@@ -40,24 +38,6 @@ from grover.search.protocols import (
     SupportsTextSearch,
     VectorStore,
 )
-from grover.search.results import (
-    GlobEvidence,
-    GlobResult,
-    GraphEvidence,
-    GraphResult,
-    GrepEvidence,
-    GrepResult,
-    HybridSearchResult,
-    LexicalSearchResult,
-    LineMatch,
-    ListDirResult,
-    TrashResult,
-    TreeResult,
-    VectorEvidence,
-)
-from grover.search.results import (
-    VectorSearchResult as VectorSearchResult,
-)
 from grover.search.types import (
     DeleteResult as SearchDeleteResult,
 )
@@ -68,13 +48,52 @@ from grover.search.types import (
     UpsertResult,
     VectorEntry,
 )
+from grover.types import (
+    ConnectionResult,
+    DeleteResult,
+    EditResult,
+    Evidence,
+    FileInfoResult,
+    FileOperationResult,
+    FileSearchCandidate,
+    FileSearchResult,
+    GetVersionContentResult,
+    GlobEvidence,
+    GlobResult,
+    GraphEvidence,
+    GraphResult,
+    GrepEvidence,
+    GrepResult,
+    HybridSearchResult,
+    LexicalSearchResult,
+    LineMatch,
+    ListDirResult,
+    MkdirResult,
+    MoveResult,
+    ReadResult,
+    RestoreResult,
+    ShareResult,
+    ShareSearchResult,
+    TrashResult,
+    TreeResult,
+    VectorEvidence,
+    VectorSearchResult,
+    VersionResult,
+    WriteResult,
+)
 
 __all__ = [
+    "ConnectionResult",
+    "DeleteResult",
+    "EditResult",
     "EmbeddingProvider",
     "Evidence",
+    "FileInfoResult",
     "FileOperationResult",
+    "FileSearchCandidate",
     "FileSearchResult",
     "FilterExpression",
+    "GetVersionContentResult",
     "GlobEvidence",
     "GlobResult",
     "GraphEvidence",
@@ -90,16 +109,19 @@ __all__ = [
     "LexicalSearchResult",
     "LineMatch",
     "ListDirResult",
-    "ListSharesResult",
+    "MkdirResult",
     "Mount",
+    "MoveResult",
     "ProtocolConflictError",
     "ProtocolNotAvailableError",
+    "ReadResult",
     "Ref",
+    "RestoreResult",
     "SearchDeleteResult",
     "SearchEngine",
     "SearchResult",
-    "ShareInfo",
     "ShareResult",
+    "ShareSearchResult",
     "SubgraphResult",
     "SupportsHybridSearch",
     "SupportsIndexLifecycle",
@@ -116,6 +138,8 @@ __all__ = [
     "VectorEvidence",
     "VectorSearchResult",
     "VectorStore",
+    "VersionResult",
+    "WriteResult",
     "__version__",
     "and_",
     "eq",

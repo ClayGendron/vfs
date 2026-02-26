@@ -105,10 +105,10 @@ class GroverLoader(BaseLoader):
         result = self.grover.tree(self.path, max_depth=None if self.recursive else 1)
         if not result.success:
             return []
-        from grover.search.results import TreeEvidence
+        from grover.types import TreeEvidence
 
         entries = []
-        for p, evs in result._entries.items():
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in evs)
-            entries.append({"path": p, "is_directory": is_dir, "size_bytes": None})
+        for c in result.candidates:
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
+            entries.append({"path": c.path, "is_directory": is_dir, "size_bytes": None})
         return entries

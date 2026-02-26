@@ -22,21 +22,6 @@ from grover.fs.protocol import (
     SupportsTrash,
     SupportsVersions,
 )
-from grover.fs.types import (
-    DeleteResult,
-    EditResult,
-    FileInfo,
-    GetVersionContentResult,
-    ListSharesResult,
-    ListVersionsResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    RestoreResult,
-    ShareInfo,
-    ShareResult,
-    WriteResult,
-)
 from grover.fs.utils import normalize_path
 from grover.graph._rustworkx import RustworkxGraph
 from grover.graph.analyzers import AnalyzerRegistry
@@ -45,22 +30,36 @@ from grover.models.connections import FileConnection
 from grover.models.files import File, FileVersion
 from grover.models.shares import FileShare
 from grover.mount import Mount
-from grover.results import FileSearchResult
 from grover.search._engine import SearchEngine
 from grover.search.extractors import extract_from_chunks, extract_from_file
-from grover.search.results import (
+from grover.types import (
+    DeleteResult,
+    EditResult,
+    FileInfoResult,
+    FileSearchCandidate,
+    FileSearchResult,
+    GetVersionContentResult,
     GlobResult,
     GraphEvidence,
     GraphResult,
     GrepResult,
     LexicalEvidence,
     LexicalSearchResult,
+    ListDirEvidence,
     ListDirResult,
-    TrashEvidence,
+    MkdirResult,
+    MoveResult,
+    ReadResult,
+    RestoreResult,
+    ShareResult,
+    ShareSearchResult,
     TrashResult,
+    TreeEvidence,
     TreeResult,
     VectorEvidence,
     VectorSearchResult,
+    VersionResult,
+    WriteResult,
 )
 
 if TYPE_CHECKING:
@@ -173,7 +172,7 @@ class GroverAsync:
             return mount_path
         return mount_path + path
 
-    def _prefix_file_info(self, info: FileInfo, mount: Mount) -> FileInfo:
+    def _prefix_file_info(self, info: FileInfoResult, mount: Mount) -> FileInfoResult:
         prefixed_path = self._prefix_path(info.path, mount.path) or info.path
         info.path = prefixed_path
         info.mount_type = mount.mount_type
@@ -851,7 +850,7 @@ class GroverAsync:
             result = await mount.filesystem.read(
                 rel_path, offset, limit, session=sess, user_id=user_id
             )
-        result.file_path = self._prefix_path(result.file_path, mount.path)
+        result.path = self._prefix_path(result.path, mount.path) or result.path
         return result
 
     async def write(
@@ -879,7 +878,7 @@ class GroverAsync:
                     session=sess,
                     user_id=user_id,
                 )
-            result.file_path = self._prefix_path(result.file_path, mount.path)
+            result.path = self._prefix_path(result.path, mount.path) or result.path
             if result.success:
                 await self._emit(
                     FileEvent(
@@ -920,7 +919,7 @@ class GroverAsync:
                     session=sess,
                     user_id=user_id,
                 )
-            result.file_path = self._prefix_path(result.file_path, mount.path)
+            result.path = self._prefix_path(result.path, mount.path) or result.path
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_WRITTEN, path=path, user_id=user_id)
@@ -952,7 +951,7 @@ class GroverAsync:
                 result = await mount.filesystem.delete(
                     rel_path, permanent, session=sess, user_id=user_id
                 )
-            result.file_path = self._prefix_path(result.file_path, mount.path)
+            result.path = self._prefix_path(result.path, mount.path) or result.path
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_DELETED, path=path, user_id=user_id)
@@ -993,21 +992,23 @@ class GroverAsync:
         return result.rebase(mount.path)
 
     def _list_root(self) -> ListDirResult:
-        from grover.search.results import ListDirEvidence
-
-        entries: dict[str, list] = {}
-        for mount in self._registry.list_visible_mounts():
-            entries[mount.path] = [
-                ListDirEvidence(
-                    strategy="list_dir",
-                    path=mount.path,
-                    is_directory=True,
-                )
-            ]
+        candidates = [
+            FileSearchCandidate(
+                path=mount.path,
+                evidence=[
+                    ListDirEvidence(
+                        strategy="list_dir",
+                        path=mount.path,
+                        is_directory=True,
+                    )
+                ],
+            )
+            for mount in self._registry.list_visible_mounts()
+        ]
         return ListDirResult(
             success=True,
-            message=f"Found {len(entries)} mount(s)",
-            _entries=entries,
+            message=f"Found {len(candidates)} mount(s)",
+            candidates=candidates,
         )
 
     async def exists(self, path: str, *, user_id: str | None = None) -> bool:
@@ -1027,14 +1028,14 @@ class GroverAsync:
         async with self._session_for(mount) as sess:
             return await mount.filesystem.exists(rel_path, session=sess, user_id=user_id)
 
-    async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfo | None:
+    async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfoResult | None:
         path = normalize_path(path)
 
         if self._registry.has_mount(path):
             for mount in self._registry.list_mounts():
                 if mount.path == path:
                     name = mount.path.lstrip("/")
-                    return FileInfo(
+                    return FileInfoResult(
                         path=mount.path,
                         name=name,
                         is_directory=True,
@@ -1160,7 +1161,7 @@ class GroverAsync:
                     result = await src_mount.filesystem.copy(
                         src_rel, dest_rel, session=sess, user_id=user_id
                     )
-                result.file_path = self._prefix_path(result.file_path, dest_mount.path)
+                result.path = self._prefix_path(result.path, dest_mount.path) or result.path
                 if result.success:
                     await self._emit(
                         FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
@@ -1177,14 +1178,14 @@ class GroverAsync:
                     success=False,
                     message=f"Cannot read source for cross-mount copy: {read_result.message}",
                 )
-            if read_result.content is None:
+            if not read_result.content:
                 return WriteResult(success=False, message=f"Source file has no content: {src}")
 
             async with self._session_for(dest_mount) as dest_sess:
                 result = await dest_mount.filesystem.write(
                     dest_rel, read_result.content, session=dest_sess, user_id=user_id
                 )
-            result.file_path = self._prefix_path(result.file_path, dest_mount.path)
+            result.path = self._prefix_path(result.path, dest_mount.path) or result.path
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
@@ -1203,7 +1204,7 @@ class GroverAsync:
         path = normalize_path(path)
         try:
             if path == "/":
-                combined = GlobResult(success=True, message="", _entries={}, pattern=pattern)
+                combined = GlobResult(success=True, message="", pattern=pattern)
                 for mount in self._registry.list_visible_mounts():
                     async with self._session_for(mount) as sess:
                         result = await mount.filesystem.glob(
@@ -1274,10 +1275,12 @@ class GroverAsync:
                         )
                     if result.success:
                         rebased = result.rebase(mount.path)
-                        for p, evs in rebased._entries.items():
-                            combined_entries.setdefault(p, []).extend(evs)
+                        for c in rebased.candidates:
+                            combined_entries.setdefault(c.path, []).extend(c.evidence)
                             total_matches += sum(
-                                len(e.line_matches) for e in evs if hasattr(e, "line_matches")
+                                len(e.line_matches)
+                                for e in c.evidence
+                                if hasattr(e, "line_matches")
                             )
                         total_searched += result.files_searched
                         total_matched += result.files_matched
@@ -1298,7 +1301,7 @@ class GroverAsync:
                 return GrepResult(
                     success=True,
                     message=f"Found {total_matches} match(es) in {total_matched} file(s)",
-                    _entries=combined_entries,
+                    candidates=FileSearchResult._dict_to_candidates(combined_entries),
                     pattern=pattern,
                     files_searched=total_searched,
                     files_matched=total_matched,
@@ -1333,19 +1336,21 @@ class GroverAsync:
         path = normalize_path(path)
         try:
             if path == "/":
-                from grover.search.results import TreeEvidence
-
-                root_entries: dict[str, list] = {}
-                for mount in self._registry.list_visible_mounts():
-                    root_entries[mount.path] = [
-                        TreeEvidence(
-                            strategy="tree",
-                            path=mount.path,
-                            depth=0,
-                            is_directory=True,
-                        )
-                    ]
-                combined = TreeResult(success=True, message="", _entries=root_entries)
+                root_candidates = [
+                    FileSearchCandidate(
+                        path=mount.path,
+                        evidence=[
+                            TreeEvidence(
+                                strategy="tree",
+                                path=mount.path,
+                                depth=0,
+                                is_directory=True,
+                            )
+                        ],
+                    )
+                    for mount in self._registry.list_visible_mounts()
+                ]
+                combined = TreeResult(success=True, message="", candidates=root_candidates)
 
                 if max_depth is None or max_depth > 0:
                     for mount in self._registry.list_visible_mounts():
@@ -1374,7 +1379,7 @@ class GroverAsync:
     # Version operations (absorbed from VFS, capability-gated)
     # ------------------------------------------------------------------
 
-    async def list_versions(self, path: str, *, user_id: str | None = None) -> ListVersionsResult:
+    async def list_versions(self, path: str, *, user_id: str | None = None) -> VersionResult:
         path = normalize_path(path)
         try:
             mount, rel_path = self._registry.resolve(path)
@@ -1386,7 +1391,7 @@ class GroverAsync:
             async with self._session_for(mount) as sess:
                 return await cap.list_versions(rel_path, session=sess, user_id=user_id)
         except CapabilityNotSupportedError as e:
-            return ListVersionsResult(success=False, versions=[], message=str(e))
+            return VersionResult(success=False, message=str(e))
 
     async def get_version_content(
         self, path: str, version: int, *, user_id: str | None = None
@@ -1404,7 +1409,7 @@ class GroverAsync:
                     rel_path, version, session=sess, user_id=user_id
                 )
         except CapabilityNotSupportedError as e:
-            return GetVersionContentResult(success=False, content=None, message=str(e))
+            return GetVersionContentResult(success=False, message=str(e))
 
     async def restore_version(
         self, path: str, version: int, *, user_id: str | None = None
@@ -1424,7 +1429,7 @@ class GroverAsync:
                 )
             async with self._session_for(mount) as sess:
                 result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
-            result.file_path = self._prefix_path(result.file_path, mount.path)
+            result.path = self._prefix_path(result.path, mount.path) or result.path
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
@@ -1447,18 +1452,8 @@ class GroverAsync:
             async with self._session_for(mount) as sess:
                 result = await cap.list_trash(session=sess, user_id=user_id)
             if result.success:
-                mount_entries: dict[str, list[Any]] = {}
-                for entry in result.entries:
-                    fp = self._prefix_path(entry.path, mount.path) or entry.path
-                    ev = TrashEvidence(
-                        strategy="trash",
-                        path=fp,
-                        deleted_at=getattr(entry, "deleted_at", None),
-                        original_path=fp,
-                    )
-                    mount_entries.setdefault(fp, []).append(ev)
-                mount_result = TrashResult(success=True, message="", _entries=mount_entries)
-                combined = combined | mount_result
+                rebased = result.rebase(mount.path)
+                combined = combined | rebased
         combined.message = f"Found {len(combined)} item(s) in trash"
         return combined
 
@@ -1476,7 +1471,7 @@ class GroverAsync:
                 raise CapabilityNotSupportedError(f"Mount at {mount.path} does not support trash")
             async with self._session_for(mount) as sess:
                 result = await cap.restore_from_trash(rel_path, session=sess, user_id=user_id)
-            result.file_path = self._prefix_path(result.file_path, mount.path)
+            result.path = self._prefix_path(result.path, mount.path) or result.path
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
@@ -1554,14 +1549,10 @@ class GroverAsync:
         return ShareResult(
             success=True,
             message=f"Shared {path} with {grantee_id} ({permission})",
-            share=ShareInfo(
-                path=path,
-                grantee_id=share_info.grantee_id,
-                permission=share_info.permission,
-                granted_by=share_info.granted_by,
-                created_at=share_info.created_at,
-                expires_at=share_info.expires_at,
-            ),
+            path=path,
+            grantee_id=share_info.grantee_id,
+            permission=share_info.permission,
+            granted_by=share_info.granted_by,
         )
 
     async def unshare(
@@ -1605,74 +1596,51 @@ class GroverAsync:
         path: str,
         *,
         user_id: str,
-    ) -> ListSharesResult:
+    ) -> ShareSearchResult:
         """List all shares on a given path."""
 
         path = normalize_path(path)
         try:
             mount, rel_path = self._registry.resolve(path)
         except MountNotFoundError as e:
-            return ListSharesResult(success=False, message=str(e))
+            return ShareSearchResult(success=False, message=str(e))
 
         cap = self._get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
-            return ListSharesResult(
+            return ShareSearchResult(
                 success=False,
                 message="Backend does not support sharing",
             )
 
         async with self._session_for(mount) as sess:
             assert sess is not None
-            shares = await cap.list_shares_on_path(rel_path, user_id=user_id, session=sess)
+            result = await cap.list_shares_on_path(rel_path, user_id=user_id, session=sess)
 
-        return ListSharesResult(
-            success=True,
-            message=f"Found {len(shares)} share(s)",
-            shares=[
-                ShareInfo(
-                    path=path,
-                    grantee_id=s.grantee_id,
-                    permission=s.permission,
-                    granted_by=s.granted_by,
-                    created_at=s.created_at,
-                    expires_at=s.expires_at,
-                )
-                for s in shares
-            ],
-        )
+        # Rebase paths from backend-relative to absolute mount paths
+        return result.rebase(mount.path)
 
     async def list_shared_with_me(
         self,
         *,
         user_id: str,
-    ) -> ListSharesResult:
+    ) -> ShareSearchResult:
         """List all files shared with the current user across all mounts."""
-        all_shares: list[ShareInfo] = []
+        all_candidates: list[FileSearchCandidate] = []
         for mount in self._registry.list_mounts():
             cap = self._get_capability(mount.filesystem, SupportsReBAC)
             if cap is None:
                 continue
             async with self._session_for(mount) as sess:
                 assert sess is not None
-                shares = await cap.list_shared_with_me(user_id=user_id, session=sess)
-            for s in shares:
-                # Backend returns paths like /@shared/alice/a.md — prepend mount
-                full_path = mount.path + s.path if s.path != "/" else mount.path
-                all_shares.append(
-                    ShareInfo(
-                        path=full_path,
-                        grantee_id=s.grantee_id,
-                        permission=s.permission,
-                        granted_by=s.granted_by,
-                        created_at=s.created_at,
-                        expires_at=s.expires_at,
-                    )
-                )
+                result = await cap.list_shared_with_me(user_id=user_id, session=sess)
+            # Backend returns paths like /@shared/alice/a.md — rebase to mount
+            rebased = result.rebase(mount.path)
+            all_candidates.extend(rebased.candidates)
 
-        return ListSharesResult(
+        return ShareSearchResult(
             success=True,
-            message=f"Found {len(all_shares)} share(s)",
-            shares=all_shares,
+            message=f"Found {len(all_candidates)} share(s)",
+            candidates=all_candidates,
         )
 
     # ------------------------------------------------------------------
@@ -1755,19 +1723,23 @@ class GroverAsync:
             msg = "Graph backend does not support centrality algorithms"
             raise CapabilityNotSupportedError(msg)
         scores = graph.pagerank(personalization=personalization)
-        entries: dict[str, list[Any]] = {}
-        for node_path in scores:
-            entries[node_path] = [
-                GraphEvidence(
-                    strategy="pagerank",
-                    path=node_path,
-                    algorithm="pagerank",
-                )
-            ]
+        candidates = [
+            FileSearchCandidate(
+                path=node_path,
+                evidence=[
+                    GraphEvidence(
+                        strategy="pagerank",
+                        path=node_path,
+                        algorithm="pagerank",
+                    )
+                ],
+            )
+            for node_path in scores
+        ]
         return GraphResult(
             success=True,
-            message=f"PageRank computed for {len(entries)} node(s)",
-            _entries=entries,
+            message=f"PageRank computed for {len(candidates)} node(s)",
+            candidates=candidates,
         )
 
     def ancestors(self, path: str) -> GraphResult:
@@ -1904,23 +1876,23 @@ class GroverAsync:
         # Build VectorSearchResult with VectorEvidence
         entries: dict[str, list[Any]] = {}
         for r, mount_path in tagged:
-            file_path = r.parent_path or r.ref.path
-            if mount_path and not file_path.startswith(mount_path):
-                file_path = mount_path + file_path
+            fp = r.parent_path or r.ref.path
+            if mount_path and not fp.startswith(mount_path):
+                fp = mount_path + fp
             snippet = r.content[:200]
             if len(r.content) > 200:
                 snippet += "..."
             ev = VectorEvidence(
                 strategy="vector_search",
-                path=file_path,
+                path=fp,
                 snippet=snippet,
             )
-            entries.setdefault(file_path, []).append(ev)
+            entries.setdefault(fp, []).append(ev)
 
         return VectorSearchResult(
             success=True,
             message=f"Found matches in {len(entries)} file(s)",
-            _entries=entries,
+            candidates=FileSearchResult._dict_to_candidates(entries),
         )
 
     async def lexical_search(
@@ -1952,7 +1924,9 @@ class GroverAsync:
                         )
                         mount_entries.setdefault(fp, []).append(ev)
                     mount_result = LexicalSearchResult(
-                        success=True, message="", _entries=mount_entries
+                        success=True,
+                        message="",
+                        candidates=FileSearchResult._dict_to_candidates(mount_entries),
                     )
                     combined = combined | mount_result
                 combined.message = f"Found matches in {len(combined)} file(s)"
@@ -1978,7 +1952,7 @@ class GroverAsync:
                 return LexicalSearchResult(
                     success=True,
                     message=f"Found matches in {len(entries)} file(s)",
-                    _entries=entries,
+                    candidates=FileSearchResult._dict_to_candidates(entries),
                 )
         except Exception as e:
             return LexicalSearchResult(
@@ -2086,12 +2060,10 @@ class GroverAsync:
         if not result.success:
             return
 
-        from grover.search.results import ListDirEvidence
-
         for entry_path in result.paths:
             if "/.grover/" in entry_path:
                 continue
-            evs = result._entries.get(entry_path, [])
+            evs = result.explain(entry_path)
             is_dir = any(isinstance(e, ListDirEvidence) and e.is_directory for e in evs)
             if is_dir:
                 await self._walk_and_index(entry_path, stats)

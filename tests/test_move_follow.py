@@ -121,14 +121,14 @@ class TestMoveFileFollow:
 
             versions_before = await dfs.list_versions("/versioned.py", session=sess)
             assert versions_before.success
-            assert len(versions_before.versions) == 2
+            assert len(versions_before) == 2
 
             result = await dfs.move("/versioned.py", "/renamed.py", session=sess, follow=True)
             assert result.success is True
 
             versions_after = await dfs.list_versions("/renamed.py", session=sess)
             assert versions_after.success
-            assert len(versions_after.versions) == 2
+            assert len(versions_after) == 2
 
     @pytest.mark.asyncio
     async def test_move_no_follow_no_version_history(
@@ -145,7 +145,7 @@ class TestMoveFileFollow:
             versions = await dfs.list_versions("/new.py", session=sess)
             assert versions.success
             # New file starts at version 1
-            assert len(versions.versions) == 1
+            assert len(versions) == 1
 
     @pytest.mark.asyncio
     async def test_move_follow_shares_updated(

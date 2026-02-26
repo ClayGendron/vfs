@@ -10,7 +10,7 @@ import pytest
 
 from grover.search.filters import eq
 from grover.search.stores.local import LocalVectorStore
-from grover.search.types import DeleteResult, UpsertResult, VectorEntry, VectorSearchResult
+from grover.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
 
 # ------------------------------------------------------------------
 # Helpers
@@ -95,7 +95,7 @@ class TestSearch:
         await store.upsert(entries)
         results = await store.search(_hash_vector("alpha"), k=2)
         assert len(results) >= 1
-        assert all(isinstance(r, VectorSearchResult) for r in results)
+        assert all(isinstance(r, VectorHit) for r in results)
 
     @pytest.mark.asyncio
     async def test_search_scores_sorted(self, store: LocalVectorStore):

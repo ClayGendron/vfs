@@ -12,7 +12,7 @@ from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph import RustworkxGraph
 from grover.search._engine import SearchEngine
-from grover.search.results import GraphResult
+from grover.types import GraphResult
 
 if TYPE_CHECKING:
     from pathlib import Path

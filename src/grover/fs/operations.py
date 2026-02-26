@@ -13,16 +13,16 @@ from typing import TYPE_CHECKING, Any
 
 from sqlmodel import select
 
-from grover.search.results import ListDirEvidence, ListDirResult
-
-from .metadata import MetadataService, compute_content_hash
-from .types import (
+from grover.types.operations import (
     DeleteResult,
     EditResult,
     MoveResult,
     ReadResult,
     WriteResult,
 )
+from grover.types.search import FileSearchCandidate, ListDirEvidence, ListDirResult
+
+from .metadata import MetadataService, compute_content_hash
 from .utils import (
     guess_mime_type,
     is_text_file,
@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.files import FileBase
-    from grover.results import Evidence
 
     from .directories import DirectoryService
     from .sharing import SharingService
@@ -264,7 +263,7 @@ async def write_file(
     return WriteResult(
         success=True,
         message=f"{'Created' if created else 'Updated'}: {path} (v{version})",
-        file_path=path,
+        path=path,
         created=created,
         version=version,
     )
@@ -311,7 +310,7 @@ async def edit_file(
         return EditResult(
             success=False,
             message=result.error or "Edit failed",
-            file_path=path,
+            path=path,
         )
 
     new_content = result.content
@@ -334,7 +333,7 @@ async def edit_file(
     return EditResult(
         success=True,
         message=f"Edit applied to {path} (v{file.current_version})",
-        file_path=path,
+        path=path,
         version=file.current_version,
     )
 
@@ -400,7 +399,7 @@ async def delete_file(
     return DeleteResult(
         success=True,
         message=f"{'Permanently deleted' if permanent else 'Moved to trash'}: {path}",
-        file_path=path,
+        path=path,
         permanent=permanent,
     )
 
@@ -765,20 +764,25 @@ async def list_dir_db(
             )
         )
 
-    entries: dict[str, list[Evidence]] = {}
+    candidates: list[FileSearchCandidate] = []
     for f in result.scalars().all():
         info = MetadataService.file_to_info(f)
-        entries[info.path] = [
-            ListDirEvidence(
-                strategy="list_dir",
+        candidates.append(
+            FileSearchCandidate(
                 path=info.path,
-                is_directory=info.is_directory,
-                size_bytes=info.size_bytes,
+                evidence=[
+                    ListDirEvidence(
+                        strategy="list_dir",
+                        path=info.path,
+                        is_directory=info.is_directory,
+                        size_bytes=info.size_bytes,
+                    )
+                ],
             )
-        ]
+        )
 
     return ListDirResult(
         success=True,
-        message=f"Listed {len(entries)} items in {path}",
-        _entries=entries,
+        message=f"Listed {len(candidates)} items in {path}",
+        candidates=candidates,
     )

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from grover.results import Evidence, FileSearchResult
-from grover.search.results import (
+from grover.types import (
+    Evidence,
+    FileSearchCandidate,
+    FileSearchResult,
     GlobEvidence,
     GlobResult,
     GrepEvidence,
@@ -22,13 +24,17 @@ from grover.search.results import (
 
 def _glob(paths: dict[str, bool], *, pattern: str = "*.py") -> GlobResult:
     """Build a GlobResult from {path: is_directory} mapping."""
-    entries: dict[str, list[Evidence]] = {}
-    for p, is_d in paths.items():
-        entries[p] = [GlobEvidence(strategy="glob", path=p, is_directory=is_d, size_bytes=100)]
+    candidates = [
+        FileSearchCandidate(
+            path=p,
+            evidence=[GlobEvidence(strategy="glob", path=p, is_directory=is_d, size_bytes=100)],
+        )
+        for p, is_d in paths.items()
+    ]
     return GlobResult(
         success=True,
         message=f"Found {len(paths)} match(es)",
-        _entries=entries,
+        candidates=candidates,
         pattern=pattern,
     )
 
@@ -39,14 +45,19 @@ def _grep(
     pattern: str = "login",
 ) -> GrepResult:
     """Build a GrepResult from {path: [(line_no, content), ...]} mapping."""
-    entries: dict[str, list[Evidence]] = {}
+    candidates = []
     for p, lms in matches.items():
         line_matches = tuple(LineMatch(line_number=ln, line_content=lc) for ln, lc in lms)
-        entries[p] = [GrepEvidence(strategy="grep", path=p, line_matches=line_matches)]
+        candidates.append(
+            FileSearchCandidate(
+                path=p,
+                evidence=[GrepEvidence(strategy="grep", path=p, line_matches=line_matches)],
+            )
+        )
     return GrepResult(
         success=True,
         message=f"Found matches in {len(matches)} file(s)",
-        _entries=entries,
+        candidates=candidates,
         pattern=pattern,
         files_searched=10,
         files_matched=len(matches),
@@ -55,25 +66,33 @@ def _grep(
 
 def _tree(paths: dict[str, tuple[int, bool]]) -> TreeResult:
     """Build a TreeResult from {path: (depth, is_directory)} mapping."""
-    entries: dict[str, list[Evidence]] = {}
-    for p, (depth, is_d) in paths.items():
-        entries[p] = [TreeEvidence(strategy="tree", path=p, depth=depth, is_directory=is_d)]
+    candidates = [
+        FileSearchCandidate(
+            path=p,
+            evidence=[TreeEvidence(strategy="tree", path=p, depth=depth, is_directory=is_d)],
+        )
+        for p, (depth, is_d) in paths.items()
+    ]
     return TreeResult(
         success=True,
         message=f"Found {len(paths)} entries",
-        _entries=entries,
+        candidates=candidates,
     )
 
 
 def _list_dir(paths: dict[str, bool]) -> ListDirResult:
     """Build a ListDirResult from {path: is_directory} mapping."""
-    entries: dict[str, list[Evidence]] = {}
-    for p, is_d in paths.items():
-        entries[p] = [ListDirEvidence(strategy="list_dir", path=p, is_directory=is_d)]
+    candidates = [
+        FileSearchCandidate(
+            path=p,
+            evidence=[ListDirEvidence(strategy="list_dir", path=p, is_directory=is_d)],
+        )
+        for p, is_d in paths.items()
+    ]
     return ListDirResult(
         success=True,
         message=f"Found {len(paths)} entries",
-        _entries=entries,
+        candidates=candidates,
     )
 
 
@@ -168,8 +187,13 @@ class TestRebase:
 
     def test_rebase_root_path(self) -> None:
         """Root path '/' gets replaced with just the prefix."""
-        entries: dict[str, list[Evidence]] = {"/": [Evidence(strategy="test", path="/")]}
-        result = FileSearchResult(success=True, message="test", _entries=entries)
+        result = FileSearchResult(
+            success=True,
+            message="test",
+            candidates=[
+                FileSearchCandidate(path="/", evidence=[Evidence(strategy="test", path="/")])
+            ],
+        )
         rebased = result.rebase("/mount")
 
         assert "/mount" in rebased

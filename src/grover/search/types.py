@@ -63,8 +63,12 @@ class SparseVector:
 
 
 @dataclass(frozen=True, slots=True)
-class VectorSearchResult:
+class VectorHit:
     """A single result from a VectorStore search.
+
+    Renamed from ``VectorSearchResult`` to avoid collision with the
+    user-facing :class:`~grover.types.search.VectorSearchResult`
+    (a ``FileSearchResult`` subclass).
 
     Attributes:
         id: Identifier of the matched entry.

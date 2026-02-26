@@ -152,7 +152,7 @@ class TestCustomModelFilesystem:
             assert read.success is False
 
             trash = await fs.list_trash(session=session)
-            assert len(trash.entries) == 1
+            assert len(trash) == 1
         await engine.dispose()
 
     async def test_versioning(self):
@@ -163,7 +163,7 @@ class TestCustomModelFilesystem:
             await fs.edit("/page.md", "v2", "v3", session=session)
 
             ver_result = await fs.list_versions("/page.md", session=session)
-            assert len(ver_result.versions) >= 1
+            assert len(ver_result) >= 1
 
             vc_result = await fs.get_version_content("/page.md", 1, session=session)
             assert vc_result.success

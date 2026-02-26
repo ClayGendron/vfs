@@ -138,7 +138,7 @@ class TestVersioning:
                 await fs.edit("/f.py", old, new, session=session)
 
             result = await fs.list_versions("/f.py", session=session)
-            assert len(result.versions) > 0
+            assert len(result) > 0
 
             vc1 = await fs.get_version_content("/f.py", 1, session=session)
             assert vc1.success
@@ -165,15 +165,14 @@ class TestListVersions:
             await fs.edit("/f.py", "v1", "v2", session=session)
 
             result = await fs.list_versions("/f.py", session=session)
-            assert len(result.versions) >= 1
-            assert result.versions[0].version >= result.versions[-1].version
+            assert len(result) >= 1
         await engine.dispose()
 
     async def test_list_versions_nonexistent(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             result = await fs.list_versions("/nope.py", session=session)
-            assert result.versions == []
+            assert len(result) == 0
         await engine.dispose()
 
 
@@ -243,7 +242,7 @@ class TestDelete:
             await fs.write("/f.py", "v1\n", session=session)
             await fs.write("/f.py", "v2\n", session=session)
             ver_result = await fs.list_versions("/f.py", session=session)
-            assert len(ver_result.versions) == 2
+            assert len(ver_result) == 2
 
             await fs.delete("/f.py", permanent=True, session=session)
             await session.commit()
@@ -276,7 +275,7 @@ class TestTrash:
 
             trash = await fs.list_trash(session=session)
             assert trash.success is True
-            assert len(trash.entries) == 1
+            assert len(trash) == 1
         await engine.dispose()
 
     async def test_restore_from_trash(self):
@@ -313,7 +312,7 @@ class TestTrash:
             assert result.total_deleted == 2
 
             trash = await fs.list_trash(session=session)
-            assert len(trash.entries) == 0
+            assert len(trash) == 0
         await engine.dispose()
 
     async def test_empty_trash_cleans_versions(self):
@@ -349,7 +348,7 @@ class TestTrash:
             assert await fs.exists("/mydir/b.py", session=session) is False
 
             trash = await fs.list_trash(session=session)
-            paths = [e.path for e in trash.entries]
+            paths = trash.deleted_paths()
             assert "/mydir" in paths
             assert "/mydir/a.py" in paths
             assert "/mydir/b.py" in paths
@@ -883,7 +882,7 @@ class TestAtomicMoveOverwrite:
             await fs.move("/src.py", "/dest.py", session=session)
             # dest should have version history
             ver_result = await fs.list_versions("/dest.py", session=session)
-            assert len(ver_result.versions) >= 2
+            assert len(ver_result) >= 2
         await engine.dispose()
 
 

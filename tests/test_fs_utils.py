@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from grover.fs.types import ReadResult
 from grover.fs.utils import (
     block_anchor_replacer,
     format_read_output,
@@ -27,6 +26,7 @@ from grover.fs.utils import (
     to_trash_path,
     validate_path,
 )
+from grover.types import ReadResult
 
 # ---------------------------------------------------------------------------
 # Path Utilities
@@ -386,7 +386,7 @@ class TestFormatReadOutput:
             success=True,
             message="ok",
             content="line1\nline2\nline3",
-            offset=10,
+            line_offset=10,
         )
         output = format_read_output(result)
         # Lines should start at offset+1 = 11
@@ -399,7 +399,7 @@ class TestFormatReadOutput:
             success=True,
             message="ok",
             content="line1\nline2",
-            offset=0,
+            line_offset=0,
             truncated=True,
         )
         output = format_read_output(result)
@@ -411,8 +411,8 @@ class TestFormatReadOutput:
         output = format_read_output(result)
         assert "empty file" in output.lower()
 
-    def test_format_read_output_none_content(self):
-        result = ReadResult(success=True, message="ok", content=None)
+    def test_format_read_output_empty_content(self):
+        result = ReadResult(success=True, message="ok", content="")
         output = format_read_output(result)
         assert "empty file" in output.lower()
 

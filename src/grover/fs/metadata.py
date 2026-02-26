@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from .types import FileInfo, ReadResult
+from grover.types.operations import FileInfoResult, ReadResult
+
 from .utils import normalize_path, validate_path
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ class MetadataService:
         file = await self.get_file(session, path)
         return file is not None
 
-    async def get_info(self, session: AsyncSession, path: str) -> FileInfo | None:
+    async def get_info(self, session: AsyncSession, path: str) -> FileInfoResult | None:
         """Get metadata for a file or directory."""
         valid, _ = validate_path(path)
         if not valid:
@@ -77,14 +78,14 @@ class MetadataService:
         return self.file_to_info(file)
 
     @staticmethod
-    def file_to_info(f: FileBase) -> FileInfo:
-        """Convert a file record to FileInfo."""
-        return FileInfo(
+    def file_to_info(f: FileBase) -> FileInfoResult:
+        """Convert a file record to FileInfoResult."""
+        return FileInfoResult(
             path=f.path,
             name=f.name,
             is_directory=f.is_directory,
-            size_bytes=f.size_bytes,
-            mime_type=f.mime_type,
+            size_bytes=f.size_bytes or 0,
+            mime_type=f.mime_type or "text/plain",
             version=f.current_version,
             created_at=f.created_at,
             updated_at=f.updated_at,
@@ -106,11 +107,11 @@ class MetadataService:
                 success=True,
                 message="File is empty.",
                 content="",
-                file_path=path,
+                path=path,
                 total_lines=0,
                 lines_read=0,
                 truncated=False,
-                offset=offset,
+                line_offset=offset,
             )
 
         end_line = min(len(lines), offset + limit)
@@ -123,9 +124,9 @@ class MetadataService:
             success=True,
             message=f"Read {len(output_lines)} lines from {path}",
             content="\n".join(output_lines),
-            file_path=path,
+            path=path,
             total_lines=total_lines,
             lines_read=len(output_lines),
             truncated=has_more,
-            offset=offset,
+            line_offset=offset,
         )

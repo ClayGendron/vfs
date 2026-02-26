@@ -169,17 +169,17 @@ class GroverStore(BaseStore):
         namespaces: set[tuple[str, ...]] = set()
         prefix_len = len(self.prefix) + 1  # +1 for trailing /
 
-        from grover.search.results import TreeEvidence
+        from grover.types import TreeEvidence
 
-        for path, evs in tree_result._entries.items():
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in evs)
+        for c in tree_result.candidates:
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
             if is_dir:
                 continue
-            if not path.startswith(self.prefix + "/"):
+            if not c.path.startswith(self.prefix + "/"):
                 continue
 
             # Extract relative path and strip the key filename
-            relative = path[prefix_len:]
+            relative = c.path[prefix_len:]
             parts = relative.split("/")
             if len(parts) < 2:
                 continue
@@ -253,21 +253,21 @@ class GroverStore(BaseStore):
         if not tree_result.success:
             return []
 
-        from grover.search.results import TreeEvidence
+        from grover.types import TreeEvidence
 
         items: list[SearchItem] = []
-        for entry_path, evs in tree_result._entries.items():
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in evs)
+        for c in tree_result.candidates:
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
             if is_dir:
                 continue
-            if not entry_path.endswith(".json"):
+            if not c.path.endswith(".json"):
                 continue
 
-            ns, key = self._path_to_namespace_key(entry_path)
+            ns, key = self._path_to_namespace_key(c.path)
             if ns is None:
                 continue
 
-            read_result = self.grover.read(entry_path)
+            read_result = self.grover.read(c.path)
             if not read_result.success or read_result.content is None:
                 continue
 

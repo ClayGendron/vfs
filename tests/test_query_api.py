@@ -10,12 +10,7 @@ import pytest
 
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
-from grover.search.results import (
-    GlobResult,
-    GrepResult,
-    LineMatch,
-    VectorSearchResult,
-)
+from grover.types import GlobResult, GrepResult, LineMatch, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -5,8 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from grover.ref import Ref
-from grover.results import Evidence, FileOperationResult, FileSearchResult
-from grover.search.results import (
+from grover.types import (
+    DeleteResult,
+    EditResult,
+    Evidence,
+    FileOperationResult,
+    FileSearchCandidate,
+    FileSearchResult,
+    GetVersionContentResult,
     GlobEvidence,
     GlobResult,
     GraphEvidence,
@@ -20,12 +26,17 @@ from grover.search.results import (
     LineMatch,
     ListDirEvidence,
     ListDirResult,
+    MkdirResult,
+    MoveResult,
+    ReadResult,
+    RestoreResult,
     TrashEvidence,
     TrashResult,
     TreeEvidence,
     TreeResult,
     VectorEvidence,
     VectorSearchResult,
+    WriteResult,
 )
 
 # =====================================================================
@@ -44,20 +55,6 @@ class TestFileOperationResult:
         assert r.success is False
 
     def test_existing_types_inherit(self):
-        from grover.fs.types import (
-            DeleteResult,
-            EditResult,
-            GetVersionContentResult,
-            ListSharesResult,
-            ListVersionsResult,
-            MkdirResult,
-            MoveResult,
-            ReadResult,
-            RestoreResult,
-            ShareResult,
-            WriteResult,
-        )
-
         for cls in [
             ReadResult,
             WriteResult,
@@ -66,38 +63,25 @@ class TestFileOperationResult:
             MkdirResult,
             MoveResult,
             RestoreResult,
-            ListVersionsResult,
             GetVersionContentResult,
-            ShareResult,
-            ListSharesResult,
         ]:
             instance = cls(success=True, message="ok")
             assert isinstance(instance, FileOperationResult), f"{cls.__name__} not subclass"
 
     def test_existing_result_fields_preserved(self):
-        from grover.fs.types import ReadResult
-
         r = ReadResult(
             success=True,
             message="ok",
             content="hello",
-            file_path="/a.txt",
+            path="/a.txt",
             total_lines=1,
             lines_read=1,
             truncated=False,
-            offset=0,
+            line_offset=0,
         )
         assert r.content == "hello"
-        assert r.file_path == "/a.txt"
+        assert r.path == "/a.txt"
         assert r.total_lines == 1
-
-    def test_list_result_inherits(self):
-        """ListResult (internal VFS) also inherits FileOperationResult."""
-        from grover.fs.types import ListResult
-
-        r = ListResult(success=True, message="ok")
-        assert isinstance(r, FileOperationResult)
-        assert r.success is True
 
 
 # =====================================================================
@@ -191,31 +175,37 @@ class TestFileSearchResult:
         assert list(r) == []
 
     def test_with_entries(self):
-        entries = {
-            "/a.py": [Evidence(strategy="glob", path="/a.py")],
-            "/b.py": [Evidence(strategy="glob", path="/b.py")],
-        }
-        r = FileSearchResult(success=True, message="2 paths", _entries=entries)
+        candidates = [
+            FileSearchCandidate(path="/a.py", evidence=[Evidence(strategy="glob", path="/a.py")]),
+            FileSearchCandidate(path="/b.py", evidence=[Evidence(strategy="glob", path="/b.py")]),
+        ]
+        r = FileSearchResult(success=True, message="2 paths", candidates=candidates)
         assert len(r) == 2
         assert r  # non-empty is truthy
         assert "/a.py" in r
         assert "/c.py" not in r
 
     def test_paths_property(self):
-        entries = {"/x.py": [], "/y.py": []}
-        r = FileSearchResult(success=True, message="ok", _entries=entries)
+        candidates = [
+            FileSearchCandidate(path="/x.py", evidence=[]),
+            FileSearchCandidate(path="/y.py", evidence=[]),
+        ]
+        r = FileSearchResult(success=True, message="ok", candidates=candidates)
         assert set(r.paths) == {"/x.py", "/y.py"}
 
     def test_iteration(self):
-        entries = {"/a.py": [], "/b.py": []}
-        r = FileSearchResult(success=True, message="ok", _entries=entries)
+        candidates = [
+            FileSearchCandidate(path="/a.py", evidence=[]),
+            FileSearchCandidate(path="/b.py", evidence=[]),
+        ]
+        r = FileSearchResult(success=True, message="ok", candidates=candidates)
         assert set(r) == {"/a.py", "/b.py"}
 
     def test_explain(self):
         e1 = Evidence(strategy="glob", path="/a.py")
         e2 = Evidence(strategy="grep", path="/a.py")
-        entries = {"/a.py": [e1, e2]}
-        r = FileSearchResult(success=True, message="ok", _entries=entries)
+        candidates = [FileSearchCandidate(path="/a.py", evidence=[e1, e2])]
+        r = FileSearchResult(success=True, message="ok", candidates=candidates)
         chain = r.explain("/a.py")
         assert len(chain) == 2
         assert chain[0].strategy == "glob"
@@ -226,8 +216,11 @@ class TestFileSearchResult:
         assert r.explain("/missing.py") == []
 
     def test_to_refs(self):
-        entries = {"/a.py": [], "/b.py": []}
-        r = FileSearchResult(success=True, message="ok", _entries=entries)
+        candidates = [
+            FileSearchCandidate(path="/a.py", evidence=[]),
+            FileSearchCandidate(path="/b.py", evidence=[]),
+        ]
+        r = FileSearchResult(success=True, message="ok", candidates=candidates)
         refs = r.to_refs()
         assert len(refs) == 2
         assert all(isinstance(ref, Ref) for ref in refs)
@@ -247,8 +240,8 @@ class TestFileSearchResult:
         assert "/a.py" in r
 
     def test_failed_result_is_falsy(self):
-        entries = {"/a.py": []}
-        r = FileSearchResult(success=False, message="fail", _entries=entries)
+        candidates = [FileSearchCandidate(path="/a.py", evidence=[])]
+        r = FileSearchResult(success=False, message="fail", candidates=candidates)
         assert not r  # failed is falsy even with entries
 
 
@@ -260,7 +253,9 @@ class TestFileSearchResult:
 class TestSetAlgebra:
     def _make(self, paths: list[str], strategy: str = "test") -> FileSearchResult:
         entries = {p: [Evidence(strategy=strategy, path=p)] for p in paths}
-        return FileSearchResult(success=True, message="ok", _entries=entries)
+        return FileSearchResult(
+            success=True, message="ok", candidates=FileSearchResult._dict_to_candidates(entries)
+        )
 
     def test_union(self):
         a = self._make(["/a.py", "/b.py"])
@@ -369,12 +364,20 @@ class TestSubclassPreservation:
         a = GlobResult(
             success=True,
             message="a",
-            _entries={"/a.py": [GlobEvidence(strategy="glob", path="/a.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py", evidence=[GlobEvidence(strategy="glob", path="/a.py")]
+                )
+            ],
         )
         b = GlobResult(
             success=True,
             message="b",
-            _entries={"/b.py": [GlobEvidence(strategy="glob", path="/b.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/b.py", evidence=[GlobEvidence(strategy="glob", path="/b.py")]
+                )
+            ],
         )
         result = a | b
         assert isinstance(result, GlobResult)
@@ -383,12 +386,20 @@ class TestSubclassPreservation:
         a = GrepResult(
             success=True,
             message="a",
-            _entries={"/a.py": [GrepEvidence(strategy="grep", path="/a.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py", evidence=[GrepEvidence(strategy="grep", path="/a.py")]
+                )
+            ],
         )
         b = GrepResult(
             success=True,
             message="b",
-            _entries={"/a.py": [GrepEvidence(strategy="grep", path="/a.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py", evidence=[GrepEvidence(strategy="grep", path="/a.py")]
+                )
+            ],
         )
         result = a & b
         assert isinstance(result, GrepResult)
@@ -397,12 +408,20 @@ class TestSubclassPreservation:
         a = GlobResult(
             success=True,
             message="a",
-            _entries={"/a.py": [GlobEvidence(strategy="glob", path="/a.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py", evidence=[GlobEvidence(strategy="glob", path="/a.py")]
+                )
+            ],
         )
         b = GrepResult(
             success=True,
             message="b",
-            _entries={"/a.py": [GrepEvidence(strategy="grep", path="/a.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py", evidence=[GrepEvidence(strategy="grep", path="/a.py")]
+                )
+            ],
         )
         result = a & b
         assert type(result) is FileSearchResult
@@ -411,12 +430,20 @@ class TestSubclassPreservation:
         a = GlobResult(
             success=True,
             message="a",
-            _entries={"/a.py": [GlobEvidence(strategy="glob", path="/a.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py", evidence=[GlobEvidence(strategy="glob", path="/a.py")]
+                )
+            ],
         )
         b = VectorSearchResult(
             success=True,
             message="b",
-            _entries={"/a.py": [VectorEvidence(strategy="vector", path="/a.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py", evidence=[VectorEvidence(strategy="vector", path="/a.py")]
+                )
+            ],
         )
         result = a >> b
         assert type(result) is FileSearchResult
@@ -426,7 +453,11 @@ class TestSubclassPreservation:
         b = GlobResult(
             success=True,
             message="b",
-            _entries={"/a.py": [GlobEvidence(strategy="glob", path="/a.py")]},
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py", evidence=[GlobEvidence(strategy="glob", path="/a.py")]
+                )
+            ],
         )
         result = a | b
         assert type(result) is FileSearchResult
@@ -435,18 +466,24 @@ class TestSubclassPreservation:
         a = GraphResult(
             success=True,
             message="a",
-            _entries={
-                "/a.py": [
-                    GraphEvidence(strategy="dependents", path="/a.py", algorithm="dependents")
-                ]
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py",
+                    evidence=[
+                        GraphEvidence(strategy="dependents", path="/a.py", algorithm="dependents")
+                    ],
+                )
+            ],
         )
         b = GraphResult(
             success=True,
             message="b",
-            _entries={
-                "/b.py": [GraphEvidence(strategy="impacts", path="/b.py", algorithm="impacts")]
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/b.py",
+                    evidence=[GraphEvidence(strategy="impacts", path="/b.py", algorithm="impacts")],
+                )
+            ],
         )
         result = a | b
         assert isinstance(result, GraphResult)
@@ -462,12 +499,20 @@ class TestGlobResultAccessors:
         r = GlobResult(
             success=True,
             message="ok",
-            _entries={
-                "/src": [GlobEvidence(strategy="glob", path="/src", is_directory=True)],
-                "/a.py": [
-                    GlobEvidence(strategy="glob", path="/a.py", is_directory=False, size_bytes=100)
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/src",
+                    evidence=[GlobEvidence(strategy="glob", path="/src", is_directory=True)],
+                ),
+                FileSearchCandidate(
+                    path="/a.py",
+                    evidence=[
+                        GlobEvidence(
+                            strategy="glob", path="/a.py", is_directory=False, size_bytes=100
+                        )
+                    ],
+                ),
+            ],
         )
         assert r.directories() == ("/src",)
         assert r.files() == ("/a.py",)
@@ -476,16 +521,19 @@ class TestGlobResultAccessors:
         r = GlobResult(
             success=True,
             message="ok",
-            _entries={
-                "/a.py": [
-                    GlobEvidence(
-                        strategy="glob",
-                        path="/a.py",
-                        size_bytes=200,
-                        mime_type="text/x-python",
-                    )
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py",
+                    evidence=[
+                        GlobEvidence(
+                            strategy="glob",
+                            path="/a.py",
+                            size_bytes=200,
+                            mime_type="text/x-python",
+                        )
+                    ],
+                ),
+            ],
         )
         info = r.file_info("/a.py")
         assert info is not None
@@ -504,9 +552,12 @@ class TestGrepResultAccessors:
         r = GrepResult(
             success=True,
             message="ok",
-            _entries={
-                "/a.py": [GrepEvidence(strategy="grep", path="/a.py", line_matches=(lm1, lm2))],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py",
+                    evidence=[GrepEvidence(strategy="grep", path="/a.py", line_matches=(lm1, lm2))],
+                ),
+            ],
         )
         matches = r.line_matches("/a.py")
         assert len(matches) == 2
@@ -522,10 +573,16 @@ class TestGrepResultAccessors:
         r = GrepResult(
             success=True,
             message="ok",
-            _entries={
-                "/a.py": [GrepEvidence(strategy="grep", path="/a.py", line_matches=(lm1,))],
-                "/b.py": [GrepEvidence(strategy="grep", path="/b.py", line_matches=(lm2,))],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/a.py",
+                    evidence=[GrepEvidence(strategy="grep", path="/a.py", line_matches=(lm1,))],
+                ),
+                FileSearchCandidate(
+                    path="/b.py",
+                    evidence=[GrepEvidence(strategy="grep", path="/b.py", line_matches=(lm2,))],
+                ),
+            ],
         )
         all_matches = r.all_matches()
         assert len(all_matches) == 2
@@ -538,11 +595,26 @@ class TestTreeResultAccessors:
         r = TreeResult(
             success=True,
             message="ok",
-            _entries={
-                "/src": [TreeEvidence(strategy="tree", path="/src", depth=1, is_directory=True)],
-                "/a.py": [TreeEvidence(strategy="tree", path="/a.py", depth=1, is_directory=False)],
-                "/b.py": [TreeEvidence(strategy="tree", path="/b.py", depth=1, is_directory=False)],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/src",
+                    evidence=[
+                        TreeEvidence(strategy="tree", path="/src", depth=1, is_directory=True)
+                    ],
+                ),
+                FileSearchCandidate(
+                    path="/a.py",
+                    evidence=[
+                        TreeEvidence(strategy="tree", path="/a.py", depth=1, is_directory=False)
+                    ],
+                ),
+                FileSearchCandidate(
+                    path="/b.py",
+                    evidence=[
+                        TreeEvidence(strategy="tree", path="/b.py", depth=1, is_directory=False)
+                    ],
+                ),
+            ],
         )
         assert r.total_files == 2
         assert r.total_dirs == 1
@@ -553,14 +625,20 @@ class TestListDirResultAccessors:
         r = ListDirResult(
             success=True,
             message="ok",
-            _entries={
-                "/src": [ListDirEvidence(strategy="list_dir", path="/src", is_directory=True)],
-                "/a.py": [
-                    ListDirEvidence(
-                        strategy="list_dir", path="/a.py", is_directory=False, size_bytes=50
-                    )
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/src",
+                    evidence=[ListDirEvidence(strategy="list_dir", path="/src", is_directory=True)],
+                ),
+                FileSearchCandidate(
+                    path="/a.py",
+                    evidence=[
+                        ListDirEvidence(
+                            strategy="list_dir", path="/a.py", is_directory=False, size_bytes=50
+                        )
+                    ],
+                ),
+            ],
         )
         assert r.directories() == ("/src",)
         assert r.files() == ("/a.py",)
@@ -572,16 +650,19 @@ class TestTrashResultAccessors:
         r = TrashResult(
             success=True,
             message="ok",
-            _entries={
-                "/__trash__/abc/a.py": [
-                    TrashEvidence(
-                        strategy="trash",
-                        path="/__trash__/abc/a.py",
-                        deleted_at=now,
-                        original_path="/a.py",
-                    )
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/__trash__/abc/a.py",
+                    evidence=[
+                        TrashEvidence(
+                            strategy="trash",
+                            path="/__trash__/abc/a.py",
+                            deleted_at=now,
+                            original_path="/a.py",
+                        )
+                    ],
+                ),
+            ],
         )
         assert r.deleted_paths() == ("/a.py",)
 
@@ -591,11 +672,16 @@ class TestVectorSearchResultAccessors:
         r = VectorSearchResult(
             success=True,
             message="ok",
-            _entries={
-                "/auth.py": [
-                    VectorEvidence(strategy="vector_search", path="/auth.py", snippet="login code")
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/auth.py",
+                    evidence=[
+                        VectorEvidence(
+                            strategy="vector_search", path="/auth.py", snippet="login code"
+                        )
+                    ],
+                ),
+            ],
         )
         assert r.snippets("/auth.py") == ("login code",)
 
@@ -609,11 +695,16 @@ class TestLexicalSearchResultAccessors:
         r = LexicalSearchResult(
             success=True,
             message="ok",
-            _entries={
-                "/auth.py": [
-                    LexicalEvidence(strategy="lexical", path="/auth.py", snippet="keyword match")
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/auth.py",
+                    evidence=[
+                        LexicalEvidence(
+                            strategy="lexical", path="/auth.py", snippet="keyword match"
+                        )
+                    ],
+                ),
+            ],
         )
         assert r.snippets("/auth.py") == ("keyword match",)
 
@@ -623,11 +714,14 @@ class TestHybridSearchResultAccessors:
         r = HybridSearchResult(
             success=True,
             message="ok",
-            _entries={
-                "/auth.py": [
-                    HybridEvidence(strategy="hybrid", path="/auth.py", snippet="hybrid match")
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/auth.py",
+                    evidence=[
+                        HybridEvidence(strategy="hybrid", path="/auth.py", snippet="hybrid match")
+                    ],
+                ),
+            ],
         )
         assert r.snippets("/auth.py") == ("hybrid match",)
 
@@ -637,16 +731,19 @@ class TestGraphResultAccessors:
         r = GraphResult(
             success=True,
             message="ok",
-            _entries={
-                "/b.py": [
-                    GraphEvidence(
-                        strategy="dependents",
-                        path="/b.py",
-                        algorithm="dependents",
-                        relationship="imports",
-                    )
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/b.py",
+                    evidence=[
+                        GraphEvidence(
+                            strategy="dependents",
+                            path="/b.py",
+                            algorithm="dependents",
+                            relationship="imports",
+                        )
+                    ],
+                ),
+            ],
         )
         assert r.algorithm == "dependents"
 
@@ -658,22 +755,25 @@ class TestGraphResultAccessors:
         r = GraphResult(
             success=True,
             message="ok",
-            _entries={
-                "/b.py": [
-                    GraphEvidence(
-                        strategy="deps",
-                        path="/b.py",
-                        algorithm="dependents",
-                        relationship="imports",
-                    ),
-                    GraphEvidence(
-                        strategy="deps",
-                        path="/b.py",
-                        algorithm="dependents",
-                        relationship="contains",
-                    ),
-                ],
-            },
+            candidates=[
+                FileSearchCandidate(
+                    path="/b.py",
+                    evidence=[
+                        GraphEvidence(
+                            strategy="deps",
+                            path="/b.py",
+                            algorithm="dependents",
+                            relationship="imports",
+                        ),
+                        GraphEvidence(
+                            strategy="deps",
+                            path="/b.py",
+                            algorithm="dependents",
+                            relationship="contains",
+                        ),
+                    ],
+                ),
+            ],
         )
         assert r.relationships("/b.py") == ("imports", "contains")
 

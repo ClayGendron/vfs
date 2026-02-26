@@ -13,7 +13,7 @@ from grover.search.types import (
     IndexConfig,
     SparseVector,
     VectorEntry,
-    VectorSearchResult,
+    VectorHit,
 )
 
 # ------------------------------------------------------------------
@@ -192,7 +192,7 @@ class TestSearch:
         )
         results = await store.search([0.1, 0.2], k=5)
         assert len(results) == 2
-        assert all(isinstance(r, VectorSearchResult) for r in results)
+        assert all(isinstance(r, VectorHit) for r in results)
         assert results[0].id == "/a.py"
         assert results[0].score == 0.95
 

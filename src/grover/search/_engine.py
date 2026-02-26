@@ -32,7 +32,7 @@ class SearchEngine:
     for search.  It embeds text via the provider, stores vectors in the
     store, and converts between Grover-level types
     (``EmbeddableChunk`` / ``SearchResult``) and store-level types
-    (``VectorEntry`` / ``VectorSearchResult``).
+    (``VectorEntry`` / ``VectorHit``).
     """
 
     def __init__(

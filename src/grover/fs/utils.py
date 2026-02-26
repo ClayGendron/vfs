@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .types import ReadResult
+    from grover.types.operations import ReadResult
 
 # =============================================================================
 # Text File Extensions (allowed for write operations)
@@ -924,7 +924,7 @@ def format_read_output(result: ReadResult) -> str:
         return "<file>\n(empty file)\n</file>"
 
     lines = result.content.split("\n")
-    offset = result.offset
+    offset = result.line_offset
 
     formatted_lines = [f"{str(i + offset + 1).zfill(5)}| {line}" for i, line in enumerate(lines)]
 

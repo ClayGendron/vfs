@@ -47,7 +47,7 @@ from grover.search.types import (
     TextEntry,
     UpsertResult,
     VectorEntry,
-    VectorSearchResult,
+    VectorHit,
 )
 
 # ==================================================================
@@ -111,16 +111,16 @@ class TestSparseVector:
             sv.indices = [1]  # type: ignore[misc]
 
 
-class TestVectorSearchResult:
+class TestVectorHit:
     def test_construction(self):
-        vsr = VectorSearchResult(id="/a.py", score=0.95)
+        vsr = VectorHit(id="/a.py", score=0.95)
         assert vsr.id == "/a.py"
         assert vsr.score == 0.95
         assert vsr.metadata == {}
         assert vsr.vector is None
 
     def test_with_all_fields(self):
-        vsr = VectorSearchResult(
+        vsr = VectorHit(
             id="/a.py",
             score=0.95,
             metadata={"lang": "python"},
@@ -130,7 +130,7 @@ class TestVectorSearchResult:
         assert vsr.vector == [0.1, 0.2]
 
     def test_frozen(self):
-        vsr = VectorSearchResult(id="/a.py", score=0.95)
+        vsr = VectorHit(id="/a.py", score=0.95)
         with pytest.raises(FrozenInstanceError):
             vsr.score = 0.5  # type: ignore[misc]
 

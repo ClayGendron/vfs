@@ -159,7 +159,7 @@ class TestDeleteBackup:
         # File should be in trash (backed up to DB)
         async with _session(factory) as session:
             trash = await fs.list_trash(session=session)
-        paths = [e.path for e in trash.entries]
+        paths = trash.deleted_paths()
         assert "/ephemeral.py" in paths
         await fs.close()
 
@@ -376,7 +376,7 @@ class TestDirectoryTrashDisk:
         # Both parent and child should be in trash
         async with _session(factory) as session:
             trash = await fs.list_trash(session=session)
-        paths = [e.path for e in trash.entries]
+        paths = trash.deleted_paths()
         assert "/mydir" in paths
         assert "/mydir/child.py" in paths
         await fs.close()

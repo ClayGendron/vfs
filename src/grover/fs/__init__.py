@@ -20,23 +20,28 @@ from grover.fs.protocol import (
     SupportsTrash,
     SupportsVersions,
 )
-from grover.fs.types import (
+from grover.fs.user_scoped_fs import UserScopedFileSystem
+from grover.fs.utils import format_read_output
+from grover.types.operations import (
     DeleteResult,
     EditResult,
-    FileInfo,
+    FileInfoResult,
     GetVersionContentResult,
-    ListResult,
-    ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
-    VersionInfo,
     WriteResult,
 )
-from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.fs.utils import format_read_output
-from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
+from grover.types.search import (
+    GlobResult,
+    GrepResult,
+    ListDirResult,
+    ShareSearchResult,
+    TrashResult,
+    TreeResult,
+    VersionResult,
+)
 
 __all__ = [
     "AuthenticationRequiredError",
@@ -45,14 +50,12 @@ __all__ = [
     "DatabaseFileSystem",
     "DeleteResult",
     "EditResult",
-    "FileInfo",
+    "FileInfoResult",
     "GetVersionContentResult",
     "GlobResult",
     "GrepResult",
     "GroverError",
     "ListDirResult",
-    "ListResult",
-    "ListVersionsResult",
     "LocalFileSystem",
     "MkdirResult",
     "MountNotFoundError",
@@ -62,15 +65,17 @@ __all__ = [
     "Permission",
     "ReadResult",
     "RestoreResult",
+    "ShareSearchResult",
     "StorageBackend",
     "StorageError",
     "SupportsReBAC",
     "SupportsReconcile",
     "SupportsTrash",
     "SupportsVersions",
+    "TrashResult",
     "TreeResult",
     "UserScopedFileSystem",
-    "VersionInfo",
+    "VersionResult",
     "WriteResult",
     "format_read_output",
 ]

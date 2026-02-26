@@ -133,8 +133,8 @@ class TestAuthenticatedReadWrite:
         result = await auth_grover.read("/ws/project/src/main.py", user_id="alice")
         assert result.success is True
         assert result.content == "print('hello')"
-        # file_path should be user-facing (no user prefix)
-        assert result.file_path == "/ws/project/src/main.py"
+        # path should be user-facing (no user prefix)
+        assert result.path == "/ws/project/src/main.py"
 
     async def test_write_no_user_id_error(self, auth_grover: GroverAsync):
         result = await auth_grover.write("/ws/notes.md", "content", user_id=None)

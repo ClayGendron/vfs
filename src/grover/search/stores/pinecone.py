@@ -14,7 +14,7 @@ from grover.search.types import (
     SparseVector,
     UpsertResult,
     VectorEntry,
-    VectorSearchResult,
+    VectorHit,
 )
 
 try:
@@ -106,7 +106,7 @@ class PineconeVectorStore:
         filter: FilterExpression | None = None,
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Query the index for nearest vectors."""
         ns = namespace if namespace is not None else self._default_namespace
         idx = self._require_index()
@@ -123,13 +123,13 @@ class PineconeVectorStore:
 
         resp = await idx.query(**kwargs)
 
-        results: list[VectorSearchResult] = []
+        results: list[VectorHit] = []
         for match in resp.matches:
             score = match.score
             if score_threshold is not None and score < score_threshold:
                 continue
             results.append(
-                VectorSearchResult(
+                VectorHit(
                     id=match.id,
                     score=score,
                     metadata=dict(match.metadata) if match.metadata else {},
@@ -288,7 +288,7 @@ class PineconeVectorStore:
         alpha: float = 0.5,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Run a hybrid search combining dense and sparse vectors."""
         ns = namespace if namespace is not None else self._default_namespace
         idx = self._require_index()
@@ -313,7 +313,7 @@ class PineconeVectorStore:
         resp = await idx.query(**kwargs)
 
         return [
-            VectorSearchResult(
+            VectorHit(
                 id=match.id,
                 score=match.score,
                 metadata=dict(match.metadata) if match.metadata else {},
@@ -336,7 +336,7 @@ class PineconeVectorStore:
         rerank_top_n: int | None = None,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Search with server-side reranking via Pinecone Inference."""
         # First, get initial results
         search_results = await self.search(
@@ -365,12 +365,12 @@ class PineconeVectorStore:
             return_documents=True,
         )
 
-        reranked: list[VectorSearchResult] = []
+        reranked: list[VectorHit] = []
         for item in rerank_resp.data:
             original_idx = item.index
             original = search_results[original_idx]
             reranked.append(
-                VectorSearchResult(
+                VectorHit(
                     id=original.id,
                     score=item.score,
                     metadata=original.metadata,

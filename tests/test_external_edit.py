@@ -59,7 +59,7 @@ class TestExternalEditDetection:
             assert result.version == 3
 
             versions = await fs.list_versions("/app.py", session=session)
-            assert len(versions.versions) == 3
+            assert len(versions) == 3
         await engine.dispose()
 
     async def test_edit_after_external_edit_creates_synthetic_version(self):
@@ -87,7 +87,7 @@ class TestExternalEditDetection:
             assert result.version == 2
 
             versions = await fs.list_versions("/app.py", session=session)
-            assert len(versions.versions) == 2
+            assert len(versions) == 2
         await engine.dispose()
 
 

@@ -23,17 +23,34 @@ from sqlmodel import select
 
 from grover.models.chunks import FileChunk
 from grover.models.files import File, FileVersion
-from grover.search.results import (
+from grover.types.operations import (
+    DeleteResult,
+    EditResult,
+    FileInfoResult,
+    GetVersionContentResult,
+    MkdirResult,
+    MoveResult,
+    ReadResult,
+    RestoreResult,
+    WriteResult,
+)
+from grover.types.search import (
+    FileSearchCandidate,
     GlobEvidence,
     GlobResult,
     GrepEvidence,
     GrepResult,
     ListDirEvidence,
     ListDirResult,
+    TrashResult,
     TreeEvidence,
     TreeResult,
+    VersionEvidence,
+    VersionResult,
 )
-from grover.search.results import LineMatch as SearchLineMatch
+from grover.types.search import (
+    LineMatch as SearchLineMatch,
+)
 
 from .chunks import ChunkService
 from .directories import DirectoryService
@@ -47,19 +64,6 @@ from .operations import (
     write_file,
 )
 from .trash import TrashService
-from .types import (
-    DeleteResult,
-    EditResult,
-    FileInfo,
-    GetVersionContentResult,
-    ListResult,
-    ListVersionsResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    RestoreResult,
-    WriteResult,
-)
 from .utils import (
     compile_glob,
     get_similar_files,
@@ -74,7 +78,6 @@ from .versioning import VersioningService
 if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.results import Evidence
 
     from .sharing import SharingService
 
@@ -579,7 +582,7 @@ class LocalFileSystem:
 
         disk_items = await asyncio.to_thread(_scan_dir)
 
-        entries: dict[str, list[Evidence]] = {}
+        candidates: list[FileSearchCandidate] = []
         for name, is_d, disk_size in disk_items:
             item_path = f"{path}/{name}" if path != "/" else f"/{name}"
             item_path = normalize_path(item_path)
@@ -587,19 +590,24 @@ class LocalFileSystem:
             file = await self.metadata.get_file(sess, item_path)
             size = file.size_bytes if file else disk_size
 
-            entries[item_path] = [
-                ListDirEvidence(
-                    strategy="list_dir",
+            candidates.append(
+                FileSearchCandidate(
                     path=item_path,
-                    is_directory=is_d,
-                    size_bytes=size,
+                    evidence=[
+                        ListDirEvidence(
+                            strategy="list_dir",
+                            path=item_path,
+                            is_directory=is_d,
+                            size_bytes=size,
+                        )
+                    ],
                 )
-            ]
+            )
 
         return ListDirResult(
             success=True,
-            message=f"Listed {len(entries)} items in {path}",
-            _entries=entries,
+            message=f"Listed {len(candidates)} items in {path}",
+            candidates=candidates,
         )
 
     async def exists(
@@ -618,7 +626,7 @@ class LocalFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfo | None:
+    ) -> FileInfoResult | None:
         sess = self._require_session(session)
         return await self.metadata.get_info(sess, path)
 
@@ -759,23 +767,28 @@ class LocalFileSystem:
         else:
             file_map = {}
 
-        entries: dict[str, list[Evidence]] = {}
+        candidates: list[FileSearchCandidate] = []
         for _p, vpath, is_d, size in matched:
             file = file_map.get(vpath)
-            entries[vpath] = [
-                GlobEvidence(
-                    strategy="glob",
+            candidates.append(
+                FileSearchCandidate(
                     path=vpath,
-                    is_directory=is_d,
-                    size_bytes=file.size_bytes if file else size,
-                    mime_type=file.mime_type if file else None,
+                    evidence=[
+                        GlobEvidence(
+                            strategy="glob",
+                            path=vpath,
+                            is_directory=is_d,
+                            size_bytes=file.size_bytes if file else size,
+                            mime_type=file.mime_type if file else None,
+                        )
+                    ],
                 )
-            ]
+            )
 
         return GlobResult(
             success=True,
-            message=f"Found {len(entries)} match(es)",
-            _entries=entries,
+            message=f"Found {len(candidates)} match(es)",
+            candidates=candidates,
             pattern=pattern,
         )
 
@@ -867,7 +880,7 @@ class LocalFileSystem:
 
                 candidate_vpaths = await asyncio.to_thread(_collect_files)
 
-        result_entries: dict[str, list[Evidence]] = {}
+        result_candidates: list[FileSearchCandidate] = []
         files_searched = 0
         files_matched = 0
         truncated = False
@@ -929,13 +942,18 @@ class LocalFileSystem:
                     # For files_only, keep just one match as evidence
                     file_line_matches = [file_line_matches[0]]
 
-                result_entries[file_path] = [
-                    GrepEvidence(
-                        strategy="grep",
+                result_candidates.append(
+                    FileSearchCandidate(
                         path=file_path,
-                        line_matches=tuple(file_line_matches),
+                        evidence=[
+                            GrepEvidence(
+                                strategy="grep",
+                                path=file_path,
+                                line_matches=tuple(file_line_matches),
+                            )
+                        ],
                     )
-                ]
+                )
                 total_matches += len(file_line_matches)
 
                 if max_results > 0 and total_matches >= max_results:
@@ -956,7 +974,7 @@ class LocalFileSystem:
         return GrepResult(
             success=True,
             message=f"Found {total_matches} match(es) in {files_matched} file(s)",
-            _entries=result_entries,
+            candidates=result_candidates,
             pattern=pattern,
             files_searched=files_searched,
             files_matched=files_matched,
@@ -1028,22 +1046,27 @@ class LocalFileSystem:
 
         disk_items = await asyncio.to_thread(_walk)
 
-        entries: dict[str, list[Evidence]] = {}
+        candidates: list[FileSearchCandidate] = []
         for vpath, is_d, depth in sorted(disk_items, key=lambda x: x[0]):
-            entries[vpath] = [
-                TreeEvidence(
-                    strategy="tree",
+            candidates.append(
+                FileSearchCandidate(
                     path=vpath,
-                    depth=depth,
-                    is_directory=is_d,
+                    evidence=[
+                        TreeEvidence(
+                            strategy="tree",
+                            path=vpath,
+                            depth=depth,
+                            is_directory=is_d,
+                        )
+                    ],
                 )
-            ]
+            )
 
         return TreeResult(
             success=True,
             message=f"{sum(1 for _, d, _ in disk_items if d)} directories, "
             f"{sum(1 for _, d, _ in disk_items if not d)} files",
-            _entries=entries,
+            candidates=candidates,
         )
 
     # ------------------------------------------------------------------
@@ -1056,17 +1079,34 @@ class LocalFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListVersionsResult:
+    ) -> VersionResult:
         sess = self._require_session(session)
         path = normalize_path(path)
         file = await self.metadata.get_file(sess, path)
         if not file:
-            return ListVersionsResult(success=False, message=f"File not found: {path}", versions=[])
+            return VersionResult(success=False, message=f"File not found: {path}")
         versions = await self.versioning.list_versions(sess, file)
-        return ListVersionsResult(
+        candidates = [
+            FileSearchCandidate(
+                path=f"{path}@{v.version}",
+                evidence=[
+                    VersionEvidence(
+                        strategy="version",
+                        path=path,
+                        version=v.version,
+                        content_hash=v.content_hash,
+                        size_bytes=v.size_bytes,
+                        created_at=v.created_at,
+                        created_by=v.created_by,
+                    )
+                ],
+            )
+            for v in versions
+        ]
+        return VersionResult(
             success=True,
             message=f"Found {len(versions)} version(s)",
-            versions=versions,
+            candidates=candidates,
         )
 
     async def get_version_content(
@@ -1120,9 +1160,9 @@ class LocalFileSystem:
         return RestoreResult(
             success=True,
             message=f"Restored {path} to version {version}",
-            file_path=path,
+            path=path,
             restored_version=version,
-            current_version=write_result.version,
+            version=write_result.version,
         )
 
     # ------------------------------------------------------------------
@@ -1135,7 +1175,7 @@ class LocalFileSystem:
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> ListResult:
+    ) -> TrashResult:
         sess = self._require_session(session)
         return await self.trash.list_trash(sess, owner_id=owner_id)
 
@@ -1155,7 +1195,7 @@ class LocalFileSystem:
         if not result.success:
             return result
 
-        restored_path = result.file_path or path
+        restored_path = result.path or path
         file = await self.metadata.get_file(sess, restored_path)
         if file:
             if file.is_directory:

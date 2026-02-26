@@ -4,32 +4,31 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from grover.fs.types import (
+from grover.types import (
     DeleteResult,
     EditResult,
-    FileInfo,
-    ListResult,
+    FileInfoResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
-    VersionInfo,
+    VersionEvidence,
     WriteResult,
 )
 
 
-class TestFileInfo:
+class TestFileInfoResult:
     def test_required_fields(self):
-        info = FileInfo(path="/hello.txt", name="hello.txt", is_directory=False)
+        info = FileInfoResult(path="/hello.txt", name="hello.txt", is_directory=False)
         assert info.path == "/hello.txt"
         assert info.name == "hello.txt"
         assert info.is_directory is False
 
     def test_defaults(self):
-        info = FileInfo(path="/x", name="x", is_directory=True)
-        assert info.size_bytes is None
-        assert info.mime_type is None
-        assert info.version == 1
+        info = FileInfoResult(path="/x", name="x", is_directory=True)
+        assert info.size_bytes == 0
+        assert info.mime_type == "text/plain"
+        assert info.version == 0
         assert info.created_at is None
         assert info.updated_at is None
         assert info.permission is None
@@ -37,7 +36,7 @@ class TestFileInfo:
 
     def test_all_fields(self):
         now = datetime.now(UTC)
-        info = FileInfo(
+        info = FileInfoResult(
             path="/src",
             name="src",
             is_directory=True,
@@ -53,19 +52,28 @@ class TestFileInfo:
         assert info.mount_type == "vfs"
 
 
-class TestVersionInfo:
+class TestVersionEvidence:
     def test_required_fields(self):
         now = datetime.now(UTC)
-        vi = VersionInfo(version=1, content_hash="abc", size_bytes=10, created_at=now)
-        assert vi.version == 1
-        assert vi.content_hash == "abc"
-        assert vi.size_bytes == 10
-        assert vi.created_at == now
+        ve = VersionEvidence(
+            strategy="version",
+            path="/test.txt",
+            version=1,
+            content_hash="abc",
+            size_bytes=10,
+            created_at=now,
+        )
+        assert ve.version == 1
+        assert ve.content_hash == "abc"
+        assert ve.size_bytes == 10
+        assert ve.created_at == now
 
     def test_defaults(self):
-        now = datetime.now(UTC)
-        vi = VersionInfo(version=1, content_hash="abc", size_bytes=10, created_at=now)
-        assert vi.created_by is None
+        ve = VersionEvidence(strategy="version", path="/test.txt")
+        assert ve.created_by is None
+        assert ve.version == 0
+        assert ve.content_hash == ""
+        assert ve.size_bytes == 0
 
 
 class TestReadResult:
@@ -74,7 +82,7 @@ class TestReadResult:
             success=True,
             message="Read 10 lines",
             content="hello\nworld",
-            file_path="/test.txt",
+            path="/test.txt",
             total_lines=2,
             lines_read=2,
         )
@@ -85,37 +93,37 @@ class TestReadResult:
     def test_failure(self):
         r = ReadResult(success=False, message="File not found")
         assert r.success is False
-        assert r.content is None
-        assert r.file_path is None
+        assert r.content == ""
+        assert r.path == ""
 
 
 class TestWriteResult:
     def test_created(self):
-        r = WriteResult(success=True, message="Created", file_path="/new.py", created=True)
+        r = WriteResult(success=True, message="Created", path="/new.py", created=True)
         assert r.created is True
-        assert r.version == 1
+        assert r.version == 0
 
     def test_updated(self):
-        r = WriteResult(success=True, message="Updated", file_path="/old.py", version=5)
+        r = WriteResult(success=True, message="Updated", path="/old.py", version=5)
         assert r.created is False
         assert r.version == 5
 
 
 class TestEditResult:
     def test_success(self):
-        r = EditResult(success=True, message="Applied", file_path="/x.py", version=3)
+        r = EditResult(success=True, message="Applied", path="/x.py", version=3)
         assert r.success is True
         assert r.version == 3
 
     def test_defaults(self):
         r = EditResult(success=False, message="err")
-        assert r.file_path is None
-        assert r.version == 1
+        assert r.path == ""
+        assert r.version == 0
 
 
 class TestDeleteResult:
     def test_soft_delete(self):
-        r = DeleteResult(success=True, message="Trashed", file_path="/x.py")
+        r = DeleteResult(success=True, message="Trashed", path="/x.py")
         assert r.permanent is False
         assert r.total_deleted is None
 
@@ -133,23 +141,8 @@ class TestMkdirResult:
 
     def test_defaults(self):
         r = MkdirResult(success=True, message="ok")
-        assert r.path is None
+        assert r.path == ""
         assert r.created_dirs == []
-
-
-class TestListResult:
-    def test_with_entries(self):
-        entries = [
-            FileInfo(path="/a.py", name="a.py", is_directory=False),
-            FileInfo(path="/src", name="src", is_directory=True),
-        ]
-        r = ListResult(success=True, message="Listed 2 items", entries=entries)
-        assert len(r.entries) == 2
-        assert r.path == "/"
-
-    def test_defaults(self):
-        r = ListResult(success=True, message="ok")
-        assert r.entries == []
 
 
 class TestMoveResult:
@@ -160,8 +153,8 @@ class TestMoveResult:
 
     def test_defaults(self):
         r = MoveResult(success=False, message="err")
-        assert r.old_path is None
-        assert r.new_path is None
+        assert r.old_path == ""
+        assert r.new_path == ""
 
 
 class TestRestoreResult:
@@ -169,15 +162,12 @@ class TestRestoreResult:
         r = RestoreResult(
             success=True,
             message="Restored",
-            file_path="/x.py",
+            path="/x.py",
             restored_version=2,
-            current_version=5,
         )
         assert r.restored_version == 2
-        assert r.current_version == 5
 
     def test_defaults(self):
         r = RestoreResult(success=False, message="err")
-        assert r.file_path is None
+        assert r.path == ""
         assert r.restored_version == 0
-        assert r.current_version == 0

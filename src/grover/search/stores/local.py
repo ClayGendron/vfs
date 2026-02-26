@@ -11,7 +11,7 @@ import numpy as np
 from usearch.index import Index
 
 from grover.search.filters import FilterExpression, compile_dict
-from grover.search.types import DeleteResult, UpsertResult, VectorEntry, VectorSearchResult
+from grover.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
 
 _INDEX_FILE = "search.usearch"
 _META_FILE = "search_meta.json"
@@ -95,7 +95,7 @@ class LocalVectorStore:
         filter: FilterExpression | None = None,  # noqa: A002
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Search for the *k* nearest vectors."""
         self._reject_namespace(namespace)
 
@@ -115,7 +115,7 @@ class LocalVectorStore:
         if filter is not None:
             filter_dict = compile_dict(filter)
 
-        results: list[VectorSearchResult] = []
+        results: list[VectorHit] = []
         for match_key, distance in zip(
             matches.keys.tolist(), matches.distances.tolist(), strict=True
         ):
@@ -137,7 +137,7 @@ class LocalVectorStore:
             result_meta = {mk: mv for mk, mv in meta.items() if mk not in ("id", "vector")}
 
             results.append(
-                VectorSearchResult(
+                VectorHit(
                     id=meta["id"],
                     score=score,
                     metadata=result_meta if include_metadata else {},

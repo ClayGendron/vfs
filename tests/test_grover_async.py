@@ -11,7 +11,7 @@ import pytest
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph import RustworkxGraph
-from grover.search.results import GraphResult, VectorSearchResult
+from grover.types import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -684,9 +684,8 @@ class TestGroverAsyncSharing:
         await auth_grover.write("/ws/notes.md", "shared", user_id="alice")
         result = await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
         assert result.success is True
-        assert result.share is not None
-        assert result.share.grantee_id == "bob"
-        assert result.share.permission == "read"
+        assert result.grantee_id == "bob"
+        assert result.permission == "read"
 
     @pytest.mark.asyncio
     async def test_unshare_file(self, auth_grover: GroverAsync):
@@ -702,13 +701,20 @@ class TestGroverAsyncSharing:
 
     @pytest.mark.asyncio
     async def test_list_shares(self, auth_grover: GroverAsync):
+        from grover.types import ShareEvidence
+
         await auth_grover.write("/ws/notes.md", "data", user_id="alice")
         await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
         await auth_grover.share("/ws/notes.md", "charlie", "write", user_id="alice")
         result = await auth_grover.list_shares("/ws/notes.md", user_id="alice")
         assert result.success is True
-        assert len(result.shares) == 2
-        grantees = {s.grantee_id for s in result.shares}
+        assert len(result) == 2
+        grantees = {
+            e.grantee_id
+            for c in result.candidates
+            for e in c.evidence
+            if isinstance(e, ShareEvidence)
+        }
         assert grantees == {"bob", "charlie"}
 
     @pytest.mark.asyncio
@@ -717,9 +723,9 @@ class TestGroverAsyncSharing:
         await auth_grover.share("/ws/a.md", "bob", "read", user_id="alice")
         result = await auth_grover.list_shared_with_me(user_id="bob")
         assert result.success is True
-        assert len(result.shares) == 1
+        assert len(result) == 1
         # Path should be an @shared path, not a raw stored path
-        assert result.shares[0].path == "/ws/@shared/alice/a.md"
+        assert result.candidates[0].path == "/ws/@shared/alice/a.md"
 
     @pytest.mark.asyncio
     async def test_share_requires_authenticated_mount(self, workspace: Path, tmp_path: Path):

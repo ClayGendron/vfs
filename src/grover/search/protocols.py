@@ -14,7 +14,7 @@ if TYPE_CHECKING:
         TextEntry,
         UpsertResult,
         VectorEntry,
-        VectorSearchResult,
+        VectorHit,
     )
 
 
@@ -77,7 +77,7 @@ class VectorStore(Protocol):
         filter: FilterExpression | None = None,
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Search for the *k* nearest vectors."""
         ...
 
@@ -180,7 +180,7 @@ class SupportsHybridSearch(Protocol):
         alpha: float = 0.5,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Run a hybrid search combining dense, sparse, and/or keyword signals."""
         ...
 
@@ -199,7 +199,7 @@ class SupportsReranking(Protocol):
         rerank_top_n: int | None = None,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Search with server-side reranking applied to the results."""
         ...
 
@@ -215,7 +215,7 @@ class SupportsTextSearch(Protocol):
         k: int = 10,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Search using raw text (the store handles embedding internally)."""
         ...
 

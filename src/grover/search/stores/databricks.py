@@ -14,7 +14,7 @@ from grover.search.types import (
     IndexInfo,
     UpsertResult,
     VectorEntry,
-    VectorSearchResult,
+    VectorHit,
 )
 
 try:
@@ -109,7 +109,7 @@ class DatabricksVectorStore:
         filter: FilterExpression | None = None,
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Query the index for nearest vectors."""
         self._reject_namespace(namespace)
         idx = self._require_index()
@@ -278,7 +278,7 @@ class DatabricksVectorStore:
         alpha: float = 0.5,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[VectorHit]:
         """Hybrid search combining vector similarity + keyword (BM25)."""
         self._reject_namespace(namespace)
         idx = self._require_index()
@@ -328,13 +328,13 @@ class DatabricksVectorStore:
         self,
         resp: dict[str, Any],
         include_metadata: bool,
-    ) -> list[VectorSearchResult]:
-        """Parse a Databricks similarity_search response into VectorSearchResults."""
+    ) -> list[VectorHit]:
+        """Parse a Databricks similarity_search response into VectorHits."""
         manifest = resp.get("manifest", {})
         columns = [c["name"] for c in manifest.get("columns", [])]
         rows = resp.get("result", {}).get("data_array", [])
 
-        results: list[VectorSearchResult] = []
+        results: list[VectorHit] = []
         for row in rows:
             row_dict = dict(zip(columns, row, strict=False))
             entry_id = str(row_dict.get(self._pk_column, ""))
@@ -349,7 +349,7 @@ class DatabricksVectorStore:
                 }
 
             results.append(
-                VectorSearchResult(
+                VectorHit(
                     id=entry_id,
                     score=score,
                     metadata=metadata,

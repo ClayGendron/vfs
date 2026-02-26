@@ -10,11 +10,11 @@ import pytest
 import grover
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
-from grover.fs.types import (
+from grover.types import (
     DeleteResult,
     EditResult,
-    FileInfo,
-    ListResult,
+    FileInfoResult,
+    ListDirResult,
     MkdirResult,
     MoveResult,
     ReadResult,
@@ -66,7 +66,7 @@ class InMemoryBackend:
         content = self._files.get(path)
         if content is None:
             return ReadResult(success=False, message=f"Not found: {path}")
-        return ReadResult(success=True, message="OK", content=content, file_path=path)
+        return ReadResult(success=True, message="OK", content=content, path=path)
 
     async def list_dir(
         self,
@@ -74,8 +74,8 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> ListResult:
-        return ListResult(success=True, message="OK", entries=[], path=path)
+    ) -> ListDirResult:
+        return ListDirResult(success=True, message="OK")
 
     async def exists(
         self,
@@ -92,10 +92,10 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> FileInfo | None:
+    ) -> FileInfoResult | None:
         if path not in self._files:
             return None
-        return FileInfo(path=path, name=path.rsplit("/", 1)[-1], is_directory=False)
+        return FileInfoResult(path=path, name=path.rsplit("/", 1)[-1], is_directory=False)
 
     async def write(
         self,
@@ -109,7 +109,7 @@ class InMemoryBackend:
         user_id: str | None = None,
     ) -> WriteResult:
         self._files[path] = content
-        return WriteResult(success=True, message="OK", file_path=path)
+        return WriteResult(success=True, message="OK", path=path)
 
     async def edit(
         self,
@@ -126,7 +126,7 @@ class InMemoryBackend:
         if content is None:
             return EditResult(success=False, message=f"Not found: {path}")
         self._files[path] = content.replace(old_string, new_string, 1)
-        return EditResult(success=True, message="OK", file_path=path)
+        return EditResult(success=True, message="OK", path=path)
 
     async def delete(
         self,
@@ -139,7 +139,7 @@ class InMemoryBackend:
         if path not in self._files:
             return DeleteResult(success=False, message=f"Not found: {path}")
         del self._files[path]
-        return DeleteResult(success=True, message="OK", file_path=path, permanent=permanent)
+        return DeleteResult(success=True, message="OK", path=path, permanent=permanent)
 
     async def mkdir(
         self,
@@ -177,7 +177,7 @@ class InMemoryBackend:
         if content is None:
             return WriteResult(success=False, message=f"Not found: {src}")
         self._files[dest] = content
-        return WriteResult(success=True, message="OK", file_path=dest)
+        return WriteResult(success=True, message="OK", path=dest)
 
 
 class OpenFailBackend(InMemoryBackend):

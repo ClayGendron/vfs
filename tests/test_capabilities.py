@@ -18,17 +18,21 @@ from grover.fs.protocol import (
     SupportsTrash,
     SupportsVersions,
 )
-from grover.fs.types import (
+from grover.types import (
     DeleteResult,
     EditResult,
-    FileInfo,
-    ListResult,
+    FileInfoResult,
+    FileSearchCandidate,
+    GlobResult,
+    GrepResult,
+    ListDirEvidence,
+    ListDirResult,
     MkdirResult,
     MoveResult,
     ReadResult,
+    TreeResult,
     WriteResult,
 )
-from grover.search.results import GlobResult, GrepResult, TreeResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -63,7 +67,7 @@ class MinimalBackend:
         content = self._files.get(path)
         if content is None:
             return ReadResult(success=False, message=f"Not found: {path}")
-        return ReadResult(success=True, message="OK", content=content, file_path=path)
+        return ReadResult(success=True, message="OK", content=content, path=path)
 
     async def write(
         self,
@@ -77,7 +81,7 @@ class MinimalBackend:
         user_id: str | None = None,
     ) -> WriteResult:
         self._files[path] = content
-        return WriteResult(success=True, message="OK", file_path=path)
+        return WriteResult(success=True, message="OK", path=path)
 
     async def edit(
         self,
@@ -94,7 +98,7 @@ class MinimalBackend:
         if content is None:
             return EditResult(success=False, message=f"Not found: {path}")
         self._files[path] = content.replace(old_string, new_string, 1)
-        return EditResult(success=True, message="OK", file_path=path)
+        return EditResult(success=True, message="OK", path=path)
 
     async def delete(
         self,
@@ -145,7 +149,7 @@ class MinimalBackend:
         if content is None:
             return WriteResult(success=False, message=f"Not found: {src}")
         self._files[dest] = content
-        return WriteResult(success=True, message="OK", file_path=dest)
+        return WriteResult(success=True, message="OK", path=dest)
 
     async def glob(
         self,
@@ -193,8 +197,8 @@ class MinimalBackend:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListResult:
-        entries = []
+    ) -> ListDirResult:
+        candidates = []
         prefix = path.rstrip("/") + "/"
         seen = set()
         for p in self._files:
@@ -203,14 +207,20 @@ class MinimalBackend:
                 name = rest.split("/")[0]
                 if name not in seen:
                     seen.add(name)
-                    entries.append(
-                        FileInfo(
-                            path=prefix + name,
-                            name=name,
-                            is_directory="/" in rest,
+                    full_path = prefix + name
+                    candidates.append(
+                        FileSearchCandidate(
+                            path=full_path,
+                            evidence=[
+                                ListDirEvidence(
+                                    strategy="list_dir",
+                                    path=full_path,
+                                    is_directory="/" in rest,
+                                )
+                            ],
                         )
                     )
-        return ListResult(success=True, message="OK", entries=entries, path=path)
+        return ListDirResult(success=True, message="OK", candidates=candidates)
 
     async def exists(
         self,
@@ -227,11 +237,11 @@ class MinimalBackend:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfo | None:
+    ) -> FileInfoResult | None:
         if path not in self._files:
             return None
         name = path.rsplit("/", 1)[-1]
-        return FileInfo(path=path, name=name, is_directory=False)
+        return FileInfoResult(path=path, name=name, is_directory=False)
 
 
 # =========================================================================
@@ -392,7 +402,7 @@ class TestMixedMounts:
         await mixed_grover.write("/db/a.txt", "v2")
         result = await mixed_grover.list_versions("/db/a.txt")
         assert result.success
-        assert len(result.versions) == 2
+        assert len(result) == 2
 
     async def test_versioning_fails_on_minimal_mount(self, mixed_grover: GroverAsync) -> None:
         await mixed_grover.write("/mem/a.txt", "v1")

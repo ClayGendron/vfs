@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete as sa_delete
@@ -10,12 +11,24 @@ from sqlmodel import select
 
 from .diff import SNAPSHOT_INTERVAL, compute_diff, reconstruct_version
 from .exceptions import ConsistencyError
-from .types import VersionInfo
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.files import FileBase, FileVersionBase
+
+
+@dataclass(frozen=True, slots=True)
+class VersionInfo:
+    """Internal version metadata (not part of public API)."""
+
+    version: int
+    content_hash: str
+    size_bytes: int
+    created_at: datetime | None = None
+    created_by: str | None = None
 
 
 class VersioningService:

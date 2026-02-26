@@ -104,11 +104,11 @@ class GroverBackend(BackendProtocol):
         except Exception:
             return []
 
-        from grover.search.results import ListDirEvidence
+        from grover.types import ListDirEvidence
 
         result: list[FileInfo] = []
         for entry_path in entries.paths:
-            evs = entries._entries.get(entry_path, [])
+            evs = entries.explain(entry_path)
             is_dir = any(isinstance(e, ListDirEvidence) and e.is_directory for e in evs)
             info: FileInfo = {
                 "path": entry_path,

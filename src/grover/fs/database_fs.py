@@ -11,16 +11,33 @@ from sqlmodel import select
 
 from grover.models.chunks import FileChunk
 from grover.models.files import File, FileVersion
-from grover.search.results import (
+from grover.types.operations import (
+    DeleteResult,
+    EditResult,
+    FileInfoResult,
+    GetVersionContentResult,
+    MkdirResult,
+    MoveResult,
+    ReadResult,
+    RestoreResult,
+    WriteResult,
+)
+from grover.types.search import (
+    FileSearchCandidate,
     GlobEvidence,
     GlobResult,
     GrepEvidence,
     GrepResult,
     ListDirResult,
+    TrashResult,
     TreeEvidence,
     TreeResult,
+    VersionEvidence,
+    VersionResult,
 )
-from grover.search.results import LineMatch as SearchLineMatch
+from grover.types.search import (
+    LineMatch as SearchLineMatch,
+)
 
 from ..models import FileConnectionBase
 from .chunks import ChunkService
@@ -37,19 +54,6 @@ from .operations import (
     write_file,
 )
 from .trash import TrashService
-from .types import (
-    DeleteResult,
-    EditResult,
-    FileInfo,
-    GetVersionContentResult,
-    ListResult,
-    ListVersionsResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    RestoreResult,
-    WriteResult,
-)
 from .utils import (
     compile_glob,
     glob_to_sql_like,
@@ -63,7 +67,6 @@ if TYPE_CHECKING:
 
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.results import Evidence
 
     from .sharing import SharingService
 
@@ -329,7 +332,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfo | None:
+    ) -> FileInfoResult | None:
         sess = self._require_session(session)
         return await self.metadata.get_info(sess, path)
 
@@ -450,23 +453,28 @@ class DatabaseFileSystem:
             f for f in candidates if glob_regex is not None and glob_regex.match(f.path) is not None
         ]
 
-        entries: dict[str, list[Evidence]] = {}
+        candidates: list[FileSearchCandidate] = []
         for f in matched:
             info = MetadataService.file_to_info(f)
-            entries[info.path] = [
-                GlobEvidence(
-                    strategy="glob",
+            candidates.append(
+                FileSearchCandidate(
                     path=info.path,
-                    is_directory=info.is_directory,
-                    size_bytes=info.size_bytes,
-                    mime_type=info.mime_type,
+                    evidence=[
+                        GlobEvidence(
+                            strategy="glob",
+                            path=info.path,
+                            is_directory=info.is_directory,
+                            size_bytes=info.size_bytes,
+                            mime_type=info.mime_type,
+                        )
+                    ],
                 )
-            ]
+            )
 
         return GlobResult(
             success=True,
-            message=f"Found {len(entries)} match(es)",
-            _entries=entries,
+            message=f"Found {len(candidates)} match(es)",
+            candidates=candidates,
             pattern=pattern,
         )
 
@@ -546,7 +554,7 @@ class DatabaseFileSystem:
                 )
                 candidate_paths = [row[0] for row in result.all()]
 
-        result_entries: dict[str, list[Evidence]] = {}
+        result_candidates: list[FileSearchCandidate] = []
         files_searched = 0
         files_matched = 0
         truncated = False
@@ -595,13 +603,18 @@ class DatabaseFileSystem:
                 if files_only:
                     file_line_matches = [file_line_matches[0]]
 
-                result_entries[file_path] = [
-                    GrepEvidence(
-                        strategy="grep",
+                result_candidates.append(
+                    FileSearchCandidate(
                         path=file_path,
-                        line_matches=tuple(file_line_matches),
+                        evidence=[
+                            GrepEvidence(
+                                strategy="grep",
+                                path=file_path,
+                                line_matches=tuple(file_line_matches),
+                            )
+                        ],
                     )
-                ]
+                )
                 total_matches += len(file_line_matches)
 
                 if max_results > 0 and total_matches >= max_results:
@@ -622,7 +635,7 @@ class DatabaseFileSystem:
         return GrepResult(
             success=True,
             message=f"Found {total_matches} match(es) in {files_matched} file(s)",
-            _entries=result_entries,
+            candidates=result_candidates,
             pattern=pattern,
             files_searched=files_searched,
             files_matched=files_matched,
@@ -673,30 +686,36 @@ class DatabaseFileSystem:
         result = await sess.execute(select(model).where(*conditions))
         all_files = list(result.scalars().all())
 
-        entries: dict[str, list[Evidence]] = {}
+        candidates: list[FileSearchCandidate] = []
         total_files = 0
         total_dirs = 0
 
         for f in all_files:
             info = MetadataService.file_to_info(f)
             depth = info.path.count("/") - base_depth
-            entries[info.path] = [
-                TreeEvidence(
-                    strategy="tree",
+            candidates.append(
+                FileSearchCandidate(
                     path=info.path,
-                    depth=depth,
-                    is_directory=info.is_directory,
+                    evidence=[
+                        TreeEvidence(
+                            strategy="tree",
+                            path=info.path,
+                            depth=depth,
+                            is_directory=info.is_directory,
+                        )
+                    ],
                 )
-            ]
+            )
             if f.is_directory:
                 total_dirs += 1
             else:
                 total_files += 1
 
+        candidates.sort(key=lambda c: c.path)
         return TreeResult(
             success=True,
             message=f"{total_dirs} directories, {total_files} files",
-            _entries=dict(sorted(entries.items())),
+            candidates=candidates,
         )
 
     # ------------------------------------------------------------------
@@ -709,17 +728,34 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListVersionsResult:
+    ) -> VersionResult:
         sess = self._require_session(session)
         path = normalize_path(path)
         file = await self.metadata.get_file(sess, path)
         if not file:
-            return ListVersionsResult(success=False, message=f"File not found: {path}", versions=[])
+            return VersionResult(success=False, message=f"File not found: {path}")
         versions = await self.versioning.list_versions(sess, file)
-        return ListVersionsResult(
+        candidates = [
+            FileSearchCandidate(
+                path=f"{path}@{v.version}",
+                evidence=[
+                    VersionEvidence(
+                        strategy="version",
+                        path=path,
+                        version=v.version,
+                        content_hash=v.content_hash,
+                        size_bytes=v.size_bytes,
+                        created_at=v.created_at,
+                        created_by=v.created_by,
+                    )
+                ],
+            )
+            for v in versions
+        ]
+        return VersionResult(
             success=True,
             message=f"Found {len(versions)} version(s)",
-            versions=versions,
+            candidates=candidates,
         )
 
     async def get_version_content(
@@ -773,9 +809,9 @@ class DatabaseFileSystem:
         return RestoreResult(
             success=True,
             message=f"Restored {path} to version {version}",
-            file_path=path,
+            path=path,
             restored_version=version,
-            current_version=write_result.version,
+            version=write_result.version,
         )
 
     # ------------------------------------------------------------------
@@ -788,7 +824,7 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> ListResult:
+    ) -> TrashResult:
         sess = self._require_session(session)
         return await self.trash.list_trash(sess, owner_id=owner_id)
 

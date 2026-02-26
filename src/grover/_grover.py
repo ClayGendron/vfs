@@ -14,28 +14,26 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-    from grover.fs.types import (
-        DeleteResult,
-        EditResult,
-        ListSharesResult,
-        MoveResult,
-        ReadResult,
-        ShareResult,
-        WriteResult,
-    )
     from grover.graph.protocols import GraphStore
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.results import FileSearchResult
-    from grover.search.results import (
+    from grover.types import (
+        DeleteResult,
+        EditResult,
+        FileSearchResult,
         GlobResult,
         GraphResult,
         GrepResult,
         LexicalSearchResult,
         ListDirResult,
+        MoveResult,
+        ReadResult,
+        ShareResult,
+        ShareSearchResult,
         TrashResult,
         TreeResult,
         VectorSearchResult,
+        WriteResult,
     )
 
 
@@ -310,11 +308,11 @@ class Grover:
         """Remove a share for a file or directory."""
         return self._run(self._async.unshare(path, grantee_id, user_id=user_id))
 
-    def list_shares(self, path: str, *, user_id: str) -> ListSharesResult:
+    def list_shares(self, path: str, *, user_id: str) -> ShareSearchResult:
         """List all shares on a given path."""
         return self._run(self._async.list_shares(path, user_id=user_id))
 
-    def list_shared_with_me(self, *, user_id: str) -> ListSharesResult:
+    def list_shared_with_me(self, *, user_id: str) -> ShareSearchResult:
         """List all files shared with the current user."""
         return self._run(self._async.list_shared_with_me(user_id=user_id))
 

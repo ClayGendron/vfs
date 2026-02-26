@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from .types import DeleteResult, FileInfo, ListResult, RestoreResult
+from grover.types.operations import DeleteResult, RestoreResult
+from grover.types.search import FileSearchCandidate, TrashEvidence, TrashResult
+
 from .utils import normalize_path
 
 if TYPE_CHECKING:
@@ -40,7 +42,9 @@ class TrashService:
         self._versioning = versioning
         self._delete_content_cb = delete_content_cb
 
-    async def list_trash(self, session: AsyncSession, *, owner_id: str | None = None) -> ListResult:
+    async def list_trash(
+        self, session: AsyncSession, *, owner_id: str | None = None
+    ) -> TrashResult:
         """List soft-deleted files, optionally scoped to *owner_id*."""
         model = self._file_model
         conditions = [model.deleted_at.is_not(None)]  # type: ignore[unresolved-attribute]
@@ -49,24 +53,25 @@ class TrashService:
         result = await session.execute(select(model).where(*conditions))
         files = result.scalars().all()
 
-        entries = [
-            FileInfo(
+        candidates = [
+            FileSearchCandidate(
                 path=f.original_path or f.path,
-                name=f.name,
-                is_directory=f.is_directory,
-                size_bytes=f.size_bytes,
-                version=f.current_version,
-                created_at=f.created_at,
-                updated_at=f.deleted_at,
+                evidence=[
+                    TrashEvidence(
+                        strategy="trash",
+                        path=f.original_path or f.path,
+                        deleted_at=f.deleted_at,
+                        original_path=f.original_path or f.path,
+                    )
+                ],
             )
             for f in files
         ]
 
-        return ListResult(
+        return TrashResult(
             success=True,
-            message=f"Found {len(entries)} items in trash",
-            entries=entries,
-            path="/__trash__",
+            message=f"Found {len(candidates)} items in trash",
+            candidates=candidates,
         )
 
     async def restore_from_trash(
@@ -139,7 +144,7 @@ class TrashService:
         return RestoreResult(
             success=True,
             message=f"Restored from trash: {path}",
-            file_path=path,
+            path=path,
         )
 
     async def empty_trash(
