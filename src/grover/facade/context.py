@@ -19,10 +19,10 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.events import EventBus, FileEvent
-    from grover.fs.mounts import MountRegistry
     from grover.graph.analyzers import AnalyzerRegistry
     from grover.graph.protocols import GraphStore
     from grover.mount import Mount
+    from grover.mount.mounts import MountRegistry
     from grover.search.fulltext.protocol import FullTextStore
     from grover.search.protocols import EmbeddingProvider, VectorStore
     from grover.types import FileInfoResult

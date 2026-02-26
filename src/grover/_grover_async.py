@@ -15,8 +15,8 @@ from grover.facade.mounting import MountMixin
 from grover.facade.search_ops import SearchOpsMixin
 from grover.facade.sharing import ShareMixin
 from grover.facade.version_trash import VersionTrashMixin
-from grover.fs.mounts import MountRegistry
 from grover.graph.analyzers import AnalyzerRegistry
+from grover.mount.mounts import MountRegistry
 
 if TYPE_CHECKING:
     from grover.search.protocols import EmbeddingProvider, VectorStore

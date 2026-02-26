@@ -12,7 +12,6 @@ from grover.fs.exceptions import (
     StorageError,
 )
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.mounts import MountRegistry
 from grover.fs.permissions import Permission
 from grover.fs.protocol import (
     StorageBackend,
@@ -24,6 +23,7 @@ from grover.fs.protocol import (
 )
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.fs.utils import format_read_output
+from grover.mount.mounts import MountRegistry
 from grover.types.operations import (
     DeleteResult,
     EditResult,
