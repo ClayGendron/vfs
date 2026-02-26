@@ -16,6 +16,13 @@ Usage::
 
     # With dimension enforcement in the DB layer:
     vector: Vector | None = Field(default=None, sa_type=VectorType(dimension=1024))
+
+    # With model name tracking:
+    v = Vector[1536, "text-embedding-3-large"]([0.1] * 1536)
+    v = Vector["text-embedding-3-large"]([0.1] * 1536)
+
+    # Derive from an EmbeddingProvider:
+    VecType = Vector.for_provider(my_provider)
 """
 
 from __future__ import annotations
@@ -32,26 +39,69 @@ if TYPE_CHECKING:
     from pydantic_core import CoreSchema
     from sqlalchemy.engine.interfaces import Dialect
 
+    from grover.search.protocols import EmbeddingProvider
+
 
 class Vector(list[float]):
-    """Fixed-dimension vector. Use ``Vector[1024]`` for 1024-dim enforcement.
+    """Fixed-dimension vector with optional model name tracking.
 
-    - As model field type: ``vector: Vector | None = Field(default=None, sa_type=VectorType())``
-    - As runtime validator: ``v = Vector[1024]([0.1, 0.2, ...])``
-    - Unsubscripted ``Vector()`` accepts any length.
+    Subscript forms:
+
+    - ``Vector[1024]`` — dimension only (backward compat)
+    - ``Vector["text-embedding-3-large"]`` — model name only
+    - ``Vector[1024, "text-embedding-3-large"]`` — both
+
+    Unsubscripted ``Vector()`` accepts any length with no model tracking.
     """
 
     _dimension: int | None = None
+    _model_name: str | None = None
 
-    def __class_getitem__(cls, dimension: int) -> type[Vector]:  # type: ignore[override]
-        """Create a dimension-specific Vector subclass."""
-        return type(f"Vector[{dimension}]", (cls,), {"_dimension": dimension})
+    def __class_getitem__(cls, params: int | str | tuple[int, str]) -> type[Vector]:  # type: ignore[override]
+        """Create a dimension/model-specific Vector subclass."""
+        if isinstance(params, int):
+            return type(f"Vector[{params}]", (cls,), {"_dimension": params, "_model_name": None})
+        if isinstance(params, str):
+            return type(f"Vector['{params}']", (cls,), {"_dimension": None, "_model_name": params})
+        if isinstance(params, tuple):
+            if len(params) != 2:
+                msg = f"Vector[...] tuple must be (int, str), got {len(params)} elements"
+                raise TypeError(msg)
+            dim, model = params
+            if not isinstance(dim, int) or not isinstance(model, str):
+                msg = (
+                    f"Vector[...] tuple must be (int, str), "
+                    f"got ({type(dim).__name__}, {type(model).__name__})"
+                )
+                raise TypeError(msg)
+            attrs = {"_dimension": dim, "_model_name": model}
+            return type(f"Vector[{dim}, '{model}']", (cls,), attrs)
+        msg = f"Vector[...] requires int, str, or (int, str), got {type(params).__name__}"
+        raise TypeError(msg)
 
     def __init__(self, data: list[float] | None = None) -> None:
         super().__init__(data or [])
         if self._dimension is not None and len(self) != self._dimension:
             msg = f"Expected {self._dimension} dimensions, got {len(self)}"
             raise ValueError(msg)
+
+    @property
+    def dimension(self) -> int | None:
+        """Number of dimensions, or None if unconstrained."""
+        return self._dimension
+
+    @property
+    def model_name(self) -> str | None:
+        """Embedding model name, or None if unset."""
+        return self._model_name
+
+    @classmethod
+    def for_provider(cls, provider: EmbeddingProvider) -> type[Vector]:
+        """Create a typed Vector subclass from an EmbeddingProvider.
+
+        Equivalent to ``Vector[provider.dimensions, provider.model_name]``.
+        """
+        return cls[provider.dimensions, provider.model_name]
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -83,20 +133,41 @@ class VectorType(TypeDecorator[Vector]):
     """SQLAlchemy type: stores Vector as JSON text.
 
     Enforces dimension on BOTH read and write when ``dimension`` is set.
+    Validates model name on write when ``model_name`` is set.
     """
 
     impl = Text
     cache_ok = True
 
-    def __init__(self, dimension: int | None = None) -> None:
+    def __init__(self, dimension: int | None = None, model_name: str | None = None) -> None:
         super().__init__()
         self.dimension = dimension
+        self.model_name = model_name
+
+    @classmethod
+    def from_provider(cls, provider: EmbeddingProvider) -> VectorType:
+        """Create a VectorType from an EmbeddingProvider.
+
+        Equivalent to ``VectorType(dimension=provider.dimensions, model_name=provider.model_name)``.
+        """
+        return cls(dimension=provider.dimensions, model_name=provider.model_name)
 
     def process_bind_param(self, value: list[float] | None, dialect: Dialect) -> str | None:
         if value is None:
             return None
         if self.dimension is not None and len(value) != self.dimension:
             msg = f"Vector bind: expected {self.dimension} dims, got {len(value)}"
+            raise ValueError(msg)
+        if (
+            self.model_name is not None
+            and isinstance(value, Vector)
+            and value._model_name is not None
+            and value._model_name != self.model_name
+        ):
+            msg = (
+                f"Vector bind: model name mismatch — "
+                f"column expects '{self.model_name}', got '{value._model_name}'"
+            )
             raise ValueError(msg)
         return json.dumps(list(value))
 
@@ -107,6 +178,11 @@ class VectorType(TypeDecorator[Vector]):
         if self.dimension is not None and len(data) != self.dimension:
             msg = f"Vector read: expected {self.dimension} dims, got {len(data)}"
             raise ValueError(msg)
+        # Construct the most specific subclass based on what we know
+        if self.dimension is not None and self.model_name is not None:
+            return Vector[self.dimension, self.model_name](data)
         if self.dimension is not None:
             return Vector[self.dimension](data)
+        if self.model_name is not None:
+            return Vector[self.model_name](data)
         return Vector(data)
