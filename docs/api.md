@@ -148,6 +148,8 @@ g.tree(path="/", *, max_depth=None) -> TreeResult
 g.list_versions(path) -> VersionResult
 g.get_version_content(path, version) -> GetVersionContentResult
 g.restore_version(path, version) -> RestoreResult
+g.verify_versions(path) -> VerifyVersionResult
+g.verify_all_versions(mount_path=None) -> list[VerifyVersionResult]
 ```
 
 | Method | Description |
@@ -155,6 +157,8 @@ g.restore_version(path, version) -> RestoreResult
 | `list_versions(path)` | List all versions of a file. Returns `VersionResult` (a `FileSearchResult` subclass) with `candidates` — each candidate's path is `"{file_path}@{version}"` and evidence is `VersionEvidence` with `version`, `content_hash`, `size_bytes`, `created_at`, `created_by`. Versions with `created_by="external"` are synthetic snapshots auto-inserted when an external edit was detected. |
 | `get_version_content(path, version)` | Retrieve the content of a specific version. Returns `GetVersionContentResult`. |
 | `restore_version(path, version)` | Restore a file to a previous version (creates a new version with the old content). Returns `RestoreResult`. |
+| `verify_versions(path)` | Verify the version chain integrity for a single file. Reconstructs every version and checks SHA256 hashes. Returns `VerifyVersionResult` with per-version pass/fail details in `errors: list[VersionChainError]`. |
+| `verify_all_versions(mount_path=None)` | Verify version chains for all files, optionally filtered to a specific mount. Returns `list[VerifyVersionResult]`. |
 
 ### Trash
 
@@ -211,6 +215,8 @@ g.reconcile(mount_path=None) -> dict[str, int]
 ```
 
 Synchronize the database with the actual filesystem state. Only available for backends that implement `SupportsReconcile` (currently `LocalFileSystem`).
+
+Returns a dict with keys: `created`, `updated`, `deleted`, `chain_errors`. The `chain_errors` count is the total number of version records that failed integrity verification across all reconciled files.
 
 Returns a dict with counts: `{"created": N, "updated": N, "deleted": N}`.
 
@@ -432,6 +438,9 @@ This design is intentional: agents running in loops should handle failures grace
 | `ShareResult` | `grantee_id`, `permission`, `granted_by` |
 | `ConnectionResult` | `source_path`, `target_path`, `connection_type` |
 | `FileInfoResult` | `name`, `is_directory`, `mime_type`, `size_bytes`, `created_at`, `updated_at`, `permission`, `mount_type` |
+| `VerifyVersionResult` | `versions_checked`, `versions_passed`, `versions_failed`, `errors: list[VersionChainError]` |
+
+`VersionChainError` is a frozen dataclass with fields: `version`, `expected_hash`, `actual_hash`, `error`.
 
 #### FileSearchResult subclasses
 
@@ -511,7 +520,7 @@ Permission.READ_ONLY   # Reads and listings only
 | Protocol | Methods |
 |----------|---------|
 | `StorageBackend` | `open`, `close`, `read`, `write`, `edit`, `delete`, `mkdir`, `move`, `copy`, `list_dir`, `exists`, `get_info`, `glob`, `grep`, `tree` |
-| `SupportsVersions` | `list_versions`, `get_version_content`, `restore_version` |
+| `SupportsVersions` | `list_versions`, `get_version_content`, `restore_version`, `verify_versions`, `verify_all_versions` |
 | `SupportsTrash` | `list_trash`, `restore_from_trash`, `empty_trash` |
 | `SupportsReconcile` | `reconcile` |
 | `SupportsSearch` | `search` — semantic search backed by a per-mount search engine |

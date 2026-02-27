@@ -14,6 +14,7 @@ from grover.types import (
     GetVersionContentResult,
     RestoreResult,
     TrashResult,
+    VerifyVersionResult,
     VersionResult,
 )
 
@@ -87,6 +88,42 @@ class VersionTrashMixin:
         except CapabilityNotSupportedError as e:
             return RestoreResult(success=False, message=str(e))
 
+    async def verify_versions(
+        self, path: str, *, user_id: str | None = None
+    ) -> VerifyVersionResult:
+        path = normalize_path(path)
+        try:
+            mount, rel_path = self._ctx.registry.resolve(path)
+            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
+            if cap is None:
+                raise CapabilityNotSupportedError(
+                    f"Mount at {mount.path} does not support versioning"
+                )
+            async with self._ctx.session_for(mount) as sess:
+                result = await cap.verify_versions(rel_path, session=sess, user_id=user_id)
+            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+            return result
+        except CapabilityNotSupportedError as e:
+            return VerifyVersionResult(success=False, message=str(e), path=path)
+
+    async def verify_all_versions(self, mount_path: str | None = None) -> list[VerifyVersionResult]:
+        all_results: list[VerifyVersionResult] = []
+        mounts = self._ctx.registry.list_mounts()
+        if mount_path is not None:
+            mount_path = normalize_path(mount_path).rstrip("/")
+            mounts = [m for m in mounts if m.path == mount_path]
+
+        for mount in mounts:
+            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
+            if cap is None:
+                continue
+            async with self._ctx.session_for(mount) as sess:
+                results = await cap.verify_all_versions(session=sess)
+            for r in results:
+                r.path = self._ctx.prefix_path(r.path, mount.path) or r.path
+            all_results.extend(results)
+        return all_results
+
     # ------------------------------------------------------------------
     # Trash operations (absorbed from VFS, capability-gated)
     # ------------------------------------------------------------------
@@ -157,7 +194,7 @@ class VersionTrashMixin:
 
     async def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
         """Reconcile disk ↔ DB for capable mounts."""
-        total = {"created": 0, "updated": 0, "deleted": 0}
+        total: dict[str, int] = {"created": 0, "updated": 0, "deleted": 0, "chain_errors": 0}
         mounts = self._ctx.registry.list_mounts()
         if mount_path is not None:
             mount_path = normalize_path(mount_path).rstrip("/")
@@ -172,7 +209,7 @@ class VersionTrashMixin:
                 continue
             async with self._ctx.session_for(mount) as sess:
                 stats = await cap.reconcile(session=sess)
-            for k in total:
-                total[k] += stats.get(k, 0)
+            for k, v in stats.items():
+                total[k] = total.get(k, 0) + v
 
         return total

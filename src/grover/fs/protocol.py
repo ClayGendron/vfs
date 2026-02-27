@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         ReadResult,
         RestoreResult,
         ShareResult,
+        VerifyVersionResult,
         WriteResult,
     )
     from grover.types.search import (
@@ -240,6 +241,21 @@ class SupportsVersions(Protocol):
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> RestoreResult: ...
+
+    async def verify_versions(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> VerifyVersionResult: ...
+
+    async def verify_all_versions(
+        self,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> list[VerifyVersionResult]: ...
 
 
 @runtime_checkable

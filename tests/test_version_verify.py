@@ -267,6 +267,91 @@ class TestVerifyChainCorrupted:
         await engine.dispose()
 
 
+class TestBackendVerifyVersions:
+    """Backend-level verify_versions / verify_all_versions tests."""
+
+    async def test_backend_verify_versions_healthy(self):
+        """DatabaseFileSystem.verify_versions on a healthy file."""
+        fs, factory, engine = await _make_fs()
+        async with factory() as session:
+            await fs.write("/f.py", "v1\n", session=session)
+            await fs.write("/f.py", "v2\n", session=session)
+
+            result = await fs.verify_versions("/f.py", session=session)
+            assert result.success is True
+            assert result.versions_checked == 2
+            assert result.versions_passed == 2
+            assert result.path == "/f.py"
+        await engine.dispose()
+
+    async def test_backend_verify_versions_not_found(self):
+        """verify_versions on a nonexistent path returns success=False."""
+        fs, factory, engine = await _make_fs()
+        async with factory() as session:
+            result = await fs.verify_versions("/nope.py", session=session)
+            assert result.success is False
+            assert "not found" in result.message.lower()
+        await engine.dispose()
+
+    async def test_backend_verify_all_versions_multiple_files(self):
+        """verify_all_versions checks all non-deleted, non-directory files."""
+        fs, factory, engine = await _make_fs()
+        async with factory() as session:
+            await fs.write("/a.py", "a\n", session=session)
+            await fs.write("/b.py", "b\n", session=session)
+            await fs.write("/c.py", "c\n", session=session)
+
+            results = await fs.verify_all_versions(session=session)
+            assert len(results) == 3
+            assert all(r.success for r in results)
+        await engine.dispose()
+
+    async def test_backend_verify_all_versions_skips_directories(self):
+        """verify_all_versions only checks files, not directories."""
+        fs, factory, engine = await _make_fs()
+        async with factory() as session:
+            await fs.mkdir("/mydir", session=session)
+            await fs.write("/mydir/f.py", "content\n", session=session)
+
+            results = await fs.verify_all_versions(session=session)
+            # Only the file, not the directory
+            assert len(results) == 1
+            assert results[0].path == "/mydir/f.py"
+        await engine.dispose()
+
+    async def test_backend_verify_all_versions_with_corruption(self):
+        """verify_all_versions reports mixed results when one file is corrupted."""
+        fs, factory, engine = await _make_fs()
+        async with factory() as session:
+            await fs.write("/good.py", "good\n", session=session)
+            await fs.write("/bad.py", "bad\n", session=session)
+
+            # Corrupt /bad.py's hash
+            file_rec = (
+                await session.execute(
+                    select(fs._file_model).where(fs._file_model.path == "/bad.py")
+                )
+            ).scalar_one()
+            v1_rec = (
+                await session.execute(
+                    select(FileVersion).where(
+                        FileVersion.file_id == file_rec.id,
+                        FileVersion.version == 1,
+                    )
+                )
+            ).scalar_one()
+            v1_rec.content_hash = "0" * 64
+            session.add(v1_rec)
+            await session.flush()
+
+            results = await fs.verify_all_versions(session=session)
+            assert len(results) == 2
+            paths = {r.path: r for r in results}
+            assert paths["/good.py"].success is True
+            assert paths["/bad.py"].success is False
+        await engine.dispose()
+
+
 class TestVerifyVersionResultFields:
     """Test VerifyVersionResult and VersionChainError types."""
 

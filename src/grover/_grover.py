@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         TrashResult,
         TreeResult,
         VectorSearchResult,
+        VerifyVersionResult,
         VersionResult,
         WriteResult,
     )
@@ -298,6 +299,12 @@ class Grover:
 
     def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
         return self._run(self._async.reconcile(mount_path))
+
+    def verify_versions(self, path: str, *, user_id: str | None = None) -> VerifyVersionResult:
+        return self._run(self._async.verify_versions(path, user_id=user_id))
+
+    def verify_all_versions(self, mount_path: str | None = None) -> list[VerifyVersionResult]:
+        return self._run(self._async.verify_all_versions(mount_path))
 
     # ------------------------------------------------------------------
     # Share wrappers (sync)

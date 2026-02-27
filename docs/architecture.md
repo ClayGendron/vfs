@@ -260,6 +260,8 @@ This balances storage efficiency (diffs are small) with reconstruction speed (at
 
 **External edit detection:** If a file is modified outside Grover (by an IDE, git, etc.), the diff chain would silently break. At `write()` and `edit()` time, `check_external_edit()` compares the storage content's hash against the last Grover-written hash. On mismatch, a synthetic snapshot version is inserted with `created_by="external"` to keep the chain intact. See [internals/fs.md](internals/fs.md#external-edit-detection) for details.
 
+**Proactive chain verification:** `verify_versions(path)` and `verify_all_versions()` reconstruct every version in a file's chain and verify each SHA-256 hash. Corruption is reported per-version in the `VerifyVersionResult.errors` list rather than raising exceptions — this enables full chain audits that report all problems at once. `reconcile()` calls `verify_all_versions()` automatically and includes a `chain_errors` count in its return dict.
+
 ## Graph model
 
 The knowledge graph is an in-memory `rustworkx.PyDiGraph` with string-path-keyed nodes. Edges have a free-form `type` string — there's no enum or schema for edge types. **The graph is a pure in-memory projection** — it is populated from the database on mount init and updated via events at runtime.

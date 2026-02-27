@@ -34,6 +34,7 @@ from grover.types.operations import (
     MoveResult,
     ReadResult,
     RestoreResult,
+    VerifyVersionResult,
     WriteResult,
 )
 from grover.types.search import (
@@ -1169,6 +1170,43 @@ class LocalFileSystem:
             version=write_result.version,
         )
 
+    async def verify_versions(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> VerifyVersionResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        file = await self.metadata.get_file(sess, path)
+        if not file:
+            return VerifyVersionResult(
+                success=False,
+                message=f"File not found: {path}",
+                path=path,
+            )
+        return await self.versioning.verify_chain(sess, file)
+
+    async def verify_all_versions(
+        self,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> list[VerifyVersionResult]:
+        sess = self._require_session(session)
+        model = self._file_model
+        result = await sess.execute(
+            select(model).where(
+                model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+                model.is_directory.is_(False),  # type: ignore[union-attr]
+            )
+        )
+        results: list[VerifyVersionResult] = []
+        for file in result.scalars().all():
+            results.append(await self.versioning.verify_chain(sess, file))  # noqa: PERF401
+        return results
+
     # ------------------------------------------------------------------
     # Capability: SupportsTrash
     # ------------------------------------------------------------------
@@ -1323,6 +1361,11 @@ class LocalFileSystem:
                     stats["deleted"] += 1
 
         await sess.flush()
+
+        # Verify version chain integrity
+        verification_results = await self.verify_all_versions(session=sess)
+        stats["chain_errors"] = sum(r.versions_failed for r in verification_results)
+
         return stats
 
     # ------------------------------------------------------------------
