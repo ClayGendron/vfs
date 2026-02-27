@@ -80,6 +80,8 @@ from grover.types import (
     TreeResult,
     VectorEvidence,
     VectorSearchResult,
+    VerifyVersionResult,
+    VersionChainError,
     VersionResult,
     WriteResult,
 )
@@ -142,6 +144,8 @@ __all__ = [
     "VectorEvidence",
     "VectorSearchResult",
     "VectorStore",
+    "VerifyVersionResult",
+    "VersionChainError",
     "VersionResult",
     "WriteResult",
     "__version__",

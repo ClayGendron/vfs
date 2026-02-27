@@ -16,6 +16,8 @@ from grover.types.operations import (
     ReadResult,
     RestoreResult,
     ShareResult,
+    VerifyVersionResult,
+    VersionChainError,
     WriteResult,
 )
 from grover.types.search import (
@@ -83,6 +85,8 @@ __all__ = [
     "TreeResult",
     "VectorEvidence",
     "VectorSearchResult",
+    "VerifyVersionResult",
+    "VersionChainError",
     "VersionEvidence",
     "VersionResult",
     "WriteResult",

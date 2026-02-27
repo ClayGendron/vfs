@@ -122,3 +122,23 @@ class FileInfoResult(FileOperationResult):
     updated_at: datetime | None = None
     permission: str | None = None
     mount_type: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VersionChainError:
+    """Detail about a single failed version in chain verification."""
+
+    version: int
+    expected_hash: str
+    actual_hash: str
+    error: str
+
+
+@dataclass
+class VerifyVersionResult(FileOperationResult):
+    """Result of verifying a file's version chain integrity."""
+
+    versions_checked: int = 0
+    versions_passed: int = 0
+    versions_failed: int = 0
+    errors: list[VersionChainError] = field(default_factory=list)

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete as sa_delete
 from sqlmodel import select
 
+from grover.types.operations import VerifyVersionResult, VersionChainError
+
 from .diff import SNAPSHOT_INTERVAL, compute_diff, reconstruct_version
 from .exceptions import ConsistencyError
 
@@ -163,3 +165,99 @@ class VersioningService:
             )
 
         return content
+
+    async def verify_chain(
+        self,
+        session: AsyncSession,
+        file: FileBase,
+    ) -> VerifyVersionResult:
+        """Verify the integrity of the entire version chain for a file.
+
+        Reconstructs every version and checks its SHA256 hash against the
+        stored hash. Captures all errors rather than raising — callers get
+        a full report of which versions are healthy and which are corrupt.
+        """
+        fv_model = self._file_version_model
+
+        # Load all version records ordered ascending
+        all_result = await session.execute(
+            select(fv_model).where(fv_model.file_id == file.id).order_by(fv_model.version.asc())  # type: ignore[unresolved-attribute]
+        )
+        all_versions = all_result.scalars().all()
+
+        if not all_versions:
+            return VerifyVersionResult(
+                path=file.path,
+                success=True,
+                message="No versions to verify",
+            )
+
+        errors: list[VersionChainError] = []
+        checked = 0
+        passed = 0
+
+        for v in all_versions:
+            checked += 1
+
+            # Find the nearest snapshot at or before this version
+            snapshot_rec = None
+            for candidate in all_versions:
+                if candidate.version > v.version:
+                    break
+                if candidate.is_snapshot:
+                    snapshot_rec = candidate
+
+            if snapshot_rec is None:
+                errors.append(
+                    VersionChainError(
+                        version=v.version,
+                        expected_hash=v.content_hash,
+                        actual_hash="",
+                        error="No snapshot found at or before this version",
+                    )
+                )
+                continue
+
+            # Build the sub-chain from snapshot through target
+            chain = [
+                rec for rec in all_versions if snapshot_rec.version <= rec.version <= v.version
+            ]
+
+            try:
+                entries = [(rec.is_snapshot, rec.content) for rec in chain]
+                content = reconstruct_version(entries)
+                actual_hash = hashlib.sha256(content.encode()).hexdigest()
+            except Exception as exc:
+                errors.append(
+                    VersionChainError(
+                        version=v.version,
+                        expected_hash=v.content_hash,
+                        actual_hash="",
+                        error=f"Reconstruction failed: {exc}",
+                    )
+                )
+                continue
+
+            if actual_hash != v.content_hash:
+                errors.append(
+                    VersionChainError(
+                        version=v.version,
+                        expected_hash=v.content_hash,
+                        actual_hash=actual_hash,
+                        error="Content hash mismatch",
+                    )
+                )
+            else:
+                passed += 1
+
+        failed = checked - passed
+        ok = failed == 0
+        return VerifyVersionResult(
+            path=file.path,
+            success=ok,
+            message="All versions verified" if ok else f"{failed} version(s) failed verification",
+            versions_checked=checked,
+            versions_passed=passed,
+            versions_failed=failed,
+            errors=errors,
+        )
