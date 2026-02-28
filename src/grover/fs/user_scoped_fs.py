@@ -120,7 +120,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
 
         - Regular paths: prepend ``/{user_id}/``.
         - ``@shared/{owner}/rest``: resolve to ``/{owner}/rest``.
+
+        The path is normalized **before** prepending the user namespace to
+        prevent ``..`` traversal out of the user's directory.
         """
+        path = normalize_path(path)
         is_shared, owner, rest = UserScopedFileSystem._is_shared_access(path)
         if is_shared and owner is not None and rest is not None:
             return f"/{owner}{rest}" if rest != "/" else f"/{owner}"

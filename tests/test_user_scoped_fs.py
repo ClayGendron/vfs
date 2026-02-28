@@ -1635,3 +1635,46 @@ class TestSecurityVulnerabilities:
         assert UserScopedFileSystem._require_user_id("user_name") == "user_name"
         assert UserScopedFileSystem._require_user_id("user.name") == "user.name"
         assert UserScopedFileSystem._require_user_id("user123") == "user123"
+
+    # -- Fix 7: path traversal via .. in _resolve_path --
+
+    def test_resolve_path_normalizes_dotdot(self):
+        """Traversal via .. must not escape the user namespace."""
+        result = UserScopedFileSystem._resolve_path("/../bob/secret.txt", "alice")
+        assert result == "/alice/bob/secret.txt"
+
+    def test_resolve_path_normalizes_deep_dotdot(self):
+        result = UserScopedFileSystem._resolve_path("/../../bob/secret.txt", "alice")
+        assert result == "/alice/bob/secret.txt"
+
+    def test_resolve_path_normalizes_mid_dotdot(self):
+        result = UserScopedFileSystem._resolve_path("/foo/../bar/secret.txt", "alice")
+        assert result == "/alice/bar/secret.txt"
+
+    async def test_read_traversal_stays_in_namespace(
+        self, usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        """Reading via .. path must not access another user's file."""
+        await usfs.write("/secret.txt", "bob secret", session=async_session, user_id="bob")
+        result = await usfs.read("/../bob/secret.txt", session=async_session, user_id="alice")
+        # Should NOT return bob's file — path resolves within alice's namespace
+        assert result.success is False or result.content != "bob secret"
+
+    async def test_write_traversal_stays_in_namespace(
+        self, usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        """Writing via .. path must not overwrite another user's file."""
+        await usfs.write("/secret.txt", "original", session=async_session, user_id="bob")
+        await usfs.write("/../bob/secret.txt", "hacked", session=async_session, user_id="alice")
+        result = await usfs.read("/secret.txt", session=async_session, user_id="bob")
+        assert result.content == "original"
+
+    async def test_delete_traversal_stays_in_namespace(
+        self, usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        """Deleting via .. path must not delete another user's file."""
+        await usfs.write("/secret.txt", "bob data", session=async_session, user_id="bob")
+        await usfs.delete("/../bob/secret.txt", session=async_session, user_id="alice")
+        result = await usfs.read("/secret.txt", session=async_session, user_id="bob")
+        assert result.success is True
+        assert result.content == "bob data"
