@@ -7,11 +7,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from grover.events import IndexingMode
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.permissions import Permission
 from grover.search._engine import SearchEngine
+from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.events import EventBus, FileEvent
     from grover.graph.analyzers import AnalyzerRegistry
     from grover.graph.protocols import GraphStore
     from grover.mount import Mount
@@ -27,6 +26,7 @@ if TYPE_CHECKING:
     from grover.search.fulltext.protocol import FullTextStore
     from grover.search.protocols import EmbeddingProvider, VectorStore
     from grover.types import FileInfoResult
+    from grover.worker import BackgroundWorker
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ T = TypeVar("T")
 class GroverContext:
     """Shared state for GroverAsync operations."""
 
-    event_bus: EventBus
+    worker: BackgroundWorker
     registry: MountRegistry
     analyzer_registry: AnalyzerRegistry
     embedding_provider: EmbeddingProvider | None = None
@@ -69,13 +69,9 @@ class GroverContext:
         finally:
             await session.close()
 
-    async def emit(self, event: FileEvent) -> None:
-        """Emit a file event via the event bus."""
-        await self.event_bus.emit(event)
-
     async def drain(self) -> None:
-        """Drain all pending background events."""
-        await self.event_bus.drain()
+        """Drain all pending background work."""
+        await self.worker.drain()
 
     def check_writable(self, virtual_path: str) -> str | None:
         """Return an error message if *virtual_path* is read-only, else ``None``.

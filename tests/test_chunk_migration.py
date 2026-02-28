@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from grover._grover_async import GroverAsync
-from grover.events import EventType, FileEvent
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.protocol import SupportsFileChunks
 
@@ -363,20 +362,3 @@ class TestVectorMetadata:
                 found = True
                 break
         assert found, "No chunk vector found with parent_path=/project/funcs.py"
-
-
-# ==================================================================
-# FileEvent user_id
-# ==================================================================
-
-
-class TestFileEventUserId:
-    def test_file_event_user_id_default(self):
-        """FileEvent.user_id should default to None."""
-        event = FileEvent(event_type=EventType.FILE_WRITTEN, path="/test.py")
-        assert event.user_id is None
-
-    def test_file_event_user_id_set(self):
-        """FileEvent.user_id should be settable."""
-        event = FileEvent(event_type=EventType.FILE_WRITTEN, path="/test.py", user_id="alice")
-        assert event.user_id == "alice"

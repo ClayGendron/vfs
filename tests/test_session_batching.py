@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from grover._grover_async import GroverAsync
-from grover.events import EventType, FileEvent
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.models.chunks import FileChunk
 from grover.models.connections import FileConnection
@@ -216,35 +215,27 @@ class TestAnalyzeSessionBatching:
             # No leftover os import edge
             assert not any(t.endswith("/os") for t in targets)
 
-    async def test_analyze_events_emitted_after_commit(
+    async def test_analyze_edges_projected_after_commit(
         self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        """CONNECTION_ADDED events should fire after DB commit, so records are visible."""
+        """Edges should be projected into graph after DB commit, with DB records visible."""
         g, engine = dbfs_setup
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-        records_visible: list[bool] = []
-
-        async def check_db_handler(event: FileEvent) -> None:
-            """Handler that verifies DB record is visible when event fires."""
-            if event.source_path is None:
-                return
-            async with factory() as sess:
-                rows = await sess.execute(
-                    select(FileConnection).where(FileConnection.source_path == event.source_path)
-                )
-                records = list(rows.scalars().all())
-                records_visible.append(len(records) > 0)
-
-        g._ctx.event_bus.register(EventType.CONNECTION_ADDED, check_db_handler)
 
         await g.write("/vfs/main.py", _SINGLE_IMPORT_CODE)
         await g.flush()
 
-        # At least one CONNECTION_ADDED event should have fired
-        assert len(records_visible) >= 1
-        # All records should have been visible (committed) when event fired
-        assert all(records_visible), f"Records not visible at event time: {records_visible}"
+        # Graph should have import edges (projected after commit)
+        graph = g.get_graph("/vfs")
+        assert graph.has_node("/vfs/main.py")
+
+        # DB records should be committed and visible
+        async with factory() as sess:
+            rows = await sess.execute(
+                select(FileConnection).where(FileConnection.source_path == "/vfs/main.py")
+            )
+            records = list(rows.scalars().all())
+            assert len(records) >= 1, "DB records should be visible after commit"
 
     async def test_analyze_atomicity_on_failure(
         self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
@@ -290,12 +281,12 @@ class TestAnalyzeSessionBatching:
 
 
 # =========================================================================
-# _on_file_deleted session batching
+# _process_delete session batching
 # =========================================================================
 
 
 class TestDeletedSessionBatching:
-    """Verify _on_file_deleted uses a single batched session."""
+    """Verify _process_delete uses a single batched session."""
 
     async def test_on_file_deleted_uses_single_session(
         self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
@@ -311,8 +302,8 @@ class TestDeletedSessionBatching:
         counter = SessionCounter(g._ctx)
         g._ctx.session_for = counter  # type: ignore[assignment]
 
-        # Call handler directly
-        await g._on_file_deleted(FileEvent(event_type=EventType.FILE_DELETED, path="/vfs/main.py"))
+        # Call processing method directly
+        await g._process_delete("/vfs/main.py")
 
         assert counter.count == 1, f"Expected 1 session, got {counter.count}"
 
@@ -352,12 +343,12 @@ class TestDeletedSessionBatching:
 
 
 # =========================================================================
-# _on_file_moved session batching
+# _process_move session batching
 # =========================================================================
 
 
 class TestMovedSessionBatching:
-    """Verify _on_file_moved uses a single session for old-path cleanup."""
+    """Verify _process_move uses a single session for old-path cleanup."""
 
     async def test_on_file_moved_uses_single_session(
         self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
@@ -373,16 +364,10 @@ class TestMovedSessionBatching:
         counter = SessionCounter(g._ctx)
         g._ctx.session_for = counter  # type: ignore[assignment]
 
-        # Call handler directly with a .grover path as the new path.
-        # The handler returns early for .grover paths (before read),
+        # Call processing method directly with a .grover path as the new path.
+        # _process_move returns early for .grover new paths (before read),
         # isolating just the old-path cleanup session.
-        await g._on_file_moved(
-            FileEvent(
-                event_type=EventType.FILE_MOVED,
-                path="/vfs/.grover/temp.py",
-                old_path="/vfs/main.py",
-            )
-        )
+        await g._process_move("/vfs/main.py", "/vfs/.grover/temp.py")
 
         assert counter.count == 1, f"Expected 1 session for old-path cleanup, got {counter.count}"
 

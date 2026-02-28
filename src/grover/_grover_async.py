@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from grover.events import EventBus, EventType, IndexingMode
 from grover.facade.connections import ConnectionMixin
 from grover.facade.context import GroverContext
 from grover.facade.file_ops import FileOpsMixin
@@ -17,6 +16,7 @@ from grover.facade.sharing import ShareMixin
 from grover.facade.version_trash import VersionTrashMixin
 from grover.graph.analyzers import AnalyzerRegistry
 from grover.mount.mounts import MountRegistry
+from grover.worker import BackgroundWorker, IndexingMode
 
 if TYPE_CHECKING:
     from grover.search.protocols import EmbeddingProvider, VectorStore
@@ -32,7 +32,7 @@ class GroverAsync(
     ConnectionMixin,
     IndexMixin,
 ):
-    """Async facade wiring filesystem, graph, analyzers, event bus, and search.
+    """Async facade wiring filesystem, graph, analyzers, worker, and search.
 
     Mount-first API: create an instance, then add mounts.
 
@@ -59,7 +59,7 @@ class GroverAsync(
         debounce_delay: float = 0.1,
     ) -> None:
         self._ctx = GroverContext(
-            event_bus=EventBus(indexing_mode=indexing_mode, debounce_delay=debounce_delay),
+            worker=BackgroundWorker(indexing_mode=indexing_mode, debounce_delay=debounce_delay),
             registry=MountRegistry(),
             analyzer_registry=AnalyzerRegistry(),
             embedding_provider=embedding_provider,
@@ -67,11 +67,3 @@ class GroverAsync(
             explicit_data_dir=Path(data_dir) if data_dir else None,
             indexing_mode=indexing_mode,
         )
-
-        # Register event handlers
-        self._ctx.event_bus.register(EventType.FILE_WRITTEN, self._on_file_written)
-        self._ctx.event_bus.register(EventType.FILE_DELETED, self._on_file_deleted)
-        self._ctx.event_bus.register(EventType.FILE_MOVED, self._on_file_moved)
-        self._ctx.event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
-        self._ctx.event_bus.register(EventType.CONNECTION_ADDED, self._on_connection_added)
-        self._ctx.event_bus.register(EventType.CONNECTION_DELETED, self._on_connection_deleted)

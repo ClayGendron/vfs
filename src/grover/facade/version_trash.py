@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from grover.events import EventType, FileEvent
 from grover.fs.exceptions import CapabilityNotSupportedError
 from grover.fs.permissions import Permission
 from grover.fs.protocol import SupportsReconcile, SupportsTrash, SupportsVersions
@@ -81,8 +80,9 @@ class VersionTrashMixin:
                 result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
             result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._ctx.emit(
-                    FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
+                self._ctx.worker.schedule(
+                    path,
+                    lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
                 )
             return result
         except CapabilityNotSupportedError as e:
@@ -157,8 +157,9 @@ class VersionTrashMixin:
                 result = await cap.restore_from_trash(rel_path, session=sess, user_id=user_id)
             result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._ctx.emit(
-                    FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
+                self._ctx.worker.schedule(
+                    path,
+                    lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
                 )
             return result
         except CapabilityNotSupportedError as e:

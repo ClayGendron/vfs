@@ -2,11 +2,10 @@
 
 This covers:
 - ConnectionService unit tests (low-level DB CRUD)
-- GroverAsync + DatabaseFileSystem connection integration (events, graph)
+- GroverAsync + DatabaseFileSystem connection integration (graph)
 - GroverAsync + LocalFileSystem connection integration
 - _analyze_and_integrate edge routing through FS
-- Graph projection (in-memory, updated via events)
-- FileEvent connection field shape
+- Graph projection (in-memory, updated via worker)
 - save() no longer writes edges
 """
 
@@ -21,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from grover._grover_async import GroverAsync
-from grover.events import EventType, FileEvent
 from grover.fs.connections import ConnectionService
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
@@ -65,10 +63,6 @@ class FakeProvider:
         raw = [float(b) for b in h]
         norm = math.sqrt(sum(x * x for x in raw))
         return [x / norm for x in raw]
-
-
-async def _collecting_handler(events: list[FileEvent], event: FileEvent) -> None:
-    events.append(event)
 
 
 # =========================================================================
@@ -344,7 +338,7 @@ class TestConnectionService:
 
 
 # =========================================================================
-# Integration: GroverAsync + DatabaseFileSystem + EventBus + Graph
+# Integration: GroverAsync + DatabaseFileSystem + Graph
 # =========================================================================
 
 
@@ -352,7 +346,7 @@ class TestConnectionIntegrationDBFS:
     """Connection operations through GroverAsync with DatabaseFileSystem."""
 
     @pytest.fixture
-    async def setup(self, tmp_path: Path) -> tuple[GroverAsync, list[FileEvent], AsyncEngine]:
+    async def setup(self, tmp_path: Path) -> tuple[GroverAsync, AsyncEngine]:
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
@@ -360,25 +354,17 @@ class TestConnectionIntegrationDBFS:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(dialect="sqlite")
 
-        collected: list[FileEvent] = []
-
-        async def handler(event: FileEvent) -> None:
-            await _collecting_handler(collected, event)
-
         g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
         await g.add_mount("/vfs", fs, session_factory=factory)
 
-        for et in EventType:
-            g._ctx.event_bus.register(et, handler)
-
-        yield g, collected, engine  # type: ignore[misc]
+        yield g, engine  # type: ignore[misc]
         await g.close()
         await engine.dispose()
 
     async def test_add_connection_returns_result(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        grover, _collected, _engine = setup
+        grover, _engine = setup
         result = await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         assert isinstance(result, ConnectionResult)
         assert result.success
@@ -387,26 +373,10 @@ class TestConnectionIntegrationDBFS:
         assert result.target_path == "/vfs/b.py"
         assert result.connection_type == "imports"
 
-    async def test_add_connection_triggers_event(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+    async def test_add_connection_updates_graph(
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        grover, collected, _engine = setup
-        await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
-        await grover.flush()
-
-        conn_events = [e for e in collected if e.event_type is EventType.CONNECTION_ADDED]
-        assert len(conn_events) == 1
-        ev = conn_events[0]
-        assert ev.path == "/vfs/a.py[imports]/vfs/b.py"
-        assert ev.source_path == "/vfs/a.py"
-        assert ev.target_path == "/vfs/b.py"
-        assert ev.connection_type == "imports"
-        assert ev.weight == 1.0
-
-    async def test_add_connection_updates_graph_via_event(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
-    ) -> None:
-        grover, _collected, _engine = setup
+        grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.flush()
 
@@ -415,29 +385,24 @@ class TestConnectionIntegrationDBFS:
         assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
 
     async def test_delete_connection_removes_from_db_and_graph(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        grover, collected, _engine = setup
+        grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.flush()
         assert grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
-        collected.clear()
         result = await grover.delete_connection("/vfs/a.py", "/vfs/b.py", connection_type="imports")
         await grover.flush()
         assert result.success
 
-        # Graph updated via event
+        # Graph updated via worker
         assert not grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
-        # Event emitted
-        del_events = [e for e in collected if e.event_type is EventType.CONNECTION_DELETED]
-        assert len(del_events) == 1
-
-    async def test_delete_connection_updates_graph_via_event(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+    async def test_delete_connection_updates_graph(
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        grover, _collected, _engine = setup
+        grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.flush()
         assert grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
@@ -447,9 +412,9 @@ class TestConnectionIntegrationDBFS:
         assert not grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
     async def test_list_connections_returns_records(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        grover, _collected, _engine = setup
+        grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.add_connection("/vfs/a.py", "/vfs/c.py", "calls")
 
@@ -457,26 +422,28 @@ class TestConnectionIntegrationDBFS:
         assert len(conns) == 2
 
     async def test_list_connections_no_mount_returns_empty(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        grover, _collected, _engine = setup
+        grover, _engine = setup
         conns = await grover.list_connections("/nonexistent/path")
         assert conns == []
 
-    async def test_failed_add_does_not_emit_event(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+    async def test_failed_add_does_not_update_graph(
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        """add_connection to a nonexistent mount should fail without event."""
-        grover, collected, _engine = setup
+        """add_connection to a nonexistent mount should fail without graph update."""
+        grover, _engine = setup
         result = await grover.add_connection("/nope/a.py", "/nope/b.py", "imports")
         assert not result.success
-        conn_events = [e for e in collected if e.event_type is EventType.CONNECTION_ADDED]
-        assert len(conn_events) == 0
+        await grover.flush()
+        # Graph should not have any edges for the failed path
+        graph = grover.get_graph("/vfs")
+        assert not graph.has_edge("/nope/a.py", "/nope/b.py")
 
     async def test_multiple_connection_types_between_same_files(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
-        grover, _collected, _engine = setup
+        grover, _engine = setup
         r1 = await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         r2 = await grover.add_connection("/vfs/a.py", "/vfs/b.py", "calls")
         assert r1.success
@@ -492,7 +459,7 @@ class TestConnectionIntegrationDBFS:
 
 
 # =========================================================================
-# Integration: GroverAsync + LocalFileSystem + EventBus + Graph
+# Integration: GroverAsync + LocalFileSystem + Graph
 # =========================================================================
 
 
@@ -500,12 +467,7 @@ class TestConnectionIntegrationLocalFS:
     """Connection operations through GroverAsync with LocalFileSystem."""
 
     @pytest.fixture
-    async def setup(self, tmp_path: Path) -> tuple[GroverAsync, list[FileEvent]]:
-        collected: list[FileEvent] = []
-
-        async def handler(event: FileEvent) -> None:
-            await _collecting_handler(collected, event)
-
+    async def setup(self, tmp_path: Path) -> GroverAsync:
         data = tmp_path / "grover_data"
         ws = tmp_path / "workspace"
         ws.mkdir()
@@ -514,16 +476,11 @@ class TestConnectionIntegrationLocalFS:
         lfs = LocalFileSystem(workspace_dir=ws, data_dir=data / "local")
         await g.add_mount("/local", lfs)
 
-        for et in EventType:
-            g._ctx.event_bus.register(et, handler)
-
-        yield g, collected  # type: ignore[misc]
+        yield g  # type: ignore[misc]
         await g.close()
 
-    async def test_add_connection_through_local_fs(
-        self, setup: tuple[GroverAsync, list[FileEvent]]
-    ) -> None:
-        grover, collected = setup
+    async def test_add_connection_through_local_fs(self, setup: GroverAsync) -> None:
+        grover = setup
         result = await grover.add_connection("/local/a.py", "/local/b.py", "imports")
         assert result.success
         assert result.path == "/local/a.py[imports]/local/b.py"
@@ -533,14 +490,8 @@ class TestConnectionIntegrationLocalFS:
         graph = grover.get_graph("/local")
         assert graph.has_edge("/local/a.py", "/local/b.py")
 
-        # Event emitted
-        conn_events = [e for e in collected if e.event_type is EventType.CONNECTION_ADDED]
-        assert len(conn_events) == 1
-
-    async def test_delete_connection_through_local_fs(
-        self, setup: tuple[GroverAsync, list[FileEvent]]
-    ) -> None:
-        grover, _collected = setup
+    async def test_delete_connection_through_local_fs(self, setup: GroverAsync) -> None:
+        grover = setup
         await grover.add_connection("/local/a.py", "/local/b.py", "imports")
         await grover.flush()
 
@@ -551,10 +502,8 @@ class TestConnectionIntegrationLocalFS:
         assert result.success
         assert not grover.get_graph("/local").has_edge("/local/a.py", "/local/b.py")
 
-    async def test_list_connections_through_local_fs(
-        self, setup: tuple[GroverAsync, list[FileEvent]]
-    ) -> None:
-        grover, _collected = setup
+    async def test_list_connections_through_local_fs(self, setup: GroverAsync) -> None:
+        grover = setup
         await grover.add_connection("/local/a.py", "/local/b.py", "imports")
         await grover.add_connection("/local/c.py", "/local/a.py", "calls")
 
@@ -571,7 +520,7 @@ class TestAnalyzeIntegrateConnections:
     """Verify that _analyze_and_integrate routes dependency edges through FS."""
 
     @pytest.fixture
-    async def setup(self, tmp_path: Path) -> tuple[GroverAsync, list[FileEvent], AsyncEngine]:
+    async def setup(self, tmp_path: Path) -> tuple[GroverAsync, AsyncEngine]:
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
@@ -579,29 +528,21 @@ class TestAnalyzeIntegrateConnections:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(dialect="sqlite")
 
-        collected: list[FileEvent] = []
-
-        async def handler(event: FileEvent) -> None:
-            await _collecting_handler(collected, event)
-
         g = GroverAsync(
             data_dir=str(tmp_path / "grover_data"),
             embedding_provider=FakeProvider(),
         )
         await g.add_mount("/vfs", fs, session_factory=factory)
 
-        for et in EventType:
-            g._ctx.event_bus.register(et, handler)
-
-        yield g, collected, engine  # type: ignore[misc]
+        yield g, engine  # type: ignore[misc]
         await g.close()
         await engine.dispose()
 
     async def test_analyze_persists_edges_through_fs(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
         """Writing Python code that imports a module should persist the edge through FS."""
-        grover, collected, engine = setup
+        grover, engine = setup
 
         # Write a file with an import
         code = "import os\n\ndef hello():\n    pass\n"
@@ -609,13 +550,7 @@ class TestAnalyzeIntegrateConnections:
         assert result.success
         await grover.flush()
 
-        # Check that connection events were emitted for the import edge
-        conn_events = [e for e in collected if e.event_type is EventType.CONNECTION_ADDED]
-        # The Python analyzer should detect the 'import os' and create an edge
-        import_edges = [e for e in conn_events if e.connection_type == "imports"]
-        assert len(import_edges) >= 1
-
-        # Graph should have the edge
+        # Graph should have the file node
         graph = grover.get_graph("/vfs")
         assert graph.has_node("/vfs/main.py")
 
@@ -629,15 +564,14 @@ class TestAnalyzeIntegrateConnections:
             assert len(import_records) >= 1
 
     async def test_reanalyze_replaces_stale_edges(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
         """Re-writing a file should replace old edges with new ones."""
-        grover, collected, engine = setup
+        grover, engine = setup
 
         # Write with one import
         await grover.write("/vfs/mod.py", "import os\n\ndef f():\n    pass\n")
         await grover.flush()
-        collected.clear()
 
         # Rewrite with different import
         await grover.write("/vfs/mod.py", "import sys\n\ndef g():\n    pass\n")
@@ -655,10 +589,10 @@ class TestAnalyzeIntegrateConnections:
             assert any("sys" in t for t in targets)
 
     async def test_contains_edges_not_persisted_to_db(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
         """Structural 'contains' edges should stay in-memory, not written to DB."""
-        grover, _collected, engine = setup
+        grover, engine = setup
 
         code = "import os\n\ndef hello():\n    pass\n\nclass Foo:\n    pass\n"
         await grover.write("/vfs/mod.py", code)
@@ -677,20 +611,20 @@ class TestAnalyzeIntegrateConnections:
             assert len(contains_records) == 0
 
     async def test_reanalyze_preserves_incoming_edges(
-        self, setup: tuple[GroverAsync, list[FileEvent], AsyncEngine]
+        self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
         """Re-analyzing a file should not delete connections from OTHER files to this one."""
-        grover, collected, engine = setup
+        grover, engine = setup
 
         # Write target file
         await grover.write("/vfs/b.py", "x = 1\n")
 
         # Add a user-created connection from c -> b
         await grover.add_connection("/vfs/c.py", "/vfs/b.py", "depends_on")
-        collected.clear()
 
         # Rewrite b.py — this triggers re-analysis
         await grover.write("/vfs/b.py", "import os\nx = 2\n")
+        await grover.flush()
 
         # The c -> b connection should still exist in DB
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -812,68 +746,6 @@ class TestGraphProjection:
             )
             records = list(rows.scalars().all())
             assert len(records) == 0
-
-
-# =========================================================================
-# Event shape tests for connections
-# =========================================================================
-
-
-class TestConnectionEventShape:
-    """Verify FileEvent carries correct connection fields."""
-
-    def test_connection_event_construction(self) -> None:
-        ev = FileEvent(
-            event_type=EventType.CONNECTION_ADDED,
-            path="/a.py[imports]/b.py",
-            source_path="/a.py",
-            target_path="/b.py",
-            connection_type="imports",
-            weight=1.5,
-        )
-        assert ev.event_type is EventType.CONNECTION_ADDED
-        assert ev.path == "/a.py[imports]/b.py"
-        assert ev.source_path == "/a.py"
-        assert ev.target_path == "/b.py"
-        assert ev.connection_type == "imports"
-        assert ev.weight == 1.5
-
-    def test_connection_event_defaults(self) -> None:
-        ev = FileEvent(
-            event_type=EventType.CONNECTION_ADDED,
-            path="/a.py[imports]/b.py",
-        )
-        assert ev.source_path is None
-        assert ev.target_path is None
-        assert ev.connection_type is None
-        assert ev.weight == 1.0
-
-    def test_connection_event_immutable(self) -> None:
-        ev = FileEvent(
-            event_type=EventType.CONNECTION_ADDED,
-            path="/a.py[imports]/b.py",
-            source_path="/a.py",
-        )
-        with pytest.raises(AttributeError):
-            ev.source_path = "/changed.py"  # type: ignore[misc]
-
-    def test_connection_deleted_event(self) -> None:
-        ev = FileEvent(
-            event_type=EventType.CONNECTION_DELETED,
-            path="/a.py[imports]/b.py",
-            source_path="/a.py",
-            target_path="/b.py",
-            connection_type="imports",
-        )
-        assert ev.event_type is EventType.CONNECTION_DELETED
-
-    def test_event_type_member_count(self) -> None:
-        """6 event types total: 4 file + 2 connection."""
-        assert len(EventType) == 6
-
-    def test_connection_event_type_values(self) -> None:
-        assert EventType.CONNECTION_ADDED.value == "connection_added"
-        assert EventType.CONNECTION_DELETED.value == "connection_deleted"
 
 
 # =========================================================================

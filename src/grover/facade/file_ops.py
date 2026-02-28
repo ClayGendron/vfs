@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from grover.events import EventType, FileEvent
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.protocol import SupportsTrash
 from grover.fs.utils import normalize_path
@@ -78,13 +77,9 @@ class FileOpsMixin:
                 )
             result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._ctx.emit(
-                    FileEvent(
-                        event_type=EventType.FILE_WRITTEN,
-                        path=path,
-                        content=content,
-                        user_id=user_id,
-                    )
+                self._ctx.worker.schedule(
+                    path,
+                    lambda p=path, c=content, u=user_id: self._process_write(p, c, u),  # type: ignore[attr-defined]
                 )
             return result
         except Exception as e:
@@ -118,8 +113,9 @@ class FileOpsMixin:
                 )
             result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._ctx.emit(
-                    FileEvent(event_type=EventType.FILE_WRITTEN, path=path, user_id=user_id)
+                self._ctx.worker.schedule(
+                    path,
+                    lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
                 )
             return result
         except Exception as e:
@@ -149,9 +145,8 @@ class FileOpsMixin:
                 )
             result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
             if result.success:
-                await self._ctx.emit(
-                    FileEvent(event_type=EventType.FILE_DELETED, path=path, user_id=user_id)
-                )
+                self._ctx.worker.cancel(path)
+                self._ctx.worker.schedule_immediate(self._process_delete(path, user_id))  # type: ignore[attr-defined]
             return result
         except Exception as e:
             return DeleteResult(success=False, message=f"Delete failed: {e}")
@@ -291,14 +286,8 @@ class FileOpsMixin:
                     self._ctx.prefix_path(result.new_path, dest_mount.path) or result.new_path
                 )
                 if result.success:
-                    await self._ctx.emit(
-                        FileEvent(
-                            event_type=EventType.FILE_MOVED,
-                            path=dest,
-                            old_path=src,
-                            user_id=user_id,
-                        )
-                    )
+                    self._ctx.worker.cancel(src)
+                    self._ctx.worker.schedule_immediate(self._process_move(src, dest, user_id))  # type: ignore[attr-defined]
                 return result
 
             # Cross-mount move: read → write → delete (non-atomic)
@@ -336,9 +325,8 @@ class FileOpsMixin:
                     message=f"Copied but failed to delete source: {delete_result.message}",
                 )
 
-            await self._ctx.emit(
-                FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src, user_id=user_id)
-            )
+            self._ctx.worker.cancel(src)
+            self._ctx.worker.schedule_immediate(self._process_move(src, dest, user_id))  # type: ignore[attr-defined]
             return MoveResult(
                 success=True,
                 message=f"Moved {src} -> {dest} (cross-mount)",
@@ -368,8 +356,9 @@ class FileOpsMixin:
                     )
                 result.path = self._ctx.prefix_path(result.path, dest_mount.path) or result.path
                 if result.success:
-                    await self._ctx.emit(
-                        FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
+                    self._ctx.worker.schedule(
+                        dest,
+                        lambda p=dest, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
                     )
                 return result
 
@@ -392,8 +381,9 @@ class FileOpsMixin:
                 )
             result.path = self._ctx.prefix_path(result.path, dest_mount.path) or result.path
             if result.success:
-                await self._ctx.emit(
-                    FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
+                self._ctx.worker.schedule(
+                    dest,
+                    lambda p=dest, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
                 )
             return result
         except Exception as e:

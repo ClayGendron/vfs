@@ -7,8 +7,8 @@ import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from grover._grover_async import GroverAsync
-from grover.events import IndexingMode
 from grover.fs.permissions import Permission
+from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine

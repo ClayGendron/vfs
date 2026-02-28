@@ -1,11 +1,10 @@
-"""IndexMixin — event handlers, analysis pipeline, and persistence for GroverAsync."""
+"""IndexMixin — processing methods, analysis pipeline, and persistence for GroverAsync."""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
-from grover.events import EventType, FileEvent
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.permissions import Permission
 from grover.fs.protocol import SupportsConnections, SupportsFileChunks
@@ -20,118 +19,94 @@ logger = logging.getLogger(__name__)
 
 
 class IndexMixin:
-    """Event handlers, analysis pipeline, and persistence extracted from GroverAsync."""
+    """Processing methods, analysis pipeline, and persistence extracted from GroverAsync."""
 
     _ctx: GroverContext
 
     # ------------------------------------------------------------------
-    # Event handlers
+    # Processing methods (called by worker via schedule/schedule_immediate)
     # ------------------------------------------------------------------
 
-    async def _on_file_written(self, event: FileEvent) -> None:
+    async def _process_write(
+        self, path: str, content: str | None = None, user_id: str | None = None
+    ) -> None:
+        """Analyze and integrate a written/edited/restored file."""
         if self._ctx.meta_fs is None:
             return
-        if "/.grover/" in event.path:
+        if "/.grover/" in path:
             return
-        content = event.content
         if content is None:
-            result = await self.read(event.path)  # type: ignore[attr-defined]
+            result = await self.read(path)  # type: ignore[attr-defined]
             if not result.success:
                 return
             content = result.content
         if content is not None:
-            await self._analyze_and_integrate(event.path, content, user_id=event.user_id)
+            await self._analyze_and_integrate(path, content, user_id=user_id)
 
-    async def _on_file_deleted(self, event: FileEvent) -> None:
+    async def _process_delete(self, path: str, user_id: str | None = None) -> None:
+        """Clean up graph, search, chunks, and connections for a deleted file."""
         if self._ctx.meta_fs is None:
             return
-        if "/.grover/" in event.path:
+        if "/.grover/" in path:
             return
         # In-memory graph cleanup
         try:
-            graph = self._ctx.resolve_graph(event.path)
-            if graph.has_node(event.path):
-                graph.remove_file_subgraph(event.path)
+            graph = self._ctx.resolve_graph(path)
+            if graph.has_node(path):
+                graph.remove_file_subgraph(path)
         except RuntimeError:
             pass  # Mount may not have a graph
         # DB cleanup: search, chunks, connections in a single session
         try:
-            mount, _rel = self._ctx.registry.resolve(event.path)
+            mount, _rel = self._ctx.registry.resolve(path)
         except MountNotFoundError:
             return
         async with self._ctx.session_for(mount) as sess:
             search_engine = mount.search
             if search_engine is not None:
-                await search_engine.remove_file(event.path, session=sess)
+                await search_engine.remove_file(path, session=sess)
             if isinstance(mount.filesystem, SupportsFileChunks):
-                await mount.filesystem.delete_file_chunks(event.path, session=sess)
+                await mount.filesystem.delete_file_chunks(path, session=sess)
             conn_svc = getattr(mount.filesystem, "connections", None)
             if conn_svc is not None:
-                await conn_svc.delete_connections_for_path(sess, event.path)
+                await conn_svc.delete_connections_for_path(sess, path)
 
-    async def _on_file_moved(self, event: FileEvent) -> None:
+    async def _process_move(self, old_path: str, new_path: str, user_id: str | None = None) -> None:
+        """Clean up old path and re-analyze new path after a move."""
         if self._ctx.meta_fs is None:
             return
-        if event.old_path and "/.grover/" not in event.old_path:
-            # In-memory graph cleanup for old path
-            try:
-                graph = self._ctx.resolve_graph(event.old_path)
-                if graph.has_node(event.old_path):
-                    graph.remove_file_subgraph(event.old_path)
-            except RuntimeError:
-                pass
-            # DB cleanup for old path in a single session
-            try:
-                mount, _rel = self._ctx.registry.resolve(event.old_path)
-            except MountNotFoundError:
-                pass
-            else:
-                async with self._ctx.session_for(mount) as sess:
-                    search_engine = mount.search
-                    if search_engine is not None:
-                        await search_engine.remove_file(event.old_path, session=sess)
-                    if isinstance(mount.filesystem, SupportsFileChunks):
-                        await mount.filesystem.delete_file_chunks(event.old_path, session=sess)
-                    conn_svc = getattr(mount.filesystem, "connections", None)
-                    if conn_svc is not None:
-                        await conn_svc.delete_connections_for_path(sess, event.old_path)
+        if old_path and "/.grover/" not in old_path:
+            await self._process_delete(old_path)
+        if "/.grover/" not in new_path:
+            await self._process_write(new_path, None, user_id)
 
-        if "/.grover/" in event.path:
-            return
-        result = await self.read(event.path)  # type: ignore[attr-defined]
-        if result.success:
-            content = result.content
-            if content is not None:
-                await self._analyze_and_integrate(event.path, content, user_id=event.user_id)
-
-    async def _on_file_restored(self, event: FileEvent) -> None:
-        await self._on_file_written(event)
-
-    async def _on_connection_added(self, event: FileEvent) -> None:
+    async def _process_connection_added(
+        self,
+        source_path: str,
+        target_path: str,
+        connection_type: str,
+        weight: float = 1.0,
+    ) -> None:
         """Update the in-memory graph when a connection is persisted through FS."""
-        if event.source_path is None or event.target_path is None or event.connection_type is None:
-            return
         try:
-            graph = self._ctx.resolve_graph(event.source_path)
+            graph = self._ctx.resolve_graph(source_path)
         except RuntimeError:
             return
         graph.add_edge(
-            event.source_path,
-            event.target_path,
-            edge_type=event.connection_type,
-            weight=event.weight,
+            source_path,
+            target_path,
+            edge_type=connection_type,
+            weight=weight,
         )
 
-    async def _on_connection_deleted(self, event: FileEvent) -> None:
+    async def _process_connection_deleted(self, source_path: str, target_path: str) -> None:
         """Update the in-memory graph when a connection is removed from FS."""
-        if event.source_path is None or event.target_path is None:
-            return
         try:
-            graph = self._ctx.resolve_graph(event.source_path)
+            graph = self._ctx.resolve_graph(source_path)
         except RuntimeError:
             return
-        if graph.has_edge(event.source_path, event.target_path):
-            graph.remove_edge(event.source_path, event.target_path)
+        if graph.has_edge(source_path, target_path):
+            graph.remove_edge(source_path, target_path)
 
     # ------------------------------------------------------------------
     # Core pipeline
@@ -162,8 +137,8 @@ class IndexMixin:
 
         analysis = self._ctx.analyzer_registry.analyze_file(path, content)
 
-        # Collect CONNECTION_ADDED events to emit after DB commit
-        deferred_events: list[FileEvent] = []
+        # Edges to project into graph after DB commit
+        edges_to_project: list[tuple[str, str, str, float]] = []
 
         # Single session for all DB operations (search, chunks, connections)
         async with self._ctx.session_for(mount) as sess:
@@ -204,9 +179,9 @@ class IndexMixin:
                     graph.add_edge(path, chunk.path, edge_type="contains")
                     stats["chunks_created"] += 1
 
-                # Persist dependency edges through FS (graph updated via
-                # deferred events after commit).  "contains" edges are
-                # structural and remain in-memory only.
+                # Persist dependency edges through FS (graph projection
+                # updated post-commit).  "contains" edges are structural
+                # and remain in-memory only.
                 # Skip connection writes for read-only mounts (defensive).
                 dep_edges = [e for e in edges if e.edge_type != "contains"]
                 is_writable = mount.permission != Permission.READ_ONLY
@@ -231,16 +206,7 @@ class IndexMixin:
                             metadata=dict(edge.metadata) if edge.metadata else None,
                             session=sess,
                         )
-                        deferred_events.append(
-                            FileEvent(
-                                event_type=EventType.CONNECTION_ADDED,
-                                path=f"{edge.source}[{edge.edge_type}]{edge.target}",
-                                source_path=edge.source,
-                                target_path=edge.target,
-                                connection_type=edge.edge_type,
-                                weight=_w,
-                            )
-                        )
+                        edges_to_project.append((edge.source, edge.target, edge.edge_type, _w))
                         stats["edges_added"] += 1
                 elif dep_edges:
                     # Fallback: no SupportsConnections, add directly to graph
@@ -261,9 +227,9 @@ class IndexMixin:
                     if embeddable:
                         await search_engine.add_batch(embeddable, session=sess)
 
-        # Emit CONNECTION_ADDED events after commit (post-commit ordering)
-        for event in deferred_events:
-            await self._ctx.emit(event)
+        # Project edges into graph after commit (post-commit ordering)
+        for source, target, edge_type, weight in edges_to_project:
+            graph.add_edge(source, target, edge_type=edge_type, weight=weight)
 
         return stats
 

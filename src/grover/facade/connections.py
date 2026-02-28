@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from grover.events import EventType, FileEvent
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.protocol import SupportsConnections
 from grover.fs.utils import normalize_path
@@ -20,7 +19,7 @@ class ConnectionMixin:
     _ctx: GroverContext
 
     # ------------------------------------------------------------------
-    # Connection operations (persist through FS, graph updated via events)
+    # Connection operations (persist through FS, graph updated via worker)
     # ------------------------------------------------------------------
 
     async def add_connection(
@@ -34,8 +33,7 @@ class ConnectionMixin:
     ) -> ConnectionResult:
         """Add a connection between two files, persisted through the filesystem.
 
-        The graph is updated via the CONNECTION_ADDED event handler after
-        the DB transaction commits.
+        The graph is updated via the worker after the DB transaction commits.
         """
         source_path = normalize_path(source_path)
         target_path = normalize_path(target_path)
@@ -80,17 +78,10 @@ class ConnectionMixin:
                 session=sess,
             )
 
-        # Emit AFTER session commits (post-commit event ordering)
+        # Update graph AFTER session commits (post-commit ordering)
         if result.success:
-            await self._ctx.emit(
-                FileEvent(
-                    event_type=EventType.CONNECTION_ADDED,
-                    path=result.path,
-                    source_path=source_path,
-                    target_path=target_path,
-                    connection_type=connection_type,
-                    weight=weight,
-                )
+            self._ctx.worker.schedule_immediate(
+                self._process_connection_added(source_path, target_path, connection_type, weight)  # type: ignore[attr-defined]
             )
 
         return result
@@ -104,8 +95,7 @@ class ConnectionMixin:
     ) -> ConnectionResult:
         """Delete a connection between two files.
 
-        The graph is updated via the CONNECTION_DELETED event handler after
-        the DB transaction commits.
+        The graph is updated via the worker after the DB transaction commits.
         """
         source_path = normalize_path(source_path)
         target_path = normalize_path(target_path)
@@ -148,16 +138,10 @@ class ConnectionMixin:
                 session=sess,
             )
 
-        # Emit AFTER session commits (post-commit event ordering)
+        # Update graph AFTER session commits (post-commit ordering)
         if result.success:
-            await self._ctx.emit(
-                FileEvent(
-                    event_type=EventType.CONNECTION_DELETED,
-                    path=result.path,
-                    source_path=source_path,
-                    target_path=target_path,
-                    connection_type=connection_type,
-                )
+            self._ctx.worker.schedule_immediate(
+                self._process_connection_deleted(source_path, target_path)  # type: ignore[attr-defined]
             )
 
         return result
