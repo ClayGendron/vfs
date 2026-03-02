@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
+from grover.types.operations import ChunkListResult, ChunkResult
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +30,7 @@ class ChunkService:
         session: AsyncSession,
         file_path: str,
         chunks: list[dict],
-    ) -> int:
+    ) -> ChunkResult:
         """Delete all chunks for *file_path*, insert new ones. Returns count inserted."""
         await self.delete_file_chunks(session, file_path)
 
@@ -47,13 +49,13 @@ class ChunkService:
             count += 1
 
         await session.flush()
-        return count
+        return ChunkResult(count=count, path=file_path)
 
     async def delete_file_chunks(
         self,
         session: AsyncSession,
         file_path: str,
-    ) -> int:
+    ) -> ChunkResult:
         """Delete all chunks for *file_path*. Returns count deleted."""
         model = self._chunk_model
         result = await session.execute(select(model).where(model.file_path == file_path))
@@ -63,16 +65,17 @@ class ChunkService:
             await session.delete(row)
         if count > 0:
             await session.flush()
-        return count
+        return ChunkResult(count=count, path=file_path)
 
     async def list_file_chunks(
         self,
         session: AsyncSession,
         file_path: str,
-    ) -> list[FileChunkBase]:
+    ) -> ChunkListResult:
         """List all chunks for *file_path*, ordered by line_start."""
         model = self._chunk_model
         result = await session.execute(
             select(model).where(model.file_path == file_path).order_by(model.line_start)  # type: ignore[arg-type]
         )
-        return list(result.scalars().all())
+        chunks = list(result.scalars().all())
+        return ChunkListResult(chunks=chunks, path=file_path)

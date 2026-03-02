@@ -344,8 +344,8 @@ class TestTrash:
             result = await fs.delete("/mydir", session=session)
             assert result.success is True
 
-            assert await fs.exists("/mydir/a.py", session=session) is False
-            assert await fs.exists("/mydir/b.py", session=session) is False
+            assert (await fs.exists("/mydir/a.py", session=session)).exists is False
+            assert (await fs.exists("/mydir/b.py", session=session)).exists is False
 
             trash = await fs.list_trash(session=session)
             paths = trash.deleted_paths()
@@ -367,8 +367,8 @@ class TestTrash:
             result = await fs.restore_from_trash("/mydir", session=session)
             assert result.success is True
 
-            assert await fs.exists("/mydir/a.py", session=session) is True
-            assert await fs.exists("/mydir/b.py", session=session) is True
+            assert (await fs.exists("/mydir/a.py", session=session)).exists is True
+            assert (await fs.exists("/mydir/b.py", session=session)).exists is True
 
             read_a = await fs.read("/mydir/a.py", session=session)
             assert "a content" in read_a.content
@@ -472,8 +472,8 @@ class TestMoveCopy:
             result = await fs.move("/a.py", "/b.py", session=session)
             assert result.success is True
 
-            assert await fs.exists("/a.py", session=session) is False
-            assert await fs.exists("/b.py", session=session) is True
+            assert (await fs.exists("/a.py", session=session)).exists is False
+            assert (await fs.exists("/b.py", session=session)).exists is True
         await engine.dispose()
 
     async def test_move_empty_file_to_existing(self):
@@ -484,8 +484,8 @@ class TestMoveCopy:
 
             result = await fs.move("/empty.py", "/target.py", session=session)
             assert result.success is True
-            assert await fs.exists("/empty.py", session=session) is False
-            assert await fs.exists("/target.py", session=session) is True
+            assert (await fs.exists("/empty.py", session=session)).exists is False
+            assert (await fs.exists("/target.py", session=session)).exists is True
         await engine.dispose()
 
     async def test_copy_file(self):
@@ -495,8 +495,8 @@ class TestMoveCopy:
             result = await fs.copy("/a.py", "/b.py", session=session)
             assert result.success is True
 
-            assert await fs.exists("/a.py", session=session) is True
-            assert await fs.exists("/b.py", session=session) is True
+            assert (await fs.exists("/a.py", session=session)).exists is True
+            assert (await fs.exists("/b.py", session=session)).exists is True
         await engine.dispose()
 
     async def test_move_to_existing_file_overwrites(self):
@@ -509,7 +509,7 @@ class TestMoveCopy:
             result = await fs.move("/src.py", "/dest.py", session=session)
             assert result.success is True
 
-            assert await fs.exists("/src.py", session=session) is False
+            assert (await fs.exists("/src.py", session=session)).exists is False
 
             read = await fs.read("/dest.py", session=session)
             assert read.success is True
@@ -585,9 +585,9 @@ class TestExistsGetInfo:
     async def test_exists(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
-            assert await fs.exists("/nope.py", session=session) is False
+            assert (await fs.exists("/nope.py", session=session)).exists is False
             await fs.write("/f.py", "x\n", session=session)
-            assert await fs.exists("/f.py", session=session) is True
+            assert (await fs.exists("/f.py", session=session)).exists is True
         await engine.dispose()
 
     async def test_get_info(self):
@@ -595,7 +595,7 @@ class TestExistsGetInfo:
         async with factory() as session:
             await fs.write("/f.py", "hello\n", session=session)
             info = await fs.get_info("/f.py", session=session)
-            assert info is not None
+            assert info.success
             assert info.is_directory is False
         await engine.dispose()
 
@@ -603,7 +603,7 @@ class TestExistsGetInfo:
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             info = await fs.get_info("/nope.py", session=session)
-            assert info is None
+            assert not info.success
         await engine.dispose()
 
 
@@ -644,14 +644,14 @@ class TestPathValidationExistsGetInfo:
     async def test_exists_null_byte_path(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
-            assert await fs.exists("/foo\x00bar", session=session) is False
+            assert (await fs.exists("/foo\x00bar", session=session)).exists is False
         await engine.dispose()
 
     async def test_get_info_null_byte_path(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             info = await fs.get_info("/foo\x00bar", session=session)
-            assert info is None
+            assert not info.success
         await engine.dispose()
 
 
@@ -703,8 +703,8 @@ class TestEdgeCases:
             result = await fs.move("/a", "/b", session=session)
             assert result.success is True
 
-            assert await fs.exists("/b/child.py", session=session) is True
-            assert await fs.exists("/a/child.py", session=session) is False
+            assert (await fs.exists("/b/child.py", session=session)).exists is True
+            assert (await fs.exists("/a/child.py", session=session)).exists is False
         await engine.dispose()
 
     async def test_copy_directory_rejected(self):
@@ -749,7 +749,7 @@ class TestParentPath:
             await fs.write("/src/main.py", "content\n", session=session)
 
             info = await fs.get_info("/src/main.py", session=session)
-            assert info is not None
+            assert info.success
 
             file = await fs.metadata.get_file(session, "/src/main.py")
             assert file.parent_path == "/src"
@@ -854,7 +854,7 @@ class TestMoveGuards:
             await fs.write("/a/b.py", "content\n", session=session)
             result = await fs.move("/a/b.py", "/a/c.py", session=session)
             assert result.success is True
-            assert await fs.exists("/a/c.py", session=session) is True
+            assert (await fs.exists("/a/c.py", session=session)).exists is True
         await engine.dispose()
 
 
@@ -870,7 +870,7 @@ class TestAtomicMoveOverwrite:
             assert result.success is True
             read = await fs.read("/dest.py", session=session)
             assert read.content == "source\n"
-            assert await fs.exists("/src.py", session=session) is False
+            assert (await fs.exists("/src.py", session=session)).exists is False
         await engine.dispose()
 
     async def test_move_overwrite_preserves_dest_history(self):

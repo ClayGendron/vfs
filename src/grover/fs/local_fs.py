@@ -25,14 +25,19 @@ from grover.models.chunks import FileChunk
 from grover.models.connections import FileConnection
 from grover.models.files import File, FileVersion
 from grover.types.operations import (
+    ChunkListResult,
+    ChunkResult,
+    ConnectionListResult,
     ConnectionResult,
     DeleteResult,
     EditResult,
+    ExistsResult,
     FileInfoResult,
     GetVersionContentResult,
     MkdirResult,
     MoveResult,
     ReadResult,
+    ReconcileResult,
     RestoreResult,
     VerifyVersionResult,
     WriteResult,
@@ -621,7 +626,7 @@ class LocalFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> bool:
+    ) -> ExistsResult:
         sess = self._require_session(session)
         return await self.metadata.exists(sess, path)
 
@@ -631,7 +636,7 @@ class LocalFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult | None:
+    ) -> FileInfoResult:
         sess = self._require_session(session)
         return await self.metadata.get_info(sess, path)
 
@@ -1286,10 +1291,10 @@ class LocalFileSystem:
         self,
         *,
         session: AsyncSession | None = None,
-    ) -> dict[str, int]:
+    ) -> ReconcileResult:
         """Walk disk, compare with DB, create/update/soft-delete as needed."""
         sess = self._require_session(session)
-        stats = {"created": 0, "updated": 0, "deleted": 0}
+        stats = ReconcileResult()
 
         # Walk workspace files
         disk_paths: set[str] = set()
@@ -1340,7 +1345,7 @@ class LocalFileSystem:
                         read_content=self._read_content,
                         write_content=_noop_write,
                     )
-                    stats["created"] += 1
+                    stats.created += 1
 
         # Check DB records against disk
         model = self._file_model
@@ -1358,13 +1363,13 @@ class LocalFileSystem:
                     file.original_path = file.path
                     file.path = to_trash_path(file.path, file.id)
                     file.deleted_at = datetime.now(UTC)
-                    stats["deleted"] += 1
+                    stats.deleted += 1
 
         await sess.flush()
 
         # Verify version chain integrity
         verification_results = await self.verify_all_versions(session=sess)
-        stats["chain_errors"] = sum(r.versions_failed for r in verification_results)
+        stats.chain_errors = sum(r.versions_failed for r in verification_results)
 
         return stats
 
@@ -1378,7 +1383,7 @@ class LocalFileSystem:
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-    ) -> int:
+    ) -> ChunkResult:
         sess = self._require_session(session)
         return await self.chunks.replace_file_chunks(sess, file_path, chunks)
 
@@ -1387,7 +1392,7 @@ class LocalFileSystem:
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> int:
+    ) -> ChunkResult:
         sess = self._require_session(session)
         return await self.chunks.delete_file_chunks(sess, file_path)
 
@@ -1396,7 +1401,7 @@ class LocalFileSystem:
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> list:
+    ) -> ChunkListResult:
         sess = self._require_session(session)
         return await self.chunks.list_file_chunks(sess, file_path)
 
@@ -1445,7 +1450,7 @@ class LocalFileSystem:
         direction: str = "both",
         connection_type: str | None = None,
         session: AsyncSession | None = None,
-    ) -> list:
+    ) -> ConnectionListResult:
         sess = self._require_session(session)
         return await self.connections.list_connections(
             sess,

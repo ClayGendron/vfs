@@ -16,6 +16,7 @@ from grover.fs.local_fs import LocalFileSystem
 from grover.fs.permissions import Permission
 from grover.graph import RustworkxGraph
 from grover.types import (
+    ConnectionListResult,
     ConnectionResult,
     DeleteResult,
     EditResult,
@@ -202,8 +203,8 @@ class TestReadOnlyAllowsReads:
 
     async def test_read_only_allows_list_connections(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.list_connections("/ro/hello.py")
-        # list_connections returns a list (read-only operation, always works)
-        assert isinstance(result, list)
+        # list_connections returns ConnectionListResult (read-only operation, always works)
+        assert isinstance(result, ConnectionListResult)
 
 
 # ------------------------------------------------------------------
@@ -350,4 +351,6 @@ class TestReconcileReadOnly:
     async def test_reconcile_skips_ro_mounts(self, grover_mixed: GroverAsync) -> None:
         stats = await grover_mixed.reconcile()
         # Should complete without error — ro mount skipped
-        assert isinstance(stats, dict)
+        from grover.types import ReconcileResult
+
+        assert isinstance(stats, ReconcileResult)

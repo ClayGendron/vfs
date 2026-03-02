@@ -73,7 +73,7 @@ g.write(path, content, *, user_id=None) -> WriteResult
 g.edit(path, old, new, *, user_id=None) -> EditResult
 g.delete(path, permanent=False, *, user_id=None) -> DeleteResult
 g.list_dir(path="/", *, user_id=None) -> list[dict]
-g.exists(path, *, user_id=None) -> bool
+g.exists(path, *, user_id=None) -> ExistsResult
 g.move(src, dest, *, user_id=None, follow=False) -> MoveResult
 g.copy(src, dest, *, user_id=None) -> WriteResult
 ```
@@ -84,8 +84,8 @@ g.copy(src, dest, *, user_id=None) -> WriteResult
 | `write(path, content)` | Write content to a file. Creates the file if it doesn't exist, creates a new version if it does. Returns `WriteResult` with `success`, `created`, `version`. |
 | `edit(path, old, new)` | Find-and-replace within a file. Returns `EditResult` with `success` and `version`. |
 | `delete(path, permanent=False)` | Delete a file. Default is soft-delete (moves to trash). Pass `permanent=True` for permanent deletion. Returns `DeleteResult`. |
-| `list_dir(path)` | List directory entries. Returns a list of dicts with `path`, `name`, `is_directory`. On user-scoped mounts, the user's root listing includes a virtual `@shared/` entry. |
-| `exists(path)` | Check if a path exists. Returns `bool`. |
+| `list_dir(path)` | List directory entries. Returns candidates with `path` and `is_directory`. On user-scoped mounts, the user's root listing includes a virtual `@shared/` entry. |
+| `exists(path)` | Check if a path exists. Returns `ExistsResult` with `exists: bool`. |
 | `move(src, dest, *, follow=False)` | Move a file or directory. Default (`follow=False`) creates a clean break — new file record at dest, source soft-deleted, no version history carryover. `follow=True` does an in-place rename — same file record, versions follow, share paths updated. Returns `MoveResult`. |
 | `copy(src, dest)` | Copy a file to a new path. Returns `WriteResult`. |
 
@@ -211,14 +211,12 @@ Directory shares grant access to all descendants (prefix matching).
 ### Reconciliation
 
 ```python
-g.reconcile(mount_path=None) -> dict[str, int]
+g.reconcile(mount_path=None) -> ReconcileResult
 ```
 
 Synchronize the database with the actual filesystem state. Only available for backends that implement `SupportsReconcile` (currently `LocalFileSystem`).
 
-Returns a dict with keys: `created`, `updated`, `deleted`, `chain_errors`. The `chain_errors` count is the total number of version records that failed integrity verification across all reconciled files.
-
-Returns a dict with counts: `{"created": N, "updated": N, "deleted": N}`.
+Returns a `ReconcileResult` with fields: `created`, `updated`, `deleted`, `chain_errors` (all `int`). The `chain_errors` count is the total number of version records that failed integrity verification across all reconciled files.
 
 ### Graph Queries
 
@@ -243,7 +241,7 @@ g.contains(path) -> list[Ref]
 ```python
 g.add_connection(source_path, target_path, connection_type, *, weight=1.0, metadata=None) -> ConnectionResult
 g.delete_connection(source_path, target_path, *, connection_type=None) -> ConnectionResult
-g.list_connections(path, *, direction="both", connection_type=None) -> list[FileConnection]
+g.list_connections(path, *, direction="both", connection_type=None) -> ConnectionListResult
 ```
 
 Connections are persisted through the filesystem layer (not directly on the graph). The in-memory graph is updated via `CONNECTION_ADDED` / `CONNECTION_DELETED` events after the DB transaction commits. This makes the filesystem the single source of truth for all persistent edge data.
@@ -252,7 +250,7 @@ Connections are persisted through the filesystem layer (not directly on the grap
 |--------|-------------|
 | `add_connection(source, target, type)` | Create or update a connection. Returns `ConnectionResult`. The connection path identity is `source[type]target`. |
 | `delete_connection(source, target)` | Delete a connection. If `connection_type` is `None`, deletes all connections between source and target. |
-| `list_connections(path)` | List connections for a path. `direction` can be `"out"`, `"in"`, or `"both"` (default). |
+| `list_connections(path)` | List connections for a path. `direction` can be `"out"`, `"in"`, or `"both"` (default). Returns `ConnectionListResult` with `connections: list`. |
 
 `ConnectionResult` fields: `success`, `message`, `path`, `source_path`, `target_path`, `connection_type`.
 
@@ -417,7 +415,8 @@ from grover import (
     FileOperationResult, ReadResult, WriteResult, EditResult,
     DeleteResult, MkdirResult, MoveResult, RestoreResult,
     GetVersionContentResult, ShareResult, ConnectionResult,
-    FileInfoResult,
+    FileInfoResult, ExistsResult, ReconcileResult,
+    ChunkResult, ChunkListResult, ConnectionListResult,
     # Search results
     FileSearchResult, FileSearchCandidate, Evidence,
     GlobResult, GrepResult, TreeResult, ListDirResult,
@@ -460,7 +459,12 @@ This design is intentional: agents running in loops should handle failures grace
 | `GetVersionContentResult` | (base has `content` + `version`) |
 | `ShareResult` | `grantee_id`, `permission`, `granted_by` |
 | `ConnectionResult` | `source_path`, `target_path`, `connection_type` |
-| `FileInfoResult` | `name`, `is_directory`, `mime_type`, `size_bytes`, `created_at`, `updated_at`, `permission`, `mount_type` |
+| `FileInfoResult` | `is_directory`, `mime_type`, `size_bytes`, `created_at`, `updated_at`, `permission`, `mount_type`. `get_info()` always returns this (never `None`); check `success` for not-found. |
+| `ExistsResult` | `exists` (bool) |
+| `ReconcileResult` | `created`, `updated`, `deleted`, `chain_errors` (all int) |
+| `ChunkResult` | `count` (int) |
+| `ChunkListResult` | `chunks` (list) |
+| `ConnectionListResult` | `connections` (list) |
 | `VerifyVersionResult` | `versions_checked`, `versions_passed`, `versions_failed`, `errors: list[VersionChainError]` |
 
 `VersionChainError` is a frozen dataclass with fields: `version`, `expected_hash`, `actual_hash`, `error`.

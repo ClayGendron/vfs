@@ -33,6 +33,13 @@ class FileOperationResult:
 
 
 @dataclass
+class ExistsResult(FileOperationResult):
+    """Result of an exists check."""
+
+    exists: bool = False
+
+
+@dataclass
 class ReadResult(FileOperationResult):
     """Result of a read operation."""
 
@@ -131,6 +138,37 @@ class VersionChainError:
     expected_hash: str
     actual_hash: str
     error: str
+
+
+@dataclass
+class ChunkResult(FileOperationResult):
+    """Result of a chunk replace or delete operation."""
+
+    count: int = 0
+
+
+@dataclass
+class ChunkListResult(FileOperationResult):
+    """Result of listing file chunks."""
+
+    chunks: list[object] = field(default_factory=list)
+
+
+@dataclass
+class ConnectionListResult(FileOperationResult):
+    """Result of listing file connections."""
+
+    connections: list[object] = field(default_factory=list)
+
+
+@dataclass
+class ReconcileResult(FileOperationResult):
+    """Result of a disk/DB reconciliation."""
+
+    created: int = 0
+    updated: int = 0
+    deleted: int = 0
+    chain_errors: int = 0
 
 
 @dataclass

@@ -270,8 +270,10 @@ class TestOperations:
             session=async_session,
             user_id="alice",
         )
-        assert await usfs.exists("/notes.md", session=async_session, user_id="alice") is True
-        assert await usfs.exists("/notes.md", session=async_session, user_id="bob") is False
+        result = await usfs.exists("/notes.md", session=async_session, user_id="alice")
+        assert result.exists is True
+        result = await usfs.exists("/notes.md", session=async_session, user_id="bob")
+        assert result.exists is False
 
     async def test_get_info(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -281,7 +283,7 @@ class TestOperations:
             user_id="alice",
         )
         info = await usfs.get_info("/notes.md", session=async_session, user_id="alice")
-        assert info is not None
+        assert info.success
         assert info.path == "/notes.md"
 
     async def test_get_info_other_user_none(
@@ -294,7 +296,7 @@ class TestOperations:
             user_id="alice",
         )
         info = await usfs.get_info("/notes.md", session=async_session, user_id="bob")
-        assert info is None
+        assert not info.success
 
     async def test_copy(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -581,14 +583,12 @@ class TestSharedAccess:
             "read",
         )
 
-        assert (
-            await shared_usfs.exists(
-                "/@shared/alice/notes.md",
-                session=async_session,
-                user_id="bob",
-            )
-            is True
+        result = await shared_usfs.exists(
+            "/@shared/alice/notes.md",
+            session=async_session,
+            user_id="bob",
         )
+        assert result.exists is True
 
     async def test_exists_shared_no_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -599,14 +599,12 @@ class TestSharedAccess:
             session=async_session,
             user_id="alice",
         )
-        assert (
-            await shared_usfs.exists(
-                "/@shared/alice/notes.md",
-                session=async_session,
-                user_id="bob",
-            )
-            is False
+        result = await shared_usfs.exists(
+            "/@shared/alice/notes.md",
+            session=async_session,
+            user_id="bob",
         )
+        assert result.exists is False
 
     async def test_get_info_shared(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -630,7 +628,7 @@ class TestSharedAccess:
             session=async_session,
             user_id="bob",
         )
-        assert info is not None
+        assert info.success
 
     async def test_get_info_shared_no_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -646,7 +644,7 @@ class TestSharedAccess:
             session=async_session,
             user_id="bob",
         )
-        assert info is None
+        assert not info.success
 
     async def test_directory_share_grants_children(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -747,7 +745,7 @@ class TestSharedAccess:
             session=async_session,
             user_id="bob",
         )
-        assert info is not None
+        assert info.success
         assert info.path == "/@shared/alice/notes.md"
 
     async def test_shared_access_denied_without_sharing_service(
@@ -1068,13 +1066,13 @@ class TestShareCRUD:
             session=async_session,
         )
 
-        removed = await shared_usfs.unshare(
+        result = await shared_usfs.unshare(
             "/notes.md",
             "bob",
             user_id="alice",
             session=async_session,
         )
-        assert removed is True
+        assert result.success is True
 
         # Verify bob can no longer read
         with pytest.raises(PermissionError):

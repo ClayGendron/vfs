@@ -111,7 +111,7 @@ class TestGroverAsyncLifecycle:
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         await g.write("/app/test.txt", "hello")
-        assert await g.exists("/app/test.txt")
+        assert (await g.exists("/app/test.txt")).exists
         await g.unmount("/app")
         # Mount should be gone
         assert not g._ctx.registry.has_mount("/app")
@@ -173,9 +173,9 @@ class TestGroverAsyncDirectAccess:
 
     @pytest.mark.asyncio
     async def test_exists(self, grover: GroverAsync):
-        assert not await grover.exists("/project/nope.txt")
+        assert not (await grover.exists("/project/nope.txt")).exists
         await grover.write("/project/yes.txt", "yes")
-        assert await grover.exists("/project/yes.txt")
+        assert (await grover.exists("/project/yes.txt")).exists
 
     @pytest.mark.asyncio
     async def test_write_overwrite_false_fails_when_exists(self, grover: GroverAsync):
@@ -255,8 +255,8 @@ class TestGroverAsyncMultiMount:
         await g.add_mount("/b", lfs_b)
 
         await g.write("/a/file.txt", "in mount a")
-        assert await g.exists("/a/file.txt")
-        assert not await g.exists("/b/file.txt")
+        assert (await g.exists("/a/file.txt")).exists
+        assert not (await g.exists("/b/file.txt")).exists
 
         await g.close()
 
@@ -691,8 +691,8 @@ class TestGroverAsyncAuthenticatedMount:
         assert copy_result.success is True
         move_result = await auth_grover.move("/ws/src.md", "/ws/moved.md", user_id="alice")
         assert move_result.success is True
-        assert await auth_grover.exists("/ws/copy.md", user_id="alice")
-        assert await auth_grover.exists("/ws/moved.md", user_id="alice")
+        assert (await auth_grover.exists("/ws/copy.md", user_id="alice")).exists
+        assert (await auth_grover.exists("/ws/moved.md", user_id="alice")).exists
 
 
 class TestGroverAsyncSharing:

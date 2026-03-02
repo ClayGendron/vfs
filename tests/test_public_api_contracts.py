@@ -13,6 +13,7 @@ from grover._grover_async import GroverAsync
 from grover.types import (
     DeleteResult,
     EditResult,
+    ExistsResult,
     FileInfoResult,
     ListDirResult,
     MkdirResult,
@@ -83,8 +84,8 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> bool:
-        return path in self._files
+    ) -> ExistsResult:
+        return ExistsResult(exists=path in self._files, path=path)
 
     async def get_info(
         self,
@@ -92,9 +93,9 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult | None:
+    ) -> FileInfoResult:
         if path not in self._files:
-            return None
+            return FileInfoResult(success=False, message="Not found", path=path)
         return FileInfoResult(path=path, is_directory=False)
 
     async def write(

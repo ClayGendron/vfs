@@ -13,9 +13,13 @@ from grover.models.chunks import FileChunk
 from grover.models.connections import FileConnection
 from grover.models.files import File, FileVersion
 from grover.types.operations import (
+    ChunkListResult,
+    ChunkResult,
+    ConnectionListResult,
     ConnectionResult,
     DeleteResult,
     EditResult,
+    ExistsResult,
     FileInfoResult,
     GetVersionContentResult,
     MkdirResult,
@@ -327,7 +331,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> bool:
+    ) -> ExistsResult:
         sess = self._require_session(session)
         return await self.metadata.exists(sess, path)
 
@@ -337,7 +341,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult | None:
+    ) -> FileInfoResult:
         sess = self._require_session(session)
         return await self.metadata.get_info(sess, path)
 
@@ -903,7 +907,7 @@ class DatabaseFileSystem:
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-    ) -> int:
+    ) -> ChunkResult:
         sess = self._require_session(session)
         return await self.chunks.replace_file_chunks(sess, file_path, chunks)
 
@@ -912,7 +916,7 @@ class DatabaseFileSystem:
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> int:
+    ) -> ChunkResult:
         sess = self._require_session(session)
         return await self.chunks.delete_file_chunks(sess, file_path)
 
@@ -921,7 +925,7 @@ class DatabaseFileSystem:
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> list:
+    ) -> ChunkListResult:
         sess = self._require_session(session)
         return await self.chunks.list_file_chunks(sess, file_path)
 
@@ -970,7 +974,7 @@ class DatabaseFileSystem:
         direction: str = "both",
         connection_type: str | None = None,
         session: AsyncSession | None = None,
-    ) -> list:
+    ) -> ConnectionListResult:
         sess = self._require_session(session)
         return await self.connections.list_connections(
             sess,

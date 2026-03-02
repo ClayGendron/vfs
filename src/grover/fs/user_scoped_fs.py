@@ -14,8 +14,11 @@ import logging
 from typing import TYPE_CHECKING
 
 from grover.types.operations import (
+    ChunkListResult,
+    ChunkResult,
     DeleteResult,
     EditResult,
+    ExistsResult,
     FileInfoResult,
     GetVersionContentResult,
     MkdirResult,
@@ -292,7 +295,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             size_bytes: int | None = None
             try:
                 info = await super().get_info(file_stored, session=session)
-                if info is not None:
+                if info.success:
                     size_bytes = info.size_bytes
             except Exception:
                 pass
@@ -530,7 +533,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> bool:
+    ) -> ExistsResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -539,7 +542,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             try:
                 await self._check_share_access(sess, stored, uid, "read")
             except PermissionError:
-                return False
+                return ExistsResult(exists=False, path=path)
         return await super().exists(stored, session=sess)
 
     async def get_info(
@@ -548,7 +551,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult | None:
+    ) -> FileInfoResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -557,9 +560,9 @@ class UserScopedFileSystem(DatabaseFileSystem):
             try:
                 await self._check_share_access(sess, stored, uid, "read")
             except PermissionError:
-                return None
+                return FileInfoResult(success=False, message="Access denied", path=path)
         info = await super().get_info(stored, session=sess)
-        if info is not None:
+        if info.success:
             if is_shared:
                 info.path = path
             else:
@@ -969,7 +972,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         user_id: str,
         session: AsyncSession | None = None,
-    ) -> bool:
+    ) -> ShareResult:
         """Remove a share on a user-facing path."""
         uid = self._require_user_id(user_id)
         if self._is_shared_access(path)[0]:
@@ -978,7 +981,20 @@ class UserScopedFileSystem(DatabaseFileSystem):
             raise ValueError("No sharing service configured")
         stored = self._resolve_path(path, uid)
         sess = self._require_session(session)
-        return await self._sharing.remove_share(sess, stored, grantee_id)
+        removed = await self._sharing.remove_share(sess, stored, grantee_id)
+        if removed:
+            return ShareResult(
+                success=True,
+                message=f"Removed share on {path} for {grantee_id}",
+                path=path,
+                grantee_id=grantee_id,
+            )
+        return ShareResult(
+            success=False,
+            message=f"No share found on {path} for {grantee_id}",
+            path=path,
+            grantee_id=grantee_id,
+        )
 
     async def list_shares_on_path(
         self,
@@ -1082,18 +1098,16 @@ class UserScopedFileSystem(DatabaseFileSystem):
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-    ) -> int:
-        uid = self._require_user_id()
-        stored = self._resolve_path(file_path, uid)
-        sess = self._require_session(session)
-        return await self.chunks.replace_file_chunks(sess, stored, chunks)
+    ) -> ChunkResult:
+        # No user scoping on replace — stored path should already be resolved
+        return await super().replace_file_chunks(file_path, chunks, session=session)
 
     async def delete_file_chunks(
         self,
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> int:
+    ) -> ChunkResult:
         # No user scoping on delete — stored path should already be resolved
         return await super().delete_file_chunks(file_path, session=session)
 
@@ -1102,6 +1116,6 @@ class UserScopedFileSystem(DatabaseFileSystem):
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> list:
+    ) -> ChunkListResult:
         # No user scoping on list — stored path should already be resolved
         return await super().list_file_chunks(file_path, session=session)

@@ -150,9 +150,9 @@ class TestGroverFilesystem:
         assert "b.txt" in names
 
     def test_exists(self, grover: Grover):
-        assert not grover.exists("/project/nope.txt")
+        assert not grover.exists("/project/nope.txt").exists
         grover.write("/project/yes.txt", "yes")
-        assert grover.exists("/project/yes.txt")
+        assert grover.exists("/project/yes.txt").exists
 
     def test_write_overwrite_false_fails_when_exists(self, grover: Grover):
         grover.write("/project/exists.txt", "original")

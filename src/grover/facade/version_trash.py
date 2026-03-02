@@ -11,6 +11,7 @@ from grover.fs.utils import normalize_path
 from grover.types import (
     DeleteResult,
     GetVersionContentResult,
+    ReconcileResult,
     RestoreResult,
     TrashResult,
     VerifyVersionResult,
@@ -193,9 +194,9 @@ class VersionTrashMixin:
     # Reconciliation
     # ------------------------------------------------------------------
 
-    async def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
+    async def reconcile(self, mount_path: str | None = None) -> ReconcileResult:
         """Reconcile disk ↔ DB for capable mounts."""
-        total: dict[str, int] = {"created": 0, "updated": 0, "deleted": 0, "chain_errors": 0}
+        total = ReconcileResult()
         mounts = self._ctx.registry.list_mounts()
         if mount_path is not None:
             mount_path = normalize_path(mount_path).rstrip("/")
@@ -210,7 +211,9 @@ class VersionTrashMixin:
                 continue
             async with self._ctx.session_for(mount) as sess:
                 stats = await cap.reconcile(session=sess)
-            for k, v in stats.items():
-                total[k] = total.get(k, 0) + v
+            total.created += stats.created
+            total.updated += stats.updated
+            total.deleted += stats.deleted
+            total.chain_errors += stats.chain_errors
 
         return total

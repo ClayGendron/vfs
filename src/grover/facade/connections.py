@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.protocol import SupportsConnections
 from grover.fs.utils import normalize_path
-from grover.types import ConnectionResult
+from grover.types import ConnectionListResult, ConnectionResult
 
 if TYPE_CHECKING:
     from grover.facade.context import GroverContext
@@ -150,18 +150,18 @@ class ConnectionMixin:
         *,
         direction: str = "both",
         connection_type: str | None = None,
-    ) -> list[object]:
+    ) -> ConnectionListResult:
         """List connections for a path."""
         path = normalize_path(path)
 
         try:
             mount, _rel = self._ctx.registry.resolve(path)
         except MountNotFoundError:
-            return []
+            return ConnectionListResult(connections=[], path=path)
 
         backend = self._ctx.get_capability(mount.filesystem, SupportsConnections)
         if backend is None:
-            return []
+            return ConnectionListResult(connections=[], path=path)
 
         async with self._ctx.session_for(mount) as sess:
             return await backend.list_connections(

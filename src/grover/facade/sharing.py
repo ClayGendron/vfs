@@ -108,17 +108,10 @@ class ShareMixin:
 
         async with self._ctx.session_for(mount) as sess:
             assert sess is not None
-            removed = await cap.unshare(rel_path, grantee_id, user_id=user_id, session=sess)
+            result = await cap.unshare(rel_path, grantee_id, user_id=user_id, session=sess)
 
-        if removed:
-            return ShareResult(
-                success=True,
-                message=f"Removed share on {path} for {grantee_id}",
-            )
-        return ShareResult(
-            success=False,
-            message=f"No share found on {path} for {grantee_id}",
-        )
+        result.path = path
+        return result
 
     async def list_shares(
         self,

@@ -161,9 +161,7 @@ class IndexMixin:
                         }
                         for chunk in chunks
                     ]
-                    await mount.filesystem.replace_file_chunks(
-                        path, chunk_dicts, session=sess
-                    )
+                    await mount.filesystem.replace_file_chunks(path, chunk_dicts, session=sess)
 
                 # In-memory graph: chunk nodes + "contains" edges
                 for chunk in chunks:

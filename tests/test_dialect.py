@@ -365,7 +365,12 @@ class TestUpsertMssql:
 
         await _upsert_mssql(
             mock_session,
-            values={"id": "m3", "path": "/m.txt", "mime_type": "text/markdown", "current_version": 5},
+            values={
+                "id": "m3",
+                "path": "/m.txt",
+                "mime_type": "text/markdown",
+                "current_version": 5,
+            },
             conflict_keys=["path"],
             model=File,
             update_keys=["mime_type"],

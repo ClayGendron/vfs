@@ -10,6 +10,7 @@ from grover.fs.utils import normalize_path
 from grover.types import (
     DeleteResult,
     EditResult,
+    ExistsResult,
     FileInfoResult,
     FileSearchCandidate,
     ListDirEvidence,
@@ -204,34 +205,32 @@ class FileOpsMixin:
             candidates=candidates,
         )
 
-    async def exists(self, path: str, *, user_id: str | None = None) -> bool:
+    async def exists(self, path: str, *, user_id: str | None = None) -> ExistsResult:
         path = normalize_path(path)
 
         if path == "/":
-            return True
+            return ExistsResult(exists=True, path=path)
 
         if self._ctx.registry.has_mount(path):
-            return True
+            return ExistsResult(exists=True, path=path)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError:
-            return False
+            return ExistsResult(exists=False, path=path)
 
         assert mount.filesystem is not None
         async with self._ctx.session_for(mount) as sess:
             return await mount.filesystem.exists(rel_path, session=sess, user_id=user_id)
 
-    async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfoResult | None:
+    async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfoResult:
         path = normalize_path(path)
 
         if self._ctx.registry.has_mount(path):
             for mount in self._ctx.registry.list_mounts():
                 if mount.path == path:
-                    name = mount.path.lstrip("/")
                     return FileInfoResult(
                         path=mount.path,
-                        name=name,
                         is_directory=True,
                         permission=mount.permission.value,
                         mount_type=mount.mount_type,
@@ -240,12 +239,14 @@ class FileOpsMixin:
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError:
-            return None
+            return FileInfoResult(
+                success=False, message=f"No mount found for path: {path}", path=path
+            )
 
         assert mount.filesystem is not None
         async with self._ctx.session_for(mount) as sess:
             info = await mount.filesystem.get_info(rel_path, session=sess, user_id=user_id)
-        if info is not None:
+        if info.success:
             info = self._ctx.prefix_file_info(info, mount)
         return info
 

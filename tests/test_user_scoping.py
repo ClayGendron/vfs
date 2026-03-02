@@ -166,19 +166,19 @@ class TestAuthenticatedOtherOps:
 
     async def test_exists_authenticated(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "content", user_id="alice")
-        assert await auth_grover.exists("/ws/notes.md", user_id="alice") is True
-        assert await auth_grover.exists("/ws/notes.md", user_id="bob") is False
+        assert (await auth_grover.exists("/ws/notes.md", user_id="alice")).exists is True
+        assert (await auth_grover.exists("/ws/notes.md", user_id="bob")).exists is False
 
     async def test_get_info_authenticated(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "content", user_id="alice")
         info = await auth_grover.get_info("/ws/notes.md", user_id="alice")
-        assert info is not None
+        assert info.success
         assert info.path == "/ws/notes.md"
 
     async def test_get_info_other_user_none(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "content", user_id="alice")
         info = await auth_grover.get_info("/ws/notes.md", user_id="bob")
-        assert info is None
+        assert not info.success
 
     async def test_copy_authenticated(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/a.md", "content", user_id="alice")
@@ -223,9 +223,9 @@ class TestAuthenticatedOtherOps:
     async def test_regular_mount_all_ops_unchanged(self, regular_grover: GroverAsync):
         """Regular mount operations work with user_id (ignored)."""
         await regular_grover.write("/ws/notes.md", "content", user_id="alice")
-        assert await regular_grover.exists("/ws/notes.md", user_id="bob") is True
+        assert (await regular_grover.exists("/ws/notes.md", user_id="bob")).exists is True
         info = await regular_grover.get_info("/ws/notes.md", user_id="bob")
-        assert info is not None
+        assert info.success
 
 
 # ---------------------------------------------------------------------------
@@ -314,14 +314,16 @@ class TestSharedAccess:
         await shared_grover.write("/ws/notes.md", "content", user_id="alice")
         await self._create_share(shared_grover, async_session, "/alice/notes.md", "bob", "read")
 
-        assert await shared_grover.exists("/ws/@shared/alice/notes.md", user_id="bob") is True
+        result = await shared_grover.exists("/ws/@shared/alice/notes.md", user_id="bob")
+        assert result.exists is True
 
     async def test_exists_shared_no_permission(
         self, shared_grover: GroverAsync, async_session: AsyncSession
     ):
         """exists returns False for shared path without permission."""
         await shared_grover.write("/ws/notes.md", "content", user_id="alice")
-        assert await shared_grover.exists("/ws/@shared/alice/notes.md", user_id="bob") is False
+        result = await shared_grover.exists("/ws/@shared/alice/notes.md", user_id="bob")
+        assert result.exists is False
 
     async def test_get_info_shared(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """get_info works for shared paths with permission."""
@@ -329,15 +331,15 @@ class TestSharedAccess:
         await self._create_share(shared_grover, async_session, "/alice/notes.md", "bob", "read")
 
         info = await shared_grover.get_info("/ws/@shared/alice/notes.md", user_id="bob")
-        assert info is not None
+        assert info.success
 
     async def test_get_info_shared_no_permission(
         self, shared_grover: GroverAsync, async_session: AsyncSession
     ):
-        """get_info returns None for shared path without permission."""
+        """get_info returns success=False for shared path without permission."""
         await shared_grover.write("/ws/notes.md", "content", user_id="alice")
         info = await shared_grover.get_info("/ws/@shared/alice/notes.md", user_id="bob")
-        assert info is None
+        assert not info.success
 
     async def test_directory_share_grants_children(
         self, shared_grover: GroverAsync, async_session: AsyncSession

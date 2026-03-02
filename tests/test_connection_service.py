@@ -235,9 +235,9 @@ class TestConnectionService:
             await sess.commit()
 
         async with factory() as sess:
-            conns = await svc.list_connections(sess, "/a.py", direction="both")
+            result = await svc.list_connections(sess, "/a.py", direction="both")
 
-        assert len(conns) == 2
+        assert len(result.connections) == 2
 
     async def test_list_connections_outgoing(
         self, db: tuple[AsyncEngine, ConnectionService]
@@ -251,10 +251,10 @@ class TestConnectionService:
             await sess.commit()
 
         async with factory() as sess:
-            conns = await svc.list_connections(sess, "/a.py", direction="out")
+            result = await svc.list_connections(sess, "/a.py", direction="out")
 
-        assert len(conns) == 1
-        assert conns[0].target_path == "/b.py"
+        assert len(result.connections) == 1
+        assert result.connections[0].target_path == "/b.py"
 
     async def test_list_connections_incoming(
         self, db: tuple[AsyncEngine, ConnectionService]
@@ -268,10 +268,10 @@ class TestConnectionService:
             await sess.commit()
 
         async with factory() as sess:
-            conns = await svc.list_connections(sess, "/a.py", direction="in")
+            result = await svc.list_connections(sess, "/a.py", direction="in")
 
-        assert len(conns) == 1
-        assert conns[0].source_path == "/c.py"
+        assert len(result.connections) == 1
+        assert result.connections[0].source_path == "/c.py"
 
     async def test_list_connections_filter_by_type(
         self, db: tuple[AsyncEngine, ConnectionService]
@@ -285,12 +285,12 @@ class TestConnectionService:
             await sess.commit()
 
         async with factory() as sess:
-            conns = await svc.list_connections(
+            result = await svc.list_connections(
                 sess, "/a.py", direction="out", connection_type="imports"
             )
 
-        assert len(conns) == 1
-        assert conns[0].target_path == "/b.py"
+        assert len(result.connections) == 1
+        assert result.connections[0].target_path == "/b.py"
 
     async def test_connection_result_shape(self, db: tuple[AsyncEngine, ConnectionService]) -> None:
         engine, svc = db
@@ -390,15 +390,15 @@ class TestConnectionIntegrationDBFS:
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.add_connection("/vfs/a.py", "/vfs/c.py", "calls")
 
-        conns = await grover.list_connections("/vfs/a.py", direction="out")
-        assert len(conns) == 2
+        result = await grover.list_connections("/vfs/a.py", direction="out")
+        assert len(result.connections) == 2
 
     async def test_list_connections_no_mount_returns_empty(
         self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
         grover, _engine = setup
-        conns = await grover.list_connections("/nonexistent/path")
-        assert conns == []
+        result = await grover.list_connections("/nonexistent/path")
+        assert result.connections == []
 
     async def test_failed_add_does_not_update_graph(
         self, setup: tuple[GroverAsync, AsyncEngine]
@@ -426,8 +426,8 @@ class TestConnectionIntegrationDBFS:
         assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
 
         # DB should have 2 records
-        conns = await grover.list_connections("/vfs/a.py", direction="out")
-        assert len(conns) == 2
+        result = await grover.list_connections("/vfs/a.py", direction="out")
+        assert len(result.connections) == 2
 
 
 # =========================================================================
@@ -479,8 +479,8 @@ class TestConnectionIntegrationLocalFS:
         await grover.add_connection("/local/a.py", "/local/b.py", "imports")
         await grover.add_connection("/local/c.py", "/local/a.py", "calls")
 
-        conns = await grover.list_connections("/local/a.py")
-        assert len(conns) == 2
+        result = await grover.list_connections("/local/a.py")
+        assert len(result.connections) == 2
 
 
 # =========================================================================

@@ -50,10 +50,14 @@ from grover.search.types import (
     VectorEntry,
 )
 from grover.types import (
+    ChunkListResult,
+    ChunkResult,
+    ConnectionListResult,
     ConnectionResult,
     DeleteResult,
     EditResult,
     Evidence,
+    ExistsResult,
     FileInfoResult,
     FileOperationResult,
     FileSearchCandidate,
@@ -72,6 +76,7 @@ from grover.types import (
     MkdirResult,
     MoveResult,
     ReadResult,
+    ReconcileResult,
     RestoreResult,
     ShareResult,
     ShareSearchResult,
@@ -87,11 +92,15 @@ from grover.types import (
 from grover.worker import IndexingMode
 
 __all__ = [
+    "ChunkListResult",
+    "ChunkResult",
+    "ConnectionListResult",
     "ConnectionResult",
     "DeleteResult",
     "EditResult",
     "EmbeddingProvider",
     "Evidence",
+    "ExistsResult",
     "FileInfoResult",
     "FileOperationResult",
     "FileSearchCandidate",
@@ -121,6 +130,7 @@ __all__ = [
     "ProtocolConflictError",
     "ProtocolNotAvailableError",
     "ReadResult",
+    "ReconcileResult",
     "Ref",
     "RestoreResult",
     "SearchDeleteResult",

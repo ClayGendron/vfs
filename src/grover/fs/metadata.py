@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from grover.types.operations import FileInfoResult, ReadResult
+from grover.types.operations import ExistsResult, FileInfoResult, ReadResult
 
 from .utils import normalize_path, validate_path
 
@@ -51,30 +51,30 @@ class MetadataService:
         result = await session.execute(query)
         return result.scalar_one_or_none()
 
-    async def exists(self, session: AsyncSession, path: str) -> bool:
+    async def exists(self, session: AsyncSession, path: str) -> ExistsResult:
         """Check if a file or directory exists."""
         valid, _ = validate_path(path)
         if not valid:
-            return False
+            return ExistsResult(exists=False, path=path)
 
         path = normalize_path(path)
         if path == "/":
-            return True
+            return ExistsResult(exists=True, path=path)
 
         file = await self.get_file(session, path)
-        return file is not None
+        return ExistsResult(exists=file is not None, path=path)
 
-    async def get_info(self, session: AsyncSession, path: str) -> FileInfoResult | None:
+    async def get_info(self, session: AsyncSession, path: str) -> FileInfoResult:
         """Get metadata for a file or directory."""
-        valid, _ = validate_path(path)
+        valid, msg = validate_path(path)
         if not valid:
-            return None
+            return FileInfoResult(success=False, message=msg or "Invalid path", path=path)
 
         path = normalize_path(path)
 
         file = await self.get_file(session, path)
         if not file:
-            return None
+            return FileInfoResult(success=False, message=f"File not found: {path}", path=path)
         return self.file_to_info(file)
 
     @staticmethod

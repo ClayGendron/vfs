@@ -201,7 +201,7 @@ class TestReconcileChainErrors:
         """reconcile reports chain_errors=0 when no corruption."""
         await grover.write("/project/f.py", "content\n")
         stats = await grover.reconcile("/project")
-        assert stats["chain_errors"] == 0
+        assert stats.chain_errors == 0
 
     async def test_reconcile_includes_chain_errors(self, workspace: Path, tmp_path: Path):
         """reconcile detects chain_errors when a version is corrupted."""
@@ -235,7 +235,7 @@ class TestReconcileChainErrors:
             await sess.commit()
 
         stats = await g.reconcile("/project")
-        assert stats["chain_errors"] > 0
+        assert stats.chain_errors > 0
         await g.close()
 
 
@@ -295,10 +295,14 @@ class TestVerifyUnsupported:
                 return ListDirResult()
 
             async def exists(self, path, *, session=None, user_id=None):
-                return False
+                from grover.types import ExistsResult
+
+                return ExistsResult(exists=False, path=path)
 
             async def get_info(self, path, *, session=None, user_id=None):
-                return None
+                from grover.types import FileInfoResult
+
+                return FileInfoResult(success=False, message="Not found", path=path)
 
             async def write(
                 self,

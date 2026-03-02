@@ -21,6 +21,7 @@ from grover.fs.protocol import (
 from grover.types import (
     DeleteResult,
     EditResult,
+    ExistsResult,
     FileInfoResult,
     FileSearchCandidate,
     GlobResult,
@@ -228,8 +229,8 @@ class MinimalBackend:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> bool:
-        return path in self._files
+    ) -> ExistsResult:
+        return ExistsResult(exists=path in self._files, path=path)
 
     async def get_info(
         self,
@@ -237,9 +238,9 @@ class MinimalBackend:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult | None:
+    ) -> FileInfoResult:
         if path not in self._files:
-            return None
+            return FileInfoResult(success=False, message="Not found", path=path)
         return FileInfoResult(path=path, is_directory=False)
 
 
@@ -308,7 +309,7 @@ class TestCapabilityGating:
         assert read.success
         assert read.content == "hi"
 
-        assert await minimal_grover.exists("/mem/hello.txt")
+        assert (await minimal_grover.exists("/mem/hello.txt")).exists
 
     async def test_list_versions_returns_failure(self, minimal_grover: GroverAsync) -> None:
         result = await minimal_grover.list_versions("/mem/hello.txt")

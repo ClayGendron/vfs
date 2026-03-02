@@ -5,15 +5,20 @@ Import from ``grover.types`` (or the top-level ``grover`` package).
 """
 
 from grover.types.operations import (
+    ChunkListResult,
+    ChunkResult,
+    ConnectionListResult,
     ConnectionResult,
     DeleteResult,
     EditResult,
+    ExistsResult,
     FileInfoResult,
     FileOperationResult,
     GetVersionContentResult,
     MkdirResult,
     MoveResult,
     ReadResult,
+    ReconcileResult,
     RestoreResult,
     ShareResult,
     VerifyVersionResult,
@@ -50,10 +55,14 @@ from grover.types.search import (
 )
 
 __all__ = [
+    "ChunkListResult",
+    "ChunkResult",
+    "ConnectionListResult",
     "ConnectionResult",
     "DeleteResult",
     "EditResult",
     "Evidence",
+    "ExistsResult",
     "FileInfoResult",
     "FileOperationResult",
     "FileSearchCandidate",
@@ -75,6 +84,7 @@ __all__ = [
     "MkdirResult",
     "MoveResult",
     "ReadResult",
+    "ReconcileResult",
     "RestoreResult",
     "ShareEvidence",
     "ShareResult",

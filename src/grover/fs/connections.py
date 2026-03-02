@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from grover.types.operations import ConnectionResult
+from grover.types.operations import ConnectionListResult, ConnectionResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -173,7 +173,7 @@ class ConnectionService:
         *,
         direction: str = "both",
         connection_type: str | None = None,
-    ) -> list[FileConnectionBase]:
+    ) -> ConnectionListResult:
         """List connections for a path. direction: 'out', 'in', or 'both'."""
         model = self._model
         conditions = []
@@ -190,4 +190,5 @@ class ConnectionService:
 
         stmt = select(model).where(*conditions)
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        connections = list(result.scalars().all())
+        return ConnectionListResult(connections=connections, path=path)

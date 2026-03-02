@@ -13,7 +13,7 @@ using these shared modules.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -22,14 +22,19 @@ if TYPE_CHECKING:
 
     from grover.fs.sharing import SharingService
     from grover.types.operations import (
+        ChunkListResult,
+        ChunkResult,
+        ConnectionListResult,
         ConnectionResult,
         DeleteResult,
         EditResult,
+        ExistsResult,
         FileInfoResult,
         GetVersionContentResult,
         MkdirResult,
         MoveResult,
         ReadResult,
+        ReconcileResult,
         RestoreResult,
         ShareResult,
         VerifyVersionResult,
@@ -94,7 +99,7 @@ class StorageBackend(Protocol):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> bool: ...
+    ) -> ExistsResult: ...
 
     async def get_info(
         self,
@@ -102,7 +107,7 @@ class StorageBackend(Protocol):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult | None: ...
+    ) -> FileInfoResult: ...
 
     # ------------------------------------------------------------------
     # Write
@@ -315,7 +320,7 @@ class SupportsReBAC(Protocol):
         *,
         user_id: str,
         session: AsyncSession | None = None,
-    ) -> bool: ...
+    ) -> ShareResult: ...
 
     async def list_shares_on_path(
         self,
@@ -341,7 +346,7 @@ class SupportsReconcile(Protocol):
         self,
         *,
         session: AsyncSession | None = None,
-    ) -> dict[str, int]: ...
+    ) -> ReconcileResult: ...
 
 
 @runtime_checkable
@@ -374,7 +379,7 @@ class SupportsConnections(Protocol):
         direction: str = "both",
         connection_type: str | None = None,
         session: AsyncSession | None = None,
-    ) -> list[object]: ...
+    ) -> ConnectionListResult: ...
 
 
 @runtime_checkable
@@ -387,18 +392,18 @@ class SupportsFileChunks(Protocol):
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-    ) -> int: ...
+    ) -> ChunkResult: ...
 
     async def delete_file_chunks(
         self,
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> int: ...
+    ) -> ChunkResult: ...
 
     async def list_file_chunks(
         self,
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> list[object]: ...
+    ) -> ChunkListResult: ...

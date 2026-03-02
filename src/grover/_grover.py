@@ -23,9 +23,12 @@ if TYPE_CHECKING:
     from grover.mount import Mount
     from grover.search.protocols import EmbeddingProvider, VectorStore
     from grover.types import (
+        ConnectionListResult,
         ConnectionResult,
         DeleteResult,
         EditResult,
+        ExistsResult,
+        FileInfoResult,
         FileSearchResult,
         GetVersionContentResult,
         GlobResult,
@@ -35,6 +38,7 @@ if TYPE_CHECKING:
         ListDirResult,
         MoveResult,
         ReadResult,
+        ReconcileResult,
         RestoreResult,
         ShareResult,
         ShareSearchResult,
@@ -207,9 +211,13 @@ class Grover:
         """List entries under *path*."""
         return self._run(self._async.list_dir(path, user_id=user_id))
 
-    def exists(self, path: str, *, user_id: str | None = None) -> bool:
+    def exists(self, path: str, *, user_id: str | None = None) -> ExistsResult:
         """Check whether *path* exists."""
         return self._run(self._async.exists(path, user_id=user_id))
+
+    def get_info(self, path: str, *, user_id: str | None = None) -> FileInfoResult:
+        """Return metadata for *path*."""
+        return self._run(self._async.get_info(path, user_id=user_id))
 
     def move(
         self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False
@@ -297,7 +305,7 @@ class Grover:
     def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
         return self._run(self._async.empty_trash(user_id=user_id))
 
-    def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
+    def reconcile(self, mount_path: str | None = None) -> ReconcileResult:
         return self._run(self._async.reconcile(mount_path))
 
     def verify_versions(self, path: str, *, user_id: str | None = None) -> VerifyVersionResult:
@@ -386,7 +394,7 @@ class Grover:
         *,
         direction: str = "both",
         connection_type: str | None = None,
-    ) -> list[object]:
+    ) -> ConnectionListResult:
         return self._run(
             self._async.list_connections(
                 path,
