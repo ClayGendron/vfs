@@ -195,6 +195,7 @@ class TestReadWrite:
         result = await async_session.execute(select(File).where(File.path == "/alice/notes.md"))
         file = result.scalar_one_or_none()
         assert file is not None
+        assert file.path == "/alice/notes.md"
         assert file.owner_id == "alice"
 
     async def test_no_user_id_raises_on_read(
@@ -261,6 +262,8 @@ class TestOperations:
         result = await async_session.execute(select(File).where(File.path == "/alice/mydir"))
         file = result.scalar_one_or_none()
         assert file is not None
+        assert file.path == "/alice/mydir"
+        assert file.is_directory is True
         assert file.owner_id == "alice"
 
     async def test_exists(self, usfs: UserScopedFileSystem, async_session: AsyncSession):

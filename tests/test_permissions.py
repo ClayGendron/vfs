@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.permissions import Permission
+from grover.grover_async import GroverAsync
 from grover.types import (
     ConnectionListResult,
     ConnectionResult,
@@ -196,6 +196,8 @@ class TestReadOnlyAllowsReads:
     async def test_read_only_allows_graph_queries(self, grover_ro: GroverAsync) -> None:
         graph = grover_ro.get_graph("/ro")
         assert graph is not None
+        assert isinstance(graph.node_count, int)
+        assert graph.node_count >= 0
 
     async def test_read_only_allows_list_connections(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.list_connections("/ro/hello.py")
