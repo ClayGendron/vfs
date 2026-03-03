@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.files import FileBase
+    from grover.models.file import FileBase
 
-    from .providers.protocols import VersionProvider
+    from .providers.versioning.protocol import VersionProvider
 
     ContentDeleter = Callable[[str, AsyncSession], Awaitable[None]]
     GetFile = Callable[[AsyncSession, str, bool], Awaitable[FileBase | None]]

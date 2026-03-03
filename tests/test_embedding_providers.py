@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from grover.fs.providers.protocols import EmbeddingProvider
+from grover.fs.providers.embedding.protocol import EmbeddingProvider
 
 # ==================================================================
 # OpenAI provider

@@ -417,37 +417,37 @@ class TestImportGuard:
 
 class TestProtocolConformance:
     def test_satisfies_vector_store(self):
-        from grover.fs.providers.search.protocols import VectorStore
+        from grover.fs.providers.search.protocol import VectorStore
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, VectorStore)
 
     def test_satisfies_supports_metadata_filter(self):
-        from grover.fs.providers.search.protocols import SupportsMetadataFilter
+        from grover.fs.providers.search.protocol import SupportsMetadataFilter
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsMetadataFilter)
 
     def test_satisfies_supports_index_lifecycle(self):
-        from grover.fs.providers.search.protocols import SupportsIndexLifecycle
+        from grover.fs.providers.search.protocol import SupportsIndexLifecycle
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsIndexLifecycle)
 
     def test_satisfies_supports_hybrid_search(self):
-        from grover.fs.providers.search.protocols import SupportsHybridSearch
+        from grover.fs.providers.search.protocol import SupportsHybridSearch
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsHybridSearch)
 
     def test_does_not_satisfy_supports_namespaces(self):
-        from grover.fs.providers.search.protocols import SupportsNamespaces
+        from grover.fs.providers.search.protocol import SupportsNamespaces
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert not isinstance(s, SupportsNamespaces)
 
     def test_does_not_satisfy_supports_reranking(self):
-        from grover.fs.providers.search.protocols import SupportsReranking
+        from grover.fs.providers.search.protocol import SupportsReranking
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert not isinstance(s, SupportsReranking)

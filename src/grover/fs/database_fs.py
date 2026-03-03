@@ -61,7 +61,7 @@ from .operations import (
     write_file,
 )
 from .providers.chunks import DefaultChunkProvider
-from .providers.protocols import SupportsStorageQueries
+from .providers.storage.protocol import SupportsStorageQueries
 from .providers.versioning import DefaultVersionProvider
 from .trash import TrashService
 from .utils import (
@@ -80,14 +80,12 @@ if TYPE_CHECKING:
     from grover.models.file import FileBase
     from grover.models.version import FileVersionBase
 
-    from .providers.protocols import (
-        ChunkProvider,
-        EmbeddingProvider,
-        GraphProvider,
-        SearchProvider,
-        StorageProvider,
-        VersionProvider,
-    )
+    from .providers.chunks.protocol import ChunkProvider
+    from .providers.embedding.protocol import EmbeddingProvider
+    from .providers.graph.protocol import GraphProvider
+    from .providers.search.protocol import SearchProvider
+    from .providers.storage.protocol import StorageProvider
+    from .providers.versioning.protocol import VersionProvider
     from .sharing import SharingService
 
 logger = logging.getLogger(__name__)

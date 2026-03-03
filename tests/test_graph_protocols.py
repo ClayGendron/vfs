@@ -7,12 +7,12 @@ from types import MappingProxyType
 import pytest
 
 from grover.fs.providers.graph import RustworkxGraph
-from grover.fs.providers.graph.protocols import (
+from grover.fs.providers.graph.protocol import (
+    GraphProvider,
     GraphStore,
     SupportsPersistence,
 )
 from grover.fs.providers.graph.types import SubgraphResult, subgraph_result
-from grover.fs.providers.protocols import GraphProvider
 
 # ======================================================================
 # GraphStore protocol

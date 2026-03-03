@@ -39,11 +39,11 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.files import FileBase
+    from grover.models.file import FileBase
     from grover.types.operations import FileInfoResult
 
     from .directories import DirectoryService
-    from .providers.protocols import VersionProvider
+    from .providers.versioning.protocol import VersionProvider
     from .sharing import SharingService
 
     ContentReader = Callable[[str, AsyncSession], Awaitable[str | None]]

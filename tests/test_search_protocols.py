@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from grover.fs.providers.protocols import EmbeddingProvider
+from grover.fs.providers.embedding.protocol import EmbeddingProvider
 from grover.fs.providers.search.filters import (
     Comparison,
     FilterOp,
@@ -27,7 +27,7 @@ from grover.fs.providers.search.filters import (
     not_in,
     or_,
 )
-from grover.fs.providers.search.protocols import (
+from grover.fs.providers.search.protocol import (
     SupportsHybridSearch,
     SupportsIndexLifecycle,
     SupportsMetadataFilter,

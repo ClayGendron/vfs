@@ -1,6 +1,6 @@
 """Embedding providers — protocol and implementations."""
 
-from grover.fs.providers.protocols import EmbeddingProvider
+from .protocol import EmbeddingProvider
 
 __all__ = [
     "EmbeddingProvider",

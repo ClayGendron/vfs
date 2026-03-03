@@ -98,7 +98,7 @@ These are checked at runtime with `isinstance(backend, SupportsReconcile)`. The 
 
 ### Provider protocols
 
-Provider protocols live in `fs/providers/protocols.py` and define the pluggable capabilities that filesystems compose:
+Provider protocols are co-located with their provider implementations. Each subdirectory under `fs/providers/` has a `protocol.py` defining its protocol:
 
 ```python
 class StorageProvider(Protocol):    # Disk I/O: read/write/delete content

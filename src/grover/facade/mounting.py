@@ -28,7 +28,8 @@ if TYPE_CHECKING:
 
     from grover.facade.context import GroverContext
     from grover.fs.protocol import GroverFileSystem
-    from grover.fs.providers.protocols import EmbeddingProvider, SearchProvider
+    from grover.fs.providers.embedding.protocol import EmbeddingProvider
+    from grover.fs.providers.search.protocol import SearchProvider
     from grover.models.chunk import FileChunkBase
     from grover.models.file import FileBase
     from grover.models.version import FileVersionBase

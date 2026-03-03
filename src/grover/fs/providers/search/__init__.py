@@ -1,13 +1,13 @@
 """Vector search layer — stores, text extraction, embedding providers."""
 
-from grover.fs.providers.protocols import EmbeddingProvider
+from grover.fs.providers.embedding.protocol import EmbeddingProvider
 from grover.fs.providers.search.extractors import (
     EmbeddableChunk,
     extract_from_chunks,
     extract_from_file,
 )
 from grover.fs.providers.search.local import LocalVectorStore
-from grover.fs.providers.search.protocols import VectorStore
+from grover.fs.providers.search.protocol import VectorStore
 from grover.fs.providers.search.types import SearchResult
 
 __all__ = [

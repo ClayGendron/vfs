@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from grover.fs.providers.chunks.protocol import ChunkProvider
 from grover.fs.providers.graph import RustworkxGraph
-from grover.fs.providers.protocols import (
-    ChunkProvider,
-    GraphProvider,
+from grover.fs.providers.graph.protocol import GraphProvider
+from grover.fs.providers.storage.disk import DiskStorageProvider
+from grover.fs.providers.storage.protocol import (
     StorageProvider,
     SupportsStorageQueries,
     SupportsStorageReconcile,
-    VersionProvider,
 )
-from grover.fs.providers.storage.disk import DiskStorageProvider
+from grover.fs.providers.versioning.protocol import VersionProvider
 
 if TYPE_CHECKING:
     from pathlib import Path

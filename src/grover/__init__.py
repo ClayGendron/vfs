@@ -5,8 +5,6 @@ Safe file operations, knowledge graphs, and semantic search — unified for AI a
 
 __version__ = "0.0.3"
 
-from grover._grover import Grover
-from grover._grover_async import GroverAsync
 from grover.fs.providers import (
     ChunkProvider,
     DefaultChunkProvider,
@@ -34,7 +32,7 @@ from grover.fs.providers.search.filters import (
     not_in,
     or_,
 )
-from grover.fs.providers.search.protocols import (
+from grover.fs.providers.search.protocol import (
     SupportsHybridSearch,
     SupportsIndexLifecycle,
     SupportsMetadataFilter,
@@ -55,6 +53,8 @@ from grover.fs.providers.search.types import (
     VectorEntry,
 )
 from grover.fs.user_scoped_fs import UserScopedFileSystem
+from grover.grover import Grover
+from grover.grover_async import GroverAsync
 from grover.mount import Mount
 from grover.ref import Ref
 from grover.types import (

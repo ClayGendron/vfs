@@ -1,6 +1,7 @@
 """Knowledge graph layer — protocol-based graph API over file paths."""
 
-from grover.fs.providers.graph.protocols import (
+from grover.fs.providers.graph.protocol import (
+    GraphProvider,
     GraphStore,
     SupportsCentrality,
     SupportsConnectivity,
@@ -12,7 +13,6 @@ from grover.fs.providers.graph.protocols import (
 )
 from grover.fs.providers.graph.rustworkx import RustworkxGraph
 from grover.fs.providers.graph.types import SubgraphResult
-from grover.fs.providers.protocols import GraphProvider
 
 __all__ = [
     "GraphProvider",

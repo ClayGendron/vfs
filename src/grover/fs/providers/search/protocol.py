@@ -1,11 +1,8 @@
-"""Search layer protocols — vector storage and capability interfaces.
-
-Note: ``EmbeddingProvider`` has moved to ``grover.fs.providers.protocols``.
-"""
+"""Search layer protocols — vector storage and capability interfaces."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from grover.fs.providers.search.filters import FilterExpression
@@ -19,6 +16,68 @@ if TYPE_CHECKING:
         VectorEntry,
         VectorHit,
     )
+    from grover.types.search import LexicalSearchResult, VectorSearchResult
+
+
+# ---------------------------------------------------------------------------
+# Core search protocol (filesystem-level)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SearchProvider(Protocol):
+    """Search interface — vector + lexical.
+
+    Existing stores (``LocalVectorStore``, ``PineconeVectorStore``,
+    ``DatabricksVectorStore``) implement this directly. Replaces
+    ``VectorStore`` as the filesystem-level type.
+    """
+
+    # Vector operations
+    async def upsert(
+        self,
+        entries: list[VectorEntry],
+        *,
+        namespace: str | None = None,
+    ) -> UpsertResult: ...
+
+    async def vector_search(
+        self,
+        vector: list[float],
+        *,
+        k: int = 10,
+        namespace: str | None = None,
+        filter: Any = None,  # noqa: A002
+        include_metadata: bool = True,
+        score_threshold: float | None = None,
+    ) -> VectorSearchResult: ...
+
+    async def delete(
+        self,
+        ids: list[str],
+        *,
+        namespace: str | None = None,
+    ) -> DeleteResult: ...
+
+    async def fetch(
+        self,
+        ids: list[str],
+        *,
+        namespace: str | None = None,
+    ) -> list[VectorEntry | None]: ...
+
+    # Lexical search (stores that don't support it return empty result)
+    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult: ...
+
+    # Lifecycle
+    async def connect(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# VectorStore protocol (store-level)
+# ---------------------------------------------------------------------------
 
 
 @runtime_checkable
@@ -45,7 +104,7 @@ class VectorStore(Protocol):
         *,
         k: int = 10,
         namespace: str | None = None,
-        filter: FilterExpression | None = None,
+        filter: FilterExpression | None = None,  # noqa: A002
         include_metadata: bool = True,
         score_threshold: float | None = None,
     ) -> list[VectorHit]:
@@ -150,7 +209,7 @@ class SupportsHybridSearch(Protocol):
         k: int = 10,
         alpha: float = 0.5,
         namespace: str | None = None,
-        filter: FilterExpression | None = None,
+        filter: FilterExpression | None = None,  # noqa: A002
     ) -> list[VectorHit]:
         """Run a hybrid search combining dense, sparse, and/or keyword signals."""
         ...
@@ -169,7 +228,7 @@ class SupportsReranking(Protocol):
         rerank_model: str | None = None,
         rerank_top_n: int | None = None,
         namespace: str | None = None,
-        filter: FilterExpression | None = None,
+        filter: FilterExpression | None = None,  # noqa: A002
     ) -> list[VectorHit]:
         """Search with server-side reranking applied to the results."""
         ...
@@ -185,7 +244,7 @@ class SupportsTextSearch(Protocol):
         *,
         k: int = 10,
         namespace: str | None = None,
-        filter: FilterExpression | None = None,
+        filter: FilterExpression | None = None,  # noqa: A002
     ) -> list[VectorHit]:
         """Search using raw text (the store handles embedding internally)."""
         ...

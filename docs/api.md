@@ -709,11 +709,11 @@ Built-in analyzers:
 
 ### Graph Protocols
 
-The graph API uses the same protocol pattern as the filesystem layer. `GraphProvider` (defined in `fs/providers/protocols.py`) is the core protocol; capability protocols (in `fs/providers/graph/protocols.py`) are opt-in. Check support with `isinstance()`:
+The graph API uses the same protocol pattern as the filesystem layer. `GraphProvider` and all opt-in capability protocols live in `fs/providers/graph/protocol.py`. Check support with `isinstance()`:
 
 ```python
 from grover import GraphProvider
-from grover.fs.providers.graph.protocols import (
+from grover.fs.providers.graph.protocol import (
     SupportsCentrality,      # PageRank, betweenness, closeness, katz, degree
     SupportsConnectivity,    # Weakly/strongly connected components
     SupportsTraversal,       # Ancestors, descendants, topological sort, shortest paths
