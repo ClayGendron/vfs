@@ -12,6 +12,12 @@ from usearch.index import Index
 
 from grover.search.filters import FilterExpression, compile_dict
 from grover.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
+from grover.types.search import (
+    FileSearchResult,
+    LexicalSearchResult,
+    VectorEvidence,
+    VectorSearchResult,
+)
 
 _INDEX_FILE = "search.usearch"
 _META_FILE = "search_meta.json"
@@ -86,7 +92,7 @@ class LocalVectorStore:
 
         return UpsertResult(upserted_count=count)
 
-    async def search(
+    async def vector_search(
         self,
         vector: list[float],
         *,
@@ -95,12 +101,12 @@ class LocalVectorStore:
         filter: FilterExpression | None = None,  # noqa: A002
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> list[VectorHit]:
-        """Search for the *k* nearest vectors."""
+    ) -> VectorSearchResult:
+        """Search for the *k* nearest vectors, returning a ``VectorSearchResult``."""
         self._reject_namespace(namespace)
 
         if len(self) == 0:
-            return []
+            return VectorSearchResult(success=True, message="No entries indexed")
 
         query = np.array(vector, dtype=np.float32)
 
@@ -115,7 +121,7 @@ class LocalVectorStore:
         if filter is not None:
             filter_dict = compile_dict(filter)
 
-        results: list[VectorHit] = []
+        hits: list[VectorHit] = []
         for match_key, distance in zip(
             matches.keys.tolist(), matches.distances.tolist(), strict=True
         ):
@@ -136,7 +142,7 @@ class LocalVectorStore:
 
             result_meta = {mk: mv for mk, mv in meta.items() if mk not in ("id", "vector")}
 
-            results.append(
+            hits.append(
                 VectorHit(
                     id=meta["id"],
                     score=score,
@@ -145,11 +151,90 @@ class LocalVectorStore:
                 )
             )
 
+            if len(hits) >= k:
+                break
+
+        hits.sort(key=lambda r: r.score, reverse=True)
+
+        # Wrap into VectorSearchResult
+        entries: dict[str, list[VectorEvidence]] = {}
+        for hit in hits:
+            fp = hit.metadata.get("parent_path") or hit.id
+            content = hit.metadata.get("content", "")
+            snippet = content[:200] + ("..." if len(content) > 200 else "") if content else ""
+            ev = VectorEvidence(strategy="vector_search", path=fp, snippet=snippet)
+            entries.setdefault(fp, []).append(ev)
+
+        return VectorSearchResult(
+            success=True,
+            message=f"Found matches in {len(entries)} file(s)",
+            candidates=FileSearchResult._dict_to_candidates(entries),
+        )
+
+    async def search(
+        self,
+        vector: list[float],
+        *,
+        k: int = 10,
+        namespace: str | None = None,
+        filter: FilterExpression | None = None,  # noqa: A002
+        include_metadata: bool = True,
+        score_threshold: float | None = None,
+    ) -> list[VectorHit]:
+        """Legacy alias — returns raw ``VectorHit`` list.
+
+        Kept for backward compatibility with ``VectorStore`` protocol.
+        """
+        self._reject_namespace(namespace)
+
+        if len(self) == 0:
+            return []
+
+        query = np.array(vector, dtype=np.float32)
+        effective_k = min(k * 3, len(self)) if filter is not None else min(k, len(self))
+
+        with self._lock:
+            matches = self._index.search(query, effective_k)
+
+        filter_dict: dict[str, Any] | None = None
+        if filter is not None:
+            filter_dict = compile_dict(filter)
+
+        results: list[VectorHit] = []
+        for match_key, distance in zip(
+            matches.keys.tolist(), matches.distances.tolist(), strict=True
+        ):
+            meta = self._key_to_meta.get(int(match_key))
+            if meta is None:
+                continue
+            if filter_dict is not None and not all(
+                meta.get(fk) == fv for fk, fv in filter_dict.items()
+            ):
+                continue
+            score = 1.0 - distance
+            if score_threshold is not None and score < score_threshold:
+                continue
+            result_meta = {mk: mv for mk, mv in meta.items() if mk not in ("id", "vector")}
+            results.append(
+                VectorHit(
+                    id=meta["id"],
+                    score=score,
+                    metadata=result_meta if include_metadata else {},
+                    vector=meta.get("vector") if include_metadata else None,
+                )
+            )
             if len(results) >= k:
                 break
 
         results.sort(key=lambda r: r.score, reverse=True)
         return results
+
+    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult:
+        """LocalVectorStore is vector-only — lexical search returns empty result."""
+        return LexicalSearchResult(
+            success=True,
+            message="Lexical search not supported by LocalVectorStore",
+        )
 
     async def delete(
         self,

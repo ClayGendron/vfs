@@ -11,6 +11,7 @@ from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.sharing import SharingService
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.models.shares import FileShare
+from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -58,7 +59,7 @@ async def grover_with_sharing(
     session_factory, sharing: SharingService, engine: AsyncEngine, tmp_path: Path
 ) -> AsyncIterator[GroverAsync]:
     """GroverAsync with a UserScopedFileSystem backend that has a SharingService."""
-    g = GroverAsync()
+    g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     backend = UserScopedFileSystem(sharing=sharing)
     await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g

@@ -41,7 +41,6 @@ Issues = "https://github.com/ClayGendron/grover/issues"
 
 [project.optional-dependencies]
 search = [
-    "sentence-transformers>=3.0",
     "usearch>=2.0",
 ]
 treesitter = [

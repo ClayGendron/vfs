@@ -1,13 +1,9 @@
 """Embedding providers — protocol and implementations."""
 
-from grover.search.protocols import EmbeddingProvider
-from grover.search.providers.sentence_transformers import (
-    SentenceTransformerEmbedding,
-)
+from grover.fs.providers.protocols import EmbeddingProvider
 
 __all__ = [
     "EmbeddingProvider",
-    "SentenceTransformerEmbedding",
 ]
 
 # Optional providers — import-guarded, available only when deps are installed.

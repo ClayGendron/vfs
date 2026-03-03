@@ -12,7 +12,7 @@ Grover gives AI agents a single toolkit for working with any knowledge base — 
 
 - **Versioned filesystem** — mount local directories or databases, write safely with automatic versioning, and recover mistakes with soft-delete trash and rollback.
 - **Knowledge graph** — relationship, impact, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Add edges manually or let built-in analyzers extract structure automatically (Python via AST; JS/TS/Go via tree-sitter).
-- **Semantic search** — pluggable vector stores (local [usearch](https://github.com/unum-cloud/usearch), [Pinecone](https://www.pinecone.io/), [Databricks](https://docs.databricks.com/en/generative-ai/vector-search.html)) with pluggable embedding providers (sentence-transformers, OpenAI, LangChain). Search by meaning, not just keywords.
+- **Semantic search** — pluggable vector stores (local [usearch](https://github.com/unum-cloud/usearch), [Pinecone](https://www.pinecone.io/), [Databricks](https://docs.databricks.com/en/generative-ai/vector-search.html)) with pluggable embedding providers (OpenAI, LangChain). Search by meaning, not just keywords.
 
 All three layers stay in sync — write a file and the graph rebuilds and embeddings re-index automatically in the background.
 
@@ -27,7 +27,7 @@ pip install grover
 Optional extras:
 
 ```bash
-pip install grover[search]       # sentence-transformers + usearch (local search)
+pip install grover[search]       # usearch (local vector search)
 pip install grover[openai]       # OpenAI embeddings
 pip install grover[pinecone]     # Pinecone vector store
 pip install grover[databricks]   # Databricks Vector Search
@@ -79,8 +79,15 @@ anc = g.ancestors("/project/main.py")                     # transitive predecess
 sub = g.meeting_subgraph(["/project/a.py", "/project/b.py"])  # connecting subgraph
 nodes = g.find_nodes(lang="python")                       # filter by attributes
 
-# Semantic search (requires the search extra)
-result = g.search("greeting function", k=5)
+# Semantic search (requires embedding + search providers)
+from grover.search.stores import LocalVectorStore
+from grover.search.providers import OpenAIEmbedding
+
+g2 = Grover()
+g2.add_mount("/project", backend,
+             embedding_provider=OpenAIEmbedding(model="text-embedding-3-small"),
+             search_provider=LocalVectorStore(dimension=1536))
+result = g2.vector_search("greeting function", k=5)
 for candidate in result.candidates:
     print(candidate.path)
 
@@ -128,38 +135,37 @@ g.close()
 
 ## Architecture
 
-Grover is composed of three layers that share a common identity model — every node in the graph and every entry in the search index is a file path.
+Grover is composed of three layers that share a common identity model — every node in the graph and every entry in the search index is a file path. All capabilities live as **providers** on the filesystem.
 
 ```mermaid
 graph TD
     A["Grover (sync) / GroverAsync"]
-    A --> B["VFS — Virtual Filesystem"]
-    A --> C["Graph — Knowledge Graph"]
-    A --> D["SearchEngine"]
+    A --> B["Mount Registry"]
     A --> E["BackgroundWorker"]
 
     B --> F["LocalFileSystem<br/><i>disk + SQLite</i>"]
     B --> G["DatabaseFileSystem<br/><i>PostgreSQL · MSSQL · SQLite</i>"]
 
-    C --> H["rustworkx DiGraph"]
-    C --> I["Analyzers<br/><i>Python · JS/TS · Go</i>"]
+    F --> H["GraphProvider<br/><i>rustworkx DiGraph</i>"]
+    F --> J["SearchProvider<br/><i>Local · Pinecone · Databricks</i>"]
+    F --> K["EmbeddingProvider<br/><i>OpenAI · LangChain</i>"]
+    F --> I["Analyzers<br/><i>Python · JS/TS · Go</i>"]
 
-    D --> J["VectorStore<br/><i>Local · Pinecone · Databricks</i>"]
-    D --> K["EmbeddingProvider<br/><i>sentence-transformers · OpenAI · LangChain</i>"]
+    G --> H2["GraphProvider"]
+    G --> J2["SearchProvider"]
+    G --> K2["EmbeddingProvider"]
 
-    E -.->|write/edit| C
-    E -.->|write/edit| D
-    E -.->|delete| C
-    E -.->|delete| D
+    E -.->|write/edit| H
+    E -.->|write/edit| J
+    E -.->|delete| H
+    E -.->|delete| J
 ```
 
-**VFS** routes operations to the right backend based on mount paths. Multiple backends can be mounted simultaneously.
+**Mount Registry** routes operations to the right backend based on mount paths. Multiple backends can be mounted simultaneously.
 
-**Graph** maintains an in-memory directed graph of file dependencies. Code analyzers automatically extract imports, function definitions, and class hierarchies. You can also add manual edges.
+**Filesystem providers** live on each backend. `GraphProvider` (a `RustworkxGraph`) maintains an in-memory directed graph of file dependencies. `SearchProvider` (`LocalVectorStore`, `PineconeVectorStore`, or `DatabricksVectorStore`) stores and searches vectors. `EmbeddingProvider` (`OpenAIEmbedding`, `LangChainEmbedding`) converts text to vectors. Code analyzers automatically extract imports, function definitions, and class hierarchies.
 
-**SearchEngine** orchestrates embedding and vector storage. It wires together an `EmbeddingProvider` (text → vectors) and a `VectorStore` (store/search vectors). The default setup uses `all-MiniLM-L6-v2` embeddings + local usearch HNSW. For production, swap in Pinecone or Databricks with OpenAI embeddings.
-
-**BackgroundWorker** keeps everything consistent — when a file is written or deleted, the graph and search engine update automatically in the background. Work is debounced per-path so rapid writes to the same file are coalesced into a single analysis pass.
+**BackgroundWorker** keeps everything consistent — when a file is written or deleted, the graph and search index update automatically in the background. Work is debounced per-path so rapid writes to the same file are coalesced into a single analysis pass.
 
 ## Backends
 
@@ -269,7 +275,7 @@ The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
 | **Trash** | `list_trash`, `restore_from_trash`, `empty_trash` |
 | **Sharing** | `share`, `unshare`, `list_shares`, `list_shared_with_me` |
 | **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains`, `pagerank`, `ancestors`, `descendants`, `meeting_subgraph`, `neighborhood`, `find_nodes` |
-| **Search** | `search` |
+| **Search** | `vector_search`, `lexical_search`, `hybrid_search`, `search` |
 | **Lifecycle** | `add_mount`, `unmount`, `index`, `flush`, `save`, `close` |
 
 Key types:

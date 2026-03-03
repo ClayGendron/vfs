@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.permissions import Permission
-from grover.fs.protocol import SupportsConnections, SupportsFileChunks
-from grover.fs.utils import normalize_path
+from grover.fs.protocol import SupportsConnections, SupportsFileChunks, SupportsSearch
 from grover.search.extractors import extract_from_chunks, extract_from_file
 from grover.types import ListDirEvidence
 
@@ -31,7 +30,7 @@ class IndexMixin:
         self, path: str, content: str | None = None, user_id: str | None = None
     ) -> None:
         """Analyze and integrate a written/edited/restored file."""
-        if self._ctx.meta_fs is None:
+        if not self._ctx.initialized:
             return
         if "/.grover/" in path:
             return
@@ -45,7 +44,7 @@ class IndexMixin:
 
     async def _process_delete(self, path: str, user_id: str | None = None) -> None:
         """Clean up graph, search, chunks, and connections for a deleted file."""
-        if self._ctx.meta_fs is None:
+        if not self._ctx.initialized:
             return
         if "/.grover/" in path:
             return
@@ -62,9 +61,9 @@ class IndexMixin:
         except MountNotFoundError:
             return
         async with self._ctx.session_for(mount) as sess:
-            search_engine = mount.search
-            if search_engine is not None:
-                await search_engine.remove_file(path, session=sess)
+            # Remove search entries via filesystem's search methods
+            if isinstance(mount.filesystem, SupportsSearch):
+                await mount.filesystem.search_remove_file(path, session=sess)
             if isinstance(mount.filesystem, SupportsFileChunks):
                 await mount.filesystem.delete_file_chunks(path, session=sess)
             conn_svc = getattr(mount.filesystem, "connections", None)
@@ -73,7 +72,7 @@ class IndexMixin:
 
     async def _process_move(self, old_path: str, new_path: str, user_id: str | None = None) -> None:
         """Clean up old path and re-analyze new path after a move."""
-        if self._ctx.meta_fs is None:
+        if not self._ctx.initialized:
             return
         if old_path and "/.grover/" not in old_path:
             await self._process_delete(old_path)
@@ -124,11 +123,9 @@ class IndexMixin:
         except MountNotFoundError:
             return stats
 
-        graph = mount.graph
+        graph = getattr(mount.filesystem, "graph_provider", None)
         if graph is None:
             return stats
-
-        search_engine = mount.search
 
         # In-memory graph cleanup + re-add
         if graph.has_node(path):
@@ -142,9 +139,9 @@ class IndexMixin:
 
         # Single session for all DB operations (search, chunks, connections)
         async with self._ctx.session_for(mount) as sess:
-            # Remove old search entries
-            if search_engine is not None:
-                await search_engine.remove_file(path, session=sess)
+            # Remove old search entries via filesystem's search methods
+            if isinstance(mount.filesystem, SupportsSearch):
+                await mount.filesystem.search_remove_file(path, session=sess)
 
             if analysis is not None:
                 chunks, edges = analysis
@@ -210,17 +207,17 @@ class IndexMixin:
                         graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
                         stats["edges_added"] += 1
 
-                # Index chunks for search
-                if search_engine is not None:
+                # Index chunks for search via filesystem's search methods
+                if isinstance(mount.filesystem, SupportsSearch):
                     embeddable = extract_from_chunks(chunks)
                     if embeddable:
-                        await search_engine.add_batch(embeddable, session=sess)
+                        await mount.filesystem.search_add_batch(embeddable, session=sess)
             else:
                 # No analysis — index whole file for search
-                if search_engine is not None:
+                if isinstance(mount.filesystem, SupportsSearch):
                     embeddable = extract_from_file(path, content)
                     if embeddable:
-                        await search_engine.add_batch(embeddable, session=sess)
+                        await mount.filesystem.search_add_batch(embeddable, session=sess)
 
         # Project edges into graph after commit (post-commit ordering)
         for source, target, edge_type, weight in edges_to_project:
@@ -246,7 +243,6 @@ class IndexMixin:
             for mount in self._ctx.registry.list_visible_mounts():
                 await self._walk_and_index(mount.path, stats)
 
-        await self._async_save()
         return stats
 
     async def _walk_and_index(self, path: str, stats: dict[str, int]) -> None:
@@ -314,43 +310,6 @@ class IndexMixin:
 
     async def save(self) -> None:
         await self._ctx.drain()
-        await self._async_save()
-
-    async def sync(self, *, path: str | None = None) -> None:
-        """Reload graph and search index from DB for a mount or all mounts.
-
-        This is useful after external changes to the database — it
-        re-reads the persisted graph edges and search index from storage.
-        """
-        if path is not None:
-            mount, _rel = self._ctx.registry.resolve(normalize_path(path))
-            await self._load_mount_state(mount)  # type: ignore[attr-defined]
-        else:
-            for mount in self._ctx.registry.list_mounts():
-                await self._load_mount_state(mount)  # type: ignore[attr-defined]
-
-    async def _async_save(self) -> None:
-        """Save per-mount search state.
-
-        Note: graph edges are no longer saved via ``to_sql()`` here.
-        Edge persistence is now handled by the filesystem layer —
-        ``add_connection()`` writes edges to DB, and the graph is a
-        pure in-memory projection loaded via ``from_sql()`` on mount.
-        """
-        for mount in self._ctx.registry.list_visible_mounts():
-            # Save search index to disk
-            search_engine = mount.search
-            if search_engine is not None and self._ctx.meta_data_dir is not None:
-                slug = mount.path.strip("/").replace("/", "_") or "_default"
-                search_dir = self._ctx.meta_data_dir / "search" / slug
-                try:
-                    search_engine.save(str(search_dir))
-                except Exception:
-                    logger.debug(
-                        "Failed to save search index for %s",
-                        mount.path,
-                        exc_info=True,
-                    )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -362,7 +321,6 @@ class IndexMixin:
         self._ctx.closed = True
 
         await self._ctx.drain()
-        await self._async_save()
         # Close all backends directly
         for mount in self._ctx.registry.list_mounts():
             if hasattr(mount.filesystem, "close"):

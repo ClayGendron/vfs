@@ -326,7 +326,7 @@ class TestConnectionIntegrationDBFS:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(dialect="sqlite")
 
-        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        g = GroverAsync()
         await g.add_mount("/vfs", fs, session_factory=factory)
 
         yield g, engine  # type: ignore[misc]
@@ -444,7 +444,7 @@ class TestConnectionIntegrationLocalFS:
         ws = tmp_path / "workspace"
         ws.mkdir()
 
-        g = GroverAsync(data_dir=str(data))
+        g = GroverAsync()
         lfs = LocalFileSystem(workspace_dir=ws, data_dir=data / "local")
         await g.add_mount("/local", lfs)
 
@@ -500,11 +500,8 @@ class TestAnalyzeIntegrateConnections:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(dialect="sqlite")
 
-        g = GroverAsync(
-            data_dir=str(tmp_path / "grover_data"),
-            embedding_provider=FakeProvider(),
-        )
-        await g.add_mount("/vfs", fs, session_factory=factory)
+        g = GroverAsync()
+        await g.add_mount("/vfs", fs, session_factory=factory, embedding_provider=FakeProvider())
 
         yield g, engine  # type: ignore[misc]
         await g.close()
@@ -671,7 +668,7 @@ class TestGraphProjection:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(dialect="sqlite")
 
-        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        g = GroverAsync()
         await g.add_mount("/vfs", fs, session_factory=factory)
 
         yield g, engine  # type: ignore[misc]
@@ -726,7 +723,7 @@ class TestGraphProjection:
 
 
 class TestSaveNoEdgePersistence:
-    """Verify _async_save no longer calls to_sql for edge persistence."""
+    """Verify save no longer calls to_sql for edge persistence."""
 
     @pytest.fixture
     async def setup(self, tmp_path: Path) -> tuple[GroverAsync, AsyncEngine]:
@@ -737,7 +734,7 @@ class TestSaveNoEdgePersistence:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(dialect="sqlite")
 
-        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        g = GroverAsync()
         await g.add_mount("/vfs", fs, session_factory=factory)
 
         yield g, engine  # type: ignore[misc]

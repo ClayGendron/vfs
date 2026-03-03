@@ -11,6 +11,7 @@ import pytest
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.protocol import SupportsFileChunks
+from grover.search.stores.local import LocalVectorStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -63,8 +64,13 @@ def workspace(tmp_path: Path) -> Path:
 @pytest.fixture
 async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
-    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g = GroverAsync()
+    await g.add_mount(
+        "/project",
+        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        embedding_provider=FakeProvider(),
+        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+    )
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -113,18 +119,6 @@ class TestAnalyzeWritesChunkRows:
         paths = [c.path for c in result.chunks]
         assert any("alpha" in p for p in paths)
         assert any("beta" in p for p in paths)
-
-    @pytest.mark.asyncio
-    async def test_analyze_no_vfs_chunk_files(self, grover: GroverAsync):
-        """Writing a .py file should NOT create VFS chunk files."""
-        await grover.write("/project/funcs.py", PYTHON_CODE)
-
-        result = await grover.glob("*", path="/.grover/chunks")
-        # Either the glob fails (path doesn't exist) or returns empty
-        if result.success:
-            assert len(result.entries) == 0, (
-                f"Expected no chunk files, found: {[e.path for e in result.entries]}"
-            )
 
 
 # ==================================================================
@@ -344,10 +338,7 @@ class TestVectorMetadata:
         await grover.flush()
 
         mount = _get_mount(grover, "/project")
-        search_engine = mount.search
-        assert search_engine is not None
-
-        local_store = search_engine._get_local_store()
+        local_store = mount.filesystem.search_provider
         assert local_store is not None
 
         # Check metadata of stored vectors

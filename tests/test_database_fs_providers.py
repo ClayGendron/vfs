@@ -11,7 +11,7 @@ from sqlmodel import SQLModel
 from grover.fs.chunks import DefaultChunkProvider
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.versioning import DefaultVersionProvider
-from grover.search.types import VectorHit
+from grover.types.search import FileSearchCandidate, VectorEvidence, VectorSearchResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -378,15 +378,17 @@ class TestSearchMethodsNoop:
         fs = DatabaseFileSystem()
         await fs.search_remove("/a.py")  # Should not raise
 
-    async def test_search_query_raises_without_embedding(self):
+    async def test_search_query_fails_without_embedding(self):
         fs = DatabaseFileSystem()
-        with pytest.raises(RuntimeError, match="no embedding provider"):
-            await fs.search_query("test query")
+        result = await fs.search_query("test query")
+        assert result.success is False
+        assert "no embedding provider" in result.message
 
-    async def test_search_query_raises_without_search(self):
+    async def test_search_query_fails_without_search(self):
         fs = DatabaseFileSystem(embedding_provider=_mock_embedding_provider())
-        with pytest.raises(RuntimeError, match="no search provider"):
-            await fs.search_query("test query")
+        result = await fs.search_query("test query")
+        assert result.success is False
+        assert "no search provider" in result.message
 
 
 # ------------------------------------------------------------------
@@ -418,14 +420,23 @@ class TestSearchWithProviders:
     async def test_search_query_returns_results(self):
         mock_embed = _mock_embedding_provider()
         mock_search = _mock_vector_store()
-        mock_search.search = AsyncMock(
-            return_value=[
-                VectorHit(
-                    id="/a.py",
-                    score=0.95,
-                    metadata={"content": "hello world", "parent_path": None},
-                )
-            ]
+        mock_search.vector_search = AsyncMock(
+            return_value=VectorSearchResult(
+                success=True,
+                message="1 match",
+                candidates=[
+                    FileSearchCandidate(
+                        path="/a.py",
+                        evidence=[
+                            VectorEvidence(
+                                strategy="vector_search",
+                                path="/a.py",
+                                snippet="hello world",
+                            ),
+                        ],
+                    )
+                ],
+            )
         )
 
         fs = DatabaseFileSystem(
@@ -433,12 +444,12 @@ class TestSearchWithProviders:
             search_provider=mock_search,
         )
 
-        results = await fs.search_query("hello")
+        result = await fs.search_query("hello")
 
-        assert len(results) == 1
-        assert results[0].ref.path == "/a.py"
-        assert results[0].score == 0.95
-        assert results[0].content == "hello world"
+        assert result.success is True
+        assert len(result.candidates) == 1
+        assert result.candidates[0].path == "/a.py"
+        assert result.candidates[0].evidence[0].snippet == "hello world"
 
     async def test_search_has_delegates_to_local_store(self):
         """search_has delegates to LocalVectorStore when available."""

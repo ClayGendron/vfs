@@ -11,6 +11,7 @@ import pytest
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
+from grover.search.stores.local import LocalVectorStore
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
@@ -63,8 +64,13 @@ class TestBackgroundModeAsync:
         data = tmp_path / "grover_data"
         ws = tmp_path / "workspace"
         ws.mkdir()
-        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        g = GroverAsync()
+        await g.add_mount(
+            "/project",
+            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            embedding_provider=FakeProvider(),
+            search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+        )
         yield g  # type: ignore[misc]
         await g.close()
 
@@ -173,8 +179,12 @@ class TestBackgroundModeAsync:
         data = tmp_path / "grover_data"
         ws = tmp_path / "workspace"
         ws.mkdir()
-        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        g = GroverAsync()
+        await g.add_mount(
+            "/project",
+            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            embedding_provider=FakeProvider(),
+        )
         await g.write("/project/close_test.py", "def test():\n    pass\n")
         # No explicit flush — close should drain
         await g.close()
@@ -203,8 +213,13 @@ class TestBackgroundModeSync:
         data = tmp_path / "grover_data"
         ws = tmp_path / "workspace"
         ws.mkdir()
-        g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-        g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        g = Grover()
+        g.add_mount(
+            "/project",
+            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            embedding_provider=FakeProvider(),
+            search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+        )
         yield g
         g.close()
 
@@ -224,8 +239,12 @@ class TestBackgroundModeSync:
         data = tmp_path / "grover_data2"
         ws = tmp_path / "workspace2"
         ws.mkdir()
-        g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-        g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        g = Grover()
+        g.add_mount(
+            "/project",
+            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            embedding_provider=FakeProvider(),
+        )
         g.write("/project/drain.py", "def drain():\n    pass\n")
         # close should drain and not crash
         g.close()
@@ -244,12 +263,12 @@ class TestManualMode:
         data = tmp_path / "grover_data"
         ws = tmp_path / "workspace"
         ws.mkdir()
-        g = GroverAsync(
-            data_dir=str(data),
+        g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
+        await g.add_mount(
+            "/project",
+            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
-            indexing_mode=IndexingMode.MANUAL,
         )
-        await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
         yield g  # type: ignore[misc]
         await g.close()
 

@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.fs.sharing import SharingService
+    from grover.search.extractors import EmbeddableChunk
+    from grover.search.types import SearchResult
     from grover.types.operations import (
         ChunkListResult,
         ChunkResult,
@@ -347,6 +349,41 @@ class SupportsReconcile(Protocol):
         *,
         session: AsyncSession | None = None,
     ) -> ReconcileResult: ...
+
+
+@runtime_checkable
+class SupportsSearch(Protocol):
+    """Opt-in: search index operations (vector + lexical).
+
+    Backends implementing this protocol provide methods for adding,
+    removing, and querying entries in a vector store and/or full-text
+    index.  ``DatabaseFileSystem`` satisfies this via
+    :class:`~grover.fs.mixins.search_methods.SearchMethodsMixin`.
+    """
+
+    async def search_add_batch(
+        self,
+        entries: list[EmbeddableChunk],
+        *,
+        session: AsyncSession | None = None,
+    ) -> None: ...
+
+    async def search_remove_file(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> None: ...
+
+    async def search_query(self, query: str, k: int = 10) -> list[SearchResult]: ...
+
+    async def lexical_search_query(
+        self,
+        query: str,
+        *,
+        k: int = 10,
+        session: AsyncSession | None = None,
+    ) -> list[SearchResult]: ...
 
 
 @runtime_checkable

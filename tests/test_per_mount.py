@@ -11,7 +11,7 @@ import pytest
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph import RustworkxGraph
-from grover.search._engine import SearchEngine
+from grover.search.stores.local import LocalVectorStore
 from grover.types import GraphResult
 
 if TYPE_CHECKING:
@@ -72,9 +72,14 @@ def workspace2(tmp_path: Path) -> Path:
 @pytest.fixture
 async def grover(workspace1: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
-    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+    g = GroverAsync()
     lfs = LocalFileSystem(workspace_dir=workspace1, data_dir=data / "local")
-    await g.add_mount("/project", lfs)
+    await g.add_mount(
+        "/project",
+        lfs,
+        embedding_provider=FakeProvider(),
+        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+    )
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -82,11 +87,21 @@ async def grover(workspace1: Path, tmp_path: Path) -> GroverAsync:
 @pytest.fixture
 async def multi_grover(workspace1: Path, workspace2: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
-    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+    g = GroverAsync()
     lfs1 = LocalFileSystem(workspace_dir=workspace1, data_dir=data / "local1")
     lfs2 = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local2")
-    await g.add_mount("/mount1", lfs1)
-    await g.add_mount("/mount2", lfs2)
+    await g.add_mount(
+        "/mount1",
+        lfs1,
+        embedding_provider=FakeProvider(),
+        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+    )
+    await g.add_mount(
+        "/mount2",
+        lfs2,
+        embedding_provider=FakeProvider(),
+        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+    )
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -101,15 +116,15 @@ class TestMountInjection:
     async def test_mount_injects_graph(self, grover: GroverAsync):
         """After mount, mount should have a RustworkxGraph."""
         mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
-        assert mount.graph is not None
-        assert isinstance(mount.graph, RustworkxGraph)
+        assert mount.filesystem.graph_provider is not None
+        assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)
 
     @pytest.mark.asyncio
-    async def test_mount_injects_search_engine(self, grover: GroverAsync):
-        """After mount, mount should have a SearchEngine."""
+    async def test_mount_has_search_provider(self, grover: GroverAsync):
+        """After mount with explicit search_provider, filesystem should have it."""
         mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
-        assert mount.search is not None
-        assert isinstance(mount.search, SearchEngine)
+        assert mount.filesystem.search_provider is not None
+        assert isinstance(mount.filesystem.search_provider, LocalVectorStore)
 
     @pytest.mark.asyncio
     async def test_no_graph_attr_on_grover(self, grover: GroverAsync):
@@ -122,7 +137,7 @@ class TestMountInjection:
     async def test_get_graph_returns_mount_graph(self, grover: GroverAsync):
         """get_graph() returns the mount's graph."""
         mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
-        assert grover.get_graph() is mount.graph
+        assert grover.get_graph() is mount.filesystem.graph_provider
 
     @pytest.mark.asyncio
     async def test_get_graph_with_path(self, multi_grover: GroverAsync):
@@ -133,18 +148,17 @@ class TestMountInjection:
         m2 = next(
             m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2"
         )
-        assert multi_grover.get_graph("/mount1/file.py") is m1.graph
-        assert multi_grover.get_graph("/mount2/file.py") is m2.graph
+        assert multi_grover.get_graph("/mount1/file.py") is m1.filesystem.graph_provider
+        assert multi_grover.get_graph("/mount2/file.py") is m2.filesystem.graph_provider
 
     @pytest.mark.asyncio
-    async def test_hidden_mount_no_graph(self, grover: GroverAsync):
-        """Hidden mounts (like /.grover) should not get a graph."""
+    async def test_no_hidden_grover_mount(self, grover: GroverAsync):
+        """No hidden /.grover mount should be auto-created."""
         meta_mount = next(
             (m for m in grover._ctx.registry.list_mounts() if m.path == "/.grover"),
             None,
         )
-        if meta_mount is not None:
-            assert meta_mount.graph is None
+        assert meta_mount is None
 
 
 # ==================================================================
@@ -189,11 +203,11 @@ class TestSearchRouting:
         assert len(result) >= 2
 
     @pytest.mark.asyncio
-    async def test_mount_has_search_engine(self, grover: GroverAsync):
-        """Mounts with search engines should have mount.search set."""
+    async def test_mount_has_search_provider(self, grover: GroverAsync):
+        """Mounts with explicit search_provider should have it on filesystem."""
         mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
-        assert mount.search is not None
-        assert isinstance(mount.search, SearchEngine)
+        assert mount.filesystem.search_provider is not None
+        assert isinstance(mount.filesystem.search_provider, LocalVectorStore)
 
 
 # ==================================================================
@@ -213,8 +227,8 @@ class TestPerMountIndexing:
         m2 = next(
             m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2"
         )
-        assert m1.graph.has_node("/mount1/code.py")
-        assert not m2.graph.has_node("/mount1/code.py")
+        assert m1.filesystem.graph_provider.has_node("/mount1/code.py")
+        assert not m2.filesystem.graph_provider.has_node("/mount1/code.py")
 
     @pytest.mark.asyncio
     async def test_delete_cleans_correct_mount(self, multi_grover: GroverAsync):
@@ -224,10 +238,10 @@ class TestPerMountIndexing:
         m1 = next(
             m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
         )
-        assert m1.graph.has_node("/mount1/gone.py")
+        assert m1.filesystem.graph_provider.has_node("/mount1/gone.py")
         await multi_grover.delete("/mount1/gone.py")
         await multi_grover.flush()
-        assert not m1.graph.has_node("/mount1/gone.py")
+        assert not m1.filesystem.graph_provider.has_node("/mount1/gone.py")
 
 
 # ==================================================================
@@ -270,51 +284,6 @@ class TestGraphOpsResolveMount:
 # ==================================================================
 
 
-class TestPerMountPersistence:
-    @pytest.mark.asyncio
-    async def test_save_load_per_mount(self, workspace1: Path, workspace2: Path, tmp_path: Path):
-        """Graph and search persist and reload per mount."""
-        data = tmp_path / "grover_data"
-
-        # Create and populate
-        g1 = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g1.add_mount(
-            "/mount1",
-            LocalFileSystem(workspace_dir=workspace1, data_dir=data / "local1"),
-        )
-        await g1.add_mount(
-            "/mount2",
-            LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local2"),
-        )
-        await g1.write("/mount1/a.py", "def alpha():\n    pass\n")
-        await g1.write("/mount2/b.py", "def beta():\n    pass\n")
-        await g1.save()
-        await g1.close()
-
-        # Reload
-        g2 = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g2.add_mount(
-            "/mount1",
-            LocalFileSystem(workspace_dir=workspace1, data_dir=data / "local1"),
-        )
-        await g2.add_mount(
-            "/mount2",
-            LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local2"),
-        )
-
-        # Both mounts should have their graph state
-        assert g2.get_graph("/mount1").has_node("/mount1/a.py")
-        assert g2.get_graph("/mount2").has_node("/mount2/b.py")
-        # Cross-check: mount1 graph shouldn't have mount2's node
-        assert not g2.get_graph("/mount1").has_node("/mount2/b.py")
-
-        # Search should also be restored
-        result = await g2.vector_search("alpha", path="/mount1")
-        assert len(result) >= 1
-
-        await g2.close()
-
-
 # ==================================================================
 # Engine-based mount
 # ==================================================================
@@ -326,14 +295,18 @@ class TestEngineMountGraphSearch:
         """Engine-based mounts also get per-mount graph and search."""
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        data = tmp_path / "grover_data"
-        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        g = GroverAsync()
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         try:
-            await g.add_mount("/db", engine=engine)
+            await g.add_mount(
+                "/db",
+                engine=engine,
+                embedding_provider=FakeProvider(),
+                search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+            )
             mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/db")
-            assert isinstance(mount.graph, RustworkxGraph)
-            assert isinstance(mount.search, SearchEngine)
+            assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)
+            assert isinstance(mount.filesystem.search_provider, LocalVectorStore)
 
             # Write and verify graph
             await g.write("/db/test.py", "def db_func():\n    pass\n")
@@ -353,16 +326,17 @@ class TestEngineMountGraphSearch:
         )
         from sqlmodel import SQLModel
 
-        data = tmp_path / "grover_data"
-        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        g = GroverAsync()
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         try:
-            await g.add_mount("/sf", session_factory=factory, dialect="sqlite")
+            await g.add_mount(
+                "/sf", session_factory=factory, dialect="sqlite", embedding_provider=FakeProvider()
+            )
             mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/sf")
-            assert isinstance(mount.graph, RustworkxGraph)
+            assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)
         finally:
             await g.close()
             await engine.dispose()

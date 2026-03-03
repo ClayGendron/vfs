@@ -656,7 +656,7 @@ async def grover_setup(tmp_path: Path) -> AsyncIterator[tuple[GroverAsync, Async
     local_dir.mkdir()
     data_dir = tmp_path / ".grover_data"
 
-    g = GroverAsync(data_dir=str(data_dir))
+    g = GroverAsync()
     await g.add_mount("/db", dfs, session_factory=db_factory)
     lfs = LocalFileSystem(workspace_dir=local_dir, data_dir=data_dir / "local")
     await g.add_mount("/local", lfs)

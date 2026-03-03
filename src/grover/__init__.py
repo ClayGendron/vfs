@@ -12,16 +12,16 @@ from grover.fs.providers import (
     DefaultChunkProvider,
     DefaultVersionProvider,
     DiskStorageProvider,
+    EmbeddingProvider,
     GraphProvider,
+    SearchProvider,
     StorageProvider,
     VersionProvider,
 )
 from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.graph.protocols import GraphStore
 from grover.graph.types import SubgraphResult
-from grover.mount import Mount, ProtocolConflictError, ProtocolNotAvailableError
+from grover.mount import Mount
 from grover.ref import Ref
-from grover.search._engine import SearchEngine
 from grover.search.filters import (
     FilterExpression,
     FilterValue,
@@ -38,7 +38,6 @@ from grover.search.filters import (
     or_,
 )
 from grover.search.protocols import (
-    EmbeddingProvider,
     SupportsHybridSearch,
     SupportsIndexLifecycle,
     SupportsMetadataFilter,
@@ -126,7 +125,6 @@ __all__ = [
     "GraphEvidence",
     "GraphProvider",
     "GraphResult",
-    "GraphStore",
     "GrepEvidence",
     "GrepResult",
     "Grover",
@@ -141,14 +139,12 @@ __all__ = [
     "MkdirResult",
     "Mount",
     "MoveResult",
-    "ProtocolConflictError",
-    "ProtocolNotAvailableError",
     "ReadResult",
     "ReconcileResult",
     "Ref",
     "RestoreResult",
     "SearchDeleteResult",
-    "SearchEngine",
+    "SearchProvider",
     "SearchResult",
     "ShareResult",
     "ShareSearchResult",

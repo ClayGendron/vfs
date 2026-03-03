@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from grover.search.protocols import EmbeddingProvider
+from grover.fs.providers.protocols import EmbeddingProvider
 
 # ==================================================================
 # OpenAI provider
@@ -194,90 +194,6 @@ class TestOpenAIEmbedding:
 
         # Should be sorted by index: index 0 first, index 1 second
         assert result == [[1.0], [0.0]]
-
-
-# ==================================================================
-# SentenceTransformer provider
-# ==================================================================
-
-
-class TestSentenceTransformerEmbedding:
-    def test_model_name_default(self):
-        from grover.search.providers.sentence_transformers import (
-            SentenceTransformerEmbedding,
-        )
-
-        p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
-        p._model_name = "all-MiniLM-L6-v2"
-        p._model = None
-        assert p.model_name == "all-MiniLM-L6-v2"
-
-    def test_model_name_custom(self):
-        from grover.search.providers.sentence_transformers import (
-            SentenceTransformerEmbedding,
-        )
-
-        p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
-        p._model_name = "custom-model"
-        p._model = None
-        assert p.model_name == "custom-model"
-
-    def test_isinstance_embedding_provider(self):
-        from grover.search.providers.sentence_transformers import (
-            SentenceTransformerEmbedding,
-        )
-
-        p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
-        p._model_name = "test"
-        p._model = None
-        assert isinstance(p, EmbeddingProvider)
-
-    @pytest.mark.asyncio
-    async def test_embed_async_uses_thread_pool(self):
-        import numpy as np
-
-        from grover.search.providers.sentence_transformers import (
-            SentenceTransformerEmbedding,
-        )
-
-        p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
-        p._model_name = "test"
-        p._model = MagicMock()
-        p._model.encode = MagicMock(return_value=np.array([[0.1, 0.2]]))
-
-        # embed_sync should work synchronously
-        vec = p.embed_sync("hello")
-        assert isinstance(vec, list)
-        assert vec == pytest.approx([0.1, 0.2])
-
-        # embed should be async (returns a coroutine)
-        result = p.embed("hello")
-        assert hasattr(result, "__await__")
-        vec = await result
-        assert isinstance(vec, list)
-
-    @pytest.mark.asyncio
-    async def test_embed_batch_async_uses_thread_pool(self):
-        import numpy as np
-
-        from grover.search.providers.sentence_transformers import (
-            SentenceTransformerEmbedding,
-        )
-
-        p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
-        p._model_name = "test"
-        p._model = MagicMock()
-        p._model.encode = MagicMock(return_value=np.array([[0.1, 0.2], [0.3, 0.4]]))
-
-        # embed_batch_sync should work synchronously
-        vecs = p.embed_batch_sync(["hello", "world"])
-        assert len(vecs) == 2
-
-        # embed_batch should be async
-        result = p.embed_batch(["hello", "world"])
-        assert hasattr(result, "__await__")
-        vecs = await result
-        assert len(vecs) == 2
 
 
 # ==================================================================

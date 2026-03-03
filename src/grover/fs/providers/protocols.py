@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from grover.ref import Ref
+    from grover.search.types import DeleteResult as SearchDeleteResult
+    from grover.search.types import UpsertResult, VectorEntry
     from grover.types.operations import (
         ChunkListResult,
         ChunkResult,
@@ -20,9 +22,43 @@ if TYPE_CHECKING:
     from grover.types.search import (
         GlobResult,
         GrepResult,
+        LexicalSearchResult,
         ListDirResult,
         TreeResult,
+        VectorSearchResult,
     )
+
+
+# ---------------------------------------------------------------------------
+# Embedding provider
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class EmbeddingProvider(Protocol):
+    """Async-first protocol for text-to-vector embedding.
+
+    Implementations convert text into fixed-dimension float vectors
+    suitable for similarity search.
+    """
+
+    async def embed(self, text: str) -> list[float]:
+        """Embed a single text string into a vector."""
+        ...
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts into vectors."""
+        ...
+
+    @property
+    def dimensions(self) -> int:
+        """Number of dimensions in the embedding vectors."""
+        ...
+
+    @property
+    def model_name(self) -> str:
+        """Name of the embedding model."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +170,62 @@ class GraphProvider(Protocol):
     def edge_count(self) -> int: ...
 
     def is_dag(self) -> bool: ...
+
+
+# ---------------------------------------------------------------------------
+# Search provider
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SearchProvider(Protocol):
+    """Search interface — vector + lexical.
+
+    Existing stores (``LocalVectorStore``, ``PineconeVectorStore``,
+    ``DatabricksVectorStore``) implement this directly. Replaces
+    ``VectorStore`` as the filesystem-level type.
+    """
+
+    # Vector operations
+    async def upsert(
+        self,
+        entries: list[VectorEntry],
+        *,
+        namespace: str | None = None,
+    ) -> UpsertResult: ...
+
+    async def vector_search(
+        self,
+        vector: list[float],
+        *,
+        k: int = 10,
+        namespace: str | None = None,
+        filter: Any = None,  # noqa: A002
+        include_metadata: bool = True,
+        score_threshold: float | None = None,
+    ) -> VectorSearchResult: ...
+
+    async def delete(
+        self,
+        ids: list[str],
+        *,
+        namespace: str | None = None,
+    ) -> SearchDeleteResult: ...
+
+    async def fetch(
+        self,
+        ids: list[str],
+        *,
+        namespace: str | None = None,
+    ) -> list[VectorEntry | None]: ...
+
+    # Lexical search (stores that don't support it return empty result)
+    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult: ...
+
+    # Lifecycle
+    async def connect(self) -> None: ...
+
+    async def close(self) -> None: ...
 
 
 # ---------------------------------------------------------------------------

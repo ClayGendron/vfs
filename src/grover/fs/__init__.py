@@ -18,6 +18,7 @@ from grover.fs.protocol import (
     SupportsConnections,
     SupportsReBAC,
     SupportsReconcile,
+    SupportsSearch,
     SupportsTrash,
     SupportsVersions,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "SupportsConnections",
     "SupportsReBAC",
     "SupportsReconcile",
+    "SupportsSearch",
     "SupportsTrash",
     "SupportsVersions",
     "TrashResult",

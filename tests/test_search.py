@@ -8,6 +8,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from grover.fs.providers.protocols import EmbeddingProvider
 from grover.graph.analyzers._base import ChunkFile
 from grover.ref import Ref
 from grover.search.extractors import (
@@ -15,8 +16,6 @@ from grover.search.extractors import (
     extract_from_chunks,
     extract_from_file,
 )
-from grover.search.protocols import EmbeddingProvider
-from grover.search.providers.sentence_transformers import SentenceTransformerEmbedding
 from grover.search.types import SearchResult
 
 # ------------------------------------------------------------------
@@ -206,62 +205,3 @@ class TestSearchResult:
 class TestEmbeddingProviderProtocol:
     def test_fake_provider_satisfies_protocol(self):
         assert isinstance(FakeProvider(), EmbeddingProvider)
-
-    def test_sentence_transformer_satisfies_protocol(self):
-        # Use isinstance on an uninitialised instance (bypass __init__)
-        p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
-        p._model_name = "test"
-        p._model = None
-        assert isinstance(p, EmbeddingProvider)
-
-
-# ==================================================================
-# SentenceTransformerEmbedding (unit — no model loading)
-# ==================================================================
-
-
-class TestSentenceTransformerEmbedding:
-    def test_model_name_default(self):
-        p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
-        p._model_name = "all-MiniLM-L6-v2"
-        p._model = None
-        assert p.model_name == "all-MiniLM-L6-v2"
-
-    def test_model_name_custom(self):
-        p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
-        p._model_name = "custom-model"
-        p._model = None
-        assert p.model_name == "custom-model"
-
-
-# ==================================================================
-# Integration tests — real SentenceTransformerEmbedding (slow)
-# ==================================================================
-
-
-@pytest.mark.slow
-class TestSentenceTransformerIntegration:
-    def test_real_model_loads(self):
-        provider = SentenceTransformerEmbedding()
-        assert provider.model_name == "all-MiniLM-L6-v2"
-
-    def test_embed_sync_returns_correct_dimensions(self):
-        provider = SentenceTransformerEmbedding()
-        vec = provider.embed_sync("hello world")
-        assert isinstance(vec, list)
-        assert len(vec) == 384
-        assert all(isinstance(v, float) for v in vec)
-
-    def test_embed_batch_sync_returns_correct_dimensions(self):
-        provider = SentenceTransformerEmbedding()
-        vecs = provider.embed_batch_sync(["hello", "world"])
-        assert len(vecs) == 2
-        assert all(len(v) == 384 for v in vecs)
-
-    def test_dimensions_property(self):
-        provider = SentenceTransformerEmbedding()
-        assert provider.dimensions == 384
-
-    def test_protocol_satisfied_at_runtime(self):
-        provider = SentenceTransformerEmbedding()
-        assert isinstance(provider, EmbeddingProvider)

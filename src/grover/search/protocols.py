@@ -1,4 +1,7 @@
-"""Search layer protocols — async-first interfaces for embedding and vector storage."""
+"""Search layer protocols — vector storage and capability interfaces.
+
+Note: ``EmbeddingProvider`` has moved to ``grover.fs.providers.protocols``.
+"""
 
 from __future__ import annotations
 
@@ -16,38 +19,6 @@ if TYPE_CHECKING:
         VectorEntry,
         VectorHit,
     )
-
-
-# ------------------------------------------------------------------
-# Core protocols
-# ------------------------------------------------------------------
-
-
-@runtime_checkable
-class EmbeddingProvider(Protocol):
-    """Async-first protocol for text-to-vector embedding.
-
-    Implementations convert text into fixed-dimension float vectors
-    suitable for similarity search.
-    """
-
-    async def embed(self, text: str) -> list[float]:
-        """Embed a single text string into a vector."""
-        ...
-
-    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts into vectors."""
-        ...
-
-    @property
-    def dimensions(self) -> int:
-        """Number of dimensions in the embedding vectors."""
-        ...
-
-    @property
-    def model_name(self) -> str:
-        """Name of the embedding model."""
-        ...
 
 
 @runtime_checkable

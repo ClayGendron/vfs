@@ -73,14 +73,11 @@ def workspace2(tmp_path: Path) -> Path:
 @pytest.fixture
 async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
-    g = GroverAsync(
-        data_dir=str(data),
-        embedding_provider=FakeProvider(),
-        indexing_mode=IndexingMode.MANUAL,
-    )
+    g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount(
         "/project",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        embedding_provider=FakeProvider(),
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -89,18 +86,16 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
 @pytest.fixture
 async def grover_two_mounts(workspace: Path, workspace2: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
-    g = GroverAsync(
-        data_dir=str(data),
-        embedding_provider=FakeProvider(),
-        indexing_mode=IndexingMode.MANUAL,
-    )
+    g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount(
         "/mount1",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "local1"),
+        embedding_provider=FakeProvider(),
     )
     await g.add_mount(
         "/mount2",
         LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local2"),
+        embedding_provider=FakeProvider(),
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -109,14 +104,11 @@ async def grover_two_mounts(workspace: Path, workspace2: Path, tmp_path: Path) -
 @pytest.fixture
 def sync_grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
-    g = Grover(
-        data_dir=str(data),
-        embedding_provider=FakeProvider(),
-        indexing_mode=IndexingMode.MANUAL,
-    )
+    g = Grover(indexing_mode=IndexingMode.MANUAL)
     g.add_mount(
         "/project",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        embedding_provider=FakeProvider(),
     )
     yield g
     g.close()
@@ -206,13 +198,9 @@ class TestReconcileChainErrors:
     async def test_reconcile_includes_chain_errors(self, workspace: Path, tmp_path: Path):
         """reconcile detects chain_errors when a version is corrupted."""
         data = tmp_path / "grover_data"
-        g = GroverAsync(
-            data_dir=str(data),
-            embedding_provider=FakeProvider(),
-            indexing_mode=IndexingMode.MANUAL,
-        )
+        g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
         lfs = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local")
-        await g.add_mount("/project", lfs)
+        await g.add_mount("/project", lfs, embedding_provider=FakeProvider())
 
         await g.write("/project/f.py", "v1\n")
         await g.write("/project/f.py", "v2\n")
@@ -270,9 +258,7 @@ class TestSyncGroverVerify:
 class TestVerifyUnsupported:
     async def test_facade_verify_versions_unsupported(self, tmp_path: Path):
         """verify_versions returns failure when mount doesn't support versions."""
-        data = tmp_path / "grover_data"
         g = GroverAsync(
-            data_dir=str(data),
             indexing_mode=IndexingMode.MANUAL,
         )
 

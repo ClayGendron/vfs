@@ -66,8 +66,12 @@ def workspace(tmp_path: Path) -> Path:
 @pytest.fixture
 def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
-    g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g = Grover()
+    g.add_mount(
+        "/project",
+        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        embedding_provider=FakeProvider(),
+    )
     yield g
     g.close()
 
@@ -80,8 +84,12 @@ def backend(grover: Grover) -> GroverBackend:
 @pytest.fixture
 async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data_async"
-    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g = GroverAsync()
+    await g.add_mount(
+        "/project",
+        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        embedding_provider=FakeProvider(),
+    )
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -353,7 +361,7 @@ class TestFactories:
     def test_from_local_factory(self, tmp_path: Path):
         ws = tmp_path / "factory_ws"
         ws.mkdir()
-        backend = GroverBackend.from_local(str(ws))
+        backend = GroverBackend.from_local(str(ws), data_dir=str(tmp_path / "data"))
         try:
             result = backend.write("/test.txt", "hello")
             assert result.error is None
@@ -500,8 +508,12 @@ def _make_sync_backend(tmp_path: Path) -> tuple[GroverBackend, GroverAsync]:
     ws.mkdir(exist_ok=True)
 
     async def _setup() -> GroverAsync:
-        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        g = GroverAsync()
+        await g.add_mount(
+            "/project",
+            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            embedding_provider=FakeProvider(),
+        )
         return g
 
     ga = asyncio.run(_setup())
@@ -596,7 +608,7 @@ class TestAsyncFactories:
     async def test_from_local_async_factory(self, tmp_path: Path):
         ws = tmp_path / "factory_async_ws"
         ws.mkdir()
-        backend = await GroverBackend.from_local_async(str(ws))
+        backend = await GroverBackend.from_local_async(str(ws), data_dir=str(tmp_path / "data"))
         try:
             result = await backend.awrite("/test.txt", "async hello")
             assert result.error is None

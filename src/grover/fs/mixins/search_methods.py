@@ -1,8 +1,9 @@
 """SearchMethodsMixin — search orchestration for DatabaseFileSystem.
 
-Absorbs the logic from ``SearchEngine`` into filesystem-level methods.
-No ``FullTextStore`` — lexical search queries the DB directly using
-dialect-appropriate FTS when available, with LIKE fallback.
+Embeds text via ``embedding_provider``, delegates search to
+``search_provider.vector_search()`` / ``search_provider.lexical_search()``.
+Falls back to DB-level lexical search (FTS5 / tsvector / LIKE) when the
+store's lexical_search returns no results.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from grover.ref import Ref
 from grover.search.types import SearchResult, VectorEntry
+from grover.types.search import VectorSearchResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -146,32 +148,61 @@ class SearchMethodsMixin:
     # Query operations
     # ------------------------------------------------------------------
 
-    async def search_query(self, query: str, k: int = 10) -> list[SearchResult]:
-        """Embed *query*, search the vector store, return results."""
+    async def search_query(self, query: str, k: int = 10) -> VectorSearchResult:
+        """Embed *query*, call ``search_provider.vector_search()``, return result."""
         embedding = getattr(self, "embedding_provider", None)
         search = getattr(self, "search_provider", None)
 
         if embedding is None:
-            msg = "Cannot search: no embedding provider configured"
-            raise RuntimeError(msg)
+            return VectorSearchResult(
+                success=False,
+                message="Cannot search: no embedding provider configured",
+            )
         if search is None:
-            msg = "Cannot search: no search provider configured"
-            raise RuntimeError(msg)
+            return VectorSearchResult(
+                success=False,
+                message="Cannot search: no search provider configured",
+            )
 
         vector = await self._search_embed(query)
-        vs_results = await search.search(vector, k=k)
-
-        return [
-            SearchResult(
-                ref=Ref(path=vsr.id),
-                score=vsr.score,
-                content=vsr.metadata.get("content", ""),
-                parent_path=vsr.metadata.get("parent_path"),
-            )
-            for vsr in vs_results
-        ]
+        return await search.vector_search(vector, k=k)
 
     async def lexical_search_query(
+        self,
+        query: str,
+        *,
+        k: int = 10,
+        session: AsyncSession | None = None,
+    ) -> list[SearchResult]:
+        """Lexical search: tries search_provider first, falls back to DB FTS.
+
+        If the search provider supports lexical search and returns results,
+        those are used. Otherwise falls back to dialect-aware FTS
+        (FTS5 / tsvector / FREETEXT / LIKE).
+        """
+        # Try search provider's lexical_search first
+        search = getattr(self, "search_provider", None)
+        if search is not None:
+            provider_result = await search.lexical_search(query, k=k)
+            if provider_result.success and len(provider_result) > 0:
+                # Convert back to SearchResult for the mixin interface
+                results: list[SearchResult] = []
+                for c in provider_result.candidates:
+                    for ev in c.evidence:
+                        snippet = getattr(ev, "snippet", "")
+                        results.append(
+                            SearchResult(
+                                ref=Ref(path=c.path),
+                                score=1.0,
+                                content=snippet,
+                            )
+                        )
+                return results
+
+        # Fall back to DB-level lexical search
+        return await self._db_lexical_search(query, k=k, session=session)
+
+    async def _db_lexical_search(
         self,
         query: str,
         *,
@@ -193,7 +224,6 @@ class SearchMethodsMixin:
         results: list[SearchResult] = []
 
         if dialect == "sqlite":
-            # Try FTS5 virtual table
             try:
                 table_name = getattr(model, "__tablename__", "grover_files")
                 fts_table = f"{table_name}_fts"
@@ -211,7 +241,6 @@ class SearchMethodsMixin:
                 )
                 return results
             except Exception:
-                # FTS table may not exist — fall through to LIKE
                 logger.debug("FTS5 not available, falling back to LIKE")
 
         elif dialect == "postgresql":

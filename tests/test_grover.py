@@ -14,6 +14,7 @@ import pytest
 from grover._grover import Grover
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph import RustworkxGraph
+from grover.search.stores.local import LocalVectorStore
 from grover.types import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:
@@ -67,8 +68,13 @@ def workspace(tmp_path: Path) -> Path:
 @pytest.fixture
 def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
-    g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g = Grover()
+    g.add_mount(
+        "/project",
+        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        embedding_provider=FakeProvider(),
+        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+    )
     yield g
     g.close()
 
@@ -77,7 +83,7 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
 def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     """Grover without search to test graceful degradation."""
     data = tmp_path / "grover_data"
-    g = Grover(data_dir=str(data))
+    g = Grover()
     g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
@@ -91,29 +97,25 @@ def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
 class TestGroverConstruction:
     def test_mount_first_api(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
-        g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-        g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
-        try:
-            assert g._async._ctx.meta_fs is not None
-        finally:
-            g.close()
-
-    def test_custom_data_dir(self, workspace: Path, tmp_path: Path):
-        custom_dir = tmp_path / "custom_data"
-        g = Grover(
-            data_dir=str(custom_dir),
+        g = Grover()
+        g.add_mount(
+            "/project",
+            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
-        g.add_mount("/project", LocalFileSystem(workspace_dir=workspace))
         try:
-            assert g._async._ctx.meta_data_dir == custom_dir
+            assert g._async._ctx.initialized
         finally:
             g.close()
 
     def test_close_idempotent(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
-        g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-        g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        g = Grover()
+        g.add_mount(
+            "/project",
+            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            embedding_provider=FakeProvider(),
+        )
         g.close()
         g.close()  # Should not raise
         assert g._closed
@@ -255,9 +257,9 @@ class TestGroverSearch:
 
     def test_vector_search_returns_failure_without_provider(self, grover_no_search: Grover):
         mounts = grover_no_search._async._ctx.registry.list_visible_mounts()
-        has_search = any(m.search is not None for m in mounts)
+        has_search = any(getattr(m.filesystem, "search_provider", None) is not None for m in mounts)
         if has_search:
-            pytest.skip("sentence-transformers is installed; search available")
+            pytest.skip("search provider is installed; search available")
         result = grover_no_search.vector_search("anything")
         assert result.success is False
         assert "not available" in result.message
@@ -341,17 +343,17 @@ class TestGroverEventHandlers:
             "def vanishing_function():\n    pass\n",
         )
         grover.flush()
-        # Verify it's in search (search engine is now per-mount on the Mount)
+        # Verify it's in search (search provider is now on the filesystem)
         mount = next(
             m for m in grover._async._ctx.registry.list_visible_mounts() if m.path == "/project"
         )
-        se = mount.search
-        assert se is not None
-        assert se.has("/project/vanish.py#vanishing_function")
+        sp = mount.filesystem.search_provider
+        assert sp is not None
+        assert sp.has("/project/vanish.py#vanishing_function")
         grover.delete("/project/vanish.py")
         grover.flush()
         # Should be removed from search
-        assert not se.has("/project/vanish.py#vanishing_function")
+        assert not sp.has("/project/vanish.py#vanishing_function")
 
 
 # ==================================================================
@@ -364,51 +366,8 @@ class TestGroverPersistence:
         grover.write("/project/persist.py", "def persist():\n    pass\n")
         grover.save()
 
-        # Verify DB has edges
-        data_dir = grover._async._ctx.meta_data_dir
-        assert data_dir is not None
-        db_path = data_dir / "_meta" / "file_versions.db"
-        assert db_path.exists()
-
-    def test_save_persists_search(self, grover: Grover, workspace: Path):
-        grover.write("/project/saved.txt", "save this content")
-        grover.save()
-
-        data_dir = grover._async._ctx.meta_data_dir
-        assert data_dir is not None
-        # Search index saved per-mount under data_dir/search/{slug}
-        search_dir = data_dir / "search" / "project"
-        assert (search_dir / "search_meta.json").exists()
-        assert (search_dir / "search.usearch").exists()
-
-    def test_auto_load_on_startup(self, workspace: Path, tmp_path: Path):
-        data_dir = tmp_path / "data"
-
-        # Create first instance, write data, save, close
-        g1 = Grover(
-            data_dir=str(data_dir),
-            embedding_provider=FakeProvider(),
-        )
-        lfs1 = LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
-        g1.add_mount("/project", lfs1)
-        g1.write("/project/keep.py", "def keep():\n    pass\n")
-        g1.save()
-        g1.close()
-
-        # Create second instance — should load state
-        g2 = Grover(
-            data_dir=str(data_dir),
-            embedding_provider=FakeProvider(),
-        )
-        lfs2 = LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
-        g2.add_mount("/project", lfs2)
-        try:
-            assert g2.get_graph().has_node("/project/keep.py")
-            # Search index should also be loaded
-            result = g2.vector_search("keep")
-            assert len(result) >= 1
-        finally:
-            g2.close()
+        # Graph node should exist after save
+        assert grover.get_graph().has_node("/project/persist.py")
 
 
 # ==================================================================
@@ -454,12 +413,11 @@ def auth_grover(tmp_path: Path) -> Iterator[Grover]:
     from grover.fs.user_scoped_fs import UserScopedFileSystem
     from grover.models.shares import FileShare
 
-    data = tmp_path / "grover_data"
-    g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
+    g = Grover()
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     sharing = SharingService(FileShare)
     backend = UserScopedFileSystem(sharing=sharing)
-    g.add_mount("/ws", backend, engine=engine)
+    g.add_mount("/ws", backend, engine=engine, embedding_provider=FakeProvider())
     yield g
     g.close()
 

@@ -15,40 +15,39 @@ from grover import Grover, GroverAsync
 ### Constructor
 
 ```python
-Grover(*, data_dir=None, embedding_provider=None, vector_store=None,
-       indexing_mode=IndexingMode.BACKGROUND, debounce_delay=0.1)
-GroverAsync(*, data_dir=None, embedding_provider=None, vector_store=None,
-            indexing_mode=IndexingMode.BACKGROUND, debounce_delay=0.1)
+Grover(*, indexing_mode=IndexingMode.BACKGROUND, debounce_delay=0.1)
+GroverAsync(*, indexing_mode=IndexingMode.BACKGROUND, debounce_delay=0.1)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `data_dir` | `str | None` | Directory for internal state (`.grover/`). Auto-detected from the first mounted backend if not set. `GroverAsync` also accepts `Path`. |
-| `embedding_provider` | `EmbeddingProvider | None` | Custom embedding provider for search. Falls back to `SentenceTransformerEmbedding` if the `search` extra is installed. Search is disabled if neither is available. |
-| `vector_store` | `VectorStore | None` | Custom vector store backend (e.g., `PineconeVectorStore`, `DatabricksVectorStore`). Defaults to `LocalVectorStore` if not set. |
-| `indexing_mode` | `IndexingMode` | Controls how file events are dispatched to indexing handlers. `BACKGROUND` (default): events are debounced per-path and processed in background tasks so `write()`/`edit()` return immediately. `MANUAL`: all event dispatch is suppressed; only an explicit call to `index()` populates the graph and search engine. |
-| `debounce_delay` | `float` | Seconds to wait before dispatching a debounced event (default `0.1`). Only applies in `BACKGROUND` mode. Multiple rapid writes to the same path within this window are coalesced into a single analysis pass. |
+| `indexing_mode` | `IndexingMode` | Controls how file mutations are dispatched to indexing handlers. `BACKGROUND` (default): mutations are debounced per-path and processed in background tasks so `write()`/`edit()` return immediately. `MANUAL`: all scheduling is suppressed; only an explicit call to `index()` populates the graph and search index. |
+| `debounce_delay` | `float` | Seconds to wait before dispatching a debounced task (default `0.1`). Only applies in `BACKGROUND` mode. Multiple rapid writes to the same path within this window are coalesced into a single analysis pass. |
+
+Search providers (`embedding_provider`, `search_provider`) are configured per-mount via `add_mount()`, not on the constructor. See [Mount / Unmount](#mount--unmount) below.
 
 ### Mount / Unmount
 
 ```python
-g.add_mount(path, backend=None, *, engine=None, session_factory=None,
+g.add_mount(path, filesystem=None, *, engine=None, session_factory=None,
             dialect="sqlite", file_model=None, file_version_model=None,
-            db_schema=None, mount_type=None, permission=Permission.READ_WRITE,
-            label="", hidden=False)
+            file_chunk_model=None, db_schema=None, mount_type=None,
+            permission=Permission.READ_WRITE, label="", hidden=False,
+            embedding_provider=None, search_provider=None)
 g.unmount(path)
 ```
 
 Mount a storage backend at a virtual path. You can pass either:
 
-- A `backend` object (e.g., `LocalFileSystem`, `DatabaseFileSystem`)
+- A `filesystem` object (e.g., `LocalFileSystem`, `DatabaseFileSystem`)
 - An `engine` (SQLAlchemy `AsyncEngine`) — Grover will create a `DatabaseFileSystem` automatically
 - A `session_factory` — same as engine, but you control session creation
+- A `Mount` object directly
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `path` | `str` | required | Virtual mount path (e.g., `"/project"`) |
-| `backend` | `StorageBackend | None` | `None` | Pre-created backend instance |
+| `filesystem` | `StorageBackend | None` | `None` | Pre-created backend instance |
 | `engine` | `AsyncEngine | None` | `None` | SQLAlchemy async engine (creates DatabaseFileSystem) |
 | `session_factory` | `Callable[..., AsyncSession] | None` | `None` | Custom session factory |
 | `dialect` | `str` | `"sqlite"` | Database dialect (`"sqlite"`, `"postgresql"`, `"mssql"`) |
@@ -60,8 +59,12 @@ Mount a storage backend at a virtual path. You can pass either:
 | `permission` | `Permission` | `READ_WRITE` | `Permission.READ_WRITE` or `Permission.READ_ONLY` |
 | `label` | `str` | `""` | Human-readable mount label |
 | `hidden` | `bool` | `False` | Hidden mounts are excluded from listing and indexing |
+| `embedding_provider` | `EmbeddingProvider | None` | `None` | Embedding provider for search (e.g., `OpenAIEmbedding`). Required for vector search. |
+| `search_provider` | `SearchProvider | None` | `None` | Search backend (e.g., `LocalVectorStore`, `PineconeVectorStore`). Required for vector search. |
 
-For user-scoped mounts, pass a `UserScopedFileSystem` as the backend (see [architecture.md](architecture.md#user-scoped-file-systems)).
+**Provider injection**: `add_mount()` auto-creates a `RustworkxGraph` as graph provider for non-hidden mounts. Search providers are never auto-created — you must pass both `embedding_provider` and `search_provider` to enable vector search. If either is missing, search operations return `success=False`.
+
+For user-scoped mounts, pass a `UserScopedFileSystem` as the filesystem (see [architecture.md](architecture.md#user-scoped-file-systems)).
 
 ### Filesystem Operations
 
@@ -72,7 +75,7 @@ g.read(path, *, user_id=None) -> ReadResult
 g.write(path, content, *, user_id=None) -> WriteResult
 g.edit(path, old, new, *, user_id=None) -> EditResult
 g.delete(path, permanent=False, *, user_id=None) -> DeleteResult
-g.list_dir(path="/", *, user_id=None) -> list[dict]
+g.list_dir(path="/", *, user_id=None) -> ListDirResult
 g.exists(path, *, user_id=None) -> ExistsResult
 g.move(src, dest, *, user_id=None, follow=False) -> MoveResult
 g.copy(src, dest, *, user_id=None) -> WriteResult
@@ -163,7 +166,7 @@ g.verify_all_versions(mount_path=None) -> list[VerifyVersionResult]
 ### Trash
 
 ```python
-g.list_trash(*, user_id=None) -> list
+g.list_trash(*, user_id=None) -> TrashResult
 g.restore_from_trash(path, *, user_id=None) -> RestoreResult
 g.empty_trash(*, user_id=None) -> DeleteResult
 ```
@@ -221,11 +224,11 @@ Returns a `ReconcileResult` with fields: `created`, `updated`, `deleted`, `chain
 ### Graph Queries
 
 ```python
-g.dependencies(path) -> list[Ref]
-g.dependents(path) -> list[Ref]
-g.impacts(path, max_depth=3) -> list[Ref]
-g.path_between(source, target) -> list[Ref] | None
-g.contains(path) -> list[Ref]
+g.dependencies(path) -> GraphResult
+g.dependents(path) -> GraphResult
+g.impacts(path, max_depth=3) -> GraphResult
+g.path_between(source, target) -> GraphResult
+g.contains(path) -> GraphResult
 ```
 
 | Method | Description |
@@ -239,12 +242,12 @@ g.contains(path) -> list[Ref]
 ### Connection Operations
 
 ```python
-g.add_connection(source_path, target_path, connection_type, *, weight=1.0, metadata=None) -> ConnectionResult
+g.add_connection(source_path, target_path, connection_type, *, weight=1.0) -> ConnectionResult
 g.delete_connection(source_path, target_path, *, connection_type=None) -> ConnectionResult
 g.list_connections(path, *, direction="both", connection_type=None) -> ConnectionListResult
 ```
 
-Connections are persisted through the filesystem layer (not directly on the graph). The in-memory graph is updated via `CONNECTION_ADDED` / `CONNECTION_DELETED` events after the DB transaction commits. This makes the filesystem the single source of truth for all persistent edge data.
+Connections are persisted through the filesystem layer (not directly on the graph). The in-memory graph is updated via background worker processing after the DB transaction commits. This makes the filesystem the single source of truth for all persistent edge data.
 
 | Method | Description |
 |--------|-------------|
@@ -261,12 +264,12 @@ These convenience methods delegate to the graph backend. They raise `CapabilityN
 Graph operations resolve to the per-mount graph for the given path. `pagerank()` and `find_nodes()` accept an optional `path` parameter to select which mount's graph to use (defaults to the first visible mount).
 
 ```python
-g.pagerank(*, personalization=None, path=None) -> dict[str, float]
-g.ancestors(path) -> set[str]
-g.descendants(path) -> set[str]
-g.meeting_subgraph(paths, *, max_size=50) -> SubgraphResult
-g.neighborhood(path, *, max_depth=2, direction="both", edge_types=None) -> SubgraphResult
-g.find_nodes(*, path=None, **attrs) -> list[str]
+g.pagerank(*, personalization=None, path=None) -> GraphResult
+g.ancestors(path) -> GraphResult
+g.descendants(path) -> GraphResult
+g.meeting_subgraph(paths, *, max_size=50) -> GraphResult
+g.neighborhood(path, *, max_depth=2, direction="both", edge_types=None) -> GraphResult
+g.find_nodes(*, path=None, **attrs) -> GraphResult
 ```
 
 | Method | Protocol | Description |
@@ -281,14 +284,22 @@ g.find_nodes(*, path=None, **attrs) -> list[str]
 ### Search
 
 ```python
-g.search(query, k=10, *, path="/", glob=None, grep=None, user_id=None) -> FileSearchResult
+g.vector_search(query, k=10, *, path="/", user_id=None) -> VectorSearchResult
+g.lexical_search(query, k=10, *, path="/", user_id=None) -> LexicalSearchResult
+g.hybrid_search(query, k=10, *, alpha=0.5, path="/", user_id=None) -> FileSearchResult
+g.search(query, *, path="/", glob=None, grep=None, k=10, user_id=None) -> FileSearchResult
 ```
 
-Composable search pipeline: optional glob/grep filters followed by vector search. Returns a `FileSearchResult` with `candidates: list[FileSearchCandidate]` — each candidate has a `path` and `evidence: list[Evidence]` explaining why it matched.
+| Method | Description |
+|--------|-------------|
+| `vector_search(query, k)` | Semantic search using embedding + vector store. Requires `embedding_provider` and `search_provider` on the mount. Returns `VectorSearchResult`. |
+| `lexical_search(query, k)` | BM25/full-text keyword search via the filesystem's DB-backed lexical search. Returns `LexicalSearchResult`. |
+| `hybrid_search(query, k, alpha)` | Combines vector and lexical results. `alpha` controls the blend: 1.0 = pure vector, 0.0 = pure lexical. Falls back to whichever is available. |
+| `search(query, ...)` | Composable search pipeline: optional glob/grep filters followed by vector search. Use `glob` and `grep` to pre-filter before vector search. |
 
-Search is routed through per-mount search engines. When `path="/"`, results are aggregated across all mounts. When `path` targets a specific mount or subdirectory, search is scoped to that mount and filtered to the given path prefix. Use `glob` and `grep` parameters to pre-filter before vector search.
+Search is routed through per-mount filesystem providers. When `path="/"`, results are aggregated across all mounts. When `path` targets a specific mount, search is scoped to that mount.
 
-Returns `FileSearchResult(success=False, ...)` if no embedding provider is available.
+Returns `success=False` results if the required providers (`search_provider`, `embedding_provider`) are not configured on the mount.
 
 ### Index and Persistence
 
@@ -309,11 +320,10 @@ g.close()
 ### Properties and Methods
 
 ```python
-g.get_graph(path=None) -> GraphStore   # Per-mount knowledge graph (replaces old .graph property)
-g.fs -> VFS                            # The virtual filesystem (for advanced use)
+g.get_graph(path=None) -> GraphProvider   # Per-mount knowledge graph
 ```
 
-`get_graph(path)` returns the graph for the mount owning `path`. If `path` is `None`, returns the first available mount's graph. Each mount has its own isolated `RustworkxGraph` instance, injected at mount time.
+`get_graph(path)` returns the graph provider for the mount owning `path`. If `path` is `None`, returns the first available mount's graph. Each mount has its own isolated `RustworkxGraph` instance, auto-injected at mount time. The graph is accessed through `mount.filesystem.graph_provider`.
 
 ---
 
@@ -389,7 +399,7 @@ g = Grover(indexing_mode=IndexingMode.MANUAL)
 from grover.search.types import SearchResult
 ```
 
-Internal type used by `SearchEngine` and vector store backends. The public `Grover.search()` API returns `FileSearchResult` (see [Result Types](#result-types) below), which wraps these into `FileSearchCandidate` objects with `VectorEvidence`.
+Internal type used by the filesystem's `SearchMethodsMixin` and vector store backends. The public `Grover.search()` API returns `FileSearchResult` (see [Result Types](#result-types) below), which wraps these into `FileSearchCandidate` objects with `VectorEvidence`.
 
 ```python
 @dataclass(frozen=True)
@@ -550,7 +560,7 @@ Permission.READ_ONLY   # Reads and listings only
 | `SupportsVersions` | `list_versions`, `get_version_content`, `restore_version`, `verify_versions`, `verify_all_versions` |
 | `SupportsTrash` | `list_trash`, `restore_from_trash`, `empty_trash` |
 | `SupportsReconcile` | `reconcile` |
-| `SupportsSearch` | `search` — semantic search backed by a per-mount search engine |
+| `SupportsSearch` | `search_query`, `search_add_batch`, `search_remove_file`, `lexical_search_query` — search via filesystem providers |
 | `SupportsFileChunks` | `replace_file_chunks`, `delete_file_chunks`, `list_file_chunks` |
 
 All protocols are `runtime_checkable`. Implement `StorageBackend` for a minimal custom backend; add optional protocols as needed.
@@ -577,7 +587,7 @@ from grover.fs import (
 from grover.graph import RustworkxGraph
 ```
 
-In-memory directed graph backed by `rustworkx.PyDiGraph`. Nodes are file paths (strings), edges have a free-form type string. Implements the `GraphStore` protocol.
+In-memory directed graph backed by `rustworkx.PyDiGraph`. Nodes are file paths (strings), edges have a free-form type string. Implements the `GraphProvider` protocol plus all capability protocols.
 
 ### Node Operations
 
@@ -703,11 +713,11 @@ Built-in analyzers:
 
 ### Graph Protocols
 
-The graph API uses the same protocol pattern as the filesystem layer. `GraphStore` is the core protocol; capability protocols are opt-in. Check support with `isinstance()`:
+The graph API uses the same protocol pattern as the filesystem layer. `GraphProvider` (defined in `fs/providers/protocols.py`) is the core protocol; capability protocols (in `graph/protocols.py`) are opt-in. Check support with `isinstance()`:
 
 ```python
+from grover import GraphProvider
 from grover.graph.protocols import (
-    GraphStore,              # Core: node/edge CRUD + basic queries
     SupportsCentrality,      # PageRank, betweenness, closeness, katz, degree
     SupportsConnectivity,    # Weakly/strongly connected components
     SupportsTraversal,       # Ancestors, descendants, topological sort, shortest paths
@@ -721,7 +731,7 @@ if isinstance(g.get_graph(), SupportsCentrality):
     scores = g.get_graph().pagerank()
 ```
 
-`RustworkxGraph` implements all protocols. Custom graph backends only need to implement `GraphStore` plus whichever capabilities they support.
+`RustworkxGraph` implements all protocols. Custom graph backends only need to implement `GraphProvider` plus whichever capabilities they support.
 
 ### SubgraphResult
 
@@ -741,78 +751,45 @@ Frozen dataclass returned by subgraph extraction methods. Deeply immutable — `
 
 ## Search
 
-Grover's search layer is built around three protocol layers — **EmbeddingProvider** (text → vectors), **VectorStore** (store/search vectors), and **FullTextStore** (BM25 keyword search) — wired together by **SearchEngine**.
+Grover's search layer is built around two provider protocols on the filesystem — **EmbeddingProvider** (text → vectors) and **SearchProvider** (store/search vectors, optional lexical search). There is no `SearchEngine` intermediary; the filesystem's `SearchMethodsMixin` orchestrates providers directly.
 
 ```python
 from grover import (
-    SearchEngine,
-    EmbeddingProvider, VectorStore,
+    EmbeddingProvider, SearchProvider,
     VectorEntry, IndexConfig, IndexInfo,
     FilterExpression, FilterValue, eq, gt, and_, or_,
 )
-from grover.search.types import SearchResult, VectorHit  # internal types used by SearchEngine
-from grover.search.fulltext import FullTextStore, FullTextResult
+from grover.search.types import SearchResult, VectorHit  # internal types
 ```
 
-### SearchEngine
+### SearchProvider Protocol
 
 ```python
-SearchEngine(*, vector=None, embedding=None, lexical=None, hybrid=None, model_name=None)
-```
+from grover import SearchProvider
 
-Orchestrates embedding, vector storage, and full-text search. This is what `GroverAsync` uses internally. All components are optional — configure only what you need.
-
-**Construction-time validation:** If both `vector` and `embedding` are provided and the vector store exposes a `dimension` property, the engine verifies that the store's dimension matches `embedding.dimensions`. If `model_name` is provided with an `embedding`, the engine verifies they agree. Both checks raise `ValueError` on mismatch.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `vector` | `VectorStore | None` | Vector store for semantic search |
-| `embedding` | `EmbeddingProvider | None` | Embedding provider for vectorization |
-| `lexical` | `FullTextStore | None` | Full-text store for BM25 keyword search |
-| `hybrid` | `object | None` | Hybrid search provider (reserved) |
-| `model_name` | `str | None` | Declared model name — validated against embedding provider if both are set |
-
-| Method | Description |
-|--------|-------------|
-| `add(path, content, *, parent_path=None, session=None)` | Embed and index a single item (vector + FTS) |
-| `add_batch(chunks, *, session=None)` | Batch embed and index multiple items |
-| `remove(path, *, session=None)` | Remove a single entry by path |
-| `remove_file(path, *, session=None)` | Remove a file and all its chunks |
-| `search(query, k=10) -> list[SearchResult]` | Embed query and search (vector). Returns internal `SearchResult` type. |
-| `lexical_search(query, *, k=10, session=None) -> list[FullTextResult]` | BM25 keyword search |
-| `has(path) -> bool` | Check if a path is indexed |
-| `content_hash(path) -> str | None` | Get the content hash of an indexed entry |
-| `save(dir)` | Persist to disk (delegates to store if supported) |
-| `load(dir)` | Load from disk (delegates to store if supported) |
-| `connect()` | Connect the underlying store |
-| `close()` | Close the underlying store |
-| `supported_protocols() -> set[type]` | Return mount-level dispatch protocols based on configured components |
-
-### FullTextStore Protocol
-
-```python
 @runtime_checkable
-class FullTextStore(Protocol):
-    async def index(self, path: str, content: str, *, session=None) -> None: ...
-    async def remove(self, path: str, *, session=None) -> None: ...
-    async def remove_file(self, path: str, *, session=None) -> None: ...
-    async def search(self, query: str, *, k: int = 10, session=None) -> list[FullTextResult]: ...
+class SearchProvider(Protocol):
+    # Vector operations
+    async def upsert(self, entries: list[VectorEntry], *, namespace: str | None = None) -> UpsertResult: ...
+    async def vector_search(self, vector: list[float], *, k: int = 10, namespace: str | None = None, filter: Any = None, include_metadata: bool = True, score_threshold: float | None = None) -> VectorSearchResult: ...
+    async def delete(self, ids: list[str], *, namespace: str | None = None) -> DeleteResult: ...
+    async def fetch(self, ids: list[str], *, namespace: str | None = None) -> list[VectorEntry | None]: ...
+
+    # Lexical search (stores that don't support it return empty result)
+    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult: ...
+
+    # Lifecycle
+    async def connect(self) -> None: ...
+    async def close(self) -> None: ...
 ```
 
-**Implementations:**
-- `SQLiteFullTextStore` — FTS5 virtual table with `bm25()` ranking and `snippet()`
-- `PostgresFullTextStore` — `to_tsvector`/`tsquery` with `ts_rank_cd` and GIN index
-- `MSSQLFullTextStore` — `FREETEXTTABLE` with full-text catalog
-
-```python
-from grover.search.fulltext.sqlite import SQLiteFullTextStore
-from grover.search.fulltext.postgres import PostgresFullTextStore
-from grover.search.fulltext.mssql import MSSQLFullTextStore
-```
+`SearchProvider` unifies vector and lexical search. All built-in stores (`LocalVectorStore`, `PineconeVectorStore`, `DatabricksVectorStore`) implement it. Stores that don't support lexical search return an empty `LexicalSearchResult`. The protocol is set on the filesystem as `search_provider` and passed via `add_mount(..., search_provider=...)`.
 
 ### EmbeddingProvider Protocol
 
 ```python
+from grover import EmbeddingProvider
+
 @runtime_checkable
 class EmbeddingProvider(Protocol):
     async def embed(self, text: str) -> list[float]: ...
@@ -824,13 +801,6 @@ class EmbeddingProvider(Protocol):
 ```
 
 ### Embedding Providers
-
-**SentenceTransformerEmbedding** — local models (default). Requires the `search` extra.
-
-```python
-from grover.search.providers import SentenceTransformerEmbedding
-provider = SentenceTransformerEmbedding(model_name="all-MiniLM-L6-v2")
-```
 
 **OpenAIEmbedding** — OpenAI API. Requires the `openai` extra.
 
@@ -844,21 +814,6 @@ provider = OpenAIEmbedding(model="text-embedding-3-small", dimensions=384)
 ```python
 from grover.search.providers import LangChainEmbedding
 provider = LangChainEmbedding(embeddings=langchain_embeddings, dimensions=384)
-```
-
-### VectorStore Protocol
-
-```python
-@runtime_checkable
-class VectorStore(Protocol):
-    async def upsert(self, entries: list[VectorEntry], *, namespace: str | None = None) -> UpsertResult: ...
-    async def search(self, vector: list[float], *, k: int = 10, namespace: str | None = None, filter: FilterExpression | None = None, ...) -> list[VectorHit]: ...
-    async def delete(self, ids: list[str], *, namespace: str | None = None) -> DeleteResult: ...
-    async def fetch(self, ids: list[str], *, namespace: str | None = None) -> list[VectorEntry | None]: ...
-    async def connect(self) -> None: ...
-    async def close(self) -> None: ...
-    @property
-    def index_name(self) -> str: ...
 ```
 
 ### Capability Protocols
@@ -875,7 +830,9 @@ Vector stores can implement additional capabilities, checked at runtime via `isi
 | `SupportsTextSearch` | `text_search()` | (custom stores) |
 | `SupportsTextIngest` | `text_upsert()` | (custom stores) |
 
-### Vector Store Backends
+### Search Provider Backends
+
+All built-in stores implement `SearchProvider`. Pass them to `add_mount(..., search_provider=...)`.
 
 **LocalVectorStore** — in-process usearch HNSW index for local development.
 

@@ -121,8 +121,8 @@ async def dbfs_setup(tmp_path: Path):
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     fs = DatabaseFileSystem(dialect="sqlite")
 
-    g = GroverAsync(data_dir=str(tmp_path / "grover_data"), embedding_provider=FakeProvider())
-    await g.add_mount("/vfs", fs, session_factory=factory)
+    g = GroverAsync()
+    await g.add_mount("/vfs", fs, session_factory=factory, embedding_provider=FakeProvider())
 
     yield g, engine
     await g.close()
@@ -413,8 +413,8 @@ class TestAnalyzeEdgeCases:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(dialect="sqlite")
 
-        g = GroverAsync(data_dir=str(tmp_path / "grover_data"), embedding_provider=FakeProvider())
-        await g.add_mount("/vfs", fs, session_factory=factory)
+        g = GroverAsync()
+        await g.add_mount("/vfs", fs, session_factory=factory, embedding_provider=FakeProvider())
 
         # Write the file while mount is writable
         await g.write("/vfs/main.py", "x = 1\n")

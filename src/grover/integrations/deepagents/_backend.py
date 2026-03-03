@@ -146,13 +146,22 @@ class GroverBackend(BackendProtocol):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_local(cls, workspace_dir: str, **mount_kwargs: Any) -> GroverBackend:
+    def from_local(
+        cls,
+        workspace_dir: str,
+        *,
+        data_dir: str | None = None,
+        **mount_kwargs: Any,
+    ) -> GroverBackend:
         """Create a GroverBackend with a LocalFileSystem mounted at ``/``."""
         from grover._grover import Grover
         from grover.fs.local_fs import LocalFileSystem
 
+        fs_kwargs: dict[str, Any] = {"workspace_dir": workspace_dir}
+        if data_dir is not None:
+            fs_kwargs["data_dir"] = data_dir
         g = Grover()
-        g.add_mount("/", LocalFileSystem(workspace_dir=workspace_dir), **mount_kwargs)
+        g.add_mount("/", LocalFileSystem(**fs_kwargs), **mount_kwargs)
         return cls(g)
 
     @classmethod
@@ -177,13 +186,22 @@ class GroverBackend(BackendProtocol):
         return cls(g)
 
     @classmethod
-    async def from_local_async(cls, workspace_dir: str, **mount_kwargs: Any) -> GroverBackend:
+    async def from_local_async(
+        cls,
+        workspace_dir: str,
+        *,
+        data_dir: str | None = None,
+        **mount_kwargs: Any,
+    ) -> GroverBackend:
         """Create a GroverBackend with a GroverAsync + LocalFileSystem at ``/``."""
         from grover._grover_async import GroverAsync
         from grover.fs.local_fs import LocalFileSystem
 
+        fs_kwargs: dict[str, Any] = {"workspace_dir": workspace_dir}
+        if data_dir is not None:
+            fs_kwargs["data_dir"] = data_dir
         g = GroverAsync()
-        await g.add_mount("/", LocalFileSystem(workspace_dir=workspace_dir), **mount_kwargs)
+        await g.add_mount("/", LocalFileSystem(**fs_kwargs), **mount_kwargs)
         return cls(g)
 
     @classmethod

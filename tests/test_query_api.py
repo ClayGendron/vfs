@@ -10,6 +10,7 @@ import pytest
 
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
+from grover.search.stores.local import LocalVectorStore
 from grover.types import GlobResult, GrepResult, LineMatch, VectorSearchResult
 
 if TYPE_CHECKING:
@@ -51,12 +52,14 @@ class FakeProvider:
 @pytest.fixture
 async def grover(tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
-    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+    g = GroverAsync()
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     await g.add_mount(
         "/project",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        embedding_provider=FakeProvider(),
+        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -240,7 +243,7 @@ class TestVectorSearchQueryApi:
     async def test_vector_search_failure_no_provider(self, tmp_path: Path):
         """Search without provider returns failure result."""
         data = tmp_path / "grover_data_no_search"
-        g = GroverAsync(data_dir=str(data))
+        g = GroverAsync()
         workspace = tmp_path / "ws_no_search"
         workspace.mkdir()
         await g.add_mount(
@@ -248,9 +251,12 @@ class TestVectorSearchQueryApi:
             LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         )
         try:
-            has_search = any(m.search is not None for m in g._ctx.registry.list_visible_mounts())
+            has_search = any(
+                getattr(m.filesystem, "search_provider", None) is not None
+                for m in g._ctx.registry.list_visible_mounts()
+            )
             if has_search:
-                pytest.skip("sentence-transformers is installed; search available")
+                pytest.skip("search provider is installed; search available")
             result = await g.vector_search("anything")
             assert isinstance(result, VectorSearchResult)
             assert result.success is False

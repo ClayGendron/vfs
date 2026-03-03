@@ -6,7 +6,7 @@ Thanks for your interest in contributing to Grover! This guide covers how to set
 
 ### Prerequisites
 
-- **Python 3.11+** (3.13 recommended)
+- **Python 3.12+** (3.13 recommended)
 - **[uv](https://docs.astral.sh/uv/)** for package management
 
 ### Setup
@@ -109,20 +109,28 @@ src/grover/
 ├── ref.py                # Ref frozen dataclass
 ├── worker.py             # BackgroundWorker, IndexingMode
 ├── fs/                   # Filesystem layer
-│   ├── vfs.py            # Mount router
-│   ├── local_fs.py       # Disk + SQLite backend
-│   ├── database_fs.py    # Pure-database backend
+│   ├── local_fs.py       # Thin subclass of DatabaseFileSystem (disk + SQLite)
+│   ├── database_fs.py    # Base class — owns all providers
 │   ├── protocol.py       # StorageBackend + capability protocols
 │   ├── operations.py     # Shared orchestration functions
+│   ├── providers/        # Provider protocols + implementations
+│   │   ├── protocols.py  # GraphProvider, SearchProvider, EmbeddingProvider, etc.
+│   │   ├── disk.py       # DiskStorageProvider
+│   │   └── defaults.py   # DefaultVersionProvider, DefaultChunkProvider
+│   ├── mixins/           # Internal mixins for DatabaseFileSystem
+│   │   ├── graph.py      # GraphMethodsMixin
+│   │   ├── search.py     # SearchMethodsMixin
+│   │   ├── versions.py   # VersionMethodsMixin
+│   │   └── chunks.py     # ChunkMethodsMixin
 │   └── ...
 ├── graph/                # Knowledge graph
 │   ├── _rustworkx.py     # RustworkxGraph — rustworkx wrapper
-│   ├── protocols.py      # GraphStore + capability protocols
+│   ├── protocols.py      # Graph capability protocols (centrality, traversal, etc.)
 │   ├── types.py          # SubgraphResult, subgraph_result factory
 │   └── analyzers/        # Language-specific code analyzers
 ├── search/               # Vector search
-│   ├── _engine.py        # SearchEngine orchestrator
-│   └── providers/        # Embedding providers
+│   ├── stores/           # SearchProvider implementations (local, pinecone, databricks)
+│   └── providers/        # EmbeddingProvider implementations (openai, langchain)
 └── models/               # SQLModel database models
 ```
 

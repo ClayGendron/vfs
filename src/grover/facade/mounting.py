@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -28,14 +27,11 @@ if TYPE_CHECKING:
 
     from grover.facade.context import GroverContext
     from grover.fs.protocol import StorageBackend
-    from grover.graph.protocols import GraphStore
+    from grover.fs.providers.protocols import EmbeddingProvider, SearchProvider
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.search._engine import SearchEngine
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_DATA_DIR = Path.home() / ".grover" / "_default"
 
 
 class MountMixin:
@@ -52,8 +48,6 @@ class MountMixin:
         mount_or_path: str | Mount | None = None,
         filesystem: StorageBackend | None = None,
         *,
-        graph: GraphStore | None = None,
-        search: SearchEngine | None = None,
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
         dialect: str = "sqlite",
@@ -66,6 +60,8 @@ class MountMixin:
         label: str = "",
         hidden: bool = False,
         path: str | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        search_provider: SearchProvider | None = None,
     ) -> None:
         """Register a :class:`~grover.mount.Mount` or build one from kwargs.
 
@@ -80,6 +76,9 @@ class MountMixin:
 
             # Engine-based (auto-creates session factory + DatabaseFileSystem)
             await g.add_mount("/data", engine=engine)
+
+            # With search — pass embedding_provider to enable vector search
+            await g.add_mount("/data", engine=engine, embedding_provider=embed)
 
             # Session-factory-based
             await g.add_mount("/data", filesystem, session_factory=sf)
@@ -144,8 +143,6 @@ class MountMixin:
             new_mount = Mount(
                 path=actual_path,
                 filesystem=filesystem,
-                graph=graph,
-                search=search,
                 session_factory=sf,
                 permission=permission,
                 label=label,
@@ -153,16 +150,23 @@ class MountMixin:
                 hidden=hidden,
             )
 
-        # Auto-create graph if not provided and not hidden
-        if not new_mount.hidden and new_mount.graph is None:
-            new_mount.graph = RustworkxGraph()  # type: ignore[assignment]  # satisfies GraphStore protocol
+        # ------------------------------------------------------------------
+        # Auto-inject providers on the filesystem
+        # ------------------------------------------------------------------
+        fs = new_mount.filesystem
+        if fs is not None and not new_mount.hidden:
+            # Graph provider: auto-create RustworkxGraph if not already set
+            if getattr(fs, "graph_provider", None) is None:
+                fs.graph_provider = RustworkxGraph()  # type: ignore[union-attr]
 
-        # Auto-create search engine if not provided and not hidden
-        if not new_mount.hidden and new_mount.search is None:
-            lexical = await self._ctx.create_fulltext_store(new_mount)
-            se = self._ctx.create_search_engine(lexical=lexical)
-            if se is not None:
-                new_mount.search = se
+            # Search providers: inject from kwargs if not already set on filesystem
+            if embedding_provider is not None and getattr(fs, "embedding_provider", None) is None:
+                fs.embedding_provider = embedding_provider  # type: ignore[union-attr]
+            if search_provider is not None and getattr(fs, "search_provider", None) is None:
+                fs.search_provider = search_provider  # type: ignore[union-attr]
+            # Validate dimensions if both providers are set
+            if hasattr(fs, "_validate_search_dimensions"):
+                fs._validate_search_dimensions()  # type: ignore[union-attr]
 
         # Call open() on the filesystem if needed (skip LocalFileSystem — already opened above)
         if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(
@@ -172,14 +176,8 @@ class MountMixin:
 
         self._ctx.registry.add_mount(new_mount)
 
-        # Lazily initialise meta_fs on first non-hidden mount
-        if not new_mount.hidden and self._ctx.meta_fs is None:
-            assert new_mount.filesystem is not None
-            await self._init_meta_fs(new_mount.filesystem)
-
-        # Load existing graph + search state for this mount
         if not new_mount.hidden:
-            await self._load_mount_state(new_mount)
+            self._ctx.initialized = True
 
     async def _create_engine_mount(
         self,
@@ -335,9 +333,6 @@ class MountMixin:
         """Unmount the backend at *path*."""
 
         path = normalize_path(path).rstrip("/")
-        if path == "/.grover":
-            raise ValueError("Cannot unmount /.grover")
-
         try:
             mount, _ = self._ctx.registry.resolve(path)
         except MountNotFoundError:
@@ -351,99 +346,3 @@ class MountMixin:
         if hasattr(backend, "close"):
             await backend.close()
         self._ctx.registry.remove_mount(path)
-
-    # ------------------------------------------------------------------
-    # Internal metadata mount
-    # ------------------------------------------------------------------
-
-    async def _init_meta_fs(self, first_backend: StorageBackend) -> None:
-        """Create the internal /.grover metadata mount."""
-        if self._ctx.explicit_data_dir is not None:
-            data_dir = self._ctx.explicit_data_dir
-        elif isinstance(first_backend, LocalFileSystem):
-            data_dir = first_backend.data_dir
-        else:
-            data_dir = _DEFAULT_DATA_DIR
-
-        self._ctx.meta_data_dir = data_dir
-
-        self._ctx.meta_fs = LocalFileSystem(
-            workspace_dir=data_dir,
-            data_dir=data_dir / "_meta",
-        )
-
-        # Eagerly init DB
-        await self._ctx.meta_fs.open()
-
-        self._ctx.registry.add_mount(
-            Mount(
-                path="/.grover",
-                filesystem=self._ctx.meta_fs,
-                session_factory=self._ctx.meta_fs.session_factory,
-                mount_type="local",
-                hidden=True,
-            )
-        )
-
-        # Create extra tables on the meta engine
-        await self._ensure_extra_tables()
-
-    async def _ensure_extra_tables(self) -> None:
-        if self._ctx.meta_fs is None:
-            return
-        await self._ctx.meta_fs.open()
-        engine = self._ctx.meta_fs.engine
-        if engine is None:
-            return
-
-        async with engine.begin() as conn:
-            await conn.run_sync(
-                lambda c: FileConnection.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
-            )
-
-    # ------------------------------------------------------------------
-    # Per-mount state loading
-    # ------------------------------------------------------------------
-
-    async def _load_mount_state(self, mount: Mount) -> None:
-        """Load graph and search state for a single mount."""
-        graph = mount.graph
-        if graph is None:
-            return
-
-        # Load graph: file nodes from mount's DB, edges from mount's DB
-        if mount.session_factory is not None:
-            try:
-                from grover.graph.protocols import SupportsPersistence
-
-                if isinstance(graph, SupportsPersistence):
-                    file_model = getattr(mount.filesystem, "file_model", None) or File
-                    async with self._ctx.session_for(mount) as session:
-                        if session is not None:
-                            await graph.from_sql(
-                                session,
-                                file_model=file_model,
-                                path_prefix=mount.path,
-                            )
-            except Exception:
-                logger.debug(
-                    "No existing graph state to load for %s",
-                    mount.path,
-                    exc_info=True,
-                )
-
-        # Load search index from disk
-        search_engine = mount.search
-        if search_engine is not None and self._ctx.meta_data_dir is not None:
-            slug = mount.path.strip("/").replace("/", "_") or "_default"
-            search_dir = self._ctx.meta_data_dir / "search" / slug
-            meta_file = search_dir / "search_meta.json"
-            if meta_file.exists():
-                try:
-                    search_engine.load(str(search_dir))
-                except Exception:
-                    logger.debug(
-                        "Failed to load search index for %s",
-                        mount.path,
-                        exc_info=True,
-                    )

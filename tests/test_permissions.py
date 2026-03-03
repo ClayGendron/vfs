@@ -14,7 +14,6 @@ import pytest
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.permissions import Permission
-from grover.graph import RustworkxGraph
 from grover.types import (
     ConnectionListResult,
     ConnectionResult,
@@ -64,11 +63,10 @@ async def grover_ro(workspace: Path, tmp_path: Path) -> GroverAsync:
     (workspace / "sub").mkdir()
     (workspace / "sub" / "nested.py").write_text("x = 1")
 
-    g = GroverAsync(data_dir=str(data))
+    g = GroverAsync()
     await g.add_mount(
         "/ro",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
-        graph=RustworkxGraph(),
         permission=Permission.READ_ONLY,
     )
     yield g  # type: ignore[misc]
@@ -83,17 +81,15 @@ async def grover_mixed(workspace: Path, rw_workspace: Path, tmp_path: Path) -> G
     # Pre-create files in the read-only workspace
     (workspace / "existing.txt").write_text("read-only content")
 
-    g = GroverAsync(data_dir=str(data))
+    g = GroverAsync()
     await g.add_mount(
         "/ro",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "ro_local"),
-        graph=RustworkxGraph(),
         permission=Permission.READ_ONLY,
     )
     await g.add_mount(
         "/rw",
         LocalFileSystem(workspace_dir=rw_workspace, data_dir=data / "rw_local"),
-        graph=RustworkxGraph(),
         permission=Permission.READ_WRITE,
     )
     yield g  # type: ignore[misc]

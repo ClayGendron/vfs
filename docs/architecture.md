@@ -18,23 +18,37 @@ This means:
 
 This simplification keeps the three layers (filesystem, graph, search) naturally aligned. A file write creates a node, generates edges, and indexes embeddings — all keyed by the same path.
 
-## Composition over inheritance
+## Filesystem-centric architecture
 
-Grover uses composition and protocols instead of class hierarchies. There is no `BaseFileSystem` abstract class.
+Grover uses a **filesystem-centric** design where `DatabaseFileSystem` is the base class that owns all providers. `LocalFileSystem` is a thin subclass (~330 lines) that adds disk-specific overrides.
 
-**Backends** (`LocalFileSystem`, `DatabaseFileSystem`) are independent classes that both implement the `StorageBackend` protocol. They compose shared services internally:
+**Provider composition**: Instead of separate graph and search objects on the mount, all capabilities are pluggable **providers** on the filesystem itself:
 
 ```
-LocalFileSystem
-├── MetadataService    (file lookup, hashing)
-├── VersioningService  (diff storage, reconstruction)
-├── DirectoryService   (hierarchy operations)
-└── TrashService       (soft-delete, restore)
+DatabaseFileSystem
+├── storage_provider: StorageProvider | None    (disk I/O — only LocalFileSystem)
+├── graph_provider: GraphProvider | None        (in-memory knowledge graph)
+├── search_provider: SearchProvider | None      (vector/lexical search)
+├── embedding_provider: EmbeddingProvider | None (text → vector embedding)
+├── version_provider: VersionProvider           (diff-based versioning)
+├── chunk_provider: ChunkProvider               (code chunk storage)
+├── ConnectionService                           (edge persistence)
+├── DirectoryService                            (hierarchy operations)
+└── TrashService                                (soft-delete, restore)
 ```
 
-**Orchestration functions** in `operations.py` are pure functions that take services and callbacks as parameters. Both backends call the same functions — no duplication, no inheritance.
+**LocalFileSystem** inherits from `DatabaseFileSystem` and passes a `DiskStorageProvider` to its parent. It only overrides lifecycle (`open`/`close`) and disk-specific operations (`read`, `delete`, `mkdir`, `restore`, `reconcile`). All other behavior — versioning, chunking, graph, search — comes from `DatabaseFileSystem` and its mixins.
 
-**Why?** Inheritance creates coupling. When `LocalFileSystem` needs to write to disk and `DatabaseFileSystem` needs to write to a DB column, a shared base class either forces awkward abstractions or leaves half the logic in the subclass anyway. Composition lets each backend wire up exactly the behavior it needs.
+**Orchestration functions** in `operations.py` are pure functions that take services and callbacks as parameters. Both the base class and its subclass call the same functions.
+
+**Internal mixins** on `DatabaseFileSystem` organize provider-dependent methods:
+
+| Mixin | Responsibility |
+|-------|---------------|
+| `GraphMethodsMixin` | Delegates to `graph_provider` — node/edge CRUD |
+| `SearchMethodsMixin` | Orchestrates `embedding_provider` + `search_provider` |
+| `VersionMethodsMixin` | Delegates to `version_provider` — diff storage, reconstruction |
+| `ChunkMethodsMixin` | Delegates to `chunk_provider` — file chunk CRUD |
 
 ## GroverAsync facade structure
 
@@ -58,7 +72,7 @@ Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every m
 | `ConnectionMixin` | `facade/connections.py` | Manual edge CRUD (persisted through FS) |
 | `IndexMixin` | `facade/indexing.py` | Event handlers, analysis pipeline, indexing, save, close |
 
-`GroverContext` (`facade/context.py`) holds the event bus, mount registry, analyzer registry, embedding/vector config, and helper methods used across all mixins (session management, permission checks, path prefixing, graph/search resolution).
+`GroverContext` (`facade/context.py`) holds the worker, mount registry, analyzer registry, indexing mode, and helper methods used across all mixins (session management, permission checks, path prefixing, graph resolution via `resolve_graph()`).
 
 **Why mixins?** Each method exists once — no forwarding stubs or delegation boilerplate. The public API is unchanged: `from grover import GroverAsync` works exactly as before.
 
@@ -72,6 +86,7 @@ class SupportsVersions(Protocol):     # list_versions, restore_version, ...
 class SupportsTrash(Protocol):        # list_trash, restore_from_trash, ...
 class SupportsReconcile(Protocol):    # reconcile (sync disk ↔ DB)
 class SupportsFileChunks(Protocol):   # replace/delete/list file chunks
+class SupportsSearch(Protocol):       # search methods via filesystem providers
 ```
 
 VFS checks capabilities with `isinstance(backend, SupportsVersions)` at runtime. If a backend doesn't support a capability:
@@ -82,12 +97,27 @@ VFS checks capabilities with `isinstance(backend, SupportsVersions)` at runtime.
 
 This makes it straightforward to write a minimal custom backend — just implement `StorageBackend` and skip the optional protocols.
 
-### Graph capability protocols
+### Provider protocols
 
-The graph layer uses the same pattern. `GraphStore` is the core protocol (node/edge CRUD + basic queries). Capability protocols add algorithms:
+Provider protocols live in `fs/providers/protocols.py` and define the pluggable capabilities that filesystems compose:
 
 ```python
-class GraphStore(Protocol):              # Core: add/remove/query nodes and edges
+class StorageProvider(Protocol):    # Disk I/O: read/write/delete content
+class GraphProvider(Protocol):      # Node/edge CRUD + graph queries
+class SearchProvider(Protocol):     # Vector + lexical search
+class EmbeddingProvider(Protocol):  # Text → vector embedding
+class VersionProvider(Protocol):    # Diff-based version storage
+class ChunkProvider(Protocol):      # Code chunk CRUD
+```
+
+`GraphProvider` is the core graph protocol — `RustworkxGraph` implements it plus the algorithm capability protocols. `SearchProvider` unifies vector and lexical search — `LocalVectorStore`, `PineconeVectorStore`, and `DatabricksVectorStore` implement it directly. `EmbeddingProvider` stays separate from `SearchProvider` because embedding is stateless and shared across operations.
+
+### Graph capability protocols
+
+The graph layer uses capability protocols for optional algorithms:
+
+```python
+class GraphProvider(Protocol):           # Core: add/remove/query nodes and edges
 class SupportsCentrality(Protocol):      # PageRank, betweenness, closeness, katz, degree
 class SupportsConnectivity(Protocol):    # Connected components, is_weakly_connected
 class SupportsTraversal(Protocol):       # Ancestors, descendants, topological sort, shortest paths
@@ -97,7 +127,7 @@ class SupportsNodeSimilarity(Protocol):  # Jaccard structural similarity
 class SupportsPersistence(Protocol):     # SQL persistence (to_sql / from_sql)
 ```
 
-`RustworkxGraph` implements all protocols. To write a custom graph backend, implement `GraphStore` plus whichever capabilities you need. `GroverAsync` checks capabilities at runtime with `isinstance()` and raises `CapabilityNotSupportedError` for unsupported operations.
+`RustworkxGraph` implements all protocols. To write a custom graph backend, implement `GraphProvider` plus whichever capabilities you need. `GroverAsync` checks capabilities at runtime with `isinstance()` and raises `CapabilityNotSupportedError` for unsupported operations.
 
 ## Content-before-commit write ordering
 
@@ -118,62 +148,45 @@ The opposite ordering (commit-first) would create **phantom metadata**: the DB s
 
 **This ordering is intentional and should not be changed.** See [internals/fs.md](internals/fs.md) for the full rationale and history.
 
-## Mount as first-class composition unit
+## Mount as minimal routing dataclass
 
-`Mount` is the central composition class. Each mount composes three components as **public attributes**:
+`Mount` is a minimal dataclass that binds a virtual path to a filesystem. All capabilities (graph, search, embedding) live on the filesystem itself as **providers**:
 
 ```
 Mount "/project"
-    ├── filesystem: LocalFileSystem    (required — storage backend)
-    ├── graph: RustworkxGraph          (optional — in-memory knowledge graph)
-    └── search: SearchEngine           (optional — vector/lexical search)
+    ├── path: str                      (mount point)
+    ├── filesystem: StorageBackend     (required — the backend with providers)
+    ├── session_factory: ...           (optional — for DB-backed filesystems)
+    ├── permission: Permission         (read-write or read-only)
+    └── hidden: bool                   (excluded from listing/indexing)
 ```
 
-Graph and search are no longer injected as private attributes on the backend. They live on the `Mount` itself, accessible as `mount.graph` and `mount.search`.
+Graph, search, and embedding providers are accessed through the filesystem:
+- `mount.filesystem.graph_provider` — the per-mount `RustworkxGraph`
+- `mount.filesystem.search_provider` — `LocalVectorStore`, `PineconeVectorStore`, etc.
+- `mount.filesystem.embedding_provider` — `OpenAIEmbedding`, `LangChainEmbedding`, etc.
 
-**Protocol dispatch**: Mount checks all three components against dispatch protocols at construction time and builds a dispatch map. If two components implement the same protocol, `ProtocolConflictError` is raised. If no component implements a requested protocol, `ProtocolNotAvailableError` is raised when the method is called.
+There is no `mount.graph`, `mount.search`, or protocol dispatch on Mount. Mount does not check component compatibility — it simply holds the filesystem.
+
+**Provider injection**: `add_mount()` auto-creates a `RustworkxGraph` as `graph_provider` for non-hidden mounts. `embedding_provider` and `search_provider` must be passed explicitly — no auto-creation. If no search providers are configured, search methods return `success=False` with a descriptive message.
 
 ```python
-# Dispatch protocols (mount-level routing)
-SupportsGlob          # glob pattern matching → filesystem
-SupportsGrep          # regex content search → filesystem
-SupportsTree          # directory tree listing → filesystem
-SupportsListDir       # directory listing → filesystem
-SupportsVectorSearch  # semantic search → search engine
-SupportsLexicalSearch # keyword/BM25 search → search engine
-SupportsHybridSearch  # combined search → search engine
-SupportsEmbedding     # text embedding → search engine
+# No search — graph and filesystem only
+g.add_mount("/project", LocalFileSystem(workspace_dir="."))
+
+# With search — pass providers to add_mount
+g.add_mount("/data", engine=engine,
+            embedding_provider=OpenAIEmbedding(model="text-embedding-3-small"),
+            search_provider=LocalVectorStore(dimension=1536))
 ```
 
-**SearchEngine composition**: SearchEngine accepts pluggable components via keyword args:
+**Graph resolution**: operations like `dependents(path)` resolve the mount from the path, then delegate to `mount.filesystem.graph_provider`. `get_graph(path)` is the public method.
 
-```python
-SearchEngine(
-    vector=LocalVectorStore(...),     # → satisfies SupportsVectorSearch
-    embedding=OpenAIEmbedding(...),   # → satisfies SupportsEmbedding
-    lexical=SQLiteFullText(...),      # → satisfies SupportsLexicalSearch
-    hybrid=HybridProvider(...),       # → satisfies SupportsHybridSearch
-)
-```
+**Search routing**: `vector_search()`, `lexical_search()`, and `hybrid_search()` check each mount's filesystem for `search_provider` and `embedding_provider`. Root-level searches aggregate results across all mounts; path-scoped searches target a single mount.
 
-SearchEngine exposes `supported_protocols()` which Mount uses instead of `isinstance()` to determine what dispatch protocols the search component satisfies.
+**Lexical search**: `DatabaseFileSystem` provides DB-backed lexical search via SQL LIKE queries. Stores that implement the `SearchProvider` protocol can optionally support `lexical_search()` as well.
 
-**Full-text (BM25) search**: the `lexical` component of SearchEngine provides keyword search via native DB features. Grover auto-detects the dialect and creates the appropriate store:
-- SQLite → `SQLiteFullTextStore` (FTS5 virtual table, `bm25()` ranking, `snippet()`)
-- PostgreSQL → `PostgresFullTextStore` (`to_tsvector`/`tsquery`, `ts_rank_cd`, GIN index)
-- MSSQL → `MSSQLFullTextStore` (`FREETEXTTABLE`, full-text catalog)
-
-FTS stays in sync with content changes: `add()`, `add_batch()`, `remove()`, and `remove_file()` on SearchEngine propagate to both vector and lexical stores. Event handlers pass DB sessions for FTS operations.
-
-**Graph resolution**: operations like `dependents(path)` resolve the mount from the path, then delegate to that mount's graph. `get_graph(path)` is the public method (replaces the removed `.graph` property).
-
-**Search routing**: `search()` routes through VFS, checking `mount.search` on the resolved mount. Root-level searches aggregate results across all mounts; path-scoped searches target a single mount.
-
-**Persistence**: each mount's graph saves to its own database (via `to_sql`/`from_sql`). Search indices save per-mount under `data_dir/search/{mount_slug}/`.
-
-**Embedding provider**: shared across mounts (stateless). Each mount gets its own `LocalVectorStore` by default.
-
-Hidden mounts (like `/.grover`) do not receive graph or search engine injection.
+Hidden mounts (like `/.grover`) do not receive provider injection.
 
 ## Background indexing and consistency
 
@@ -187,7 +200,7 @@ The three layers stay in sync through a `BackgroundWorker`. When a facade method
 | `add_connection()` | `_process_connection_added(src, tgt, type, weight)` | Add edge to in-memory graph |
 | `delete_connection()` | `_process_connection_deleted(src, tgt)` | Remove edge from in-memory graph |
 
-Processing methods accept direct parameters (not event objects). They resolve the mount from the path, then use that mount's graph and search engine. Exceptions are logged but never propagated — a failed re-index should not cause a file write to fail.
+Processing methods accept direct parameters (not event objects). They resolve the mount from the path, then access graph and search providers through the filesystem (`mount.filesystem.graph_provider`, `mount.filesystem.search_provider`). Exceptions are logged but never propagated — a failed re-index should not cause a file write to fail.
 
 ### Indexing modes
 
@@ -276,19 +289,18 @@ Code analyzers produce edges automatically. You can also add manual edges via `a
 
 ### Filesystem owns connection data
 
-All persistent edges (user-created and analyzer-discovered) are persisted through the filesystem layer via `ConnectionService`, stored in the `grover_file_connections` table. The graph is updated via `CONNECTION_ADDED` / `CONNECTION_DELETED` events after the DB transaction commits:
+All persistent edges (user-created and analyzer-discovered) are persisted through the filesystem layer via `ConnectionService`, stored in the `grover_file_connections` table. The graph is updated via background worker processing after the DB transaction commits:
 
 1. Caller invokes `add_connection(source, target, type)` on `GroverAsync`
 2. `GroverAsync` delegates to the backend's `add_connection()` (through `SupportsConnections`)
 3. `ConnectionService` writes the record to `grover_file_connections`
-4. After the session commits, a `CONNECTION_ADDED` event is emitted
-5. The event handler updates the in-memory graph (`graph.add_edge()`)
+4. After the session commits, `_process_connection_added` updates the in-memory graph (`graph.add_edge()`)
 
 On mount init, `from_sql()` loads file nodes from `grover_files` and edges from `grover_file_connections` to populate the graph projection.
 
 **Structural "contains" edges** (file-to-chunk membership) are NOT persisted — they are in-memory only and rebuilt every time a file is analyzed. This keeps the DB clean and avoids conflicts between structural and dependency edges.
 
-**Single-session batching in `_analyze_and_integrate`**: All DB operations within the analysis pipeline (search entry removal, chunk replacement, connection deletion/creation, search indexing) are wrapped in a single `session_for` block. This provides atomicity — if any operation fails, the entire transaction rolls back with no partial state. `CONNECTION_ADDED` events are collected in a deferred list and emitted only after the session commits, ensuring DB records are visible when event handlers query them. The same single-session pattern is used in `_on_file_deleted` and `_on_file_moved` for their cleanup operations.
+**Single-session batching in `_analyze_and_integrate`**: All DB operations within the analysis pipeline (search entry removal, chunk replacement, connection deletion/creation, search indexing) are wrapped in a single `session_for` block. This provides atomicity — if any operation fails, the entire transaction rolls back with no partial state. Edges to project into the in-memory graph are collected in an `edges_to_project` list and projected only after the session commits, ensuring DB records are visible before the graph is updated. The same single-session pattern is used in `_process_delete` and `_process_move` for their cleanup operations.
 
 ## Analyzer architecture
 
@@ -370,14 +382,16 @@ On user-scoped mounts, trash operations are scoped by `owner_id`. Each user can 
 
 ## Search layer architecture
 
-The search layer follows the same two-protocol pattern as the filesystem:
+The search layer uses two provider protocols on the filesystem:
 
-- **EmbeddingProvider** — converts text to vectors. Async-first, with `embed()` and `embed_batch()` methods. Built-in providers: sentence-transformers (local), OpenAI (API), LangChain adapter (any LangChain `Embeddings` instance).
-- **VectorStore** — stores and searches vectors. Async-first. Built-in stores: LocalVectorStore (in-process usearch HNSW), PineconeVectorStore (Pinecone cloud), DatabricksVectorStore (Databricks Vector Search).
+- **EmbeddingProvider** — converts text to vectors. Async-first, with `embed()` and `embed_batch()` methods. Built-in providers: OpenAI (API), LangChain adapter (any LangChain `Embeddings` instance).
+- **SearchProvider** — stores and searches vectors, with optional lexical search. Async-first. Built-in stores: `LocalVectorStore` (in-process usearch HNSW), `PineconeVectorStore` (Pinecone cloud), `DatabricksVectorStore` (Databricks Vector Search).
 
-**SearchEngine** orchestrates them: embed text via provider → store vectors via store → search by embedding queries. `GroverAsync` creates a `SearchEngine` per mount and wires it into the mount's search slot.
+Both providers live directly on the filesystem. `DatabaseFileSystem.SearchMethodsMixin` orchestrates them: embed text via `embedding_provider` → store/search vectors via `search_provider.vector_search()`. There is no `SearchEngine` intermediary — the filesystem itself coordinates embedding and search.
 
-**Construction-time validation.** `SearchEngine` validates component compatibility at construction time rather than at query time. If a vector store exposes a `dimension` property (duck-typed via `getattr`), the engine checks it matches the embedding provider's `dimensions`. A declared `model_name` is cross-checked against the provider's `model_name`. This catches model swaps and dimension mismatches before any data is indexed.
+**No auto-creation**: Unlike the `graph_provider` (which is auto-injected as a `RustworkxGraph`), search providers are never auto-created. Users must explicitly pass both `search_provider` and `embedding_provider` to `add_mount()`. If either is missing, search operations return `success=False` with a descriptive message.
+
+**Construction-time validation**: When both `embedding_provider` and `search_provider` are set on a filesystem, `_validate_search_dimensions()` checks that the store's dimension (if exposed) matches the provider's `dimensions`. This catches model swaps and dimension mismatches before data is indexed.
 
 ### Capability protocols (search)
 
@@ -409,7 +423,7 @@ Metadata filters are expressed as a provider-agnostic AST (`Comparison` and `Log
 4. Add the provider to `src/grover/search/providers/__init__.py`.
 5. Add tests in `tests/test_embedding_providers.py`.
 
-The provider is passed to `Grover(embedding_provider=...)` at construction time.
+The provider is passed to `add_mount(..., embedding_provider=...)` at mount time.
 
 ## Integration async patterns
 
@@ -432,10 +446,10 @@ All five integration classes (`GroverBackend`, `GroverMiddleware`, `GroverRetrie
 ## Adding a new vector store
 
 1. Create `src/grover/search/stores/your_store.py`.
-2. Implement the `VectorStore` protocol: `upsert()`, `search()`, `delete()`, `fetch()`, `connect()`, `close()`, and `index_name` property.
+2. Implement the `SearchProvider` protocol: `upsert()`, `vector_search()`, `delete()`, `fetch()`, `lexical_search()`, `connect()`, `close()`.
 3. Add any applicable capability protocols (e.g., `SupportsMetadataFilter`).
 4. Import-guard any optional dependencies.
 5. Add the store to `src/grover/search/stores/__init__.py`.
 6. Add tests in `tests/test_your_store.py`.
 
-The store is passed to `Grover(vector_store=...)` at construction time.
+The store is passed to `add_mount(..., search_provider=...)` at mount time. Stores that don't support lexical search should return an empty `LexicalSearchResult` from `lexical_search()`.

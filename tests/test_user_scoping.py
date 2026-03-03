@@ -20,6 +20,7 @@ from grover.fs.sharing import SharingService
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.models.files import File
 from grover.models.shares import FileShare
+from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -40,7 +41,7 @@ async def auth_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsync:
     backend = UserScopedFileSystem()
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
-    g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+    g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g  # type: ignore[misc]
     await g.close()
@@ -55,7 +56,7 @@ async def shared_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsyn
     backend = UserScopedFileSystem(sharing=sharing)
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
-    g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+    g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g  # type: ignore[misc]
     await g.close()
@@ -69,7 +70,7 @@ async def regular_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsy
     backend = DatabaseFileSystem()
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
-    g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+    g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g  # type: ignore[misc]
     await g.close()

@@ -77,11 +77,12 @@ if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.connections import FileConnectionBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.search.protocols import EmbeddingProvider, VectorStore
 
     from .providers.protocols import (
         ChunkProvider,
+        EmbeddingProvider,
         GraphProvider,
+        SearchProvider,
         StorageProvider,
         VersionProvider,
     )
@@ -106,7 +107,7 @@ class DatabaseFileSystem(
 
     - ``storage_provider`` — external content I/O + queries (None = DB content)
     - ``graph_provider`` — in-memory graph (None = no graph)
-    - ``search_provider`` — vector store (None = no vector search)
+    - ``search_provider`` — search provider (None = no search)
     - ``embedding_provider`` — embedding model (None = no embeddings)
     - ``version_provider`` — version management (default: ``DefaultVersionProvider``)
     - ``chunk_provider`` — chunk management (default: ``DefaultChunkProvider``)
@@ -123,7 +124,7 @@ class DatabaseFileSystem(
         *,
         storage_provider: StorageProvider | None = None,
         graph_provider: GraphProvider | None = None,
-        search_provider: VectorStore | None = None,
+        search_provider: SearchProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         version_provider: VersionProvider | None = None,
         chunk_provider: ChunkProvider | None = None,

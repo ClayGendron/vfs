@@ -16,6 +16,12 @@ from grover.search.types import (
     VectorEntry,
     VectorHit,
 )
+from grover.types.search import (
+    FileSearchResult,
+    LexicalSearchResult,
+    VectorEvidence,
+    VectorSearchResult,
+)
 
 try:
     from pinecone import PineconeAsyncio, ServerlessSpec
@@ -137,6 +143,46 @@ class PineconeVectorStore:
                 )
             )
         return results
+
+    async def vector_search(
+        self,
+        vector: list[float],
+        *,
+        k: int = 10,
+        namespace: str | None = None,
+        filter: FilterExpression | None = None,
+        include_metadata: bool = True,
+        score_threshold: float | None = None,
+    ) -> VectorSearchResult:
+        """Query the index, returning a ``VectorSearchResult``."""
+        hits = await self.search(
+            vector,
+            k=k,
+            namespace=namespace,
+            filter=filter,
+            include_metadata=include_metadata,
+            score_threshold=score_threshold,
+        )
+
+        entries: dict[str, list[VectorEvidence]] = {}
+        for hit in hits:
+            fp = hit.metadata.get("parent_path") or hit.id
+            content = hit.metadata.get("content", "")
+            snippet = content[:200] + ("..." if len(content) > 200 else "") if content else ""
+            ev = VectorEvidence(strategy="vector_search", path=fp, snippet=snippet)
+            entries.setdefault(fp, []).append(ev)
+
+        return VectorSearchResult(
+            success=True,
+            message=f"Found matches in {len(entries)} file(s)",
+            candidates=FileSearchResult._dict_to_candidates(entries),
+        )
+
+    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult:
+        """Pinecone is vector-only — lexical search returns empty result."""
+        return LexicalSearchResult(
+            success=True, message="Lexical search not supported by PineconeVectorStore"
+        )
 
     async def delete(
         self,

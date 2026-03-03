@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from grover.fs.protocol import SupportsSearch
 from grover.fs.utils import normalize_path
 from grover.types import (
     FileSearchCandidate,
@@ -14,7 +15,6 @@ from grover.types import (
     LexicalSearchResult,
     TreeEvidence,
     TreeResult,
-    VectorEvidence,
     VectorSearchResult,
 )
 
@@ -226,76 +226,59 @@ class SearchOpsMixin:
         path: str = "/",
         user_id: str | None = None,
     ) -> VectorSearchResult:
-        """Semantic (vector) search, routed to per-mount search engines."""
+        """Semantic (vector) search, routed to per-mount filesystem providers."""
         path = normalize_path(path)
 
-        # Check if any mount has a search engine with vector capability
+        # Check if any mount has search providers
         has_search = any(
-            mount.search is not None for mount in self._ctx.registry.list_visible_mounts()
+            isinstance(mount.filesystem, SupportsSearch)
+            and getattr(mount.filesystem, "search_provider", None) is not None
+            and getattr(mount.filesystem, "embedding_provider", None) is not None
+            for mount in self._ctx.registry.list_visible_mounts()
         )
         if not has_search:
             return VectorSearchResult(
                 success=False,
                 message=(
-                    "Vector search is not available: no embedding provider "
-                    "configured. Install sentence-transformers or pass "
-                    "embedding_provider= to GroverAsync()."
+                    "Vector search is not available: no search_provider and/or "
+                    "embedding_provider configured. Pass both to add_mount()."
                 ),
             )
-        # Collect (result, mount_path) pairs — SearchResult is frozen so we
-        # cannot attach attributes to it.  Use a parallel list instead.
+
         try:
             if path == "/":
-                tagged: list[tuple[Any, str]] = []
+                combined = VectorSearchResult(success=True, message="")
                 for mount in self._ctx.registry.list_visible_mounts():
-                    if mount.search is None:
+                    if not isinstance(mount.filesystem, SupportsSearch):
                         continue
-                    results = await mount.search.search(query, k)
-                    tagged.extend((r, mount.path) for r in results)
-                tagged.sort(key=lambda t: t[0].score, reverse=True)
-                tagged = tagged[:k]
+                    if getattr(mount.filesystem, "search_provider", None) is None:
+                        continue
+                    if getattr(mount.filesystem, "embedding_provider", None) is None:
+                        continue
+                    result = await mount.filesystem.search_query(query, k)
+                    if result.success:
+                        combined = combined | result.rebase(mount.path)
+                combined.message = f"Found matches in {len(combined)} file(s)"
+                return combined
             else:
-                mount, rel_path = self._ctx.registry.resolve(path)
-                if mount.search is None:
-                    tagged = []
-                else:
-                    results = await mount.search.search(query, k)
-                    if rel_path != "/":
-                        prefix = rel_path.rstrip("/") + "/"
-                        results = [
-                            r
-                            for r in results
-                            if (r.parent_path or r.ref.path).startswith(prefix)
-                            or (r.parent_path or r.ref.path) == rel_path.rstrip("/")
-                        ]
-                    tagged = [(r, mount.path) for r in results]
+                mount, _rel_path = self._ctx.registry.resolve(path)
+                if not isinstance(mount.filesystem, SupportsSearch):
+                    return VectorSearchResult(
+                        success=False, message="Mount does not support search"
+                    )
+                if getattr(mount.filesystem, "search_provider", None) is None:
+                    return VectorSearchResult(success=False, message="No search_provider on mount")
+                if getattr(mount.filesystem, "embedding_provider", None) is None:
+                    return VectorSearchResult(
+                        success=False, message="No embedding_provider on mount"
+                    )
+                result = await mount.filesystem.search_query(query, k)
+                return result.rebase(mount.path)
         except Exception as e:
             return VectorSearchResult(
                 success=False,
                 message=f"Vector search failed: {e}",
             )
-
-        # Build VectorSearchResult with VectorEvidence
-        entries: dict[str, list[Any]] = {}
-        for r, mount_path in tagged:
-            fp = r.parent_path or r.ref.path
-            if mount_path and not fp.startswith(mount_path):
-                fp = mount_path + fp
-            snippet = r.content[:200]
-            if len(r.content) > 200:
-                snippet += "..."
-            ev = VectorEvidence(
-                strategy="vector_search",
-                path=fp,
-                snippet=snippet,
-            )
-            entries.setdefault(fp, []).append(ev)
-
-        return VectorSearchResult(
-            success=True,
-            message=f"Found matches in {len(entries)} file(s)",
-            candidates=FileSearchResult._dict_to_candidates(entries),
-        )
 
     async def lexical_search(
         self,
@@ -305,24 +288,26 @@ class SearchOpsMixin:
         path: str = "/",
         user_id: str | None = None,
     ) -> LexicalSearchResult:
-        """BM25/full-text search, routed to per-mount search engines."""
+        """BM25/full-text search, routed to per-mount filesystem providers."""
         path = normalize_path(path)
 
         try:
             if path == "/":
                 combined: LexicalSearchResult = LexicalSearchResult(success=True, message="")
                 for mount in self._ctx.registry.list_visible_mounts():
-                    if mount.search is None or mount.search.lexical is None:
+                    if not isinstance(mount.filesystem, SupportsSearch):
                         continue
                     async with self._ctx.session_for(mount) as sess:
-                        fts_results = await mount.search.lexical_search(query, k=k, session=sess)
+                        fts_results = await mount.filesystem.lexical_search_query(
+                            query, k=k, session=sess
+                        )
                     mount_entries: dict[str, list[Any]] = {}
-                    for ftr in fts_results:
-                        fp = mount.path + ftr.path
+                    for sr in fts_results:
+                        fp = mount.path + sr.ref.path
                         ev = LexicalEvidence(
                             strategy="lexical_search",
                             path=fp,
-                            snippet=ftr.snippet,
+                            snippet=sr.content[:200] if sr.content else "",
                         )
                         mount_entries.setdefault(fp, []).append(ev)
                     mount_result = LexicalSearchResult(
@@ -335,20 +320,22 @@ class SearchOpsMixin:
                 return combined
             else:
                 mount, _rel_path = self._ctx.registry.resolve(path)
-                if mount.search is None or mount.search.lexical is None:
+                if not isinstance(mount.filesystem, SupportsSearch):
                     return LexicalSearchResult(
                         success=False,
                         message="Lexical search not available on this mount",
                     )
                 async with self._ctx.session_for(mount) as sess:
-                    fts_results = await mount.search.lexical_search(query, k=k, session=sess)
+                    fts_results = await mount.filesystem.lexical_search_query(
+                        query, k=k, session=sess
+                    )
                 entries: dict[str, list[Any]] = {}
-                for ftr in fts_results:
-                    fp = mount.path + ftr.path
+                for sr in fts_results:
+                    fp = mount.path + sr.ref.path
                     ev = LexicalEvidence(
                         strategy="lexical_search",
                         path=fp,
-                        snippet=ftr.snippet,
+                        snippet=sr.content[:200] if sr.content else "",
                     )
                     entries.setdefault(fp, []).append(ev)
                 return LexicalSearchResult(
@@ -382,13 +369,13 @@ class SearchOpsMixin:
         lex_result: FileSearchResult | None = None
 
         has_vector = any(
-            mount.search is not None
-            and mount.search.vector is not None
-            and mount.search.embedding is not None
+            isinstance(mount.filesystem, SupportsSearch)
+            and getattr(mount.filesystem, "search_provider", None) is not None
+            and getattr(mount.filesystem, "embedding_provider", None) is not None
             for mount in self._ctx.registry.list_visible_mounts()
         )
         has_lexical = any(
-            mount.search is not None and mount.search.lexical is not None
+            isinstance(mount.filesystem, SupportsSearch)
             for mount in self._ctx.registry.list_visible_mounts()
         )
 

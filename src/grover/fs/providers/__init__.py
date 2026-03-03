@@ -4,7 +4,9 @@ from .defaults import DefaultChunkProvider, DefaultVersionProvider
 from .disk import DiskStorageProvider
 from .protocols import (
     ChunkProvider,
+    EmbeddingProvider,
     GraphProvider,
+    SearchProvider,
     StorageProvider,
     SupportsStorageQueries,
     SupportsStorageReconcile,
@@ -16,7 +18,9 @@ __all__ = [
     "DefaultChunkProvider",
     "DefaultVersionProvider",
     "DiskStorageProvider",
+    "EmbeddingProvider",
     "GraphProvider",
+    "SearchProvider",
     "StorageProvider",
     "SupportsStorageQueries",
     "SupportsStorageReconcile",

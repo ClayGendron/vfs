@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING
-
 from grover.facade.connections import ConnectionMixin
 from grover.facade.context import GroverContext
 from grover.facade.file_ops import FileOpsMixin
@@ -17,9 +14,6 @@ from grover.facade.version_trash import VersionTrashMixin
 from grover.graph.analyzers import AnalyzerRegistry
 from grover.mount.mounts import MountRegistry
 from grover.worker import BackgroundWorker, IndexingMode
-
-if TYPE_CHECKING:
-    from grover.search.protocols import EmbeddingProvider, VectorStore
 
 
 class GroverAsync(
@@ -39,8 +33,13 @@ class GroverAsync(
     Engine-based DB mount (primary API)::
 
         engine = create_async_engine("postgresql+asyncpg://...")
-        g = GroverAsync(data_dir="/myapp/.grover")
+        g = GroverAsync()
         await g.add_mount("/data", engine=engine)
+
+    With search (pass embedding_provider to add_mount)::
+
+        g = GroverAsync()
+        await g.add_mount("/data", engine=engine, embedding_provider=embed)
 
     Direct access — auto-commits per operation::
 
@@ -52,9 +51,6 @@ class GroverAsync(
     def __init__(
         self,
         *,
-        data_dir: str | Path | None = None,
-        embedding_provider: EmbeddingProvider | None = None,
-        vector_store: VectorStore | None = None,
         indexing_mode: IndexingMode = IndexingMode.BACKGROUND,
         debounce_delay: float = 0.1,
     ) -> None:
@@ -62,8 +58,5 @@ class GroverAsync(
             worker=BackgroundWorker(indexing_mode=indexing_mode, debounce_delay=debounce_delay),
             registry=MountRegistry(),
             analyzer_registry=AnalyzerRegistry(),
-            embedding_provider=embedding_provider,
-            explicit_vector_store=vector_store,
-            explicit_data_dir=Path(data_dir) if data_dir else None,
             indexing_mode=indexing_mode,
         )

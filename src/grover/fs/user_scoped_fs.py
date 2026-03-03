@@ -52,11 +52,12 @@ if TYPE_CHECKING:
 
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.search.protocols import EmbeddingProvider, VectorStore
 
     from .providers.protocols import (
         ChunkProvider,
+        EmbeddingProvider,
         GraphProvider,
+        SearchProvider,
         StorageProvider,
         VersionProvider,
     )
@@ -88,7 +89,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         schema: str | None = None,
         storage_provider: StorageProvider | None = None,
         graph_provider: GraphProvider | None = None,
-        search_provider: VectorStore | None = None,
+        search_provider: SearchProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         version_provider: VersionProvider | None = None,
         chunk_provider: ChunkProvider | None = None,

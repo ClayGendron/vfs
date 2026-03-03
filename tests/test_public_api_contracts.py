@@ -203,10 +203,10 @@ class BadCommitSession:
 
 @pytest.mark.asyncio
 async def test_async_unmount_requires_exact_mount_path(tmp_path: Path) -> None:
-    g = GroverAsync(embedding_provider=FakeProvider())
+    g = GroverAsync()
     backend = InMemoryBackend()
     try:
-        await g.add_mount("/app", backend)
+        await g.add_mount("/app", backend, embedding_provider=FakeProvider())
         await g.unmount("/app/subpath")
         assert g._ctx.registry.has_mount("/app")
         assert backend.close_calls == 0
@@ -216,10 +216,10 @@ async def test_async_unmount_requires_exact_mount_path(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_async_mount_open_failure_does_not_register_mount(tmp_path: Path) -> None:
-    g = GroverAsync(embedding_provider=FakeProvider())
+    g = GroverAsync()
     try:
         with pytest.raises(RuntimeError, match="open failed"):
-            await g.add_mount("/bad", OpenFailBackend())
+            await g.add_mount("/bad", OpenFailBackend(), embedding_provider=FakeProvider())
         assert not g._ctx.registry.has_mount("/bad")
     finally:
         await g.close()
@@ -227,9 +227,9 @@ async def test_async_mount_open_failure_does_not_register_mount(tmp_path: Path) 
 
 @pytest.mark.asyncio
 async def test_async_write_edit_delete_return_result_types(tmp_path: Path) -> None:
-    g = GroverAsync(embedding_provider=FakeProvider())
+    g = GroverAsync()
     try:
-        await g.add_mount("/app", InMemoryBackend())
+        await g.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider())
         write_result = await g.write("/app/file.txt", "hello")
         edit_result = await g.edit("/app/file.txt", "hello", "world")
         delete_result = await g.delete("/app/file.txt", permanent=True)
@@ -246,9 +246,9 @@ async def test_async_write_edit_delete_return_result_types(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_async_write_commit_failure_returns_failed_result(tmp_path: Path) -> None:
-    g = GroverAsync(embedding_provider=FakeProvider())
+    g = GroverAsync()
     try:
-        await g.add_mount("/app", InMemoryBackend())
+        await g.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider())
         mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/app")
         mount.session_factory = BadCommitSession
 
@@ -261,9 +261,9 @@ async def test_async_write_commit_failure_returns_failed_result(tmp_path: Path) 
 
 
 def test_sync_write_edit_delete_return_result_types(tmp_path: Path) -> None:
-    g = Grover(embedding_provider=FakeProvider())
+    g = Grover()
     try:
-        g.add_mount("/app", InMemoryBackend())
+        g.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider())
         write_result = g.write("/app/file.txt", "hello")
         edit_result = g.edit("/app/file.txt", "hello", "world")
         delete_result = g.delete("/app/file.txt", permanent=True)
@@ -279,9 +279,9 @@ def test_sync_write_edit_delete_return_result_types(tmp_path: Path) -> None:
 
 
 def test_sync_write_commit_failure_returns_failed_result(tmp_path: Path) -> None:
-    g = Grover(embedding_provider=FakeProvider())
+    g = Grover()
     try:
-        g.add_mount("/app", InMemoryBackend())
+        g.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider())
         mount = next(m for m in g._async._ctx.registry.list_mounts() if m.path == "/app")
         mount.session_factory = BadCommitSession
 
@@ -310,12 +310,6 @@ def test_version_matches_pyproject() -> None:
 # ======================================================================
 # Graph protocol and algorithm exports
 # ======================================================================
-
-
-def test_graph_store_exported() -> None:
-    from grover import GraphStore
-
-    assert GraphStore is not None
 
 
 def test_graph_provider_exported() -> None:
@@ -428,12 +422,12 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         def is_dag(self) -> bool:
             return True
 
-    ga = GroverAsync(embedding_provider=FakeProvider())
+    ga = GroverAsync()
     try:
-        await ga.add_mount("/app", InMemoryBackend())
+        await ga.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider())
         # Inject MinimalGraph onto the mounted backend
         mount = next(m for m in ga._ctx.registry.list_visible_mounts() if m.path == "/app")
-        mount.graph = MinimalGraph()
+        mount.filesystem.graph_provider = MinimalGraph()
         with pytest.raises(CapabilityNotSupportedError):
             ga.pagerank(path="/app")
         with pytest.raises(CapabilityNotSupportedError):

@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from grover.fs.protocol import StorageBackend
+    from grover.fs.providers.protocols import EmbeddingProvider, SearchProvider
     from grover.graph.protocols import GraphStore
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
     from grover.mount import Mount
-    from grover.search.protocols import EmbeddingProvider, VectorStore
     from grover.types import (
         ConnectionListResult,
         ConnectionResult,
@@ -62,8 +62,10 @@ class Grover:
 
     Usage::
 
-        g = Grover(embedding_provider=FakeProvider())
-        g.add_mount("/project", LocalFileSystem(workspace_dir="."))
+        g = Grover()
+        g.add_mount(
+            "/project", LocalFileSystem(workspace_dir="."), embedding_provider=embed
+        )
         g.write("/project/hello.py", "print('hi')")
         g.close()
     """
@@ -71,8 +73,6 @@ class Grover:
     def __init__(
         self,
         *,
-        embedding_provider: EmbeddingProvider | None = None,
-        vector_store: VectorStore | None = None,
         indexing_mode: IndexingMode = IndexingMode.BACKGROUND,
         debounce_delay: float = 0.1,
     ) -> None:
@@ -85,8 +85,6 @@ class Grover:
         self._thread.start()
 
         self._async = GroverAsync(
-            embedding_provider=embedding_provider,
-            vector_store=vector_store,
             indexing_mode=indexing_mode,
             debounce_delay=debounce_delay,
         )
@@ -137,6 +135,8 @@ class Grover:
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         hidden: bool = False,
+        embedding_provider: EmbeddingProvider | None = None,
+        search_provider: SearchProvider | None = None,
     ) -> None:
         """Add a mount at *path* with *filesystem*."""
         self._run(
@@ -154,6 +154,8 @@ class Grover:
                 permission=permission,
                 label=label,
                 hidden=hidden,
+                embedding_provider=embedding_provider,
+                search_provider=search_provider,
             )
         )
 

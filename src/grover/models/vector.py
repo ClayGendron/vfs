@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from pydantic_core import CoreSchema
     from sqlalchemy.engine.interfaces import Dialect
 
-    from grover.search.protocols import EmbeddingProvider
+    from grover.fs.providers.protocols import EmbeddingProvider
 
 
 class Vector(list[float]):

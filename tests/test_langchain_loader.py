@@ -37,7 +37,7 @@ def workspace(tmp_path: Path) -> Path:
 @pytest.fixture
 def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
-    g = Grover(data_dir=str(data))
+    g = Grover()
     g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
@@ -51,7 +51,7 @@ def loader(grover: Grover) -> GroverLoader:
 @pytest.fixture
 async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data_async"
-    g = GroverAsync(data_dir=str(data))
+    g = GroverAsync()
     await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
@@ -240,7 +240,7 @@ def _make_sync_loader(tmp_path: Path) -> tuple[GroverLoader, GroverAsync]:
     ws.mkdir(exist_ok=True)
 
     async def _setup() -> GroverAsync:
-        g = GroverAsync(data_dir=str(data))
+        g = GroverAsync()
         await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
         return g
 

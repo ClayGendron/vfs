@@ -5,26 +5,21 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from grover.fs.exceptions import MountNotFoundError
-from grover.fs.local_fs import LocalFileSystem
 from grover.fs.permissions import Permission
-from grover.search._engine import SearchEngine
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
-    from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.fs.providers.protocols import GraphProvider
     from grover.graph.analyzers import AnalyzerRegistry
-    from grover.graph.protocols import GraphStore
     from grover.mount import Mount
     from grover.mount.mounts import MountRegistry
-    from grover.search.fulltext.protocol import FullTextStore
-    from grover.search.protocols import EmbeddingProvider, VectorStore
     from grover.types import FileInfoResult
     from grover.worker import BackgroundWorker
 
@@ -40,12 +35,8 @@ class GroverContext:
     worker: BackgroundWorker
     registry: MountRegistry
     analyzer_registry: AnalyzerRegistry
-    embedding_provider: EmbeddingProvider | None = None
-    explicit_vector_store: VectorStore | None = None
-    explicit_data_dir: Path | None = None
-    meta_fs: LocalFileSystem | None = None
-    meta_data_dir: Path | None = None
     indexing_mode: IndexingMode = IndexingMode.BACKGROUND
+    initialized: bool = False
     closed: bool = False
 
     # ------------------------------------------------------------------
@@ -109,103 +100,29 @@ class GroverContext:
         return info
 
     # ------------------------------------------------------------------
-    # Per-mount graph / search resolution
+    # Per-mount graph resolution
     # ------------------------------------------------------------------
 
-    def resolve_graph(self, path: str) -> GraphStore:
-        """Return the graph for the mount owning *path*."""
+    def resolve_graph(self, path: str) -> GraphProvider:
+        """Return the graph provider for the mount owning *path*."""
         try:
             mount, _rel = self.registry.resolve(path)
         except MountNotFoundError:
             msg = f"No mount found for path: {path!r}"
             raise RuntimeError(msg) from None
-        if mount.graph is None:
+        gp = getattr(mount.filesystem, "graph_provider", None)
+        if gp is None:
             msg = f"No graph on mount at {mount.path}"
             raise RuntimeError(msg)
-        return mount.graph
+        return gp
 
-    def resolve_search_engine(self, path: str) -> SearchEngine | None:
-        """Return the search engine for the mount owning *path*, or None."""
-        try:
-            mount, _rel = self.registry.resolve(path)
-        except MountNotFoundError:
-            return None
-        return mount.search
-
-    def resolve_graph_any(self, path: str | None = None) -> GraphStore:
+    def resolve_graph_any(self, path: str | None = None) -> GraphProvider:
         """Get graph for a specific path, or first available mount's graph."""
         if path is not None:
             return self.resolve_graph(path)
         for mount in self.registry.list_visible_mounts():
-            if mount.graph is not None:
-                return mount.graph
+            gp = getattr(mount.filesystem, "graph_provider", None)
+            if gp is not None:
+                return gp
         msg = "No graph available on any mount"
         raise RuntimeError(msg)
-
-    # ------------------------------------------------------------------
-    # Search / Graph factory helpers
-    # ------------------------------------------------------------------
-
-    def create_search_engine(self, *, lexical: FullTextStore | None = None) -> SearchEngine | None:
-        """Create a new SearchEngine for a mount."""
-        vector: Any = None
-        embedding = self.embedding_provider
-
-        if self.explicit_vector_store is not None:
-            vector = self.explicit_vector_store
-        elif embedding is not None:
-            from grover.search.stores.local import LocalVectorStore
-
-            vector = LocalVectorStore(dimension=embedding.dimensions)
-
-        # If we have nothing at all, no search engine
-        if vector is None and embedding is None and lexical is None:
-            return None
-
-        return SearchEngine(vector=vector, embedding=embedding, lexical=lexical)
-
-    async def create_fulltext_store(self, config: Mount) -> FullTextStore | None:
-        """Create a FullTextStore for the mount based on its dialect."""
-        from grover.search.fulltext.sqlite import SQLiteFullTextStore
-
-        if isinstance(config.filesystem, LocalFileSystem):
-            engine = getattr(config.filesystem, "_engine", None)
-            if engine is not None:
-                fts = SQLiteFullTextStore(engine=engine)
-                await fts.ensure_table()
-                return fts
-            return None
-
-        if config.session_factory is not None:
-            # Detect dialect from session factory's engine if available
-            sf = config.session_factory
-            bind = getattr(sf, "kw", {}).get("bind", None)
-            if bind is None:
-                bind = getattr(sf, "class_", None)
-                if bind is None:
-                    return None
-                bind = getattr(bind, "bind", None)
-            if bind is None:
-                return None
-
-            from grover.fs.dialect import get_dialect
-
-            dialect = get_dialect(bind)
-            if dialect == "sqlite":
-                fts = SQLiteFullTextStore(engine=bind)
-                await fts.ensure_table()
-                return fts
-            if dialect == "postgresql":
-                from grover.search.fulltext.postgres import PostgresFullTextStore
-
-                fts_pg = PostgresFullTextStore(engine=bind)
-                await fts_pg.ensure_table()
-                return fts_pg
-            if dialect == "mssql":
-                from grover.search.fulltext.mssql import MSSQLFullTextStore
-
-                fts_mssql = MSSQLFullTextStore(engine=bind)
-                await fts_mssql.ensure_table()
-                return fts_mssql
-
-        return None
