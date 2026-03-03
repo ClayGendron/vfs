@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.metadata import compute_content_hash
 from grover.fs.operations import check_external_edit
+from grover.fs.utils import compute_content_hash
 from grover.models.files import File, FileVersion
 
 

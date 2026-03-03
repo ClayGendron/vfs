@@ -22,8 +22,9 @@ from grover.types.operations import (
 )
 from grover.types.search import FileSearchCandidate, ListDirEvidence, ListDirResult
 
-from .metadata import MetadataService, compute_content_hash
+from .metadata import MetadataService
 from .utils import (
+    compute_content_hash,
     guess_mime_type,
     is_text_file,
     is_trash_path,
@@ -140,7 +141,47 @@ async def read_file(
     if content is None:
         return ReadResult(success=False, message=f"File content not found: {path}")
 
-    return MetadataService.paginate_content(content, path, offset, limit)
+    return paginate_content(content, path, offset, limit)
+
+
+def paginate_content(
+    content: str,
+    path: str,
+    offset: int,
+    limit: int,
+) -> ReadResult:
+    """Paginate file content and return raw text."""
+    lines = content.split("\n")
+    total_lines = len(lines)
+
+    if total_lines == 0 or (total_lines == 1 and lines[0] == ""):
+        return ReadResult(
+            success=True,
+            message="File is empty.",
+            content="",
+            path=path,
+            total_lines=0,
+            lines_read=0,
+            truncated=False,
+            line_offset=offset,
+        )
+
+    end_line = min(len(lines), offset + limit)
+    output_lines = lines[offset:end_line]
+
+    last_read_line = offset + len(output_lines)
+    has_more = total_lines > last_read_line
+
+    return ReadResult(
+        success=True,
+        message=f"Read {len(output_lines)} lines from {path}",
+        content="\n".join(output_lines),
+        path=path,
+        total_lines=total_lines,
+        lines_read=len(output_lines),
+        truncated=has_more,
+        line_offset=offset,
+    )
 
 
 async def write_file(

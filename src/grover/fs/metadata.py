@@ -1,13 +1,12 @@
-"""MetadataService — file lookup, info conversion, content hashing."""
+"""MetadataService — file lookup and info conversion."""
 
 from __future__ import annotations
 
-import hashlib
 from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from grover.types.operations import ExistsResult, FileInfoResult, ReadResult
+from grover.types.operations import ExistsResult, FileInfoResult
 
 from .utils import normalize_path, validate_path
 
@@ -15,12 +14,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.files import FileBase
-
-
-def compute_content_hash(content: str) -> tuple[str, int]:
-    """Return (sha256_hex, size_bytes) for *content*."""
-    encoded = content.encode()
-    return hashlib.sha256(encoded).hexdigest(), len(encoded)
 
 
 class MetadataService:
@@ -88,44 +81,4 @@ class MetadataService:
             version=f.current_version,
             created_at=f.created_at,
             updated_at=f.updated_at,
-        )
-
-    @staticmethod
-    def paginate_content(
-        content: str,
-        path: str,
-        offset: int,
-        limit: int,
-    ) -> ReadResult:
-        """Paginate file content and return raw text."""
-        lines = content.split("\n")
-        total_lines = len(lines)
-
-        if total_lines == 0 or (total_lines == 1 and lines[0] == ""):
-            return ReadResult(
-                success=True,
-                message="File is empty.",
-                content="",
-                path=path,
-                total_lines=0,
-                lines_read=0,
-                truncated=False,
-                line_offset=offset,
-            )
-
-        end_line = min(len(lines), offset + limit)
-        output_lines = lines[offset:end_line]
-
-        last_read_line = offset + len(output_lines)
-        has_more = total_lines > last_read_line
-
-        return ReadResult(
-            success=True,
-            message=f"Read {len(output_lines)} lines from {path}",
-            content="\n".join(output_lines),
-            path=path,
-            total_lines=total_lines,
-            lines_read=len(output_lines),
-            truncated=has_more,
-            line_offset=offset,
         )

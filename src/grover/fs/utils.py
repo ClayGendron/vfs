@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import posixpath
 import re
@@ -13,6 +14,18 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from grover.types.operations import ReadResult
+
+
+# =============================================================================
+# Content Hashing
+# =============================================================================
+
+
+def compute_content_hash(content: str) -> tuple[str, int]:
+    """Return (sha256_hex, size_bytes) for *content*."""
+    encoded = content.encode()
+    return hashlib.sha256(encoded).hexdigest(), len(encoded)
+
 
 # =============================================================================
 # Text File Extensions (allowed for write operations)

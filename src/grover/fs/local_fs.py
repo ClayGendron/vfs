@@ -70,6 +70,7 @@ from .operations import (
     delete_file,
     edit_file,
     move_file,
+    paginate_content,
     write_file,
 )
 from .trash import TrashService
@@ -410,7 +411,7 @@ class LocalFileSystem:
         if content is None:
             return ReadResult(success=False, message=f"Could not read file: {path}")
 
-        return MetadataService.paginate_content(content, path, offset, limit)
+        return paginate_content(content, path, offset, limit)
 
     async def write(
         self,

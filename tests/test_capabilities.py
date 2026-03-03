@@ -360,8 +360,12 @@ class TestCapabilityGating:
 
     async def test_reconcile_skips_unsupported(self, minimal_grover: GroverAsync) -> None:
         """Reconcile skips non-reconcilable backends."""
-        stats = await minimal_grover.reconcile()
-        assert stats == {"created": 0, "updated": 0, "deleted": 0, "chain_errors": 0}
+        result = await minimal_grover.reconcile()
+        assert result.success
+        assert result.created == 0
+        assert result.updated == 0
+        assert result.deleted == 0
+        assert result.chain_errors == 0
 
 
 # =========================================================================
