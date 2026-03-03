@@ -812,7 +812,7 @@ class RustworkxGraph:
         """
         from sqlalchemy import select
 
-        from grover.models.connections import FileConnection
+        from grover.models.connection import FileConnection
 
         # Build FileConnection instances from in-memory graph
         graph_edges: dict[str, FileConnection] = {}
@@ -872,10 +872,10 @@ class RustworkxGraph:
         """
         from sqlalchemy import select
 
-        from grover.models.connections import FileConnection
+        from grover.models.connection import FileConnection
 
         if file_model is None:
-            from grover.models.files import File
+            from grover.models.file import File
 
             file_model = File
 

@@ -9,8 +9,8 @@ from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.tools import BaseTool, StructuredTool
 
 if TYPE_CHECKING:
-    from grover._grover import Grover
-    from grover._grover_async import GroverAsync
+    from grover.grover import Grover
+    from grover.grover_async import GroverAsync
 
 
 # ------------------------------------------------------------------
@@ -157,7 +157,7 @@ class GroverMiddleware(AgentMiddleware):
         enable_search: bool = True,
         enable_graph: bool = True,
     ) -> None:
-        from grover._grover_async import GroverAsync
+        from grover.grover_async import GroverAsync
 
         self.grover = grover
         self._is_async = isinstance(grover, GroverAsync)

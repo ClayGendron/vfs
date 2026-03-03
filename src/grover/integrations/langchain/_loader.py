@@ -14,8 +14,8 @@ from grover.fs.utils import has_binary_extension
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
-    from grover._grover import Grover
-    from grover._grover_async import GroverAsync
+    from grover.grover import Grover
+    from grover.grover_async import GroverAsync
 
 
 class GroverLoader(BaseLoader):
@@ -57,7 +57,7 @@ class GroverLoader(BaseLoader):
         glob_pattern: str | None = None,
         recursive: bool = True,
     ) -> None:
-        from grover._grover_async import GroverAsync
+        from grover.grover_async import GroverAsync
 
         self.grover = grover
         self.path = path

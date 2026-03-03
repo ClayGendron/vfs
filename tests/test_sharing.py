@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from grover.fs.sharing import SharingService
-from grover.models.shares import FileShare
+from grover.models.share import FileShare
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

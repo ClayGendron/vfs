@@ -17,7 +17,7 @@ from .utils import normalize_path
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.shares import FileShareBase
+    from grover.models.share import FileShareBase
 
 
 class SharingService:

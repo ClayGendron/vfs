@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover._grover_async import GroverAsync
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.sharing import SharingService
 from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.models.shares import FileShare
+from grover.grover_async import GroverAsync
+from grover.models.share import FileShare
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:

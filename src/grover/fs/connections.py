@@ -11,7 +11,7 @@ from grover.types.operations import ConnectionListResult, ConnectionResult
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.connections import FileConnectionBase
+    from grover.models.connection import FileConnectionBase
 
 
 class ConnectionService:

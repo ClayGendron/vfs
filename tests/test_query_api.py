@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.providers.search.local import LocalVectorStore
+from grover.grover_async import GroverAsync
 from grover.types import GlobResult, GrepResult, LineMatch, VectorSearchResult
 
 if TYPE_CHECKING:
@@ -203,7 +203,7 @@ class TestVectorSearchQueryApi:
     @pytest.mark.asyncio
     async def test_vector_search_snippets(self, grover: GroverAsync):
         await grover.write(
-            "/project/chunks.py",
+            "/project/chunk.py",
             'def chunk_func():\n    """A chunk."""\n    return 42\n',
         )
         result = await grover.vector_search("chunk_func")

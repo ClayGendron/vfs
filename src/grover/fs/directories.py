@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.files import FileBase
+    from grover.models.file import FileBase
 
     GetFile = Callable[[AsyncSession, str, bool], Awaitable[FileBase | None]]
 

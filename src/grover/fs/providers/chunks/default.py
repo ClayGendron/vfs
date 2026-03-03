@@ -11,7 +11,7 @@ from grover.types.operations import ChunkListResult, ChunkResult
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.chunks import FileChunkBase
+    from grover.models.chunk import FileChunkBase
 
 
 class DefaultChunkProvider:

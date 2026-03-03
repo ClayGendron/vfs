@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from grover.fs.dialect import _upsert_mssql, get_dialect, now_expression, upsert_file
-from grover.models.files import File
+from grover.models.file import File
 
 
 class TestGetDialect:

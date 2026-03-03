@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.fs.protocol import StorageBackend
+    from grover.fs.protocol import GroverFileSystem
 
 
 class Mount:
@@ -30,7 +30,7 @@ class Mount:
     def __init__(
         self,
         path: str = "",
-        filesystem: StorageBackend | None = None,
+        filesystem: GroverFileSystem | None = None,
         *,
         session_factory: Callable[..., AsyncSession] | None = None,
         permission: Permission = Permission.READ_WRITE,
@@ -40,7 +40,7 @@ class Mount:
         read_only_paths: set[str] | None = None,
     ) -> None:
         self.path: str = normalize_path(path).rstrip("/")
-        self.filesystem: StorageBackend | None = filesystem
+        self.filesystem: GroverFileSystem | None = filesystem
         self.session_factory: Callable[..., AsyncSession] | None = session_factory
         self.permission: Permission = permission
         self.label: str = label or self.path.lstrip("/") or "root"

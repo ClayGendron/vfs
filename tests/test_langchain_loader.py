@@ -13,9 +13,9 @@ from collections.abc import Iterator  # noqa: E402
 
 from langchain_core.documents import Document  # noqa: E402
 
-from grover._grover import Grover  # noqa: E402
-from grover._grover_async import GroverAsync  # noqa: E402
 from grover.fs.local_fs import LocalFileSystem  # noqa: E402
+from grover.grover import Grover  # noqa: E402
+from grover.grover_async import GroverAsync  # noqa: E402
 from grover.integrations.langchain._loader import GroverLoader  # noqa: E402
 
 if TYPE_CHECKING:

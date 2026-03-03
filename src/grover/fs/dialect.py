@@ -8,7 +8,7 @@ from sqlalchemy import func, text
 from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 
-from grover.models.files import File
+from grover.models.file import File
 
 if TYPE_CHECKING:
     from datetime import datetime

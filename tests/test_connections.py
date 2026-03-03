@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlmodel import Session, SQLModel, select
 
-from grover.models.connections import FileConnection, FileConnectionBase
+from grover.models.connection import FileConnection, FileConnectionBase
 
 
 class TestFileConnectionModel:

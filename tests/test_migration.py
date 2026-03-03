@@ -309,8 +309,8 @@ async def test_backfill_on_current_schema() -> None:
 
 async def test_add_mount_rejects_old_schema() -> None:
     """add_mount raises SchemaIncompatibleError on stale schema."""
-    from grover._grover_async import GroverAsync
     from grover.fs.exceptions import SchemaIncompatibleError
+    from grover.grover_async import GroverAsync
 
     # Create engine with old schema
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
@@ -325,7 +325,7 @@ async def test_add_mount_rejects_old_schema() -> None:
 
 async def test_add_mount_accepts_current_schema() -> None:
     """add_mount works fine with current schema (no error)."""
-    from grover._grover_async import GroverAsync
+    from grover.grover_async import GroverAsync
 
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     g = GroverAsync()
@@ -337,7 +337,7 @@ async def test_add_mount_accepts_current_schema() -> None:
 
 async def test_add_mount_accepts_migrated_schema() -> None:
     """add_mount works after running migration on old schema."""
-    from grover._grover_async import GroverAsync
+    from grover.grover_async import GroverAsync
 
     # Create engine with old schema
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)

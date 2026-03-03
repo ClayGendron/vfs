@@ -7,8 +7,8 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict
 
-from grover._grover import Grover
-from grover._grover_async import GroverAsync
+from grover.grover import Grover
+from grover.grover_async import GroverAsync
 
 if TYPE_CHECKING:
     from langchain_core.callbacks import (

@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from grover.fs.providers.graph import RustworkxGraph
-from grover.models.connections import FileConnection
-from grover.models.files import File
+from grover.models.connection import FileConnection
+from grover.models.file import File
 from grover.ref import Ref
 
 if TYPE_CHECKING:

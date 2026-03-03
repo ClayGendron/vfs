@@ -23,8 +23,8 @@ from langgraph.store.base import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from grover._grover import Grover
-    from grover._grover_async import GroverAsync
+    from grover.grover import Grover
+    from grover.grover_async import GroverAsync
 
 
 class GroverStore(BaseStore):
@@ -63,7 +63,7 @@ class GroverStore(BaseStore):
         *,
         prefix: str = "/store",
     ) -> None:
-        from grover._grover_async import GroverAsync
+        from grover.grover_async import GroverAsync
 
         self.grover = grover
         self.prefix = prefix.rstrip("/")

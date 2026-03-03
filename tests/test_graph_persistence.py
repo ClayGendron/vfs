@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 from sqlmodel import select
 
 from grover.fs.providers.graph import RustworkxGraph
-from grover.models.connections import FileConnection
-from grover.models.files import File
+from grover.models.connection import FileConnection
+from grover.models.file import File
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

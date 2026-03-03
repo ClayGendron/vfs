@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-    from grover._grover import Grover
-    from grover._grover_async import GroverAsync
+    from grover.grover import Grover
+    from grover.grover_async import GroverAsync
 
 
 def _validate_path(path: str) -> str | None:
@@ -136,7 +136,7 @@ class GroverBackend(BackendProtocol):
     """
 
     def __init__(self, grover: Grover | GroverAsync) -> None:
-        from grover._grover_async import GroverAsync
+        from grover.grover_async import GroverAsync
 
         self.grover = grover
         self._is_async = isinstance(grover, GroverAsync)
@@ -154,8 +154,8 @@ class GroverBackend(BackendProtocol):
         **mount_kwargs: Any,
     ) -> GroverBackend:
         """Create a GroverBackend with a LocalFileSystem mounted at ``/``."""
-        from grover._grover import Grover
         from grover.fs.local_fs import LocalFileSystem
+        from grover.grover import Grover
 
         fs_kwargs: dict[str, Any] = {"workspace_dir": workspace_dir}
         if data_dir is not None:
@@ -172,8 +172,8 @@ class GroverBackend(BackendProtocol):
         **mount_kwargs: Any,
     ) -> GroverBackend:
         """Create a GroverBackend with a DatabaseFileSystem mounted at ``/``."""
-        from grover._grover import Grover
         from grover.fs.database_fs import DatabaseFileSystem
+        from grover.grover import Grover
 
         g = Grover()
         g.add_mount(
@@ -194,8 +194,8 @@ class GroverBackend(BackendProtocol):
         **mount_kwargs: Any,
     ) -> GroverBackend:
         """Create a GroverBackend with a GroverAsync + LocalFileSystem at ``/``."""
-        from grover._grover_async import GroverAsync
         from grover.fs.local_fs import LocalFileSystem
+        from grover.grover_async import GroverAsync
 
         fs_kwargs: dict[str, Any] = {"workspace_dir": workspace_dir}
         if data_dir is not None:
@@ -212,8 +212,8 @@ class GroverBackend(BackendProtocol):
         **mount_kwargs: Any,
     ) -> GroverBackend:
         """Create a GroverBackend with a GroverAsync + DatabaseFileSystem at ``/``."""
-        from grover._grover_async import GroverAsync
         from grover.fs.database_fs import DatabaseFileSystem
+        from grover.grover_async import GroverAsync
 
         g = GroverAsync()
         await g.add_mount(
