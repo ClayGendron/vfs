@@ -46,15 +46,15 @@ from grover.types.search import (
     LineMatch as SearchLineMatch,
 )
 
-from .chunks import ChunkService
+from .chunks import DefaultChunkProvider
 from .connections import ConnectionService
 from .directories import DirectoryService
 from .exceptions import GroverError
-from .metadata import MetadataService
 from .operations import (
     copy_file,
     delete_file,
     edit_file,
+    file_to_info,
     list_dir_db,
     move_file,
     read_file,
@@ -66,8 +66,9 @@ from .utils import (
     glob_to_sql_like,
     has_binary_extension,
     normalize_path,
+    validate_path,
 )
-from .versioning import VersioningService
+from .versioning import DefaultVersionProvider
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,12 +114,12 @@ class DatabaseFileSystem:
             file_connection_model or FileConnection
         )
 
-        # Composed services
-        self.metadata = MetadataService(self._file_model)
-        self.versioning = VersioningService(self._file_model, self._file_version_model)
+        # Composed services (renamed: VersioningService → DefaultVersionProvider,
+        # ChunkService → DefaultChunkProvider, MetadataService → absorbed)
+        self.versioning = DefaultVersionProvider(self._file_model, self._file_version_model)
         self.directories = DirectoryService(self._file_model, dialect, schema)
         self.trash = TrashService(self._file_model, self.versioning, self._delete_content)
-        self.chunks = ChunkService(self._file_chunk_model)
+        self.chunks = DefaultChunkProvider(self._file_chunk_model)
         self.connections = ConnectionService(self._file_connection_model)
 
     @property
@@ -142,6 +143,30 @@ class DatabaseFileSystem:
         if session is None:
             raise GroverError("DatabaseFileSystem requires a session")
         return session
+
+    # ------------------------------------------------------------------
+    # File record lookup (absorbed from MetadataService)
+    # ------------------------------------------------------------------
+
+    async def _get_file_record(
+        self,
+        session: AsyncSession,
+        path: str,
+        include_deleted: bool = False,
+    ) -> FileBase | None:
+        """Look up a file record by path.
+
+        Absorbed from the former ``MetadataService.get_file()``.
+        """
+        path = normalize_path(path)
+        model = self._file_model
+        conditions = [model.path == path]
+        if not include_deleted:
+            conditions.append(
+                model.deleted_at.is_(None)  # type: ignore[unresolved-attribute]
+            )
+        result = await session.execute(select(model).where(*conditions))
+        return result.scalar_one_or_none()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -203,7 +228,7 @@ class DatabaseFileSystem:
             offset,
             limit,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             read_content=self._read_content,
         )
 
@@ -225,7 +250,7 @@ class DatabaseFileSystem:
             created_by,
             overwrite,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             versioning=self.versioning,
             directories=self.directories,
             file_model=self._file_model,
@@ -253,7 +278,7 @@ class DatabaseFileSystem:
             replace_all,
             created_by,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             versioning=self.versioning,
             read_content=self._read_content,
             write_content=self._write_content,
@@ -272,7 +297,7 @@ class DatabaseFileSystem:
             path,
             permanent,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             versioning=self.versioning,
             file_model=self._file_model,
             delete_content=self._delete_content,
@@ -291,7 +316,7 @@ class DatabaseFileSystem:
             sess,
             path,
             parents,
-            self.metadata.get_file,
+            self._get_file_record,
         )
         if error is not None:
             return MkdirResult(success=False, message=error)
@@ -321,7 +346,7 @@ class DatabaseFileSystem:
         return await list_dir_db(
             path,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             file_model=self._file_model,
         )
 
@@ -333,7 +358,14 @@ class DatabaseFileSystem:
         user_id: str | None = None,
     ) -> ExistsResult:
         sess = self._require_session(session)
-        return await self.metadata.exists(sess, path)
+        valid, _error = validate_path(path)
+        if not valid:
+            return ExistsResult(exists=False, path=path)
+        path = normalize_path(path)
+        if path == "/":
+            return ExistsResult(exists=True, path=path)
+        file = await self._get_file_record(sess, path)
+        return ExistsResult(exists=file is not None, path=path)
 
     async def get_info(
         self,
@@ -343,7 +375,14 @@ class DatabaseFileSystem:
         user_id: str | None = None,
     ) -> FileInfoResult:
         sess = self._require_session(session)
-        return await self.metadata.get_info(sess, path)
+        valid, error = validate_path(path)
+        if not valid:
+            return FileInfoResult(success=False, message=error, path=path)
+        path = normalize_path(path)
+        file = await self._get_file_record(sess, path)
+        if not file:
+            return FileInfoResult(success=False, message=f"File not found: {path}", path=path)
+        return file_to_info(file)
 
     async def move(
         self,
@@ -360,7 +399,7 @@ class DatabaseFileSystem:
             src,
             dest,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             versioning=self.versioning,
             directories=self.directories,
             file_model=self._file_model,
@@ -384,7 +423,7 @@ class DatabaseFileSystem:
             src,
             dest,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             read_content=self._read_content,
             write_fn=self.write,
         )
@@ -413,7 +452,7 @@ class DatabaseFileSystem:
 
         # Verify base directory exists (unless root)
         if path != "/":
-            dir_file = await self.metadata.get_file(sess, path)
+            dir_file = await self._get_file_record(sess, path)
             if not dir_file:
                 return GlobResult(
                     success=False,
@@ -464,7 +503,7 @@ class DatabaseFileSystem:
 
         candidates: list[FileSearchCandidate] = []
         for f in matched:
-            info = MetadataService.file_to_info(f)
+            info = file_to_info(f)
             candidates.append(
                 FileSearchCandidate(
                     path=info.path,
@@ -536,7 +575,7 @@ class DatabaseFileSystem:
         else:
             model = self._file_model
             if path != "/":
-                file = await self.metadata.get_file(sess, path)
+                file = await self._get_file_record(sess, path)
                 if file and not file.is_directory:
                     candidate_paths = [path]
                 elif file and file.is_directory:
@@ -664,7 +703,7 @@ class DatabaseFileSystem:
 
         # Verify base directory exists (unless root)
         if path != "/":
-            dir_file = await self.metadata.get_file(sess, path)
+            dir_file = await self._get_file_record(sess, path)
             if not dir_file:
                 return TreeResult(
                     success=False,
@@ -700,7 +739,7 @@ class DatabaseFileSystem:
         total_dirs = 0
 
         for f in all_files:
-            info = MetadataService.file_to_info(f)
+            info = file_to_info(f)
             depth = info.path.count("/") - base_depth
             candidates.append(
                 FileSearchCandidate(
@@ -740,7 +779,7 @@ class DatabaseFileSystem:
     ) -> VersionResult:
         sess = self._require_session(session)
         path = normalize_path(path)
-        file = await self.metadata.get_file(sess, path)
+        file = await self._get_file_record(sess, path)
         if not file:
             return VersionResult(success=False, message=f"File not found: {path}")
         versions = await self.versioning.list_versions(sess, file)
@@ -777,7 +816,7 @@ class DatabaseFileSystem:
     ) -> GetVersionContentResult:
         sess = self._require_session(session)
         path = normalize_path(path)
-        file = await self.metadata.get_file(sess, path)
+        file = await self._get_file_record(sess, path)
         if not file:
             return GetVersionContentResult(
                 success=False,
@@ -832,7 +871,7 @@ class DatabaseFileSystem:
     ) -> VerifyVersionResult:
         sess = self._require_session(session)
         path = normalize_path(path)
-        file = await self.metadata.get_file(sess, path)
+        file = await self._get_file_record(sess, path)
         if not file:
             return VerifyVersionResult(
                 success=False,
@@ -884,7 +923,7 @@ class DatabaseFileSystem:
     ) -> RestoreResult:
         sess = self._require_session(session)
         return await self.trash.restore_from_trash(
-            sess, path, self.metadata.get_file, owner_id=owner_id
+            sess, path, self._get_file_record, owner_id=owner_id
         )
 
     async def empty_trash(

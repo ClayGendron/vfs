@@ -751,7 +751,7 @@ class TestParentPath:
             info = await fs.get_info("/src/main.py", session=session)
             assert info.success
 
-            file = await fs.metadata.get_file(session, "/src/main.py")
+            file = await fs._get_file_record(session, "/src/main.py")
             assert file.parent_path == "/src"
         await engine.dispose()
 
@@ -760,11 +760,11 @@ class TestParentPath:
         async with factory() as session:
             await fs.mkdir("/a/b/c", session=session)
 
-            b = await fs.metadata.get_file(session, "/a/b")
+            b = await fs._get_file_record(session, "/a/b")
             assert b is not None
             assert b.parent_path == "/a"
 
-            c = await fs.metadata.get_file(session, "/a/b/c")
+            c = await fs._get_file_record(session, "/a/b/c")
             assert c is not None
             assert c.parent_path == "/a/b"
         await engine.dispose()
@@ -776,7 +776,7 @@ class TestParentPath:
             await fs.mkdir("/dst", session=session)
             await fs.move("/src/file.py", "/dst/file.py", session=session)
 
-            file = await fs.metadata.get_file(session, "/dst/file.py")
+            file = await fs._get_file_record(session, "/dst/file.py")
             assert file is not None
             assert file.parent_path == "/dst"
         await engine.dispose()
@@ -786,7 +786,7 @@ class TestParentPath:
         async with factory() as session:
             await fs.write("/root_file.py", "content\n", session=session)
 
-            file = await fs.metadata.get_file(session, "/root_file.py")
+            file = await fs._get_file_record(session, "/root_file.py")
             assert file.parent_path == "/"
         await engine.dispose()
 

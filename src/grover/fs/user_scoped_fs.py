@@ -454,7 +454,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             sess,
             stored,
             parents,
-            self.metadata.get_file,
+            self._get_file_record,
             owner_id=uid,
         )
         if error is not None:
@@ -624,7 +624,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             await self._check_share_access(sess, dest_stored, uid, "write")
         # Call super().write directly to avoid polymorphic dispatch
         # (copy_file calls self.write which would re-enter our override)
-        src_file = await self.metadata.get_file(sess, src_stored)
+        src_file = await self._get_file_record(sess, src_stored)
         if not src_file:
             return WriteResult(
                 success=False,

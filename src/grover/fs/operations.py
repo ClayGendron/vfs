@@ -22,7 +22,6 @@ from grover.types.operations import (
 )
 from grover.types.search import FileSearchCandidate, ListDirEvidence, ListDirResult
 
-from .metadata import MetadataService
 from .utils import (
     compute_content_hash,
     guess_mime_type,
@@ -41,14 +40,16 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.files import FileBase
+    from grover.types.operations import FileInfoResult
 
     from .directories import DirectoryService
     from .sharing import SharingService
-    from .versioning import VersioningService
+    from .versioning import DefaultVersionProvider
 
     ContentReader = Callable[[str, AsyncSession], Awaitable[str | None]]
     ContentWriter = Callable[[str, str, AsyncSession], Awaitable[None]]
     ContentDeleter = Callable[[str, AsyncSession], Awaitable[None]]
+    GetFileRecord = Callable[..., Awaitable["FileBase | None"]]
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +57,29 @@ logger = logging.getLogger(__name__)
 DEFAULT_READ_LIMIT = 2000
 
 
+def file_to_info(f: FileBase) -> FileInfoResult:
+    """Convert a FileBase model to a FileInfoResult."""
+    from grover.types.operations import FileInfoResult
+
+    return FileInfoResult(
+        success=True,
+        message="OK",
+        path=f.path,
+        is_directory=f.is_directory,
+        size_bytes=f.size_bytes,
+        mime_type=f.mime_type,
+        version=f.current_version,
+        created_at=f.created_at,
+        updated_at=f.updated_at,
+    )
+
+
 async def check_external_edit(
     file: FileBase,
     current_content: str,
     session: AsyncSession,
     *,
-    versioning: VersioningService,
+    versioning: DefaultVersionProvider,
 ) -> bool:
     """Detect and record an external edit as a synthetic snapshot version.
 
@@ -113,7 +131,7 @@ async def read_file(
     limit: int,
     session: AsyncSession,
     *,
-    metadata: MetadataService,
+    get_file_record: GetFileRecord,
     read_content: ContentReader,
 ) -> ReadResult:
     """Orchestrate a file read: validate → lookup → read → paginate."""
@@ -126,7 +144,7 @@ async def read_file(
     if is_trash_path(path):
         return ReadResult(success=False, message=f"Cannot read from trash: {path}")
 
-    file = await metadata.get_file(session, path)
+    file = await get_file_record(session, path)
 
     if not file:
         return ReadResult(success=False, message=f"File not found: {path}")
@@ -191,8 +209,8 @@ async def write_file(
     overwrite: bool,
     session: AsyncSession,
     *,
-    metadata: MetadataService,
-    versioning: VersioningService,
+    get_file_record: GetFileRecord,
+    versioning: DefaultVersionProvider,
     directories: DirectoryService,
     file_model: type[FileBase],
     read_content: ContentReader,
@@ -218,7 +236,7 @@ async def write_file(
 
     content_hash, size_bytes = compute_content_hash(content)
 
-    existing = await metadata.get_file(session, path, include_deleted=True)
+    existing = await get_file_record(session, path, include_deleted=True)
 
     if existing:
         if existing.is_directory:
@@ -317,8 +335,8 @@ async def edit_file(
     created_by: str,
     session: AsyncSession,
     *,
-    metadata: MetadataService,
-    versioning: VersioningService,
+    get_file_record: GetFileRecord,
+    versioning: DefaultVersionProvider,
     read_content: ContentReader,
     write_content: ContentWriter,
 ) -> EditResult:
@@ -329,7 +347,7 @@ async def edit_file(
 
     path = normalize_path(path)
 
-    file = await metadata.get_file(session, path)
+    file = await get_file_record(session, path)
 
     if not file:
         return EditResult(success=False, message=f"File not found: {path}")
@@ -383,8 +401,8 @@ async def delete_file(
     permanent: bool,
     session: AsyncSession,
     *,
-    metadata: MetadataService,
-    versioning: VersioningService,
+    get_file_record: GetFileRecord,
+    versioning: DefaultVersionProvider,
     file_model: type[FileBase],
     delete_content: ContentDeleter,
 ) -> DeleteResult:
@@ -395,7 +413,7 @@ async def delete_file(
 
     path = normalize_path(path)
 
-    file = await metadata.get_file(session, path)
+    file = await get_file_record(session, path)
 
     if not file:
         return DeleteResult(success=False, message=f"File not found: {path}")
@@ -449,8 +467,8 @@ async def move_file(
     dest: str,
     session: AsyncSession,
     *,
-    metadata: MetadataService,
-    versioning: VersioningService,
+    get_file_record: GetFileRecord,
+    versioning: DefaultVersionProvider,
     directories: DirectoryService,
     file_model: type[FileBase],
     read_content: ContentReader,
@@ -493,7 +511,7 @@ async def move_file(
             new_path=dest,
         )
 
-    src_file = await metadata.get_file(session, src)
+    src_file = await get_file_record(session, src)
     if not src_file:
         return MoveResult(success=False, message=f"Source not found: {src}")
 
@@ -503,7 +521,7 @@ async def move_file(
             message=f"Cannot move directory into itself: {dest} is inside {src}",
         )
 
-    dest_file = await metadata.get_file(session, dest)
+    dest_file = await get_file_record(session, dest)
     if dest_file:
         if dest_file.is_directory:
             return MoveResult(
@@ -743,14 +761,14 @@ async def copy_file(
     dest: str,
     session: AsyncSession,
     *,
-    metadata: MetadataService,
+    get_file_record: GetFileRecord,
     read_content: ContentReader,
     write_fn: Callable[..., Awaitable[WriteResult]],
 ) -> WriteResult:
     """Orchestrate a file copy: read src → write to dest."""
     src = normalize_path(src)
 
-    src_file = await metadata.get_file(session, src)
+    src_file = await get_file_record(session, src)
     if not src_file:
         return WriteResult(success=False, message=f"Source not found: {src}")
 
@@ -768,7 +786,7 @@ async def list_dir_db(
     path: str,
     session: AsyncSession,
     *,
-    metadata: MetadataService,
+    get_file_record: GetFileRecord,
     file_model: type[FileBase],
 ) -> ListDirResult:
     """List files and directories from database records."""
@@ -776,7 +794,7 @@ async def list_dir_db(
     path = normalize_path(path)
 
     if path != "/":
-        dir_file = await metadata.get_file(session, path)
+        dir_file = await get_file_record(session, path)
         if not dir_file:
             return ListDirResult(success=False, message=f"Directory not found: {path}")
         if not dir_file.is_directory:
@@ -800,7 +818,7 @@ async def list_dir_db(
 
     candidates: list[FileSearchCandidate] = []
     for f in result.scalars().all():
-        info = MetadataService.file_to_info(f)
+        info = file_to_info(f)
         candidates.append(
             FileSearchCandidate(
                 path=info.path,

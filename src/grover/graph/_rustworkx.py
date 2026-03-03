@@ -1,4 +1,4 @@
-"""RustworkxGraph — rustworkx-backed graph store implementing GraphStore protocol."""
+"""RustworkxGraph — rustworkx-backed graph store implementing GraphProvider protocol."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class RustworkxGraph:
     traversal queries (dependents, impacts, path_between) plus async
     persistence to/from the ``grover_file_connections`` / ``grover_files`` tables.
 
-    Implements the ``GraphStore`` and ``SupportsPersistence`` protocols.
+    Implements the ``GraphProvider`` and ``SupportsPersistence`` protocols.
     """
 
     def __init__(self) -> None:

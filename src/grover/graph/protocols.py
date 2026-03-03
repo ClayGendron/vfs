@@ -14,62 +14,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from grover.fs.providers.protocols import GraphProvider
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.graph.types import SubgraphResult
-    from grover.ref import Ref
 
-
-@runtime_checkable
-class GraphStore(Protocol):
-    """Core graph interface — node/edge CRUD and basic queries.
-
-    Every graph backend must implement this.  Capability protocols
-    (``SupportsCentrality``, etc.) are opt-in.
-    """
-
-    # ------------------------------------------------------------------
-    # Node operations
-    # ------------------------------------------------------------------
-
-    def add_node(self, path: str, **attrs: object) -> None: ...
-    def remove_node(self, path: str) -> None: ...
-    def has_node(self, path: str) -> bool: ...
-    def get_node(self, path: str) -> dict[str, Any]: ...
-    def nodes(self) -> list[str]: ...
-
-    # ------------------------------------------------------------------
-    # Edge operations
-    # ------------------------------------------------------------------
-
-    def add_edge(self, source: str, target: str, **attrs: object) -> None: ...
-    def remove_edge(self, source: str, target: str) -> None: ...
-    def has_edge(self, source: str, target: str) -> bool: ...
-    def get_edge(self, source: str, target: str) -> dict[str, Any]: ...
-    def edges(self) -> list[tuple[str, str, dict[str, Any]]]: ...
-
-    # ------------------------------------------------------------------
-    # Basic queries
-    # ------------------------------------------------------------------
-
-    def dependents(self, path: str) -> list[Ref]: ...
-    def dependencies(self, path: str) -> list[Ref]: ...
-    def impacts(self, path: str, max_depth: int = 3) -> list[Ref]: ...
-    def path_between(self, source: str, target: str) -> list[Ref] | None: ...
-    def contains(self, path: str) -> list[Ref]: ...
-    def by_parent(self, parent_path: str) -> list[Ref]: ...
-    def remove_file_subgraph(self, path: str) -> list[str]: ...
-
-    # ------------------------------------------------------------------
-    # Graph-level
-    # ------------------------------------------------------------------
-
-    @property
-    def node_count(self) -> int: ...
-    @property
-    def edge_count(self) -> int: ...
-    def is_dag(self) -> bool: ...
+# Canonical protocol lives in fs/providers/protocols.py.
+# Re-exported here for backward compatibility during transition.
+GraphStore = GraphProvider
 
 
 @runtime_checkable

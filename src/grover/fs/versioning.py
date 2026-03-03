@@ -1,4 +1,4 @@
-"""VersioningService — version save, delete, list, reconstruct."""
+"""DefaultVersionProvider — version save, delete, list, reconstruct."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class VersionInfo:
     created_by: str | None = None
 
 
-class VersioningService:
+class DefaultVersionProvider:
     """Diff-based version storage with periodic snapshots.
 
     Stores a full snapshot at version 1 and every ``SNAPSHOT_INTERVAL``

@@ -112,7 +112,7 @@ class DirectoryService:
 
         created_dirs: list[str] = []
         for dir_path in dirs_to_create:
-            parent, name = split_path(dir_path)
+            parent, _name = split_path(dir_path)
             values: dict[str, object] = {
                 "id": str(uuid.uuid4()),
                 "path": dir_path,

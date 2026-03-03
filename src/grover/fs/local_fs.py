@@ -60,15 +60,15 @@ from grover.types.search import (
     LineMatch as SearchLineMatch,
 )
 
-from .chunks import ChunkService
+from .chunks import DefaultChunkProvider
 from .connections import ConnectionService
 from .directories import DirectoryService
 from .exceptions import GroverError
-from .metadata import MetadataService
 from .operations import (
     copy_file,
     delete_file,
     edit_file,
+    file_to_info,
     move_file,
     paginate_content,
     write_file,
@@ -83,7 +83,7 @@ from .utils import (
     to_trash_path,
     validate_path,
 )
-from .versioning import VersioningService
+from .versioning import DefaultVersionProvider
 
 if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
@@ -145,12 +145,12 @@ class LocalFileSystem:
         self._session_factory = None
         self._init_lock = asyncio.Lock()
 
-        # Composed services
-        self.metadata = MetadataService(fm)
-        self.versioning = VersioningService(fm, fvm)
+        # Composed services (renamed: VersioningService → DefaultVersionProvider,
+        # ChunkService → DefaultChunkProvider, MetadataService → absorbed)
+        self.versioning = DefaultVersionProvider(fm, fvm)
         self.directories = DirectoryService(fm, "sqlite", schema)
         self.trash = TrashService(fm, self.versioning, self._delete_content)
-        self.chunks = ChunkService(fcm)
+        self.chunks = DefaultChunkProvider(fcm)
         self.connections = ConnectionService(FileConnection)
 
     @property
@@ -180,6 +180,27 @@ class LocalFileSystem:
         if session is None:
             raise GroverError("LocalFileSystem requires a session")
         return session
+
+    # ------------------------------------------------------------------
+    # File record lookup (absorbed from MetadataService)
+    # ------------------------------------------------------------------
+
+    async def _get_file_record(
+        self,
+        session: AsyncSession,
+        path: str,
+        include_deleted: bool = False,
+    ) -> FileBase | None:
+        """Look up a file record by path."""
+        path = normalize_path(path)
+        model = self._file_model
+        conditions = [model.path == path]
+        if not include_deleted:
+            conditions.append(
+                model.deleted_at.is_(None)  # type: ignore[unresolved-attribute]
+            )
+        result = await session.execute(select(model).where(*conditions))
+        return result.scalar_one_or_none()
 
     # ------------------------------------------------------------------
     # Database Management
@@ -431,7 +452,7 @@ class LocalFileSystem:
             created_by,
             overwrite,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             versioning=self.versioning,
             directories=self.directories,
             file_model=self._file_model,
@@ -459,7 +480,7 @@ class LocalFileSystem:
             replace_all,
             created_by,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             versioning=self.versioning,
             read_content=self._read_content,
             write_content=self._write_content,
@@ -486,7 +507,7 @@ class LocalFileSystem:
 
         # Ensure a DB record exists so delete can soft-delete it
         if content is not None:
-            file = await self.metadata.get_file(sess, norm)
+            file = await self._get_file_record(sess, norm)
             if file is None:
                 # Disk-only file: create a DB record + version 1 snapshot
                 await write_file(
@@ -495,7 +516,7 @@ class LocalFileSystem:
                     "backup",
                     True,
                     sess,
-                    metadata=self.metadata,
+                    get_file_record=self._get_file_record,
                     versioning=self.versioning,
                     directories=self.directories,
                     file_model=self._file_model,
@@ -507,7 +528,7 @@ class LocalFileSystem:
             norm,
             permanent,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             versioning=self.versioning,
             file_model=self._file_model,
             delete_content=self._delete_content,
@@ -533,7 +554,7 @@ class LocalFileSystem:
             sess,
             path,
             parents,
-            self.metadata.get_file,
+            self._get_file_record,
         )
         if error is not None:
             return MkdirResult(success=False, message=error)
@@ -598,7 +619,7 @@ class LocalFileSystem:
             item_path = f"{path}/{name}" if path != "/" else f"/{name}"
             item_path = normalize_path(item_path)
 
-            file = await self.metadata.get_file(sess, item_path)
+            file = await self._get_file_record(sess, item_path)
             size = file.size_bytes if file else disk_size
 
             candidates.append(
@@ -629,7 +650,14 @@ class LocalFileSystem:
         user_id: str | None = None,
     ) -> ExistsResult:
         sess = self._require_session(session)
-        return await self.metadata.exists(sess, path)
+        valid, _error = validate_path(path)
+        if not valid:
+            return ExistsResult(exists=False, path=path)
+        path = normalize_path(path)
+        if path == "/":
+            return ExistsResult(exists=True, path=path)
+        file = await self._get_file_record(sess, path)
+        return ExistsResult(exists=file is not None, path=path)
 
     async def get_info(
         self,
@@ -639,7 +667,14 @@ class LocalFileSystem:
         user_id: str | None = None,
     ) -> FileInfoResult:
         sess = self._require_session(session)
-        return await self.metadata.get_info(sess, path)
+        valid, error = validate_path(path)
+        if not valid:
+            return FileInfoResult(success=False, message=error, path=path)
+        path = normalize_path(path)
+        file = await self._get_file_record(sess, path)
+        if not file:
+            return FileInfoResult(success=False, message=f"File not found: {path}", path=path)
+        return file_to_info(file)
 
     async def move(
         self,
@@ -656,7 +691,7 @@ class LocalFileSystem:
             src,
             dest,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             versioning=self.versioning,
             directories=self.directories,
             file_model=self._file_model,
@@ -680,7 +715,7 @@ class LocalFileSystem:
             src,
             dest,
             sess,
-            metadata=self.metadata,
+            get_file_record=self._get_file_record,
             read_content=self._read_content,
             write_fn=self.write,
         )
@@ -1093,7 +1128,7 @@ class LocalFileSystem:
     ) -> VersionResult:
         sess = self._require_session(session)
         path = normalize_path(path)
-        file = await self.metadata.get_file(sess, path)
+        file = await self._get_file_record(sess, path)
         if not file:
             return VersionResult(success=False, message=f"File not found: {path}")
         versions = await self.versioning.list_versions(sess, file)
@@ -1130,7 +1165,7 @@ class LocalFileSystem:
     ) -> GetVersionContentResult:
         sess = self._require_session(session)
         path = normalize_path(path)
-        file = await self.metadata.get_file(sess, path)
+        file = await self._get_file_record(sess, path)
         if not file:
             return GetVersionContentResult(
                 success=False,
@@ -1185,7 +1220,7 @@ class LocalFileSystem:
     ) -> VerifyVersionResult:
         sess = self._require_session(session)
         path = normalize_path(path)
-        file = await self.metadata.get_file(sess, path)
+        file = await self._get_file_record(sess, path)
         if not file:
             return VerifyVersionResult(
                 success=False,
@@ -1238,13 +1273,13 @@ class LocalFileSystem:
         """Restore a file from trash, writing content back to disk."""
         sess = self._require_session(session)
         result = await self.trash.restore_from_trash(
-            sess, path, self.metadata.get_file, owner_id=owner_id
+            sess, path, self._get_file_record, owner_id=owner_id
         )
         if not result.success:
             return result
 
         restored_path = result.path or path
-        file = await self.metadata.get_file(sess, restored_path)
+        file = await self._get_file_record(sess, restored_path)
         if file:
             if file.is_directory:
                 model = self._file_model
@@ -1327,7 +1362,7 @@ class LocalFileSystem:
         for vpath, _ in items:
             disk_paths.add(vpath)
 
-            file = await self.metadata.get_file(sess, vpath)
+            file = await self._get_file_record(sess, vpath)
             if file is None:
                 # File on disk but not in DB — create DB record only
                 # (content already exists on disk, no need to rewrite)
@@ -1339,7 +1374,7 @@ class LocalFileSystem:
                         "reconcile",
                         True,
                         sess,
-                        metadata=self.metadata,
+                        get_file_record=self._get_file_record,
                         versioning=self.versioning,
                         directories=self.directories,
                         file_model=self._file_model,

@@ -1,11 +1,11 @@
-"""Tests for FileChunk model, ChunkService, and SupportsFileChunks protocol."""
+"""Tests for FileChunk model, DefaultChunkProvider, and SupportsFileChunks protocol."""
 
 from __future__ import annotations
 
 import pytest
 from sqlmodel import Session, SQLModel, select
 
-from grover.fs.chunks import ChunkService
+from grover.fs.chunks import DefaultChunkProvider
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.protocol import SupportsFileChunks
@@ -89,10 +89,10 @@ class TestFileChunkModel:
 # ---------------------------------------------------------------------------
 
 
-class TestChunkService:
+class TestDefaultChunkProvider:
     @pytest.fixture
     def service(self):
-        return ChunkService(FileChunk)
+        return DefaultChunkProvider(FileChunk)
 
     async def test_replace_inserts(self, service, async_session):
         chunks = [

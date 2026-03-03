@@ -58,7 +58,7 @@ async def grover_with_sharing(
     session_factory, sharing: SharingService, engine: AsyncEngine, tmp_path: Path
 ) -> AsyncIterator[GroverAsync]:
     """GroverAsync with a UserScopedFileSystem backend that has a SharingService."""
-    g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+    g = GroverAsync()
     backend = UserScopedFileSystem(sharing=sharing)
     await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g
@@ -78,7 +78,7 @@ class TestMoveFileFollow:
         """follow=False creates a new file record at dest, source soft-deleted."""
         async with session_factory() as sess:
             await dfs.write("/old.py", "content", session=sess)
-            old_file = await dfs.metadata.get_file(sess, "/old.py")
+            old_file = await dfs._get_file_record(sess, "/old.py")
             assert old_file is not None
             old_id = old_file.id
 
@@ -86,13 +86,13 @@ class TestMoveFileFollow:
             assert result.success is True
 
             # New file should exist at dest
-            new_file = await dfs.metadata.get_file(sess, "/new.py")
+            new_file = await dfs._get_file_record(sess, "/new.py")
             assert new_file is not None
             # Different file record (clean break)
             assert new_file.id != old_id
 
             # Source should be soft-deleted
-            old_after = await dfs.metadata.get_file(sess, "/old.py")
+            old_after = await dfs._get_file_record(sess, "/old.py")
             assert old_after is None  # Not found (in trash)
 
     @pytest.mark.asyncio
@@ -100,7 +100,7 @@ class TestMoveFileFollow:
         """follow=True keeps the same file record (in-place rename)."""
         async with session_factory() as sess:
             await dfs.write("/old.py", "content", session=sess)
-            old_file = await dfs.metadata.get_file(sess, "/old.py")
+            old_file = await dfs._get_file_record(sess, "/old.py")
             assert old_file is not None
             old_id = old_file.id
 
@@ -108,7 +108,7 @@ class TestMoveFileFollow:
             assert result.success is True
 
             # Same file record at new path
-            new_file = await dfs.metadata.get_file(sess, "/new.py")
+            new_file = await dfs._get_file_record(sess, "/new.py")
             assert new_file is not None
             assert new_file.id == old_id
 
@@ -207,7 +207,7 @@ class TestMoveFileFollow:
             await dfs.write("/src/a.py", "file a", session=sess)
             await dfs.write("/src/b.py", "file b", session=sess)
 
-            a_file = await dfs.metadata.get_file(sess, "/src/a.py")
+            a_file = await dfs._get_file_record(sess, "/src/a.py")
             assert a_file is not None
             a_id = a_file.id
 
@@ -215,7 +215,7 @@ class TestMoveFileFollow:
             assert result.success is True
 
             # Children moved in-place (same IDs)
-            new_a = await dfs.metadata.get_file(sess, "/dst/a.py")
+            new_a = await dfs._get_file_record(sess, "/dst/a.py")
             assert new_a is not None
             assert new_a.id == a_id
 
@@ -236,11 +236,11 @@ class TestMoveFileFollow:
             assert result.success is True
 
             # Parent directories should exist
-            deep = await dfs.metadata.get_file(sess, "/deep")
+            deep = await dfs._get_file_record(sess, "/deep")
             assert deep is not None
             assert deep.is_directory is True
 
-            nested = await dfs.metadata.get_file(sess, "/deep/nested")
+            nested = await dfs._get_file_record(sess, "/deep/nested")
             assert nested is not None
             assert nested.is_directory is True
 
@@ -256,7 +256,7 @@ class TestMoveFileFollow:
             await dfs.mkdir("/src", session=sess)
             await dfs.write("/src/a.py", "file a", session=sess)
 
-            a_file = await dfs.metadata.get_file(sess, "/src/a.py")
+            a_file = await dfs._get_file_record(sess, "/src/a.py")
             assert a_file is not None
             a_id = a_file.id
 
@@ -264,7 +264,7 @@ class TestMoveFileFollow:
             assert result.success is True
 
             # New record at dest (different ID)
-            new_a = await dfs.metadata.get_file(sess, "/dst/a.py")
+            new_a = await dfs._get_file_record(sess, "/dst/a.py")
             assert new_a is not None
             assert new_a.id != a_id
 
@@ -311,12 +311,12 @@ class TestMoveFileFollow:
             assert result.success is True
 
             # Subdirectory should still be a directory
-            sub = await dfs.metadata.get_file(sess, "/dst/sub")
+            sub = await dfs._get_file_record(sess, "/dst/sub")
             assert sub is not None
             assert sub.is_directory is True
 
             # File should not be a directory
-            f = await dfs.metadata.get_file(sess, "/dst/sub/file.py")
+            f = await dfs._get_file_record(sess, "/dst/sub/file.py")
             assert f is not None
             assert f.is_directory is False
 

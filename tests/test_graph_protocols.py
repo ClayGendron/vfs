@@ -6,6 +6,7 @@ from types import MappingProxyType
 
 import pytest
 
+from grover.fs.providers.protocols import GraphProvider
 from grover.graph import RustworkxGraph
 from grover.graph.protocols import (
     GraphStore,
@@ -29,6 +30,20 @@ class TestGraphStoreProtocol:
 
         # A plain object should NOT satisfy it
         assert not isinstance(object(), GraphStore)
+
+
+class TestGraphProviderProtocol:
+    def test_rustworkx_satisfies_graph_provider(self) -> None:
+        g = RustworkxGraph()
+        assert isinstance(g, GraphProvider)
+
+    def test_graph_provider_is_runtime_checkable(self) -> None:
+        assert isinstance(RustworkxGraph(), GraphProvider)
+        assert not isinstance(object(), GraphProvider)
+
+    def test_graph_provider_is_graph_store(self) -> None:
+        """GraphStore is an alias for GraphProvider."""
+        assert GraphStore is GraphProvider
 
 
 # ======================================================================

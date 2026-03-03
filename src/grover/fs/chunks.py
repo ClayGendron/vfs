@@ -1,4 +1,4 @@
-"""ChunkService — stateless chunk CRUD for DB-backed chunk storage."""
+"""DefaultChunkProvider — stateless chunk CRUD for DB-backed chunk storage."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
 
 
-class ChunkService:
+class DefaultChunkProvider:
     """Stateless helpers for file chunk record CRUD.
 
     Receives the concrete chunk model at construction so callers can

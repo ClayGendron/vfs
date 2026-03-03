@@ -1,7 +1,7 @@
 """SharingService — share CRUD and permission resolution.
 
 Stateless service that receives the share model at construction
-and a session at call time, following the MetadataService pattern.
+and a session at call time, following the provider pattern.
 """
 
 from __future__ import annotations

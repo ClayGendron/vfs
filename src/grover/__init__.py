@@ -7,6 +7,15 @@ __version__ = "0.0.3"
 
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
+from grover.fs.providers import (
+    ChunkProvider,
+    DefaultChunkProvider,
+    DefaultVersionProvider,
+    DiskStorageProvider,
+    GraphProvider,
+    StorageProvider,
+    VersionProvider,
+)
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.graph.protocols import GraphStore
 from grover.graph.types import SubgraphResult
@@ -93,10 +102,14 @@ from grover.worker import IndexingMode
 
 __all__ = [
     "ChunkListResult",
+    "ChunkProvider",
     "ChunkResult",
     "ConnectionListResult",
     "ConnectionResult",
+    "DefaultChunkProvider",
+    "DefaultVersionProvider",
     "DeleteResult",
+    "DiskStorageProvider",
     "EditResult",
     "EmbeddingProvider",
     "Evidence",
@@ -111,6 +124,7 @@ __all__ = [
     "GlobEvidence",
     "GlobResult",
     "GraphEvidence",
+    "GraphProvider",
     "GraphResult",
     "GraphStore",
     "GrepEvidence",
@@ -138,6 +152,7 @@ __all__ = [
     "SearchResult",
     "ShareResult",
     "ShareSearchResult",
+    "StorageProvider",
     "SubgraphResult",
     "SupportsHybridSearch",
     "SupportsIndexLifecycle",
@@ -156,6 +171,7 @@ __all__ = [
     "VectorStore",
     "VerifyVersionResult",
     "VersionChainError",
+    "VersionProvider",
     "VersionResult",
     "WriteResult",
     "__version__",
