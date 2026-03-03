@@ -449,3 +449,171 @@ class TestWALPragma:
             # FULL = 2
             assert level == 2
         await fs.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Inheritance + DiskStorageProvider integration
+# ---------------------------------------------------------------------------
+
+
+class TestLocalFSInheritsDatabaseFS:
+    """LocalFileSystem is a thin wrapper over DatabaseFileSystem."""
+
+    async def test_isinstance_database_fs(self, tmp_path: Path):
+        """LocalFileSystem is a subclass of DatabaseFileSystem."""
+        from grover.fs.database_fs import DatabaseFileSystem
+
+        fs, _ = await _make_local_fs(tmp_path)
+        assert isinstance(fs, DatabaseFileSystem)
+        await fs.close()
+
+    async def test_has_disk_storage_provider(self, tmp_path: Path):
+        """LocalFileSystem creates a DiskStorageProvider."""
+        from grover.fs.providers.disk import DiskStorageProvider
+
+        fs, _ = await _make_local_fs(tmp_path)
+        assert isinstance(fs.storage_provider, DiskStorageProvider)
+        assert isinstance(fs._disk, DiskStorageProvider)
+        assert fs.storage_provider is fs._disk
+        await fs.close()
+
+    async def test_disk_provider_workspace_matches(self, tmp_path: Path):
+        """DiskStorageProvider workspace_dir matches LocalFileSystem workspace_dir."""
+        fs, _ = await _make_local_fs(tmp_path)
+        assert fs._disk.workspace_dir == fs.workspace_dir.resolve()
+        await fs.close()
+
+    async def test_glob_uses_disk(self, tmp_path: Path):
+        """glob delegates to DiskStorageProvider (reads from disk, not DB)."""
+        fs, factory = await _make_local_fs(tmp_path)
+        workspace = fs.workspace_dir
+
+        # Create files directly on disk (no FS write)
+        (workspace / "alpha.py").write_text("# alpha\n")
+        (workspace / "beta.py").write_text("# beta\n")
+
+        async with _session(factory) as session:
+            result = await fs.glob("*.py", session=session)
+        assert result.success is True
+        paths = list(result.files())
+        assert "/alpha.py" in paths
+        assert "/beta.py" in paths
+        await fs.close()
+
+    async def test_grep_uses_disk(self, tmp_path: Path):
+        """grep delegates to DiskStorageProvider (reads from disk)."""
+        fs, factory = await _make_local_fs(tmp_path)
+        workspace = fs.workspace_dir
+
+        (workspace / "search_me.py").write_text("needle in haystack\n")
+
+        async with _session(factory) as session:
+            result = await fs.grep("needle", session=session)
+        assert result.success is True
+        assert result.files_matched == 1
+        await fs.close()
+
+    async def test_tree_uses_disk(self, tmp_path: Path):
+        """tree delegates to DiskStorageProvider (reads from disk)."""
+        fs, factory = await _make_local_fs(tmp_path)
+        workspace = fs.workspace_dir
+
+        (workspace / "subdir").mkdir()
+        (workspace / "subdir" / "file.py").write_text("content\n")
+
+        async with _session(factory) as session:
+            result = await fs.tree("/", session=session)
+        assert result.success is True
+        paths = [c.path for c in result.candidates]
+        assert "/subdir" in paths
+        assert "/subdir/file.py" in paths
+        await fs.close()
+
+    async def test_exists_uses_disk(self, tmp_path: Path):
+        """exists delegates to DiskStorageProvider (checks disk, not DB)."""
+        fs, factory = await _make_local_fs(tmp_path)
+        workspace = fs.workspace_dir
+
+        (workspace / "disk_only.py").write_text("content\n")
+
+        async with _session(factory) as session:
+            result = await fs.exists("/disk_only.py", session=session)
+        assert result.exists is True
+        await fs.close()
+
+    async def test_no_unexpected_method_overrides(self, tmp_path: Path):
+        """LocalFileSystem only overrides the expected methods."""
+        expected_overrides = {
+            "__init__",
+            "open",
+            "close",
+            "read",
+            "delete",
+            "mkdir",
+            "restore_from_trash",
+            "reconcile",
+            "_ensure_db",
+        }
+
+        # Find methods defined directly on LocalFileSystem (not inherited)
+        lfs_own = {
+            name
+            for name, val in vars(LocalFileSystem).items()
+            if (callable(val) and not name.startswith("__")) or name == "__init__"
+        }
+        # Properties
+        lfs_own -= {"session_factory", "engine"}
+
+        # All own methods should be in the expected set
+        unexpected = lfs_own - expected_overrides
+        assert unexpected == set(), f"Unexpected overrides: {unexpected}"
+
+    async def test_inherited_write_works(self, tmp_path: Path):
+        """write is inherited from DatabaseFileSystem, not overridden."""
+        fs, factory = await _make_local_fs(tmp_path)
+        workspace = fs.workspace_dir
+
+        async with _session(factory) as session:
+            result = await fs.write("/inherited.py", "content\n", session=session)
+        assert result.success is True
+        assert (workspace / "inherited.py").read_text() == "content\n"
+        await fs.close()
+
+    async def test_inherited_edit_works(self, tmp_path: Path):
+        """edit is inherited from DatabaseFileSystem, not overridden."""
+        fs, factory = await _make_local_fs(tmp_path)
+        workspace = fs.workspace_dir
+
+        async with _session(factory) as session:
+            await fs.write("/edit_me.py", "old content\n", session=session)
+        async with _session(factory) as session:
+            result = await fs.edit("/edit_me.py", "old", "new", session=session)
+        assert result.success is True
+        assert (workspace / "edit_me.py").read_text() == "new content\n"
+        await fs.close()
+
+    async def test_inherited_versions_work(self, tmp_path: Path):
+        """Version methods are inherited from DatabaseFileSystem mixins."""
+        fs, factory = await _make_local_fs(tmp_path)
+
+        async with _session(factory) as session:
+            await fs.write("/versioned.py", "v1\n", session=session)
+        async with _session(factory) as session:
+            await fs.write("/versioned.py", "v2\n", session=session)
+        async with _session(factory) as session:
+            versions = await fs.list_versions("/versioned.py", session=session)
+        assert versions.success is True
+        assert len(versions.candidates) == 2
+        await fs.close()
+
+    async def test_provider_kwargs_forwarded(self, tmp_path: Path):
+        """Provider kwargs are forwarded to DatabaseFileSystem."""
+        from unittest.mock import MagicMock
+
+        mock_graph = MagicMock()
+        fs = LocalFileSystem(
+            workspace_dir=tmp_path,
+            data_dir=tmp_path / ".grover_test",
+            graph_provider=mock_graph,
+        )
+        assert fs.graph_provider is mock_graph

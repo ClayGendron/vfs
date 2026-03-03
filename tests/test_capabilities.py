@@ -291,7 +291,7 @@ class TestProtocolChecks:
 @pytest.fixture
 async def minimal_grover(tmp_path: Path):
     """GroverAsync with a single MinimalBackend at /mem (no session_factory)."""
-    g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+    g = GroverAsync()
     await g.add_mount("/mem", MinimalBackend())
     yield g
     await g.close()
@@ -384,7 +384,7 @@ class TestMixedMounts:
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        g = GroverAsync()
         await g.add_mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
         await g.add_mount("/mem", MinimalBackend())
         yield g
@@ -449,7 +449,7 @@ class TestSessionRollback:
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        g = GroverAsync()
         await g.add_mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
         yield g, factory
         await g.close()
@@ -490,7 +490,7 @@ class TestSessionRollback:
 
     async def test_failing_backend_returns_failure(self, tmp_path: Path) -> None:
         """GroverAsync returns failure result for backend exceptions."""
-        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        g = GroverAsync()
         await g.add_mount("/fail", _FailingBackend())
 
         result = await g.write("/fail/test.txt", "content")
@@ -531,9 +531,12 @@ class TestLocalFileSystemRequiresSession:
         with pytest.raises(GroverError, match="requires a session"):
             await lfs.delete("/test.txt", session=None)
 
-    async def test_list_dir_without_session_raises(self, lfs: LocalFileSystem) -> None:
-        with pytest.raises(GroverError, match="requires a session"):
-            await lfs.list_dir("/", session=None)
+    async def test_list_dir_without_session_succeeds_with_disk_provider(
+        self, lfs: LocalFileSystem
+    ) -> None:
+        # list_dir delegates to DiskStorageProvider — no session needed
+        result = await lfs.list_dir("/", session=None)
+        assert result.success is True
 
     async def test_list_versions_without_session_raises(self, lfs: LocalFileSystem) -> None:
         with pytest.raises(GroverError, match="requires a session"):

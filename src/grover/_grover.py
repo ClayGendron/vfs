@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from grover._grover_async import GroverAsync
 from grover.fs.permissions import Permission
@@ -71,7 +71,6 @@ class Grover:
     def __init__(
         self,
         *,
-        data_dir: str | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
         indexing_mode: IndexingMode = IndexingMode.BACKGROUND,
@@ -86,7 +85,6 @@ class Grover:
         self._thread.start()
 
         self._async = GroverAsync(
-            data_dir=data_dir,
             embedding_provider=embedding_provider,
             vector_store=vector_store,
             indexing_mode=indexing_mode,
@@ -361,7 +359,6 @@ class Grover:
         connection_type: str,
         *,
         weight: float = 1.0,
-        metadata: dict[str, Any] | None = None,
     ) -> ConnectionResult:
         return self._run(
             self._async.add_connection(
@@ -369,7 +366,6 @@ class Grover:
                 target_path,
                 connection_type,
                 weight=weight,
-                metadata=metadata,
             )
         )
 
@@ -540,12 +536,8 @@ class Grover:
         return self._run(self._async.index(mount_path))
 
     def save(self) -> None:
-        """Persist graph and search index to disk."""
+        """Drain pending background work."""
         self._run(self._async.save())
-
-    def sync(self, *, path: str | None = None) -> None:
-        """Reload graph and search index from DB."""
-        self._run(self._async.sync(path=path))
 
     # ------------------------------------------------------------------
     # Properties
