@@ -15,7 +15,6 @@ from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
 from grover.permissions import Permission
 from grover.results import (
-    ConnectionListResult,
     ConnectionResult,
     DeleteResult,
     EditResult,
@@ -199,10 +198,11 @@ class TestReadOnlyAllowsReads:
         assert isinstance(graph.node_count, int)
         assert graph.node_count >= 0
 
-    async def test_read_only_allows_list_connections(self, grover_ro: GroverAsync) -> None:
-        result = await grover_ro.list_connections("/ro/hello.py")
-        # list_connections returns ConnectionListResult (read-only operation, always works)
-        assert isinstance(result, ConnectionListResult)
+    async def test_read_only_allows_graph_edges(self, grover_ro: GroverAsync) -> None:
+        graph = grover_ro.get_graph("/ro")
+        # edges() is a read-only graph provider operation, always works
+        edges = graph.edges()
+        assert isinstance(edges, list)
 
 
 # ------------------------------------------------------------------

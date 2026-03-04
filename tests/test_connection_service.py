@@ -348,22 +348,17 @@ class TestConnectionIntegrationDBFS:
         await grover.flush()
         assert not grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
-    async def test_list_connections_returns_records(
+    async def test_add_connection_creates_graph_edges(
         self, setup: tuple[GroverAsync, AsyncEngine]
     ) -> None:
         grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.add_connection("/vfs/a.py", "/vfs/c.py", "calls")
+        await grover.flush()
 
-        result = await grover.list_connections("/vfs/a.py", direction="out")
-        assert len(result.connections) == 2
-
-    async def test_list_connections_no_mount_returns_empty(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
-        grover, _engine = setup
-        result = await grover.list_connections("/nonexistent/path")
-        assert result.connections == []
+        graph = grover.get_graph("/vfs")
+        assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
+        assert graph.has_edge("/vfs/a.py", "/vfs/c.py")
 
     async def test_failed_add_does_not_update_graph(
         self, setup: tuple[GroverAsync, AsyncEngine]
@@ -386,13 +381,9 @@ class TestConnectionIntegrationDBFS:
         assert r1.success
         assert r2.success
 
-        # Both edges should exist in graph
+        # Edge should exist in graph (graph deduplicates by endpoints)
         graph = grover.get_graph("/vfs")
         assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
-
-        # DB should have 2 records
-        result = await grover.list_connections("/vfs/a.py", direction="out")
-        assert len(result.connections) == 2
 
 
 # =========================================================================
@@ -439,13 +430,15 @@ class TestConnectionIntegrationLocalFS:
         assert result.success
         assert not grover.get_graph("/local").has_edge("/local/a.py", "/local/b.py")
 
-    async def test_list_connections_through_local_fs(self, setup: GroverAsync) -> None:
+    async def test_add_connections_creates_graph_edges_local_fs(self, setup: GroverAsync) -> None:
         grover = setup
         await grover.add_connection("/local/a.py", "/local/b.py", "imports")
         await grover.add_connection("/local/c.py", "/local/a.py", "calls")
+        await grover.flush()
 
-        result = await grover.list_connections("/local/a.py")
-        assert len(result.connections) == 2
+        graph = grover.get_graph("/local")
+        assert graph.has_edge("/local/a.py", "/local/b.py")
+        assert graph.has_edge("/local/c.py", "/local/a.py")
 
 
 # =========================================================================

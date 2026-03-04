@@ -56,7 +56,7 @@ DatabaseFileSystem
 
 ```
 GroverAsync(MountMixin, FileOpsMixin, SearchOpsMixin, GraphOpsMixin,
-            ShareMixin, ConnectionMixin, IndexMixin)
+            ShareMixin, IndexMixin)
 ```
 
 Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every mixin declares `_ctx: GroverContext` as a class-level annotation so type checkers resolve attribute access.
@@ -66,9 +66,8 @@ Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every m
 | `MountMixin` | `api/mounting.py` | Mount lifecycle: add, unmount, init meta FS |
 | `FileOpsMixin` | `api/file_ops.py` | File CRUD, tree, versions, trash, reconciliation |
 | `SearchOpsMixin` | `api/search_ops.py` | Queries: glob, grep, vector/lexical/hybrid search |
-| `GraphOpsMixin` | `api/graph_ops.py` | Graph queries: predecessors, successors, pagerank |
+| `GraphOpsMixin` | `api/graph_ops.py` | Graph traversal, algorithms, connections, subgraph extraction |
 | `ShareMixin` | `api/sharing.py` | Share/unshare between users |
-| `ConnectionMixin` | `api/connections.py` | Manual edge CRUD (persisted through FS) |
 | `IndexMixin` | `api/indexing.py` | Event handlers, analysis pipeline, indexing, save, close |
 
 `GroverContext` (`api/context.py`) holds the worker, mount registry, analyzer registry, indexing mode, and helper methods used across all mixins (session management, permission checks, path prefixing, graph resolution via `resolve_graph()`).

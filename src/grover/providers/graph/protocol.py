@@ -97,6 +97,15 @@ class GraphProvider(Protocol):
 
     def closeness_centrality(self) -> dict[str, float]: ...
 
+    def harmonic_centrality(self) -> dict[str, float]: ...
+
+    def hits(
+        self,
+        *,
+        max_iter: int = 100,
+        tol: float = 1e-8,
+    ) -> tuple[dict[str, float], dict[str, float]]: ...
+
     def katz_centrality(
         self,
         *,
@@ -138,6 +147,8 @@ class GraphProvider(Protocol):
 
     def shortest_path_length(self, source: str, target: str) -> float | None: ...
 
+    def has_path(self, source: str, target: str) -> bool: ...
+
     # ------------------------------------------------------------------
     # Subgraph extraction
     # ------------------------------------------------------------------
@@ -156,6 +167,8 @@ class GraphProvider(Protocol):
     def meeting_subgraph(self, start_paths: list[str], *, max_size: int = 50) -> SubgraphResult: ...
 
     def common_reachable(self, paths: list[str], *, direction: str = "forward") -> set[str]: ...
+
+    def common_neighbors(self, path1: str, path2: str) -> set[str]: ...
 
     # ------------------------------------------------------------------
     # Filtering

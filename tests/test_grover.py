@@ -14,7 +14,21 @@ from grover.backends.local import LocalFileSystem
 from grover.client import Grover
 from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
-from grover.results import GraphResult, VectorSearchResult
+from grover.results import (
+    AncestorsResult,
+    BetweennessResult,
+    CommonNeighborsResult,
+    DegreeResult,
+    DescendantsResult,
+    EgoGraphResult,
+    HasPathResult,
+    HitsResult,
+    PageRankResult,
+    PredecessorsResult,
+    ShortestPathResult,
+    SuccessorsResult,
+    VectorSearchResult,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -171,7 +185,7 @@ class TestGroverGraph:
         assert grover.get_graph().has_node("/project/app.py")
         # Check predecessors doesn't crash (may be empty if no other file points to it)
         result = grover.predecessors("/project/app.py")
-        assert isinstance(result, GraphResult)
+        assert isinstance(result, PredecessorsResult)
         assert result.success is True
 
     def test_successors_after_write(self, grover: Grover):
@@ -180,20 +194,19 @@ class TestGroverGraph:
         grover.flush()
         # The file should have "contains" edges to its chunks
         result = grover.successors("/project/greet.py")
-        assert isinstance(result, GraphResult)
+        assert isinstance(result, SuccessorsResult)
         assert result.success is True
         # Should contain the greet function chunk
         assert len(result) >= 1
 
-    def test_contains_returns_chunks(self, grover: Grover):
+    def test_contains_via_graph_provider(self, grover: Grover):
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         grover.write("/project/funcs.py", code)
         grover.flush()
-        result = grover.contains("/project/funcs.py")
-        assert isinstance(result, GraphResult)
-        assert len(result) >= 2
-        assert any("foo" in p for p in result.paths)
-        assert any("bar" in p for p in result.paths)
+        refs = grover.get_graph().contains("/project/funcs.py")
+        assert len(refs) >= 2
+        assert any("foo" in r.path for r in refs)
+        assert any("bar" in r.path for r in refs)
 
 
 # ==================================================================
@@ -462,3 +475,125 @@ class TestGroverVersionOps:
         result = grover.tree("/project")
         assert result.success is True
         assert len(result) >= 1
+
+
+# ==================================================================
+# Phase 3 — Graph Operations (consolidated)
+# ==================================================================
+
+
+class TestGroverGraphAlgorithms:
+    """Tests for sync graph algorithm facades."""
+
+    def test_ancestors(self, grover: Grover):
+        grover.write("/project/base.py", "X = 1\n")
+        grover.write(
+            "/project/child.py",
+            "from base import X\n\ndef child():\n    return X\n",
+        )
+        grover.flush()
+        result = grover.ancestors("/project/base.py")
+        assert isinstance(result, AncestorsResult)
+        assert result.success is True
+
+    def test_descendants(self, grover: Grover):
+        grover.write("/project/root.py", "X = 1\n")
+        grover.write(
+            "/project/leaf.py",
+            "from root import X\n\ndef leaf():\n    return X\n",
+        )
+        grover.flush()
+        result = grover.descendants("/project/root.py")
+        assert isinstance(result, DescendantsResult)
+        assert result.success is True
+
+    def test_shortest_path(self, grover: Grover):
+        grover.write("/project/sp_a.py", "X = 1\n")
+        grover.write(
+            "/project/sp_b.py",
+            "from sp_a import X\n\ndef sp_b():\n    return X\n",
+        )
+        grover.flush()
+        result = grover.shortest_path("/project/sp_b.py", "/project/sp_a.py")
+        assert isinstance(result, ShortestPathResult)
+        assert result.success is True
+
+    def test_has_path_no_path(self, grover: Grover):
+        grover.write("/project/island_x.py", "X = 1\n")
+        grover.write("/project/island_y.py", "Y = 2\n")
+        grover.flush()
+        result = grover.has_path("/project/island_x.py", "/project/island_y.py")
+        assert isinstance(result, HasPathResult)
+        assert bool(result) is False
+
+    def test_ego_graph(self, grover: Grover):
+        grover.write("/project/ego.py", "X = 1\n")
+        grover.flush()
+        result = grover.ego_graph("/project/ego.py", max_depth=1)
+        assert isinstance(result, EgoGraphResult)
+        assert result.success is True
+
+    def test_pagerank(self, grover: Grover):
+        grover.write("/project/pr.py", "X = 1\n")
+        grover.flush()
+        result = grover.pagerank()
+        assert isinstance(result, PageRankResult)
+        assert result.success is True
+
+    def test_betweenness_centrality(self, grover: Grover):
+        grover.write("/project/bw.py", "X = 1\n")
+        grover.flush()
+        result = grover.betweenness_centrality()
+        assert isinstance(result, BetweennessResult)
+        assert result.success is True
+
+    def test_hits(self, grover: Grover):
+        grover.write("/project/ht.py", "X = 1\n")
+        grover.flush()
+        result = grover.hits()
+        assert isinstance(result, HitsResult)
+        assert result.success is True
+
+    def test_degree_centrality(self, grover: Grover):
+        grover.write("/project/deg.py", "X = 1\n")
+        grover.flush()
+        result = grover.degree_centrality()
+        assert isinstance(result, DegreeResult)
+        assert result.success is True
+
+    def test_common_neighbors(self, grover: Grover):
+        grover.write("/project/cn_shared.py", "S = 1\n")
+        grover.write(
+            "/project/cn_a.py",
+            "from cn_shared import S\n\ndef a():\n    return S\n",
+        )
+        grover.write(
+            "/project/cn_b.py",
+            "from cn_shared import S\n\ndef b():\n    return S\n",
+        )
+        grover.flush()
+        result = grover.common_neighbors("/project/cn_a.py", "/project/cn_b.py")
+        assert isinstance(result, CommonNeighborsResult)
+        assert result.success is True
+
+    def test_add_connection_sync(self, grover: Grover):
+        grover.write("/project/conn_a.py", "X = 1\n")
+        grover.write("/project/conn_b.py", "Y = 2\n")
+        grover.flush()
+        result = grover.add_connection("/project/conn_a.py", "/project/conn_b.py", "imports")
+        assert result.success is True
+        grover.flush()
+        assert grover.get_graph().has_edge("/project/conn_a.py", "/project/conn_b.py")
+
+    def test_delete_connection_sync(self, grover: Grover):
+        grover.write("/project/dconn_a.py", "X = 1\n")
+        grover.write("/project/dconn_b.py", "Y = 2\n")
+        grover.flush()
+        grover.add_connection("/project/dconn_a.py", "/project/dconn_b.py", "imports")
+        grover.flush()
+        result = grover.delete_connection(
+            "/project/dconn_a.py", "/project/dconn_b.py", connection_type="imports"
+        )
+        assert result.success is True
+        grover.flush()
+        assert not grover.get_graph().has_edge("/project/dconn_a.py", "/project/dconn_b.py")

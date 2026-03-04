@@ -11,7 +11,26 @@ from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
 from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
-from grover.results import GraphResult, VectorSearchResult
+from grover.results import (
+    AncestorsResult,
+    BetweennessResult,
+    ClosenessResult,
+    CommonNeighborsResult,
+    DegreeResult,
+    DescendantsResult,
+    EgoGraphResult,
+    HarmonicResult,
+    HasPathResult,
+    HitsResult,
+    KatzResult,
+    MeetingSubgraphResult,
+    PageRankResult,
+    PredecessorsResult,
+    ShortestPathResult,
+    SubgraphSearchResult,
+    SuccessorsResult,
+    VectorSearchResult,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -258,13 +277,12 @@ class TestGroverAsyncGraph:
         assert grover.get_graph().has_node("/project/mod.py")
 
     @pytest.mark.asyncio
-    async def test_contains_returns_graph_result(self, grover: GroverAsync):
+    async def test_contains_via_graph_provider(self, grover: GroverAsync):
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await grover.write("/project/funcs.py", code)
         await grover.flush()
-        result = grover.contains("/project/funcs.py")
-        assert isinstance(result, GraphResult)
-        assert len(result) >= 2
+        refs = grover.get_graph().contains("/project/funcs.py")
+        assert len(refs) >= 2
 
     @pytest.mark.asyncio
     async def test_delete_removes_from_graph(self, grover: GroverAsync):
@@ -391,7 +409,7 @@ class TestGroverAsyncGraphQueries:
         result = grover.predecessors("/project/lib.py")
         # main.py imports lib.py, so main.py is a predecessor
         # The graph stores "imports" edges from analyzer
-        assert isinstance(result, GraphResult)
+        assert isinstance(result, PredecessorsResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -403,11 +421,11 @@ class TestGroverAsyncGraphQueries:
         )
         await grover.flush()
         result = grover.successors("/project/consumer.py")
-        assert isinstance(result, GraphResult)
+        assert isinstance(result, SuccessorsResult)
         assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_path_between_found(self, grover: GroverAsync):
+    async def test_shortest_path_found(self, grover: GroverAsync):
         await grover.write("/project/start.py", "X = 1\n")
         await grover.write(
             "/project/mid.py",
@@ -418,8 +436,8 @@ class TestGroverAsyncGraphQueries:
             "from mid import mid\n\ndef end():\n    return mid()\n",
         )
         await grover.flush()
-        result = grover.path_between("/project/end.py", "/project/start.py")
-        assert isinstance(result, GraphResult)
+        result = grover.shortest_path("/project/end.py", "/project/start.py")
+        assert isinstance(result, ShortestPathResult)
         assert result.success is True
         # May or may not find a path depending on import analysis depth
         # If path found, result.paths will be non-empty
@@ -427,12 +445,12 @@ class TestGroverAsyncGraphQueries:
             assert len(result.paths) > 0
 
     @pytest.mark.asyncio
-    async def test_path_between_none(self, grover: GroverAsync):
+    async def test_shortest_path_none(self, grover: GroverAsync):
         await grover.write("/project/island_a.py", "A = 1\n")
         await grover.write("/project/island_b.py", "B = 2\n")
         await grover.flush()
-        result = grover.path_between("/project/island_a.py", "/project/island_b.py")
-        assert isinstance(result, GraphResult)
+        result = grover.shortest_path("/project/island_a.py", "/project/island_b.py")
+        assert isinstance(result, ShortestPathResult)
         assert result.success is True
         assert len(result) == 0
 
@@ -781,3 +799,265 @@ class TestGroverAsyncVersionOps:
         result = await grover.tree("/project")
         assert result.success is True
         assert len(result) >= 2
+
+
+# ==================================================================
+# Phase 3 — Graph Operations (consolidated)
+# ==================================================================
+
+
+class TestGroverAsyncGraphAlgorithms:
+    """Tests for new graph algorithm facades."""
+
+    @pytest.mark.asyncio
+    async def test_ancestors(self, grover: GroverAsync):
+        await grover.write("/project/base.py", "X = 1\n")
+        await grover.write(
+            "/project/mid.py",
+            "from base import X\n\ndef mid():\n    return X\n",
+        )
+        await grover.write(
+            "/project/top.py",
+            "from mid import mid\n\ndef top():\n    return mid()\n",
+        )
+        await grover.flush()
+        result = grover.ancestors("/project/base.py")
+        assert isinstance(result, AncestorsResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_descendants(self, grover: GroverAsync):
+        await grover.write("/project/root.py", "X = 1\n")
+        await grover.write(
+            "/project/child.py",
+            "from root import X\n\ndef child():\n    return X\n",
+        )
+        await grover.flush()
+        result = grover.descendants("/project/root.py")
+        assert isinstance(result, DescendantsResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_has_path_exists(self, grover: GroverAsync):
+        await grover.write("/project/src.py", "X = 1\n")
+        await grover.write(
+            "/project/dst.py",
+            "from src import X\n\ndef dst():\n    return X\n",
+        )
+        await grover.flush()
+        result = grover.has_path("/project/dst.py", "/project/src.py")
+        assert isinstance(result, HasPathResult)
+        assert result.success is True
+        # dst imports src → dst → src path exists
+        if len(result) > 0:
+            assert bool(result) is True
+
+    @pytest.mark.asyncio
+    async def test_has_path_no_path(self, grover: GroverAsync):
+        await grover.write("/project/lone_a.py", "A = 1\n")
+        await grover.write("/project/lone_b.py", "B = 2\n")
+        await grover.flush()
+        result = grover.has_path("/project/lone_a.py", "/project/lone_b.py")
+        assert isinstance(result, HasPathResult)
+        assert result.success is True
+        assert len(result) == 0
+        assert bool(result) is False
+
+    @pytest.mark.asyncio
+    async def test_subgraph_from_candidates(self, grover: GroverAsync):
+        await grover.write("/project/a.py", "X = 1\n")
+        await grover.write(
+            "/project/b.py",
+            "from a import X\n\ndef b():\n    return X\n",
+        )
+        await grover.write("/project/c.py", "C = 3\n")
+        await grover.flush()
+        # Use glob as candidates
+        candidates = await grover.glob("*.py", "/project")
+        result = grover.subgraph(candidates)
+        assert isinstance(result, SubgraphSearchResult)
+        assert result.success is True
+        assert len(result) >= 2
+
+    @pytest.mark.asyncio
+    async def test_ego_graph(self, grover: GroverAsync):
+        await grover.write("/project/center.py", "X = 1\n")
+        await grover.write(
+            "/project/near.py",
+            "from center import X\n\ndef near():\n    return X\n",
+        )
+        await grover.flush()
+        result = grover.ego_graph("/project/center.py", max_depth=1)
+        assert isinstance(result, EgoGraphResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_min_meeting_subgraph_from_candidates(self, grover: GroverAsync):
+        await grover.write("/project/x.py", "X = 1\n")
+        await grover.write(
+            "/project/y.py",
+            "from x import X\n\ndef y():\n    return X\n",
+        )
+        await grover.flush()
+        candidates = await grover.glob("*.py", "/project")
+        result = grover.min_meeting_subgraph(candidates, max_size=50)
+        assert isinstance(result, MeetingSubgraphResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_pagerank_with_candidates_filter(self, grover: GroverAsync):
+        await grover.write("/project/p1.py", "A = 1\n")
+        await grover.write(
+            "/project/p2.py",
+            "from p1 import A\n\ndef p2():\n    return A\n",
+        )
+        await grover.write("/project/p3.py", "C = 3\n")
+        await grover.flush()
+        # Without candidates — all nodes
+        full = grover.pagerank()
+        assert isinstance(full, PageRankResult)
+        assert len(full) >= 3
+
+        # With candidates — filtered
+        candidates = await grover.glob("p1*", "/project")
+        filtered = grover.pagerank(candidates=candidates)
+        assert isinstance(filtered, PageRankResult)
+        assert len(filtered) <= len(full)
+        for c in filtered.file_candidates:
+            assert c.path in candidates.paths
+
+    @pytest.mark.asyncio
+    async def test_hits_two_evidence_records(self, grover: GroverAsync):
+        await grover.write("/project/h1.py", "X = 1\n")
+        await grover.write(
+            "/project/h2.py",
+            "from h1 import X\n\ndef h2():\n    return X\n",
+        )
+        await grover.flush()
+        result = grover.hits()
+        assert isinstance(result, HitsResult)
+        assert result.success is True
+        if len(result) > 0:
+            # Each candidate should have two evidence records
+            for c in result.file_candidates:
+                ops = [e.operation for e in c.evidence]
+                assert "hits_authority" in ops
+                assert "hits_hub" in ops
+
+    @pytest.mark.asyncio
+    async def test_betweenness_centrality(self, grover: GroverAsync):
+        await grover.write("/project/bc.py", "X = 1\n")
+        await grover.flush()
+        result = grover.betweenness_centrality()
+        assert isinstance(result, BetweennessResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_closeness_centrality(self, grover: GroverAsync):
+        await grover.write("/project/cc.py", "X = 1\n")
+        await grover.flush()
+        result = grover.closeness_centrality()
+        assert isinstance(result, ClosenessResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_harmonic_centrality(self, grover: GroverAsync):
+        await grover.write("/project/hc.py", "X = 1\n")
+        await grover.flush()
+        result = grover.harmonic_centrality()
+        assert isinstance(result, HarmonicResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_katz_centrality(self, grover: GroverAsync):
+        await grover.write("/project/kc.py", "X = 1\n")
+        await grover.flush()
+        result = grover.katz_centrality()
+        assert isinstance(result, KatzResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_degree_centrality(self, grover: GroverAsync):
+        await grover.write("/project/dc.py", "X = 1\n")
+        await grover.flush()
+        result = grover.degree_centrality()
+        assert isinstance(result, DegreeResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_in_degree_centrality(self, grover: GroverAsync):
+        await grover.write("/project/idc.py", "X = 1\n")
+        await grover.flush()
+        result = grover.in_degree_centrality()
+        assert isinstance(result, DegreeResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_out_degree_centrality(self, grover: GroverAsync):
+        await grover.write("/project/odc.py", "X = 1\n")
+        await grover.flush()
+        result = grover.out_degree_centrality()
+        assert isinstance(result, DegreeResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_common_neighbors(self, grover: GroverAsync):
+        await grover.write("/project/shared.py", "S = 1\n")
+        await grover.write(
+            "/project/n1.py",
+            "from shared import S\n\ndef n1():\n    return S\n",
+        )
+        await grover.write(
+            "/project/n2.py",
+            "from shared import S\n\ndef n2():\n    return S\n",
+        )
+        await grover.flush()
+        result = grover.common_neighbors("/project/n1.py", "/project/n2.py")
+        assert isinstance(result, CommonNeighborsResult)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_add_connection_on_graph_ops(self, grover: GroverAsync):
+        """add_connection works from GraphOpsMixin (formerly ConnectionMixin)."""
+        await grover.write("/project/ac_src.py", "X = 1\n")
+        await grover.write("/project/ac_tgt.py", "Y = 2\n")
+        await grover.flush()
+        result = await grover.add_connection("/project/ac_src.py", "/project/ac_tgt.py", "imports")
+        assert result.success is True
+        await grover.flush()
+        graph = grover.get_graph()
+        assert graph.has_edge("/project/ac_src.py", "/project/ac_tgt.py")
+
+    @pytest.mark.asyncio
+    async def test_delete_connection_on_graph_ops(self, grover: GroverAsync):
+        """delete_connection works from GraphOpsMixin (formerly ConnectionMixin)."""
+        await grover.write("/project/dc_src.py", "X = 1\n")
+        await grover.write("/project/dc_tgt.py", "Y = 2\n")
+        await grover.flush()
+        await grover.add_connection("/project/dc_src.py", "/project/dc_tgt.py", "imports")
+        await grover.flush()
+        result = await grover.delete_connection(
+            "/project/dc_src.py", "/project/dc_tgt.py", connection_type="imports"
+        )
+        assert result.success is True
+        await grover.flush()
+        graph = grover.get_graph()
+        assert not graph.has_edge("/project/dc_src.py", "/project/dc_tgt.py")
+
+    @pytest.mark.asyncio
+    async def test_graph_result_has_connection_candidates(self, grover: GroverAsync):
+        """Subgraph results include connection_candidates (edges)."""
+        await grover.write("/project/sg_a.py", "X = 1\n")
+        await grover.write(
+            "/project/sg_b.py",
+            "from sg_a import X\n\ndef b():\n    return X\n",
+        )
+        await grover.flush()
+        candidates = await grover.glob("sg_*.py", "/project")
+        result = grover.subgraph(candidates)
+        assert isinstance(result, SubgraphSearchResult)
+        # connection_candidates populated from induced edges
+        if len(result.connection_candidates) > 0:
+            cc = result.connection_candidates[0]
+            assert cc.source_path
+            assert cc.target_path

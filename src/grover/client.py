@@ -7,7 +7,6 @@ import threading
 from typing import TYPE_CHECKING, TypeVar
 
 from grover.analyzers import AnalyzerRegistry
-from grover.api.connections import ConnectionMixin
 from grover.api.context import GroverContext
 from grover.api.file_ops import FileOpsMixin
 from grover.api.graph_ops import GraphOpsMixin
@@ -34,26 +33,41 @@ if TYPE_CHECKING:
     from grover.providers.graph.protocol import GraphStore
     from grover.providers.search.protocol import SearchProvider
     from grover.results import (
-        ConnectionListResult,
+        AncestorsResult,
+        BetweennessResult,
+        ClosenessResult,
+        CommonNeighborsResult,
         ConnectionResult,
+        DegreeResult,
         DeleteResult,
+        DescendantsResult,
         DiffVersionsResult,
         EditResult,
+        EgoGraphResult,
         ExistsResult,
         FileInfoResult,
         FileSearchResult,
         GetVersionContentResult,
         GlobResult,
-        GraphResult,
         GrepResult,
+        HarmonicResult,
+        HasPathResult,
+        HitsResult,
+        KatzResult,
         LexicalSearchResult,
         ListDirResult,
+        MeetingSubgraphResult,
         MoveResult,
+        PageRankResult,
+        PredecessorsResult,
         ReadResult,
         ReconcileResult,
         RestoreResult,
         ShareResult,
         ShareSearchResult,
+        ShortestPathResult,
+        SubgraphSearchResult,
+        SuccessorsResult,
         TrashResult,
         TreeResult,
         VectorSearchResult,
@@ -70,7 +84,6 @@ class GroverAsync(
     SearchOpsMixin,
     GraphOpsMixin,
     ShareMixin,
-    ConnectionMixin,
     IndexMixin,
 ):
     """Async facade wiring filesystem, graph, analyzers, worker, and search.
@@ -406,7 +419,7 @@ class Grover:
         return self._run(self._async.list_shared_with_me(user_id=user_id))
 
     # ------------------------------------------------------------------
-    # Connection operations
+    # Connection operations (sync)
     # ------------------------------------------------------------------
 
     def add_connection(
@@ -441,78 +454,154 @@ class Grover:
             )
         )
 
-    def list_connections(
-        self,
-        path: str,
-        *,
-        direction: str = "both",
-        connection_type: str | None = None,
-    ) -> ConnectionListResult:
-        return self._run(
-            self._async.list_connections(
-                path,
-                direction=direction,
-                connection_type=connection_type,
-            )
-        )
-
     # ------------------------------------------------------------------
-    # Graph query wrappers (sync — Graph methods are already sync)
+    # Graph traversal wrappers (sync)
     # ------------------------------------------------------------------
 
-    def predecessors(self, path: str) -> GraphResult:
+    def predecessors(self, path: str) -> PredecessorsResult:
         return self._async.predecessors(path)
 
-    def successors(self, path: str) -> GraphResult:
+    def successors(self, path: str) -> SuccessorsResult:
         return self._async.successors(path)
 
-    def path_between(self, source: str, target: str) -> GraphResult:
-        return self._async.path_between(source, target)
+    def ancestors(self, path: str) -> AncestorsResult:
+        return self._async.ancestors(path)
 
-    def contains(self, path: str) -> GraphResult:
-        return self._async.contains(path)
+    def descendants(self, path: str) -> DescendantsResult:
+        return self._async.descendants(path)
+
+    def shortest_path(self, source: str, target: str) -> ShortestPathResult:
+        return self._async.shortest_path(source, target)
+
+    def has_path(self, source: str, target: str) -> HasPathResult:
+        return self._async.has_path(source, target)
 
     # ------------------------------------------------------------------
-    # Graph algorithm wrappers (capability-checked)
+    # Graph subgraph wrappers (sync)
     # ------------------------------------------------------------------
 
-    def pagerank(
+    def subgraph(
         self,
+        candidates: FileSearchResult,
         *,
-        personalization: dict[str, float] | None = None,
         path: str | None = None,
-    ) -> GraphResult:
-        """Run PageRank on the knowledge graph."""
-        return self._async.pagerank(personalization=personalization, path=path)
+    ) -> SubgraphSearchResult:
+        return self._async.subgraph(candidates, path=path)
 
-    def meeting_subgraph(
+    def min_meeting_subgraph(
         self,
-        paths: list[str],
+        candidates: FileSearchResult,
         *,
         max_size: int = 50,
-    ) -> GraphResult:
-        """Extract the subgraph connecting *paths* via shortest paths."""
-        return self._async.meeting_subgraph(paths, max_size=max_size)
+    ) -> MeetingSubgraphResult:
+        return self._async.min_meeting_subgraph(candidates, max_size=max_size)
 
-    def neighborhood(
+    def ego_graph(
         self,
         path: str,
         *,
         max_depth: int = 2,
         direction: str = "both",
         edge_types: list[str] | None = None,
-    ) -> GraphResult:
-        """Extract the neighborhood subgraph around *path*."""
-        return self._async.neighborhood(
+    ) -> EgoGraphResult:
+        return self._async.ego_graph(
             path,
             max_depth=max_depth,
             direction=direction,
             edge_types=edge_types,
         )
 
-    def find_nodes(self, *, path: str | None = None, **attrs: object) -> GraphResult:
-        """Find graph nodes matching all attribute predicates."""
-        return self._async.find_nodes(path=path, **attrs)
+    # ------------------------------------------------------------------
+    # Graph centrality wrappers (sync)
+    # ------------------------------------------------------------------
+
+    def pagerank(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+        personalization: dict[str, float] | None = None,
+    ) -> PageRankResult:
+        return self._async.pagerank(
+            path=path, candidates=candidates, personalization=personalization
+        )
+
+    def betweenness_centrality(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+    ) -> BetweennessResult:
+        return self._async.betweenness_centrality(path=path, candidates=candidates)
+
+    def closeness_centrality(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+    ) -> ClosenessResult:
+        return self._async.closeness_centrality(path=path, candidates=candidates)
+
+    def harmonic_centrality(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+    ) -> HarmonicResult:
+        return self._async.harmonic_centrality(path=path, candidates=candidates)
+
+    def katz_centrality(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+    ) -> KatzResult:
+        return self._async.katz_centrality(path=path, candidates=candidates)
+
+    def degree_centrality(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+    ) -> DegreeResult:
+        return self._async.degree_centrality(path=path, candidates=candidates)
+
+    def in_degree_centrality(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+    ) -> DegreeResult:
+        return self._async.in_degree_centrality(path=path, candidates=candidates)
+
+    def out_degree_centrality(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+    ) -> DegreeResult:
+        return self._async.out_degree_centrality(path=path, candidates=candidates)
+
+    def hits(
+        self,
+        *,
+        path: str | None = None,
+        candidates: FileSearchResult | None = None,
+    ) -> HitsResult:
+        return self._async.hits(path=path, candidates=candidates)
+
+    # ------------------------------------------------------------------
+    # Other graph operations (sync)
+    # ------------------------------------------------------------------
+
+    def common_neighbors(
+        self,
+        path1: str,
+        path2: str,
+        *,
+        path: str | None = None,
+    ) -> CommonNeighborsResult:
+        return self._async.common_neighbors(path1, path2, path=path)
 
     # ------------------------------------------------------------------
     # Search wrappers (sync)

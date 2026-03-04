@@ -315,6 +315,53 @@ class RustworkxGraph:
             if idx in self._idx_to_path
         }
 
+    def harmonic_centrality(self) -> dict[str, float]:
+        """Harmonic centrality scores.
+
+        For each node *v*, harmonic centrality = sum(1/d(v,u)) for all reachable *u*.
+        """
+        result: dict[str, float] = {}
+        for path, idx in self._path_to_idx.items():
+            lengths = rustworkx.dijkstra_shortest_path_lengths(
+                self._graph,
+                idx,
+                lambda e: e.get("weight", 1.0),
+            )
+            score = sum(1.0 / d for d in dict(lengths).values() if d > 0)
+            result[path] = score
+        return result
+
+    def hits(
+        self,
+        *,
+        max_iter: int = 100,
+        tol: float = 1e-8,
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """HITS hub and authority scores.
+
+        Returns ``(hubs, authorities)`` where each is a ``{path: score}`` dict.
+        """
+        if self._graph.num_nodes() == 0 or self._graph.num_edges() == 0:
+            # HITS requires at least one edge to converge
+            return dict.fromkeys(self._path_to_idx, 0.0), dict.fromkeys(self._path_to_idx, 0.0)
+        # rustworkx.hits returns (hubs, authorities) as CentralityMapping objects
+        hubs_raw, auths_raw = rustworkx.hits(
+            self._graph,
+            max_iter=max_iter,
+            tol=tol,
+        )
+        hubs = {
+            self._idx_to_path[idx]: score
+            for idx, score in hubs_raw.items()
+            if idx in self._idx_to_path
+        }
+        auths = {
+            self._idx_to_path[idx]: score
+            for idx, score in auths_raw.items()
+            if idx in self._idx_to_path
+        }
+        return hubs, auths
+
     def katz_centrality(
         self,
         *,
@@ -468,6 +515,10 @@ class RustworkxGraph:
         result = dict(lengths)
         return result.get(tgt_idx)
 
+    def has_path(self, source: str, target: str) -> bool:
+        """Return ``True`` if there is a directed path from *source* to *target*."""
+        return self.path_between(source, target) is not None
+
     # ------------------------------------------------------------------
     # Subgraph extraction (SupportsSubgraph)
     # ------------------------------------------------------------------
@@ -620,6 +671,12 @@ class RustworkxGraph:
         for s in sets[1:]:
             result = result & s
         return result
+
+    def common_neighbors(self, path1: str, path2: str) -> set[str]:
+        """Intersection of undirected neighbors (predecessors | successors) of both nodes."""
+        n1 = self._undirected_neighbors(path1)
+        n2 = self._undirected_neighbors(path2)
+        return n1 & n2
 
     # ------------------------------------------------------------------
     # Filtering (SupportsFiltering)

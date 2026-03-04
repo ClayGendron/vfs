@@ -357,10 +357,8 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         with pytest.raises(CapabilityNotSupportedError):
             ga.pagerank(path="/app")
         with pytest.raises(CapabilityNotSupportedError):
-            ga.meeting_subgraph(["/app/a.py"])
+            ga.betweenness_centrality(path="/app")
         with pytest.raises(CapabilityNotSupportedError):
-            ga.neighborhood("/app/a.py")
-        with pytest.raises(CapabilityNotSupportedError):
-            ga.find_nodes(path="/app", lang="python")
+            ga.hits(path="/app")
     finally:
         await ga.close()
