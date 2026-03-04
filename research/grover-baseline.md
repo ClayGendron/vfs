@@ -101,9 +101,8 @@ Returns `{"created": N, "updated": N, "deleted": N}`.
 
 | Method | Description |
 |--------|-------------|
-| `dependencies(path)` | What does this file import/depend on? (outgoing edges) |
-| `dependents(path)` | What depends on this file? (incoming edges) |
-| `impacts(path, max_depth)` | Transitive: what's affected if this file changes? (BFS) |
+| `successors(path)` | What does this file import/depend on? (outgoing edges) |
+| `predecessors(path)` | What depends on this file? (incoming edges) |
 | `path_between(source, target)` | Shortest path via Dijkstra |
 | `contains(path)` | Chunks/symbols inside this file |
 

@@ -319,13 +319,10 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         def edges(self) -> list:
             return []
 
-        def dependents(self, path: str) -> list:
+        def predecessors(self, path: str) -> list:
             return []
 
-        def dependencies(self, path: str) -> list:
-            return []
-
-        def impacts(self, path: str, max_depth: int = 3) -> list:
+        def successors(self, path: str) -> list:
             return []
 
         def path_between(self, source: str, target: str) -> None:
@@ -359,10 +356,6 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         mount.filesystem.graph_provider = MinimalGraph()
         with pytest.raises(CapabilityNotSupportedError):
             ga.pagerank(path="/app")
-        with pytest.raises(CapabilityNotSupportedError):
-            ga.ancestors("/app/a.py")
-        with pytest.raises(CapabilityNotSupportedError):
-            ga.descendants("/app/a.py")
         with pytest.raises(CapabilityNotSupportedError):
             ga.meeting_subgraph(["/app/a.py"])
         with pytest.raises(CapabilityNotSupportedError):

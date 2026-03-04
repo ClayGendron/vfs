@@ -25,7 +25,7 @@ class GraphOpsMixin:
         """Return the graph for the mount owning *path*, or the first available.
 
         This replaces the old ``self.graph`` attribute which was removed
-        in favour of per-mount graphs.
+        in favor of per-mount graphs.
         """
         return self._ctx.resolve_graph_any(path)
 
@@ -33,20 +33,15 @@ class GraphOpsMixin:
     # Graph query wrappers (resolve mount → delegate to backend's graph)
     # ------------------------------------------------------------------
 
-    def dependents(self, path: str) -> GraphResult:
-        """Return files that depend on *path*."""
-        refs = self._ctx.resolve_graph(path).dependents(path)
-        return GraphResult.from_refs(refs, strategy="dependents")
+    def predecessors(self, path: str) -> GraphResult:
+        """Return graph predecessors of *path* (nodes with edges pointing to it)."""
+        refs = self._ctx.resolve_graph(path).predecessors(path)
+        return GraphResult.from_refs(refs, strategy="predecessors")
 
-    def dependencies(self, path: str) -> GraphResult:
-        """Return files that *path* depends on."""
-        refs = self._ctx.resolve_graph(path).dependencies(path)
-        return GraphResult.from_refs(refs, strategy="dependencies")
-
-    def impacts(self, path: str, max_depth: int = 3) -> GraphResult:
-        """Return files transitively impacted by changes to *path*."""
-        refs = self._ctx.resolve_graph(path).impacts(path, max_depth)
-        return GraphResult.from_refs(refs, strategy="impacts")
+    def successors(self, path: str) -> GraphResult:
+        """Return graph successors of *path* (nodes it points to)."""
+        refs = self._ctx.resolve_graph(path).successors(path)
+        return GraphResult.from_refs(refs, strategy="successors")
 
     def path_between(self, source: str, target: str) -> GraphResult:
         """Return the shortest path from *source* to *target*."""
@@ -103,26 +98,6 @@ class GraphOpsMixin:
             message=f"PageRank computed for {len(candidates)} node(s)",
             candidates=candidates,
         )
-
-    def ancestors(self, path: str) -> GraphResult:
-        """All transitive predecessors of *path* in the knowledge graph."""
-        graph = self._ctx.resolve_graph(path)
-        try:
-            node_set = graph.ancestors(path)
-        except (AttributeError, NotImplementedError):
-            msg = "Graph backend does not support traversal algorithms"
-            raise CapabilityNotSupportedError(msg) from None
-        return GraphResult.from_paths(sorted(node_set), strategy="ancestors")
-
-    def descendants(self, path: str) -> GraphResult:
-        """All transitive successors of *path* in the knowledge graph."""
-        graph = self._ctx.resolve_graph(path)
-        try:
-            node_set = graph.descendants(path)
-        except (AttributeError, NotImplementedError):
-            msg = "Graph backend does not support traversal algorithms"
-            raise CapabilityNotSupportedError(msg) from None
-        return GraphResult.from_paths(sorted(node_set), strategy="descendants")
 
     def meeting_subgraph(
         self,

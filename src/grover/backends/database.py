@@ -1257,20 +1257,15 @@ class DatabaseFileSystem:
             return False
         return self.graph_provider.has_edge(source, target)
 
-    def graph_dependents(self, path: str) -> list[Ref]:
+    def graph_predecessors(self, path: str) -> list[Ref]:
         if self.graph_provider is None:
             return []
-        return self.graph_provider.dependents(path)
+        return self.graph_provider.predecessors(path)
 
-    def graph_dependencies(self, path: str) -> list[Ref]:
+    def graph_successors(self, path: str) -> list[Ref]:
         if self.graph_provider is None:
             return []
-        return self.graph_provider.dependencies(path)
-
-    def graph_impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
-        if self.graph_provider is None:
-            return []
-        return self.graph_provider.impacts(path, max_depth)
+        return self.graph_provider.successors(path)
 
     def graph_path_between(self, source: str, target: str) -> list[Ref] | None:
         if self.graph_provider is None:

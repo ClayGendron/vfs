@@ -218,20 +218,20 @@ class TestPerMountIndexing:
 
 class TestGraphOpsResolveMount:
     @pytest.mark.asyncio
-    async def test_dependents_resolves_mount(self, multi_grover: GroverAsync):
-        """dependents() uses the correct mount's graph."""
+    async def test_predecessors_resolves_mount(self, multi_grover: GroverAsync):
+        """predecessors() uses the correct mount's graph."""
         await multi_grover.write("/mount1/lib.py", "def helper():\n    return 42\n")
         await multi_grover.flush()
-        result = multi_grover.dependents("/mount1/lib.py")
+        result = multi_grover.predecessors("/mount1/lib.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_dependencies_resolves_mount(self, multi_grover: GroverAsync):
-        """dependencies() uses the correct mount's graph."""
+    async def test_successors_resolves_mount(self, multi_grover: GroverAsync):
+        """successors() uses the correct mount's graph."""
         await multi_grover.write("/mount2/consumer.py", "def main():\n    pass\n")
         await multi_grover.flush()
-        result = multi_grover.dependencies("/mount2/consumer.py")
+        result = multi_grover.successors("/mount2/consumer.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
 

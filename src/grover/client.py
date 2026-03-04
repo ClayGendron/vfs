@@ -463,14 +463,11 @@ class Grover:
     # Graph query wrappers (sync — Graph methods are already sync)
     # ------------------------------------------------------------------
 
-    def dependents(self, path: str) -> GraphResult:
-        return self._async.dependents(path)
+    def predecessors(self, path: str) -> GraphResult:
+        return self._async.predecessors(path)
 
-    def dependencies(self, path: str) -> GraphResult:
-        return self._async.dependencies(path)
-
-    def impacts(self, path: str, max_depth: int = 3) -> GraphResult:
-        return self._async.impacts(path, max_depth)
+    def successors(self, path: str) -> GraphResult:
+        return self._async.successors(path)
 
     def path_between(self, source: str, target: str) -> GraphResult:
         return self._async.path_between(source, target)
@@ -490,14 +487,6 @@ class Grover:
     ) -> GraphResult:
         """Run PageRank on the knowledge graph."""
         return self._async.pagerank(personalization=personalization, path=path)
-
-    def ancestors(self, path: str) -> GraphResult:
-        """All transitive predecessors of *path* in the knowledge graph."""
-        return self._async.ancestors(path)
-
-    def descendants(self, path: str) -> GraphResult:
-        """All transitive successors of *path* in the knowledge graph."""
-        return self._async.descendants(path)
 
     def meeting_subgraph(
         self,

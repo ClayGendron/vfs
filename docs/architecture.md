@@ -66,7 +66,7 @@ Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every m
 | `MountMixin` | `api/mounting.py` | Mount lifecycle: add, unmount, init meta FS |
 | `FileOpsMixin` | `api/file_ops.py` | File CRUD: read, write, edit, delete, mkdir, list_dir, move, copy |
 | `SearchOpsMixin` | `api/search_ops.py` | Queries: glob, grep, tree, vector/lexical/hybrid search |
-| `GraphOpsMixin` | `api/graph_ops.py` | Graph queries: dependents, dependencies, impacts, pagerank |
+| `GraphOpsMixin` | `api/graph_ops.py` | Graph queries: predecessors, successors, pagerank |
 | `VersionTrashMixin` | `api/version_trash.py` | Versions, trash, reconciliation |
 | `ShareMixin` | `api/sharing.py` | Share/unshare between users |
 | `ConnectionMixin` | `api/connections.py` | Manual edge CRUD (persisted through FS) |
@@ -179,7 +179,7 @@ g.add_mount("/data", engine=engine,
             search_provider=LocalVectorStore(dimension=1536))
 ```
 
-**Graph resolution**: operations like `dependents(path)` resolve the mount from the path, then delegate to `mount.filesystem.graph_provider`. `get_graph(path)` is the public method.
+**Graph resolution**: operations like `predecessors(path)` resolve the mount from the path, then delegate to `mount.filesystem.graph_provider`. `get_graph(path)` is the public method.
 
 **Search routing**: `vector_search()`, `lexical_search()`, and `hybrid_search()` check each mount's filesystem for `search_provider` and `embedding_provider`. Root-level searches aggregate results across all mounts; path-scoped searches target a single mount.
 
@@ -434,7 +434,7 @@ All five integration classes (`GroverBackend`, `GroverMiddleware`, `GroverRetrie
 - Sync methods work directly (unchanged from before).
 - Async methods raise `TypeError` directing the user to pass `GroverAsync` or use sync methods.
 
-**Graph operations** (`dependencies`, `dependents`, `impacts`) are sync on both `Grover` and `GroverAsync` because they operate on an in-memory `rustworkx` graph. `GroverMiddleware` does NOT pass `coroutine` to `StructuredTool.from_function` for graph tools — they are always sync.
+**Graph operations** (`successors`, `predecessors`) are sync on both `Grover` and `GroverAsync` because they operate on an in-memory `rustworkx` graph. `GroverMiddleware` does NOT pass `coroutine` to `StructuredTool.from_function` for graph tools — they are always sync.
 
 **Formatting helpers** are extracted as module-level functions shared between sync and async code paths. This prevents logic drift and ensures identical output format regardless of which path is used.
 

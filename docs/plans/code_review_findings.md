@@ -565,7 +565,7 @@ The package `__init__.py` exports 58 names at version 0.0.3. Most users need `Gr
 **Source:** LangGraph Contributor
 
 **Problem statement:**
-`GroverMiddleware` exposes 10 tools (list_versions, get_version_content, restore_version, delete_file, list_trash, restore_from_trash, search_semantic, dependencies, dependents, impacts). Missing: `tree` (directory overview), `move`/`copy` (file management), `glob` (pattern search), `grep` (text search), `lexical_search` (BM25), `hybrid_search`, `index` (re-index). An agent using only `GroverMiddleware` cannot navigate the filesystem without the backend's `ls_info`.
+`GroverMiddleware` exposes 9 tools (list_versions, get_version_content, restore_version, delete_file, list_trash, restore_from_trash, search_semantic, successors, predecessors). Missing: `tree` (directory overview), `move`/`copy` (file management), `glob` (pattern search), `grep` (text search), `lexical_search` (BM25), `hybrid_search`, `index` (re-index). An agent using only `GroverMiddleware` cannot navigate the filesystem without the backend's `ls_info`.
 
 **Code references:**
 
@@ -583,9 +583,8 @@ if enable_search:
     tool_list.append(self._create_search_semantic_tool())
 if enable_graph:
     tool_list.extend([
-        self._create_dependencies_tool(),
-        self._create_dependents_tool(),
-        self._create_impacts_tool(),
+        self._create_successors_tool(),
+        self._create_predecessors_tool(),
     ])
 ```
 

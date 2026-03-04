@@ -8,7 +8,7 @@
 Grover gives AI agents a single toolkit for working with codebases and documents:
 
 - **Versioned filesystem** — mount local directories or databases, write safely with automatic versioning, and recover mistakes with soft-delete trash and rollback.
-- **Knowledge graph** — dependency, impact, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Code is automatically analyzed (Python via AST; JS/TS/Go via tree-sitter) and wired into the graph.
+- **Knowledge graph** — predecessor, successor, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Code is automatically analyzed (Python via AST; JS/TS/Go via tree-sitter) and wired into the graph.
 - **Semantic search** — pluggable vector stores (local [usearch](https://github.com/unum-cloud/usearch), [Pinecone](https://www.pinecone.io/), [Databricks](https://docs.databricks.com/en/generative-ai/vector-search.html)) with pluggable embedding providers (OpenAI, LangChain). Search by meaning, not just keywords.
 
 All three layers stay in sync — write a file and the graph rebuilds and embeddings re-index automatically.
@@ -70,9 +70,8 @@ stats = g.index()
 # {"files_scanned": 42, "chunks_created": 187, "edges_added": 95}
 
 # Knowledge graph queries
-g.dependencies("/project/main.py")   # what does main.py depend on?
-g.dependents("/project/hello.py")    # what depends on hello.py?
-g.impacts("/project/hello.py")       # transitive impact analysis
+g.successors("/project/main.py")     # what does main.py depend on?
+g.predecessors("/project/hello.py")  # what depends on hello.py?
 g.contains("/project/hello.py")      # functions and classes inside
 
 # Semantic search (requires embedding_provider + search_provider on add_mount)
@@ -183,7 +182,7 @@ The full API reference is in the [API Reference](api.md). Here's a summary:
 | **Search / Query** | `glob`, `grep`, `tree` |
 | **Versioning** | `list_versions`, `get_version_content`, `restore_version` |
 | **Trash** | `list_trash`, `restore_from_trash`, `empty_trash` |
-| **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains` |
+| **Graph** | `successors`, `predecessors`, `path_between`, `contains` |
 | **Search** | `vector_search`, `lexical_search`, `hybrid_search`, `search` |
 | **Lifecycle** | `add_mount`, `unmount`, `index`, `save`, `close` |
 

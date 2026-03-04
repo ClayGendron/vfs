@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 import rustworkx
@@ -19,7 +18,7 @@ class RustworkxGraph:
     """Directed knowledge graph over file paths.
 
     Wraps a ``rustworkx.PyDiGraph`` with string-path-keyed nodes and provides
-    traversal queries (dependents, impacts, path_between) plus async
+    traversal queries (predecessors, successors, path_between) plus async
     persistence to/from the ``grover_file_connections`` / ``grover_files`` tables.
 
     Implements the ``GraphProvider`` and ``SupportsPersistence`` protocols.
@@ -154,40 +153,15 @@ class RustworkxGraph:
     # Query methods
     # ------------------------------------------------------------------
 
-    def dependents(self, path: str) -> list[Ref]:
+    def predecessors(self, path: str) -> list[Ref]:
         """Nodes with edges pointing *to* this node (predecessors)."""
         idx = self._require_node(path)
         return [Ref(path=self._idx_to_path[p]) for p in self._graph.predecessor_indices(idx)]
 
-    def dependencies(self, path: str) -> list[Ref]:
+    def successors(self, path: str) -> list[Ref]:
         """Nodes this node points *to* (successors)."""
         idx = self._require_node(path)
         return [Ref(path=self._idx_to_path[s]) for s in self._graph.successor_indices(idx)]
-
-    def impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
-        """Reverse transitive reachability via BFS over predecessors.
-
-        Returns nodes affected if *path* changes, up to *max_depth* hops.
-        Excludes the starting node.  Cycle-safe.
-        """
-        idx = self._require_node(path)
-        visited: set[int] = {idx}
-        queue: deque[tuple[int, int]] = deque()
-        for pred in self._graph.predecessor_indices(idx):
-            if pred not in visited:
-                queue.append((pred, 1))
-                visited.add(pred)
-
-        result: list[Ref] = []
-        while queue:
-            current, depth = queue.popleft()
-            result.append(Ref(path=self._idx_to_path[current]))
-            if depth < max_depth:
-                for pred in self._graph.predecessor_indices(current):
-                    if pred not in visited:
-                        queue.append((pred, depth + 1))
-                        visited.add(pred)
-        return result
 
     def path_between(self, source: str, target: str) -> list[Ref] | None:
         """Shortest path (Dijkstra) from *source* to *target*, or ``None``."""

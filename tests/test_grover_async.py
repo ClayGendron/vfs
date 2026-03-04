@@ -381,41 +381,28 @@ class TestGroverAsyncProperties:
 
 class TestGroverAsyncGraphQueries:
     @pytest.mark.asyncio
-    async def test_dependents_returns_graph_result(self, grover: GroverAsync):
+    async def test_predecessors_returns_graph_result(self, grover: GroverAsync):
         await grover.write("/project/lib.py", "def helper():\n    return 42\n")
         await grover.write(
             "/project/main.py",
             "from lib import helper\n\ndef run():\n    return helper()\n",
         )
         await grover.flush()
-        result = grover.dependents("/project/lib.py")
-        # main.py imports lib.py, so main.py is a dependent
+        result = grover.predecessors("/project/lib.py")
+        # main.py imports lib.py, so main.py is a predecessor
         # The graph stores "imports" edges from analyzer
         assert isinstance(result, GraphResult)
         assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_dependencies_returns_graph_result(self, grover: GroverAsync):
+    async def test_successors_returns_graph_result(self, grover: GroverAsync):
         await grover.write("/project/dep.py", "def util():\n    pass\n")
         await grover.write(
             "/project/consumer.py",
             "from dep import util\n\ndef main():\n    util()\n",
         )
         await grover.flush()
-        result = grover.dependencies("/project/consumer.py")
-        assert isinstance(result, GraphResult)
-        assert result.success is True
-
-    @pytest.mark.asyncio
-    async def test_impacts_transitive(self, grover: GroverAsync):
-        await grover.write("/project/c.py", "VALUE = 1\n")
-        await grover.write("/project/b.py", "from c import VALUE\n\ndef get():\n    return VALUE\n")
-        await grover.write(
-            "/project/a.py",
-            "from b import get\n\ndef run():\n    return get()\n",
-        )
-        await grover.flush()
-        result = grover.impacts("/project/c.py")
+        result = grover.successors("/project/consumer.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
 

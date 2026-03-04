@@ -197,7 +197,7 @@ Additional Grover-specific tools could be exposed as custom middleware:
 
 - `search_semantic(query, k)` — vector similarity search
 - `list_versions(path)` / `restore_version(path, version)` — version management
-- `dependencies(path)` / `dependents(path)` / `impacts(path)` — graph queries
+- `successors(path)` / `predecessors(path)` — graph queries
 - `trash()` / `restore_from_trash(path)` — soft-delete management
 
 ## Source Locations

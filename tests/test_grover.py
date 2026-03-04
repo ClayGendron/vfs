@@ -163,23 +163,23 @@ class TestGroverGraph:
         assert isinstance(grover.get_graph(), RustworkxGraph)
         assert grover.get_graph() is grover._async.get_graph()
 
-    def test_dependents_after_write(self, grover: Grover):
+    def test_predecessors_after_write(self, grover: Grover):
         code = 'import os\n\ndef hello():\n    return "hi"\n'
         grover.write("/project/app.py", code)
         grover.flush()
         # File should be in graph now
         assert grover.get_graph().has_node("/project/app.py")
-        # Check dependents doesn't crash (may be empty if no other file depends on it)
-        result = grover.dependents("/project/app.py")
+        # Check predecessors doesn't crash (may be empty if no other file points to it)
+        result = grover.predecessors("/project/app.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
 
-    def test_dependencies_after_write(self, grover: Grover):
+    def test_successors_after_write(self, grover: Grover):
         code = 'def greet():\n    return "hello"\n'
         grover.write("/project/greet.py", code)
         grover.flush()
         # The file should have "contains" edges to its chunks
-        result = grover.dependencies("/project/greet.py")
+        result = grover.successors("/project/greet.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
         # Should contain the greet function chunk

@@ -35,8 +35,8 @@ The power is in composition. An agent searches by similarity, then traverses the
 results = g.search("database connection pooling")
 # → grover://file/src/db/pool.py (score: 0.92)
 
-# Traverse the graph for dependencies — accepts any canonical ID
-deps = g.graph.dependents("grover://file/src/db/pool.py")
+# Traverse the graph for predecessors — accepts any canonical ID
+deps = g.graph.predecessors("grover://file/src/db/pool.py")
 # → grover://file/src/api/routes.py, grover://file/src/workers/sync.py
 
 # Read the file — path alias works as shorthand
@@ -77,7 +77,7 @@ class Ref:
     permissions: str | None = None  # effective permission for caller
 ```
 
-**Single permission evaluation.** Permissions are evaluated once at the reference model layer, not independently per tool. When an agent resolves a reference, the permission check happens at that point. Graph traversal and vector search filter results through the same policy — preventing the case where `filesystem.read()` denies access but `graph.dependents()` leaks the relationship.
+**Single permission evaluation.** Permissions are evaluated once at the reference model layer, not independently per tool. When an agent resolves a reference, the permission check happens at that point. Graph traversal and vector search filter results through the same policy — preventing the case where `filesystem.read()` denies access but `graph.predecessors()` leaks the relationship.
 
 ```
 ┌─────────────────────────────────────────┐
@@ -170,8 +170,8 @@ g.fs.rollback("/src/auth.py")             # instant undo
 g.fs.versions("/src/auth.py")             # full edit history
 
 # Auto-generated dependency graph (from AST, not LLM)
-g.graph.dependents("/src/db/pool.py")     # what imports this?
-g.graph.impacts("/src/models/user.py")    # what breaks if I change this?
+g.graph.predecessors("/src/db/pool.py")   # what imports this?
+g.graph.successors("/src/models/user.py") # what does this depend on?
 g.graph.path("/src/auth.py", "/src/db/pool.py")  # how are these connected?
 
 # Semantic search

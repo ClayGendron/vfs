@@ -221,110 +221,48 @@ class TestEdgeOperations:
 # ======================================================================
 
 
-class TestDependentsAndDependencies:
-    def test_dependents_incoming(self) -> None:
+class TestPredecessorsAndSuccessors:
+    def test_predecessors_incoming(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/c.py", "/b.py", "imports")
-        refs = g.dependents("/b.py")
+        refs = g.predecessors("/b.py")
         assert _ref_paths(refs) == {"/a.py", "/c.py"}
 
-    def test_dependencies_outgoing(self) -> None:
+    def test_successors_outgoing(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "imports")
-        refs = g.dependencies("/a.py")
+        refs = g.successors("/a.py")
         assert _ref_paths(refs) == {"/b.py", "/c.py"}
 
-    def test_dependents_empty(self) -> None:
+    def test_predecessors_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        assert g.dependents("/a.py") == []
+        assert g.predecessors("/a.py") == []
 
-    def test_dependencies_empty(self) -> None:
+    def test_successors_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        assert g.dependencies("/a.py") == []
+        assert g.successors("/a.py") == []
 
-    def test_dependents_not_found(self) -> None:
+    def test_predecessors_not_found(self) -> None:
         g = RustworkxGraph()
         with pytest.raises(KeyError):
-            g.dependents("/missing.py")
+            g.predecessors("/missing.py")
 
-    def test_dependencies_not_found(self) -> None:
+    def test_successors_not_found(self) -> None:
         g = RustworkxGraph()
         with pytest.raises(KeyError):
-            g.dependencies("/missing.py")
+            g.successors("/missing.py")
 
     def test_returns_ref_instances(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        refs = g.dependents("/b.py")
+        refs = g.predecessors("/b.py")
         assert len(refs) == 1
         assert isinstance(refs[0], Ref)
         assert refs[0].path == "/a.py"
-
-
-# ======================================================================
-# TestImpacts
-# ======================================================================
-
-
-class TestImpacts:
-    def test_single_level(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        refs = g.impacts("/b.py")
-        assert _ref_paths(refs) == {"/a.py"}
-
-    def test_transitive(self) -> None:
-        # c -> b -> a  (c imports b, b imports a)
-        g = RustworkxGraph()
-        g.add_edge("/c.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/a.py", "imports")
-        refs = g.impacts("/a.py", max_depth=3)
-        assert _ref_paths(refs) == {"/b.py", "/c.py"}
-
-    def test_max_depth_limit(self) -> None:
-        # d -> c -> b -> a
-        g = RustworkxGraph()
-        g.add_edge("/d.py", "/c.py", "imports")
-        g.add_edge("/c.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/a.py", "imports")
-        refs = g.impacts("/a.py", max_depth=1)
-        assert _ref_paths(refs) == {"/b.py"}
-
-    def test_cycle_safe(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/a.py", "imports")
-        refs = g.impacts("/a.py")
-        assert _ref_paths(refs) == {"/b.py"}
-
-    def test_excludes_self(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        refs = g.impacts("/b.py")
-        assert "/b.py" not in _ref_paths(refs)
-
-    def test_diamond_graph(self) -> None:
-        #   c
-        #  / \
-        # a   b
-        #  \ /
-        #   d
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/d.py", "imports")
-        g.add_edge("/b.py", "/d.py", "imports")
-        g.add_edge("/c.py", "/a.py", "imports")
-        g.add_edge("/c.py", "/b.py", "imports")
-        refs = g.impacts("/d.py", max_depth=3)
-        assert _ref_paths(refs) == {"/a.py", "/b.py", "/c.py"}
-
-    def test_not_found(self) -> None:
-        g = RustworkxGraph()
-        with pytest.raises(KeyError):
-            g.impacts("/missing.py")
 
 
 # ======================================================================

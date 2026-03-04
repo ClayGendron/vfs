@@ -81,8 +81,8 @@ async def middleware_async(grover_async: GroverAsync) -> GroverMiddleware:
 
 class TestToolRegistration:
     def test_middleware_tools_registered(self, middleware: GroverMiddleware):
-        """All 10 tools registered by default."""
-        assert len(middleware.tools) == 10
+        """All 9 tools registered by default."""
+        assert len(middleware.tools) == 9
         names = {t.name for t in middleware.tools}
         assert names == {
             "list_versions",
@@ -92,23 +92,21 @@ class TestToolRegistration:
             "list_trash",
             "restore_from_trash",
             "search_semantic",
-            "dependencies",
-            "dependents",
-            "impacts",
+            "successors",
+            "predecessors",
         }
 
     def test_enable_search_false_excludes_search_tool(self, grover: Grover):
         mw = GroverMiddleware(grover, enable_search=False)
         names = {t.name for t in mw.tools}
         assert "search_semantic" not in names
-        assert len(mw.tools) == 9
+        assert len(mw.tools) == 8
 
     def test_enable_graph_false_excludes_graph_tools(self, grover: Grover):
         mw = GroverMiddleware(grover, enable_graph=False)
         names = {t.name for t in mw.tools}
-        assert "dependencies" not in names
-        assert "dependents" not in names
-        assert "impacts" not in names
+        assert "successors" not in names
+        assert "predecessors" not in names
         assert len(mw.tools) == 7
 
     def test_both_disabled(self, grover: Grover):
@@ -289,56 +287,34 @@ class TestSearchSemantic:
 # ==================================================================
 
 
-class TestDependencies:
-    def test_dependencies_returns_file_list(self, middleware: GroverMiddleware, grover: Grover):
+class TestSuccessors:
+    def test_successors_returns_file_list(self, middleware: GroverMiddleware, grover: Grover):
         # Write files with import relationships
         grover.write("/project/utils.py", "def helper(): pass\n")
         grover.write("/project/main.py", "from utils import helper\n\ndef run(): helper()\n")
         grover.index("/project")
 
-        tool = next(t for t in middleware.tools if t.name == "dependencies")
+        tool = next(t for t in middleware.tools if t.name == "successors")
         result = tool.invoke({"path": "/project/main.py"})
         assert isinstance(result, str)
-        # If the graph analyzer found the import, it should list dependencies
-        # (the exact output depends on whether the analyzer resolves the import)
-        assert isinstance(result, str)
 
-    def test_dependencies_no_deps(self, middleware: GroverMiddleware, grover: Grover):
+    def test_successors_no_results(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/standalone.py", "x = 42\n")
         grover.index("/project")
-        tool = next(t for t in middleware.tools if t.name == "dependencies")
+        tool = next(t for t in middleware.tools if t.name == "successors")
         result = tool.invoke({"path": "/project/standalone.py"})
-        assert "No dependencies" in result
+        assert "No successors" in result
 
 
-class TestDependents:
-    def test_dependents_returns_file_list(self, middleware: GroverMiddleware, grover: Grover):
+class TestPredecessors:
+    def test_predecessors_returns_file_list(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/lib.py", "def shared(): pass\n")
         grover.write("/project/consumer.py", "from lib import shared\n\nshared()\n")
         grover.index("/project")
 
-        tool = next(t for t in middleware.tools if t.name == "dependents")
+        tool = next(t for t in middleware.tools if t.name == "predecessors")
         result = tool.invoke({"path": "/project/lib.py"})
         assert isinstance(result, str)
-
-
-class TestImpacts:
-    def test_impacts_returns_transitive_closure(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/base.py", "BASE = 1\n")
-        grover.write("/project/mid.py", "from base import BASE\nMID = BASE + 1\n")
-        grover.write("/project/top.py", "from mid import MID\nTOP = MID + 1\n")
-        grover.index("/project")
-
-        tool = next(t for t in middleware.tools if t.name == "impacts")
-        result = tool.invoke({"path": "/project/base.py", "max_depth": 3})
-        assert isinstance(result, str)
-
-    def test_impacts_no_impact(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/island.py", "x = 1\n")
-        grover.index("/project")
-        tool = next(t for t in middleware.tools if t.name == "impacts")
-        result = tool.invoke({"path": "/project/island.py"})
-        assert "No impacted" in result
 
 
 # ==================================================================
@@ -357,8 +333,6 @@ class TestErrorHandling:
                 result = tool.invoke({"query": "test"})
             elif tool.name in ("get_version_content", "restore_version"):
                 result = tool.invoke({"path": "/project/nope.txt", "version": 1})
-            elif tool.name == "impacts":
-                result = tool.invoke({"path": "/project/nope.txt", "max_depth": 1})
             else:
                 result = tool.invoke({"path": "/project/nope.txt"})
             assert isinstance(result, str), f"Tool {tool.name} returned {type(result)}"
@@ -372,7 +346,7 @@ class TestErrorHandling:
 class TestAsyncTools:
     async def test_tools_have_coroutine_when_async(self, middleware_async: GroverMiddleware):
         """Non-graph tools should have coroutine when GroverAsync is used."""
-        graph_tools = {"dependencies", "dependents", "impacts"}
+        graph_tools = {"successors", "predecessors"}
         for tool in middleware_async.tools:
             if tool.name in graph_tools:
                 # Graph tools are sync on both Grover and GroverAsync
@@ -415,9 +389,9 @@ class TestAsyncTools:
         """Graph tools should work via sync invoke even with GroverAsync."""
         await grover_async.write("/project/standalone.py", "x = 42\n")
         await grover_async.index("/project")
-        tool = next(t for t in middleware_async.tools if t.name == "dependencies")
+        tool = next(t for t in middleware_async.tools if t.name == "successors")
         result = tool.invoke({"path": "/project/standalone.py"})
-        assert "No dependencies" in result
+        assert "No successors" in result
 
 
 # ==================================================================

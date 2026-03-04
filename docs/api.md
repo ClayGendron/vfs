@@ -224,18 +224,16 @@ Returns a `ReconcileResult` with fields: `created`, `updated`, `deleted`, `chain
 ### Graph Queries
 
 ```python
-g.dependencies(path) -> GraphResult
-g.dependents(path) -> GraphResult
-g.impacts(path, max_depth=3) -> GraphResult
+g.successors(path) -> GraphResult
+g.predecessors(path) -> GraphResult
 g.path_between(source, target) -> GraphResult
 g.contains(path) -> GraphResult
 ```
 
 | Method | Description |
 |--------|-------------|
-| `dependencies(path)` | Files that this file depends on (outgoing edges). |
-| `dependents(path)` | Files that depend on this file (incoming edges). |
-| `impacts(path, max_depth=3)` | Transitive reverse reachability — all files that could be affected by a change to this file. BFS with cycle detection, bounded by `max_depth`. |
+| `successors(path)` | Files that this file depends on (outgoing edges). |
+| `predecessors(path)` | Files that depend on this file (incoming edges). |
 | `path_between(source, target)` | Shortest path between two files using Dijkstra (weight-aware). Returns `None` if no path exists. |
 | `contains(path)` | Chunks (functions, classes) contained in this file. Returns nodes connected by `"contains"` edges. |
 
@@ -265,8 +263,6 @@ Graph operations resolve to the per-mount graph for the given path. `pagerank()`
 
 ```python
 g.pagerank(*, personalization=None, path=None) -> GraphResult
-g.ancestors(path) -> GraphResult
-g.descendants(path) -> GraphResult
 g.meeting_subgraph(paths, *, max_size=50) -> GraphResult
 g.neighborhood(path, *, max_depth=2, direction="both", edge_types=None) -> GraphResult
 g.find_nodes(*, path=None, **attrs) -> GraphResult
@@ -275,11 +271,11 @@ g.find_nodes(*, path=None, **attrs) -> GraphResult
 | Method | Protocol | Description |
 |--------|----------|-------------|
 | `pagerank(personalization=None, path=None)` | `SupportsCentrality` | PageRank scores for all nodes. Optional `personalization` dict biases the random walk. `path` selects which mount's graph. |
-| `ancestors(path)` | `SupportsTraversal` | All transitive predecessors of a node. |
-| `descendants(path)` | `SupportsTraversal` | All transitive successors of a node. |
 | `meeting_subgraph(paths, max_size=50)` | `SupportsSubgraph` | Subgraph connecting multiple nodes via shortest paths, scored by PageRank. Pruned to `max_size` nodes. |
 | `neighborhood(path, max_depth=2, direction="both", edge_types=None)` | `SupportsSubgraph` | BFS neighborhood around a node. `direction`: `"out"`, `"in"`, or `"both"`. |
 | `find_nodes(path=None, **attrs)` | `SupportsFiltering` | Find nodes by attribute predicates. `path` selects which mount's graph. Callable values are used as predicates; non-callable values are matched by equality. |
+
+> **Note:** `ancestors()` and `descendants()` are available on the `GraphProvider` protocol (via `SupportsTraversal`) but are not exposed as facade methods on `Grover`/`GroverAsync`. Access them directly via `g.get_graph().ancestors(path)` if needed.
 
 ### Search
 
@@ -608,9 +604,8 @@ graph.edges() -> list[tuple[str, str, dict]]
 ### Query Methods
 
 ```python
-graph.dependents(path) -> list[Ref]       # Incoming edges (predecessors)
-graph.dependencies(path) -> list[Ref]     # Outgoing edges (successors)
-graph.impacts(path, max_depth=3) -> list[Ref]  # Transitive BFS
+graph.predecessors(path) -> list[Ref]     # Incoming edges (predecessors)
+graph.successors(path) -> list[Ref]       # Outgoing edges (successors)
 graph.path_between(source, target) -> list[Ref] | None  # Dijkstra
 graph.contains(path) -> list[Ref]         # "contains" edges only
 graph.by_parent(path) -> list[Ref]        # Nodes with matching parent_path
@@ -1030,11 +1025,10 @@ When `GroverAsync` is passed, non-graph tools include both sync and async (corou
 | `list_trash` | List all soft-deleted files |
 | `restore_from_trash` | Recover a file from trash |
 | `search_semantic` | Semantic similarity search (requires embedding provider) |
-| `dependencies` | Direct dependencies from the knowledge graph |
-| `dependents` | Reverse dependencies from the knowledge graph |
-| `impacts` | Transitive impact analysis |
+| `successors` | Direct successors (outgoing edges) from the knowledge graph |
+| `predecessors` | Direct predecessors (incoming edges) from the knowledge graph |
 
-Toggle tool groups with `enable_search=False` (removes `search_semantic`) and `enable_graph=False` (removes `dependencies`, `dependents`, `impacts`).
+Toggle tool groups with `enable_search=False` (removes `search_semantic`) and `enable_graph=False` (removes `successors`, `predecessors`).
 
 ---
 

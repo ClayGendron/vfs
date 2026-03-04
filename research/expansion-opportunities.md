@@ -26,7 +26,7 @@ Detailed analysis of each identified opportunity for expanding Grover's feature 
 **Additional value:** Grover-specific tools exposed as custom middleware:
 - `search_semantic(query, k)` — vector similarity search
 - `list_versions(path)` / `restore_version(path, v)` — version management
-- `dependencies(path)` / `dependents(path)` / `impacts(path)` — graph queries
+- `successors(path)` / `predecessors(path)` — graph queries
 - `list_trash()` / `restore_from_trash(path)` — soft-delete management
 
 **Effort:** Medium. Protocol adapter + middleware. No changes to Grover core.
@@ -56,9 +56,8 @@ Detailed analysis of each identified opportunity for expanding Grover's feature 
 | `file_history` | List versions of a file |
 | `restore_version` | Rollback to previous version |
 | `diff_versions` | Compare two versions |
-| `dependencies` | What does this file depend on? |
-| `dependents` | What depends on this file? |
-| `impacts` | What's affected if this changes? |
+| `successors` | What does this file depend on? |
+| `predecessors` | What depends on this file? |
 | `restore_from_trash` | Recover deleted files |
 
 **Effort:** Medium-high. Requires MCP protocol implementation, server lifecycle management.

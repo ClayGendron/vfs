@@ -302,17 +302,13 @@ class TestGraphMethodsNoop:
         fs = DatabaseFileSystem()
         assert fs.graph_has_node("/a.py") is False
 
-    def test_graph_dependents_returns_empty(self):
+    def test_graph_predecessors_returns_empty(self):
         fs = DatabaseFileSystem()
-        assert fs.graph_dependents("/a.py") == []
+        assert fs.graph_predecessors("/a.py") == []
 
-    def test_graph_dependencies_returns_empty(self):
+    def test_graph_successors_returns_empty(self):
         fs = DatabaseFileSystem()
-        assert fs.graph_dependencies("/a.py") == []
-
-    def test_graph_impacts_returns_empty(self):
-        fs = DatabaseFileSystem()
-        assert fs.graph_impacts("/a.py") == []
+        assert fs.graph_successors("/a.py") == []
 
     def test_graph_node_count_returns_zero(self):
         fs = DatabaseFileSystem()

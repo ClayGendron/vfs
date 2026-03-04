@@ -155,9 +155,9 @@ class TestEvidence:
 
     def test_graph_evidence(self):
         e = GraphEvidence(
-            strategy="dependents", path="/a.py", algorithm="dependents", relationship="imports"
+            strategy="predecessors", path="/a.py", algorithm="predecessors", relationship="imports"
         )
-        assert e.algorithm == "dependents"
+        assert e.algorithm == "predecessors"
         assert e.relationship == "imports"
 
 
@@ -470,7 +470,9 @@ class TestSubclassPreservation:
                 FileSearchCandidate(
                     path="/a.py",
                     evidence=[
-                        GraphEvidence(strategy="dependents", path="/a.py", algorithm="dependents")
+                        GraphEvidence(
+                            strategy="predecessors", path="/a.py", algorithm="predecessors"
+                        )
                     ],
                 )
             ],
@@ -481,7 +483,9 @@ class TestSubclassPreservation:
             candidates=[
                 FileSearchCandidate(
                     path="/b.py",
-                    evidence=[GraphEvidence(strategy="impacts", path="/b.py", algorithm="impacts")],
+                    evidence=[
+                        GraphEvidence(strategy="successors", path="/b.py", algorithm="successors")
+                    ],
                 )
             ],
         )
@@ -736,16 +740,16 @@ class TestGraphResultAccessors:
                     path="/b.py",
                     evidence=[
                         GraphEvidence(
-                            strategy="dependents",
+                            strategy="predecessors",
                             path="/b.py",
-                            algorithm="dependents",
+                            algorithm="predecessors",
                             relationship="imports",
                         )
                     ],
                 ),
             ],
         )
-        assert r.algorithm == "dependents"
+        assert r.algorithm == "predecessors"
 
     def test_algorithm_empty(self):
         r = GraphResult(success=True, message="ok")
@@ -760,15 +764,15 @@ class TestGraphResultAccessors:
                     path="/b.py",
                     evidence=[
                         GraphEvidence(
-                            strategy="deps",
+                            strategy="predecessors",
                             path="/b.py",
-                            algorithm="dependents",
+                            algorithm="predecessors",
                             relationship="imports",
                         ),
                         GraphEvidence(
-                            strategy="deps",
+                            strategy="predecessors",
                             path="/b.py",
-                            algorithm="dependents",
+                            algorithm="predecessors",
                             relationship="contains",
                         ),
                     ],

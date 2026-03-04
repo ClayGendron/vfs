@@ -573,14 +573,11 @@ class Graph:
     # Note: Graph itself is permission-unaware. The Grover class wraps these
     # methods and filters results via include_restricted flag + permission layer.
 
-    def dependents(self, path: str) -> list[Ref]:
+    def predecessors(self, path: str) -> list[Ref]:
         """What depends on this file? (incoming edges)"""
 
-    def dependencies(self, path: str) -> list[Ref]:
+    def successors(self, path: str) -> list[Ref]:
         """What does this file depend on? (outgoing edges)"""
-
-    def impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
-        """Transitive BFS: what is affected if this file changes?"""
 
     def path_between(self, source: str, target: str) -> list[str] | None:
         """Shortest path via rustworkx Dijkstra."""
@@ -794,13 +791,13 @@ g.fs.rollback("/src/auth.py")               # RestoreResult
 g.fs.versions("/src/auth.py")               # list[VersionInfo]
 
 # --- Graph (sync wrappers, one graph per mount) ---
-g.graph.dependents("/src/auth.py")           # list[Ref] — filtered by permissions
-g.graph.impacts("/src/models/user.py")       # list[Ref] — transitive impact
+g.graph.predecessors("/src/auth.py")         # list[Ref] — filtered by permissions
+g.graph.successors("/src/auth.py")           # list[Ref] — filtered by permissions
 g.graph.contains("/src/auth.py")             # list[Ref] — chunks within this file
 g.graph.path_between("/src/a.py", "/src/b.py")  # list[str] | None
 
 # Opt-in: include nodes in restricted directories
-g.graph.dependents("/src/auth.py", include_restricted=True)
+g.graph.predecessors("/src/auth.py", include_restricted=True)
 
 # --- Search (vector search → graph → filesystem) ---
 g.search("database connection retry logic")  # list[SearchResult] — filtered
@@ -841,10 +838,10 @@ Simple, two-level model with query-time filtering.
 
 ```python
 # Default: only returns nodes/results the caller can read
-refs = g.graph.dependents("/src/auth.py")
+refs = g.graph.predecessors("/src/auth.py")
 
 # Opt-in: include nodes in restricted directories (metadata-only access)
-refs = g.graph.dependents("/src/auth.py", include_restricted=True)
+refs = g.graph.predecessors("/src/auth.py", include_restricted=True)
 
 # Search respects the same flag
 results = g.search("retry logic")                              # filtered
@@ -913,7 +910,7 @@ mount.read_only_paths = {"/engineering/archived"}
 
 ### Step 7: Graph
 - `src/grover/graph/_graph.py` — Graph (rustworkx wrapper, file-path-based nodes)
-- Query methods: dependents, dependencies, impacts, path_between, contains, by_parent
+- Query methods: predecessors, successors, path_between, contains, by_parent
 - SQL persistence: `to_sql()` / `from_sql()` (edges table + files as nodes)
 - Dangling edge handling (auto-create blank files)
 - `tests/graph/test_graph.py`
@@ -954,12 +951,12 @@ mount.read_only_paths = {"/engineering/archived"}
 3. **Linting per step.** Run `uv run ruff check .` at each step.
 4. **Diff versioning round-trip:** Write file → edit 5 times → reconstruct each version from diffs → verify content matches.
 5. **Multi-backend filesystem:** Run fs tests against SQLite. PostgreSQL/MSSQL tested via optional CI.
-6. **Graph from AST:** Parse the grover repo itself → verify node/edge counts → query `dependents()` and `impacts()`.
+6. **Graph from AST:** Parse the grover repo itself → verify node/edge counts → query `predecessors()` and `successors()`.
 7. **Chunk creation:** Analyze a Python file → verify chunk files created in `.grover/chunks/` → verify graph edges connect parent to chunks.
 8. **Graph from SQL:** Load graph from SQL tables → verify traversal works → save and reload.
 9. **Search quality:** Index the grover repo → search "file versioning" → verify relevant files rank high.
 10. **Search flow:** `search()` → graph traversal for related files → `fs.read()` for content.
 11. **Cross-layer consistency:** Write a file via `g.fs.write()` → verify graph and search index updated automatically.
-12. **End-to-end:** `Grover(".")` → `index()` → `search()` → `graph.dependents()` → `fs.read()`.
+12. **End-to-end:** `Grover(".")` → `index()` → `search()` → `graph.predecessors()` → `fs.read()`.
 13. **.gitignore respect:** Files matching `.gitignore` patterns are not analyzed or chunked.
 14. **Dangling edges:** Create edge to non-existent path → verify blank file auto-created.

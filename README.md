@@ -11,7 +11,7 @@
 Grover gives AI agents a single toolkit for working with any knowledge base — documents, codebases, research, datasets, or any collection of files:
 
 - **Versioned filesystem** — mount local directories or databases, write safely with automatic versioning, and recover mistakes with soft-delete trash and rollback.
-- **Knowledge graph** — relationship, impact, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Add edges manually or let built-in analyzers extract structure automatically (Python via AST; JS/TS/Go via tree-sitter).
+- **Knowledge graph** — predecessor, successor, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Add edges manually or let built-in analyzers extract structure automatically (Python via AST; JS/TS/Go via tree-sitter).
 - **Semantic search** — pluggable vector stores (local [usearch](https://github.com/unum-cloud/usearch), [Pinecone](https://www.pinecone.io/), [Databricks](https://docs.databricks.com/en/generative-ai/vector-search.html)) with pluggable embedding providers (OpenAI, LangChain). Search by meaning, not just keywords.
 
 All three layers stay in sync — write a file and the graph rebuilds and embeddings re-index automatically in the background.
@@ -68,14 +68,12 @@ g.edit("/project/hello.py", "Hello", "Hi")
 g.flush()
 
 # Knowledge graph queries
-g.dependencies("/project/main.py")   # what does main.py depend on?
-g.dependents("/project/hello.py")    # what depends on hello.py?
-g.impacts("/project/hello.py")       # transitive impact analysis
+g.successors("/project/main.py")     # what does main.py depend on?
+g.predecessors("/project/hello.py")  # what depends on hello.py?
 g.contains("/project/hello.py")      # functions and classes inside
 
-# Graph algorithms (centrality, traversal, subgraph extraction)
+# Graph algorithms (centrality, subgraph extraction)
 scores = g.pagerank()                                     # PageRank centrality
-anc = g.ancestors("/project/main.py")                     # transitive predecessors
 sub = g.meeting_subgraph(["/project/a.py", "/project/b.py"])  # connecting subgraph
 nodes = g.find_nodes(lang="python")                       # filter by attributes
 
@@ -272,7 +270,7 @@ The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
 | **Versioning** | `list_versions`, `get_version_content`, `restore_version` |
 | **Trash** | `list_trash`, `restore_from_trash`, `empty_trash` |
 | **Sharing** | `share`, `unshare`, `list_shares`, `list_shared_with_me` |
-| **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains`, `pagerank`, `ancestors`, `descendants`, `meeting_subgraph`, `neighborhood`, `find_nodes` |
+| **Graph** | `successors`, `predecessors`, `path_between`, `contains`, `pagerank`, `meeting_subgraph`, `neighborhood`, `find_nodes` |
 | **Search** | `vector_search`, `lexical_search`, `hybrid_search`, `search` |
 | **Lifecycle** | `add_mount`, `unmount`, `index`, `flush`, `save`, `close` |
 

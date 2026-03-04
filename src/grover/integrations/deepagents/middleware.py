@@ -173,9 +173,8 @@ class GroverMiddleware(AgentMiddleware):
         if enable_graph:
             tool_list.extend(
                 [
-                    self._create_dependencies_tool(),
-                    self._create_dependents_tool(),
-                    self._create_impacts_tool(),
+                    self._create_successors_tool(),
+                    self._create_predecessors_tool(),
                 ]
             )
         self.tools: list[BaseTool] = tool_list
@@ -466,68 +465,46 @@ class GroverMiddleware(AgentMiddleware):
     # Graph tools (sync on both Grover and GroverAsync — in-memory rustworkx)
     # ------------------------------------------------------------------
 
-    def _create_dependencies_tool(self) -> BaseTool:
+    def _create_successors_tool(self) -> BaseTool:
         grover = self.grover
 
-        def dependencies(
+        def successors(
             path: Annotated[str, "Absolute virtual path to the file"],
         ) -> str:
             try:
-                result = grover.dependencies(path)
+                result = grover.successors(path)
             except Exception as e:
                 return f"Error: {e}"
-            return _format_graph_result(result, "dependencies")
+            return _format_graph_result(result, "successors")
 
         return StructuredTool.from_function(
-            name="dependencies",
+            name="successors",
             description=(
-                "Show what files this file imports or depends on. Returns "
-                "the direct dependency list from the knowledge graph."
+                "Show graph successors of this file — nodes it points to "
+                "(outgoing edges). Returns the direct successor list from "
+                "the knowledge graph."
             ),
-            func=dependencies,
+            func=successors,
         )
 
-    def _create_dependents_tool(self) -> BaseTool:
+    def _create_predecessors_tool(self) -> BaseTool:
         grover = self.grover
 
-        def dependents(
+        def predecessors(
             path: Annotated[str, "Absolute virtual path to the file"],
         ) -> str:
             try:
-                result = grover.dependents(path)
+                result = grover.predecessors(path)
             except Exception as e:
                 return f"Error: {e}"
-            return _format_graph_result(result, "dependents")
+            return _format_graph_result(result, "predecessors")
 
         return StructuredTool.from_function(
-            name="dependents",
+            name="predecessors",
             description=(
-                "Show what files depend on or import this file. Useful for "
-                "understanding the impact of changes — if many files depend "
-                "on this one, changes need extra care."
+                "Show graph predecessors of this file — nodes with edges "
+                "pointing to it (incoming edges). Useful for understanding "
+                "the impact of changes."
             ),
-            func=dependents,
-        )
-
-    def _create_impacts_tool(self) -> BaseTool:
-        grover = self.grover
-
-        def impacts(
-            path: Annotated[str, "Absolute virtual path to the file"],
-            max_depth: Annotated[int, "Maximum depth for transitive impact analysis"] = 3,
-        ) -> str:
-            try:
-                result = grover.impacts(path, max_depth=max_depth)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_graph_result(result, "impacted files")
-
-        return StructuredTool.from_function(
-            name="impacts",
-            description=(
-                "Show all files transitively affected if this file changes. "
-                "Follows the dependency graph up to max_depth levels deep. "
-                "Use this before making changes to understand the blast radius."
-            ),
-            func=impacts,
+            func=predecessors,
         )
