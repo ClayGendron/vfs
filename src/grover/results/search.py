@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
     from datetime import datetime
 
+    from grover.providers.graph.types import SubgraphResult
     from grover.ref import Ref
 
 
@@ -666,6 +667,196 @@ class GraphResult(FileSearchResult):
                     if isinstance(e, GraphEvidence) and e.relationship
                 )
         return ()
+
+    # -----------------------------------------------------------------
+    # Factory methods
+    # -----------------------------------------------------------------
+
+    @classmethod
+    def from_subgraph(cls, sub: SubgraphResult, *, operation: str) -> Self:
+        """Create a result from a ``SubgraphResult``.
+
+        ``file_candidates`` from ``sub.nodes`` with ``GraphEvidence``.
+        ``connection_candidates`` from ``sub.edges`` as ``ConnectionCandidate``.
+        """
+        file_candidates = [
+            FileCandidate(
+                path=node,
+                evidence=[
+                    GraphEvidence(
+                        operation=operation,
+                        algorithm=operation,
+                        score=sub.scores.get(node, 0.0),
+                    )
+                ],
+            )
+            for node in sub.nodes
+        ]
+        connection_candidates = [
+            ConnectionCandidate(
+                source_path=src,
+                target_path=tgt,
+                connection_type=data.get("type", ""),
+                weight=data.get("weight", 1.0),
+                evidence=[GraphEvidence(operation=operation, algorithm=operation)],
+            )
+            for src, tgt, data in sub.edges
+        ]
+        return cls(
+            success=True,
+            message=f"{len(file_candidates)} node(s), {len(connection_candidates)} edge(s)",
+            file_candidates=file_candidates,
+            connection_candidates=connection_candidates,
+        )
+
+    @classmethod
+    def from_scored(
+        cls,
+        scores: dict[str, float],
+        *,
+        operation: str,
+        algorithm: str = "",
+    ) -> Self:
+        """Create a result from a ``{path: score}`` dict, sorted descending."""
+        sorted_items = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        file_candidates = [
+            FileCandidate(
+                path=path,
+                evidence=[
+                    GraphEvidence(
+                        operation=operation,
+                        algorithm=algorithm or operation,
+                        score=score,
+                    )
+                ],
+            )
+            for path, score in sorted_items
+        ]
+        return cls(
+            success=True,
+            message=f"{len(file_candidates)} node(s)",
+            file_candidates=file_candidates,
+        )
+
+
+# =====================================================================
+# Typed GraphResult subclasses
+# =====================================================================
+
+# --- Traversal results ---
+
+
+@dataclass
+class PredecessorsResult(GraphResult):
+    """Result of a predecessors query."""
+
+
+@dataclass
+class SuccessorsResult(GraphResult):
+    """Result of a successors query."""
+
+
+@dataclass
+class AncestorsResult(GraphResult):
+    """Result of an ancestors query."""
+
+
+@dataclass
+class DescendantsResult(GraphResult):
+    """Result of a descendants query."""
+
+
+@dataclass
+class ShortestPathResult(GraphResult):
+    """Result of a shortest path query."""
+
+
+@dataclass
+class HasPathResult(GraphResult):
+    """Result of a has_path check. bool(result) indicates connectivity."""
+
+
+# --- Subgraph results ---
+
+
+@dataclass
+class SubgraphSearchResult(GraphResult):
+    """Result of an induced subgraph extraction."""
+
+
+@dataclass
+class MeetingSubgraphResult(GraphResult):
+    """Result of a minimum meeting subgraph extraction."""
+
+
+@dataclass
+class EgoGraphResult(GraphResult):
+    """Result of an ego graph (neighborhood) extraction."""
+
+
+# --- Centrality results ---
+
+
+@dataclass
+class PageRankResult(GraphResult):
+    """Result of PageRank computation."""
+
+
+@dataclass
+class HitsResult(GraphResult):
+    """Result of HITS computation. Each candidate has two evidence records:
+    hits_authority and hits_hub."""
+
+    def hub_score(self, path: str) -> float:
+        """Return the hub score for *path*."""
+        for c in self.file_candidates:
+            if c.path == path:
+                for e in c.evidence:
+                    if isinstance(e, GraphEvidence) and e.operation == "hits_hub":
+                        return e.score
+        return 0.0
+
+    def authority_score(self, path: str) -> float:
+        """Return the authority score for *path*."""
+        for c in self.file_candidates:
+            if c.path == path:
+                for e in c.evidence:
+                    if isinstance(e, GraphEvidence) and e.operation == "hits_authority":
+                        return e.score
+        return 0.0
+
+
+@dataclass
+class BetweennessResult(GraphResult):
+    """Result of betweenness centrality computation."""
+
+
+@dataclass
+class ClosenessResult(GraphResult):
+    """Result of closeness centrality computation."""
+
+
+@dataclass
+class HarmonicResult(GraphResult):
+    """Result of harmonic centrality computation."""
+
+
+@dataclass
+class KatzResult(GraphResult):
+    """Result of Katz centrality computation."""
+
+
+@dataclass
+class DegreeResult(GraphResult):
+    """Result of degree centrality computation (degree, in-degree, or out-degree)."""
+
+
+# --- Other graph results ---
+
+
+@dataclass
+class CommonNeighborsResult(GraphResult):
+    """Result of a common neighbors query."""
 
 
 @dataclass

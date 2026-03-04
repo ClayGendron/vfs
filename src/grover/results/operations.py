@@ -172,6 +172,17 @@ class ReconcileResult(FileOperationResult):
 
 
 @dataclass
+class DiffVersionsResult(FileOperationResult):
+    """Result of comparing two versions of a file."""
+
+    version_a: int = 0
+    version_b: int = 0
+    diff: str = ""
+    content_a: str = ""
+    content_b: str = ""
+
+
+@dataclass
 class VerifyVersionResult(FileOperationResult):
     """Result of verifying a file's version chain integrity."""
 
