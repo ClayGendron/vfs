@@ -34,14 +34,13 @@ if TYPE_CHECKING:
     from grover.models.file import FileBase
     from grover.types.operations import FileInfoResult
 
-    from .directories import DirectoryService
     from .providers.versioning.protocol import VersionProvider
-    from .sharing import SharingService
 
     ContentReader = Callable[[str, AsyncSession], Awaitable[str | None]]
     ContentWriter = Callable[[str, str, AsyncSession], Awaitable[None]]
     ContentDeleter = Callable[[str, AsyncSession], Awaitable[None]]
     GetFileRecord = Callable[..., Awaitable["FileBase | None"]]
+    EnsureParentDirs = Callable[[AsyncSession, str, str | None], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +202,7 @@ async def write_file(
     *,
     get_file_record: GetFileRecord,
     versioning: VersionProvider,
-    directories: DirectoryService,
+    ensure_parent_dirs: EnsureParentDirs,
     file_model: type[FileBase],
     read_content: ContentReader,
     write_content: ContentWriter,
@@ -282,7 +281,7 @@ async def write_file(
         created = False
         version = existing.current_version
     else:
-        await directories.ensure_parent_dirs(session, path, owner_id=owner_id)
+        await ensure_parent_dirs(session, path, owner_id)
 
         new_file = file_model(
             path=path,
@@ -461,13 +460,12 @@ async def move_file(
     *,
     get_file_record: GetFileRecord,
     versioning: VersionProvider,
-    directories: DirectoryService,
+    ensure_parent_dirs: EnsureParentDirs,
     file_model: type[FileBase],
     read_content: ContentReader,
     write_content: ContentWriter,
     delete_content: ContentDeleter,
     follow: bool = False,
-    sharing: SharingService | None = None,
 ) -> MoveResult:
     """Orchestrate a file move within the same backend.
 
@@ -475,14 +473,9 @@ async def move_file(
     ----------
     follow:
         ``False`` (default) — clean break: new file at *dest*, source deleted.
-        Version history does not carry over. Share paths are NOT updated.
+        Version history does not carry over.
 
         ``True`` — in-place rename: same file record, versions follow.
-        If a ``sharing`` service is provided, share paths are updated to
-        match the new location.
-    sharing:
-        Optional :class:`SharingService` instance for updating share paths
-        when ``follow=True``.
     """
     valid, error = validate_path(src)
     if not valid:
@@ -566,11 +559,6 @@ async def move_file(
         except Exception:
             logger.warning("Failed to clean up old content at %s", src)
 
-        # Update share paths if follow=True
-        if follow and sharing is not None:
-            await sharing.update_share_paths(session, src, dest)
-            await session.flush()
-
         return MoveResult(
             success=True,
             message=f"Moved {src} to {dest}",
@@ -582,7 +570,7 @@ async def move_file(
 
     if follow:
         # In-place rename: same file record, versions follow
-        await directories.ensure_parent_dirs(session, dest)
+        await ensure_parent_dirs(session, dest, None)
         old_paths: list[str] = [src]
 
         if src_file.is_directory:
@@ -619,11 +607,6 @@ async def move_file(
             except Exception:
                 logger.warning("Failed to clean up old content at %s", old_path)
 
-        # Update share paths
-        if sharing is not None:
-            await sharing.update_share_paths(session, src, dest)
-            await session.flush()
-
         return MoveResult(
             success=True,
             message=f"Moved {src} to {dest}",
@@ -633,7 +616,7 @@ async def move_file(
 
     # follow=False: clean break — new records at dest, source soft-deleted
     now = datetime.now(UTC)
-    await directories.ensure_parent_dirs(session, dest)
+    await ensure_parent_dirs(session, dest, None)
 
     if src_file.is_directory:
         # Collect children and their content before modifying records

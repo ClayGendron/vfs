@@ -1,7 +1,7 @@
-"""Tests for ConnectionService and connection integration through GroverAsync.
+"""Tests for connection operations on DatabaseFileSystem and integration through GroverAsync.
 
 This covers:
-- ConnectionService unit tests (low-level DB CRUD)
+- DatabaseFileSystem connection unit tests (low-level DB CRUD)
 - GroverAsync + DatabaseFileSystem connection integration (graph)
 - GroverAsync + LocalFileSystem connection integration
 - _analyze_and_integrate edge routing through FS
@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from _helpers import FakeProvider
-from grover.fs.connections import ConnectionService
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.providers.graph import RustworkxGraph
@@ -33,28 +32,30 @@ if TYPE_CHECKING:
 
 
 # =========================================================================
-# ConnectionService unit tests (low-level, direct DB access)
+# DFS connection unit tests (low-level, direct DB access)
 # =========================================================================
 
 
-class TestConnectionService:
+class TestConnectionMethods:
     @pytest.fixture
-    async def db(self) -> tuple[AsyncEngine, ConnectionService]:
+    async def setup(
+        self,
+    ) -> tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]:
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
-        svc = ConnectionService(FileConnection)
-        yield engine, svc  # type: ignore[misc]
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs = DatabaseFileSystem(dialect="sqlite")
+        yield fs, factory, engine  # type: ignore[misc]
         await engine.dispose()
 
     async def test_add_connection_creates_db_record(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            result = await svc.add_connection(sess, "/a.py", "/b.py", "imports", weight=1.0)
+            result = await fs.add_connection("/a.py", "/b.py", "imports", weight=1.0, session=sess)
             await sess.commit()
 
         assert isinstance(result, ConnectionResult)
@@ -74,28 +75,28 @@ class TestConnectionService:
             assert records[0].type == "imports"
 
     async def test_add_connection_computes_path(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            result = await svc.add_connection(sess, "/src/a.py", "/src/b.py", "imports")
+            result = await fs.add_connection("/src/a.py", "/src/b.py", "imports", session=sess)
             await sess.commit()
 
         assert result.path == "/src/a.py[imports]/src/b.py"
 
-    async def test_add_connection_upsert(self, db: tuple[AsyncEngine, ConnectionService]) -> None:
+    async def test_add_connection_upsert(
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
         """Adding the same connection twice updates instead of creating duplicate."""
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports", weight=1.0)
+            await fs.add_connection("/a.py", "/b.py", "imports", weight=1.0, session=sess)
             await sess.commit()
 
         async with factory() as sess:
-            result = await svc.add_connection(sess, "/a.py", "/b.py", "imports", weight=2.0)
+            result = await fs.add_connection("/a.py", "/b.py", "imports", weight=2.0, session=sess)
             await sess.commit()
 
         assert result.success
@@ -109,17 +110,18 @@ class TestConnectionService:
             assert records[0].weight == 2.0
 
     async def test_delete_connection_removes_record(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports")
+            await fs.add_connection("/a.py", "/b.py", "imports", session=sess)
             await sess.commit()
 
         async with factory() as sess:
-            result = await svc.delete_connection(sess, "/a.py", "/b.py", connection_type="imports")
+            result = await fs.delete_connection(
+                "/a.py", "/b.py", connection_type="imports", session=sess
+            )
             await sess.commit()
 
         assert result.success
@@ -131,31 +133,31 @@ class TestConnectionService:
             assert len(list(row.scalars().all())) == 0
 
     async def test_delete_connection_not_found(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            result = await svc.delete_connection(sess, "/a.py", "/b.py", connection_type="imports")
+            result = await fs.delete_connection(
+                "/a.py", "/b.py", connection_type="imports", session=sess
+            )
 
         assert not result.success
         assert "not found" in result.message.lower()
 
     async def test_delete_connection_all_types(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
         """Deleting without connection_type removes all edges between source and target."""
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports")
-            await svc.add_connection(sess, "/a.py", "/b.py", "calls")
+            await fs.add_connection("/a.py", "/b.py", "imports", session=sess)
+            await fs.add_connection("/a.py", "/b.py", "calls", session=sess)
             await sess.commit()
 
         async with factory() as sess:
-            result = await svc.delete_connection(sess, "/a.py", "/b.py")
+            result = await fs.delete_connection("/a.py", "/b.py", session=sess)
             await sess.commit()
 
         assert result.success
@@ -165,20 +167,19 @@ class TestConnectionService:
             assert len(list(row.scalars().all())) == 0
 
     async def test_delete_connections_for_path(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
         """delete_connections_for_path removes all connections where path is source or target."""
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports")
-            await svc.add_connection(sess, "/c.py", "/a.py", "imports")
-            await svc.add_connection(sess, "/x.py", "/y.py", "imports")
+            await fs.add_connection("/a.py", "/b.py", "imports", session=sess)
+            await fs.add_connection("/c.py", "/a.py", "imports", session=sess)
+            await fs.add_connection("/x.py", "/y.py", "imports", session=sess)
             await sess.commit()
 
         async with factory() as sess:
-            count = await svc.delete_connections_for_path(sess, "/a.py")
+            count = await fs.delete_connections_for_path(sess, "/a.py")
             await sess.commit()
 
         assert count == 2
@@ -191,81 +192,78 @@ class TestConnectionService:
             assert records[0].source_path == "/x.py"
 
     async def test_list_connections_both_directions(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports")
-            await svc.add_connection(sess, "/c.py", "/a.py", "calls")
+            await fs.add_connection("/a.py", "/b.py", "imports", session=sess)
+            await fs.add_connection("/c.py", "/a.py", "calls", session=sess)
             await sess.commit()
 
         async with factory() as sess:
-            result = await svc.list_connections(sess, "/a.py", direction="both")
+            result = await fs.list_connections("/a.py", direction="both", session=sess)
 
         assert len(result.connections) == 2
 
     async def test_list_connections_outgoing(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports")
-            await svc.add_connection(sess, "/c.py", "/a.py", "calls")
+            await fs.add_connection("/a.py", "/b.py", "imports", session=sess)
+            await fs.add_connection("/c.py", "/a.py", "calls", session=sess)
             await sess.commit()
 
         async with factory() as sess:
-            result = await svc.list_connections(sess, "/a.py", direction="out")
+            result = await fs.list_connections("/a.py", direction="out", session=sess)
 
         assert len(result.connections) == 1
         assert result.connections[0].target_path == "/b.py"
 
     async def test_list_connections_incoming(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports")
-            await svc.add_connection(sess, "/c.py", "/a.py", "calls")
+            await fs.add_connection("/a.py", "/b.py", "imports", session=sess)
+            await fs.add_connection("/c.py", "/a.py", "calls", session=sess)
             await sess.commit()
 
         async with factory() as sess:
-            result = await svc.list_connections(sess, "/a.py", direction="in")
+            result = await fs.list_connections("/a.py", direction="in", session=sess)
 
         assert len(result.connections) == 1
         assert result.connections[0].source_path == "/c.py"
 
     async def test_list_connections_filter_by_type(
-        self, db: tuple[AsyncEngine, ConnectionService]
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports")
-            await svc.add_connection(sess, "/a.py", "/c.py", "calls")
+            await fs.add_connection("/a.py", "/b.py", "imports", session=sess)
+            await fs.add_connection("/a.py", "/c.py", "calls", session=sess)
             await sess.commit()
 
         async with factory() as sess:
-            result = await svc.list_connections(
-                sess, "/a.py", direction="out", connection_type="imports"
+            result = await fs.list_connections(
+                "/a.py", direction="out", connection_type="imports", session=sess
             )
 
         assert len(result.connections) == 1
         assert result.connections[0].target_path == "/b.py"
 
-    async def test_connection_result_shape(self, db: tuple[AsyncEngine, ConnectionService]) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async def test_connection_result_shape(
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            result = await svc.add_connection(
-                sess, "/src/main.py", "/src/utils.py", "imports", weight=0.5
+            result = await fs.add_connection(
+                "/src/main.py", "/src/utils.py", "imports", weight=0.5, session=sess
             )
             await sess.commit()
 
@@ -577,7 +575,7 @@ class TestAnalyzeIntegrateConnections:
 
 
 # =========================================================================
-# ConnectionService.delete_outgoing_connections
+# DFS.delete_outgoing_connections
 # =========================================================================
 
 
@@ -585,26 +583,32 @@ class TestDeleteOutgoingConnections:
     """Verify delete_outgoing_connections only removes source-side edges."""
 
     @pytest.fixture
-    async def db(self) -> tuple[AsyncEngine, ConnectionService]:
+    async def setup(
+        self,
+    ) -> tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]:
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
-        svc = ConnectionService(FileConnection)
-        yield engine, svc  # type: ignore[misc]
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs = DatabaseFileSystem(dialect="sqlite")
+        yield fs, factory, engine  # type: ignore[misc]
         await engine.dispose()
 
-    async def test_only_deletes_outgoing(self, db: tuple[AsyncEngine, ConnectionService]) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async def test_only_deletes_outgoing(
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        fs, factory, _engine = setup
 
         async with factory() as sess:
-            await svc.add_connection(sess, "/a.py", "/b.py", "imports")  # outgoing from /a.py
-            await svc.add_connection(sess, "/c.py", "/a.py", "calls")  # incoming to /a.py
-            await svc.add_connection(sess, "/x.py", "/y.py", "imports")  # unrelated
+            await fs.add_connection(
+                "/a.py", "/b.py", "imports", session=sess
+            )  # outgoing from /a.py
+            await fs.add_connection("/c.py", "/a.py", "calls", session=sess)  # incoming to /a.py
+            await fs.add_connection("/x.py", "/y.py", "imports", session=sess)  # unrelated
             await sess.commit()
 
         async with factory() as sess:
-            count = await svc.delete_outgoing_connections(sess, "/a.py")
+            count = await fs.delete_outgoing_connections(sess, "/a.py")
             await sess.commit()
 
         assert count == 1  # only /a.py -> /b.py

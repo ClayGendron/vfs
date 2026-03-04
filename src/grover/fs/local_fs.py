@@ -268,7 +268,7 @@ class LocalFileSystem(DatabaseFileSystem):
                     sess,
                     get_file_record=self._get_file_record,
                     versioning=self.version_provider,
-                    directories=self.directories,
+                    ensure_parent_dirs=self._ensure_parent_dirs,
                     file_model=self.file_model,
                     read_content=self._read_content,
                     write_content=self._write_content,
@@ -317,9 +317,7 @@ class LocalFileSystem(DatabaseFileSystem):
     ) -> RestoreResult:
         """Restore a file from trash, writing content back to disk."""
         sess = self._require_session(session)
-        result = await self.trash.restore_from_trash(
-            sess, path, self._get_file_record, owner_id=owner_id
-        )
+        result = await super().restore_from_trash(path, session=sess, owner_id=owner_id)
         if not result.success:
             return result
 
@@ -413,7 +411,7 @@ class LocalFileSystem(DatabaseFileSystem):
                         sess,
                         get_file_record=self._get_file_record,
                         versioning=self.version_provider,
-                        directories=self.directories,
+                        ensure_parent_dirs=self._ensure_parent_dirs,
                         file_model=self.file_model,
                         read_content=self._read_content,
                         write_content=_noop_write,

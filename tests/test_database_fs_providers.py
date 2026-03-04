@@ -557,35 +557,15 @@ class TestDimensionValidation:
 
 
 # ------------------------------------------------------------------
-# Mixin inheritance
+# Inlined method tests (formerly mixin delegation)
 # ------------------------------------------------------------------
 
 
-class TestMixinInheritance:
-    """DatabaseFileSystem inherits from all mixins."""
+class TestInlinedMethods:
+    """Version and chunk methods work directly on DatabaseFileSystem."""
 
-    def test_inherits_graph_mixin(self):
-        from grover.fs.mixins import GraphMethodsMixin
-
-        assert issubclass(DatabaseFileSystem, GraphMethodsMixin)
-
-    def test_inherits_search_mixin(self):
-        from grover.fs.mixins import SearchMethodsMixin
-
-        assert issubclass(DatabaseFileSystem, SearchMethodsMixin)
-
-    def test_inherits_version_mixin(self):
-        from grover.fs.mixins import VersionMethodsMixin
-
-        assert issubclass(DatabaseFileSystem, VersionMethodsMixin)
-
-    def test_inherits_chunk_mixin(self):
-        from grover.fs.mixins import ChunkMethodsMixin
-
-        assert issubclass(DatabaseFileSystem, ChunkMethodsMixin)
-
-    async def test_version_methods_from_mixin(self):
-        """Version methods work via mixin delegation."""
+    async def test_version_methods(self):
+        """Version methods work via direct delegation."""
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/test.py", "v1\n", session=session)
@@ -596,8 +576,8 @@ class TestMixinInheritance:
             assert len(versions.candidates) == 2
         await engine.dispose()
 
-    async def test_chunk_methods_from_mixin(self):
-        """Chunk methods work via mixin delegation."""
+    async def test_chunk_methods(self):
+        """Chunk methods work via direct delegation."""
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/test.py", "hello\n", session=session)

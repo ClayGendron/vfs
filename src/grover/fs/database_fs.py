@@ -2,28 +2,37 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
+import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func
 from sqlmodel import select
 
+from grover.fs.providers.search.types import SearchResult, VectorEntry
 from grover.models.chunk import FileChunk
 from grover.models.connection import FileConnection
 from grover.models.file import File
 from grover.models.version import FileVersion
+from grover.ref import Ref
 from grover.types.operations import (
+    ChunkListResult,
+    ChunkResult,
     ConnectionListResult,
     ConnectionResult,
     DeleteResult,
     EditResult,
     ExistsResult,
     FileInfoResult,
+    GetVersionContentResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
+    VerifyVersionResult,
     WriteResult,
 )
 from grover.types.search import (
@@ -33,24 +42,21 @@ from grover.types.search import (
     GrepEvidence,
     GrepResult,
     ListDirResult,
+    TrashEvidence,
     TrashResult,
     TreeEvidence,
     TreeResult,
+    VectorSearchResult,
+    VersionEvidence,
+    VersionResult,
 )
 from grover.types.search import (
     LineMatch as SearchLineMatch,
 )
 
-from .connections import ConnectionService
-from .content import has_binary_extension
-from .directories import DirectoryService
+from .content import compute_content_hash, has_binary_extension
+from .dialect import upsert_file
 from .exceptions import GroverError
-from .mixins import (
-    ChunkMethodsMixin,
-    GraphMethodsMixin,
-    SearchMethodsMixin,
-    VersionMethodsMixin,
-)
 from .operations import (
     copy_file,
     delete_file,
@@ -61,15 +67,16 @@ from .operations import (
     read_file,
     write_file,
 )
-from .paths import normalize_path, validate_path
+from .paths import normalize_path, split_path, validate_path
 from .patterns import compile_glob, glob_to_sql_like
 from .providers.chunks import DefaultChunkProvider
 from .providers.versioning import DefaultVersionProvider
-from .trash import TrashService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.fs.providers.search.extractors import EmbeddableChunk
+    from grover.fs.providers.search.local import LocalVectorStore
     from grover.models.chunk import FileChunkBase
     from grover.models.connection import FileConnectionBase
     from grover.models.file import FileBase
@@ -81,17 +88,11 @@ if TYPE_CHECKING:
     from .providers.search.protocol import SearchProvider
     from .providers.storage.protocol import StorageProvider
     from .providers.versioning.protocol import VersionProvider
-    from .sharing import SharingService
 
 logger = logging.getLogger(__name__)
 
 
-class DatabaseFileSystem(
-    GraphMethodsMixin,
-    SearchMethodsMixin,
-    VersionMethodsMixin,
-    ChunkMethodsMixin,
-):
+class DatabaseFileSystem:
     """Database-backed file system with pluggable providers.
 
     All content is stored in the database by default — portable and
@@ -142,11 +143,6 @@ class DatabaseFileSystem(
             self.file_model, self.file_version_model
         )
         self.chunk_provider = chunk_provider or DefaultChunkProvider(self.file_chunk_model)
-
-        # Internal services
-        self.directories = DirectoryService(self.file_model, dialect, schema)
-        self.trash = TrashService(self.file_model, self.version_provider, self._delete_content)
-        self.connections = ConnectionService(self.file_connection_model)
 
         # Validate search dimensions if both providers set
         self._validate_search_dimensions()
@@ -273,7 +269,7 @@ class DatabaseFileSystem(
             sess,
             get_file_record=self._get_file_record,
             versioning=self.version_provider,
-            directories=self.directories,
+            ensure_parent_dirs=self._ensure_parent_dirs,
             file_model=self.file_model,
             read_content=self._read_content,
             write_content=self._write_content,
@@ -333,12 +329,7 @@ class DatabaseFileSystem(
         user_id: str | None = None,
     ) -> MkdirResult:
         sess = self._require_session(session)
-        created_dirs, error = await self.directories.mkdir(
-            sess,
-            path,
-            parents,
-            self._get_file_record,
-        )
+        created_dirs, error = await self._mkdir_impl(sess, path, parents)
         if error is not None:
             return MkdirResult(success=False, message=error)
         path = normalize_path(path)
@@ -419,7 +410,6 @@ class DatabaseFileSystem(
         *,
         session: AsyncSession | None = None,
         follow: bool = False,
-        sharing: SharingService | None = None,
         user_id: str | None = None,
     ) -> MoveResult:
         sess = self._require_session(session)
@@ -429,13 +419,12 @@ class DatabaseFileSystem(
             sess,
             get_file_record=self._get_file_record,
             versioning=self.version_provider,
-            directories=self.directories,
+            ensure_parent_dirs=self._ensure_parent_dirs,
             file_model=self.file_model,
             read_content=self._read_content,
             write_content=self._write_content,
             delete_content=self._delete_content,
             follow=follow,
-            sharing=sharing,
         )
 
     async def copy(
@@ -825,7 +814,33 @@ class DatabaseFileSystem(
         user_id: str | None = None,
     ) -> TrashResult:
         sess = self._require_session(session)
-        return await self.trash.list_trash(sess, owner_id=owner_id)
+        model = self.file_model
+        conditions = [model.deleted_at.is_not(None)]  # type: ignore[unresolved-attribute]
+        if owner_id is not None:
+            conditions.append(model.owner_id == owner_id)
+        result = await sess.execute(select(model).where(*conditions))
+        files = result.scalars().all()
+
+        candidates = [
+            FileSearchCandidate(
+                path=f.original_path or f.path,
+                evidence=[
+                    TrashEvidence(
+                        strategy="trash",
+                        path=f.original_path or f.path,
+                        deleted_at=f.deleted_at,
+                        original_path=f.original_path or f.path,
+                    )
+                ],
+            )
+            for f in files
+        ]
+
+        return TrashResult(
+            success=True,
+            message=f"Found {len(candidates)} items in trash",
+            candidates=candidates,
+        )
 
     async def restore_from_trash(
         self,
@@ -836,8 +851,68 @@ class DatabaseFileSystem(
         user_id: str | None = None,
     ) -> RestoreResult:
         sess = self._require_session(session)
-        return await self.trash.restore_from_trash(
-            sess, path, self._get_file_record, owner_id=owner_id
+        path = normalize_path(path)
+
+        model = self.file_model
+        conditions = [
+            model.original_path == path,
+            model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
+        ]
+        if owner_id is not None:
+            conditions.append(model.owner_id == owner_id)
+        result = await sess.execute(select(model).where(*conditions))
+        file = result.scalar_one_or_none()
+
+        if not file:
+            return RestoreResult(success=False, message=f"File not in trash: {path}")
+
+        original = file.original_path or path
+
+        # If path is occupied, overwrite the occupant (git restore semantics).
+        existing = await self._get_file_record(sess, original, False)
+        if existing and existing.id != file.id:
+            await self.version_provider.delete_versions(sess, existing.id)
+            await sess.delete(existing)
+            await sess.flush()
+
+        file.path = original
+        file.original_path = None
+        file.deleted_at = None
+        file.updated_at = datetime.now(UTC)
+
+        if file.is_directory:
+            children_result = await sess.execute(
+                select(model).where(
+                    model.original_path.startswith(path + "/"),  # type: ignore[union-attr]
+                    model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
+                )
+            )
+            children = children_result.scalars().all()
+
+            # Remove occupants at children's original paths
+            had_occupants = False
+            for child in children:
+                child_original = child.original_path or child.path
+                child_existing = await self._get_file_record(sess, child_original, False)
+                if child_existing and child_existing.id != child.id:
+                    await self.version_provider.delete_versions(sess, child_existing.id)
+                    await sess.delete(child_existing)
+                    had_occupants = True
+            if had_occupants:
+                await sess.flush()
+
+            for child in children:
+                child.path = child.original_path or child.path
+                child.original_path = None
+                child.deleted_at = None
+                child.updated_at = datetime.now(UTC)
+
+        await sess.flush()
+
+        return RestoreResult(
+            success=True,
+            message=f"Restored from trash: {path}",
+            path=path,
         )
 
     async def empty_trash(
@@ -848,7 +923,27 @@ class DatabaseFileSystem(
         user_id: str | None = None,
     ) -> DeleteResult:
         sess = self._require_session(session)
-        return await self.trash.empty_trash(sess, owner_id=owner_id)
+        model = self.file_model
+        conditions = [model.deleted_at.is_not(None)]  # type: ignore[unresolved-attribute]
+        if owner_id is not None:
+            conditions.append(model.owner_id == owner_id)
+        result = await sess.execute(select(model).where(*conditions))
+        files = result.scalars().all()
+
+        count = len(files)
+        for file in files:
+            await self.version_provider.delete_versions(sess, file.id)
+            await self._delete_content(file.original_path or file.path, sess)
+            await sess.delete(file)
+
+        await sess.flush()
+
+        return DeleteResult(
+            success=True,
+            message=f"Permanently deleted {count} items from trash",
+            permanent=True,
+            total_deleted=count,
+        )
 
     # ------------------------------------------------------------------
     # Connection operations
@@ -864,12 +959,38 @@ class DatabaseFileSystem(
         session: AsyncSession | None = None,
     ) -> ConnectionResult:
         sess = self._require_session(session)
-        return await self.connections.add_connection(
-            sess,
-            source_path,
-            target_path,
-            connection_type,
+        model = self.file_connection_model
+        path = f"{source_path}[{connection_type}]{target_path}"
+
+        result = await sess.execute(select(model).where(model.path == path))
+        existing = result.scalar_one_or_none()
+
+        if existing is not None:
+            existing.weight = weight
+            await sess.flush()
+            return ConnectionResult(
+                path=path,
+                source_path=source_path,
+                target_path=target_path,
+                connection_type=connection_type,
+                message="Connection updated",
+            )
+
+        record = model(
+            path=path,
+            source_path=source_path,
+            target_path=target_path,
+            type=connection_type,
             weight=weight,
+        )
+        sess.add(record)
+        await sess.flush()
+        return ConnectionResult(
+            path=path,
+            source_path=source_path,
+            target_path=target_path,
+            connection_type=connection_type,
+            message="Connection created",
         )
 
     async def delete_connection(
@@ -881,12 +1002,86 @@ class DatabaseFileSystem(
         session: AsyncSession | None = None,
     ) -> ConnectionResult:
         sess = self._require_session(session)
-        return await self.connections.delete_connection(
-            sess,
-            source_path,
-            target_path,
-            connection_type=connection_type,
+        model = self.file_connection_model
+
+        if connection_type is not None:
+            path = f"{source_path}[{connection_type}]{target_path}"
+            result = await sess.execute(select(model).where(model.path == path))
+            row = result.scalar_one_or_none()
+            if row is None:
+                return ConnectionResult(
+                    success=False,
+                    path=path,
+                    source_path=source_path,
+                    target_path=target_path,
+                    connection_type=connection_type,
+                    message=f"Connection not found: {path}",
+                )
+            await sess.delete(row)
+            await sess.flush()
+            return ConnectionResult(
+                path=path,
+                source_path=source_path,
+                target_path=target_path,
+                connection_type=connection_type,
+                message="Connection deleted",
+            )
+
+        # Delete all connections between source and target
+        result = await sess.execute(
+            select(model).where(
+                model.source_path == source_path,
+                model.target_path == target_path,
+            )
         )
+        rows = list(result.scalars().all())
+        if not rows:
+            return ConnectionResult(
+                success=False,
+                source_path=source_path,
+                target_path=target_path,
+                message=f"No connections found from {source_path} to {target_path}",
+            )
+        for row in rows:
+            await sess.delete(row)
+        await sess.flush()
+        return ConnectionResult(
+            source_path=source_path,
+            target_path=target_path,
+            message=f"Deleted {len(rows)} connection(s)",
+        )
+
+    async def delete_connections_for_path(
+        self,
+        session: AsyncSession,
+        path: str,
+    ) -> int:
+        """Delete all connections where path is source or target. Returns count deleted."""
+        model = self.file_connection_model
+        result = await session.execute(
+            select(model).where((model.source_path == path) | (model.target_path == path))
+        )
+        rows = list(result.scalars().all())
+        for row in rows:
+            await session.delete(row)
+        if rows:
+            await session.flush()
+        return len(rows)
+
+    async def delete_outgoing_connections(
+        self,
+        session: AsyncSession,
+        path: str,
+    ) -> int:
+        """Delete connections where path is the source only. Returns count deleted."""
+        model = self.file_connection_model
+        result = await session.execute(select(model).where(model.source_path == path))
+        rows = list(result.scalars().all())
+        for row in rows:
+            await session.delete(row)
+        if rows:
+            await session.flush()
+        return len(rows)
 
     async def list_connections(
         self,
@@ -897,9 +1092,675 @@ class DatabaseFileSystem(
         session: AsyncSession | None = None,
     ) -> ConnectionListResult:
         sess = self._require_session(session)
-        return await self.connections.list_connections(
-            sess,
-            path,
-            direction=direction,
-            connection_type=connection_type,
+        model = self.file_connection_model
+        conditions = []
+
+        if direction == "out":
+            conditions.append(model.source_path == path)
+        elif direction == "in":
+            conditions.append(model.target_path == path)
+        else:
+            conditions.append((model.source_path == path) | (model.target_path == path))
+
+        if connection_type is not None:
+            conditions.append(model.type == connection_type)
+
+        stmt = select(model).where(*conditions)
+        result = await sess.execute(stmt)
+        connections = list(result.scalars().all())
+        return ConnectionListResult(connections=connections, path=path)  # type: ignore[arg-type]
+
+    # ------------------------------------------------------------------
+    # Directory helpers (inlined from DirectoryService)
+    # ------------------------------------------------------------------
+
+    async def _ensure_parent_dirs(
+        self,
+        session: AsyncSession,
+        path: str,
+        owner_id: str | None = None,
+    ) -> None:
+        """Ensure all parent directories exist in the database."""
+        parts = path.split("/")
+        for i in range(2, len(parts)):
+            dir_path = "/".join(parts[:i])
+            if not dir_path:
+                continue
+
+            parent = "/".join(parts[: i - 1]) or "/"
+            values: dict[str, object] = {
+                "id": str(uuid.uuid4()),
+                "path": dir_path,
+                "parent_path": parent,
+                "is_directory": True,
+                "current_version": 1,
+                "created_at": datetime.now(UTC),
+                "updated_at": datetime.now(UTC),
+            }
+            if owner_id is not None:
+                values["owner_id"] = owner_id
+            await upsert_file(
+                session,
+                self.dialect,
+                values=values,
+                conflict_keys=["path"],
+                model=self.file_model,
+                schema=self.schema,
+                update_keys=["updated_at"],
+            )
+
+    async def _mkdir_impl(
+        self,
+        session: AsyncSession,
+        path: str,
+        parents: bool,
+        owner_id: str | None = None,
+    ) -> tuple[list[str], str | None]:
+        """Create a directory using dialect-aware upsert.
+
+        Returns ``(created_dirs, error_message)``.  On success,
+        ``error_message`` is ``None``.
+        """
+        valid, error = validate_path(path)
+        if not valid:
+            return [], error
+
+        path = normalize_path(path)
+
+        existing = await self._get_file_record(session, path, False)
+        if existing:
+            if existing.is_directory:
+                return [], None  # already exists, no error
+            return [], f"Path exists as file: {path}"
+
+        dirs_to_create: list[str] = []
+        current = path
+
+        while current != "/":
+            existing = await self._get_file_record(session, current, False)
+            if existing:
+                if not existing.is_directory:
+                    return [], f"Path exists as file: {current}"
+                break
+            dirs_to_create.insert(0, current)
+            if not parents and len(dirs_to_create) > 1:
+                return [], f"Parent directory does not exist: {split_path(current)[0]}"
+            current = split_path(current)[0]
+
+        created_dirs: list[str] = []
+        for dir_path in dirs_to_create:
+            parent, _name = split_path(dir_path)
+            values: dict[str, object] = {
+                "id": str(uuid.uuid4()),
+                "path": dir_path,
+                "parent_path": parent,
+                "is_directory": True,
+                "current_version": 1,
+                "created_at": datetime.now(UTC),
+                "updated_at": datetime.now(UTC),
+            }
+            if owner_id is not None:
+                values["owner_id"] = owner_id
+            rowcount = await upsert_file(
+                session,
+                self.dialect,
+                values=values,
+                conflict_keys=["path"],
+                model=self.file_model,
+                schema=self.schema,
+            )
+            if rowcount > 0:
+                created_dirs.append(dir_path)
+
+        await session.flush()
+        return created_dirs, None
+
+    # ------------------------------------------------------------------
+    # Graph methods (inlined from GraphMethodsMixin)
+    # ------------------------------------------------------------------
+
+    def graph_add_node(self, path: str, **attrs: object) -> None:
+        if self.graph_provider is None:
+            return
+        self.graph_provider.add_node(path, **attrs)
+
+    def graph_remove_node(self, path: str) -> None:
+        if self.graph_provider is None:
+            return
+        self.graph_provider.remove_node(path)
+
+    def graph_has_node(self, path: str) -> bool:
+        if self.graph_provider is None:
+            return False
+        return self.graph_provider.has_node(path)
+
+    def graph_get_node(self, path: str) -> dict:
+        if self.graph_provider is None:
+            return {}
+        return self.graph_provider.get_node(path)
+
+    def graph_nodes(self) -> list[str]:
+        if self.graph_provider is None:
+            return []
+        return self.graph_provider.nodes()
+
+    def graph_add_edge(self, source: str, target: str, edge_type: str, **attrs: object) -> None:
+        if self.graph_provider is None:
+            return
+        self.graph_provider.add_edge(source, target, edge_type, **attrs)
+
+    def graph_remove_edge(self, source: str, target: str) -> None:
+        if self.graph_provider is None:
+            return
+        self.graph_provider.remove_edge(source, target)
+
+    def graph_has_edge(self, source: str, target: str) -> bool:
+        if self.graph_provider is None:
+            return False
+        return self.graph_provider.has_edge(source, target)
+
+    def graph_dependents(self, path: str) -> list[Ref]:
+        if self.graph_provider is None:
+            return []
+        return self.graph_provider.dependents(path)
+
+    def graph_dependencies(self, path: str) -> list[Ref]:
+        if self.graph_provider is None:
+            return []
+        return self.graph_provider.dependencies(path)
+
+    def graph_impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
+        if self.graph_provider is None:
+            return []
+        return self.graph_provider.impacts(path, max_depth)
+
+    def graph_path_between(self, source: str, target: str) -> list[Ref] | None:
+        if self.graph_provider is None:
+            return None
+        return self.graph_provider.path_between(source, target)
+
+    def graph_contains(self, path: str) -> list[Ref]:
+        if self.graph_provider is None:
+            return []
+        return self.graph_provider.contains(path)
+
+    def graph_remove_file_subgraph(self, path: str) -> list[str]:
+        if self.graph_provider is None:
+            return []
+        return self.graph_provider.remove_file_subgraph(path)
+
+    @property
+    def graph_node_count(self) -> int:
+        if self.graph_provider is None:
+            return 0
+        return self.graph_provider.node_count
+
+    @property
+    def graph_edge_count(self) -> int:
+        if self.graph_provider is None:
+            return 0
+        return self.graph_provider.edge_count
+
+    # ------------------------------------------------------------------
+    # Chunk methods (inlined from ChunkMethodsMixin)
+    # ------------------------------------------------------------------
+
+    async def replace_file_chunks(
+        self,
+        file_path: str,
+        chunks: list[dict],
+        *,
+        session: AsyncSession | None = None,
+    ) -> ChunkResult:
+        sess = self._require_session(session)
+        return await self.chunk_provider.replace_file_chunks(sess, file_path, chunks)
+
+    async def delete_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> ChunkResult:
+        sess = self._require_session(session)
+        return await self.chunk_provider.delete_file_chunks(sess, file_path)
+
+    async def list_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> ChunkListResult:
+        sess = self._require_session(session)
+        return await self.chunk_provider.list_file_chunks(sess, file_path)
+
+    # ------------------------------------------------------------------
+    # Version methods (inlined from VersionMethodsMixin)
+    # ------------------------------------------------------------------
+
+    async def list_versions(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> VersionResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        file = await self._get_file_record(sess, path)
+        if not file:
+            return VersionResult(success=False, message=f"File not found: {path}")
+        versions = await self.version_provider.list_versions(sess, file)
+        candidates = [
+            FileSearchCandidate(
+                path=f"{path}@{v.version}",
+                evidence=[
+                    VersionEvidence(
+                        strategy="version",
+                        path=path,
+                        version=v.version,
+                        content_hash=v.content_hash,
+                        size_bytes=v.size_bytes,
+                        created_at=v.created_at,
+                        created_by=v.created_by,
+                    )
+                ],
+            )
+            for v in versions
+        ]
+        return VersionResult(
+            success=True,
+            message=f"Found {len(versions)} version(s)",
+            candidates=candidates,
         )
+
+    async def get_version_content(
+        self,
+        path: str,
+        version: int,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> GetVersionContentResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        file = await self._get_file_record(sess, path)
+        if not file:
+            return GetVersionContentResult(
+                success=False,
+                message=f"File not found: {path}",
+            )
+        content = await self.version_provider.get_version_content(sess, file, version)
+        if content is None:
+            return GetVersionContentResult(
+                success=False,
+                message=f"Version {version} not found for {path}",
+            )
+        return GetVersionContentResult(success=True, message="OK", content=content)
+
+    async def restore_version(
+        self,
+        path: str,
+        version: int,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> RestoreResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        vc_result = await self.get_version_content(path, version, session=sess)
+        if not vc_result.success or vc_result.content is None:
+            return RestoreResult(
+                success=False,
+                message=f"Version {version} not found for {path}",
+            )
+
+        write_result = await self.write(
+            path,
+            vc_result.content,
+            created_by="restore",
+            session=sess,
+        )
+
+        return RestoreResult(
+            success=True,
+            message=f"Restored {path} to version {version}",
+            path=path,
+            restored_version=version,
+            version=write_result.version,
+        )
+
+    async def verify_versions(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> VerifyVersionResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        file = await self._get_file_record(sess, path)
+        if not file:
+            return VerifyVersionResult(
+                success=False,
+                message=f"File not found: {path}",
+                path=path,
+            )
+        return await self.version_provider.verify_chain(sess, file)
+
+    async def verify_all_versions(
+        self,
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> list[VerifyVersionResult]:
+        sess = self._require_session(session)
+        model = self.file_model
+        result = await sess.execute(
+            select(model).where(
+                model.deleted_at.is_(None),  # type: ignore[union-attr]
+                model.is_directory.is_(False),  # type: ignore[union-attr]
+            )
+        )
+        results: list[VerifyVersionResult] = []
+        for file in result.scalars().all():
+            results.append(await self.version_provider.verify_chain(sess, file))  # noqa: PERF401
+        return results
+
+    # ------------------------------------------------------------------
+    # Search methods (inlined from SearchMethodsMixin)
+    # ------------------------------------------------------------------
+
+    def _validate_search_dimensions(self) -> None:
+        """Check that embedding dimensions match search store dimensions."""
+        if self.embedding_provider is not None and self.search_provider is not None:
+            store_dim = getattr(self.search_provider, "dimension", None)
+            if store_dim is not None and self.embedding_provider.dimensions != store_dim:
+                msg = (
+                    f"Dimension mismatch: embedding provider "
+                    f"'{self.embedding_provider.model_name}' produces "
+                    f"{self.embedding_provider.dimensions}-dim vectors, but vector "
+                    f"store expects {store_dim}-dim"
+                )
+                raise ValueError(msg)
+
+    async def search_add(
+        self,
+        path: str,
+        content: str,
+        *,
+        parent_path: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> None:
+        """Embed *content* and upsert to the vector store."""
+        if self.search_provider is not None and self.embedding_provider is not None:
+            vector = await self._search_embed(content)
+            entry = VectorEntry(
+                id=path,
+                vector=vector,
+                metadata={
+                    "content": content,
+                    "parent_path": parent_path,
+                    "content_hash": compute_content_hash(content)[0],
+                },
+            )
+            await self.search_provider.upsert([entry])
+
+    async def search_add_batch(
+        self,
+        entries: list[EmbeddableChunk],
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
+        """Embed a batch of entries and upsert to the vector store."""
+        if not entries:
+            return
+
+        if self.search_provider is not None and self.embedding_provider is not None:
+            texts = [e.content for e in entries]
+            vectors = await self._search_embed_batch(texts)
+
+            vector_entries = [
+                VectorEntry(
+                    id=entry.path,
+                    vector=vectors[i],
+                    metadata={
+                        "content": entry.content,
+                        "parent_path": entry.parent_path,
+                        "content_hash": compute_content_hash(entry.content)[0],
+                        "chunk_name": entry.chunk_name,
+                        "line_start": entry.line_start,
+                        "line_end": entry.line_end,
+                    },
+                )
+                for i, entry in enumerate(entries)
+            ]
+            await self.search_provider.upsert(vector_entries)
+
+    async def search_remove(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
+        """Remove a single entry by path from the vector store."""
+        if self.search_provider is not None:
+            await self.search_provider.delete([path])
+
+    async def search_remove_file(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
+        """Remove *path* and all entries whose ``parent_path`` matches."""
+        if self.search_provider is not None:
+            local_store = self._search_get_local_store()
+            if local_store is not None:
+                local_store.remove_file(path)
+            else:
+                await self.search_provider.delete([path])
+
+    async def vector_search(self, query: str, k: int = 10) -> VectorSearchResult:
+        """Embed *query*, call ``search_provider.vector_search()``, return result."""
+        if self.embedding_provider is None:
+            return VectorSearchResult(
+                success=False,
+                message="Cannot search: no embedding provider configured",
+            )
+        if self.search_provider is None:
+            return VectorSearchResult(
+                success=False,
+                message="Cannot search: no search provider configured",
+            )
+
+        vector = await self._search_embed(query)
+        return await self.search_provider.vector_search(vector, k=k)
+
+    async def lexical_search(
+        self,
+        query: str,
+        *,
+        k: int = 10,
+        session: AsyncSession | None = None,
+    ) -> list[SearchResult]:
+        """Lexical search: tries search_provider first, falls back to DB FTS."""
+        if self.search_provider is not None:
+            provider_result = await self.search_provider.lexical_search(query, k=k)
+            if provider_result.success and len(provider_result) > 0:
+                results: list[SearchResult] = []
+                for c in provider_result.candidates:
+                    for ev in c.evidence:
+                        snippet = getattr(ev, "snippet", "")
+                        results.append(
+                            SearchResult(
+                                ref=Ref(path=c.path),
+                                score=1.0,
+                                content=snippet,
+                            )
+                        )
+                return results
+
+        return await self._db_lexical_search(query, k=k, session=session)
+
+    async def _db_lexical_search(
+        self,
+        query: str,
+        *,
+        k: int = 10,
+        session: AsyncSession | None = None,
+    ) -> list[SearchResult]:
+        """Dialect-aware full-text search against DB content."""
+        from sqlalchemy import text
+
+        sess = self._require_session(session)
+        model = self.file_model
+
+        results: list[SearchResult] = []
+
+        if self.dialect == "sqlite":
+            try:
+                table_name = getattr(model, "__tablename__", "grover_files")
+                fts_table = f"{table_name}_fts"
+                stmt = text(
+                    f"SELECT path, content FROM {fts_table} WHERE {fts_table} MATCH :query LIMIT :k"
+                )
+                rows = await sess.execute(stmt, {"query": query, "k": k})
+                results.extend(
+                    SearchResult(
+                        ref=Ref(path=row[0]),
+                        score=1.0,
+                        content=row[1] or "",
+                    )
+                    for row in rows
+                )
+                return results
+            except Exception:
+                logger.debug("FTS5 not available, falling back to LIKE")
+
+        elif self.dialect == "postgresql":
+            try:
+                stmt = (
+                    select(model.path, model.content)
+                    .where(
+                        text("content_tsv @@ plainto_tsquery('english', :query)"),
+                        model.deleted_at.is_(None),  # type: ignore[union-attr]
+                    )
+                    .limit(k)
+                )
+                rows = await sess.execute(stmt, {"query": query})
+                results.extend(
+                    SearchResult(
+                        ref=Ref(path=row[0]),
+                        score=1.0,
+                        content=row[1] or "",
+                    )
+                    for row in rows
+                )
+                return results
+            except Exception:
+                logger.debug("PostgreSQL FTS not available, falling back to LIKE")
+
+        elif self.dialect == "mssql":
+            try:
+                stmt = (
+                    select(model.path, model.content)
+                    .where(
+                        text("FREETEXT(content, :query)"),
+                        model.deleted_at.is_(None),  # type: ignore[union-attr]
+                    )
+                    .limit(k)
+                )
+                rows = await sess.execute(stmt, {"query": query})
+                results.extend(
+                    SearchResult(
+                        ref=Ref(path=row[0]),
+                        score=1.0,
+                        content=row[1] or "",
+                    )
+                    for row in rows
+                )
+                return results
+            except Exception:
+                logger.debug("MSSQL FTS not available, falling back to LIKE")
+
+        # Fallback: LIKE search
+        like_pattern = f"%{query}%"
+        stmt = (
+            select(model.path, model.content)
+            .where(
+                model.content.like(like_pattern),  # type: ignore[union-attr]
+                model.deleted_at.is_(None),  # type: ignore[union-attr]
+                model.is_directory.is_(False),  # type: ignore[union-attr]
+            )
+            .limit(k)
+        )
+        rows = await sess.execute(stmt)
+        results.extend(
+            SearchResult(
+                ref=Ref(path=row[0]),
+                score=0.5,
+                content=row[1] or "",
+            )
+            for row in rows
+        )
+        return results
+
+    def search_has(self, path: str) -> bool:
+        """Return whether *path* is present in the local vector store."""
+        local = self._search_get_local_store()
+        if local is not None:
+            return local.has(path)
+        return False
+
+    def search_content_hash(self, path: str) -> str | None:
+        """Return the content hash for *path*, or None."""
+        local = self._search_get_local_store()
+        if local is not None:
+            return local.content_hash(path)
+        return None
+
+    def search_save(self, directory: str) -> None:
+        """Persist the vector store to *directory* (if supported)."""
+        save_fn = getattr(self.search_provider, "save", None)
+        if save_fn is not None:
+            save_fn(directory)
+
+    def search_load(self, directory: str) -> None:
+        """Load the vector store from *directory* (if supported)."""
+        load_fn = getattr(self.search_provider, "load", None)
+        if load_fn is not None:
+            load_fn(directory)
+
+    async def search_connect(self) -> None:
+        """Connect the underlying vector store."""
+        if self.search_provider is not None:
+            await self.search_provider.connect()
+
+    async def search_close(self) -> None:
+        """Close the underlying vector store."""
+        if self.search_provider is not None:
+            await self.search_provider.close()
+
+    async def _search_embed(self, text: str) -> list[float]:
+        """Embed a single text, handling both sync and async providers."""
+        assert self.embedding_provider is not None
+        result = self.embedding_provider.embed(text)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def _search_embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of texts, handling both sync and async providers."""
+        assert self.embedding_provider is not None
+        result = self.embedding_provider.embed_batch(texts)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    def _search_get_local_store(self) -> LocalVectorStore | None:
+        """Return the store as a LocalVectorStore if it is one."""
+        from grover.fs.providers.search.local import LocalVectorStore
+
+        if isinstance(self.search_provider, LocalVectorStore):
+            return self.search_provider
+        return None

@@ -63,9 +63,7 @@ class IndexMixin:
             assert mount.filesystem is not None
             await mount.filesystem.search_remove_file(path, session=sess)
             await mount.filesystem.delete_file_chunks(path, session=sess)
-            conn_svc = getattr(mount.filesystem, "connections", None)
-            if conn_svc is not None:
-                await conn_svc.delete_connections_for_path(sess, path)
+            await mount.filesystem.delete_connections_for_path(sess, path)  # type: ignore[union-attr]
 
     async def _process_move(self, old_path: str, new_path: str, user_id: str | None = None) -> None:
         """Clean up old path and re-analyze new path after a move."""
@@ -179,9 +177,7 @@ class IndexMixin:
                     # Delete stale outgoing connections before re-adding.
                     # Only outgoing (source_path == path) so we preserve
                     # edges from OTHER files that point to this one.
-                    conn_svc = getattr(mount.filesystem, "connections", None)
-                    if conn_svc is not None:
-                        await conn_svc.delete_outgoing_connections(sess, path)
+                    await mount.filesystem.delete_outgoing_connections(sess, path)  # type: ignore[union-attr]
                     for edge in dep_edges:
                         _w: float = (
                             float(edge.metadata.get("weight", 1.0))  # type: ignore[arg-type]

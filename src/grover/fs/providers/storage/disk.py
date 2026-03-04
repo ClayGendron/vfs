@@ -622,7 +622,7 @@ class DiskStorageProvider:
             session: AsyncSession
             get_file_record: async callable(session, path) -> FileBase | None
             version_provider: DefaultVersionProvider
-            directories: DirectoryService
+            ensure_parent_dirs: async callable(session, path, owner_id) -> None
             file_model: type[FileBase]
             read_content: async callable(path, session) -> str | None
         """
@@ -631,7 +631,7 @@ class DiskStorageProvider:
         session = kwargs["session"]
         get_file_record = kwargs["get_file_record"]
         version_provider = kwargs["version_provider"]
-        directories = kwargs["directories"]
+        ensure_parent_dirs = kwargs["ensure_parent_dirs"]
         file_model = kwargs["file_model"]
         read_content = kwargs["read_content"]
 
@@ -677,7 +677,7 @@ class DiskStorageProvider:
                         session,
                         get_file_record=get_file_record,
                         versioning=version_provider,
-                        directories=directories,
+                        ensure_parent_dirs=ensure_parent_dirs,
                         file_model=file_model,
                         read_content=read_content,
                         write_content=_noop_write,

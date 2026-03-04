@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
     from grover.fs.providers.search.extractors import EmbeddableChunk
     from grover.fs.providers.search.types import SearchResult
-    from grover.fs.sharing import SharingService
     from grover.types.operations import (
         ChunkListResult,
         ChunkResult,
@@ -166,7 +165,6 @@ class GroverFileSystem(Protocol):
         *,
         session: AsyncSession | None = None,
         follow: bool = False,
-        sharing: SharingService | None = None,
         user_id: str | None = None,
     ) -> MoveResult: ...
 
