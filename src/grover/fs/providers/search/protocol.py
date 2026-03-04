@@ -11,7 +11,6 @@ if TYPE_CHECKING:
         IndexConfig,
         IndexInfo,
         SparseVector,
-        TextEntry,
         UpsertResult,
         VectorEntry,
         VectorHit,
@@ -29,8 +28,7 @@ class SearchProvider(Protocol):
     """Search interface — vector + lexical.
 
     Existing stores (``LocalVectorStore``, ``PineconeVectorStore``,
-    ``DatabricksVectorStore``) implement this directly. Replaces
-    ``VectorStore`` as the filesystem-level type.
+    ``DatabricksVectorStore``) implement this directly.
     """
 
     # Vector operations
@@ -75,74 +73,6 @@ class SearchProvider(Protocol):
     async def close(self) -> None: ...
 
 
-# ---------------------------------------------------------------------------
-# VectorStore protocol (store-level)
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class VectorStore(Protocol):
-    """Async-first protocol for vector storage and search.
-
-    Core data operations accept optional ``namespace`` and ``filter`` keyword
-    arguments.  Stores that do not support them raise ``ValueError`` if a
-    non-None value is passed.
-    """
-
-    async def upsert(
-        self,
-        entries: list[VectorEntry],
-        *,
-        namespace: str | None = None,
-    ) -> UpsertResult:
-        """Insert or update vector entries."""
-        ...
-
-    async def search(
-        self,
-        vector: list[float],
-        *,
-        k: int = 10,
-        namespace: str | None = None,
-        filter: FilterExpression | None = None,  # noqa: A002
-        include_metadata: bool = True,
-        score_threshold: float | None = None,
-    ) -> list[VectorHit]:
-        """Search for the *k* nearest vectors."""
-        ...
-
-    async def delete(
-        self,
-        ids: list[str],
-        *,
-        namespace: str | None = None,
-    ) -> DeleteResult:
-        """Delete vectors by their IDs."""
-        ...
-
-    async def fetch(
-        self,
-        ids: list[str],
-        *,
-        namespace: str | None = None,
-    ) -> list[VectorEntry | None]:
-        """Fetch vectors by their IDs.  Missing IDs return ``None``."""
-        ...
-
-    async def connect(self) -> None:
-        """Open connection / initialize resources."""
-        ...
-
-    async def close(self) -> None:
-        """Release connection / clean up resources."""
-        ...
-
-    @property
-    def index_name(self) -> str:
-        """Name of the underlying index."""
-        ...
-
-
 # ------------------------------------------------------------------
 # Capability protocols — checked via isinstance() at runtime
 # ------------------------------------------------------------------
@@ -150,50 +80,29 @@ class VectorStore(Protocol):
 
 @runtime_checkable
 class SupportsNamespaces(Protocol):
-    """Store supports namespace partitioning.
+    """Store supports namespace partitioning."""
 
-    Core ``VectorStore`` methods accept the ``namespace=`` kwarg; this
-    protocol adds namespace management operations.
-    """
+    async def list_namespaces(self) -> list[str]: ...
 
-    async def list_namespaces(self) -> list[str]:
-        """List all namespaces in the index."""
-        ...
-
-    async def delete_namespace(self, namespace: str) -> None:
-        """Delete an entire namespace and all its vectors."""
-        ...
+    async def delete_namespace(self, namespace: str) -> None: ...
 
 
 @runtime_checkable
 class SupportsMetadataFilter(Protocol):
-    """Store supports metadata filtering on ``search()``.
+    """Store supports metadata filtering on ``search()``."""
 
-    The ``filter=`` parameter is already on ``VectorStore.search()``; this
-    protocol's unique method is ``compile_filter``, which converts a
-    provider-agnostic ``FilterExpression`` into the store's native format.
-    """
-
-    def compile_filter(self, expr: FilterExpression) -> object:
-        """Compile a ``FilterExpression`` to the store's native filter format."""
-        ...
+    def compile_filter(self, expr: FilterExpression) -> object: ...
 
 
 @runtime_checkable
 class SupportsIndexLifecycle(Protocol):
     """Store supports programmatic index create/delete/list."""
 
-    async def create_index(self, config: IndexConfig) -> None:
-        """Create a new vector index."""
-        ...
+    async def create_index(self, config: IndexConfig) -> None: ...
 
-    async def delete_index(self, name: str) -> None:
-        """Delete an existing vector index."""
-        ...
+    async def delete_index(self, name: str) -> None: ...
 
-    async def list_indexes(self) -> list[IndexInfo]:
-        """List all available indexes."""
-        ...
+    async def list_indexes(self) -> list[IndexInfo]: ...
 
 
 @runtime_checkable
@@ -210,9 +119,7 @@ class SupportsHybridSearch(Protocol):
         alpha: float = 0.5,
         namespace: str | None = None,
         filter: FilterExpression | None = None,  # noqa: A002
-    ) -> list[VectorHit]:
-        """Run a hybrid search combining dense, sparse, and/or keyword signals."""
-        ...
+    ) -> list[VectorHit]: ...
 
 
 @runtime_checkable
@@ -229,36 +136,4 @@ class SupportsReranking(Protocol):
         rerank_top_n: int | None = None,
         namespace: str | None = None,
         filter: FilterExpression | None = None,  # noqa: A002
-    ) -> list[VectorHit]:
-        """Search with server-side reranking applied to the results."""
-        ...
-
-
-@runtime_checkable
-class SupportsTextSearch(Protocol):
-    """Store embeds query text internally — no external EmbeddingProvider needed."""
-
-    async def text_search(
-        self,
-        query: str,
-        *,
-        k: int = 10,
-        namespace: str | None = None,
-        filter: FilterExpression | None = None,  # noqa: A002
-    ) -> list[VectorHit]:
-        """Search using raw text (the store handles embedding internally)."""
-        ...
-
-
-@runtime_checkable
-class SupportsTextIngest(Protocol):
-    """Store embeds document text on ingest — no external EmbeddingProvider needed."""
-
-    async def text_upsert(
-        self,
-        entries: list[TextEntry],
-        *,
-        namespace: str | None = None,
-    ) -> UpsertResult:
-        """Upsert text entries (the store handles embedding internally)."""
-        ...
+    ) -> list[VectorHit]: ...

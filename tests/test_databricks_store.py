@@ -416,11 +416,11 @@ class TestImportGuard:
 
 
 class TestProtocolConformance:
-    def test_satisfies_vector_store(self):
-        from grover.fs.providers.search.protocol import VectorStore
+    def test_satisfies_search_provider(self):
+        from grover.fs.providers.search.protocol import SearchProvider
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
-        assert isinstance(s, VectorStore)
+        assert isinstance(s, SearchProvider)
 
     def test_satisfies_supports_metadata_filter(self):
         from grover.fs.providers.search.protocol import SupportsMetadataFilter

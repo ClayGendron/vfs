@@ -476,11 +476,11 @@ class TestImportGuard:
 
 
 class TestProtocolConformance:
-    def test_satisfies_vector_store(self):
-        from grover.fs.providers.search.protocol import VectorStore
+    def test_satisfies_search_provider(self):
+        from grover.fs.providers.search.protocol import SearchProvider
 
         s = PineconeVectorStore(index_name="x", api_key="k")
-        assert isinstance(s, VectorStore)
+        assert isinstance(s, SearchProvider)
 
     def test_satisfies_supports_namespaces(self):
         from grover.fs.providers.search.protocol import SupportsNamespaces

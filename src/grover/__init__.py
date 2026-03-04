@@ -38,9 +38,6 @@ from grover.fs.providers.search.protocol import (
     SupportsMetadataFilter,
     SupportsNamespaces,
     SupportsReranking,
-    SupportsTextIngest,
-    SupportsTextSearch,
-    VectorStore,
 )
 from grover.fs.providers.search.types import (
     DeleteResult as SearchDeleteResult,
@@ -155,8 +152,6 @@ __all__ = [
     "SupportsMetadataFilter",
     "SupportsNamespaces",
     "SupportsReranking",
-    "SupportsTextIngest",
-    "SupportsTextSearch",
     "TrashResult",
     "TreeResult",
     "UpsertResult",
@@ -164,7 +159,6 @@ __all__ = [
     "VectorEntry",
     "VectorEvidence",
     "VectorSearchResult",
-    "VectorStore",
     "VerifyVersionResult",
     "VersionChainError",
     "VersionProvider",

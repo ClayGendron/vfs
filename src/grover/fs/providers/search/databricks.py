@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class DatabricksVectorStore:
     """Databricks Vector Search store (Direct Vector Access mode).
 
-    Implements ``VectorStore``, ``SupportsMetadataFilter``,
+    Implements ``SearchProvider``, ``SupportsMetadataFilter``,
     ``SupportsIndexLifecycle``, and ``SupportsHybridSearch``.
 
     All SDK calls are wrapped in ``asyncio.to_thread`` because the

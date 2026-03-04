@@ -33,9 +33,6 @@ from grover.fs.providers.search.protocol import (
     SupportsMetadataFilter,
     SupportsNamespaces,
     SupportsReranking,
-    SupportsTextIngest,
-    SupportsTextSearch,
-    VectorStore,
 )
 from grover.fs.providers.search.types import (
     DeleteResult,
@@ -511,32 +508,6 @@ class TestProtocolRuntimeChecks:
 
         assert not isinstance(NotAProvider(), EmbeddingProvider)
 
-    def test_vector_store_is_runtime_checkable(self):
-        class FakeStore:
-            async def upsert(self, entries, **kwargs):
-                pass
-
-            async def search(self, vector, **kwargs):
-                pass
-
-            async def delete(self, ids, **kwargs):
-                pass
-
-            async def fetch(self, ids, **kwargs):
-                pass
-
-            async def connect(self):
-                pass
-
-            async def close(self):
-                pass
-
-            @property
-            def index_name(self):
-                return "fake"
-
-        assert isinstance(FakeStore(), VectorStore)
-
     def test_supports_namespaces_is_runtime_checkable(self):
         class FakeNS:
             async def list_namespaces(self):
@@ -581,28 +552,11 @@ class TestProtocolRuntimeChecks:
 
         assert isinstance(FakeRR(), SupportsReranking)
 
-    def test_supports_text_search_is_runtime_checkable(self):
-        class FakeTS:
-            async def text_search(self, query, **kwargs):
-                return []
-
-        assert isinstance(FakeTS(), SupportsTextSearch)
-
-    def test_supports_text_ingest_is_runtime_checkable(self):
-        class FakeTI:
-            async def text_upsert(self, entries, **kwargs):
-                pass
-
-        assert isinstance(FakeTI(), SupportsTextIngest)
-
     def test_plain_object_fails_all_protocols(self):
         obj = object()
         assert not isinstance(obj, EmbeddingProvider)
-        assert not isinstance(obj, VectorStore)
         assert not isinstance(obj, SupportsNamespaces)
         assert not isinstance(obj, SupportsMetadataFilter)
         assert not isinstance(obj, SupportsIndexLifecycle)
         assert not isinstance(obj, SupportsHybridSearch)
         assert not isinstance(obj, SupportsReranking)
-        assert not isinstance(obj, SupportsTextSearch)
-        assert not isinstance(obj, SupportsTextIngest)

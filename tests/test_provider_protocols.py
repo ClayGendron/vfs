@@ -8,11 +8,7 @@ from grover.fs.providers.chunks.protocol import ChunkProvider
 from grover.fs.providers.graph import RustworkxGraph
 from grover.fs.providers.graph.protocol import GraphProvider
 from grover.fs.providers.storage.disk import DiskStorageProvider
-from grover.fs.providers.storage.protocol import (
-    StorageProvider,
-    SupportsStorageQueries,
-    SupportsStorageReconcile,
-)
+from grover.fs.providers.storage.protocol import StorageProvider
 from grover.fs.providers.versioning.protocol import VersionProvider
 
 if TYPE_CHECKING:
@@ -32,22 +28,17 @@ class TestStorageProviderProtocol:
         assert isinstance(dsp, StorageProvider)
 
 
-class TestSupportsStorageQueriesProtocol:
-    def test_runtime_checkable(self) -> None:
-        assert not isinstance(object(), SupportsStorageQueries)
-
-    def test_disk_storage_satisfies(self, tmp_path: Path) -> None:
+class TestStorageProviderQueryMethods:
+    def test_disk_storage_has_query_methods(self, tmp_path: Path) -> None:
         dsp = DiskStorageProvider(tmp_path)
-        assert isinstance(dsp, SupportsStorageQueries)
+        assert hasattr(dsp, "storage_glob")
+        assert hasattr(dsp, "storage_grep")
+        assert hasattr(dsp, "storage_tree")
+        assert hasattr(dsp, "storage_list_dir")
 
-
-class TestSupportsStorageReconcileProtocol:
-    def test_runtime_checkable(self) -> None:
-        assert not isinstance(object(), SupportsStorageReconcile)
-
-    def test_disk_storage_satisfies(self, tmp_path: Path) -> None:
+    def test_disk_storage_has_reconcile(self, tmp_path: Path) -> None:
         dsp = DiskStorageProvider(tmp_path)
-        assert isinstance(dsp, SupportsStorageReconcile)
+        assert hasattr(dsp, "reconcile")
 
 
 class TestGraphProviderProtocol:

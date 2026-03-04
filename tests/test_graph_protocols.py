@@ -10,7 +10,6 @@ from grover.fs.providers.graph import RustworkxGraph
 from grover.fs.providers.graph.protocol import (
     GraphProvider,
     GraphStore,
-    SupportsPersistence,
 )
 from grover.fs.providers.graph.types import SubgraphResult, subgraph_result
 
@@ -51,10 +50,11 @@ class TestGraphProviderProtocol:
 # ======================================================================
 
 
-class TestSupportsPersistenceProtocol:
-    def test_rustworkx_satisfies_persistence(self) -> None:
+class TestGraphProviderIncludesPersistence:
+    def test_rustworkx_has_persistence_methods(self) -> None:
         g = RustworkxGraph()
-        assert isinstance(g, SupportsPersistence)
+        assert hasattr(g, "to_sql")
+        assert hasattr(g, "from_sql")
 
 
 # ======================================================================

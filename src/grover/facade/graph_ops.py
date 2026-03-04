@@ -79,13 +79,12 @@ class GraphOpsMixin:
         Raises :class:`~grover.fs.exceptions.CapabilityNotSupportedError` if
         the graph backend does not support centrality algorithms.
         """
-        from grover.fs.providers.graph.protocol import SupportsCentrality
-
         graph = self._ctx.resolve_graph_any(path)
-        if not isinstance(graph, SupportsCentrality):
+        try:
+            scores = graph.pagerank(personalization=personalization)
+        except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support centrality algorithms"
-            raise CapabilityNotSupportedError(msg)
-        scores = graph.pagerank(personalization=personalization)
+            raise CapabilityNotSupportedError(msg) from None
         candidates = [
             FileSearchCandidate(
                 path=node_path,
@@ -107,24 +106,22 @@ class GraphOpsMixin:
 
     def ancestors(self, path: str) -> GraphResult:
         """All transitive predecessors of *path* in the knowledge graph."""
-        from grover.fs.providers.graph.protocol import SupportsTraversal
-
         graph = self._ctx.resolve_graph(path)
-        if not isinstance(graph, SupportsTraversal):
+        try:
+            node_set = graph.ancestors(path)
+        except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support traversal algorithms"
-            raise CapabilityNotSupportedError(msg)
-        node_set = graph.ancestors(path)
+            raise CapabilityNotSupportedError(msg) from None
         return GraphResult.from_paths(sorted(node_set), strategy="ancestors")
 
     def descendants(self, path: str) -> GraphResult:
         """All transitive successors of *path* in the knowledge graph."""
-        from grover.fs.providers.graph.protocol import SupportsTraversal
-
         graph = self._ctx.resolve_graph(path)
-        if not isinstance(graph, SupportsTraversal):
+        try:
+            node_set = graph.descendants(path)
+        except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support traversal algorithms"
-            raise CapabilityNotSupportedError(msg)
-        node_set = graph.descendants(path)
+            raise CapabilityNotSupportedError(msg) from None
         return GraphResult.from_paths(sorted(node_set), strategy="descendants")
 
     def meeting_subgraph(
@@ -134,13 +131,12 @@ class GraphOpsMixin:
         max_size: int = 50,
     ) -> GraphResult:
         """Extract the subgraph connecting *paths* via shortest paths."""
-        from grover.fs.providers.graph.protocol import SupportsSubgraph
-
         graph = self._ctx.resolve_graph_any(paths[0] if paths else None)
-        if not isinstance(graph, SupportsSubgraph):
+        try:
+            sub = graph.meeting_subgraph(paths, max_size=max_size)
+        except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support subgraph extraction"
-            raise CapabilityNotSupportedError(msg)
-        sub = graph.meeting_subgraph(paths, max_size=max_size)
+            raise CapabilityNotSupportedError(msg) from None
         return GraphResult.from_paths(sorted(sub.nodes), strategy="meeting_subgraph")
 
     def neighborhood(
@@ -152,27 +148,25 @@ class GraphOpsMixin:
         edge_types: list[str] | None = None,
     ) -> GraphResult:
         """Extract the neighborhood subgraph around *path*."""
-        from grover.fs.providers.graph.protocol import SupportsSubgraph
-
         graph = self._ctx.resolve_graph(path)
-        if not isinstance(graph, SupportsSubgraph):
+        try:
+            sub = graph.neighborhood(
+                path,
+                max_depth=max_depth,
+                direction=direction,
+                edge_types=edge_types,
+            )
+        except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support subgraph extraction"
-            raise CapabilityNotSupportedError(msg)
-        sub = graph.neighborhood(
-            path,
-            max_depth=max_depth,
-            direction=direction,
-            edge_types=edge_types,
-        )
+            raise CapabilityNotSupportedError(msg) from None
         return GraphResult.from_paths(sorted(sub.nodes), strategy="neighborhood")
 
     def find_nodes(self, *, path: str | None = None, **attrs: object) -> GraphResult:
         """Find graph nodes matching all attribute predicates."""
-        from grover.fs.providers.graph.protocol import SupportsFiltering
-
         graph = self._ctx.resolve_graph_any(path)
-        if not isinstance(graph, SupportsFiltering):
+        try:
+            node_list = graph.find_nodes(**attrs)
+        except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support filtering"
-            raise CapabilityNotSupportedError(msg)
-        node_list = graph.find_nodes(**attrs)
+            raise CapabilityNotSupportedError(msg) from None
         return GraphResult.from_paths(node_list, strategy="find_nodes")

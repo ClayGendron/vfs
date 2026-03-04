@@ -1,4 +1,4 @@
-"""Storage provider protocols."""
+"""Storage provider protocol — unified interface for external storage backends."""
 
 from __future__ import annotations
 
@@ -11,13 +11,15 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class StorageProvider(Protocol):
-    """Core storage operations — NO session parameters.
+    """External storage operations — disk I/O, queries, and reconciliation.
 
-    Handles content I/O, file operations, and metadata for an external
-    storage backend (e.g. local disk). When ``storage_provider`` is ``None``
-    on ``DatabaseFileSystem``, all content lives in the DB content column.
+    Handles content I/O, file operations, metadata, queries (glob/grep/tree),
+    and DB-storage reconciliation for an external storage backend (e.g. local
+    disk). When ``storage_provider`` is ``None`` on ``DatabaseFileSystem``,
+    all content lives in the DB content column.
     """
 
+    # Core content operations
     async def read_content(self, path: str) -> str | None: ...
 
     async def write_content(self, path: str, content: str) -> None: ...
@@ -34,11 +36,7 @@ class StorageProvider(Protocol):
 
     async def get_info(self, path: str) -> FileInfoResult: ...
 
-
-@runtime_checkable
-class SupportsStorageQueries(Protocol):
-    """Disk-level glob/grep/tree/list_dir."""
-
+    # Storage-level queries (disk glob/grep/tree/list_dir)
     async def storage_glob(self, pattern: str, path: str = "/") -> GlobResult: ...
 
     async def storage_grep(self, pattern: str, path: str = "/", **kwargs: Any) -> GrepResult: ...
@@ -47,9 +45,10 @@ class SupportsStorageQueries(Protocol):
 
     async def storage_list_dir(self, path: str) -> ListDirResult: ...
 
-
-@runtime_checkable
-class SupportsStorageReconcile(Protocol):
-    """Sync external storage with DB."""
-
+    # Reconciliation (sync external storage with DB)
     async def reconcile(self, **kwargs: Any) -> ReconcileResult: ...
+
+
+# Backward-compat aliases
+SupportsStorageQueries = StorageProvider
+SupportsStorageReconcile = StorageProvider

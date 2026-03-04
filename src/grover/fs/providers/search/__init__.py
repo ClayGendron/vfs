@@ -7,7 +7,6 @@ from grover.fs.providers.search.extractors import (
     extract_from_file,
 )
 from grover.fs.providers.search.local import LocalVectorStore
-from grover.fs.providers.search.protocol import VectorStore
 from grover.fs.providers.search.types import SearchResult
 
 __all__ = [
@@ -15,7 +14,6 @@ __all__ = [
     "EmbeddingProvider",
     "LocalVectorStore",
     "SearchResult",
-    "VectorStore",
     "extract_from_chunks",
     "extract_from_file",
 ]

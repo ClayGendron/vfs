@@ -6,7 +6,7 @@ from .embedding.protocol import EmbeddingProvider
 from .graph.protocol import GraphProvider
 from .search.protocol import SearchProvider
 from .storage.disk import DiskStorageProvider
-from .storage.protocol import StorageProvider, SupportsStorageQueries, SupportsStorageReconcile
+from .storage.protocol import StorageProvider
 from .versioning import DefaultVersionProvider
 from .versioning.protocol import VersionProvider
 
@@ -19,7 +19,5 @@ __all__ = [
     "GraphProvider",
     "SearchProvider",
     "StorageProvider",
-    "SupportsStorageQueries",
-    "SupportsStorageReconcile",
     "VersionProvider",
 ]

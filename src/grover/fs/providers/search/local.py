@@ -26,7 +26,7 @@ _META_FILE = "search_meta.json"
 class LocalVectorStore:
     """In-process vector store backed by usearch HNSW index.
 
-    Implements the ``VectorStore`` protocol for local development use.
+    Implements the ``SearchProvider`` protocol for local development use.
     Does **not** support namespaces (raises ``ValueError`` if non-None is
     passed).  Supports simple equality-based metadata filtering.
 

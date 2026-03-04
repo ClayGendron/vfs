@@ -40,7 +40,7 @@ _UPSERT_BATCH_SIZE = 1000
 class PineconeVectorStore:
     """Pinecone vector store with full capability support.
 
-    Implements ``VectorStore``, ``SupportsNamespaces``,
+    Implements ``SearchProvider``, ``SupportsNamespaces``,
     ``SupportsMetadataFilter``, ``SupportsIndexLifecycle``,
     ``SupportsHybridSearch``, and ``SupportsReranking``.
 
