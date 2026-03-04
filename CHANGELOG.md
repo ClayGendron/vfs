@@ -4,6 +4,37 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.4] — 2026-03-04
+
+### Added
+
+- **Background worker** — `BackgroundWorker` with per-path debounced task scheduling, `flush()`/`drain()` lifecycle, and `IndexingMode` (background vs manual). Replaces `EventBus`.
+- **Version chain verification** — `verify_chain()`, `verify_versions()`, and `verify_all_versions()` for proactive integrity checking across backends, facade, and sync wrapper.
+- **Composable search pipeline** — `vector_search()`, `lexical_search()`, `hybrid_search()` with `SearchProvider` protocol. BM25 full-text search via `FullTextStore` with SQLite/PostgreSQL/MSSQL backends.
+- **Connection service** — `ConnectionService` in `DatabaseFileSystem` for filesystem-owned persistent edges. Graph is now a pure in-memory projection loaded from DB via `from_sql()`.
+- **Result type algebra** — `FileOperationResult` and `FileSearchResult` base types with set operations (`&`, `|`, `-`, `>>`). Candidates-based search results. `GraphResult` for graph method returns.
+- **`Ref` identity type** — Thin frozen wrapper with lazy path decomposition. Factories for chunk, version, and connection refs. Replaces `file_ref()` and `fs/paths.py`.
+- **`GroverContext` dataclass** — Shared state for the facade, accessed via `self._ctx`. `GroverAsync` decomposed into 8 mixins (mount, file ops, search ops, graph ops, version/trash, share, connection, index).
+- **Native async integrations** — deepagents and LangChain integrations accept `Grover | GroverAsync`.
+
+### Changed
+
+- **Package restructure** — `fs/` → `backends/`, `facade/` → `api/`, `types/` → `results/`, `graph/` and `search/` → `providers/graph/` and `providers/search/`, analyzers promoted to top-level `analyzers/`.
+- **Protocol consolidation** — `SupportsVersions`, `SupportsTrash`, `SupportsSearch`, `SupportsConnections`, `SupportsFileChunks` merged into `GroverFileSystem`. Only `SupportsReBAC` and `SupportsReconcile` remain as opt-in. Graph protocols collapsed from 8 → 1, search from 9 → 6, storage from 3 → 1.
+- **Filesystem-centric providers** — `DatabaseFileSystem` owns all providers directly. Provider protocols co-located in `providers/<family>/protocol.py`. `Mount` stripped to minimal dataclass (no graph/search).
+- **`LocalFileSystem`** simplified to thin `DatabaseFileSystem` subclass (~330 lines).
+- **`SharingService`** inlined into `UserScopedFileSystem`.
+- **`DatabaseFileSystem`** flattened — internal mixins and services inlined.
+- **Graph terminology** — `dependents`/`dependencies` renamed to `predecessors`/`successors`. `impacts`, `ancestors`, `descendants` removed.
+- **Type safety** — `Any` replaced with concrete types across the codebase. `FilterValue` type alias added. `ty check src/` passes clean.
+- **Backward compat aliases removed** — `mount()` → `add_mount()`, `SentenceTransformerProvider` alias deleted, `GroverEdge` removed, `query_types.py` deleted.
+- **Dead code deleted** — `SearchEngine`, `FullTextStore`, `EventBus`, `Embedding` model, `VectorStore` protocol, mount dispatch protocols, `vfs.py`.
+
+### Fixed
+
+- **Path traversal vulnerability** in `UserScopedFileSystem._resolve_path`.
+- **Read-only permission enforcement** across all mutation paths.
+
 ## [0.0.3] — 2026-02-19
 
 ### Added
