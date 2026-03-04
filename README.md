@@ -86,7 +86,7 @@ g2.add_mount("/project", backend,
              embedding_provider=OpenAIEmbedding(model="text-embedding-3-small"),
              search_provider=LocalVectorStore(dimension=1536))
 result = g2.vector_search("greeting function", k=5)
-for candidate in result.candidates:
+for candidate in result.file_candidates:
     print(candidate.path)
 
 # Or use index() for a full one-time scan (useful with manual mode)
@@ -277,7 +277,7 @@ The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
 Key types:
 
 ```python
-from grover import Ref, FileSearchResult, FileSearchCandidate
+from grover import Ref, FileSearchResult, FileCandidate
 
 # Ref — immutable identity for any Grover entity
 Ref(path="/project/hello.py")                              # file
@@ -287,11 +287,11 @@ Ref.for_connection("/a.py", "/b.py", "imports")            # connection
 
 # FileSearchResult — search results with evidence-backed candidates
 result = g.search("greeting function", k=5)
-result.success        # bool
-result.candidates     # list[FileSearchCandidate]
-candidate = result.candidates[0]
-candidate.path        # str — file path
-candidate.evidence    # list[Evidence] — why this path matched
+result.success           # bool
+result.file_candidates   # list[FileCandidate]
+candidate = result.file_candidates[0]
+candidate.path           # str — file path
+candidate.evidence       # list[Evidence] — why this path matched
 ```
 
 ## Error handling

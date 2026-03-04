@@ -167,7 +167,7 @@ class GroverLoader(BaseLoader):
         from grover.results import TreeEvidence
 
         entries = []
-        for c in result.candidates:
+        for c in result.file_candidates:
             is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
             entries.append({"path": c.path, "is_directory": is_dir, "size_bytes": None})
         return entries
@@ -181,7 +181,7 @@ class GroverLoader(BaseLoader):
         from grover.results import TreeEvidence
 
         entries = []
-        for c in result.candidates:
+        for c in result.file_candidates:
             is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
             entries.append({"path": c.path, "is_directory": is_dir, "size_bytes": None})
         return entries

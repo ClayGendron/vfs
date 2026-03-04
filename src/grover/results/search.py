@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
@@ -28,24 +27,53 @@ if TYPE_CHECKING:
 class Evidence:
     """Base evidence — why a path appeared in a search result."""
 
-    strategy: str
-    path: str
+    operation: str
+    score: float = 0.0
+    query_args: dict = field(default_factory=dict)
 
 
 # =====================================================================
-# FileSearchCandidate — a single path with its evidence chain
+# FileCandidate — a single path with its evidence chain
 # =====================================================================
 
 
 @dataclass(frozen=True)
-class FileSearchCandidate:
-    """A path and its associated evidence chain.
-
-    Replaces the old ``_entries: dict[str, list[Evidence]]`` internal dict.
-    """
+class FileCandidate:
+    """A path and its associated evidence chain."""
 
     path: str
     evidence: list[Evidence]
+
+    @property
+    def scores(self) -> dict[str, float]:
+        """Aggregate scores from evidence, keyed by operation."""
+        return {e.operation: e.score for e in self.evidence if e.score > 0}
+
+
+# =====================================================================
+# ConnectionCandidate — a connection (edge) with its evidence chain
+# =====================================================================
+
+
+@dataclass(frozen=True)
+class ConnectionCandidate:
+    """A connection (edge) with its evidence chain."""
+
+    source_path: str
+    target_path: str
+    connection_type: str
+    weight: float = 1.0
+    evidence: list[Evidence] = field(default_factory=list)
+
+    @property
+    def path(self) -> str:
+        """Ref-format: source[type]target."""
+        return f"{self.source_path}[{self.connection_type}]{self.target_path}"
+
+    @property
+    def scores(self) -> dict[str, float]:
+        """Aggregate scores from evidence, keyed by operation."""
+        return {e.operation: e.score for e in self.evidence if e.score > 0}
 
 
 # =====================================================================
@@ -67,20 +95,55 @@ class FileSearchResult:
 
     success: bool = True
     message: str = ""
-    candidates: list[FileSearchCandidate] = field(default_factory=list)
+    file_candidates: list[FileCandidate] = field(default_factory=list)
+    connection_candidates: list[ConnectionCandidate] = field(default_factory=list)
 
     # -----------------------------------------------------------------
     # Internal dict conversion (for efficient set algebra)
     # -----------------------------------------------------------------
 
     def _as_dict(self) -> dict[str, list[Evidence]]:
-        """Convert candidates to dict for set algebra."""
-        return {c.path: list(c.evidence) for c in self.candidates}
+        """Convert file_candidates to dict for set algebra."""
+        return {c.path: list(c.evidence) for c in self.file_candidates}
 
     @staticmethod
-    def _dict_to_candidates(entries: Mapping[str, Sequence[Evidence]]) -> list[FileSearchCandidate]:
-        """Convert dict back to candidates list."""
-        return [FileSearchCandidate(path=p, evidence=list(evs)) for p, evs in entries.items()]
+    def _dict_to_candidates(entries: Mapping[str, Sequence[Evidence]]) -> list[FileCandidate]:
+        """Convert dict back to file_candidates list."""
+        return [FileCandidate(path=p, evidence=list(evs)) for p, evs in entries.items()]
+
+    # -----------------------------------------------------------------
+    # Connection dict helpers
+    # -----------------------------------------------------------------
+
+    def _connections_as_dict(self) -> dict[str, ConnectionCandidate]:
+        """Convert connection_candidates to dict keyed by ref-format path."""
+        return {cc.path: cc for cc in self.connection_candidates}
+
+    @staticmethod
+    def _merge_connection_candidates(
+        d1: dict[str, ConnectionCandidate],
+        d2: dict[str, ConnectionCandidate],
+        paths: set[str],
+    ) -> list[ConnectionCandidate]:
+        """Merge connection candidates from both sides for the given *paths*."""
+        merged: list[ConnectionCandidate] = []
+        for p in paths:
+            c1, c2 = d1.get(p), d2.get(p)
+            if c1 and c2:
+                merged.append(
+                    ConnectionCandidate(
+                        source_path=c1.source_path,
+                        target_path=c1.target_path,
+                        connection_type=c1.connection_type,
+                        weight=c1.weight,
+                        evidence=list(c1.evidence) + list(c2.evidence),
+                    )
+                )
+            elif c1:
+                merged.append(c1)
+            elif c2:
+                merged.append(c2)
+        return merged
 
     # -----------------------------------------------------------------
     # Properties and iteration
@@ -89,11 +152,16 @@ class FileSearchResult:
     @property
     def paths(self) -> tuple[str, ...]:
         """All file paths in this result."""
-        return tuple(c.path for c in self.candidates)
+        return tuple(c.path for c in self.file_candidates)
+
+    @property
+    def connection_paths(self) -> tuple[str, ...]:
+        """All connection ref-format paths in this result."""
+        return tuple(cc.path for cc in self.connection_candidates)
 
     def explain(self, path: str) -> list[Evidence]:
         """Return the evidence chain for *path*."""
-        for c in self.candidates:
+        for c in self.file_candidates:
             if c.path == path:
                 return list(c.evidence)
         return []
@@ -102,19 +170,19 @@ class FileSearchResult:
         """Convert to a list of ``Ref`` objects."""
         from grover.ref import Ref
 
-        return [Ref(path=c.path) for c in self.candidates]
+        return [Ref(path=c.path) for c in self.file_candidates]
 
     def __len__(self) -> int:
-        return len(self.candidates)
+        return len(self.file_candidates)
 
     def __bool__(self) -> bool:
-        return self.success and len(self.candidates) > 0
+        return self.success and len(self.file_candidates) > 0
 
     def __iter__(self) -> Iterator[str]:
-        return iter(c.path for c in self.candidates)
+        return iter(c.path for c in self.file_candidates)
 
     def __contains__(self, path: object) -> bool:
-        return any(c.path == path for c in self.candidates)
+        return any(c.path == path for c in self.file_candidates)
 
     # -----------------------------------------------------------------
     # Path transformations
@@ -124,15 +192,27 @@ class FileSearchResult:
         """Return a new result with all paths prefixed by *prefix*.
 
         Preserves subclass type and any extra fields via shallow copy.
-        Evidence objects are reconstructed with updated paths.
         """
         result = copy.copy(self)
-        new_candidates: list[FileSearchCandidate] = []
-        for c in self.candidates:
+        new_candidates: list[FileCandidate] = []
+        for c in self.file_candidates:
             new_path = prefix + c.path if c.path != "/" else prefix
-            new_evs = [dc_replace(e, path=new_path) for e in c.evidence]
-            new_candidates.append(FileSearchCandidate(path=new_path, evidence=new_evs))
-        result.candidates = new_candidates
+            new_candidates.append(FileCandidate(path=new_path, evidence=list(c.evidence)))
+        result.file_candidates = new_candidates
+        new_conns: list[ConnectionCandidate] = []
+        for cc in self.connection_candidates:
+            new_src = prefix + cc.source_path if cc.source_path != "/" else prefix
+            new_tgt = prefix + cc.target_path if cc.target_path != "/" else prefix
+            new_conns.append(
+                ConnectionCandidate(
+                    source_path=new_src,
+                    target_path=new_tgt,
+                    connection_type=cc.connection_type,
+                    weight=cc.weight,
+                    evidence=list(cc.evidence),
+                )
+            )
+        result.connection_candidates = new_conns
         return result
 
     def remap_paths(self, fn: Callable[[str], str]) -> Self:
@@ -143,14 +223,24 @@ class FileSearchResult:
         result = copy.copy(self)
         # Use dict to merge evidence for paths that map to the same new path
         merged: dict[str, list[Evidence]] = {}
-        for c in self.candidates:
+        for c in self.file_candidates:
             new_path = fn(c.path)
-            new_evs = [dc_replace(e, path=new_path) for e in c.evidence]
             if new_path in merged:
-                merged[new_path].extend(new_evs)
+                merged[new_path].extend(c.evidence)
             else:
-                merged[new_path] = new_evs
-        result.candidates = self._dict_to_candidates(merged)
+                merged[new_path] = list(c.evidence)
+        result.file_candidates = self._dict_to_candidates(merged)
+        # Remap connection paths
+        result.connection_candidates = [
+            ConnectionCandidate(
+                source_path=fn(cc.source_path),
+                target_path=fn(cc.target_path),
+                connection_type=cc.connection_type,
+                weight=cc.weight,
+                evidence=list(cc.evidence),
+            )
+            for cc in self.connection_candidates
+        ]
         return result
 
     # -----------------------------------------------------------------
@@ -158,24 +248,20 @@ class FileSearchResult:
     # -----------------------------------------------------------------
 
     @classmethod
-    def from_paths(cls, paths: list[str], *, strategy: str = "unknown") -> Self:
+    def from_paths(cls, paths: list[str], *, operation: str = "unknown") -> Self:
         """Create a result from a list of paths with default evidence."""
         candidates = [
-            FileSearchCandidate(path=p, evidence=[Evidence(strategy=strategy, path=p)])
-            for p in paths
+            FileCandidate(path=p, evidence=[Evidence(operation=operation)]) for p in paths
         ]
-        return cls(success=True, message=f"{len(paths)} paths", candidates=candidates)
+        return cls(success=True, message=f"{len(paths)} paths", file_candidates=candidates)
 
     @classmethod
-    def from_refs(cls, refs: list[Ref], *, strategy: str = "unknown") -> Self:
+    def from_refs(cls, refs: list[Ref], *, operation: str = "unknown") -> Self:
         """Create a result from a list of ``Ref`` objects."""
         candidates = [
-            FileSearchCandidate(
-                path=ref.path, evidence=[Evidence(strategy=strategy, path=ref.path)]
-            )
-            for ref in refs
+            FileCandidate(path=ref.path, evidence=[Evidence(operation=operation)]) for ref in refs
         ]
-        return cls(success=True, message=f"{len(refs)} refs", candidates=candidates)
+        return cls(success=True, message=f"{len(refs)} refs", file_candidates=candidates)
 
     # -----------------------------------------------------------------
     # Set algebra
@@ -207,12 +293,18 @@ class FileSearchResult:
         d2 = other._as_dict()
         common = set(d1) & set(d2)
         merged = self._merge_dicts(other, common)
+        # Connection algebra
+        cd1 = self._connections_as_dict()
+        cd2 = other._connections_as_dict()
+        conn_common = set(cd1) & set(cd2)
+        conn_merged = self._merge_connection_candidates(cd1, cd2, conn_common)
         cls = self._result_class(other)
         success = self.success and other.success
         return cls(
             success=success,
             message=f"{len(merged)} paths",
-            candidates=self._dict_to_candidates(merged),
+            file_candidates=self._dict_to_candidates(merged),
+            connection_candidates=conn_merged,
         )
 
     def __or__(self, other: object) -> Self:
@@ -223,12 +315,18 @@ class FileSearchResult:
         d2 = other._as_dict()
         all_paths = set(d1) | set(d2)
         merged = self._merge_dicts(other, all_paths)
+        # Connection algebra
+        cd1 = self._connections_as_dict()
+        cd2 = other._connections_as_dict()
+        conn_all = set(cd1) | set(cd2)
+        conn_merged = self._merge_connection_candidates(cd1, cd2, conn_all)
         cls = self._result_class(other)
         success = self.success or other.success
         return cls(
             success=success,
             message=f"{len(merged)} paths",
-            candidates=self._dict_to_candidates(merged),
+            file_candidates=self._dict_to_candidates(merged),
+            connection_candidates=conn_merged,
         )
 
     def __sub__(self, other: object) -> Self:
@@ -239,11 +337,17 @@ class FileSearchResult:
         d2 = other._as_dict()
         diff = set(d1) - set(d2)
         entries = {p: list(d1[p]) for p in diff}
+        # Connection algebra
+        cd1 = self._connections_as_dict()
+        cd2 = other._connections_as_dict()
+        conn_diff = set(cd1) - set(cd2)
+        conn_entries = [cd1[p] for p in conn_diff]
         cls = self._result_class(other)
         return cls(
             success=self.success,
             message=f"{len(entries)} paths",
-            candidates=self._dict_to_candidates(entries),
+            file_candidates=self._dict_to_candidates(entries),
+            connection_candidates=conn_entries,
         )
 
     def __rshift__(self, other: object) -> Self:
@@ -254,12 +358,18 @@ class FileSearchResult:
         d2 = other._as_dict()
         common = set(d1) & set(d2)
         merged = self._merge_dicts(other, common)
+        # Connection algebra
+        cd1 = self._connections_as_dict()
+        cd2 = other._connections_as_dict()
+        conn_common = set(cd1) & set(cd2)
+        conn_merged = self._merge_connection_candidates(cd1, cd2, conn_common)
         cls = self._result_class(other)
         success = self.success and other.success
         return cls(
             success=success,
             message=f"{len(merged)} paths",
-            candidates=self._dict_to_candidates(merged),
+            file_candidates=self._dict_to_candidates(merged),
+            connection_candidates=conn_merged,
         )
 
 
@@ -383,7 +493,7 @@ class GlobResult(FileSearchResult):
         """Return paths that are directories."""
         return tuple(
             c.path
-            for c in self.candidates
+            for c in self.file_candidates
             if any(isinstance(e, GlobEvidence) and e.is_directory for e in c.evidence)
         )
 
@@ -391,13 +501,13 @@ class GlobResult(FileSearchResult):
         """Return paths that are files (not directories)."""
         return tuple(
             c.path
-            for c in self.candidates
+            for c in self.file_candidates
             if any(isinstance(e, GlobEvidence) and not e.is_directory for e in c.evidence)
         )
 
     def file_info(self, path: str) -> GlobEvidence | None:
         """Return the GlobEvidence for *path*, or ``None``."""
-        for c in self.candidates:
+        for c in self.file_candidates:
             if c.path == path:
                 for e in c.evidence:
                     if isinstance(e, GlobEvidence):
@@ -416,7 +526,7 @@ class GrepResult(FileSearchResult):
 
     def line_matches(self, path: str) -> tuple[LineMatch, ...]:
         """Return all line matches for *path*."""
-        for c in self.candidates:
+        for c in self.file_candidates:
             if c.path == path:
                 for e in c.evidence:
                     if isinstance(e, GrepEvidence):
@@ -426,7 +536,7 @@ class GrepResult(FileSearchResult):
     def all_matches(self) -> list[tuple[str, LineMatch]]:
         """Return all (path, line_match) pairs across all files."""
         result: list[tuple[str, LineMatch]] = []
-        for c in self.candidates:
+        for c in self.file_candidates:
             for e in c.evidence:
                 if isinstance(e, GrepEvidence):
                     result.extend((c.path, lm) for lm in e.line_matches)
@@ -442,7 +552,7 @@ class TreeResult(FileSearchResult):
         """Count of files in the tree."""
         return sum(
             1
-            for c in self.candidates
+            for c in self.file_candidates
             if any(isinstance(e, TreeEvidence) and not e.is_directory for e in c.evidence)
         )
 
@@ -451,7 +561,7 @@ class TreeResult(FileSearchResult):
         """Count of directories in the tree."""
         return sum(
             1
-            for c in self.candidates
+            for c in self.file_candidates
             if any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
         )
 
@@ -464,7 +574,7 @@ class ListDirResult(FileSearchResult):
         """Return paths that are directories."""
         return tuple(
             c.path
-            for c in self.candidates
+            for c in self.file_candidates
             if any(isinstance(e, ListDirEvidence) and e.is_directory for e in c.evidence)
         )
 
@@ -472,7 +582,7 @@ class ListDirResult(FileSearchResult):
         """Return paths that are files."""
         return tuple(
             c.path
-            for c in self.candidates
+            for c in self.file_candidates
             if any(isinstance(e, ListDirEvidence) and not e.is_directory for e in c.evidence)
         )
 
@@ -485,7 +595,7 @@ class TrashResult(FileSearchResult):
         """Return all original paths of deleted items."""
         return tuple(
             e.original_path
-            for c in self.candidates
+            for c in self.file_candidates
             for e in c.evidence
             if isinstance(e, TrashEvidence) and e.original_path
         )
@@ -497,7 +607,7 @@ class VectorSearchResult(FileSearchResult):
 
     def snippets(self, path: str) -> tuple[str, ...]:
         """Return all snippets for *path*."""
-        for c in self.candidates:
+        for c in self.file_candidates:
             if c.path == path:
                 return tuple(
                     e.snippet for e in c.evidence if isinstance(e, VectorEvidence) and e.snippet
@@ -511,7 +621,7 @@ class LexicalSearchResult(FileSearchResult):
 
     def snippets(self, path: str) -> tuple[str, ...]:
         """Return all snippets for *path*."""
-        for c in self.candidates:
+        for c in self.file_candidates:
             if c.path == path:
                 return tuple(
                     e.snippet for e in c.evidence if isinstance(e, LexicalEvidence) and e.snippet
@@ -525,7 +635,7 @@ class HybridSearchResult(FileSearchResult):
 
     def snippets(self, path: str) -> tuple[str, ...]:
         """Return all snippets for *path*."""
-        for c in self.candidates:
+        for c in self.file_candidates:
             if c.path == path:
                 return tuple(
                     e.snippet for e in c.evidence if isinstance(e, HybridEvidence) and e.snippet
@@ -540,7 +650,7 @@ class GraphResult(FileSearchResult):
     @property
     def algorithm(self) -> str:
         """Return the algorithm used, from the first GraphEvidence found."""
-        for c in self.candidates:
+        for c in self.file_candidates:
             for e in c.evidence:
                 if isinstance(e, GraphEvidence):
                     return e.algorithm
@@ -548,7 +658,7 @@ class GraphResult(FileSearchResult):
 
     def relationships(self, path: str) -> tuple[str, ...]:
         """Return relationship types for *path*."""
-        for c in self.candidates:
+        for c in self.file_candidates:
             if c.path == path:
                 return tuple(
                     e.relationship

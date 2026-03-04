@@ -20,7 +20,7 @@ from grover.results.operations import (
     ReadResult,
     WriteResult,
 )
-from grover.results.search import FileSearchCandidate, ListDirEvidence, ListDirResult
+from grover.results.search import FileCandidate, ListDirEvidence, ListDirResult
 
 from .content import compute_content_hash, guess_mime_type, is_text_file
 from .paths import is_trash_path, normalize_path, split_path, to_trash_path, validate_path
@@ -790,16 +790,15 @@ async def list_dir_db(
             )
         )
 
-    candidates: list[FileSearchCandidate] = []
+    candidates: list[FileCandidate] = []
     for f in result.scalars().all():
         info = file_to_info(f)
         candidates.append(
-            FileSearchCandidate(
+            FileCandidate(
                 path=info.path,
                 evidence=[
                     ListDirEvidence(
-                        strategy="list_dir",
-                        path=info.path,
+                        operation="list_dir",
                         is_directory=info.is_directory,
                         size_bytes=info.size_bytes,
                     )
@@ -810,5 +809,5 @@ async def list_dir_db(
     return ListDirResult(
         success=True,
         message=f"Listed {len(candidates)} items in {path}",
-        candidates=candidates,
+        file_candidates=candidates,
     )

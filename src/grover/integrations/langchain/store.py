@@ -343,7 +343,7 @@ class GroverStore(BaseStore):
         namespaces: set[tuple[str, ...]] = set()
         prefix_len = len(self.prefix) + 1  # +1 for trailing /
 
-        for c in tree_result.candidates:  # type: ignore[union-attr]
+        for c in tree_result.file_candidates:  # type: ignore[union-attr]
             is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
             if is_dir:
                 continue
@@ -396,7 +396,7 @@ class GroverStore(BaseStore):
         from grover.results import TreeEvidence
 
         items: list[SearchItem] = []
-        for c in tree_result.candidates:
+        for c in tree_result.file_candidates:
             is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
             if is_dir:
                 continue
@@ -447,7 +447,7 @@ class GroverStore(BaseStore):
         from grover.results import TreeEvidence
 
         items: list[SearchItem] = []
-        for c in tree_result.candidates:
+        for c in tree_result.file_candidates:
             is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
             if is_dir:
                 continue

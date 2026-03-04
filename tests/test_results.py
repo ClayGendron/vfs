@@ -6,11 +6,12 @@ from datetime import UTC, datetime
 
 from grover.ref import Ref
 from grover.results import (
+    ConnectionCandidate,
     DeleteResult,
     EditResult,
     Evidence,
+    FileCandidate,
     FileOperationResult,
-    FileSearchCandidate,
     FileSearchResult,
     GetVersionContentResult,
     GlobEvidence,
@@ -91,19 +92,35 @@ class TestFileOperationResult:
 
 class TestEvidence:
     def test_base_frozen(self):
-        e = Evidence(strategy="glob", path="/a.py")
-        assert e.strategy == "glob"
-        assert e.path == "/a.py"
+        e = Evidence(operation="glob")
+        assert e.operation == "glob"
+
+    def test_evidence_no_path(self):
+        e = Evidence(operation="test")
+        assert not hasattr(e, "path") or "path" not in e.__dataclass_fields__
+
+    def test_evidence_score_default(self):
+        e = Evidence(operation="test")
+        assert e.score == 0.0
+
+    def test_evidence_query_args_default(self):
+        e = Evidence(operation="test")
+        assert e.query_args == {}
+
+    def test_evidence_with_score_and_query_args(self):
+        e = Evidence(operation="search", score=0.85, query_args={"k": 10, "q": "hello"})
+        assert e.score == 0.85
+        assert e.query_args == {"k": 10, "q": "hello"}
 
     def test_glob_evidence(self):
-        e = GlobEvidence(strategy="glob", path="/a.py", is_directory=False, size_bytes=100)
+        e = GlobEvidence(operation="glob", is_directory=False, size_bytes=100)
         assert isinstance(e, Evidence)
         assert e.is_directory is False
         assert e.size_bytes == 100
 
     def test_grep_evidence(self):
         lm = LineMatch(line_number=5, line_content="def foo():")
-        e = GrepEvidence(strategy="grep", path="/a.py", line_matches=(lm,))
+        e = GrepEvidence(operation="grep", line_matches=(lm,))
         assert isinstance(e, Evidence)
         assert len(e.line_matches) == 1
         assert e.line_matches[0].line_number == 5
@@ -125,40 +142,105 @@ class TestEvidence:
         assert len(lm.context_after) == 1
 
     def test_tree_evidence(self):
-        e = TreeEvidence(strategy="tree", path="/dir", depth=2, is_directory=True)
+        e = TreeEvidence(operation="tree", depth=2, is_directory=True)
         assert e.depth == 2
         assert e.is_directory is True
 
     def test_listdir_evidence(self):
-        e = ListDirEvidence(strategy="list_dir", path="/a.py", is_directory=False, size_bytes=50)
+        e = ListDirEvidence(operation="list_dir", is_directory=False, size_bytes=50)
         assert e.size_bytes == 50
 
     def test_trash_evidence(self):
         now = datetime.now(UTC)
-        e = TrashEvidence(
-            strategy="trash", path="/__trash__/abc/a.py", deleted_at=now, original_path="/a.py"
-        )
+        e = TrashEvidence(operation="trash", deleted_at=now, original_path="/a.py")
         assert e.deleted_at == now
         assert e.original_path == "/a.py"
 
     def test_vector_evidence(self):
-        e = VectorEvidence(strategy="vector_search", path="/a.py", snippet="auth logic")
+        e = VectorEvidence(operation="vector_search", snippet="auth logic")
         assert e.snippet == "auth logic"
 
     def test_lexical_evidence(self):
-        e = LexicalEvidence(strategy="lexical_search", path="/a.py", snippet="login")
+        e = LexicalEvidence(operation="lexical_search", snippet="login")
         assert e.snippet == "login"
 
     def test_hybrid_evidence(self):
-        e = HybridEvidence(strategy="hybrid_search", path="/a.py", snippet="mixed")
+        e = HybridEvidence(operation="hybrid_search", snippet="mixed")
         assert e.snippet == "mixed"
 
     def test_graph_evidence(self):
         e = GraphEvidence(
-            strategy="predecessors", path="/a.py", algorithm="predecessors", relationship="imports"
+            operation="predecessors", algorithm="predecessors", relationship="imports"
         )
         assert e.algorithm == "predecessors"
         assert e.relationship == "imports"
+
+
+# =====================================================================
+# FileCandidate
+# =====================================================================
+
+
+class TestFileCandidate:
+    def test_file_candidate_scores(self):
+        fc = FileCandidate(
+            path="/a.py",
+            evidence=[
+                Evidence(operation="pagerank", score=0.9),
+                Evidence(operation="vector_search", score=0.7),
+                Evidence(operation="grep"),  # score=0.0 → excluded
+            ],
+        )
+        assert fc.scores == {"pagerank": 0.9, "vector_search": 0.7}
+
+    def test_file_candidate_scores_empty(self):
+        fc = FileCandidate(path="/a.py", evidence=[])
+        assert fc.scores == {}
+
+
+# =====================================================================
+# ConnectionCandidate
+# =====================================================================
+
+
+class TestConnectionCandidate:
+    def test_connection_candidate_frozen(self):
+        cc = ConnectionCandidate(
+            source_path="/a.py",
+            target_path="/b.py",
+            connection_type="imports",
+        )
+        assert cc.source_path == "/a.py"
+        assert cc.target_path == "/b.py"
+        assert cc.connection_type == "imports"
+
+    def test_connection_candidate_path_format(self):
+        cc = ConnectionCandidate(
+            source_path="/a.py",
+            target_path="/b.py",
+            connection_type="imports",
+        )
+        assert cc.path == "/a.py[imports]/b.py"
+
+    def test_connection_candidate_default_weight(self):
+        cc = ConnectionCandidate(
+            source_path="/a.py",
+            target_path="/b.py",
+            connection_type="imports",
+        )
+        assert cc.weight == 1.0
+
+    def test_connection_candidate_scores(self):
+        cc = ConnectionCandidate(
+            source_path="/a.py",
+            target_path="/b.py",
+            connection_type="imports",
+            evidence=[
+                Evidence(operation="pagerank", score=0.9),
+                Evidence(operation="graph", score=0.5),
+            ],
+        )
+        assert cc.scores == {"pagerank": 0.9, "graph": 0.5}
 
 
 # =====================================================================
@@ -176,10 +258,10 @@ class TestFileSearchResult:
 
     def test_with_entries(self):
         candidates = [
-            FileSearchCandidate(path="/a.py", evidence=[Evidence(strategy="glob", path="/a.py")]),
-            FileSearchCandidate(path="/b.py", evidence=[Evidence(strategy="glob", path="/b.py")]),
+            FileCandidate(path="/a.py", evidence=[Evidence(operation="glob")]),
+            FileCandidate(path="/b.py", evidence=[Evidence(operation="glob")]),
         ]
-        r = FileSearchResult(success=True, message="2 paths", candidates=candidates)
+        r = FileSearchResult(success=True, message="2 paths", file_candidates=candidates)
         assert len(r) == 2
         assert r  # non-empty is truthy
         assert "/a.py" in r
@@ -187,29 +269,29 @@ class TestFileSearchResult:
 
     def test_paths_property(self):
         candidates = [
-            FileSearchCandidate(path="/x.py", evidence=[]),
-            FileSearchCandidate(path="/y.py", evidence=[]),
+            FileCandidate(path="/x.py", evidence=[]),
+            FileCandidate(path="/y.py", evidence=[]),
         ]
-        r = FileSearchResult(success=True, message="ok", candidates=candidates)
+        r = FileSearchResult(success=True, message="ok", file_candidates=candidates)
         assert set(r.paths) == {"/x.py", "/y.py"}
 
     def test_iteration(self):
         candidates = [
-            FileSearchCandidate(path="/a.py", evidence=[]),
-            FileSearchCandidate(path="/b.py", evidence=[]),
+            FileCandidate(path="/a.py", evidence=[]),
+            FileCandidate(path="/b.py", evidence=[]),
         ]
-        r = FileSearchResult(success=True, message="ok", candidates=candidates)
+        r = FileSearchResult(success=True, message="ok", file_candidates=candidates)
         assert set(r) == {"/a.py", "/b.py"}
 
     def test_explain(self):
-        e1 = Evidence(strategy="glob", path="/a.py")
-        e2 = Evidence(strategy="grep", path="/a.py")
-        candidates = [FileSearchCandidate(path="/a.py", evidence=[e1, e2])]
-        r = FileSearchResult(success=True, message="ok", candidates=candidates)
+        e1 = Evidence(operation="glob")
+        e2 = Evidence(operation="grep")
+        candidates = [FileCandidate(path="/a.py", evidence=[e1, e2])]
+        r = FileSearchResult(success=True, message="ok", file_candidates=candidates)
         chain = r.explain("/a.py")
         assert len(chain) == 2
-        assert chain[0].strategy == "glob"
-        assert chain[1].strategy == "grep"
+        assert chain[0].operation == "glob"
+        assert chain[1].operation == "grep"
 
     def test_explain_missing_path(self):
         r = FileSearchResult(success=True, message="ok")
@@ -217,10 +299,10 @@ class TestFileSearchResult:
 
     def test_to_refs(self):
         candidates = [
-            FileSearchCandidate(path="/a.py", evidence=[]),
-            FileSearchCandidate(path="/b.py", evidence=[]),
+            FileCandidate(path="/a.py", evidence=[]),
+            FileCandidate(path="/b.py", evidence=[]),
         ]
-        r = FileSearchResult(success=True, message="ok", candidates=candidates)
+        r = FileSearchResult(success=True, message="ok", file_candidates=candidates)
         refs = r.to_refs()
         assert len(refs) == 2
         assert all(isinstance(ref, Ref) for ref in refs)
@@ -228,21 +310,60 @@ class TestFileSearchResult:
         assert paths == {"/a.py", "/b.py"}
 
     def test_from_paths(self):
-        r = FileSearchResult.from_paths(["/a.py", "/b.py"], strategy="custom")
+        r = FileSearchResult.from_paths(["/a.py", "/b.py"], operation="custom")
         assert len(r) == 2
         assert "/a.py" in r
-        assert r.explain("/a.py")[0].strategy == "custom"
+        assert r.explain("/a.py")[0].operation == "custom"
 
     def test_from_refs(self):
         refs = [Ref(path="/a.py"), Ref(path="/b.py")]
-        r = FileSearchResult.from_refs(refs, strategy="ref")
+        r = FileSearchResult.from_refs(refs, operation="ref")
         assert len(r) == 2
         assert "/a.py" in r
 
     def test_failed_result_is_falsy(self):
-        candidates = [FileSearchCandidate(path="/a.py", evidence=[])]
-        r = FileSearchResult(success=False, message="fail", candidates=candidates)
+        candidates = [FileCandidate(path="/a.py", evidence=[])]
+        r = FileSearchResult(success=False, message="fail", file_candidates=candidates)
         assert not r  # failed is falsy even with entries
+
+    def test_connection_candidates_default_empty(self):
+        r = FileSearchResult(success=True, message="ok")
+        assert r.connection_candidates == []
+
+    def test_connection_paths_property(self):
+        cc1 = ConnectionCandidate(
+            source_path="/a.py", target_path="/b.py", connection_type="imports"
+        )
+        cc2 = ConnectionCandidate(source_path="/c.py", target_path="/d.py", connection_type="calls")
+        r = FileSearchResult(success=True, message="ok", connection_candidates=[cc1, cc2])
+        assert r.connection_paths == ("/a.py[imports]/b.py", "/c.py[calls]/d.py")
+
+    def test_len_counts_file_candidates_only(self):
+        fc = [FileCandidate(path="/a.py", evidence=[])]
+        cc = [
+            ConnectionCandidate(source_path="/a.py", target_path="/b.py", connection_type="imports")
+        ]
+        r = FileSearchResult(
+            success=True, message="ok", file_candidates=fc, connection_candidates=cc
+        )
+        assert len(r) == 1  # only file_candidates count
+
+    def test_bool_checks_file_candidates_only(self):
+        cc = [
+            ConnectionCandidate(source_path="/a.py", target_path="/b.py", connection_type="imports")
+        ]
+        r = FileSearchResult(success=True, message="ok", connection_candidates=cc)
+        assert not r  # no file_candidates → falsy
+
+    def test_iter_yields_file_paths_only(self):
+        fc = [FileCandidate(path="/a.py", evidence=[])]
+        cc = [
+            ConnectionCandidate(source_path="/c.py", target_path="/d.py", connection_type="imports")
+        ]
+        r = FileSearchResult(
+            success=True, message="ok", file_candidates=fc, connection_candidates=cc
+        )
+        assert list(r) == ["/a.py"]
 
 
 # =====================================================================
@@ -251,10 +372,12 @@ class TestFileSearchResult:
 
 
 class TestSetAlgebra:
-    def _make(self, paths: list[str], strategy: str = "test") -> FileSearchResult:
-        entries = {p: [Evidence(strategy=strategy, path=p)] for p in paths}
+    def _make(self, paths: list[str], operation: str = "test") -> FileSearchResult:
+        entries = {p: [Evidence(operation=operation)] for p in paths}
         return FileSearchResult(
-            success=True, message="ok", candidates=FileSearchResult._dict_to_candidates(entries)
+            success=True,
+            message="ok",
+            file_candidates=FileSearchResult._dict_to_candidates(entries),
         )
 
     def test_union(self):
@@ -283,28 +406,28 @@ class TestSetAlgebra:
         assert set(result.paths) == {"/b.py", "/c.py"}
 
     def test_evidence_merged_on_union(self):
-        a = self._make(["/a.py"], strategy="glob")
-        b = self._make(["/a.py"], strategy="grep")
+        a = self._make(["/a.py"], operation="glob")
+        b = self._make(["/a.py"], operation="grep")
         result = a | b
         chain = result.explain("/a.py")
-        strategies = {e.strategy for e in chain}
-        assert strategies == {"glob", "grep"}
+        operations = {e.operation for e in chain}
+        assert operations == {"glob", "grep"}
 
     def test_evidence_merged_on_intersection(self):
-        a = self._make(["/a.py"], strategy="glob")
-        b = self._make(["/a.py"], strategy="grep")
+        a = self._make(["/a.py"], operation="glob")
+        b = self._make(["/a.py"], operation="grep")
         result = a & b
         chain = result.explain("/a.py")
-        strategies = {e.strategy for e in chain}
-        assert strategies == {"glob", "grep"}
+        operations = {e.operation for e in chain}
+        assert operations == {"glob", "grep"}
 
     def test_evidence_lhs_only_on_difference(self):
-        a = self._make(["/a.py", "/b.py"], strategy="glob")
-        b = self._make(["/b.py"], strategy="grep")
+        a = self._make(["/a.py", "/b.py"], operation="glob")
+        b = self._make(["/b.py"], operation="grep")
         result = a - b
         assert "/a.py" in result
         chain = result.explain("/a.py")
-        assert all(e.strategy == "glob" for e in chain)
+        assert all(e.operation == "glob" for e in chain)
 
     def test_empty_intersection(self):
         a = self._make(["/a.py"])
@@ -355,6 +478,69 @@ class TestSetAlgebra:
 
 
 # =====================================================================
+# Set algebra with connections
+# =====================================================================
+
+
+class TestSetAlgebraConnections:
+    def _make_conn(
+        self, src: str, tgt: str, conn_type: str = "imports", operation: str = "test"
+    ) -> ConnectionCandidate:
+        return ConnectionCandidate(
+            source_path=src,
+            target_path=tgt,
+            connection_type=conn_type,
+            evidence=[Evidence(operation=operation)],
+        )
+
+    def test_union_merges_connections(self):
+        cc1 = self._make_conn("/a.py", "/b.py")
+        cc2 = self._make_conn("/c.py", "/d.py")
+        a = FileSearchResult(success=True, message="a", connection_candidates=[cc1])
+        b = FileSearchResult(success=True, message="b", connection_candidates=[cc2])
+        result = a | b
+        assert len(result.connection_candidates) == 2
+
+    def test_intersection_connections(self):
+        cc1 = self._make_conn("/a.py", "/b.py", operation="glob")
+        cc2 = self._make_conn("/a.py", "/b.py", operation="grep")
+        cc3 = self._make_conn("/c.py", "/d.py")
+        a = FileSearchResult(success=True, message="a", connection_candidates=[cc1, cc3])
+        b = FileSearchResult(success=True, message="b", connection_candidates=[cc2])
+        result = a & b
+        assert len(result.connection_candidates) == 1
+        assert result.connection_candidates[0].path == "/a.py[imports]/b.py"
+
+    def test_difference_connections(self):
+        cc1 = self._make_conn("/a.py", "/b.py")
+        cc2 = self._make_conn("/a.py", "/b.py")
+        cc3 = self._make_conn("/c.py", "/d.py")
+        a = FileSearchResult(success=True, message="a", connection_candidates=[cc1, cc3])
+        b = FileSearchResult(success=True, message="b", connection_candidates=[cc2])
+        result = a - b
+        assert len(result.connection_candidates) == 1
+        assert result.connection_candidates[0].path == "/c.py[imports]/d.py"
+
+    def test_pipeline_connections(self):
+        cc1 = self._make_conn("/a.py", "/b.py", operation="glob")
+        cc2 = self._make_conn("/a.py", "/b.py", operation="grep")
+        a = FileSearchResult(success=True, message="a", connection_candidates=[cc1])
+        b = FileSearchResult(success=True, message="b", connection_candidates=[cc2])
+        result = a >> b
+        assert len(result.connection_candidates) == 1
+
+    def test_connection_evidence_merged_on_union(self):
+        cc1 = self._make_conn("/a.py", "/b.py", operation="glob")
+        cc2 = self._make_conn("/a.py", "/b.py", operation="grep")
+        a = FileSearchResult(success=True, message="a", connection_candidates=[cc1])
+        b = FileSearchResult(success=True, message="b", connection_candidates=[cc2])
+        result = a | b
+        assert len(result.connection_candidates) == 1
+        ops = {e.operation for e in result.connection_candidates[0].evidence}
+        assert ops == {"glob", "grep"}
+
+
+# =====================================================================
 # Same type preserves subclass, mixed returns base
 # =====================================================================
 
@@ -364,19 +550,15 @@ class TestSubclassPreservation:
         a = GlobResult(
             success=True,
             message="a",
-            candidates=[
-                FileSearchCandidate(
-                    path="/a.py", evidence=[GlobEvidence(strategy="glob", path="/a.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GlobEvidence(operation="glob")])
             ],
         )
         b = GlobResult(
             success=True,
             message="b",
-            candidates=[
-                FileSearchCandidate(
-                    path="/b.py", evidence=[GlobEvidence(strategy="glob", path="/b.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/b.py", evidence=[GlobEvidence(operation="glob")])
             ],
         )
         result = a | b
@@ -386,19 +568,15 @@ class TestSubclassPreservation:
         a = GrepResult(
             success=True,
             message="a",
-            candidates=[
-                FileSearchCandidate(
-                    path="/a.py", evidence=[GrepEvidence(strategy="grep", path="/a.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GrepEvidence(operation="grep")])
             ],
         )
         b = GrepResult(
             success=True,
             message="b",
-            candidates=[
-                FileSearchCandidate(
-                    path="/a.py", evidence=[GrepEvidence(strategy="grep", path="/a.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GrepEvidence(operation="grep")])
             ],
         )
         result = a & b
@@ -408,19 +586,15 @@ class TestSubclassPreservation:
         a = GlobResult(
             success=True,
             message="a",
-            candidates=[
-                FileSearchCandidate(
-                    path="/a.py", evidence=[GlobEvidence(strategy="glob", path="/a.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GlobEvidence(operation="glob")])
             ],
         )
         b = GrepResult(
             success=True,
             message="b",
-            candidates=[
-                FileSearchCandidate(
-                    path="/a.py", evidence=[GrepEvidence(strategy="grep", path="/a.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GrepEvidence(operation="grep")])
             ],
         )
         result = a & b
@@ -430,19 +604,15 @@ class TestSubclassPreservation:
         a = GlobResult(
             success=True,
             message="a",
-            candidates=[
-                FileSearchCandidate(
-                    path="/a.py", evidence=[GlobEvidence(strategy="glob", path="/a.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GlobEvidence(operation="glob")])
             ],
         )
         b = VectorSearchResult(
             success=True,
             message="b",
-            candidates=[
-                FileSearchCandidate(
-                    path="/a.py", evidence=[VectorEvidence(strategy="vector", path="/a.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[VectorEvidence(operation="vector")])
             ],
         )
         result = a >> b
@@ -453,10 +623,8 @@ class TestSubclassPreservation:
         b = GlobResult(
             success=True,
             message="b",
-            candidates=[
-                FileSearchCandidate(
-                    path="/a.py", evidence=[GlobEvidence(strategy="glob", path="/a.py")]
-                )
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GlobEvidence(operation="glob")])
             ],
         )
         result = a | b
@@ -466,26 +634,20 @@ class TestSubclassPreservation:
         a = GraphResult(
             success=True,
             message="a",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/a.py",
-                    evidence=[
-                        GraphEvidence(
-                            strategy="predecessors", path="/a.py", algorithm="predecessors"
-                        )
-                    ],
+                    evidence=[GraphEvidence(operation="predecessors", algorithm="predecessors")],
                 )
             ],
         )
         b = GraphResult(
             success=True,
             message="b",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/b.py",
-                    evidence=[
-                        GraphEvidence(strategy="successors", path="/b.py", algorithm="successors")
-                    ],
+                    evidence=[GraphEvidence(operation="successors", algorithm="successors")],
                 )
             ],
         )
@@ -503,18 +665,14 @@ class TestGlobResultAccessors:
         r = GlobResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/src",
-                    evidence=[GlobEvidence(strategy="glob", path="/src", is_directory=True)],
+                    evidence=[GlobEvidence(operation="glob", is_directory=True)],
                 ),
-                FileSearchCandidate(
+                FileCandidate(
                     path="/a.py",
-                    evidence=[
-                        GlobEvidence(
-                            strategy="glob", path="/a.py", is_directory=False, size_bytes=100
-                        )
-                    ],
+                    evidence=[GlobEvidence(operation="glob", is_directory=False, size_bytes=100)],
                 ),
             ],
         )
@@ -525,13 +683,12 @@ class TestGlobResultAccessors:
         r = GlobResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/a.py",
                     evidence=[
                         GlobEvidence(
-                            strategy="glob",
-                            path="/a.py",
+                            operation="glob",
                             size_bytes=200,
                             mime_type="text/x-python",
                         )
@@ -556,10 +713,10 @@ class TestGrepResultAccessors:
         r = GrepResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/a.py",
-                    evidence=[GrepEvidence(strategy="grep", path="/a.py", line_matches=(lm1, lm2))],
+                    evidence=[GrepEvidence(operation="grep", line_matches=(lm1, lm2))],
                 ),
             ],
         )
@@ -577,14 +734,14 @@ class TestGrepResultAccessors:
         r = GrepResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/a.py",
-                    evidence=[GrepEvidence(strategy="grep", path="/a.py", line_matches=(lm1,))],
+                    evidence=[GrepEvidence(operation="grep", line_matches=(lm1,))],
                 ),
-                FileSearchCandidate(
+                FileCandidate(
                     path="/b.py",
-                    evidence=[GrepEvidence(strategy="grep", path="/b.py", line_matches=(lm2,))],
+                    evidence=[GrepEvidence(operation="grep", line_matches=(lm2,))],
                 ),
             ],
         )
@@ -599,24 +756,18 @@ class TestTreeResultAccessors:
         r = TreeResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/src",
-                    evidence=[
-                        TreeEvidence(strategy="tree", path="/src", depth=1, is_directory=True)
-                    ],
+                    evidence=[TreeEvidence(operation="tree", depth=1, is_directory=True)],
                 ),
-                FileSearchCandidate(
+                FileCandidate(
                     path="/a.py",
-                    evidence=[
-                        TreeEvidence(strategy="tree", path="/a.py", depth=1, is_directory=False)
-                    ],
+                    evidence=[TreeEvidence(operation="tree", depth=1, is_directory=False)],
                 ),
-                FileSearchCandidate(
+                FileCandidate(
                     path="/b.py",
-                    evidence=[
-                        TreeEvidence(strategy="tree", path="/b.py", depth=1, is_directory=False)
-                    ],
+                    evidence=[TreeEvidence(operation="tree", depth=1, is_directory=False)],
                 ),
             ],
         )
@@ -629,17 +780,15 @@ class TestListDirResultAccessors:
         r = ListDirResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/src",
-                    evidence=[ListDirEvidence(strategy="list_dir", path="/src", is_directory=True)],
+                    evidence=[ListDirEvidence(operation="list_dir", is_directory=True)],
                 ),
-                FileSearchCandidate(
+                FileCandidate(
                     path="/a.py",
                     evidence=[
-                        ListDirEvidence(
-                            strategy="list_dir", path="/a.py", is_directory=False, size_bytes=50
-                        )
+                        ListDirEvidence(operation="list_dir", is_directory=False, size_bytes=50)
                     ],
                 ),
             ],
@@ -654,13 +803,12 @@ class TestTrashResultAccessors:
         r = TrashResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/__trash__/abc/a.py",
                     evidence=[
                         TrashEvidence(
-                            strategy="trash",
-                            path="/__trash__/abc/a.py",
+                            operation="trash",
                             deleted_at=now,
                             original_path="/a.py",
                         )
@@ -676,14 +824,10 @@ class TestVectorSearchResultAccessors:
         r = VectorSearchResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/auth.py",
-                    evidence=[
-                        VectorEvidence(
-                            strategy="vector_search", path="/auth.py", snippet="login code"
-                        )
-                    ],
+                    evidence=[VectorEvidence(operation="vector_search", snippet="login code")],
                 ),
             ],
         )
@@ -699,14 +843,10 @@ class TestLexicalSearchResultAccessors:
         r = LexicalSearchResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/auth.py",
-                    evidence=[
-                        LexicalEvidence(
-                            strategy="lexical", path="/auth.py", snippet="keyword match"
-                        )
-                    ],
+                    evidence=[LexicalEvidence(operation="lexical", snippet="keyword match")],
                 ),
             ],
         )
@@ -718,12 +858,10 @@ class TestHybridSearchResultAccessors:
         r = HybridSearchResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/auth.py",
-                    evidence=[
-                        HybridEvidence(strategy="hybrid", path="/auth.py", snippet="hybrid match")
-                    ],
+                    evidence=[HybridEvidence(operation="hybrid", snippet="hybrid match")],
                 ),
             ],
         )
@@ -735,13 +873,12 @@ class TestGraphResultAccessors:
         r = GraphResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/b.py",
                     evidence=[
                         GraphEvidence(
-                            strategy="predecessors",
-                            path="/b.py",
+                            operation="predecessors",
                             algorithm="predecessors",
                             relationship="imports",
                         )
@@ -759,19 +896,17 @@ class TestGraphResultAccessors:
         r = GraphResult(
             success=True,
             message="ok",
-            candidates=[
-                FileSearchCandidate(
+            file_candidates=[
+                FileCandidate(
                     path="/b.py",
                     evidence=[
                         GraphEvidence(
-                            strategy="predecessors",
-                            path="/b.py",
+                            operation="predecessors",
                             algorithm="predecessors",
                             relationship="imports",
                         ),
                         GraphEvidence(
-                            strategy="predecessors",
-                            path="/b.py",
+                            operation="predecessors",
                             algorithm="predecessors",
                             relationship="contains",
                         ),

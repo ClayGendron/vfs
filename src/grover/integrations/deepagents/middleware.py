@@ -42,7 +42,7 @@ def _format_version_list(result: object, path: str) -> str:
     from grover.results import VersionEvidence
 
     lines = [f"Version history for {path} ({len(result)} versions):"]  # type: ignore[arg-type]
-    for candidate in result.candidates:  # type: ignore[union-attr]
+    for candidate in result.file_candidates:  # type: ignore[union-attr]
         for ev in candidate.evidence:
             if isinstance(ev, VersionEvidence):
                 line = f"  v{ev.version}: {ev.created_at:%Y-%m-%d %H:%M:%S}"

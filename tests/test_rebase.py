@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from grover.results import (
+    ConnectionCandidate,
     Evidence,
-    FileSearchCandidate,
+    FileCandidate,
     FileSearchResult,
     GlobEvidence,
     GlobResult,
@@ -25,16 +26,16 @@ from grover.results import (
 def _glob(paths: dict[str, bool], *, pattern: str = "*.py") -> GlobResult:
     """Build a GlobResult from {path: is_directory} mapping."""
     candidates = [
-        FileSearchCandidate(
+        FileCandidate(
             path=p,
-            evidence=[GlobEvidence(strategy="glob", path=p, is_directory=is_d, size_bytes=100)],
+            evidence=[GlobEvidence(operation="glob", is_directory=is_d, size_bytes=100)],
         )
         for p, is_d in paths.items()
     ]
     return GlobResult(
         success=True,
         message=f"Found {len(paths)} match(es)",
-        candidates=candidates,
+        file_candidates=candidates,
         pattern=pattern,
     )
 
@@ -49,15 +50,15 @@ def _grep(
     for p, lms in matches.items():
         line_matches = tuple(LineMatch(line_number=ln, line_content=lc) for ln, lc in lms)
         candidates.append(
-            FileSearchCandidate(
+            FileCandidate(
                 path=p,
-                evidence=[GrepEvidence(strategy="grep", path=p, line_matches=line_matches)],
+                evidence=[GrepEvidence(operation="grep", line_matches=line_matches)],
             )
         )
     return GrepResult(
         success=True,
         message=f"Found matches in {len(matches)} file(s)",
-        candidates=candidates,
+        file_candidates=candidates,
         pattern=pattern,
         files_searched=10,
         files_matched=len(matches),
@@ -67,32 +68,32 @@ def _grep(
 def _tree(paths: dict[str, tuple[int, bool]]) -> TreeResult:
     """Build a TreeResult from {path: (depth, is_directory)} mapping."""
     candidates = [
-        FileSearchCandidate(
+        FileCandidate(
             path=p,
-            evidence=[TreeEvidence(strategy="tree", path=p, depth=depth, is_directory=is_d)],
+            evidence=[TreeEvidence(operation="tree", depth=depth, is_directory=is_d)],
         )
         for p, (depth, is_d) in paths.items()
     ]
     return TreeResult(
         success=True,
         message=f"Found {len(paths)} entries",
-        candidates=candidates,
+        file_candidates=candidates,
     )
 
 
 def _list_dir(paths: dict[str, bool]) -> ListDirResult:
     """Build a ListDirResult from {path: is_directory} mapping."""
     candidates = [
-        FileSearchCandidate(
+        FileCandidate(
             path=p,
-            evidence=[ListDirEvidence(strategy="list_dir", path=p, is_directory=is_d)],
+            evidence=[ListDirEvidence(operation="list_dir", is_directory=is_d)],
         )
         for p, is_d in paths.items()
     ]
     return ListDirResult(
         success=True,
         message=f"Found {len(paths)} entries",
-        candidates=candidates,
+        file_candidates=candidates,
     )
 
 
@@ -110,13 +111,12 @@ class TestRebase:
         assert "/mount/src/lib/" in rebased
         assert "/src/main.py" not in rebased
 
-    def test_glob_rebase_updates_evidence_paths(self) -> None:
+    def test_glob_rebase_preserves_evidence_fields(self) -> None:
         result = _glob({"/src/main.py": False})
         rebased = result.rebase("/mount")
 
         evs = rebased.explain("/mount/src/main.py")
         assert len(evs) == 1
-        assert evs[0].path == "/mount/src/main.py"
         assert isinstance(evs[0], GlobEvidence)
         assert evs[0].is_directory is False
         assert evs[0].size_bytes == 100
@@ -190,9 +190,7 @@ class TestRebase:
         result = FileSearchResult(
             success=True,
             message="test",
-            candidates=[
-                FileSearchCandidate(path="/", evidence=[Evidence(strategy="test", path="/")])
-            ],
+            file_candidates=[FileCandidate(path="/", evidence=[Evidence(operation="test")])],
         )
         rebased = result.rebase("/mount")
 
@@ -225,6 +223,21 @@ class TestRebase:
         assert "/outer/inner/a.py" in rebased
         assert len(rebased) == 1
 
+    def test_rebase_transforms_connections(self) -> None:
+        cc = ConnectionCandidate(
+            source_path="/a.py",
+            target_path="/b.py",
+            connection_type="imports",
+            evidence=[Evidence(operation="graph")],
+        )
+        r = FileSearchResult(success=True, message="ok", connection_candidates=[cc])
+        rebased = r.rebase("/mount")
+        assert len(rebased.connection_candidates) == 1
+        rcc = rebased.connection_candidates[0]
+        assert rcc.source_path == "/mount/a.py"
+        assert rcc.target_path == "/mount/b.py"
+        assert rcc.path == "/mount/a.py[imports]/mount/b.py"
+
 
 # =====================================================================
 # remap_paths() tests
@@ -239,13 +252,13 @@ class TestRemapPaths:
         assert "/@shared/alice/docs/a.txt" in remapped
         assert "/@shared/alice/docs/b.txt" in remapped
 
-    def test_remap_updates_evidence_paths(self) -> None:
+    def test_remap_preserves_evidence_fields(self) -> None:
         result = _glob({"/src/a.py": False})
         remapped = result.remap_paths(lambda p: "/new" + p)
 
         evs = remapped.explain("/new/src/a.py")
         assert len(evs) == 1
-        assert evs[0].path == "/new/src/a.py"
+        assert isinstance(evs[0], GlobEvidence)
 
     def test_remap_preserves_subclass_type(self) -> None:
         result = _grep({"/a.py": [(1, "x")]})
@@ -294,3 +307,17 @@ class TestRemapPaths:
 
         assert "/shared/a.py" in intersection
         assert "/shared/b.py" not in intersection
+
+    def test_remap_paths_transforms_connections(self) -> None:
+        cc = ConnectionCandidate(
+            source_path="/a.py",
+            target_path="/b.py",
+            connection_type="imports",
+            evidence=[Evidence(operation="graph")],
+        )
+        r = FileSearchResult(success=True, message="ok", connection_candidates=[cc])
+        remapped = r.remap_paths(lambda p: "/new" + p)
+        assert len(remapped.connection_candidates) == 1
+        rcc = remapped.connection_candidates[0]
+        assert rcc.source_path == "/new/a.py"
+        assert rcc.target_path == "/new/b.py"

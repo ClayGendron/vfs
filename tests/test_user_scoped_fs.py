@@ -932,12 +932,12 @@ class TestTrashScoping:
         alice_trash = await usfs.list_trash(session=async_session, user_id="alice")
         assert alice_trash.success
         assert len(alice_trash) == 1
-        assert alice_trash.candidates[0].path.endswith("a.md")
+        assert alice_trash.file_candidates[0].path.endswith("a.md")
 
         bob_trash = await usfs.list_trash(session=async_session, user_id="bob")
         assert bob_trash.success
         assert len(bob_trash) == 1
-        assert bob_trash.candidates[0].path.endswith("b.md")
+        assert bob_trash.file_candidates[0].path.endswith("b.md")
 
     async def test_restore_own_file(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -1113,7 +1113,7 @@ class TestShareCRUD:
         assert len(result) == 2
         grantees = {
             e.grantee_id
-            for c in result.candidates
+            for c in result.file_candidates
             for e in c.evidence
             if isinstance(e, ShareEvidence)
         }
@@ -1138,8 +1138,9 @@ class TestShareCRUD:
 
         result = await shared_usfs.list_shared_with_me(user_id="bob", session=async_session)
         assert len(result) == 1
-        assert result.candidates[0].path == "/@shared/alice/notes.md"
-        share_ev = next(e for e in result.candidates[0].evidence if isinstance(e, ShareEvidence))
+        assert result.file_candidates[0].path == "/@shared/alice/notes.md"
+        evs = result.file_candidates[0].evidence
+        share_ev = next(e for e in evs if isinstance(e, ShareEvidence))
         assert share_ev.permission == "read"
 
     async def test_share_no_sharing_service_raises(

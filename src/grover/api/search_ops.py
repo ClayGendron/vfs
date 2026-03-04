@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from grover.results import (
-    FileSearchCandidate,
+    FileCandidate,
     FileSearchResult,
     GlobResult,
     GrepResult,
@@ -110,7 +110,7 @@ class SearchOpsMixin:
                         )
                     if result.success:
                         rebased = result.rebase(mount.path)
-                        for c in rebased.candidates:
+                        for c in rebased.file_candidates:
                             combined_entries.setdefault(c.path, []).extend(c.evidence)
                             total_matches += sum(
                                 len(e.line_matches)  # type: ignore[union-attr]
@@ -136,7 +136,7 @@ class SearchOpsMixin:
                 return GrepResult(
                     success=True,
                     message=f"Found {total_matches} match(es) in {total_matched} file(s)",
-                    candidates=FileSearchResult._dict_to_candidates(combined_entries),
+                    file_candidates=FileSearchResult._dict_to_candidates(combined_entries),
                     pattern=pattern,
                     files_searched=total_searched,
                     files_matched=total_matched,
@@ -173,12 +173,11 @@ class SearchOpsMixin:
         try:
             if path == "/":
                 root_candidates = [
-                    FileSearchCandidate(
+                    FileCandidate(
                         path=mount.path,
                         evidence=[
                             TreeEvidence(
-                                strategy="tree",
-                                path=mount.path,
+                                operation="tree",
                                 depth=0,
                                 is_directory=True,
                             )
@@ -186,7 +185,7 @@ class SearchOpsMixin:
                     )
                     for mount in self._ctx.registry.list_visible_mounts()
                 ]
-                combined = TreeResult(success=True, message="", candidates=root_candidates)
+                combined = TreeResult(success=True, message="", file_candidates=root_candidates)
 
                 if max_depth is None or max_depth > 0:
                     for mount in self._ctx.registry.list_visible_mounts():
@@ -298,15 +297,14 @@ class SearchOpsMixin:
                     for sr in fts_results:
                         fp = mount.path + sr.ref.path
                         ev = LexicalEvidence(
-                            strategy="lexical_search",
-                            path=fp,
+                            operation="lexical_search",
                             snippet=sr.content[:200] if sr.content else "",
                         )
                         mount_entries.setdefault(fp, []).append(ev)
                     mount_result = LexicalSearchResult(
                         success=True,
                         message="",
-                        candidates=FileSearchResult._dict_to_candidates(mount_entries),
+                        file_candidates=FileSearchResult._dict_to_candidates(mount_entries),
                     )
                     combined = combined | mount_result
                 combined.message = f"Found matches in {len(combined)} file(s)"
@@ -320,15 +318,14 @@ class SearchOpsMixin:
                 for sr in fts_results:
                     fp = mount.path + sr.ref.path
                     ev = LexicalEvidence(
-                        strategy="lexical_search",
-                        path=fp,
+                        operation="lexical_search",
                         snippet=sr.content[:200] if sr.content else "",
                     )
                     entries.setdefault(fp, []).append(ev)
                 return LexicalSearchResult(
                     success=True,
                     message=f"Found matches in {len(entries)} file(s)",
-                    candidates=FileSearchResult._dict_to_candidates(entries),
+                    file_candidates=FileSearchResult._dict_to_candidates(entries),
                 )
         except Exception as e:
             return LexicalSearchResult(

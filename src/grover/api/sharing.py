@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from grover.backends.protocol import SupportsReBAC
 from grover.exceptions import MountNotFoundError
 from grover.results import (
-    FileSearchCandidate,
+    FileCandidate,
     ShareResult,
     ShareSearchResult,
 )
@@ -147,7 +147,7 @@ class ShareMixin:
         user_id: str,
     ) -> ShareSearchResult:
         """List all files shared with the current user across all mounts."""
-        all_candidates: list[FileSearchCandidate] = []
+        all_candidates: list[FileCandidate] = []
         for mount in self._ctx.registry.list_mounts():
             cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
             if cap is None:
@@ -157,10 +157,10 @@ class ShareMixin:
                 result = await cap.list_shared_with_me(user_id=user_id, session=sess)
             # Backend returns paths like /@shared/alice/a.md — rebase to mount
             rebased = result.rebase(mount.path)
-            all_candidates.extend(rebased.candidates)
+            all_candidates.extend(rebased.file_candidates)
 
         return ShareSearchResult(
             success=True,
             message=f"Found {len(all_candidates)} share(s)",
-            candidates=all_candidates,
+            file_candidates=all_candidates,
         )

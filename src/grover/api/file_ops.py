@@ -9,8 +9,8 @@ from grover.results import (
     DeleteResult,
     EditResult,
     ExistsResult,
+    FileCandidate,
     FileInfoResult,
-    FileSearchCandidate,
     ListDirEvidence,
     ListDirResult,
     MkdirResult,
@@ -179,12 +179,11 @@ class FileOpsMixin:
 
     def _list_root(self) -> ListDirResult:
         candidates = [
-            FileSearchCandidate(
+            FileCandidate(
                 path=mount.path,
                 evidence=[
                     ListDirEvidence(
-                        strategy="list_dir",
-                        path=mount.path,
+                        operation="list_dir",
                         is_directory=True,
                     )
                 ],
@@ -194,7 +193,7 @@ class FileOpsMixin:
         return ListDirResult(
             success=True,
             message=f"Found {len(candidates)} mount(s)",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     async def exists(self, path: str, *, user_id: str | None = None) -> ExistsResult:

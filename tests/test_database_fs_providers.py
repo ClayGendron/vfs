@@ -11,7 +11,7 @@ from sqlmodel import SQLModel
 from grover.backends.database import DatabaseFileSystem
 from grover.providers.chunks import DefaultChunkProvider
 from grover.providers.versioning import DefaultVersionProvider
-from grover.results.search import FileSearchCandidate, VectorEvidence, VectorSearchResult
+from grover.results.search import FileCandidate, VectorEvidence, VectorSearchResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -252,7 +252,7 @@ class TestStorageProviderQueryDelegation:
             await fs.write("/src/b.py", "world\n", session=session)
             result = await fs.glob("*.py", "/src", session=session)
             assert result.success
-            assert len(result.candidates) == 2
+            assert len(result.file_candidates) == 2
         await engine.dispose()
 
     async def test_grep_no_storage_uses_db(self):
@@ -420,13 +420,12 @@ class TestSearchWithProviders:
             return_value=VectorSearchResult(
                 success=True,
                 message="1 match",
-                candidates=[
-                    FileSearchCandidate(
+                file_candidates=[
+                    FileCandidate(
                         path="/a.py",
                         evidence=[
                             VectorEvidence(
-                                strategy="vector_search",
-                                path="/a.py",
+                                operation="vector_search",
                                 snippet="hello world",
                             ),
                         ],
@@ -443,9 +442,9 @@ class TestSearchWithProviders:
         result = await fs.vector_search("hello")
 
         assert result.success is True
-        assert len(result.candidates) == 1
-        assert result.candidates[0].path == "/a.py"
-        assert result.candidates[0].evidence[0].snippet == "hello world"
+        assert len(result.file_candidates) == 1
+        assert result.file_candidates[0].path == "/a.py"
+        assert result.file_candidates[0].evidence[0].snippet == "hello world"
 
     async def test_search_has_delegates_to_local_store(self):
         """search_has delegates to LocalVectorStore when available."""
@@ -569,7 +568,7 @@ class TestInlinedMethods:
 
             versions = await fs.list_versions("/test.py", session=session)
             assert versions.success
-            assert len(versions.candidates) == 2
+            assert len(versions.file_candidates) == 2
         await engine.dispose()
 
     async def test_chunk_methods(self):

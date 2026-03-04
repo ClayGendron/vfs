@@ -39,7 +39,7 @@ from grover.results.operations import (
     WriteResult,
 )
 from grover.results.search import (
-    FileSearchCandidate,
+    FileCandidate,
     GlobEvidence,
     GlobResult,
     GrepEvidence,
@@ -518,16 +518,15 @@ class DatabaseFileSystem:
             f for f in db_files if glob_regex is not None and glob_regex.match(f.path) is not None
         ]
 
-        candidates: list[FileSearchCandidate] = []
+        candidates: list[FileCandidate] = []
         for f in matched:
             info = file_to_info(f)
             candidates.append(
-                FileSearchCandidate(
+                FileCandidate(
                     path=info.path,
                     evidence=[
                         GlobEvidence(
-                            strategy="glob",
-                            path=info.path,
+                            operation="glob",
                             is_directory=info.is_directory,
                             size_bytes=info.size_bytes,
                             mime_type=info.mime_type,
@@ -539,7 +538,7 @@ class DatabaseFileSystem:
         return GlobResult(
             success=True,
             message=f"Found {len(candidates)} match(es)",
-            candidates=candidates,
+            file_candidates=candidates,
             pattern=pattern,
         )
 
@@ -634,7 +633,7 @@ class DatabaseFileSystem:
                 )
                 candidate_paths = [row[0] for row in result.all()]
 
-        result_candidates: list[FileSearchCandidate] = []
+        result_candidates: list[FileCandidate] = []
         files_searched = 0
         files_matched = 0
         truncated = False
@@ -684,12 +683,11 @@ class DatabaseFileSystem:
                     file_line_matches = [file_line_matches[0]]
 
                 result_candidates.append(
-                    FileSearchCandidate(
+                    FileCandidate(
                         path=file_path,
                         evidence=[
                             GrepEvidence(
-                                strategy="grep",
-                                path=file_path,
+                                operation="grep",
                                 line_matches=tuple(file_line_matches),
                             )
                         ],
@@ -715,7 +713,7 @@ class DatabaseFileSystem:
         return GrepResult(
             success=True,
             message=f"Found {total_matches} match(es) in {files_matched} file(s)",
-            candidates=result_candidates,
+            file_candidates=result_candidates,
             pattern=pattern,
             files_searched=files_searched,
             files_matched=files_matched,
@@ -768,7 +766,7 @@ class DatabaseFileSystem:
         result = await sess.execute(select(model).where(*conditions))
         all_files = list(result.scalars().all())
 
-        candidates: list[FileSearchCandidate] = []
+        candidates: list[FileCandidate] = []
         total_files = 0
         total_dirs = 0
 
@@ -776,12 +774,11 @@ class DatabaseFileSystem:
             info = file_to_info(f)
             depth = info.path.count("/") - base_depth
             candidates.append(
-                FileSearchCandidate(
+                FileCandidate(
                     path=info.path,
                     evidence=[
                         TreeEvidence(
-                            strategy="tree",
-                            path=info.path,
+                            operation="tree",
                             depth=depth,
                             is_directory=info.is_directory,
                         )
@@ -797,7 +794,7 @@ class DatabaseFileSystem:
         return TreeResult(
             success=True,
             message=f"{total_dirs} directories, {total_files} files",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     # ------------------------------------------------------------------
@@ -820,12 +817,11 @@ class DatabaseFileSystem:
         files = result.scalars().all()
 
         candidates = [
-            FileSearchCandidate(
+            FileCandidate(
                 path=f.original_path or f.path,
                 evidence=[
                     TrashEvidence(
-                        strategy="trash",
-                        path=f.original_path or f.path,
+                        operation="trash",
                         deleted_at=f.deleted_at,
                         original_path=f.original_path or f.path,
                     )
@@ -837,7 +833,7 @@ class DatabaseFileSystem:
         return TrashResult(
             success=True,
             message=f"Found {len(candidates)} items in trash",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     async def restore_from_trash(
@@ -1344,12 +1340,11 @@ class DatabaseFileSystem:
             return VersionResult(success=False, message=f"File not found: {path}")
         versions = await self.version_provider.list_versions(sess, file)
         candidates = [
-            FileSearchCandidate(
+            FileCandidate(
                 path=f"{path}@{v.version}",
                 evidence=[
                     VersionEvidence(
-                        strategy="version",
-                        path=path,
+                        operation="version",
                         version=v.version,
                         content_hash=v.content_hash,
                         size_bytes=v.size_bytes,
@@ -1363,7 +1358,7 @@ class DatabaseFileSystem:
         return VersionResult(
             success=True,
             message=f"Found {len(versions)} version(s)",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     async def get_version_content(
@@ -1581,7 +1576,7 @@ class DatabaseFileSystem:
             provider_result = await self.search_provider.lexical_search(query, k=k)
             if provider_result.success and len(provider_result) > 0:
                 results: list[SearchResult] = []
-                for c in provider_result.candidates:
+                for c in provider_result.file_candidates:
                     for ev in c.evidence:
                         snippet = getattr(ev, "snippet", "")
                         results.append(

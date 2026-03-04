@@ -26,8 +26,9 @@ from grover.results.operations import (
     WriteResult,
 )
 from grover.results.search import (
+    ConnectionCandidate,
     Evidence,
-    FileSearchCandidate,
+    FileCandidate,
     FileSearchResult,
     GlobEvidence,
     GlobResult,
@@ -57,15 +58,16 @@ from grover.results.search import (
 __all__ = [
     "ChunkListResult",
     "ChunkResult",
+    "ConnectionCandidate",
     "ConnectionListResult",
     "ConnectionResult",
     "DeleteResult",
     "EditResult",
     "Evidence",
     "ExistsResult",
+    "FileCandidate",
     "FileInfoResult",
     "FileOperationResult",
-    "FileSearchCandidate",
     "FileSearchResult",
     "GetVersionContentResult",
     "GlobEvidence",

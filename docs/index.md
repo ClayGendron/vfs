@@ -76,7 +76,7 @@ g.contains("/project/hello.py")      # functions and classes inside
 
 # Semantic search (requires embedding_provider + search_provider on add_mount)
 # result = g.vector_search("greeting function", k=5)
-# for candidate in result.candidates:
+# for candidate in result.file_candidates:
 #     print(candidate.path)
 
 # Persist and clean up
@@ -189,7 +189,7 @@ The full API reference is in the [API Reference](api.md). Here's a summary:
 Key types:
 
 ```python
-from grover import Ref, FileSearchResult, FileSearchCandidate
+from grover import Ref, FileSearchResult, FileCandidate
 
 # Ref — immutable identity for any Grover entity
 Ref(path="/project/hello.py")                              # file
@@ -199,11 +199,11 @@ Ref.for_connection("/a.py", "/b.py", "imports")            # connection
 
 # FileSearchResult — search results with evidence-backed candidates
 result = g.search("greeting function", k=5)
-result.success        # bool
-result.candidates     # list[FileSearchCandidate]
-candidate = result.candidates[0]
-candidate.path        # str — file path
-candidate.evidence    # list[Evidence] — why this path matched
+result.success           # bool
+result.file_candidates   # list[FileCandidate]
+candidate = result.file_candidates[0]
+candidate.path           # str — file path
+candidate.evidence       # list[Evidence] — why this path matched
 ```
 
 ---

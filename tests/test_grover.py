@@ -416,7 +416,7 @@ class TestGroverSyncAuthenticated:
         assert result.success is True
         assert len(result) == 1
         # Path should be an @shared path, not a raw stored path
-        assert result.candidates[0].path == "/ws/@shared/alice/a.md"
+        assert result.file_candidates[0].path == "/ws/@shared/alice/a.md"
 
     def test_move_and_copy(self, auth_grover: Grover):
         auth_grover.write("/ws/src.md", "content", user_id="alice")

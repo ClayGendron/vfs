@@ -682,7 +682,7 @@ class TestGroverAsyncSharing:
         assert len(result) == 2
         grantees = {
             e.grantee_id
-            for c in result.candidates
+            for c in result.file_candidates
             for e in c.evidence
             if isinstance(e, ShareEvidence)
         }
@@ -696,7 +696,7 @@ class TestGroverAsyncSharing:
         assert result.success is True
         assert len(result) == 1
         # Path should be an @shared path, not a raw stored path
-        assert result.candidates[0].path == "/ws/@shared/alice/a.md"
+        assert result.file_candidates[0].path == "/ws/@shared/alice/a.md"
 
     @pytest.mark.asyncio
     async def test_share_requires_authenticated_mount(self, workspace: Path, tmp_path: Path):

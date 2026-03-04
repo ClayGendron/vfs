@@ -244,7 +244,7 @@ class TestDiskStorageGrep:
 
         result = await dsp.storage_grep("import")
         assert result.success
-        paths = [c.path for c in result.candidates]
+        paths = [c.path for c in result.file_candidates]
         assert "/a.py" in paths
         assert "/b.py" not in paths
 
@@ -254,7 +254,7 @@ class TestDiskStorageGrep:
 
         result = await dsp.storage_grep("hello", case_sensitive=False)
         assert result.success
-        assert len(result.candidates) == 1
+        assert len(result.file_candidates) == 1
 
     async def test_grep_invalid_regex(self, tmp_path: Path) -> None:
         dsp = DiskStorageProvider(tmp_path)
@@ -271,7 +271,7 @@ class TestDiskStorageTree:
 
         result = await dsp.storage_tree()
         assert result.success
-        paths = [c.path for c in result.candidates]
+        paths = [c.path for c in result.file_candidates]
         assert "/src" in paths
         assert "/src/main.py" in paths
         assert "/src/lib" in paths
@@ -283,7 +283,7 @@ class TestDiskStorageTree:
 
         result = await dsp.storage_tree(max_depth=1)
         assert result.success
-        paths = [c.path for c in result.candidates]
+        paths = [c.path for c in result.file_candidates]
         assert "/a" in paths
         # Depth 2+ should be excluded
         assert "/a/b/c/deep.txt" not in paths
@@ -298,7 +298,7 @@ class TestDiskStorageListDir:
 
         result = await dsp.storage_list_dir("/")
         assert result.success
-        paths = [c.path for c in result.candidates]
+        paths = [c.path for c in result.file_candidates]
         assert "/file1.txt" in paths
         assert "/file2.txt" in paths
         assert "/subdir" in paths
@@ -316,7 +316,7 @@ class TestDiskStorageListDir:
 
         result = await dsp.storage_list_dir("/")
         assert result.success
-        paths = [c.path for c in result.candidates]
+        paths = [c.path for c in result.file_candidates]
         assert "/visible.txt" in paths
         assert "/.hidden" not in paths
 

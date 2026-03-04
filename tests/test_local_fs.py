@@ -524,7 +524,7 @@ class TestLocalFSInheritsDatabaseFS:
         async with _session(factory) as session:
             result = await fs.tree("/", session=session)
         assert result.success is True
-        paths = [c.path for c in result.candidates]
+        paths = [c.path for c in result.file_candidates]
         assert "/subdir" in paths
         assert "/subdir/file.py" in paths
         await fs.close()
@@ -603,7 +603,7 @@ class TestLocalFSInheritsDatabaseFS:
         async with _session(factory) as session:
             versions = await fs.list_versions("/versioned.py", session=session)
         assert versions.success is True
-        assert len(versions.candidates) == 2
+        assert len(versions.file_candidates) == 2
         await fs.close()
 
     async def test_provider_kwargs_forwarded(self, tmp_path: Path):

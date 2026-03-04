@@ -35,7 +35,7 @@ from grover.results.operations import (
     WriteResult,
 )
 from grover.results.search import (
-    FileSearchCandidate,
+    FileCandidate,
     GlobResult,
     GrepResult,
     ListDirEvidence,
@@ -420,16 +420,15 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 parts = share.path.strip("/").split("/")
                 if parts:
                     owners.add(parts[0])
-            result_candidates: list[FileSearchCandidate] = []
+            result_candidates: list[FileCandidate] = []
             for owner in sorted(owners):
                 entry_path = f"/@shared/{owner}"
                 result_candidates.append(
-                    FileSearchCandidate(
+                    FileCandidate(
                         path=entry_path,
                         evidence=[
                             ListDirEvidence(
-                                strategy="list_dir",
-                                path=entry_path,
+                                operation="list_dir",
                                 is_directory=True,
                             )
                         ],
@@ -438,7 +437,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             return ListDirResult(
                 success=True,
                 message=f"Found {len(result_candidates)} shared owner(s)",
-                candidates=result_candidates,
+                file_candidates=result_candidates,
             )
 
         # /@shared/{owner}/... — resolve to /{owner}/... and list
@@ -480,7 +479,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             else:
                 direct_files.add(remainder)
 
-        result_candidates: list[FileSearchCandidate] = []
+        result_candidates: list[FileCandidate] = []
         base = shared_prefix if sub_path == "/" else f"{shared_prefix}{sub_path}"
 
         for name in sorted(direct_files):
@@ -494,12 +493,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 pass
             entry_path = f"{base}/{name}"
             result_candidates.append(
-                FileSearchCandidate(
+                FileCandidate(
                     path=entry_path,
                     evidence=[
                         ListDirEvidence(
-                            strategy="list_dir",
-                            path=entry_path,
+                            operation="list_dir",
                             is_directory=False,
                             size_bytes=size_bytes,
                         )
@@ -510,12 +508,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         for name in sorted(child_dirs):
             entry_path = f"{base}/{name}"
             result_candidates.append(
-                FileSearchCandidate(
+                FileCandidate(
                     path=entry_path,
                     evidence=[
                         ListDirEvidence(
-                            strategy="list_dir",
-                            path=entry_path,
+                            operation="list_dir",
                             is_directory=True,
                         )
                     ],
@@ -525,7 +522,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         return ListDirResult(
             success=True,
             message=f"Found {len(result_candidates)} shared item(s)",
-            candidates=result_candidates,
+            file_candidates=result_candidates,
         )
 
     # ------------------------------------------------------------------
@@ -703,13 +700,12 @@ class UserScopedFileSystem(DatabaseFileSystem):
 
         # At root, add virtual @shared/ entry
         if path == "/":
-            result.candidates.append(
-                FileSearchCandidate(
+            result.file_candidates.append(
+                FileCandidate(
                     path="/@shared",
                     evidence=[
                         ListDirEvidence(
-                            strategy="list_dir",
-                            path="/@shared",
+                            operation="list_dir",
                             is_directory=True,
                             size_bytes=None,
                         )
@@ -951,7 +947,9 @@ class UserScopedFileSystem(DatabaseFileSystem):
             import copy as _copy
 
             result = _copy.copy(result)
-            result.candidates = [c for c in result.candidates if c.path in candidate_paths]
+            result.file_candidates = [
+                c for c in result.file_candidates if c.path in candidate_paths
+            ]
 
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
@@ -1209,12 +1207,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         sess = self._require_session(session)
         shares = await self._list_shares_on_path(sess, stored)
         candidates = [
-            FileSearchCandidate(
+            FileCandidate(
                 path=path,
                 evidence=[
                     ShareEvidence(
-                        strategy="share",
-                        path=path,
+                        operation="share",
                         grantee_id=s.grantee_id,
                         permission=s.permission,
                         granted_by=s.granted_by,
@@ -1227,7 +1224,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         return ShareSearchResult(
             success=True,
             message=f"Found {len(shares)} share(s)",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     async def list_shared_with_me(
@@ -1249,7 +1246,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             )
         sess = self._require_session(session)
         shares = await self._list_shared_with(sess, uid)
-        candidates: list[FileSearchCandidate] = []
+        candidates: list[FileCandidate] = []
         for s in shares:
             # Convert stored /{owner}/rest to @shared/{owner}/rest
             parts = s.path.strip("/").split("/", 1)
@@ -1261,12 +1258,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
             else:
                 user_path = s.path
             candidates.append(
-                FileSearchCandidate(
+                FileCandidate(
                     path=user_path,
                     evidence=[
                         ShareEvidence(
-                            strategy="share",
-                            path=user_path,
+                            operation="share",
                             grantee_id=s.grantee_id,
                             permission=s.permission,
                             granted_by=s.granted_by,
@@ -1278,7 +1274,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         return ShareSearchResult(
             success=True,
             message=f"Found {len(shares)} share(s)",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     # ------------------------------------------------------------------

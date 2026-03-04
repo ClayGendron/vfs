@@ -180,7 +180,7 @@ class TestReadOnlyAllowsReads:
         result = await grover_ro.glob("*.py", "/ro")
         assert isinstance(result, GlobResult)
         assert result.success is True
-        assert len(result.candidates) >= 1
+        assert len(result.file_candidates) >= 1
 
     async def test_read_only_allows_grep(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.grep("print", "/ro")
@@ -191,7 +191,7 @@ class TestReadOnlyAllowsReads:
         result = await grover_ro.list_dir("/ro")
         assert isinstance(result, ListDirResult)
         assert result.success is True
-        assert len(result.candidates) >= 1
+        assert len(result.file_candidates) >= 1
 
     async def test_read_only_allows_graph_queries(self, grover_ro: GroverAsync) -> None:
         graph = grover_ro.get_graph("/ro")

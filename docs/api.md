@@ -124,8 +124,8 @@ g.tree(path="/", *, max_depth=None) -> TreeResult
 
 | Method | Description |
 |--------|-------------|
-| `glob(pattern, path)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `candidates` (list of `FileSearchCandidate`). |
-| `grep(pattern, path, ...)` | Search file contents with regex. Returns `GrepResult` with `candidates` (list of `FileSearchCandidate`). Each candidate's evidence includes `GrepEvidence` with `line_matches`. |
+| `glob(pattern, path)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `file_candidates` (list of `FileCandidate`). |
+| `grep(pattern, path, ...)` | Search file contents with regex. Returns `GrepResult` with `file_candidates` (list of `FileCandidate`). Each candidate's evidence includes `GrepEvidence` with `line_matches`. |
 | `tree(path, max_depth)` | List all entries recursively. Returns `TreeResult` with `entries`, `total_files`, `total_dirs`. |
 
 **grep options:**
@@ -395,7 +395,7 @@ g = Grover(indexing_mode=IndexingMode.MANUAL)
 from grover.providers.search.types import SearchResult
 ```
 
-Internal type used by the filesystem's `SearchMethodsMixin` and vector store backends. The public `Grover.search()` API returns `FileSearchResult` (see [Result Types](#result-types) below), which wraps these into `FileSearchCandidate` objects with `VectorEvidence`.
+Internal type used by the filesystem's `SearchMethodsMixin` and vector store backends. The public `Grover.search()` API returns `FileSearchResult` (see [Result Types](#result-types) below), which wraps these into `FileCandidate` objects with `VectorEvidence`.
 
 ```python
 @dataclass(frozen=True)
@@ -411,7 +411,7 @@ class SearchResult:
 Grover has two result families:
 
 - **`FileOperationResult`** — base for content operations (read, write, edit, delete, etc.). Enriched base with `path`, `content`, `message`, `success`, `line_start`, `line_offset`, `version`.
-- **`FileSearchResult`** — base for search/query results. Contains `candidates: list[FileSearchCandidate]` where each candidate has a `path` and `evidence` list. Supports set algebra (`&`, `|`, `-`, `>>`), `rebase()`, `remap_paths()`.
+- **`FileSearchResult`** — base for search/query results. Contains `file_candidates: list[FileCandidate]` and `connection_candidates: list[ConnectionCandidate]`. Each candidate has a `path` and `evidence` list. Supports set algebra (`&`, `|`, `-`, `>>`), `rebase()`, `remap_paths()`.
 
 All result types live in `grover.results` (canonical location).
 
@@ -424,7 +424,7 @@ from grover import (
     FileInfoResult, ExistsResult, ReconcileResult,
     ChunkResult, ChunkListResult, ConnectionListResult,
     # Search results
-    FileSearchResult, FileSearchCandidate, Evidence,
+    FileSearchResult, FileCandidate, ConnectionCandidate, Evidence,
     GlobResult, GrepResult, TreeResult, ListDirResult,
     TrashResult, VersionResult, ShareSearchResult,
     VectorSearchResult, LexicalSearchResult, HybridSearchResult,
@@ -477,7 +477,7 @@ This design is intentional: agents running in loops should handle failures grace
 
 #### FileSearchResult subclasses
 
-Each search result contains `candidates: list[FileSearchCandidate]`, where each candidate has a `path: str` and `evidence: list[Evidence]`.
+Each search result contains `file_candidates: list[FileCandidate]`, where each candidate has a `path: str` and `evidence: list[Evidence]`.
 
 | Type | Evidence Type | Key Evidence Fields |
 |------|--------------|-------------------|

@@ -159,13 +159,13 @@ class DatabricksVectorStore:
             fp = hit.metadata.get("parent_path") or hit.id
             content = hit.metadata.get("content", "")
             snippet = content[:200] + ("..." if len(content) > 200 else "") if content else ""
-            ev = VectorEvidence(strategy="vector_search", path=fp, snippet=snippet)
+            ev = VectorEvidence(operation="vector_search", snippet=snippet)
             entries.setdefault(fp, []).append(ev)
 
         return VectorSearchResult(
             success=True,
             message=f"Found matches in {len(entries)} file(s)",
-            candidates=FileSearchResult._dict_to_candidates(entries),
+            file_candidates=FileSearchResult._dict_to_candidates(entries),
         )
 
     async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult:

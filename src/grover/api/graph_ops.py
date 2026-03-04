@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from grover.exceptions import CapabilityNotSupportedError
 from grover.results import (
-    FileSearchCandidate,
+    FileCandidate,
     GraphEvidence,
     GraphResult,
 )
@@ -36,12 +36,12 @@ class GraphOpsMixin:
     def predecessors(self, path: str) -> GraphResult:
         """Return graph predecessors of *path* (nodes with edges pointing to it)."""
         refs = self._ctx.resolve_graph(path).predecessors(path)
-        return GraphResult.from_refs(refs, strategy="predecessors")
+        return GraphResult.from_refs(refs, operation="predecessors")
 
     def successors(self, path: str) -> GraphResult:
         """Return graph successors of *path* (nodes it points to)."""
         refs = self._ctx.resolve_graph(path).successors(path)
-        return GraphResult.from_refs(refs, strategy="successors")
+        return GraphResult.from_refs(refs, operation="successors")
 
     def path_between(self, source: str, target: str) -> GraphResult:
         """Return the shortest path from *source* to *target*."""
@@ -51,12 +51,12 @@ class GraphOpsMixin:
                 success=True,
                 message="No path found",
             )
-        return GraphResult.from_refs(refs, strategy="path_between")
+        return GraphResult.from_refs(refs, operation="path_between")
 
     def contains(self, path: str) -> GraphResult:
         """Return files contained by *path*."""
         refs = self._ctx.resolve_graph(path).contains(path)
-        return GraphResult.from_refs(refs, strategy="contains")
+        return GraphResult.from_refs(refs, operation="contains")
 
     # ------------------------------------------------------------------
     # Graph algorithm wrappers (capability-checked)
@@ -81,12 +81,11 @@ class GraphOpsMixin:
             msg = "Graph backend does not support centrality algorithms"
             raise CapabilityNotSupportedError(msg) from None
         candidates = [
-            FileSearchCandidate(
+            FileCandidate(
                 path=node_path,
                 evidence=[
                     GraphEvidence(
-                        strategy="pagerank",
-                        path=node_path,
+                        operation="pagerank",
                         algorithm="pagerank",
                     )
                 ],
@@ -96,7 +95,7 @@ class GraphOpsMixin:
         return GraphResult(
             success=True,
             message=f"PageRank computed for {len(candidates)} node(s)",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     def meeting_subgraph(
@@ -112,7 +111,7 @@ class GraphOpsMixin:
         except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg) from None
-        return GraphResult.from_paths(sorted(sub.nodes), strategy="meeting_subgraph")
+        return GraphResult.from_paths(sorted(sub.nodes), operation="meeting_subgraph")
 
     def neighborhood(
         self,
@@ -134,7 +133,7 @@ class GraphOpsMixin:
         except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg) from None
-        return GraphResult.from_paths(sorted(sub.nodes), strategy="neighborhood")
+        return GraphResult.from_paths(sorted(sub.nodes), operation="neighborhood")
 
     def find_nodes(self, *, path: str | None = None, **attrs: object) -> GraphResult:
         """Find graph nodes matching all attribute predicates."""
@@ -144,4 +143,4 @@ class GraphOpsMixin:
         except (AttributeError, NotImplementedError):
             msg = "Graph backend does not support filtering"
             raise CapabilityNotSupportedError(msg) from None
-        return GraphResult.from_paths(node_list, strategy="find_nodes")
+        return GraphResult.from_paths(node_list, operation="find_nodes")

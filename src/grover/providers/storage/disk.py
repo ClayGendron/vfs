@@ -19,7 +19,7 @@ from typing import Any
 
 from grover.results.operations import FileInfoResult, ReconcileResult
 from grover.results.search import (
-    FileSearchCandidate,
+    FileCandidate,
     GlobEvidence,
     GlobResult,
     GrepEvidence,
@@ -289,15 +289,14 @@ class DiskStorageProvider:
 
         matched = await asyncio.to_thread(_collect_and_match)
 
-        candidates: list[FileSearchCandidate] = []
+        candidates: list[FileCandidate] = []
         for vpath, is_d, size in matched:
             candidates.append(
-                FileSearchCandidate(
+                FileCandidate(
                     path=vpath,
                     evidence=[
                         GlobEvidence(
-                            strategy="glob",
-                            path=vpath,
+                            operation="glob",
                             is_directory=is_d,
                             size_bytes=size,
                         )
@@ -308,7 +307,7 @@ class DiskStorageProvider:
         return GlobResult(
             success=True,
             message=f"Found {len(candidates)} match(es)",
-            candidates=candidates,
+            file_candidates=candidates,
             pattern=pattern,
         )
 
@@ -385,7 +384,7 @@ class DiskStorageProvider:
 
                 candidate_vpaths = await asyncio.to_thread(_collect_files)
 
-        result_candidates: list[FileSearchCandidate] = []
+        result_candidates: list[FileCandidate] = []
         files_searched = 0
         files_matched = 0
         truncated = False
@@ -445,12 +444,11 @@ class DiskStorageProvider:
                     file_line_matches = [file_line_matches[0]]
 
                 result_candidates.append(
-                    FileSearchCandidate(
+                    FileCandidate(
                         path=file_path,
                         evidence=[
                             GrepEvidence(
-                                strategy="grep",
-                                path=file_path,
+                                operation="grep",
                                 line_matches=tuple(file_line_matches),
                             )
                         ],
@@ -476,7 +474,7 @@ class DiskStorageProvider:
         return GrepResult(
             success=True,
             message=f"Found {total_matches} match(es) in {files_matched} file(s)",
-            candidates=result_candidates,
+            file_candidates=result_candidates,
             pattern=pattern,
             files_searched=files_searched,
             files_matched=files_matched,
@@ -533,15 +531,14 @@ class DiskStorageProvider:
 
         disk_items = await asyncio.to_thread(_walk)
 
-        candidates: list[FileSearchCandidate] = []
+        candidates: list[FileCandidate] = []
         for vpath, is_d, depth in sorted(disk_items, key=lambda x: x[0]):
             candidates.append(
-                FileSearchCandidate(
+                FileCandidate(
                     path=vpath,
                     evidence=[
                         TreeEvidence(
-                            strategy="tree",
-                            path=vpath,
+                            operation="tree",
                             depth=depth,
                             is_directory=is_d,
                         )
@@ -553,7 +550,7 @@ class DiskStorageProvider:
             success=True,
             message=f"{sum(1 for _, d, _ in disk_items if d)} directories, "
             f"{sum(1 for _, d, _ in disk_items if not d)} files",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     async def storage_list_dir(self, path: str) -> ListDirResult:
@@ -584,17 +581,16 @@ class DiskStorageProvider:
 
         disk_items = await asyncio.to_thread(_scan_dir)
 
-        candidates: list[FileSearchCandidate] = []
+        candidates: list[FileCandidate] = []
         for name, is_d, disk_size in disk_items:
             item_path = f"{path}/{name}" if path != "/" else f"/{name}"
             item_path = normalize_path(item_path)
             candidates.append(
-                FileSearchCandidate(
+                FileCandidate(
                     path=item_path,
                     evidence=[
                         ListDirEvidence(
-                            strategy="list_dir",
-                            path=item_path,
+                            operation="list_dir",
                             is_directory=is_d,
                             size_bytes=disk_size,
                         )
@@ -605,7 +601,7 @@ class DiskStorageProvider:
         return ListDirResult(
             success=True,
             message=f"Listed {len(candidates)} items in {path}",
-            candidates=candidates,
+            file_candidates=candidates,
         )
 
     # ------------------------------------------------------------------

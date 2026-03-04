@@ -54,8 +54,7 @@ class TestVersionEvidence:
     def test_required_fields(self):
         now = datetime.now(UTC)
         ve = VersionEvidence(
-            strategy="version",
-            path="/test.txt",
+            operation="version",
             version=1,
             content_hash="abc",
             size_bytes=10,
@@ -67,7 +66,7 @@ class TestVersionEvidence:
         assert ve.created_at == now
 
     def test_defaults(self):
-        ve = VersionEvidence(strategy="version", path="/test.txt")
+        ve = VersionEvidence(operation="version")
         assert ve.created_by is None
         assert ve.version == 0
         assert ve.content_hash == ""
