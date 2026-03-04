@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from grover.types.operations import GetVersionContentResult, RestoreResult, VerifyVersionResult
 from grover.types.search import FileSearchCandidate, VersionEvidence, VersionResult
 
-from ..utils import normalize_path
+from ..paths import normalize_path
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

@@ -1,9 +1,8 @@
 """DiskStorageProvider — local disk storage with no DB dependencies.
 
-Implements ``StorageProvider``, ``SupportsStorageQueries``, and
-``SupportsStorageReconcile``.  Session parameters are NOT part of the
-``StorageProvider`` interface — the filesystem injects sessions for
-DB operations after the storage provider call.
+Implements ``StorageProvider`` (content I/O, queries, and reconciliation).
+Session parameters are NOT part of the ``StorageProvider`` interface — the
+filesystem injects sessions for DB operations after the storage provider call.
 """
 
 from __future__ import annotations
@@ -18,14 +17,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from grover.fs.utils import (
-    compile_glob,
-    guess_mime_type,
-    has_binary_extension,
-    is_binary_file,
-    normalize_path,
-    validate_path,
-)
+from grover.fs.content import guess_mime_type, has_binary_extension, is_binary_file
+from grover.fs.paths import normalize_path, validate_path
+from grover.fs.patterns import compile_glob
 from grover.types.operations import FileInfoResult, ReconcileResult
 from grover.types.search import (
     FileSearchCandidate,
@@ -700,7 +694,7 @@ class DiskStorageProvider:
             )
         )
 
-        from grover.fs.utils import to_trash_path
+        from grover.fs.paths import to_trash_path
 
         for file in result.scalars().all():
             if file.path not in disk_paths:

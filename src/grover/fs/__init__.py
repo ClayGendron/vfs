@@ -1,5 +1,6 @@
 """Filesystem layer — storage backends, mounts, permissions, capabilities."""
 
+from grover.fs.content import format_read_output
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.exceptions import (
     AuthenticationRequiredError,
@@ -19,7 +20,6 @@ from grover.fs.protocol import (
     SupportsReconcile,
 )
 from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.fs.utils import format_read_output
 from grover.mount.mounts import MountRegistry
 from grover.types.operations import (
     DeleteResult,

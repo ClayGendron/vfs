@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from grover.fs.exceptions import MountNotFoundError
+from grover.fs.paths import normalize_path
 from grover.fs.permissions import Permission
-from grover.fs.utils import normalize_path
 
 if TYPE_CHECKING:
     from grover.mount import Mount

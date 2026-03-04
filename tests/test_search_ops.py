@@ -10,7 +10,7 @@ from sqlmodel import SQLModel
 
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.utils import glob_to_sql_like, match_glob
+from grover.fs.patterns import glob_to_sql_like, match_glob
 from grover.grover_async import GroverAsync
 
 if TYPE_CHECKING:

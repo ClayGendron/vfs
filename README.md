@@ -196,7 +196,7 @@ For multi-tenant deployments, mount a `UserScopedFileSystem` to enable per-user 
 ```python
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.fs.sharing import SharingService
-from grover.models.shares import FileShare
+from grover.models.share import FileShare
 
 g = GroverAsync()
 backend = UserScopedFileSystem(sharing=SharingService(FileShare))
@@ -206,7 +206,7 @@ await g.add_mount("/ws", backend, engine=engine)
 await g.write("/ws/notes.md", "hello", user_id="alice")
 await g.write("/ws/notes.md", "world", user_id="bob")
 r1 = await g.read("/ws/notes.md", user_id="alice")  # "hello"
-r2 = await g.read("/ws/notes.md", user_id="bob")    # "world"
+r2 = await g.read("/ws/notes.md", user_id="bob")  # "world"
 
 # Share files between users
 await g.share("/ws/notes.md", "bob", user_id="alice")

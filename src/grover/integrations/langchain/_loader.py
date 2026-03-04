@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document
 
-from grover.fs.utils import has_binary_extension
+from grover.fs.content import has_binary_extension
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from grover.fs.utils import normalize_path
+from grover.fs.paths import normalize_path
 from grover.types import (
     FileSearchCandidate,
     FileSearchResult,

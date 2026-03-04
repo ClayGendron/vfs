@@ -43,7 +43,7 @@ from grover.types.search import (
 
 from .database_fs import DatabaseFileSystem
 from .exceptions import AuthenticationRequiredError
-from .utils import normalize_path
+from .paths import normalize_path
 
 if TYPE_CHECKING:
     from datetime import datetime

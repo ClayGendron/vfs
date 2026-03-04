@@ -23,16 +23,11 @@ from grover.types.operations import (
     RestoreResult,
 )
 
+from .content import get_similar_files, is_binary_file
 from .database_fs import DatabaseFileSystem
 from .operations import paginate_content, write_file
+from .paths import normalize_path, to_trash_path, validate_path
 from .providers.storage.disk import DiskStorageProvider
-from .utils import (
-    get_similar_files,
-    is_binary_file,
-    normalize_path,
-    to_trash_path,
-    validate_path,
-)
 
 if TYPE_CHECKING:
     from grover.models.chunk import FileChunkBase

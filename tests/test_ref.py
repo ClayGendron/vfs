@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from grover.fs.utils import normalize_path, split_path
+from grover.fs.paths import normalize_path, split_path
 from grover.ref import Ref
 
 # ==================================================================

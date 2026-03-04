@@ -22,17 +22,9 @@ from grover.types.operations import (
 )
 from grover.types.search import FileSearchCandidate, ListDirEvidence, ListDirResult
 
-from .utils import (
-    compute_content_hash,
-    guess_mime_type,
-    is_text_file,
-    is_trash_path,
-    normalize_path,
-    replace,
-    split_path,
-    to_trash_path,
-    validate_path,
-)
+from .content import compute_content_hash, guess_mime_type, is_text_file
+from .paths import is_trash_path, normalize_path, split_path, to_trash_path, validate_path
+from .replace import replace
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

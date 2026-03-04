@@ -42,6 +42,7 @@ from grover.types.search import (
 )
 
 from .connections import ConnectionService
+from .content import has_binary_extension
 from .directories import DirectoryService
 from .exceptions import GroverError
 from .mixins import (
@@ -60,17 +61,11 @@ from .operations import (
     read_file,
     write_file,
 )
+from .paths import normalize_path, validate_path
+from .patterns import compile_glob, glob_to_sql_like
 from .providers.chunks import DefaultChunkProvider
-from .providers.storage.protocol import SupportsStorageQueries
 from .providers.versioning import DefaultVersionProvider
 from .trash import TrashService
-from .utils import (
-    compile_glob,
-    glob_to_sql_like,
-    has_binary_extension,
-    normalize_path,
-    validate_path,
-)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -368,7 +363,7 @@ class DatabaseFileSystem(
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> ListDirResult:
-        if isinstance(self.storage_provider, SupportsStorageQueries):
+        if self.storage_provider is not None:
             return await self.storage_provider.storage_list_dir(path)
         sess = self._require_session(session)
         return await list_dir_db(
@@ -473,7 +468,7 @@ class DatabaseFileSystem(
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> GlobResult:
-        if isinstance(self.storage_provider, SupportsStorageQueries):
+        if self.storage_provider is not None:
             return await self.storage_provider.storage_glob(pattern, path)
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -579,7 +574,7 @@ class DatabaseFileSystem(
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> GrepResult:
-        if isinstance(self.storage_provider, SupportsStorageQueries):
+        if self.storage_provider is not None:
             return await self.storage_provider.storage_grep(
                 pattern,
                 path,
@@ -748,7 +743,7 @@ class DatabaseFileSystem(
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> TreeResult:
-        if isinstance(self.storage_provider, SupportsStorageQueries):
+        if self.storage_provider is not None:
             return await self.storage_provider.storage_tree(path, max_depth=max_depth)
         sess = self._require_session(session)
         path = normalize_path(path)

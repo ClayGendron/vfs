@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from .utils import normalize_path
+from .paths import normalize_path
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

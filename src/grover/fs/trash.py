@@ -10,7 +10,7 @@ from sqlmodel import select
 from grover.types.operations import DeleteResult, RestoreResult
 from grover.types.search import FileSearchCandidate, TrashEvidence, TrashResult
 
-from .utils import normalize_path
+from .paths import normalize_path
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

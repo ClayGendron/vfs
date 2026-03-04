@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from grover.fs.paths import normalize_path
 from grover.fs.permissions import Permission
 from grover.fs.protocol import SupportsReconcile
-from grover.fs.utils import normalize_path
 from grover.types import (
     DeleteResult,
     GetVersionContentResult,

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from .dialect import upsert_file
-from .utils import normalize_path, split_path, validate_path
+from .paths import normalize_path, split_path, validate_path
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

@@ -277,8 +277,8 @@ def main() -> None:
                 print(f"    ... ({len(entries) - 15} more)")
 
         # Cross-mount exists checks
-        print(f"\n  exists('/code/src/grover/_grover.py'): "
-              f"{g.exists('/code/src/grover/_grover.py')}")
+        print(f"\n  exists('/code/src/grover/grover.py'): "
+              f"{g.exists('/code/src/grover/grover.py')}")
         print(f"  exists('/docs/README.md'): "
               f"{g.exists('/docs/README.md')}")
         print(f"  exists('/code/README.md'): "
