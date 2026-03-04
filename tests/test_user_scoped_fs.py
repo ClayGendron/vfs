@@ -12,7 +12,6 @@ import pytest
 from sqlmodel import select
 
 from grover.fs.exceptions import AuthenticationRequiredError
-from grover.fs.sharing import SharingService
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.models.file import File
 from grover.models.share import FileShare
@@ -35,9 +34,8 @@ async def usfs(async_engine: AsyncEngine) -> UserScopedFileSystem:
 
 @pytest.fixture
 async def shared_usfs(async_engine: AsyncEngine) -> UserScopedFileSystem:
-    """UserScopedFileSystem with SharingService configured."""
-    sharing = SharingService(FileShare)
-    return UserScopedFileSystem(sharing=sharing)
+    """UserScopedFileSystem with sharing configured."""
+    return UserScopedFileSystem(share_model=FileShare)
 
 
 @pytest.fixture
@@ -446,8 +444,8 @@ class TestSharedAccess:
         permission: str = "read",
         granted_by: str = "alice",
     ) -> None:
-        assert usfs._sharing is not None
-        await usfs._sharing.create_share(session, path, grantee_id, permission, granted_by)
+        assert usfs._share_model is not None
+        await usfs._create_share(session, path, grantee_id, permission, granted_by)
 
     async def test_read_shared_file(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -784,8 +782,8 @@ class TestSharedListDir:
         permission: str = "read",
         granted_by: str = "alice",
     ) -> None:
-        assert usfs._sharing is not None
-        await usfs._sharing.create_share(session, path, grantee_id, permission, granted_by)
+        assert usfs._share_model is not None
+        await usfs._create_share(session, path, grantee_id, permission, granted_by)
 
     async def test_shared_root_lists_owners(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1192,8 +1190,7 @@ class TestProtocolCompliance:
     def test_supports_rebac_protocol(self):
         from grover.fs.protocol import SupportsReBAC
 
-        sharing = SharingService(FileShare)
-        usfs = UserScopedFileSystem(sharing=sharing)
+        usfs = UserScopedFileSystem(share_model=FileShare)
         assert isinstance(usfs, SupportsReBAC)
 
     def test_supports_storage_backend_protocol(self):
@@ -1220,8 +1217,8 @@ class TestSecurityVulnerabilities:
         permission: str = "read",
         granted_by: str = "alice",
     ) -> None:
-        assert usfs._sharing is not None
-        await usfs._sharing.create_share(session, path, grantee_id, permission, granted_by)
+        assert usfs._share_model is not None
+        await usfs._create_share(session, path, grantee_id, permission, granted_by)
 
     # -- Fix 1: glob/grep/tree share permission checks + path restoration --
 

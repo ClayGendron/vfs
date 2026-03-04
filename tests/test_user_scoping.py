@@ -15,7 +15,6 @@ from sqlmodel import select
 
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.exceptions import AuthenticationRequiredError
-from grover.fs.sharing import SharingService
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.grover_async import GroverAsync
 from grover.models.file import File
@@ -49,11 +48,10 @@ async def auth_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsync:
 
 @pytest.fixture
 async def shared_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsync:
-    """GroverAsync with UserScopedFileSystem mount and SharingService configured."""
+    """GroverAsync with UserScopedFileSystem mount and sharing configured."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    sharing = SharingService(FileShare)
-    backend = UserScopedFileSystem(sharing=sharing)
+    backend = UserScopedFileSystem(share_model=FileShare)
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
@@ -244,13 +242,13 @@ class TestSharedAccess:
         permission: str = "read",
         granted_by: str = "alice",
     ) -> None:
-        """Helper to create a share record directly via SharingService."""
+        """Helper to create a share record directly via USFS private method."""
         mount = grover._ctx.registry.get_mount("/ws")
         assert mount is not None
         backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
-        assert backend._sharing is not None
-        await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
+        assert backend._share_model is not None
+        await backend._create_share(async_session, path, grantee_id, permission, granted_by)
         await async_session.commit()
 
     async def test_read_shared_file(self, shared_grover: GroverAsync, async_session: AsyncSession):
@@ -373,8 +371,8 @@ class TestSharedListDir:
         assert mount is not None
         backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
-        assert backend._sharing is not None
-        await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
+        assert backend._share_model is not None
+        await backend._create_share(async_session, path, grantee_id, permission, granted_by)
         await async_session.commit()
 
     async def test_list_dir_shared_root(
@@ -538,8 +536,8 @@ class TestSharedMoveAndCopy:
         assert mount is not None
         backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
-        assert backend._sharing is not None
-        await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
+        assert backend._share_model is not None
+        await backend._create_share(async_session, path, grantee_id, permission, granted_by)
         await async_session.commit()
 
     async def test_copy_shared_file_with_read_perm(

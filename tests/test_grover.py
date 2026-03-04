@@ -376,14 +376,12 @@ def auth_grover(tmp_path: Path) -> Iterator[Grover]:
     """Sync Grover with a UserScopedFileSystem backend."""
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    from grover.fs.sharing import SharingService
     from grover.fs.user_scoped_fs import UserScopedFileSystem
     from grover.models.share import FileShare
 
     g = Grover()
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-    sharing = SharingService(FileShare)
-    backend = UserScopedFileSystem(sharing=sharing)
+    backend = UserScopedFileSystem(share_model=FileShare)
     g.add_mount("/ws", backend, engine=engine, embedding_provider=FakeProvider())
     yield g
     g.close()

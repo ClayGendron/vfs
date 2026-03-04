@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.sharing import SharingService
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.grover_async import GroverAsync
 from grover.models.share import FileShare
@@ -50,17 +49,12 @@ def dfs() -> DatabaseFileSystem:
 
 
 @pytest.fixture
-def sharing() -> SharingService:
-    return SharingService(FileShare)
-
-
-@pytest.fixture
 async def grover_with_sharing(
-    session_factory, sharing: SharingService, engine: AsyncEngine, tmp_path: Path
+    session_factory, engine: AsyncEngine, tmp_path: Path
 ) -> AsyncIterator[GroverAsync]:
-    """GroverAsync with a UserScopedFileSystem backend that has a SharingService."""
+    """GroverAsync with a UserScopedFileSystem backend that has sharing configured."""
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-    backend = UserScopedFileSystem(sharing=sharing)
+    backend = UserScopedFileSystem(share_model=FileShare)
     await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g
     await g.close()
@@ -149,55 +143,46 @@ class TestMoveFileFollow:
             assert len(versions) == 1
 
     @pytest.mark.asyncio
-    async def test_move_follow_shares_updated(
-        self, dfs: DatabaseFileSystem, session_factory, sharing: SharingService
-    ):
-        """follow=True with sharing updates share paths."""
+    async def test_move_follow_shares_updated(self, session_factory):
+        """follow=True with sharing updates share paths (via USFS)."""
+        usfs = UserScopedFileSystem(share_model=FileShare)
         async with session_factory() as sess:
-            await dfs.write("/alice/doc.md", "data", session=sess)
-            await sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
+            await usfs.write("/doc.md", "data", session=sess, user_id="alice")
+            await usfs._create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
-            result = await dfs.move(
-                "/alice/doc.md",
-                "/alice/renamed.md",
-                session=sess,
-                follow=True,
-                sharing=sharing,
+            result = await usfs.move(
+                "/doc.md", "/renamed.md", session=sess, follow=True, user_id="alice"
             )
             assert result.success is True
 
             # Share should be updated to new path
-            shares = await sharing.list_shares_on_path(sess, "/alice/renamed.md")
+            shares = await usfs._list_shares_on_path(sess, "/alice/renamed.md")
             assert len(shares) == 1
             assert shares[0].grantee_id == "bob"
 
             # Old path should have no shares
-            old_shares = await sharing.list_shares_on_path(sess, "/alice/doc.md")
+            old_shares = await usfs._list_shares_on_path(sess, "/alice/doc.md")
             assert len(old_shares) == 0
 
     @pytest.mark.asyncio
-    async def test_move_no_follow_shares_stale(
-        self, dfs: DatabaseFileSystem, session_factory, sharing: SharingService
-    ):
+    async def test_move_no_follow_shares_stale(self, session_factory):
         """follow=False does NOT update share paths -- they become stale."""
+        usfs = UserScopedFileSystem(share_model=FileShare)
         async with session_factory() as sess:
-            await dfs.write("/alice/doc.md", "data", session=sess)
-            await sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
+            await usfs.write("/doc.md", "data", session=sess, user_id="alice")
+            await usfs._create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
-            result = await dfs.move(
-                "/alice/doc.md",
-                "/alice/renamed.md",
-                session=sess,
-                follow=False,
+            result = await usfs.move(
+                "/doc.md", "/renamed.md", session=sess, follow=False, user_id="alice"
             )
             assert result.success is True
 
             # Share still points to old path (stale)
-            old_shares = await sharing.list_shares_on_path(sess, "/alice/doc.md")
+            old_shares = await usfs._list_shares_on_path(sess, "/alice/doc.md")
             assert len(old_shares) == 1
 
             # No share at new path
-            new_shares = await sharing.list_shares_on_path(sess, "/alice/renamed.md")
+            new_shares = await usfs._list_shares_on_path(sess, "/alice/renamed.md")
             assert len(new_shares) == 0
 
     @pytest.mark.asyncio
@@ -275,26 +260,21 @@ class TestMoveFileFollow:
             assert r.content == "file a"
 
     @pytest.mark.asyncio
-    async def test_move_follow_overwrite_shares_updated(
-        self, dfs: DatabaseFileSystem, session_factory, sharing: SharingService
-    ):
-        """follow=True overwrite: shares on src path updated to dest."""
+    async def test_move_follow_overwrite_shares_updated(self, session_factory):
+        """follow=True overwrite: shares on src path updated to dest (via USFS)."""
+        usfs = UserScopedFileSystem(share_model=FileShare)
         async with session_factory() as sess:
-            await dfs.write("/alice/src.md", "source", session=sess)
-            await dfs.write("/alice/dst.md", "dest", session=sess)
-            await sharing.create_share(sess, "/alice/src.md", "bob", "read", "alice")
+            await usfs.write("/src.md", "source", session=sess, user_id="alice")
+            await usfs.write("/dst.md", "dest", session=sess, user_id="alice")
+            await usfs._create_share(sess, "/alice/src.md", "bob", "read", "alice")
 
-            result = await dfs.move(
-                "/alice/src.md",
-                "/alice/dst.md",
-                session=sess,
-                follow=True,
-                sharing=sharing,
+            result = await usfs.move(
+                "/src.md", "/dst.md", session=sess, follow=True, user_id="alice"
             )
             assert result.success is True
 
             # Share moved to dest
-            dst_shares = await sharing.list_shares_on_path(sess, "/alice/dst.md")
+            dst_shares = await usfs._list_shares_on_path(sess, "/alice/dst.md")
             assert len(dst_shares) == 1
             assert dst_shares[0].grantee_id == "bob"
 
@@ -361,8 +341,8 @@ class TestGroverMoveFollow:
         assert isinstance(backend, UserScopedFileSystem)
         async with grover._ctx.session_for(mount) as sess:
             assert sess is not None
-            assert backend._sharing is not None
-            await backend._sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
+            assert backend._share_model is not None
+            await backend._create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
         result = await grover.move("/ws/doc.md", "/ws/renamed.md", user_id="alice", follow=True)
         assert result.success is True
@@ -370,10 +350,9 @@ class TestGroverMoveFollow:
         # Verify share updated
         async with grover._ctx.session_for(mount) as sess:
             assert sess is not None
-            assert backend._sharing is not None
-            new_shares = await backend._sharing.list_shares_on_path(sess, "/alice/renamed.md")
+            new_shares = await backend._list_shares_on_path(sess, "/alice/renamed.md")
             assert len(new_shares) == 1
-            old_shares = await backend._sharing.list_shares_on_path(sess, "/alice/doc.md")
+            old_shares = await backend._list_shares_on_path(sess, "/alice/doc.md")
             assert len(old_shares) == 0
 
     @pytest.mark.asyncio

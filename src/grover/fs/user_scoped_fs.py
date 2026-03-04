@@ -11,7 +11,11 @@ logic lives here, not in VFS.
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from sqlmodel import select
 
 from grover.types.operations import (
     ChunkListResult,
@@ -46,12 +50,11 @@ from .exceptions import AuthenticationRequiredError
 from .paths import normalize_path
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.chunk import FileChunkBase
     from grover.models.file import FileBase
+    from grover.models.share import FileShareBase
     from grover.models.version import FileVersionBase
 
     from .providers.chunks.protocol import ChunkProvider
@@ -60,7 +63,6 @@ if TYPE_CHECKING:
     from .providers.search.protocol import SearchProvider
     from .providers.storage.protocol import StorageProvider
     from .providers.versioning.protocol import VersionProvider
-    from .sharing import SharingService
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +73,14 @@ class UserScopedFileSystem(DatabaseFileSystem):
     Every method requires ``user_id``.  Paths are automatically prefixed
     with ``/{user_id}/`` for storage isolation.  The ``@shared/{owner}/``
     virtual namespace resolves to another user's files with permission
-    checks via a ``SharingService``.
+    checks via inlined share logic.
 
     Implements ``GroverFileSystem`` and ``SupportsReBAC`` protocols.
     """
 
     def __init__(
         self,
-        sharing: SharingService | None = None,
+        share_model: type[FileShareBase] | None = None,
         *,
         dialect: str = "sqlite",
         file_model: type[FileBase] | None = None,
@@ -105,7 +107,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             version_provider=version_provider,
             chunk_provider=chunk_provider,
         )
-        self._sharing = sharing
+        self._share_model = share_model
 
     # ------------------------------------------------------------------
     # Path resolution helpers
@@ -187,6 +189,181 @@ class UserScopedFileSystem(DatabaseFileSystem):
         return info
 
     # ------------------------------------------------------------------
+    # Share logic (inlined from SharingService)
+    # ------------------------------------------------------------------
+
+    async def _create_share(
+        self,
+        session: AsyncSession,
+        path: str,
+        grantee_id: str,
+        permission: str,
+        granted_by: str,
+        *,
+        expires_at: datetime | None = None,
+    ) -> FileShareBase:
+        """Create a share record. Flushes but does not commit."""
+        if permission not in ("read", "write"):
+            raise ValueError(f"Invalid permission: {permission!r}. Must be 'read' or 'write'.")
+        assert self._share_model is not None
+        path = normalize_path(path)
+        share = self._share_model(
+            id=str(uuid.uuid4()),
+            path=path,
+            grantee_id=grantee_id,
+            permission=permission,
+            granted_by=granted_by,
+            expires_at=expires_at,
+        )
+        session.add(share)
+        await session.flush()
+        return share
+
+    async def _remove_share(
+        self,
+        session: AsyncSession,
+        path: str,
+        grantee_id: str,
+    ) -> bool:
+        """Remove an exact share match. Returns True if found."""
+        assert self._share_model is not None
+        path = normalize_path(path)
+        model = self._share_model
+        result = await session.execute(
+            select(model).where(model.path == path, model.grantee_id == grantee_id)
+        )
+        share = result.scalar_one_or_none()
+        if share is None:
+            return False
+        await session.delete(share)
+        await session.flush()
+        return True
+
+    async def _list_shares_on_path(
+        self,
+        session: AsyncSession,
+        path: str,
+    ) -> list[FileShareBase]:
+        """List all shares for a given path."""
+        assert self._share_model is not None
+        path = normalize_path(path)
+        model = self._share_model
+        result = await session.execute(select(model).where(model.path == path))
+        return list(result.scalars().all())
+
+    async def _list_shared_with(
+        self,
+        session: AsyncSession,
+        grantee_id: str,
+    ) -> list[FileShareBase]:
+        """List all shares granted to a grantee."""
+        assert self._share_model is not None
+        model = self._share_model
+        result = await session.execute(select(model).where(model.grantee_id == grantee_id))
+        return list(result.scalars().all())
+
+    async def _list_shares_under_prefix(
+        self,
+        session: AsyncSession,
+        grantee_id: str,
+        prefix: str,
+    ) -> list[FileShareBase]:
+        """List non-expired shares for *grantee_id* strictly under *prefix*."""
+        assert self._share_model is not None
+        prefix = normalize_path(prefix)
+        model = self._share_model
+        now = datetime.now(UTC)
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_pattern = escaped + "/%"
+        prefix_slash = prefix + "/"
+        result = await session.execute(
+            select(model).where(
+                model.grantee_id == grantee_id,
+                model.path.like(like_pattern, escape="\\"),  # type: ignore[union-attr]
+            )
+        )
+        shares = result.scalars().all()
+        active: list[FileShareBase] = []
+        for share in shares:
+            if not share.path.startswith(prefix_slash):
+                continue
+            if share.expires_at is not None:
+                exp = share.expires_at
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=UTC)
+                if exp <= now:
+                    continue
+            active.append(share)
+        return active
+
+    async def _check_permission(
+        self,
+        session: AsyncSession,
+        path: str,
+        grantee_id: str,
+        required: str = "read",
+    ) -> bool:
+        """Check if *grantee_id* has *required* permission on *path*."""
+        assert self._share_model is not None
+        path = normalize_path(path)
+        ancestors = []
+        current = path
+        while True:
+            ancestors.append(current)
+            if current == "/":
+                break
+            parent = current.rsplit("/", 1)[0] or "/"
+            current = parent
+        model = self._share_model
+        now = datetime.now(UTC)
+        result = await session.execute(
+            select(model).where(
+                model.grantee_id == grantee_id,
+                model.path.in_(ancestors),  # type: ignore[union-attr]
+            )
+        )
+        shares = result.scalars().all()
+        for share in shares:
+            if share.expires_at is not None:
+                exp = share.expires_at
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=UTC)
+                if exp <= now:
+                    continue
+            if required == "read":
+                return True
+            if required == "write" and share.permission == "write":
+                return True
+        return False
+
+    async def _update_share_paths(
+        self,
+        session: AsyncSession,
+        old_prefix: str,
+        new_prefix: str,
+    ) -> int:
+        """Bulk-update share paths when a file/directory is renamed."""
+        assert self._share_model is not None
+        old_prefix = normalize_path(old_prefix)
+        new_prefix = normalize_path(new_prefix)
+        model = self._share_model
+        escaped = old_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        result = await session.execute(
+            select(model).where(
+                model.path.like(escaped + "%", escape="\\"),  # type: ignore[union-attr]
+            )
+        )
+        shares = list(result.scalars().all())
+        count = 0
+        for share in shares:
+            if share.path == old_prefix or share.path.startswith(old_prefix + "/"):
+                share.path = new_prefix + share.path[len(old_prefix):]
+                count += 1
+        if count > 0:
+            await session.flush()
+        return count
+
+    # ------------------------------------------------------------------
     # Share permission checks
     # ------------------------------------------------------------------
 
@@ -202,9 +379,9 @@ class UserScopedFileSystem(DatabaseFileSystem):
         Raises ``PermissionError`` if no sharing service is configured or
         the user lacks the required permission.
         """
-        if self._sharing is None:
+        if self._share_model is None:
             raise PermissionError("Access denied: sharing is not configured")
-        has_access = await self._sharing.check_permission(
+        has_access = await self._check_permission(
             session,
             stored_path,
             user_id,
@@ -231,7 +408,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         - ``/@shared/{owner}`` → list that owner's shared files
         - ``/@shared/{owner}/sub/...`` → list sub-path (permission-checked)
         """
-        if self._sharing is None:
+        if self._share_model is None:
             return ListDirResult(
                 success=True,
                 message="No sharing configured",
@@ -239,7 +416,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
 
         if len(segments) == 1:
             # /@shared — list distinct owners
-            shares = await self._sharing.list_shared_with(session, user_id)
+            shares = await self._list_shared_with(session, user_id)
             owners: set[str] = set()
             for share in shares:
                 parts = share.path.strip("/").split("/")
@@ -289,7 +466,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             pass  # Fall through to filtered listing
 
         # Filtered fallback: show only files/dirs with specific shares
-        shares = await self._sharing.list_shares_under_prefix(session, user_id, stored_path)
+        shares = await self._list_shares_under_prefix(session, user_id, stored_path)
         if not shares:
             raise PermissionError(
                 f"Access denied: {user_id!r} does not have 'read' permission on shared path"
@@ -468,11 +645,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
         sess = self._require_session(session)
         if is_shared:
             await self._check_share_access(sess, stored, uid, "write")
-        created_dirs, error = await self.directories.mkdir(
+        created_dirs, error = await self._mkdir_impl(
             sess,
             stored,
             parents,
-            self._get_file_record,
             owner_id=uid,
         )
         if error is not None:
@@ -594,7 +770,6 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         follow: bool = False,
-        sharing: SharingService | None = None,
         user_id: str | None = None,
     ) -> MoveResult:
         uid = self._require_user_id(user_id)
@@ -614,8 +789,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
             dest_stored,
             session=sess,
             follow=follow,
-            sharing=self._sharing,
         )
+        # Update share paths after successful follow-move
+        if result.success and follow and self._share_model is not None:
+            await self._update_share_paths(sess, src_stored, dest_stored)
         src_orig = src if src_shared else None
         dest_orig = dest if dest_shared else None
         result.old_path = self._restore_path(result.old_path, uid, src_orig) or result.old_path
@@ -962,11 +1139,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         uid = self._require_user_id(user_id)
         if self._is_shared_access(path)[0]:
             raise PermissionError("Cannot manage shares on paths you do not own")
-        if self._sharing is None:
+        if self._share_model is None:
             raise ValueError("No sharing service configured")
         stored = self._resolve_path(path, uid)
         sess = self._require_session(session)
-        share_record = await self._sharing.create_share(
+        share_record = await self._create_share(
             sess,
             stored,
             grantee_id,
@@ -995,11 +1172,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         uid = self._require_user_id(user_id)
         if self._is_shared_access(path)[0]:
             raise PermissionError("Cannot manage shares on paths you do not own")
-        if self._sharing is None:
+        if self._share_model is None:
             raise ValueError("No sharing service configured")
         stored = self._resolve_path(path, uid)
         sess = self._require_session(session)
-        removed = await self._sharing.remove_share(sess, stored, grantee_id)
+        removed = await self._remove_share(sess, stored, grantee_id)
         if removed:
             return ShareResult(
                 success=True,
@@ -1025,14 +1202,14 @@ class UserScopedFileSystem(DatabaseFileSystem):
         uid = self._require_user_id(user_id)
         if self._is_shared_access(path)[0]:
             raise PermissionError("Cannot manage shares on paths you do not own")
-        if self._sharing is None:
+        if self._share_model is None:
             return ShareSearchResult(
                 success=True,
                 message="No sharing configured",
             )
         stored = self._resolve_path(path, uid)
         sess = self._require_session(session)
-        shares = await self._sharing.list_shares_on_path(sess, stored)
+        shares = await self._list_shares_on_path(sess, stored)
         candidates = [
             FileSearchCandidate(
                 path=path,
@@ -1067,13 +1244,13 @@ class UserScopedFileSystem(DatabaseFileSystem):
         user-facing paths.
         """
         uid = self._require_user_id(user_id)
-        if self._sharing is None:
+        if self._share_model is None:
             return ShareSearchResult(
                 success=True,
                 message="No sharing configured",
             )
         sess = self._require_session(session)
-        shares = await self._sharing.list_shared_with(sess, uid)
+        shares = await self._list_shared_with(sess, uid)
         candidates: list[FileSearchCandidate] = []
         for s in shares:
             # Convert stored /{owner}/rest to @shared/{owner}/rest

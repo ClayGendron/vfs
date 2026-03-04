@@ -52,11 +52,9 @@ class TestProtocolChecks:
         assert isinstance(usfs, GroverFileSystem)
 
     def test_user_scoped_supports_rebac(self) -> None:
-        from grover.fs.sharing import SharingService
         from grover.models.share import FileShare
 
-        sharing = SharingService(FileShare)
-        usfs = UserScopedFileSystem(sharing=sharing)
+        usfs = UserScopedFileSystem(share_model=FileShare)
         assert isinstance(usfs, SupportsReBAC)
 
 
