@@ -51,10 +51,13 @@ class TestGraphProviderProtocol:
 
 
 class TestGraphProviderIncludesPersistence:
-    def test_rustworkx_has_persistence_methods(self) -> None:
+    def test_rustworkx_has_from_sql(self) -> None:
         g = RustworkxGraph()
-        assert hasattr(g, "to_sql")
         assert hasattr(g, "from_sql")
+
+    def test_to_sql_removed(self) -> None:
+        g = RustworkxGraph()
+        assert not hasattr(g, "to_sql")
 
 
 # ======================================================================

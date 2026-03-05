@@ -301,10 +301,11 @@ class TestTraversal:
 
     def test_shortest_path_length_multi_hop(self) -> None:
         g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports", weight=2.0)
-        g.add_edge("/b.py", "/c.py", "imports", weight=3.0)
+        g.add_edge("/a.py", "/b.py", "imports")
+        g.add_edge("/b.py", "/c.py", "imports")
         result = g.shortest_path_length("/a.py", "/c.py")
-        assert result == 5.0
+        # Minimal storage — all edges are unit weight
+        assert result == 2.0
 
     def test_shortest_path_length_no_path(self) -> None:
         g = RustworkxGraph()

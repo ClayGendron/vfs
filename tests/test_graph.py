@@ -62,20 +62,18 @@ class TestNodeOperations:
         g.add_node("/a.py")
         assert g.node_count == 1
 
-    def test_add_node_merges_attrs(self) -> None:
+    def test_add_node_idempotent_with_attrs(self) -> None:
+        # Minimal storage — attrs accepted but not stored
         g = RustworkxGraph()
         g.add_node("/a.py", lang="python")
         g.add_node("/a.py", size=42)
-        data = g.get_node("/a.py")
-        assert data["lang"] == "python"
-        assert data["size"] == 42
+        assert g.node_count == 1
 
     def test_get_node_includes_path(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py", lang="python")
         data = g.get_node("/a.py")
         assert data["path"] == "/a.py"
-        assert data["lang"] == "python"
 
     def test_get_node_not_found(self) -> None:
         g = RustworkxGraph()
@@ -130,29 +128,13 @@ class TestEdgeOperations:
         assert g.has_edge("/a.py", "/b.py")
         assert g.edge_count == 1
 
-    def test_edge_type_stored(self) -> None:
+    def test_edge_minimal_data(self) -> None:
+        # Minimal storage — type, weight, metadata not stored
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         data = g.get_edge("/a.py", "/b.py")
-        assert data["type"] == "imports"
-
-    def test_edge_weight(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports", weight=2.5)
-        data = g.get_edge("/a.py", "/b.py")
-        assert data["weight"] == 2.5
-
-    def test_edge_default_weight(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        data = g.get_edge("/a.py", "/b.py")
-        assert data["weight"] == 1.0
-
-    def test_edge_metadata(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports", line=10, symbol="Foo")
-        data = g.get_edge("/a.py", "/b.py")
-        assert data["metadata"] == {"line": 10, "symbol": "Foo"}
+        assert data["source"] == "/a.py"
+        assert data["target"] == "/b.py"
 
     def test_add_edge_auto_creates_nodes(self) -> None:
         g = RustworkxGraph()
@@ -160,19 +142,12 @@ class TestEdgeOperations:
         assert g.has_node("/a.py")
         assert g.has_node("/b.py")
 
-    def test_add_edge_upsert_merges_metadata(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports", line=10)
-        g.add_edge("/a.py", "/b.py", "imports", symbol="Foo")
-        data = g.get_edge("/a.py", "/b.py")
-        assert data["metadata"] == {"line": 10, "symbol": "Foo"}
-
-    def test_add_edge_upsert_preserves_id(self) -> None:
+    def test_add_edge_upsert_idempotent(self) -> None:
+        # Minimal storage — second add is a no-op
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        original_id = g.get_edge("/a.py", "/b.py")["id"]
-        g.add_edge("/a.py", "/b.py", "imports", weight=2.0)
-        assert g.get_edge("/a.py", "/b.py")["id"] == original_id
+        g.add_edge("/a.py", "/b.py", "imports")
+        assert g.edge_count == 1
 
     def test_get_edge(self) -> None:
         g = RustworkxGraph()
@@ -320,13 +295,14 @@ class TestPathBetween:
 
 
 class TestContains:
-    def test_type_filter(self) -> None:
+    def test_returns_all_successors(self) -> None:
+        # Minimal storage — contains() returns all successors (no type filtering)
         g = RustworkxGraph()
         g.add_edge("/file.py", "/file.py::Foo", "contains")
         g.add_edge("/file.py", "/file.py::bar", "contains")
         g.add_edge("/file.py", "/other.py", "imports")
         refs = g.contains("/file.py")
-        assert _ref_paths(refs) == {"/file.py::Foo", "/file.py::bar"}
+        assert _ref_paths(refs) == {"/file.py::Foo", "/file.py::bar", "/other.py"}
 
     def test_empty(self) -> None:
         g = RustworkxGraph()
@@ -345,25 +321,17 @@ class TestContains:
 
 
 class TestByParent:
-    def test_matches(self) -> None:
+    def test_returns_empty_with_minimal_storage(self) -> None:
+        # Minimal storage — parent_path attrs not stored
         g = RustworkxGraph()
         g.add_node("/dir/a.py", parent_path="/dir")
         g.add_node("/dir/b.py", parent_path="/dir")
-        g.add_node("/other/c.py", parent_path="/other")
-        refs = g.by_parent("/dir")
-        assert _ref_paths(refs) == {"/dir/a.py", "/dir/b.py"}
+        assert g.by_parent("/dir") == []
 
     def test_no_matches(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py", parent_path="/root")
         assert g.by_parent("/nowhere") == []
-
-    def test_returns_refs(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/dir/a.py", parent_path="/dir")
-        refs = g.by_parent("/dir")
-        assert len(refs) == 1
-        assert isinstance(refs[0], Ref)
 
 
 # ======================================================================
@@ -372,11 +340,12 @@ class TestByParent:
 
 
 class TestRemoveFileSubgraph:
-    def test_file_and_chunks_removed(self) -> None:
+    def test_file_and_successors_removed(self) -> None:
+        # Minimal storage uses edges (not parent_path attr) to find children
         g = RustworkxGraph()
         g.add_node("/file.py")
-        g.add_node("/file.py::Foo", parent_path="/file.py")
-        g.add_node("/file.py::bar", parent_path="/file.py")
+        g.add_edge("/file.py", "/file.py::Foo", "contains")
+        g.add_edge("/file.py", "/file.py::bar", "contains")
         g.add_node("/other.py")
         removed = g.remove_file_subgraph("/file.py")
         assert set(removed) == {"/file.py", "/file.py::Foo", "/file.py::bar"}
@@ -386,8 +355,6 @@ class TestRemoveFileSubgraph:
 
     def test_edges_cleaned(self) -> None:
         g = RustworkxGraph()
-        g.add_node("/file.py")
-        g.add_node("/file.py::Foo", parent_path="/file.py")
         g.add_edge("/file.py", "/file.py::Foo", "contains")
         g.add_edge("/other.py", "/file.py", "imports")
         g.remove_file_subgraph("/file.py")
@@ -453,83 +420,12 @@ class TestGraphLevel:
 # ======================================================================
 
 
-class TestToSql:
-    async def test_creates_edge_rows(self, async_session: AsyncSession) -> None:
-        from sqlalchemy import select
+class TestToSqlRemoved:
+    """to_sql was removed — persistence is via ConnectionService."""
 
+    def test_to_sql_not_available(self) -> None:
         g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        await g.to_sql(async_session)
-        await async_session.commit()
-
-        result = await async_session.execute(select(FileConnection))
-        rows = result.scalars().all()
-        assert len(rows) == 1
-        assert rows[0].source_path == "/a.py"
-        assert rows[0].target_path == "/b.py"
-        assert rows[0].type == "imports"
-
-    async def test_removes_stale_edges(self, async_session: AsyncSession) -> None:
-        from sqlalchemy import select
-
-        # Save initial graph with 2 edges
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/c.py", "calls")
-        await g.to_sql(async_session)
-        await async_session.commit()
-
-        # Remove one edge and save again
-        g.remove_edge("/b.py", "/c.py")
-        await g.to_sql(async_session)
-        await async_session.commit()
-
-        result = await async_session.execute(select(FileConnection))
-        rows = result.scalars().all()
-        assert len(rows) == 1
-        assert rows[0].source_path == "/a.py"
-
-    async def test_upserts_modified_edges(self, async_session: AsyncSession) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports", weight=1.0)
-        await g.to_sql(async_session)
-        await async_session.commit()
-
-        # Modify weight via upsert
-        g.add_edge("/a.py", "/b.py", "imports", weight=5.0)
-        await g.to_sql(async_session)
-        await async_session.commit()
-
-        from sqlalchemy import select
-
-        result = await async_session.execute(select(FileConnection))
-        rows = result.scalars().all()
-        assert len(rows) == 1
-        assert rows[0].weight == 5.0
-
-    async def test_empty_graph_noop(self, async_session: AsyncSession) -> None:
-        from sqlalchemy import select
-
-        g = RustworkxGraph()
-        await g.to_sql(async_session)
-        await async_session.commit()
-
-        result = await async_session.execute(select(FileConnection))
-        assert result.scalars().all() == []
-
-    async def test_preserves_edge_ids(self, async_session: AsyncSession) -> None:
-        from sqlalchemy import select
-
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        edge_id = g.get_edge("/a.py", "/b.py")["id"]
-        await g.to_sql(async_session)
-        await async_session.commit()
-
-        result = await async_session.execute(select(FileConnection))
-        row = result.scalars().first()
-        assert row is not None
-        assert row.id == edge_id
+        assert not hasattr(g, "to_sql")
 
 
 class TestFromSql:
@@ -557,7 +453,6 @@ class TestFromSql:
         g = RustworkxGraph()
         await g.from_sql(async_session)
         assert g.has_edge("/a.py", "/b.py")
-        assert g.get_edge("/a.py", "/b.py")["type"] == "imports"
 
     async def test_skips_deleted_files(self, async_session: AsyncSession) -> None:
         async_session.add(File(path="/a.py", parent_path="/"))
@@ -606,50 +501,28 @@ class TestFromSql:
         assert g.has_edge("/orphan_a.py", "/orphan_b.py")
 
 
-class TestRoundTrip:
-    async def test_full_round_trip(self, async_session: AsyncSession) -> None:
-        g1 = RustworkxGraph()
-        g1.add_node("/a.py", parent_path="/", is_directory=False)
-        g1.add_node("/b.py", parent_path="/", is_directory=False)
-        g1.add_node("/c.py", parent_path="/", is_directory=False)
-        g1.add_edge("/a.py", "/b.py", "imports", line=5)
-        g1.add_edge("/b.py", "/c.py", "calls", weight=2.0)
-
-        await g1.to_sql(async_session)
+class TestFromSqlRoundTrip:
+    async def test_from_sql_loads_topology(self, async_session: AsyncSession) -> None:
+        """from_sql loads nodes from files and edges from connections."""
+        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(File(path="/b.py", parent_path="/"))
+        async_session.add(File(path="/c.py", parent_path="/"))
+        async_session.add(
+            FileConnection(
+                source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
+            )
+        )
+        async_session.add(
+            FileConnection(
+                source_path="/b.py", target_path="/c.py", type="calls", path="/b.py[calls]/c.py"
+            )
+        )
         await async_session.commit()
 
-        # Load into fresh graph
-        g2 = RustworkxGraph()
-        await g2.from_sql(async_session)
+        g = RustworkxGraph()
+        await g.from_sql(async_session)
 
-        assert g2.node_count == g1.node_count
-        assert g2.edge_count == g1.edge_count
-        assert g2.has_edge("/a.py", "/b.py")
-        assert g2.has_edge("/b.py", "/c.py")
-        assert g2.get_edge("/a.py", "/b.py")["type"] == "imports"
-        assert g2.get_edge("/b.py", "/c.py")["weight"] == 2.0
-
-    async def test_metadata_not_persisted(self, async_session: AsyncSession) -> None:
-        """In-memory metadata does not round-trip through DB (metadata_json removed)."""
-        g1 = RustworkxGraph()
-        g1.add_edge("/a.py", "/b.py", "imports", line=10, symbol="Foo")
-        await g1.to_sql(async_session)
-        await async_session.commit()
-
-        g2 = RustworkxGraph()
-        await g2.from_sql(async_session)
-        data = g2.get_edge("/a.py", "/b.py")
-        # Metadata is in-memory only — not persisted to DB
-        assert data["metadata"] == {}
-
-    async def test_edge_ids_preserved_round_trip(self, async_session: AsyncSession) -> None:
-        g1 = RustworkxGraph()
-        g1.add_edge("/a.py", "/b.py", "imports")
-        original_id = g1.get_edge("/a.py", "/b.py")["id"]
-
-        await g1.to_sql(async_session)
-        await async_session.commit()
-
-        g2 = RustworkxGraph()
-        await g2.from_sql(async_session)
-        assert g2.get_edge("/a.py", "/b.py")["id"] == original_id
+        assert g.node_count == 3
+        assert g.edge_count == 2
+        assert g.has_edge("/a.py", "/b.py")
+        assert g.has_edge("/b.py", "/c.py")

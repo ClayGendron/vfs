@@ -716,8 +716,13 @@ class GraphResult(FileSearchResult):
         *,
         operation: str,
         algorithm: str = "",
+        edges: list[tuple[str, str]] | None = None,
     ) -> Self:
-        """Create a result from a ``{path: score}`` dict, sorted descending."""
+        """Create a result from a ``{path: score}`` dict, sorted descending.
+
+        If *edges* is provided, ``connection_candidates`` are populated from
+        the topology used in the computation.
+        """
         sorted_items = sorted(scores.items(), key=lambda item: item[1], reverse=True)
         file_candidates = [
             FileCandidate(
@@ -732,10 +737,22 @@ class GraphResult(FileSearchResult):
             )
             for path, score in sorted_items
         ]
+        connection_candidates: list[ConnectionCandidate] = []
+        if edges:
+            connection_candidates = [
+                ConnectionCandidate(
+                    source_path=src,
+                    target_path=tgt,
+                    connection_type="",
+                    evidence=[GraphEvidence(operation=operation, algorithm=algorithm or operation)],
+                )
+                for src, tgt in edges
+            ]
         return cls(
             success=True,
             message=f"{len(file_candidates)} node(s)",
             file_candidates=file_candidates,
+            connection_candidates=connection_candidates,
         )
 
 

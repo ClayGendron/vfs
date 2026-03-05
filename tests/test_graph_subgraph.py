@@ -98,13 +98,15 @@ class TestNeighborhood:
         sub = g.neighborhood("/b.py", max_depth=1, direction="both")
         assert set(sub.nodes) == {"/a.py", "/b.py", "/c.py"}
 
-    def test_edge_type_filter(self) -> None:
+    def test_edge_type_filter_ignored_with_minimal_storage(self) -> None:
+        # Minimal storage does not store edge types — filter is a no-op
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "contains")
         sub = g.neighborhood("/a.py", max_depth=1, direction="out", edge_types=["imports"])
+        # Both neighbors included since edge types aren't stored
         assert "/b.py" in sub.nodes
-        assert "/c.py" not in sub.nodes
+        assert "/c.py" in sub.nodes
 
     def test_missing_node(self) -> None:
         g = RustworkxGraph()

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from grover.providers.graph.types import SubgraphResult
     from grover.ref import Ref
+    from grover.results.search import FileSearchResult
 
 
 @runtime_checkable
@@ -53,6 +54,16 @@ class GraphProvider(Protocol):
     def edges(self) -> list[tuple[str, str, dict]]: ...
 
     # ------------------------------------------------------------------
+    # Graph-level properties
+    # ------------------------------------------------------------------
+
+    @property
+    def node_count(self) -> int: ...
+
+    @property
+    def edge_count(self) -> int: ...
+
+    # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
 
@@ -69,75 +80,14 @@ class GraphProvider(Protocol):
     def remove_file_subgraph(self, path: str) -> list[str]: ...
 
     # ------------------------------------------------------------------
-    # Graph-level properties
-    # ------------------------------------------------------------------
-
-    @property
-    def node_count(self) -> int: ...
-
-    @property
-    def edge_count(self) -> int: ...
-
-    def is_dag(self) -> bool: ...
-
-    # ------------------------------------------------------------------
-    # Centrality algorithms
-    # ------------------------------------------------------------------
-
-    def pagerank(
-        self,
-        *,
-        alpha: float = 0.85,
-        personalization: dict[str, float] | None = None,
-        max_iter: int = 100,
-        tol: float = 1e-6,
-    ) -> dict[str, float]: ...
-
-    def betweenness_centrality(self, *, normalized: bool = True) -> dict[str, float]: ...
-
-    def closeness_centrality(self) -> dict[str, float]: ...
-
-    def harmonic_centrality(self) -> dict[str, float]: ...
-
-    def hits(
-        self,
-        *,
-        max_iter: int = 100,
-        tol: float = 1e-8,
-    ) -> tuple[dict[str, float], dict[str, float]]: ...
-
-    def katz_centrality(
-        self,
-        *,
-        alpha: float = 0.1,
-        beta: float = 1.0,
-        max_iter: int = 1000,
-        tol: float = 1e-6,
-    ) -> dict[str, float]: ...
-
-    def degree_centrality(self) -> dict[str, float]: ...
-
-    def in_degree_centrality(self) -> dict[str, float]: ...
-
-    def out_degree_centrality(self) -> dict[str, float]: ...
-
-    # ------------------------------------------------------------------
-    # Connectivity
-    # ------------------------------------------------------------------
-
-    def weakly_connected_components(self) -> list[set[str]]: ...
-
-    def strongly_connected_components(self) -> list[set[str]]: ...
-
-    def is_weakly_connected(self) -> bool: ...
-
-    # ------------------------------------------------------------------
     # Traversal
     # ------------------------------------------------------------------
 
     def ancestors(self, path: str) -> set[str]: ...
 
     def descendants(self, path: str) -> set[str]: ...
+
+    def has_path(self, source: str, target: str) -> bool: ...
 
     def all_simple_paths(
         self, source: str, target: str, *, cutoff: int | None = None
@@ -146,8 +96,6 @@ class GraphProvider(Protocol):
     def topological_sort(self) -> list[str]: ...
 
     def shortest_path_length(self, source: str, target: str) -> float | None: ...
-
-    def has_path(self, source: str, target: str) -> bool: ...
 
     # ------------------------------------------------------------------
     # Subgraph extraction
@@ -166,9 +114,85 @@ class GraphProvider(Protocol):
 
     def meeting_subgraph(self, start_paths: list[str], *, max_size: int = 50) -> SubgraphResult: ...
 
+    def connecting_subgraph(self, paths: list[str]) -> GraphProvider: ...
+
     def common_reachable(self, paths: list[str], *, direction: str = "forward") -> set[str]: ...
 
     def common_neighbors(self, path1: str, path2: str) -> set[str]: ...
+
+    # ------------------------------------------------------------------
+    # Centrality algorithms (accept candidates, return raw dicts)
+    # ------------------------------------------------------------------
+
+    def pagerank(
+        self,
+        candidates: FileSearchResult | None = None,
+        *,
+        alpha: float = 0.85,
+        personalization: dict[str, float] | None = None,
+        max_iter: int = 100,
+        tol: float = 1e-6,
+    ) -> dict[str, float]: ...
+
+    def betweenness_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+        *,
+        normalized: bool = True,
+    ) -> dict[str, float]: ...
+
+    def closeness_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]: ...
+
+    def harmonic_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]: ...
+
+    def hits(
+        self,
+        candidates: FileSearchResult | None = None,
+        *,
+        max_iter: int = 100,
+        tol: float = 1e-8,
+    ) -> tuple[dict[str, float], dict[str, float]]: ...
+
+    def katz_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+        *,
+        alpha: float = 0.1,
+        beta: float = 1.0,
+        max_iter: int = 1000,
+        tol: float = 1e-6,
+    ) -> dict[str, float]: ...
+
+    def degree_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]: ...
+
+    def in_degree_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]: ...
+
+    def out_degree_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]: ...
+
+    # ------------------------------------------------------------------
+    # Connectivity
+    # ------------------------------------------------------------------
+
+    def weakly_connected_components(self) -> list[set[str]]: ...
+
+    def strongly_connected_components(self) -> list[set[str]]: ...
+
+    def is_weakly_connected(self) -> bool: ...
 
     # ------------------------------------------------------------------
     # Filtering
@@ -205,8 +229,6 @@ class GraphProvider(Protocol):
     # ------------------------------------------------------------------
     # SQL persistence
     # ------------------------------------------------------------------
-
-    async def to_sql(self, session: AsyncSession) -> None: ...
 
     async def from_sql(
         self, session: AsyncSession, file_model: type | None = None, *, path_prefix: str = ""

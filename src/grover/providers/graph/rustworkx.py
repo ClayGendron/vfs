@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 import rustworkx
@@ -13,57 +14,80 @@ from grover.ref import Ref
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.results.search import FileSearchResult
+
 
 class RustworkxGraph:
     """Directed knowledge graph over file paths.
 
-    Wraps a ``rustworkx.PyDiGraph`` with string-path-keyed nodes and provides
-    traversal queries (predecessors, successors, path_between) plus async
-    persistence to/from the ``grover_file_connections`` / ``grover_files`` tables.
+    Stores only topology as pure Python sets (``_nodes``, ``_edges``).
+    A ``rustworkx.PyDiGraph`` is built on demand via ``_build_graph()``
+    and cached until the next mutation.
 
-    Implements the ``GraphProvider`` and ``SupportsPersistence`` protocols.
+    Implements the ``GraphProvider`` protocol.
     """
 
     def __init__(self) -> None:
-        self._graph: rustworkx.PyDiGraph = rustworkx.PyDiGraph()
-        self._path_to_idx: dict[str, int] = {}
-        self._idx_to_path: dict[int, str] = {}
+        self._nodes: set[str] = set()
+        self._edges: set[tuple[str, str]] = set()
+        self._cached: tuple[rustworkx.PyDiGraph, dict[str, int], dict[int, str]] | None = None
+
+    # ------------------------------------------------------------------
+    # Graph construction (lazy, cached)
+    # ------------------------------------------------------------------
+
+    def _build_graph(self) -> tuple[rustworkx.PyDiGraph, dict[str, int], dict[int, str]]:
+        """Build a PyDiGraph from _nodes/_edges. Cached until mutation."""
+        if self._cached is not None:
+            return self._cached
+        graph: rustworkx.PyDiGraph = rustworkx.PyDiGraph()
+        path_to_idx: dict[str, int] = {}
+        idx_to_path: dict[int, str] = {}
+        for path in self._nodes:
+            idx = graph.add_node(path)
+            path_to_idx[path] = idx
+            idx_to_path[idx] = path
+        for source, target in self._edges:
+            if source in path_to_idx and target in path_to_idx:
+                graph.add_edge(path_to_idx[source], path_to_idx[target], None)
+        self._cached = (graph, path_to_idx, idx_to_path)
+        return self._cached
+
+    def _invalidate(self) -> None:
+        """Clear the cached PyDiGraph after a mutation."""
+        self._cached = None
 
     # ------------------------------------------------------------------
     # Node operations
     # ------------------------------------------------------------------
 
     def add_node(self, path: str, **attrs: object) -> None:
-        """Add or update a node.  Merges *attrs* if the node already exists."""
-        if path in self._path_to_idx:
-            idx = self._path_to_idx[path]
-            existing: dict[str, Any] = self._graph[idx]
-            existing.update(attrs)
-        else:
-            data: dict[str, Any] = {"path": path, **attrs}
-            idx = self._graph.add_node(data)
-            self._path_to_idx[path] = idx
-            self._idx_to_path[idx] = path
+        """Add a node. Extra *attrs* are accepted for protocol compat but not stored."""
+        if path not in self._nodes:
+            self._nodes.add(path)
+            self._invalidate()
 
     def remove_node(self, path: str) -> None:
-        """Remove a node and all incident edges.  Raises ``KeyError`` if missing."""
-        idx = self._require_node(path)
-        self._graph.remove_node(idx)
-        del self._path_to_idx[path]
-        del self._idx_to_path[idx]
+        """Remove a node and all incident edges. Raises ``KeyError`` if missing."""
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        self._nodes.discard(path)
+        self._edges = {(s, t) for s, t in self._edges if s != path and t != path}
+        self._invalidate()
 
     def has_node(self, path: str) -> bool:
-        """Return whether *path* is in the graph."""
-        return path in self._path_to_idx
+        return path in self._nodes
 
     def get_node(self, path: str) -> dict[str, Any]:
-        """Return the node data dict.  Raises ``KeyError`` if missing."""
-        idx = self._require_node(path)
-        return dict(self._graph[idx])
+        """Return minimal node data dict. Raises ``KeyError`` if missing."""
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        return {"path": path}
 
     def nodes(self) -> list[str]:
-        """Return all node paths."""
-        return list(self._path_to_idx.keys())
+        return list(self._nodes)
 
     # ------------------------------------------------------------------
     # Edge operations
@@ -79,163 +103,125 @@ class RustworkxGraph:
         edge_id: str | None = None,
         **attrs: object,
     ) -> None:
-        """Add or upsert a directed edge.
-
-        Auto-creates missing endpoint nodes.  On upsert the original ``id`` is
-        preserved and *attrs* are merged into ``metadata``.
-        """
-        # Auto-create nodes
-        if not self.has_node(source):
-            self.add_node(source)
-        if not self.has_node(target):
-            self.add_node(target)
-
-        src_idx = self._path_to_idx[source]
-        tgt_idx = self._path_to_idx[target]
-
-        # Check for existing edge
-        existing_idx = self._find_edge_idx(src_idx, tgt_idx)
-        if existing_idx is not None:
-            data: dict[str, Any] = self._graph.get_edge_data_by_index(existing_idx)
-            data["type"] = edge_type
-            data["weight"] = weight
-            data["metadata"].update(attrs)
-        else:
-            resolved_id = edge_id or str(uuid.uuid4())
-            data = {
-                "id": resolved_id,
-                "source": source,
-                "target": target,
-                "type": edge_type,
-                "weight": weight,
-                "metadata": dict(attrs),
-            }
-            self._graph.add_edge(src_idx, tgt_idx, data)
+        """Add a directed edge. Auto-creates missing endpoint nodes."""
+        changed = False
+        if source not in self._nodes:
+            self._nodes.add(source)
+            changed = True
+        if target not in self._nodes:
+            self._nodes.add(target)
+            changed = True
+        if (source, target) not in self._edges:
+            self._edges.add((source, target))
+            changed = True
+        if changed:
+            self._invalidate()
 
     def remove_edge(self, source: str, target: str) -> None:
-        """Remove the edge between *source* and *target*.  Raises ``KeyError``."""
-        src_idx = self._require_node(source)
-        tgt_idx = self._require_node(target)
-        edge_idx = self._find_edge_idx(src_idx, tgt_idx)
-        if edge_idx is None:
+        """Remove the edge between *source* and *target*. Raises ``KeyError``."""
+        if source not in self._nodes:
+            msg = f"Node not found: {source!r}"
+            raise KeyError(msg)
+        if target not in self._nodes:
+            msg = f"Node not found: {target!r}"
+            raise KeyError(msg)
+        if (source, target) not in self._edges:
             msg = f"No edge from {source!r} to {target!r}"
             raise KeyError(msg)
-        self._graph.remove_edge_from_index(edge_idx)
+        self._edges.discard((source, target))
+        self._invalidate()
 
     def has_edge(self, source: str, target: str) -> bool:
-        """Return ``True`` if the edge exists.  ``False`` if nodes are missing."""
-        src_idx = self._path_to_idx.get(source)
-        tgt_idx = self._path_to_idx.get(target)
-        if src_idx is None or tgt_idx is None:
-            return False
-        return self._find_edge_idx(src_idx, tgt_idx) is not None
+        return (source, target) in self._edges
 
     def get_edge(self, source: str, target: str) -> dict[str, Any]:
-        """Return edge data dict.  Raises ``KeyError`` if missing."""
-        src_idx = self._require_node(source)
-        tgt_idx = self._require_node(target)
-        edge_idx = self._find_edge_idx(src_idx, tgt_idx)
-        if edge_idx is None:
+        """Return minimal edge data dict. Raises ``KeyError`` if missing."""
+        if source not in self._nodes:
+            msg = f"Node not found: {source!r}"
+            raise KeyError(msg)
+        if target not in self._nodes:
+            msg = f"Node not found: {target!r}"
+            raise KeyError(msg)
+        if (source, target) not in self._edges:
             msg = f"No edge from {source!r} to {target!r}"
             raise KeyError(msg)
-        return dict(self._graph.get_edge_data_by_index(edge_idx))
+        return {
+            "id": str(uuid.uuid4()),
+            "source": source,
+            "target": target,
+            "type": "",
+            "weight": 1.0,
+            "metadata": {},
+        }
 
     def edges(self) -> list[tuple[str, str, dict[str, Any]]]:
         """Return all edges as ``(source, target, data)`` triples."""
-        result: list[tuple[str, str, dict[str, Any]]] = []
-        for src_idx, tgt_idx, data in self._graph.weighted_edge_list():
-            src = self._idx_to_path.get(src_idx, "")
-            tgt = self._idx_to_path.get(tgt_idx, "")
-            result.append((src, tgt, dict(data)))
-        return result
+        return [
+            (s, t, {"id": "", "source": s, "target": t, "type": "", "weight": 1.0, "metadata": {}})
+            for s, t in self._edges
+        ]
 
     # ------------------------------------------------------------------
     # Query methods
     # ------------------------------------------------------------------
 
     def predecessors(self, path: str) -> list[Ref]:
-        """Nodes with edges pointing *to* this node (predecessors)."""
-        idx = self._require_node(path)
-        return [Ref(path=self._idx_to_path[p]) for p in self._graph.predecessor_indices(idx)]
+        """Nodes with edges pointing *to* this node."""
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        return [Ref(path=s) for s, t in self._edges if t == path]
 
     def successors(self, path: str) -> list[Ref]:
-        """Nodes this node points *to* (successors)."""
-        idx = self._require_node(path)
-        return [Ref(path=self._idx_to_path[s]) for s in self._graph.successor_indices(idx)]
+        """Nodes this node points *to*."""
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        return [Ref(path=t) for s, t in self._edges if s == path]
 
     def path_between(self, source: str, target: str) -> list[Ref] | None:
         """Shortest path (Dijkstra) from *source* to *target*, or ``None``."""
-        src_idx = self._require_node(source)
-        tgt_idx = self._require_node(target)
-        if src_idx == tgt_idx:
+        if source not in self._nodes:
+            msg = f"Node not found: {source!r}"
+            raise KeyError(msg)
+        if target not in self._nodes:
+            msg = f"Node not found: {target!r}"
+            raise KeyError(msg)
+        if source == target:
             return [Ref(path=source)]
+        graph, path_to_idx, idx_to_path = self._build_graph()
+        src_idx = path_to_idx[source]
+        tgt_idx = path_to_idx[target]
         try:
             paths = rustworkx.dijkstra_shortest_paths(
-                self._graph,
-                src_idx,
-                target=tgt_idx,
-                weight_fn=lambda e: e.get("weight", 1.0),
+                graph, src_idx, target=tgt_idx, weight_fn=lambda _e: 1.0
             )
             indices = paths[tgt_idx]
         except (KeyError, IndexError, rustworkx.NoPathFound):
             return None
-        return [Ref(path=self._idx_to_path[i]) for i in indices]
+        return [Ref(path=idx_to_path[i]) for i in indices]
 
     def contains(self, path: str) -> list[Ref]:
-        """Successors connected by ``"contains"`` edges."""
-        idx = self._require_node(path)
-        result: list[Ref] = []
-        for succ in self._graph.successor_indices(idx):
-            edge_idx = self._find_edge_idx(idx, succ)
-            if edge_idx is not None:
-                data = self._graph.get_edge_data_by_index(edge_idx)
-                if data.get("type") == "contains":
-                    result.append(Ref(path=self._idx_to_path[succ]))
-        return result
+        """Successors (all direct successors since edge types are not stored)."""
+        return self.successors(path)
 
     def by_parent(self, parent_path: str) -> list[Ref]:
-        """All nodes whose ``parent_path`` attribute matches."""
-        result: list[Ref] = []
-        for idx in self._graph.node_indices():
-            data = self._graph[idx]
-            if data.get("parent_path") == parent_path:
-                result.append(Ref(path=data["path"]))
-        return result
+        """Not supported with minimal storage — returns empty list."""
+        return []
 
     def remove_file_subgraph(self, path: str) -> list[str]:
-        """Remove a node and all child nodes.
-
-        Children are found by unioning two lookups:
-        1. Nodes whose ``parent_path`` attribute equals *path*.
-        2. Successors connected by ``"contains"`` edges.
-
-        Returns the list of removed paths.
-        """
-        idx = self._require_node(path)
-
-        # Method 1: attribute scan
-        children_by_attr = {
-            self._idx_to_path[i]
-            for i in self._graph.node_indices()
-            if self._graph[i].get("parent_path") == path
-        }
-
-        # Method 2: contains-edge traversal
-        children_by_edge: set[str] = set()
-        for succ in self._graph.successor_indices(idx):
-            edge_idx = self._find_edge_idx(idx, succ)
-            if edge_idx is not None:
-                data = self._graph.get_edge_data_by_index(edge_idx)
-                if data.get("type") == "contains":
-                    succ_path = self._idx_to_path.get(succ)
-                    if succ_path is not None:
-                        children_by_edge.add(succ_path)
-
-        children = children_by_attr | children_by_edge
+        """Remove a node and all its successors connected by any edge."""
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        # Collect direct successors as children
+        children = {t for s, t in self._edges if s == path}
         removed = [path, *sorted(children)]
         for p in removed:
-            if self.has_node(p):
-                self.remove_node(p)
+            if p in self._nodes:
+                self._nodes.discard(p)
+                self._edges = {(s, t) for s, t in self._edges if s != p and t != p}
+        self._invalidate()
         return removed
 
     # ------------------------------------------------------------------
@@ -244,27 +230,26 @@ class RustworkxGraph:
 
     @property
     def node_count(self) -> int:
-        """Number of nodes in the graph."""
-        return self._graph.num_nodes()
+        return len(self._nodes)
 
     @property
     def edge_count(self) -> int:
-        """Number of edges in the graph."""
-        return self._graph.num_edges()
+        return len(self._edges)
 
     def is_dag(self) -> bool:
-        """Return whether the graph is a directed acyclic graph."""
-        return rustworkx.is_directed_acyclic_graph(self._graph)
+        graph, _, _ = self._build_graph()
+        return rustworkx.is_directed_acyclic_graph(graph)
 
     def __repr__(self) -> str:
         return f"RustworkxGraph(nodes={self.node_count}, edges={self.edge_count})"
 
     # ------------------------------------------------------------------
-    # Centrality algorithms (SupportsCentrality)
+    # Centrality algorithms — accept candidates, return FileSearchResult
     # ------------------------------------------------------------------
 
     def pagerank(
         self,
+        candidates: FileSearchResult | None = None,
         *,
         alpha: float = 0.85,
         personalization: dict[str, float] | None = None,
@@ -272,60 +257,55 @@ class RustworkxGraph:
         tol: float = 1e-6,
     ) -> dict[str, float]:
         """PageRank centrality scores."""
+        graph, path_to_idx, idx_to_path = self._resolve_graph(candidates)
+        if graph.num_nodes() == 0:
+            return {}
         pers = None
         if personalization:
             pers = {
-                self._path_to_idx[p]: w
-                for p, w in personalization.items()
-                if p in self._path_to_idx
+                path_to_idx[p]: w for p, w in personalization.items() if p in path_to_idx
             }
             if not pers:
                 pers = None
         scores = rustworkx.pagerank(
-            self._graph,
-            alpha=alpha,
-            personalization=pers,
-            max_iter=max_iter,
-            tol=tol,
+            graph, alpha=alpha, personalization=pers, max_iter=max_iter, tol=tol
         )
-        return {
-            self._idx_to_path[idx]: score
-            for idx, score in scores.items()
-            if idx in self._idx_to_path
-        }
+        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
 
-    def betweenness_centrality(self, *, normalized: bool = True) -> dict[str, float]:
+    def betweenness_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+        *,
+        normalized: bool = True,
+    ) -> dict[str, float]:
         """Betweenness centrality scores."""
-        scores = rustworkx.digraph_betweenness_centrality(
-            self._graph,
-            normalized=normalized,
-        )
-        return {
-            self._idx_to_path[idx]: score
-            for idx, score in scores.items()
-            if idx in self._idx_to_path
-        }
+        graph, _, idx_to_path = self._resolve_graph(candidates)
+        if graph.num_nodes() == 0:
+            return {}
+        scores = rustworkx.digraph_betweenness_centrality(graph, normalized=normalized)
+        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
 
-    def closeness_centrality(self) -> dict[str, float]:
+    def closeness_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]:
         """Closeness centrality scores."""
-        scores = rustworkx.closeness_centrality(self._graph)
-        return {
-            self._idx_to_path[idx]: score
-            for idx, score in scores.items()
-            if idx in self._idx_to_path
-        }
+        graph, _, idx_to_path = self._resolve_graph(candidates)
+        if graph.num_nodes() == 0:
+            return {}
+        scores = rustworkx.closeness_centrality(graph)
+        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
 
-    def harmonic_centrality(self) -> dict[str, float]:
-        """Harmonic centrality scores.
-
-        For each node *v*, harmonic centrality = sum(1/d(v,u)) for all reachable *u*.
-        """
+    def harmonic_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]:
+        """Harmonic centrality scores."""
+        graph, path_to_idx, _idx_to_path = self._resolve_graph(candidates)
         result: dict[str, float] = {}
-        for path, idx in self._path_to_idx.items():
+        for path, idx in path_to_idx.items():
             lengths = rustworkx.dijkstra_shortest_path_lengths(
-                self._graph,
-                idx,
-                lambda e: e.get("weight", 1.0),
+                graph, idx, lambda _e: 1.0
             )
             score = sum(1.0 / d for d in dict(lengths).values() if d > 0)
             result[path] = score
@@ -333,37 +313,25 @@ class RustworkxGraph:
 
     def hits(
         self,
+        candidates: FileSearchResult | None = None,
         *,
         max_iter: int = 100,
         tol: float = 1e-8,
     ) -> tuple[dict[str, float], dict[str, float]]:
-        """HITS hub and authority scores.
-
-        Returns ``(hubs, authorities)`` where each is a ``{path: score}`` dict.
-        """
-        if self._graph.num_nodes() == 0 or self._graph.num_edges() == 0:
-            # HITS requires at least one edge to converge
-            return dict.fromkeys(self._path_to_idx, 0.0), dict.fromkeys(self._path_to_idx, 0.0)
-        # rustworkx.hits returns (hubs, authorities) as CentralityMapping objects
-        hubs_raw, auths_raw = rustworkx.hits(
-            self._graph,
-            max_iter=max_iter,
-            tol=tol,
-        )
-        hubs = {
-            self._idx_to_path[idx]: score
-            for idx, score in hubs_raw.items()
-            if idx in self._idx_to_path
-        }
+        """HITS hub and authority scores."""
+        graph, path_to_idx, idx_to_path = self._resolve_graph(candidates)
+        if graph.num_nodes() == 0 or graph.num_edges() == 0:
+            return dict.fromkeys(path_to_idx, 0.0), dict.fromkeys(path_to_idx, 0.0)
+        hubs_raw, auths_raw = rustworkx.hits(graph, max_iter=max_iter, tol=tol)
+        hubs = {idx_to_path[idx]: score for idx, score in hubs_raw.items() if idx in idx_to_path}
         auths = {
-            self._idx_to_path[idx]: score
-            for idx, score in auths_raw.items()
-            if idx in self._idx_to_path
+            idx_to_path[idx]: score for idx, score in auths_raw.items() if idx in idx_to_path
         }
         return hubs, auths
 
     def katz_centrality(
         self,
+        candidates: FileSearchResult | None = None,
         *,
         alpha: float = 0.1,
         beta: float = 1.0,
@@ -371,100 +339,91 @@ class RustworkxGraph:
         tol: float = 1e-6,
     ) -> dict[str, float]:
         """Katz centrality scores."""
-        if self._graph.num_nodes() == 0:
+        graph, _, idx_to_path = self._resolve_graph(candidates)
+        if graph.num_nodes() == 0:
             return {}
         scores = rustworkx.katz_centrality(
-            self._graph,
-            alpha=alpha,
-            beta=beta,
-            max_iter=max_iter,
-            tol=tol,
+            graph, alpha=alpha, beta=beta, max_iter=max_iter, tol=tol
         )
-        return {
-            self._idx_to_path[idx]: score
-            for idx, score in scores.items()
-            if idx in self._idx_to_path
-        }
+        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
 
-    def degree_centrality(self) -> dict[str, float]:
+    def degree_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]:
         """Degree centrality (in + out) scores."""
-        scores = rustworkx.digraph_degree_centrality(self._graph)
-        return {
-            self._idx_to_path[idx]: score
-            for idx, score in scores.items()
-            if idx in self._idx_to_path
-        }
+        graph, _, idx_to_path = self._resolve_graph(candidates)
+        if graph.num_nodes() == 0:
+            return {}
+        scores = rustworkx.digraph_degree_centrality(graph)
+        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
 
-    def in_degree_centrality(self) -> dict[str, float]:
+    def in_degree_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]:
         """In-degree centrality scores."""
-        scores = rustworkx.in_degree_centrality(self._graph)
-        return {
-            self._idx_to_path[idx]: score
-            for idx, score in scores.items()
-            if idx in self._idx_to_path
-        }
+        graph, _, idx_to_path = self._resolve_graph(candidates)
+        if graph.num_nodes() == 0:
+            return {}
+        scores = rustworkx.in_degree_centrality(graph)
+        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
 
-    def out_degree_centrality(self) -> dict[str, float]:
+    def out_degree_centrality(
+        self,
+        candidates: FileSearchResult | None = None,
+    ) -> dict[str, float]:
         """Out-degree centrality scores."""
-        scores = rustworkx.out_degree_centrality(self._graph)
-        return {
-            self._idx_to_path[idx]: score
-            for idx, score in scores.items()
-            if idx in self._idx_to_path
-        }
+        graph, _, idx_to_path = self._resolve_graph(candidates)
+        if graph.num_nodes() == 0:
+            return {}
+        scores = rustworkx.out_degree_centrality(graph)
+        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
 
     # ------------------------------------------------------------------
-    # Connectivity algorithms (SupportsConnectivity)
+    # Connectivity algorithms
     # ------------------------------------------------------------------
 
     def weakly_connected_components(self) -> list[set[str]]:
-        """Weakly connected components as sets of paths."""
-        components = rustworkx.weakly_connected_components(self._graph)
+        graph, _, idx_to_path = self._build_graph()
+        components = rustworkx.weakly_connected_components(graph)
         return [
-            {self._idx_to_path[idx] for idx in comp if idx in self._idx_to_path}
-            for comp in components
+            {idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components
         ]
 
     def strongly_connected_components(self) -> list[set[str]]:
-        """Strongly connected components as sets of paths."""
-        components = rustworkx.strongly_connected_components(self._graph)
+        graph, _, idx_to_path = self._build_graph()
+        components = rustworkx.strongly_connected_components(graph)
         return [
-            {self._idx_to_path[idx] for idx in comp if idx in self._idx_to_path}
-            for comp in components
+            {idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components
         ]
 
     def is_weakly_connected(self) -> bool:
-        """Return ``True`` if the graph is weakly connected.
-
-        Returns ``True`` for an empty graph (matches convention that the
-        null graph is trivially connected).
-        """
+        graph, _, _ = self._build_graph()
         try:
-            return rustworkx.is_weakly_connected(self._graph)
+            return rustworkx.is_weakly_connected(graph)
         except rustworkx.NullGraph:
             return True
 
     # ------------------------------------------------------------------
-    # Traversal algorithms (SupportsTraversal)
+    # Traversal algorithms
     # ------------------------------------------------------------------
 
     def ancestors(self, path: str) -> set[str]:
-        """All nodes reachable by following edges backward from *path*."""
-        idx = self._require_node(path)
-        return {
-            self._idx_to_path[i]
-            for i in rustworkx.ancestors(self._graph, idx)
-            if i in self._idx_to_path
-        }
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        graph, path_to_idx, idx_to_path = self._build_graph()
+        idx = path_to_idx[path]
+        return {idx_to_path[i] for i in rustworkx.ancestors(graph, idx) if i in idx_to_path}
 
     def descendants(self, path: str) -> set[str]:
-        """All nodes reachable by following edges forward from *path*."""
-        idx = self._require_node(path)
-        return {
-            self._idx_to_path[i]
-            for i in rustworkx.descendants(self._graph, idx)
-            if i in self._idx_to_path
-        }
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        graph, path_to_idx, idx_to_path = self._build_graph()
+        idx = path_to_idx[path]
+        return {idx_to_path[i] for i in rustworkx.descendants(graph, idx) if i in idx_to_path}
 
     def all_simple_paths(
         self,
@@ -473,66 +432,57 @@ class RustworkxGraph:
         *,
         cutoff: int | None = None,
     ) -> list[list[str]]:
-        """All simple (loop-free) paths from *source* to *target*.
-
-        Parameters
-        ----------
-        cutoff:
-            Maximum path length (number of nodes).  ``None`` means no limit.
-        """
-        src_idx = self._require_node(source)
-        tgt_idx = self._require_node(target)
-        raw = rustworkx.digraph_all_simple_paths(
-            self._graph,
-            src_idx,
-            tgt_idx,
-            cutoff=cutoff or 0,
-        )
-        return [[self._idx_to_path[i] for i in path] for path in raw]
+        if source not in self._nodes:
+            msg = f"Node not found: {source!r}"
+            raise KeyError(msg)
+        if target not in self._nodes:
+            msg = f"Node not found: {target!r}"
+            raise KeyError(msg)
+        graph, path_to_idx, idx_to_path = self._build_graph()
+        src_idx = path_to_idx[source]
+        tgt_idx = path_to_idx[target]
+        raw = rustworkx.digraph_all_simple_paths(graph, src_idx, tgt_idx, cutoff=cutoff or 0)
+        return [[idx_to_path[i] for i in path] for path in raw]
 
     def topological_sort(self) -> list[str]:
-        """Return nodes in topological order.
-
-        Raises ``ValueError`` if the graph contains cycles.
-        """
+        graph, _, idx_to_path = self._build_graph()
         try:
-            indices = rustworkx.topological_sort(self._graph)
+            indices = rustworkx.topological_sort(graph)
         except rustworkx.DAGHasCycle:
             msg = "Graph contains cycles"
             raise ValueError(msg) from None
-        return [self._idx_to_path[i] for i in indices if i in self._idx_to_path]
+        return [idx_to_path[i] for i in indices if i in idx_to_path]
 
     def shortest_path_length(self, source: str, target: str) -> float | None:
-        """Weighted shortest path length, or ``None`` if unreachable."""
-        src_idx = self._require_node(source)
-        tgt_idx = self._require_node(target)
+        if source not in self._nodes:
+            msg = f"Node not found: {source!r}"
+            raise KeyError(msg)
+        if target not in self._nodes:
+            msg = f"Node not found: {target!r}"
+            raise KeyError(msg)
+        graph, path_to_idx, _ = self._build_graph()
+        src_idx = path_to_idx[source]
+        tgt_idx = path_to_idx[target]
         lengths = rustworkx.dijkstra_shortest_path_lengths(
-            self._graph,
-            src_idx,
-            lambda e: e.get("weight", 1.0),
-            goal=tgt_idx,
+            graph, src_idx, lambda _e: 1.0, goal=tgt_idx
         )
         result = dict(lengths)
         return result.get(tgt_idx)
 
     def has_path(self, source: str, target: str) -> bool:
-        """Return ``True`` if there is a directed path from *source* to *target*."""
         return self.path_between(source, target) is not None
 
     # ------------------------------------------------------------------
-    # Subgraph extraction (SupportsSubgraph)
+    # Subgraph extraction
     # ------------------------------------------------------------------
 
     def subgraph(self, paths: list[str]) -> SubgraphResult:
-        """Extract the induced subgraph for the given *paths*.
-
-        Missing paths are silently skipped.
-        """
-        valid = {p for p in paths if p in self._path_to_idx}
+        """Extract the induced subgraph for the given *paths*."""
+        valid = {p for p in paths if p in self._nodes}
         edges: list[tuple[str, str, dict[str, Any]]] = []
-        for src, tgt, data in self.edges():
-            if src in valid and tgt in valid:
-                edges.append((src, tgt, data))
+        for s, t in self._edges:
+            if s in valid and t in valid:
+                edges.append((s, t, {"type": "", "weight": 1.0}))
         return subgraph_result(sorted(valid), edges)
 
     def neighborhood(
@@ -543,40 +493,32 @@ class RustworkxGraph:
         direction: str = "both",
         edge_types: list[str] | None = None,
     ) -> SubgraphResult:
-        """BFS neighborhood around *path* up to *max_depth* hops.
+        """BFS neighborhood around *path* up to *max_depth* hops."""
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        # Build adjacency for BFS
+        out_adj: dict[str, set[str]] = {}
+        in_adj: dict[str, set[str]] = {}
+        for s, t in self._edges:
+            out_adj.setdefault(s, set()).add(t)
+            in_adj.setdefault(t, set()).add(s)
 
-        Parameters
-        ----------
-        direction:
-            ``"out"`` = successors only, ``"in"`` = predecessors only,
-            ``"both"`` = both.
-        edge_types:
-            If provided, only traverse edges matching these types.
-        """
-        self._require_node(path)
         visited: set[str] = {path}
         frontier: set[str] = {path}
 
         for _ in range(max_depth):
             next_frontier: set[str] = set()
             for node in frontier:
-                idx = self._path_to_idx[node]
-                neighbors: list[int] = []
+                neighbors: set[str] = set()
                 if direction in ("out", "both"):
-                    neighbors.extend(self._graph.successor_indices(idx))
+                    neighbors |= out_adj.get(node, set())
                 if direction in ("in", "both"):
-                    neighbors.extend(self._graph.predecessor_indices(idx))
-                for n_idx in neighbors:
-                    n_path = self._idx_to_path.get(n_idx)
-                    if n_path is None or n_path in visited:
-                        continue
-                    # Edge type filter
-                    if edge_types is not None and not self._has_edge_of_type(
-                        idx, n_idx, edge_types, direction
-                    ):
-                        continue
-                    visited.add(n_path)
-                    next_frontier.add(n_path)
+                    neighbors |= in_adj.get(node, set())
+                for n in neighbors:
+                    if n not in visited:
+                        visited.add(n)
+                        next_frontier.add(n)
             frontier = next_frontier
             if not frontier:
                 break
@@ -589,52 +531,40 @@ class RustworkxGraph:
         *,
         max_size: int = 50,
     ) -> SubgraphResult:
-        """Find the subgraph connecting *start_paths* via shortest paths.
-
-        Algorithm:
-        1. Filter to valid start paths (need ≥ 2, else trivial subgraph).
-        2. For each pair, find shortest path. Collect all intermediate nodes.
-        3. If no pairwise connections, try common descendants.
-        4. Score with PageRank (personalized on start nodes).
-        5. Prune to *max_size* by removing lowest-score non-start nodes.
-        """
-        valid_starts = [p for p in start_paths if p in self._path_to_idx]
+        """Find the subgraph connecting *start_paths* via shortest paths."""
+        valid_starts = [p for p in start_paths if p in self._nodes]
         if len(valid_starts) <= 1:
             return self.subgraph(valid_starts)
 
-        # Step 1: collect all nodes on pairwise shortest paths
+        # Collect all nodes on pairwise shortest paths
         all_nodes: set[str] = set(valid_starts)
         found_connection = False
         for i, src in enumerate(valid_starts):
-            for tgt in valid_starts[i + 1 :]:
-                path = self.path_between(src, tgt)
-                if path is not None:
+            for tgt in valid_starts[i + 1:]:
+                path_fwd = self.path_between(src, tgt)
+                if path_fwd is not None:
                     found_connection = True
-                    for ref in path:
+                    for ref in path_fwd:
                         all_nodes.add(ref.path)
-                # Also try reverse direction
                 path_rev = self.path_between(tgt, src)
                 if path_rev is not None:
                     found_connection = True
                     for ref in path_rev:
                         all_nodes.add(ref.path)
 
-        # Step 2: if no pairwise connections, try common descendants
         if not found_connection:
             common = self.common_reachable(valid_starts, direction="forward")
-            # Take up to 5 closest common nodes
             for node in list(common)[:5]:
                 all_nodes.add(node)
 
-        # Step 3: score with personalized PageRank
+        # Score with personalized PageRank
         pers = dict.fromkeys(valid_starts, 1.0)
         scores = self.pagerank(personalization=pers)
 
-        # Step 4: prune to max_size
+        # Prune to max_size
         start_set = set(valid_starts)
         node_list = sorted(all_nodes)
         while len(node_list) > max_size:
-            # Find lowest-score non-start node
             worst: str | None = None
             worst_score = float("inf")
             for n in node_list:
@@ -648,7 +578,6 @@ class RustworkxGraph:
                 break
             node_list.remove(worst)
 
-        # Build subgraph result with scores for included nodes
         sub = self.subgraph(node_list)
         sub_scores = {n: scores.get(n, 0.0) for n in sub.nodes}
         return subgraph_result(list(sub.nodes), list(sub.edges), sub_scores)
@@ -660,7 +589,7 @@ class RustworkxGraph:
         direction: str = "forward",
     ) -> set[str]:
         """Intersection of descendants (forward) or ancestors (reverse)."""
-        valid = [p for p in paths if p in self._path_to_idx]
+        valid = [p for p in paths if p in self._nodes]
         if not valid:
             return set()
         if direction == "forward":
@@ -673,42 +602,154 @@ class RustworkxGraph:
         return result
 
     def common_neighbors(self, path1: str, path2: str) -> set[str]:
-        """Intersection of undirected neighbors (predecessors | successors) of both nodes."""
+        """Intersection of undirected neighbors of both nodes."""
         n1 = self._undirected_neighbors(path1)
         n2 = self._undirected_neighbors(path2)
         return n1 & n2
 
     # ------------------------------------------------------------------
-    # Filtering (SupportsFiltering)
+    # Connecting subgraph — multi-source BFS + Union-Find
+    # ------------------------------------------------------------------
+
+    def connecting_subgraph(self, paths: list[str]) -> RustworkxGraph:
+        """Return a new RustworkxGraph containing all nodes needed to connect *paths*.
+
+        Uses multi-source BFS with Union-Find for O(V+E) performance.
+        """
+        valid = [p for p in paths if p in self._nodes]
+        if len(valid) <= 1:
+            sub = RustworkxGraph()
+            sub._nodes = set(valid)
+            sub._edges = set()
+            return sub
+
+        graph, path_to_idx, idx_to_path = self._build_graph()
+        seed_indices = [path_to_idx[p] for p in valid]
+        keep_indices = self._multisource_bfs(graph, seed_indices)
+        keep_paths = {idx_to_path[i] for i in keep_indices if i in idx_to_path}
+
+        sub = RustworkxGraph()
+        sub._nodes = keep_paths
+        sub._edges = {(s, t) for s, t in self._edges if s in keep_paths and t in keep_paths}
+        return sub
+
+    def _multisource_bfs(
+        self,
+        graph: rustworkx.PyDiGraph,
+        seed_indices: list[int],
+    ) -> set[int]:
+        """Multi-source BFS via neighbors_undirected() + Union-Find.
+
+        Returns set of node indices connecting all seeds.
+        """
+        if not graph.node_indices():
+            return set(seed_indices)
+        arr_size = max(graph.node_indices()) + 1
+        origin = [-1] * arr_size
+        pred = [-1] * arr_size
+
+        # Inline Union-Find
+        uf_parent = list(range(arr_size))
+        uf_rank = [0] * arr_size
+        remaining = len(seed_indices)
+
+        def uf_find(x: int) -> int:
+            while uf_parent[x] != x:
+                uf_parent[x] = uf_parent[uf_parent[x]]
+                x = uf_parent[x]
+            return x
+
+        def uf_union(a: int, b: int) -> bool:
+            nonlocal remaining
+            ra, rb = uf_find(a), uf_find(b)
+            if ra == rb:
+                return False
+            if uf_rank[ra] < uf_rank[rb]:
+                ra, rb = rb, ra
+            uf_parent[rb] = ra
+            if uf_rank[ra] == uf_rank[rb]:
+                uf_rank[ra] += 1
+            remaining -= 1
+            return True
+
+        queue: deque[int] = deque(seed_indices)
+        for s in seed_indices:
+            origin[s] = s
+            pred[s] = s
+
+        bridges: list[tuple[int, int]] = []
+        while queue and remaining > 1:
+            node = queue.popleft()
+            node_origin = origin[node]
+            for neighbor in graph.neighbors_undirected(node):
+                if origin[neighbor] == -1:
+                    origin[neighbor] = node_origin
+                    pred[neighbor] = node
+                    queue.append(neighbor)
+                elif uf_find(origin[neighbor]) != uf_find(node_origin):
+                    bridges.append((node, neighbor))
+                    uf_union(origin[neighbor], node_origin)
+
+        # Trace predecessor chains from bridge endpoints back to seeds
+        keep = set(seed_indices)
+        for a, b in bridges:
+            for start in (a, b):
+                cur = start
+                while cur != pred[cur]:
+                    keep.add(cur)
+                    cur = pred[cur]
+                keep.add(cur)
+        return keep
+
+    def _graph_from_candidates(self, candidates: FileSearchResult) -> RustworkxGraph:
+        """Build a RustworkxGraph from explicit file_candidates + connection_candidates."""
+        sub = RustworkxGraph()
+        sub._nodes = {c.path for c in candidates.file_candidates}
+        sub._edges = {
+            (cc.source_path, cc.target_path) for cc in candidates.connection_candidates
+        }
+        return sub
+
+    # ------------------------------------------------------------------
+    # Helper: resolve graph for centrality (subgraph or full)
+    # ------------------------------------------------------------------
+
+    def _resolve_graph(
+        self,
+        candidates: FileSearchResult | None,
+    ) -> tuple[rustworkx.PyDiGraph, dict[str, int], dict[int, str]]:
+        """Return the (graph, path_to_idx, idx_to_path) to run centrality on.
+
+        Three modes:
+        1. candidates is None → full graph
+        2. candidates has connection_candidates → build from explicit edges
+        3. candidates has file_candidates only → connecting_subgraph
+        """
+        if candidates is None:
+            return self._build_graph()
+        if candidates.connection_candidates:
+            sub = self._graph_from_candidates(candidates)
+            return sub._build_graph()
+        paths = [c.path for c in candidates.file_candidates]
+        if not paths:
+            return self._build_graph()
+        sub = self.connecting_subgraph(paths)
+        return sub._build_graph()
+
+    # ------------------------------------------------------------------
+    # Filtering (kept for backward compat)
     # ------------------------------------------------------------------
 
     def find_nodes(self, **attrs: object) -> list[str]:
-        """Find nodes matching all *attrs* (AND logic).
-
-        Callable values are used as predicates; non-callable values are
-        matched by equality.
-        """
-        result: list[str] = []
-        for idx in self._graph.node_indices():
-            data = self._graph[idx]
-            path = self._idx_to_path.get(idx)
-            if path is None:
-                continue
-            match = True
-            for key, value in attrs.items():
-                if key not in data:
-                    match = False
-                    break
-                if callable(value):
-                    if not value(data[key]):  # type: ignore[operator]
-                        match = False
-                        break
-                elif data[key] != value:
-                    match = False
-                    break
-            if match:
-                result.append(path)
-        return result
+        """Find nodes matching attrs. With minimal storage, only 'path' is queryable."""
+        if not attrs:
+            return list(self._nodes)
+        if "path" in attrs:
+            p = attrs["path"]
+            if callable(p):
+                return [n for n in self._nodes if p(n)]  # type: ignore[operator]
+            return [n for n in self._nodes if n == p]
+        return []
 
     def find_edges(
         self,
@@ -717,16 +758,14 @@ class RustworkxGraph:
         source: str | None = None,
         target: str | None = None,
     ) -> list[tuple[str, str, dict[str, Any]]]:
-        """Filter edges by type, source, and/or target (all optional, AND logic)."""
+        """Filter edges by source and/or target."""
         result: list[tuple[str, str, dict[str, Any]]] = []
-        for src, tgt, data in self.edges():
-            if edge_type is not None and data.get("type") != edge_type:
+        for s, t in self._edges:
+            if source is not None and s != source:
                 continue
-            if source is not None and src != source:
+            if target is not None and t != target:
                 continue
-            if target is not None and tgt != target:
-                continue
-            result.append((src, tgt, data))
+            result.append((s, t, {"type": "", "weight": 1.0}))
         return result
 
     def edges_of(
@@ -736,45 +775,26 @@ class RustworkxGraph:
         direction: str = "both",
         edge_types: list[str] | None = None,
     ) -> list[tuple[str, str, dict[str, Any]]]:
-        """Return edges incident to *path*.
-
-        Parameters
-        ----------
-        direction:
-            ``"out"`` = outgoing, ``"in"`` = incoming, ``"both"`` = all.
-        edge_types:
-            If provided, only include edges whose type is in this list.
-        """
-        idx = self._require_node(path)
+        """Return edges incident to *path*."""
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+        seen: set[tuple[str, str]] = set()
         result: list[tuple[str, str, dict[str, Any]]] = []
-        seen_edge_ids: set[str] = set()
-
         if direction in ("out", "both"):
-            for succ in self._graph.successor_indices(idx):
-                edge_idx = self._find_edge_idx(idx, succ)
-                if edge_idx is not None:
-                    data = dict(self._graph.get_edge_data_by_index(edge_idx))
-                    if edge_types is not None and data.get("type") not in edge_types:
-                        continue
-                    if data["id"] not in seen_edge_ids:
-                        seen_edge_ids.add(data["id"])
-                        result.append((path, self._idx_to_path[succ], data))
-
+            for s, t in self._edges:
+                if s == path and (s, t) not in seen:
+                    seen.add((s, t))
+                    result.append((s, t, {"type": "", "weight": 1.0}))
         if direction in ("in", "both"):
-            for pred in self._graph.predecessor_indices(idx):
-                edge_idx = self._find_edge_idx(pred, idx)
-                if edge_idx is not None:
-                    data = dict(self._graph.get_edge_data_by_index(edge_idx))
-                    if edge_types is not None and data.get("type") not in edge_types:
-                        continue
-                    if data["id"] not in seen_edge_ids:
-                        seen_edge_ids.add(data["id"])
-                        result.append((self._idx_to_path[pred], path, data))
-
+            for s, t in self._edges:
+                if t == path and (s, t) not in seen:
+                    seen.add((s, t))
+                    result.append((s, t, {"type": "", "weight": 1.0}))
         return result
 
     # ------------------------------------------------------------------
-    # Node similarity (SupportsNodeSimilarity)
+    # Node similarity
     # ------------------------------------------------------------------
 
     def node_similarity(
@@ -784,11 +804,6 @@ class RustworkxGraph:
         *,
         method: str = "jaccard",
     ) -> float:
-        """Structural similarity between two nodes (Jaccard coefficient).
-
-        "Neighbors" = combined predecessors + successors (undirected).
-        Returns 0.0 if the union is empty.
-        """
         n1 = self._undirected_neighbors(path1)
         n2 = self._undirected_neighbors(path2)
         union = n1 | n2
@@ -803,12 +818,8 @@ class RustworkxGraph:
         method: str = "jaccard",
         k: int = 10,
     ) -> list[tuple[str, float]]:
-        """Top-*k* structurally similar nodes, sorted descending by score.
-
-        Excludes *path* itself from results.
-        """
         scores: list[tuple[str, float]] = []
-        for other in self._path_to_idx:
+        for other in self._nodes:
             if other == path:
                 continue
             s = self.node_similarity(path, other, method=method)
@@ -817,65 +828,20 @@ class RustworkxGraph:
         return scores[:k]
 
     def _undirected_neighbors(self, path: str) -> set[str]:
-        """Combined predecessors + successors as a set of paths."""
-        idx = self._require_node(path)
+        if path not in self._nodes:
+            msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
         neighbors: set[str] = set()
-        for pred in self._graph.predecessor_indices(idx):
-            p = self._idx_to_path.get(pred)
-            if p is not None:
-                neighbors.add(p)
-        for succ in self._graph.successor_indices(idx):
-            p = self._idx_to_path.get(succ)
-            if p is not None:
-                neighbors.add(p)
+        for s, t in self._edges:
+            if s == path:
+                neighbors.add(t)
+            elif t == path:
+                neighbors.add(s)
         return neighbors
 
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
-
-    async def to_sql(self, session: AsyncSession) -> None:
-        """Persist the graph to ``grover_file_connections``.
-
-        Full-sync strategy: upsert all current edges, delete DB edges that are
-        no longer present in the in-memory graph.  Caller manages the
-        transaction (commit/rollback).
-        """
-        from sqlalchemy import select
-
-        from grover.models.connection import FileConnection
-
-        # Build FileConnection instances from in-memory graph
-        graph_edges: dict[str, FileConnection] = {}
-        for _src, _tgt, data in self.edges():
-            edge = FileConnection(
-                id=data["id"],
-                source_path=data["source"],
-                target_path=data["target"],
-                type=data["type"],
-                weight=data["weight"],
-                path=f"{data['source']}[{data['type']}]{data['target']}",
-            )
-            graph_edges[edge.id] = edge
-
-        # Find existing DB edge IDs
-        result = await session.execute(select(FileConnection.id))  # type: ignore[no-matching-overload]
-        db_ids: set[str] = {row[0] for row in result.all()}
-
-        # Delete stale edges
-        graph_ids = set(graph_edges.keys())
-        stale_ids = db_ids - graph_ids
-        if stale_ids:
-            for stale_id in stale_ids:
-                existing = await session.get(FileConnection, stale_id)
-                if existing:
-                    await session.delete(existing)
-
-        # Upsert current edges
-        for edge in graph_edges.values():
-            await session.merge(edge)
-
-        await session.flush()
 
     async def from_sql(
         self,
@@ -887,19 +853,7 @@ class RustworkxGraph:
         """Load graph state from the database, replacing in-memory state.
 
         Loads non-deleted file rows as nodes and all ``FileConnection``
-        rows as edges.  Auto-creates nodes for dangling edge endpoints.
-
-        Parameters
-        ----------
-        session:
-            An async SQLAlchemy session.
-        file_model:
-            The SQLModel class to query for file nodes.  Defaults to
-            :class:`~grover.models.files.File`.
-        path_prefix:
-            Optional prefix to prepend to all DB paths.  DB stores relative
-            paths (e.g. ``/keep.py``) while the in-memory graph uses
-            mount-prefixed absolute paths (e.g. ``/project/keep.py``).
+        rows as edges (topology only — no metadata stored).
         """
         from sqlalchemy import select
 
@@ -918,9 +872,9 @@ class RustworkxGraph:
             return path_prefix + p
 
         # Reset
-        self._graph = rustworkx.PyDiGraph()
-        self._path_to_idx = {}
-        self._idx_to_path = {}
+        self._nodes = set()
+        self._edges = set()
+        self._cached = None
 
         # Load non-deleted files as nodes
         result = await session.execute(
@@ -928,61 +882,24 @@ class RustworkxGraph:
         )
         for file_row in result.scalars().all():
             raw_path: str = file_row.path  # type: ignore[unresolved-attribute]
-            raw_parent: str | None = file_row.parent_path  # type: ignore[unresolved-attribute]
-            self.add_node(
-                _prefix(raw_path),
-                parent_path=_prefix(raw_parent) if raw_parent else None,
-                is_directory=file_row.is_directory,  # type: ignore[unresolved-attribute]
-            )
+            self._nodes.add(_prefix(raw_path))
 
-        # Load all edges
+        # Load all edges (topology only)
         result = await session.execute(select(FileConnection))
         for edge_row in result.scalars().all():
-            self.add_edge(
-                _prefix(edge_row.source_path),
-                _prefix(edge_row.target_path),
-                edge_row.type,
-                weight=edge_row.weight,
-                edge_id=edge_row.id,
-            )
+            src = _prefix(edge_row.source_path)
+            tgt = _prefix(edge_row.target_path)
+            # Auto-create nodes for dangling endpoints
+            self._nodes.add(src)
+            self._nodes.add(tgt)
+            self._edges.add((src, tgt))
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _require_node(self, path: str) -> int:
-        """Return the rustworkx index for *path*, or raise ``KeyError``."""
-        try:
-            return self._path_to_idx[path]
-        except KeyError:
+    def _require_node(self, path: str) -> None:
+        """Raise ``KeyError`` if *path* is not in the graph."""
+        if path not in self._nodes:
             msg = f"Node not found: {path!r}"
-            raise KeyError(msg) from None
-
-    def _find_edge_idx(self, src_idx: int, tgt_idx: int) -> int | None:
-        """Return the edge index between two node indices, or ``None``."""
-        try:
-            indices = self._graph.edge_indices_from_endpoints(src_idx, tgt_idx)
-        except Exception:
-            return None
-        return indices[0] if indices else None
-
-    def _has_edge_of_type(
-        self,
-        node_idx: int,
-        neighbor_idx: int,
-        edge_types: list[str],
-        direction: str,
-    ) -> bool:
-        """Check if there's an edge of one of *edge_types* between node and neighbor."""
-        pairs: list[tuple[int, int]] = []
-        if direction in ("out", "both"):
-            pairs.append((node_idx, neighbor_idx))
-        if direction in ("in", "both"):
-            pairs.append((neighbor_idx, node_idx))
-        for src, tgt in pairs:
-            edge_idx = self._find_edge_idx(src, tgt)
-            if edge_idx is not None:
-                data = self._graph.get_edge_data_by_index(edge_idx)
-                if data.get("type") in edge_types:
-                    return True
-        return False
+            raise KeyError(msg)

@@ -13,14 +13,8 @@ from grover.providers.graph.protocol import SupportsFiltering, SupportsNodeSimil
 
 
 class TestFindNodes:
-    def test_exact_match(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/dir", is_directory=True)
-        g.add_node("/file.py", is_directory=False)
-        result = g.find_nodes(is_directory=True)
-        assert result == ["/dir"]
-
-    def test_callable_predicate(self) -> None:
+    def test_path_predicate(self) -> None:
+        # Minimal storage only supports path-based queries
         g = RustworkxGraph()
         g.add_node("/a.py")
         g.add_node("/b.ts")
@@ -28,27 +22,26 @@ class TestFindNodes:
         result = g.find_nodes(path=lambda p: p.endswith(".py"))
         assert set(result) == {"/a.py", "/c.py"}
 
-    def test_multiple_attrs(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py", lang="python", is_directory=False)
-        g.add_node("/b.py", lang="python", is_directory=True)
-        g.add_node("/c.ts", lang="typescript", is_directory=False)
-        result = g.find_nodes(lang="python", is_directory=False)
-        assert result == ["/a.py"]
-
-    def test_no_matches(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py", lang="python")
-        result = g.find_nodes(lang="go")
-        assert result == []
-
-    def test_missing_attr(self) -> None:
+    def test_path_exact_match(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        g.add_node("/b.py", lang="python")
+        g.add_node("/b.py")
+        result = g.find_nodes(path="/a.py")
+        assert result == ["/a.py"]
+
+    def test_no_attrs_returns_all(self) -> None:
+        g = RustworkxGraph()
+        g.add_node("/a.py")
+        g.add_node("/b.py")
+        result = g.find_nodes()
+        assert set(result) == {"/a.py", "/b.py"}
+
+    def test_non_path_attr_returns_empty(self) -> None:
+        # Minimal storage — non-path attrs not stored
+        g = RustworkxGraph()
+        g.add_node("/a.py", lang="python")
         result = g.find_nodes(lang="python")
-        # /a.py has no "lang" attr, so it's skipped
-        assert result == ["/b.py"]
+        assert result == []
 
 
 # ======================================================================
@@ -57,15 +50,6 @@ class TestFindNodes:
 
 
 class TestFindEdges:
-    def test_by_type(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/a.py", "/c.py", "contains")
-        result = g.find_edges(edge_type="imports")
-        assert len(result) == 1
-        assert result[0][0] == "/a.py"
-        assert result[0][1] == "/b.py"
-
     def test_by_source(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
@@ -74,13 +58,14 @@ class TestFindEdges:
         assert len(result) == 1
         assert result[0][0] == "/a.py"
 
-    def test_by_type_and_source(self) -> None:
+    def test_edge_type_ignored_with_minimal_storage(self) -> None:
+        # Minimal storage — edge_type filter is a no-op
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "contains")
-        g.add_edge("/d.py", "/b.py", "imports")
         result = g.find_edges(edge_type="imports", source="/a.py")
-        assert len(result) == 1
+        # Both edges match since type is not stored
+        assert len(result) == 2
 
     def test_no_filter(self) -> None:
         g = RustworkxGraph()
@@ -97,12 +82,6 @@ class TestFindEdges:
         result = g.find_edges(target="/b.py")
         assert len(result) == 2
         assert all(tgt == "/b.py" for _, tgt, _ in result)
-
-    def test_no_matches(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        result = g.find_edges(edge_type="calls")
-        assert result == []
 
 
 # ======================================================================
@@ -136,13 +115,13 @@ class TestEdgesOf:
         result = g.edges_of("/a.py", direction="both")
         assert len(result) == 2
 
-    def test_edge_type_filter(self) -> None:
+    def test_edge_type_filter_ignored(self) -> None:
+        # Minimal storage — edge_types filter is a no-op
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "contains")
         result = g.edges_of("/a.py", direction="out", edge_types=["imports"])
-        assert len(result) == 1
-        assert result[0][1] == "/b.py"
+        assert len(result) == 2
 
     def test_missing_node(self) -> None:
         g = RustworkxGraph()
@@ -163,7 +142,6 @@ class TestEdgesOf:
 
 class TestNodeSimilarity:
     def test_identical_neighbors(self) -> None:
-        # A and B both connect to C and D
         g = RustworkxGraph()
         g.add_edge("/a.py", "/c.py", "imports")
         g.add_edge("/a.py", "/d.py", "imports")
@@ -184,7 +162,6 @@ class TestNodeSimilarity:
         g.add_edge("/b.py", "/c.py", "imports")
         g.add_edge("/b.py", "/e.py", "imports")
         sim = g.node_similarity("/a.py", "/b.py")
-        # intersection = {c}, union = {c, d, e}, jaccard = 1/3
         assert abs(sim - 1 / 3) < 0.001
 
     def test_no_neighbors(self) -> None:
@@ -207,7 +184,6 @@ class TestSimilarNodes:
         g.add_node("/d.py")
         result = g.similar_nodes("/a.py", k=2)
         assert len(result) <= 2
-        # b has same neighbor (c), so should be first
         assert result[0][0] == "/b.py"
         assert result[0][1] > 0
 

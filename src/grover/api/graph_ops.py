@@ -181,11 +181,7 @@ class GraphOpsMixin:
         return ShortestPathResult.from_refs(refs, operation="shortest_path")
 
     def has_path(self, source: str, target: str) -> HasPathResult:
-        """Check if a directed path exists from *source* to *target*.
-
-        ``bool(result)`` is ``True`` if a path exists, ``False`` otherwise.
-        When a path exists, the result contains the path nodes.
-        """
+        """Check if a directed path exists from *source* to *target*."""
         graph = self._ctx.resolve_graph(source)
         refs = graph.path_between(source, target)
         if refs is None:
@@ -242,19 +238,8 @@ class GraphOpsMixin:
         return EgoGraphResult.from_subgraph(sub, operation="ego_graph")
 
     # ------------------------------------------------------------------
-    # Centrality algorithms
+    # Centrality algorithms — thin pass-through to provider
     # ------------------------------------------------------------------
-
-    def _filter_scores(
-        self,
-        scores: dict[str, float],
-        candidates: FileSearchResult | None,
-    ) -> dict[str, float]:
-        """Filter scores dict to only candidate paths if provided."""
-        if candidates is not None:
-            candidate_paths = set(candidates.paths)
-            return {p: s for p, s in scores.items() if p in candidate_paths}
-        return scores
 
     def pagerank(
         self,
@@ -266,12 +251,11 @@ class GraphOpsMixin:
         """Run PageRank on the knowledge graph."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            scores = graph.pagerank(personalization=personalization)
+            scores = graph.pagerank(candidates, personalization=personalization)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError(
                 "Graph backend does not support centrality algorithms"
             ) from None
-        scores = self._filter_scores(scores, candidates)
         return PageRankResult.from_scored(scores, operation="pagerank", algorithm="pagerank")
 
     def betweenness_centrality(
@@ -283,12 +267,11 @@ class GraphOpsMixin:
         """Betweenness centrality on the knowledge graph."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            scores = graph.betweenness_centrality()
+            scores = graph.betweenness_centrality(candidates)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError(
                 "Graph backend does not support centrality algorithms"
             ) from None
-        scores = self._filter_scores(scores, candidates)
         return BetweennessResult.from_scored(
             scores, operation="betweenness_centrality", algorithm="betweenness_centrality"
         )
@@ -302,12 +285,11 @@ class GraphOpsMixin:
         """Closeness centrality on the knowledge graph."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            scores = graph.closeness_centrality()
+            scores = graph.closeness_centrality(candidates)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError(
                 "Graph backend does not support centrality algorithms"
             ) from None
-        scores = self._filter_scores(scores, candidates)
         return ClosenessResult.from_scored(
             scores, operation="closeness_centrality", algorithm="closeness_centrality"
         )
@@ -321,12 +303,11 @@ class GraphOpsMixin:
         """Harmonic centrality on the knowledge graph."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            scores = graph.harmonic_centrality()
+            scores = graph.harmonic_centrality(candidates)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError(
                 "Graph backend does not support centrality algorithms"
             ) from None
-        scores = self._filter_scores(scores, candidates)
         return HarmonicResult.from_scored(
             scores, operation="harmonic_centrality", algorithm="harmonic_centrality"
         )
@@ -340,12 +321,11 @@ class GraphOpsMixin:
         """Katz centrality on the knowledge graph."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            scores = graph.katz_centrality()
+            scores = graph.katz_centrality(candidates)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError(
                 "Graph backend does not support centrality algorithms"
             ) from None
-        scores = self._filter_scores(scores, candidates)
         return KatzResult.from_scored(
             scores, operation="katz_centrality", algorithm="katz_centrality"
         )
@@ -359,12 +339,11 @@ class GraphOpsMixin:
         """Degree centrality (in + out) on the knowledge graph."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            scores = graph.degree_centrality()
+            scores = graph.degree_centrality(candidates)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError(
                 "Graph backend does not support centrality algorithms"
             ) from None
-        scores = self._filter_scores(scores, candidates)
         return DegreeResult.from_scored(
             scores, operation="degree_centrality", algorithm="degree_centrality"
         )
@@ -378,12 +357,11 @@ class GraphOpsMixin:
         """In-degree centrality on the knowledge graph."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            scores = graph.in_degree_centrality()
+            scores = graph.in_degree_centrality(candidates)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError(
                 "Graph backend does not support centrality algorithms"
             ) from None
-        scores = self._filter_scores(scores, candidates)
         return DegreeResult.from_scored(
             scores, operation="in_degree_centrality", algorithm="in_degree_centrality"
         )
@@ -397,12 +375,11 @@ class GraphOpsMixin:
         """Out-degree centrality on the knowledge graph."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            scores = graph.out_degree_centrality()
+            scores = graph.out_degree_centrality(candidates)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError(
                 "Graph backend does not support centrality algorithms"
             ) from None
-        scores = self._filter_scores(scores, candidates)
         return DegreeResult.from_scored(
             scores, operation="out_degree_centrality", algorithm="out_degree_centrality"
         )
@@ -413,19 +390,12 @@ class GraphOpsMixin:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> HitsResult:
-        """HITS hub and authority scores.
-
-        Each candidate gets two evidence records: ``hits_authority`` and ``hits_hub``.
-        """
+        """HITS hub and authority scores."""
         graph = self._ctx.resolve_graph_any(path)
         try:
-            hubs, auths = graph.hits()
+            hubs, auths = graph.hits(candidates)
         except (AttributeError, NotImplementedError):
             raise CapabilityNotSupportedError("Graph backend does not support HITS") from None
-        if candidates is not None:
-            candidate_paths = set(candidates.paths)
-            hubs = {p: s for p, s in hubs.items() if p in candidate_paths}
-            auths = {p: s for p, s in auths.items() if p in candidate_paths}
         all_paths = set(hubs) | set(auths)
         file_candidates = [
             FileCandidate(
