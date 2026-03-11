@@ -432,7 +432,7 @@ All five integration classes (`GroverBackend`, `GroverMiddleware`, `GroverRetrie
 - Sync methods work directly (unchanged from before).
 - Async methods raise `TypeError` directing the user to pass `GroverAsync` or use sync methods.
 
-**Graph operations** (`successors`, `predecessors`) are sync on both `Grover` and `GroverAsync` because they operate on an in-memory `rustworkx` graph. `GroverMiddleware` does NOT pass `coroutine` to `StructuredTool.from_function` for graph tools — they are always sync.
+**Graph operations** (`successors`, `predecessors`, `pagerank`, etc.) are `async def` on `GroverAsync` and `RustworkxGraph`. Heavy algorithms (centrality, traversal, connectivity) use `asyncio.to_thread()` with immutable snapshots for thread-safe concurrency. Light reads (predecessors, successors, contains) are async inline. Mutations (add_node, add_edge) stay sync. The sync `Grover` wrapper bridges via `_run()`. `GroverMiddleware` passes `coroutine` to `StructuredTool.from_function` for graph tools when `GroverAsync` is used.
 
 **Formatting helpers** are extracted as module-level functions shared between sync and async code paths. This prevents logic drift and ensures identical output format regardless of which path is used.
 

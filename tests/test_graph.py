@@ -198,44 +198,44 @@ class TestEdgeOperations:
 
 
 class TestPredecessorsAndSuccessors:
-    def test_predecessors_incoming(self) -> None:
+    async def test_predecessors_incoming(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/c.py", "/b.py", "imports")
-        result = g.predecessors("/b.py")
+        result = await g.predecessors("/b.py")
         assert set(result.paths) == {"/a.py", "/c.py"}
 
-    def test_successors_outgoing(self) -> None:
+    async def test_successors_outgoing(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "imports")
-        result = g.successors("/a.py")
+        result = await g.successors("/a.py")
         assert set(result.paths) == {"/b.py", "/c.py"}
 
-    def test_predecessors_empty(self) -> None:
+    async def test_predecessors_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        assert len(g.predecessors("/a.py")) == 0
+        assert len(await g.predecessors("/a.py")) == 0
 
-    def test_successors_empty(self) -> None:
+    async def test_successors_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        assert len(g.successors("/a.py")) == 0
+        assert len(await g.successors("/a.py")) == 0
 
-    def test_predecessors_not_found(self) -> None:
+    async def test_predecessors_not_found(self) -> None:
         g = RustworkxGraph()
         with pytest.raises(KeyError):
-            g.predecessors("/missing.py")
+            await g.predecessors("/missing.py")
 
-    def test_successors_not_found(self) -> None:
+    async def test_successors_not_found(self) -> None:
         g = RustworkxGraph()
         with pytest.raises(KeyError):
-            g.successors("/missing.py")
+            await g.successors("/missing.py")
 
-    def test_returns_typed_result(self) -> None:
+    async def test_returns_typed_result(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        result = g.predecessors("/b.py")
+        result = await g.predecessors("/b.py")
         assert len(result) == 1
         assert result.paths[0] == "/a.py"
 
@@ -246,45 +246,45 @@ class TestPredecessorsAndSuccessors:
 
 
 class TestPathBetween:
-    def test_direct(self) -> None:
+    async def test_direct(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        result = g.path_between("/a.py", "/b.py")
+        result = await g.path_between("/a.py", "/b.py")
         assert result
         assert list(result.paths) == ["/a.py", "/b.py"]
 
-    def test_multi_hop(self) -> None:
+    async def test_multi_hop(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        result = g.path_between("/a.py", "/c.py")
+        result = await g.path_between("/a.py", "/c.py")
         assert result
         assert list(result.paths) == ["/a.py", "/b.py", "/c.py"]
 
-    def test_no_path(self) -> None:
+    async def test_no_path(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         g.add_node("/b.py")
-        assert not g.path_between("/a.py", "/b.py")
+        assert not await g.path_between("/a.py", "/b.py")
 
-    def test_same_node(self) -> None:
+    async def test_same_node(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        result = g.path_between("/a.py", "/a.py")
+        result = await g.path_between("/a.py", "/a.py")
         assert result
         assert list(result.paths) == ["/a.py"]
 
-    def test_source_missing(self) -> None:
+    async def test_source_missing(self) -> None:
         g = RustworkxGraph()
         g.add_node("/b.py")
         with pytest.raises(KeyError):
-            g.path_between("/missing.py", "/b.py")
+            await g.path_between("/missing.py", "/b.py")
 
-    def test_target_missing(self) -> None:
+    async def test_target_missing(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         with pytest.raises(KeyError):
-            g.path_between("/a.py", "/missing.py")
+            await g.path_between("/a.py", "/missing.py")
 
 
 # ======================================================================
@@ -293,24 +293,24 @@ class TestPathBetween:
 
 
 class TestContains:
-    def test_returns_all_successors(self) -> None:
+    async def test_returns_all_successors(self) -> None:
         # Minimal storage — contains() returns all successors (no type filtering)
         g = RustworkxGraph()
         g.add_edge("/file.py", "/file.py::Foo", "contains")
         g.add_edge("/file.py", "/file.py::bar", "contains")
         g.add_edge("/file.py", "/other.py", "imports")
-        refs = g.contains("/file.py")
+        refs = await g.contains("/file.py")
         assert _ref_paths(refs) == {"/file.py::Foo", "/file.py::bar", "/other.py"}
 
-    def test_empty(self) -> None:
+    async def test_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/file.py")
-        assert g.contains("/file.py") == []
+        assert await g.contains("/file.py") == []
 
-    def test_not_found(self) -> None:
+    async def test_not_found(self) -> None:
         g = RustworkxGraph()
         with pytest.raises(KeyError):
-            g.contains("/missing.py")
+            await g.contains("/missing.py")
 
 
 # ======================================================================
@@ -319,17 +319,17 @@ class TestContains:
 
 
 class TestByParent:
-    def test_returns_empty_with_minimal_storage(self) -> None:
+    async def test_returns_empty_with_minimal_storage(self) -> None:
         # Minimal storage — parent_path attrs not stored
         g = RustworkxGraph()
         g.add_node("/dir/a.py", parent_path="/dir")
         g.add_node("/dir/b.py", parent_path="/dir")
-        assert g.by_parent("/dir") == []
+        assert await g.by_parent("/dir") == []
 
-    def test_no_matches(self) -> None:
+    async def test_no_matches(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py", parent_path="/root")
-        assert g.by_parent("/nowhere") == []
+        assert await g.by_parent("/nowhere") == []
 
 
 # ======================================================================

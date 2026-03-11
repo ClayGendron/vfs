@@ -1256,25 +1256,25 @@ class DatabaseFileSystem:
             return False
         return self.graph_provider.has_edge(source, target)
 
-    def graph_predecessors(self, path: str) -> PredecessorsResult:
+    async def graph_predecessors(self, path: str) -> PredecessorsResult:
         if self.graph_provider is None:
             return PredecessorsResult(success=True, message="No graph provider")
-        return self.graph_provider.predecessors(path)
+        return await self.graph_provider.predecessors(path)
 
-    def graph_successors(self, path: str) -> SuccessorsResult:
+    async def graph_successors(self, path: str) -> SuccessorsResult:
         if self.graph_provider is None:
             return SuccessorsResult(success=True, message="No graph provider")
-        return self.graph_provider.successors(path)
+        return await self.graph_provider.successors(path)
 
-    def graph_path_between(self, source: str, target: str) -> ShortestPathResult:
+    async def graph_path_between(self, source: str, target: str) -> ShortestPathResult:
         if self.graph_provider is None:
             return ShortestPathResult(success=True, message="No path found")
-        return self.graph_provider.path_between(source, target)
+        return await self.graph_provider.path_between(source, target)
 
-    def graph_contains(self, path: str) -> list[Ref]:
+    async def graph_contains(self, path: str) -> list[Ref]:
         if self.graph_provider is None:
             return []
-        return self.graph_provider.contains(path)
+        return await self.graph_provider.contains(path)
 
     def graph_remove_file_subgraph(self, path: str) -> list[str]:
         if self.graph_provider is None:

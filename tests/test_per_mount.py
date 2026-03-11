@@ -222,7 +222,7 @@ class TestGraphOpsResolveMount:
         """predecessors() uses the correct mount's graph."""
         await multi_grover.write("/mount1/lib.py", "def helper():\n    return 42\n")
         await multi_grover.flush()
-        result = multi_grover.predecessors("/mount1/lib.py")
+        result = await multi_grover.predecessors("/mount1/lib.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
 
@@ -231,7 +231,7 @@ class TestGraphOpsResolveMount:
         """successors() uses the correct mount's graph."""
         await multi_grover.write("/mount2/consumer.py", "def main():\n    pass\n")
         await multi_grover.flush()
-        result = multi_grover.successors("/mount2/consumer.py")
+        result = await multi_grover.successors("/mount2/consumer.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
 
@@ -241,7 +241,7 @@ class TestGraphOpsResolveMount:
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await multi_grover.write("/mount1/funcs.py", code)
         await multi_grover.flush()
-        refs = multi_grover.get_graph("/mount1/funcs.py").contains("/mount1/funcs.py")
+        refs = await multi_grover.get_graph("/mount1/funcs.py").contains("/mount1/funcs.py")
         assert len(refs) >= 2
 
 

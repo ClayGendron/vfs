@@ -468,22 +468,22 @@ class Grover:
     # ------------------------------------------------------------------
 
     def predecessors(self, path: str) -> PredecessorsResult:
-        return self._async.predecessors(path)
+        return self._run(self._async.predecessors(path))
 
     def successors(self, path: str) -> SuccessorsResult:
-        return self._async.successors(path)
+        return self._run(self._async.successors(path))
 
     def ancestors(self, path: str) -> AncestorsResult:
-        return self._async.ancestors(path)
+        return self._run(self._async.ancestors(path))
 
     def descendants(self, path: str) -> DescendantsResult:
-        return self._async.descendants(path)
+        return self._run(self._async.descendants(path))
 
     def shortest_path(self, source: str, target: str) -> ShortestPathResult:
-        return self._async.shortest_path(source, target)
+        return self._run(self._async.shortest_path(source, target))
 
     def has_path(self, source: str, target: str) -> HasPathResult:
-        return self._async.has_path(source, target)
+        return self._run(self._async.has_path(source, target))
 
     # ------------------------------------------------------------------
     # Graph subgraph wrappers (sync)
@@ -495,7 +495,7 @@ class Grover:
         *,
         path: str | None = None,
     ) -> SubgraphSearchResult:
-        return self._async.subgraph(candidates, path=path)
+        return self._run(self._async.subgraph(candidates, path=path))
 
     def min_meeting_subgraph(
         self,
@@ -503,7 +503,7 @@ class Grover:
         *,
         max_size: int = 50,
     ) -> MeetingSubgraphResult:
-        return self._async.min_meeting_subgraph(candidates, max_size=max_size)
+        return self._run(self._async.min_meeting_subgraph(candidates, max_size=max_size))
 
     def ego_graph(
         self,
@@ -513,11 +513,13 @@ class Grover:
         direction: str = "both",
         edge_types: list[str] | None = None,
     ) -> EgoGraphResult:
-        return self._async.ego_graph(
-            path,
-            max_depth=max_depth,
-            direction=direction,
-            edge_types=edge_types,
+        return self._run(
+            self._async.ego_graph(
+                path,
+                max_depth=max_depth,
+                direction=direction,
+                edge_types=edge_types,
+            )
         )
 
     # ------------------------------------------------------------------
@@ -531,8 +533,8 @@ class Grover:
         candidates: FileSearchResult | None = None,
         personalization: dict[str, float] | None = None,
     ) -> PageRankResult:
-        return self._async.pagerank(
-            path=path, candidates=candidates, personalization=personalization
+        return self._run(
+            self._async.pagerank(path=path, candidates=candidates, personalization=personalization)
         )
 
     def betweenness_centrality(
@@ -541,7 +543,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> BetweennessResult:
-        return self._async.betweenness_centrality(path=path, candidates=candidates)
+        return self._run(self._async.betweenness_centrality(path=path, candidates=candidates))
 
     def closeness_centrality(
         self,
@@ -549,7 +551,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> ClosenessResult:
-        return self._async.closeness_centrality(path=path, candidates=candidates)
+        return self._run(self._async.closeness_centrality(path=path, candidates=candidates))
 
     def harmonic_centrality(
         self,
@@ -557,7 +559,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> HarmonicResult:
-        return self._async.harmonic_centrality(path=path, candidates=candidates)
+        return self._run(self._async.harmonic_centrality(path=path, candidates=candidates))
 
     def katz_centrality(
         self,
@@ -565,7 +567,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> KatzResult:
-        return self._async.katz_centrality(path=path, candidates=candidates)
+        return self._run(self._async.katz_centrality(path=path, candidates=candidates))
 
     def degree_centrality(
         self,
@@ -573,7 +575,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult:
-        return self._async.degree_centrality(path=path, candidates=candidates)
+        return self._run(self._async.degree_centrality(path=path, candidates=candidates))
 
     def in_degree_centrality(
         self,
@@ -581,7 +583,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult:
-        return self._async.in_degree_centrality(path=path, candidates=candidates)
+        return self._run(self._async.in_degree_centrality(path=path, candidates=candidates))
 
     def out_degree_centrality(
         self,
@@ -589,7 +591,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult:
-        return self._async.out_degree_centrality(path=path, candidates=candidates)
+        return self._run(self._async.out_degree_centrality(path=path, candidates=candidates))
 
     def hits(
         self,
@@ -597,7 +599,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> HitsResult:
-        return self._async.hits(path=path, candidates=candidates)
+        return self._run(self._async.hits(path=path, candidates=candidates))
 
     # ------------------------------------------------------------------
     # Other graph operations (sync)
@@ -610,7 +612,7 @@ class Grover:
         *,
         path: str | None = None,
     ) -> CommonNeighborsResult:
-        return self._async.common_neighbors(path1, path2, path=path)
+        return self._run(self._async.common_neighbors(path1, path2, path=path))
 
     # ------------------------------------------------------------------
     # Search wrappers (sync)

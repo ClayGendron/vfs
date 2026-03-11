@@ -354,10 +354,10 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         mount = next(m for m in ga._ctx.registry.list_visible_mounts() if m.path == "/app")
         mount.filesystem.graph_provider = MinimalGraph()
         with pytest.raises(AttributeError):
-            ga.pagerank(path="/app")
+            await ga.pagerank(path="/app")
         with pytest.raises(AttributeError):
-            ga.betweenness_centrality(path="/app")
+            await ga.betweenness_centrality(path="/app")
         with pytest.raises(AttributeError):
-            ga.hits(path="/app")
+            await ga.hits(path="/app")
     finally:
         await ga.close()

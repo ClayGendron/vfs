@@ -462,49 +462,81 @@ class GroverMiddleware(AgentMiddleware):
         return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
-    # Graph tools (sync on both Grover and GroverAsync — in-memory rustworkx)
+    # Graph tools
     # ------------------------------------------------------------------
 
     def _create_successors_tool(self) -> BaseTool:
-        grover = self.grover
+        is_async = self._is_async
+        grover_s = cast("Grover", self.grover) if not is_async else None
+        grover_a = cast("GroverAsync", self.grover) if is_async else None
 
         def successors(
             path: Annotated[str, "Absolute virtual path to the file"],
         ) -> str:
+            if grover_a is not None:
+                return asyncio.run(successors_async(path))
+            assert grover_s is not None
             try:
-                result = grover.successors(path)
+                result = grover_s.successors(path)
             except Exception as e:
                 return f"Error: {e}"
             return _format_graph_result(result, "successors")
 
-        return StructuredTool.from_function(
-            name="successors",
-            description=(
+        async def successors_async(path: str) -> str:
+            assert grover_a is not None
+            try:
+                result = await grover_a.successors(path)
+            except Exception as e:
+                return f"Error: {e}"
+            return _format_graph_result(result, "successors")
+
+        kwargs: dict[str, object] = {
+            "name": "successors",
+            "description": (
                 "Show graph successors of this file — nodes it points to "
                 "(outgoing edges). Returns the direct successor list from "
                 "the knowledge graph."
             ),
-            func=successors,
-        )
+            "func": successors,
+        }
+        if is_async:
+            kwargs["coroutine"] = successors_async
+        return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]
 
     def _create_predecessors_tool(self) -> BaseTool:
-        grover = self.grover
+        is_async = self._is_async
+        grover_s = cast("Grover", self.grover) if not is_async else None
+        grover_a = cast("GroverAsync", self.grover) if is_async else None
 
         def predecessors(
             path: Annotated[str, "Absolute virtual path to the file"],
         ) -> str:
+            if grover_a is not None:
+                return asyncio.run(predecessors_async(path))
+            assert grover_s is not None
             try:
-                result = grover.predecessors(path)
+                result = grover_s.predecessors(path)
             except Exception as e:
                 return f"Error: {e}"
             return _format_graph_result(result, "predecessors")
 
-        return StructuredTool.from_function(
-            name="predecessors",
-            description=(
+        async def predecessors_async(path: str) -> str:
+            assert grover_a is not None
+            try:
+                result = await grover_a.predecessors(path)
+            except Exception as e:
+                return f"Error: {e}"
+            return _format_graph_result(result, "predecessors")
+
+        kwargs: dict[str, object] = {
+            "name": "predecessors",
+            "description": (
                 "Show graph predecessors of this file — nodes with edges "
                 "pointing to it (incoming edges). Useful for understanding "
                 "the impact of changes."
             ),
-            func=predecessors,
-        )
+            "func": predecessors,
+        }
+        if is_async:
+            kwargs["coroutine"] = predecessors_async
+        return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]

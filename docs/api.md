@@ -601,42 +601,46 @@ graph.get_edge(source, target) -> dict
 graph.edges() -> list[tuple[str, str, dict]]
 ```
 
-### Query Methods
+### Query Methods (async)
+
+All query methods are `async def`. Use `await` when calling on `RustworkxGraph` directly.
 
 ```python
-graph.predecessors(path) -> list[Ref]     # Incoming edges (predecessors)
-graph.successors(path) -> list[Ref]       # Outgoing edges (successors)
-graph.path_between(source, target) -> list[Ref] | None  # Dijkstra
-graph.contains(path) -> list[Ref]         # "contains" edges only
-graph.by_parent(path) -> list[Ref]        # Nodes with matching parent_path
+await graph.predecessors(path) -> list[Ref]     # Incoming edges (predecessors)
+await graph.successors(path) -> list[Ref]       # Outgoing edges (successors)
+await graph.path_between(source, target) -> list[Ref] | None  # Dijkstra
+await graph.contains(path) -> list[Ref]         # "contains" edges only
+await graph.by_parent(path) -> list[Ref]        # Nodes with matching parent_path
 ```
 
-### Centrality (`SupportsCentrality`)
+### Centrality (`SupportsCentrality`) — async + `to_thread`
+
+Heavy algorithms run in a thread pool via `asyncio.to_thread()` with immutable snapshots for thread safety.
 
 ```python
-graph.pagerank(*, alpha=0.85, personalization=None, max_iter=100, tol=1e-6) -> dict[str, float]
-graph.betweenness_centrality(*, normalized=True) -> dict[str, float]
-graph.closeness_centrality() -> dict[str, float]
-graph.katz_centrality(*, alpha=0.1, beta=1.0, max_iter=1000, tol=1e-6) -> dict[str, float]
-graph.degree_centrality() -> dict[str, float]
-graph.in_degree_centrality() -> dict[str, float]
-graph.out_degree_centrality() -> dict[str, float]
+await graph.pagerank(*, alpha=0.85, personalization=None, max_iter=100, tol=1e-6) -> dict[str, float]
+await graph.betweenness_centrality(*, normalized=True) -> dict[str, float]
+await graph.closeness_centrality() -> dict[str, float]
+await graph.katz_centrality(*, alpha=0.1, beta=1.0, max_iter=1000, tol=1e-6) -> dict[str, float]
+await graph.degree_centrality() -> dict[str, float]
+await graph.in_degree_centrality() -> dict[str, float]
+await graph.out_degree_centrality() -> dict[str, float]
 ```
 
-### Connectivity (`SupportsConnectivity`)
+### Connectivity (`SupportsConnectivity`) — async + `to_thread`
 
 ```python
-graph.weakly_connected_components() -> list[set[str]]
-graph.strongly_connected_components() -> list[set[str]]
-graph.is_weakly_connected() -> bool
+await graph.weakly_connected_components() -> list[set[str]]
+await graph.strongly_connected_components() -> list[set[str]]
+await graph.is_weakly_connected() -> bool
 ```
 
-### Traversal (`SupportsTraversal`)
+### Traversal (`SupportsTraversal`) — async + `to_thread`
 
 ```python
-graph.ancestors(path) -> set[str]
-graph.descendants(path) -> set[str]
-graph.all_simple_paths(source, target, *, cutoff=None) -> list[list[str]]
+await graph.ancestors(path) -> set[str]
+await graph.descendants(path) -> set[str]
+await graph.all_simple_paths(source, target, *, cutoff=None) -> list[list[str]]
 graph.topological_sort() -> list[str]                   # Raises ValueError on cycles
 graph.shortest_path_length(source, target) -> float | None
 ```
@@ -1014,7 +1018,7 @@ middleware = GroverMiddleware(grover_async)  # tools get native async coroutines
 middleware = GroverMiddleware(grover, enable_search=False, enable_graph=False)
 ```
 
-When `GroverAsync` is passed, non-graph tools include both sync and async (coroutine) implementations for native async execution. Graph tools remain sync-only (in-memory rustworkx).
+When `GroverAsync` is passed, all tools include both sync and async (coroutine) implementations for native async execution.
 
 | Tool | Description |
 |------|-------------|

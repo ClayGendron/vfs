@@ -39,12 +39,11 @@ if TYPE_CHECKING:
 class GraphProvider(Protocol):
     """Graph interface — nodes are file paths, edges are dependencies.
 
-    Includes all graph capabilities: CRUD, queries, centrality, traversal,
-    subgraph extraction, filtering, node similarity, and SQL persistence.
+    Mutations are synchronous. Query/algorithm methods are async.
     """
 
     # ------------------------------------------------------------------
-    # Graph Internal Operations
+    # Graph Internal Operations (sync mutations + sync utilities)
     # ------------------------------------------------------------------
 
     def add_node(self, path: str, **attrs: object) -> None: ...
@@ -76,47 +75,29 @@ class GraphProvider(Protocol):
     @property
     def graph(self) -> Any: ...
 
+    def remove_file_subgraph(self, path: str) -> list[str]: ...
+
     async def from_sql(
         self, session: AsyncSession, file_model: type | None = None, *, path_prefix: str = ""
     ) -> None: ...
 
     # ------------------------------------------------------------------
-    # Graph APIs — typed result returns
+    # Graph APIs — async typed result returns
     # ------------------------------------------------------------------
 
-    def predecessors(self, path: str) -> PredecessorsResult: ...
+    # Light reads (async inline)
 
-    def successors(self, path: str) -> SuccessorsResult: ...
+    async def predecessors(self, path: str) -> PredecessorsResult: ...
 
-    def path_between(self, source: str, target: str) -> ShortestPathResult: ...
+    async def successors(self, path: str) -> SuccessorsResult: ...
 
-    def contains(self, path: str) -> list[Ref]: ...
+    async def contains(self, path: str) -> list[Ref]: ...
 
-    def by_parent(self, parent_path: str) -> list[Ref]: ...
+    async def by_parent(self, parent_path: str) -> list[Ref]: ...
 
-    def remove_file_subgraph(self, path: str) -> list[str]: ...
+    async def subgraph(self, paths: list[str]) -> SubgraphSearchResult: ...
 
-    # Traversal
-
-    def ancestors(self, path: str) -> AncestorsResult: ...
-
-    def descendants(self, path: str) -> DescendantsResult: ...
-
-    def has_path(self, source: str, target: str) -> HasPathResult: ...
-
-    def all_simple_paths(
-        self, source: str, target: str, *, cutoff: int | None = None
-    ) -> list[list[str]]: ...
-
-    def topological_sort(self) -> list[str]: ...
-
-    def shortest_path_length(self, source: str, target: str) -> float | None: ...
-
-    # Subgraph extraction
-
-    def subgraph(self, paths: list[str]) -> SubgraphSearchResult: ...
-
-    def neighborhood(
+    async def neighborhood(
         self,
         path: str,
         *,
@@ -125,19 +106,47 @@ class GraphProvider(Protocol):
         edge_types: list[str] | None = None,
     ) -> EgoGraphResult: ...
 
-    def meeting_subgraph(
+    async def connecting_subgraph(self, paths: list[str]) -> GraphProvider: ...
+
+    async def common_neighbors(self, path1: str, path2: str) -> CommonNeighborsResult: ...
+
+    async def node_similarity(
+        self, path1: str, path2: str, *, method: str = "jaccard"
+    ) -> float: ...
+
+    async def similar_nodes(
+        self, path: str, *, method: str = "jaccard", k: int = 10
+    ) -> list[tuple[str, float]]: ...
+
+    # Heavy algorithms (async + to_thread)
+
+    async def path_between(self, source: str, target: str) -> ShortestPathResult: ...
+
+    async def ancestors(self, path: str) -> AncestorsResult: ...
+
+    async def descendants(self, path: str) -> DescendantsResult: ...
+
+    async def has_path(self, source: str, target: str) -> HasPathResult: ...
+
+    async def all_simple_paths(
+        self, source: str, target: str, *, cutoff: int | None = None
+    ) -> list[list[str]]: ...
+
+    async def topological_sort(self) -> list[str]: ...
+
+    async def shortest_path_length(self, source: str, target: str) -> float | None: ...
+
+    async def meeting_subgraph(
         self, start_paths: list[str], *, max_size: int = 50
     ) -> MeetingSubgraphResult: ...
 
-    def connecting_subgraph(self, paths: list[str]) -> GraphProvider: ...
+    async def common_reachable(
+        self, paths: list[str], *, direction: str = "forward"
+    ) -> set[str]: ...
 
-    def common_reachable(self, paths: list[str], *, direction: str = "forward") -> set[str]: ...
+    # Centrality algorithms
 
-    def common_neighbors(self, path1: str, path2: str) -> CommonNeighborsResult: ...
-
-    # Centrality algorithms — return typed results
-
-    def pagerank(
+    async def pagerank(
         self,
         candidates: FileSearchResult | None = None,
         *,
@@ -147,24 +156,24 @@ class GraphProvider(Protocol):
         tol: float = 1e-6,
     ) -> PageRankResult: ...
 
-    def betweenness_centrality(
+    async def betweenness_centrality(
         self,
         candidates: FileSearchResult | None = None,
         *,
         normalized: bool = True,
     ) -> BetweennessResult: ...
 
-    def closeness_centrality(
+    async def closeness_centrality(
         self,
         candidates: FileSearchResult | None = None,
     ) -> ClosenessResult: ...
 
-    def harmonic_centrality(
+    async def harmonic_centrality(
         self,
         candidates: FileSearchResult | None = None,
     ) -> HarmonicResult: ...
 
-    def hits(
+    async def hits(
         self,
         candidates: FileSearchResult | None = None,
         *,
@@ -172,7 +181,7 @@ class GraphProvider(Protocol):
         tol: float = 1e-8,
     ) -> HitsResult: ...
 
-    def katz_centrality(
+    async def katz_centrality(
         self,
         candidates: FileSearchResult | None = None,
         *,
@@ -182,33 +191,25 @@ class GraphProvider(Protocol):
         tol: float = 1e-6,
     ) -> KatzResult: ...
 
-    def degree_centrality(
+    async def degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult: ...
 
-    def in_degree_centrality(
+    async def in_degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult: ...
 
-    def out_degree_centrality(
+    async def out_degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult: ...
 
     # Connectivity
 
-    def weakly_connected_components(self) -> list[set[str]]: ...
+    async def weakly_connected_components(self) -> list[set[str]]: ...
 
-    def strongly_connected_components(self) -> list[set[str]]: ...
+    async def strongly_connected_components(self) -> list[set[str]]: ...
 
-    def is_weakly_connected(self) -> bool: ...
-
-    # Node similarity
-
-    def node_similarity(self, path1: str, path2: str, *, method: str = "jaccard") -> float: ...
-
-    def similar_nodes(
-        self, path: str, *, method: str = "jaccard", k: int = 10
-    ) -> list[tuple[str, float]]: ...
+    async def is_weakly_connected(self) -> bool: ...

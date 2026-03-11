@@ -302,15 +302,15 @@ class TestGraphMethodsNoop:
         fs = DatabaseFileSystem()
         assert fs.graph_has_node("/a.py") is False
 
-    def test_graph_predecessors_returns_empty(self):
+    async def test_graph_predecessors_returns_empty(self):
         fs = DatabaseFileSystem()
-        result = fs.graph_predecessors("/a.py")
+        result = await fs.graph_predecessors("/a.py")
         assert len(result) == 0
         assert result.success is True
 
-    def test_graph_successors_returns_empty(self):
+    async def test_graph_successors_returns_empty(self):
         fs = DatabaseFileSystem()
-        result = fs.graph_successors("/a.py")
+        result = await fs.graph_successors("/a.py")
         assert len(result) == 0
         assert result.success is True
 
@@ -330,9 +330,9 @@ class TestGraphMethodsNoop:
         fs = DatabaseFileSystem()
         assert fs.graph_nodes() == []
 
-    def test_graph_path_between_returns_empty(self):
+    async def test_graph_path_between_returns_empty(self):
         fs = DatabaseFileSystem()
-        result = fs.graph_path_between("/a.py", "/b.py")
+        result = await fs.graph_path_between("/a.py", "/b.py")
         assert not result
         assert result.success is True
 

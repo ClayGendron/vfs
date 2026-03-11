@@ -345,14 +345,9 @@ class TestErrorHandling:
 
 class TestAsyncTools:
     async def test_tools_have_coroutine_when_async(self, middleware_async: GroverMiddleware):
-        """Non-graph tools should have coroutine when GroverAsync is used."""
-        graph_tools = {"successors", "predecessors"}
+        """All tools should have coroutine when GroverAsync is used."""
         for tool in middleware_async.tools:
-            if tool.name in graph_tools:
-                # Graph tools are sync on both Grover and GroverAsync
-                assert tool.coroutine is None, f"Tool {tool.name} should not have coroutine"
-            else:
-                assert tool.coroutine is not None, f"Tool {tool.name} should have coroutine"
+            assert tool.coroutine is not None, f"Tool {tool.name} should have coroutine"
 
     async def test_tools_no_coroutine_when_sync(self, middleware: GroverMiddleware):
         """No tools should have coroutine when Grover is used."""
@@ -386,11 +381,11 @@ class TestAsyncTools:
     async def test_graph_tools_invoke_with_async(
         self, middleware_async: GroverMiddleware, grover_async: GroverAsync
     ):
-        """Graph tools should work via sync invoke even with GroverAsync."""
+        """Graph tools should work via async invoke with GroverAsync."""
         await grover_async.write("/project/standalone.py", "x = 42\n")
         await grover_async.index("/project")
         tool = next(t for t in middleware_async.tools if t.name == "successors")
-        result = tool.invoke({"path": "/project/standalone.py"})
+        result = await tool.ainvoke({"path": "/project/standalone.py"})
         assert "No successors" in result
 
 

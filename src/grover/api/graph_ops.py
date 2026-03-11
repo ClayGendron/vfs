@@ -144,38 +144,38 @@ class GraphOpsMixin:
         return result
 
     # ------------------------------------------------------------------
-    # Traversal queries — pure delegates
+    # Traversal queries — pure async delegates
     # ------------------------------------------------------------------
 
-    def predecessors(self, path: str) -> PredecessorsResult:
+    async def predecessors(self, path: str) -> PredecessorsResult:
         """Return graph predecessors of *path* (nodes with edges pointing to it)."""
-        return self._ctx.resolve_graph(path).predecessors(path)
+        return await self._ctx.resolve_graph(path).predecessors(path)
 
-    def successors(self, path: str) -> SuccessorsResult:
+    async def successors(self, path: str) -> SuccessorsResult:
         """Return graph successors of *path* (nodes it points to)."""
-        return self._ctx.resolve_graph(path).successors(path)
+        return await self._ctx.resolve_graph(path).successors(path)
 
-    def ancestors(self, path: str) -> AncestorsResult:
+    async def ancestors(self, path: str) -> AncestorsResult:
         """Return all nodes reachable by following edges backward from *path*."""
-        return self._ctx.resolve_graph(path).ancestors(path)
+        return await self._ctx.resolve_graph(path).ancestors(path)
 
-    def descendants(self, path: str) -> DescendantsResult:
+    async def descendants(self, path: str) -> DescendantsResult:
         """Return all nodes reachable by following edges forward from *path*."""
-        return self._ctx.resolve_graph(path).descendants(path)
+        return await self._ctx.resolve_graph(path).descendants(path)
 
-    def shortest_path(self, source: str, target: str) -> ShortestPathResult:
+    async def shortest_path(self, source: str, target: str) -> ShortestPathResult:
         """Return the shortest path from *source* to *target*."""
-        return self._ctx.resolve_graph(source).path_between(source, target)
+        return await self._ctx.resolve_graph(source).path_between(source, target)
 
-    def has_path(self, source: str, target: str) -> HasPathResult:
+    async def has_path(self, source: str, target: str) -> HasPathResult:
         """Check if a directed path exists from *source* to *target*."""
-        return self._ctx.resolve_graph(source).has_path(source, target)
+        return await self._ctx.resolve_graph(source).has_path(source, target)
 
     # ------------------------------------------------------------------
-    # Subgraph extraction — pure delegates
+    # Subgraph extraction — pure async delegates
     # ------------------------------------------------------------------
 
-    def subgraph(
+    async def subgraph(
         self,
         candidates: FileSearchResult,
         *,
@@ -183,9 +183,9 @@ class GraphOpsMixin:
     ) -> SubgraphSearchResult:
         """Extract the induced subgraph for nodes in *candidates*."""
         graph = self._ctx.resolve_graph_any(path)
-        return graph.subgraph(list(candidates.paths))
+        return await graph.subgraph(list(candidates.paths))
 
-    def min_meeting_subgraph(
+    async def min_meeting_subgraph(
         self,
         candidates: FileSearchResult,
         *,
@@ -194,9 +194,9 @@ class GraphOpsMixin:
         """Extract the subgraph connecting candidate nodes via shortest paths."""
         paths = list(candidates.paths)
         graph = self._ctx.resolve_graph_any(paths[0] if paths else None)
-        return graph.meeting_subgraph(paths, max_size=max_size)
+        return await graph.meeting_subgraph(paths, max_size=max_size)
 
-    def ego_graph(
+    async def ego_graph(
         self,
         path: str,
         *,
@@ -205,7 +205,7 @@ class GraphOpsMixin:
         edge_types: list[str] | None = None,
     ) -> EgoGraphResult:
         """Extract the neighborhood subgraph around *path*."""
-        return self._ctx.resolve_graph(path).neighborhood(
+        return await self._ctx.resolve_graph(path).neighborhood(
             path,
             max_depth=max_depth,
             direction=direction,
@@ -213,10 +213,10 @@ class GraphOpsMixin:
         )
 
     # ------------------------------------------------------------------
-    # Centrality algorithms — pure delegates
+    # Centrality algorithms — pure async delegates
     # ------------------------------------------------------------------
 
-    def pagerank(
+    async def pagerank(
         self,
         *,
         path: str | None = None,
@@ -224,87 +224,87 @@ class GraphOpsMixin:
         personalization: dict[str, float] | None = None,
     ) -> PageRankResult:
         """Run PageRank on the knowledge graph."""
-        return self._ctx.resolve_graph_any(path).pagerank(
+        return await self._ctx.resolve_graph_any(path).pagerank(
             candidates, personalization=personalization
         )
 
-    def betweenness_centrality(
+    async def betweenness_centrality(
         self,
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> BetweennessResult:
         """Betweenness centrality on the knowledge graph."""
-        return self._ctx.resolve_graph_any(path).betweenness_centrality(candidates)
+        return await self._ctx.resolve_graph_any(path).betweenness_centrality(candidates)
 
-    def closeness_centrality(
+    async def closeness_centrality(
         self,
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> ClosenessResult:
         """Closeness centrality on the knowledge graph."""
-        return self._ctx.resolve_graph_any(path).closeness_centrality(candidates)
+        return await self._ctx.resolve_graph_any(path).closeness_centrality(candidates)
 
-    def harmonic_centrality(
+    async def harmonic_centrality(
         self,
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> HarmonicResult:
         """Harmonic centrality on the knowledge graph."""
-        return self._ctx.resolve_graph_any(path).harmonic_centrality(candidates)
+        return await self._ctx.resolve_graph_any(path).harmonic_centrality(candidates)
 
-    def katz_centrality(
+    async def katz_centrality(
         self,
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> KatzResult:
         """Katz centrality on the knowledge graph."""
-        return self._ctx.resolve_graph_any(path).katz_centrality(candidates)
+        return await self._ctx.resolve_graph_any(path).katz_centrality(candidates)
 
-    def degree_centrality(
+    async def degree_centrality(
         self,
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult:
         """Degree centrality (in + out) on the knowledge graph."""
-        return self._ctx.resolve_graph_any(path).degree_centrality(candidates)
+        return await self._ctx.resolve_graph_any(path).degree_centrality(candidates)
 
-    def in_degree_centrality(
+    async def in_degree_centrality(
         self,
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult:
         """In-degree centrality on the knowledge graph."""
-        return self._ctx.resolve_graph_any(path).in_degree_centrality(candidates)
+        return await self._ctx.resolve_graph_any(path).in_degree_centrality(candidates)
 
-    def out_degree_centrality(
+    async def out_degree_centrality(
         self,
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> DegreeResult:
         """Out-degree centrality on the knowledge graph."""
-        return self._ctx.resolve_graph_any(path).out_degree_centrality(candidates)
+        return await self._ctx.resolve_graph_any(path).out_degree_centrality(candidates)
 
-    def hits(
+    async def hits(
         self,
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
     ) -> HitsResult:
         """HITS hub and authority scores."""
-        return self._ctx.resolve_graph_any(path).hits(candidates)
+        return await self._ctx.resolve_graph_any(path).hits(candidates)
 
     # ------------------------------------------------------------------
-    # Other graph operations — pure delegates
+    # Other graph operations — pure async delegates
     # ------------------------------------------------------------------
 
-    def common_neighbors(
+    async def common_neighbors(
         self,
         path1: str,
         path2: str,
@@ -312,4 +312,4 @@ class GraphOpsMixin:
         path: str | None = None,
     ) -> CommonNeighborsResult:
         """Find common neighbors of two nodes."""
-        return self._ctx.resolve_graph_any(path).common_neighbors(path1, path2)
+        return await self._ctx.resolve_graph_any(path).common_neighbors(path1, path2)

@@ -205,7 +205,7 @@ class TestGroverGraph:
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         grover.write("/project/funcs.py", code)
         grover.flush()
-        refs = grover.get_graph().contains("/project/funcs.py")
+        refs = grover._run(grover.get_graph().contains("/project/funcs.py"))
         assert len(refs) >= 2
         assert any("foo" in r.path for r in refs)
         assert any("bar" in r.path for r in refs)
