@@ -9,7 +9,9 @@ from collections import deque
 from typing import TYPE_CHECKING, Any
 
 import rustworkx
+from sqlalchemy import select
 
+from grover.models.connection import FileConnection, FileConnectionBase
 from grover.ref import Ref
 from grover.results.search import (
     AncestorsResult,
@@ -60,6 +62,7 @@ class RustworkxGraph:
         self._loaded_at: float | None = None
         self._stale_after: float | None = stale_after
         # Refresh config (set via configure_refresh)
+        self._refresh_file_connection_model: type[FileConnectionBase] = FileConnection
         self._refresh_path_prefix: str = ""
 
     # ------------------------------------------------------------------
@@ -99,8 +102,10 @@ class RustworkxGraph:
     def configure_refresh(
         self,
         path_prefix: str = "",
+        file_connection_model: type[FileConnectionBase] = FileConnection,
     ) -> None:
         """Store refresh parameters so ``_ensure_fresh`` can call ``from_sql``."""
+        self._refresh_file_connection_model = file_connection_model
         self._refresh_path_prefix = path_prefix
 
     async def _ensure_fresh(self, session: AsyncSession | None) -> None:
@@ -111,6 +116,7 @@ class RustworkxGraph:
             return  # No session available — serve from memory as-is
         await self.from_sql(
             session,
+            file_connection_model=self._refresh_file_connection_model,
             path_prefix=self._refresh_path_prefix,
         )
 
@@ -1433,6 +1439,7 @@ class RustworkxGraph:
         self,
         session: AsyncSession,
         *,
+        file_connection_model: type[FileConnectionBase] = FileConnection,
         path_prefix: str = "",
     ) -> None:
         """Load graph state from the database, replacing in-memory state.
@@ -1443,10 +1450,6 @@ class RustworkxGraph:
         Build-then-swap: new state is assembled in local variables and assigned
         atomically at the end, so concurrent readers never see an empty graph.
         """
-        from sqlalchemy import select
-
-        from grover.models.connection import FileConnection
-
         def _prefix(p: str) -> str:
             if not path_prefix:
                 return p
@@ -1459,7 +1462,7 @@ class RustworkxGraph:
         new_edges: set[tuple[str, str]] = set()
 
         # Load all edges — nodes come exclusively from connection endpoints
-        result = await session.execute(select(FileConnection))
+        result = await session.execute(select(file_connection_model))
         for edge_row in result.scalars().all():
             src = _prefix(edge_row.source_path)
             tgt = _prefix(edge_row.target_path)

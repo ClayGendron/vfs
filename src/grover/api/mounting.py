@@ -175,7 +175,11 @@ class MountMixin:
         if fs is not None and not new_mount.hidden and new_mount.session_factory is not None:
             gp = getattr(fs, "graph_provider", None)
             if gp is not None and hasattr(gp, "configure_refresh"):
-                gp.configure_refresh(new_mount.path)
+                fcm = getattr(fs, "file_connection_model", None)
+                kwargs: dict = {"path_prefix": new_mount.path}
+                if fcm is not None:
+                    kwargs["file_connection_model"] = fcm
+                gp.configure_refresh(**kwargs)
 
         # Call open() on the filesystem if needed (skip LocalFileSystem — already opened above)
         if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(

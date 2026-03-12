@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from grover.backends.database import DatabaseFileSystem
-from grover.models.connection import FileConnection
+from grover.models.connection import FileConnection, FileConnectionBase
 from grover.models.file import File, FileBase
 from grover.models.version import FileVersionBase
 from grover.providers.graph import RustworkxGraph
@@ -27,6 +27,12 @@ class WikiFileVersion(FileVersionBase, table=True):
     """Custom file version model with a different table name."""
 
     __tablename__ = "wiki_file_versions"
+
+
+class WikiFileConnection(FileConnectionBase, table=True):
+    """Custom connection model with a different table name."""
+
+    __tablename__ = "wiki_file_connections"
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +339,47 @@ class TestGraphConnectionsOnly:
             await g.from_sql(session)
             assert g.node_count == 0
             assert g.edge_count == 0
+
+        await engine.dispose()
+
+    async def test_from_sql_with_custom_connection_model(self):
+        """from_sql with custom file_connection_model queries the custom table."""
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with factory() as session:
+            # Insert into custom connection table
+            session.add(
+                WikiFileConnection(
+                    source_path="/wiki/a.md",
+                    target_path="/wiki/b.md",
+                    type="links_to",
+                    path="/wiki/a.md[links_to]/wiki/b.md",
+                )
+            )
+            # Insert into default connection table — should NOT be loaded
+            session.add(
+                FileConnection(
+                    source_path="/default/x.py",
+                    target_path="/default/y.py",
+                    type="imports",
+                    path="/default/x.py[imports]/default/y.py",
+                )
+            )
+            await session.commit()
+
+            g = RustworkxGraph()
+            await g.from_sql(session, file_connection_model=WikiFileConnection)
+
+            # Only custom table connections loaded
+            assert g.has_node("/wiki/a.md")
+            assert g.has_node("/wiki/b.md")
+            assert g.has_edge("/wiki/a.md", "/wiki/b.md")
+            assert not g.has_node("/default/x.py")
+            assert not g.has_node("/default/y.py")
+            assert g.node_count == 2
 
         await engine.dispose()
 
