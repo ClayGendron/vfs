@@ -12,7 +12,7 @@ Grover's identity model is built on one rule: **every entity is a file or direct
 
 This means:
 
-- There is no separate `grover_nodes` table. The `grover_files` table *is* the node registry.
+- There is no separate `grover_nodes` table. Graph nodes come exclusively from `grover_file_connections` endpoints — only files that participate in connections are in the graph.
 - A `Ref` is a thin wrapper around a path string that can represent any entity: files (`/src/auth.py`), chunks (`/src/auth.py#login`), versions (`/src/auth.py@3`), or connections (`/src/auth.py[imports]/src/utils.py`). Properties lazily decompose the path.
 - Graph edges connect paths to paths. If you can see the file, you can see the node.
 
@@ -307,7 +307,7 @@ All persistent edges (user-created and analyzer-discovered) are persisted throug
 3. `ConnectionService` writes the record to `grover_file_connections`
 4. After the session commits, `_process_connection_added` updates the in-memory graph (`graph.add_edge()`)
 
-On mount init, `from_sql()` loads file nodes from `grover_files` and edges from `grover_file_connections` to populate the graph projection.
+On mount init, `from_sql()` loads edges from `grover_file_connections` to populate the graph projection — nodes come exclusively from connection endpoints. Files with no connections are not loaded into the graph. Query methods handle unknown paths gracefully: single-node queries return empty results, and candidate-based methods (centrality, subgraph) inject unknown paths as isolated nodes or with inferred edges for chunks/versions.
 
 **Structural "contains" edges** (file-to-chunk membership) are NOT persisted — they are in-memory only and rebuilt every time a file is analyzed. This keeps the DB clean and avoids conflicts between structural and dependency edges.
 

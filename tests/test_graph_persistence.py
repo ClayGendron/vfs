@@ -33,9 +33,7 @@ class TestFromSql:
         assert g.edge_count == 0
 
     async def test_loads_nodes_and_edges(self, async_session: AsyncSession):
-        """Files and connections in the DB should be loaded as nodes and edges."""
-        async_session.add(File(path="/a.py", parent_path="/"))
-        async_session.add(File(path="/b.py", parent_path="/"))
+        """Connection endpoints should be loaded as nodes and edges."""
         async_session.add(
             FileConnection(
                 source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
@@ -52,29 +50,8 @@ class TestFromSql:
         assert g.node_count == 2
         assert g.edge_count == 1
 
-    async def test_skips_deleted_files(self, async_session: AsyncSession):
-        """Soft-deleted files should not be loaded as nodes."""
-        from datetime import UTC, datetime
-
-        async_session.add(File(path="/active.py", parent_path="/"))
-        async_session.add(
-            File(
-                path="/deleted.py",
-                parent_path="/",
-                deleted_at=datetime.now(UTC),
-            )
-        )
-        await async_session.flush()
-
-        g = RustworkxGraph()
-        await g.from_sql(async_session)
-
-        assert g.has_node("/active.py")
-        assert not g.has_node("/deleted.py")
-
     async def test_dangling_edge_creates_node(self, async_session: AsyncSession):
         """Edges referencing paths not in the files table should auto-create nodes."""
-        async_session.add(File(path="/a.py", parent_path="/"))
         async_session.add(
             FileConnection(
                 source_path="/a.py",
@@ -97,13 +74,21 @@ class TestFromSql:
         g = RustworkxGraph()
         g.add_node("/old.py")
 
-        async_session.add(File(path="/new.py", parent_path="/"))
+        async_session.add(
+            FileConnection(
+                source_path="/new.py",
+                target_path="/new2.py",
+                type="imports",
+                path="/new.py[imports]/new2.py",
+            )
+        )
         await async_session.flush()
 
         await g.from_sql(async_session)
 
         assert not g.has_node("/old.py")
         assert g.has_node("/new.py")
+        assert g.has_node("/new2.py")
 
     async def test_from_sql_atomic_no_empty_intermediate(self, async_session: AsyncSession):
         """from_sql builds new state in local vars, no empty intermediate on self."""
@@ -113,8 +98,6 @@ class TestFromSql:
         g.add_edge("/old.py", "/old2.py", "imports")
 
         # Set up DB with different data
-        async_session.add(File(path="/new.py", parent_path="/"))
-        async_session.add(File(path="/new2.py", parent_path="/"))
         async_session.add(
             FileConnection(
                 source_path="/new.py",
@@ -144,6 +127,27 @@ class TestFromSql:
 
         assert g.loaded_at is not None
         assert before <= g.loaded_at <= after
+
+    async def test_from_sql_ignores_files_without_connections(self, async_session: AsyncSession):
+        """Files in DB but with no connections should not appear in the graph."""
+        async_session.add(File(path="/lonely.py", parent_path="/"))
+        async_session.add(
+            FileConnection(
+                source_path="/a.py",
+                target_path="/b.py",
+                type="imports",
+                path="/a.py[imports]/b.py",
+            )
+        )
+        await async_session.flush()
+
+        g = RustworkxGraph()
+        await g.from_sql(async_session)
+
+        assert not g.has_node("/lonely.py")
+        assert g.has_node("/a.py")
+        assert g.has_node("/b.py")
+        assert g.node_count == 2
 
 
 class TestStaleness:
@@ -192,14 +196,12 @@ class TestConfigureRefresh:
 
     def test_configure_refresh_stores_fields(self):
         g = RustworkxGraph()
-        g.configure_refresh(file_model=File, path_prefix="/data")
-        assert g._refresh_file_model is File
+        g.configure_refresh(path_prefix="/data")
         assert g._refresh_path_prefix == "/data"
 
     def test_configure_refresh_defaults(self):
         g = RustworkxGraph()
         g.configure_refresh()
-        assert g._refresh_file_model is None
         assert g._refresh_path_prefix == ""
 
 
@@ -208,11 +210,18 @@ class TestEnsureFresh:
 
     async def test_ensure_fresh_loads_on_first_query(self, async_session: AsyncSession):
         """configure_refresh + _ensure_fresh with session triggers from_sql."""
-        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(
+            FileConnection(
+                source_path="/a.py",
+                target_path="/b.py",
+                type="imports",
+                path="/a.py[imports]/b.py",
+            )
+        )
         await async_session.flush()
 
         g = RustworkxGraph()
-        g.configure_refresh(file_model=File, path_prefix="")
+        g.configure_refresh(path_prefix="")
         assert g.needs_refresh is True
 
         await g._ensure_fresh(async_session)
@@ -223,7 +232,7 @@ class TestEnsureFresh:
     async def test_ensure_fresh_noop_when_fresh(self, async_session: AsyncSession):
         """After loading, _ensure_fresh with no TTL does not re-query."""
         g = RustworkxGraph()
-        g.configure_refresh(file_model=File, path_prefix="")
+        g.configure_refresh(path_prefix="")
         await g.from_sql(async_session)
 
         with patch.object(g, "from_sql", new_callable=AsyncMock) as mock_sql:
@@ -238,8 +247,6 @@ class TestEnsureFresh:
 
     async def test_query_method_triggers_lazy_load(self, async_session: AsyncSession):
         """Calling predecessors() with session triggers auto-load from DB."""
-        async_session.add(File(path="/a.py", parent_path="/"))
-        async_session.add(File(path="/b.py", parent_path="/"))
         async_session.add(
             FileConnection(
                 source_path="/a.py",
@@ -251,7 +258,7 @@ class TestEnsureFresh:
         await async_session.flush()
 
         g = RustworkxGraph()
-        g.configure_refresh(file_model=File, path_prefix="")
+        g.configure_refresh(path_prefix="")
 
         # Graph is empty but calling predecessors with session triggers lazy load
         result = await g.predecessors("/b.py", session=async_session)
@@ -261,11 +268,18 @@ class TestEnsureFresh:
 
     async def test_ensure_fresh_reloads_when_stale(self, async_session: AsyncSession):
         """With stale_after set, _ensure_fresh reloads after TTL expires."""
-        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(
+            FileConnection(
+                source_path="/a.py",
+                target_path="/b.py",
+                type="imports",
+                path="/a.py[imports]/b.py",
+            )
+        )
         await async_session.flush()
 
         g = RustworkxGraph(stale_after=0.01)
-        g.configure_refresh(file_model=File, path_prefix="")
+        g.configure_refresh(path_prefix="")
         await g.from_sql(async_session)
         assert g.has_node("/a.py")
 
@@ -273,10 +287,17 @@ class TestEnsureFresh:
         g._loaded_at = time.monotonic() - 1.0
         assert g.needs_refresh is True
 
-        # Add new data to DB
-        async_session.add(File(path="/b.py", parent_path="/"))
+        # Add new connection to DB
+        async_session.add(
+            FileConnection(
+                source_path="/b.py",
+                target_path="/c.py",
+                type="imports",
+                path="/b.py[imports]/c.py",
+            )
+        )
         await async_session.flush()
 
         # _ensure_fresh should reload
         await g._ensure_fresh(async_session)
-        assert g.has_node("/b.py")
+        assert g.has_node("/c.py")

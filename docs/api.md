@@ -741,10 +741,15 @@ graph.is_dag() -> bool
 ### Persistence
 
 ```python
-await graph.from_sql(session, path_prefix="/mount")  # Load from grover_files + grover_file_connections
+await graph.from_sql(session, path_prefix="/mount")  # Load from grover_file_connections only
 ```
 
-The graph is a pure in-memory projection. `from_sql()` loads file nodes from `grover_files` and edges from `grover_file_connections`, applying the mount `path_prefix` to convert relative DB paths to absolute graph paths. `to_sql()` remains available as a non-authoritative compatibility internal but is no longer called during `save()` — edge persistence is handled by `ConnectionService`.
+The graph is a pure in-memory projection. `from_sql()` loads edges from `grover_file_connections` — nodes come exclusively from connection endpoints. Files with no connections are not loaded into the graph. The mount `path_prefix` converts relative DB paths to absolute graph paths.
+
+Query methods handle unknown paths gracefully:
+- **Single-node queries** (`predecessors`, `successors`, `ancestors`, `descendants`, `path_between`, etc.) return empty success results for unknown paths instead of raising `KeyError`.
+- **Candidate-based methods** (`pagerank`, `subgraph`, `connecting_subgraph`, etc.) inject unknown candidate paths into the computation graph — chunks/versions get inferred edges to their parent file, plain files appear as isolated nodes.
+- **Mutation methods** (`remove_node`, `get_node`, `remove_file_subgraph`) still raise `KeyError` for missing nodes.
 
 ### Analyzers
 

@@ -60,7 +60,6 @@ class RustworkxGraph:
         self._loaded_at: float | None = None
         self._stale_after: float | None = stale_after
         # Refresh config (set via configure_refresh)
-        self._refresh_file_model: type | None = None
         self._refresh_path_prefix: str = ""
 
     # ------------------------------------------------------------------
@@ -99,11 +98,9 @@ class RustworkxGraph:
 
     def configure_refresh(
         self,
-        file_model: type | None = None,
         path_prefix: str = "",
     ) -> None:
         """Store refresh parameters so ``_ensure_fresh`` can call ``from_sql``."""
-        self._refresh_file_model = file_model
         self._refresh_path_prefix = path_prefix
 
     async def _ensure_fresh(self, session: AsyncSession | None) -> None:
@@ -114,7 +111,6 @@ class RustworkxGraph:
             return  # No session available — serve from memory as-is
         await self.from_sql(
             session,
-            self._refresh_file_model,
             path_prefix=self._refresh_path_prefix,
         )
 
@@ -259,7 +255,8 @@ class RustworkxGraph:
     ) -> PredecessorsResult:
         """Nodes with edges pointing *to* this node."""
         await self._ensure_fresh(session)
-        self._require_node(path)
+        if path not in self._nodes:
+            return PredecessorsResult(success=True, message="0 predecessor(s)")
         preds = sorted({s for s, t in self._edges if t == path})
         return PredecessorsResult(
             success=True,
@@ -275,7 +272,8 @@ class RustworkxGraph:
     ) -> SuccessorsResult:
         """Nodes this node points *to*."""
         await self._ensure_fresh(session)
-        self._require_node(path)
+        if path not in self._nodes:
+            return SuccessorsResult(success=True, message="0 successor(s)")
         succs = sorted({t for s, t in self._edges if s == path})
         return SuccessorsResult(
             success=True,
@@ -288,7 +286,8 @@ class RustworkxGraph:
 
     async def contains(self, path: str) -> list[Ref]:
         """Successors as Refs (internal use — not part of typed-result API)."""
-        self._require_node(path)
+        if path not in self._nodes:
+            return []
         return [Ref(path=t) for s, t in self._edges if s == path]
 
     async def by_parent(self, parent_path: str) -> list[Ref]:
@@ -298,14 +297,22 @@ class RustworkxGraph:
     async def subgraph(
         self, paths: list[str], *, session: AsyncSession | None = None
     ) -> SubgraphSearchResult:
-        """Extract the induced subgraph for the given *paths*."""
+        """Extract the induced subgraph for the given *paths*.
+
+        Unknown paths are included — chunks/versions get inferred edges to
+        their parent file; plain files appear as isolated nodes.
+        """
         await self._ensure_fresh(session)
-        valid = {p for p in paths if p in self._nodes}
+        aug_nodes, aug_edges = self._augment_with_candidates(
+            frozenset(self._nodes), frozenset(self._edges), paths
+        )
+        # All requested paths are now in aug_nodes (augment adds unknowns)
+        path_set = set(paths) & aug_nodes
         edge_list: list[tuple[str, str, dict[str, Any]]] = []
-        for s, t in self._edges:
-            if s in valid and t in valid:
+        for s, t in aug_edges:
+            if s in path_set and t in path_set:
                 edge_list.append((s, t, {"type": "", "weight": 1.0}))
-        nodes_sorted = sorted(valid)
+        nodes_sorted = sorted(path_set)
         return SubgraphSearchResult(
             success=True,
             message=f"{len(nodes_sorted)} node(s), {len(edge_list)} edge(s)",
@@ -336,7 +343,8 @@ class RustworkxGraph:
     ) -> EgoGraphResult:
         """BFS neighborhood around *path* up to *max_depth* hops."""
         await self._ensure_fresh(session)
-        self._require_node(path)
+        if path not in self._nodes:
+            return EgoGraphResult(success=True, message="0 node(s), 0 edge(s)")
         out_adj: dict[str, set[str]] = {}
         in_adj: dict[str, set[str]] = {}
         for s, t in self._edges:
@@ -388,23 +396,28 @@ class RustworkxGraph:
     async def connecting_subgraph(
         self, paths: list[str], *, session: AsyncSession | None = None
     ) -> RustworkxGraph:
-        """Return a new RustworkxGraph containing all nodes needed to connect *paths*."""
+        """Return a new RustworkxGraph containing all nodes needed to connect *paths*.
+
+        Unknown paths are augmented — chunks/versions get inferred edges.
+        """
         await self._ensure_fresh(session)
-        valid = [p for p in paths if p in self._nodes]
-        if len(valid) <= 1:
+        aug_nodes, aug_edges = self._augment_with_candidates(
+            frozenset(self._nodes), frozenset(self._edges), paths
+        )
+        if len(paths) <= 1:
             sub = RustworkxGraph()
-            sub._nodes = set(valid)
+            sub._nodes = set(paths) & set(aug_nodes)
             sub._edges = set()
             return sub
 
-        graph, path_to_idx, idx_to_path = self._build_graph()
-        seed_indices = [path_to_idx[p] for p in valid]
-        keep_indices = self._multisource_bfs(graph, seed_indices)
+        graph, path_to_idx, idx_to_path = self._build_graph_from(aug_nodes, aug_edges)
+        seed_indices = [path_to_idx[p] for p in paths if p in path_to_idx]
+        keep_indices = self._multisource_bfs_static(graph, seed_indices)
         keep_paths = {idx_to_path[i] for i in keep_indices if i in idx_to_path}
 
         sub = RustworkxGraph()
         sub._nodes = keep_paths
-        sub._edges = {(s, t) for s, t in self._edges if s in keep_paths and t in keep_paths}
+        sub._edges = {(s, t) for s, t in aug_edges if s in keep_paths and t in keep_paths}
         return sub
 
     async def node_similarity(
@@ -432,6 +445,8 @@ class RustworkxGraph:
         session: AsyncSession | None = None,
     ) -> list[tuple[str, float]]:
         await self._ensure_fresh(session)
+        if path not in self._nodes:
+            return []
         scores: list[tuple[str, float]] = []
         for other in self._nodes:
             if other == path:
@@ -495,6 +510,32 @@ class RustworkxGraph:
             for path, score in sorted_items
         ]
 
+    # --- Candidate augmentation: inject unknown paths with inferred edges ---
+
+    @staticmethod
+    def _augment_with_candidates(
+        nodes: frozenset[str],
+        edges: frozenset[tuple[str, str]],
+        candidate_paths: list[str],
+    ) -> tuple[frozenset[str], frozenset[tuple[str, str]]]:
+        """Add candidate paths to graph, inferring edges for chunks/versions.
+
+        - **Chunk** (``/a.py#login``): infer ``(/a.py, /a.py#login)`` edge
+        - **Version** (``/a.py@3``): infer ``(/a.py, /a.py@3)`` edge
+        - **Plain file**: add as isolated node (no inferred edge)
+        """
+        extra_nodes: set[str] = set()
+        extra_edges: set[tuple[str, str]] = set()
+        for p in candidate_paths:
+            if p not in nodes:
+                extra_nodes.add(p)
+                ref = Ref(path=p)
+                if ref.is_chunk or ref.is_version:
+                    base = ref.base_path
+                    extra_nodes.add(base)
+                    extra_edges.add((base, p))
+        return nodes | frozenset(extra_nodes), edges | frozenset(extra_edges)
+
     # --- resolve_graph_from: thread-safe version of _resolve_graph ---
 
     @staticmethod
@@ -515,18 +556,19 @@ class RustworkxGraph:
         paths = [c.path for c in candidates.file_candidates]
         if not paths:
             return RustworkxGraph._build_graph_from(nodes, edges)
-        # Build connecting subgraph
-        valid = [p for p in paths if p in nodes]
-        if len(valid) <= 1:
-            sub_nodes = frozenset(valid)
-            sub_edges = frozenset((s, t) for s, t in edges if s in sub_nodes and t in sub_nodes)
+        # Augment graph with unknown candidates (inferred edges for chunks/versions)
+        aug_nodes, aug_edges = RustworkxGraph._augment_with_candidates(nodes, edges, paths)
+        # Build connecting subgraph using all paths as seeds
+        if len(paths) <= 1:
+            sub_nodes = frozenset(paths)
+            sub_edges = frozenset((s, t) for s, t in aug_edges if s in sub_nodes and t in sub_nodes)
             return RustworkxGraph._build_graph_from(sub_nodes, sub_edges)
         # Full connecting subgraph via multisource BFS
-        graph, path_to_idx, idx_to_path = RustworkxGraph._build_graph_from(nodes, edges)
-        seed_indices = [path_to_idx[p] for p in valid]
+        graph, path_to_idx, idx_to_path = RustworkxGraph._build_graph_from(aug_nodes, aug_edges)
+        seed_indices = [path_to_idx[p] for p in paths if p in path_to_idx]
         keep_indices = RustworkxGraph._multisource_bfs_static(graph, seed_indices)
         keep_paths = frozenset(idx_to_path[i] for i in keep_indices if i in idx_to_path)
-        keep_edges = frozenset((s, t) for s, t in edges if s in keep_paths and t in keep_paths)
+        keep_edges = frozenset((s, t) for s, t in aug_edges if s in keep_paths and t in keep_paths)
         return RustworkxGraph._build_graph_from(keep_paths, keep_edges)
 
     # --- PageRank ---
@@ -936,7 +978,8 @@ class RustworkxGraph:
 
     async def ancestors(self, path: str, *, session: AsyncSession | None = None) -> AncestorsResult:
         await self._ensure_fresh(session)
-        self._require_node(path)
+        if path not in self._nodes:
+            return AncestorsResult(success=True, message="0 ancestor(s)")
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._ancestors_impl, nodes, edges, path)
 
@@ -962,7 +1005,8 @@ class RustworkxGraph:
         self, path: str, *, session: AsyncSession | None = None
     ) -> DescendantsResult:
         await self._ensure_fresh(session)
-        self._require_node(path)
+        if path not in self._nodes:
+            return DescendantsResult(success=True, message="0 descendant(s)")
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._descendants_impl, nodes, edges, path)
 
@@ -991,8 +1035,8 @@ class RustworkxGraph:
     ) -> ShortestPathResult:
         """Shortest path (Dijkstra) from *source* to *target*."""
         await self._ensure_fresh(session)
-        self._require_node(source)
-        self._require_node(target)
+        if source not in self._nodes or target not in self._nodes:
+            return ShortestPathResult(success=True, message="No path found")
         if source == target:
             return ShortestPathResult(
                 success=True,
@@ -1055,12 +1099,8 @@ class RustworkxGraph:
         session: AsyncSession | None = None,
     ) -> list[list[str]]:
         await self._ensure_fresh(session)
-        if source not in self._nodes:
-            msg = f"Node not found: {source!r}"
-            raise KeyError(msg)
-        if target not in self._nodes:
-            msg = f"Node not found: {target!r}"
-            raise KeyError(msg)
+        if source not in self._nodes or target not in self._nodes:
+            return []
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(
             self._all_simple_paths_impl, nodes, edges, source, target, cutoff
@@ -1102,12 +1142,8 @@ class RustworkxGraph:
         self, source: str, target: str, *, session: AsyncSession | None = None
     ) -> float | None:
         await self._ensure_fresh(session)
-        if source not in self._nodes:
-            msg = f"Node not found: {source!r}"
-            raise KeyError(msg)
-        if target not in self._nodes:
-            msg = f"Node not found: {target!r}"
-            raise KeyError(msg)
+        if source not in self._nodes or target not in self._nodes:
+            return None
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(
             self._shortest_path_length_impl, nodes, edges, source, target
@@ -1140,7 +1176,11 @@ class RustworkxGraph:
     ) -> MeetingSubgraphResult:
         """Find the subgraph connecting *start_paths* via shortest paths."""
         await self._ensure_fresh(session)
-        valid_starts = [p for p in start_paths if p in self._nodes]
+        # Augment so unknown chunk/version paths get inferred edges
+        aug_nodes, aug_edges = self._augment_with_candidates(
+            frozenset(self._nodes), frozenset(self._edges), start_paths
+        )
+        valid_starts = [p for p in start_paths if p in aug_nodes]
         if len(valid_starts) <= 1:
             sub = await self.subgraph(valid_starts, session=session)
             return MeetingSubgraphResult(
@@ -1149,9 +1189,8 @@ class RustworkxGraph:
                 file_candidates=sub.file_candidates,
                 connection_candidates=sub.connection_candidates,
             )
-        nodes, edges = self._snapshot()
         return await asyncio.to_thread(
-            self._meeting_subgraph_impl, nodes, edges, valid_starts, max_size
+            self._meeting_subgraph_impl, aug_nodes, aug_edges, valid_starts, max_size
         )
 
     @staticmethod
@@ -1257,13 +1296,21 @@ class RustworkxGraph:
         direction: str = "forward",
         session: AsyncSession | None = None,
     ) -> set[str]:
-        """Intersection of descendants (forward) or ancestors (reverse)."""
+        """Intersection of descendants (forward) or ancestors (reverse).
+
+        Unknown paths have empty descendant/ancestor sets, producing empty
+        intersection — which is correct behavior.
+        """
         await self._ensure_fresh(session)
-        valid = [p for p in paths if p in self._nodes]
+        aug_nodes, aug_edges = self._augment_with_candidates(
+            frozenset(self._nodes), frozenset(self._edges), paths
+        )
+        valid = [p for p in paths if p in aug_nodes]
         if not valid:
             return set()
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._common_reachable_impl, nodes, edges, valid, direction)
+        return await asyncio.to_thread(
+            self._common_reachable_impl, aug_nodes, aug_edges, valid, direction
+        )
 
     @staticmethod
     def _common_reachable_impl(
@@ -1385,11 +1432,13 @@ class RustworkxGraph:
     async def from_sql(
         self,
         session: AsyncSession,
-        file_model: type | None = None,
         *,
         path_prefix: str = "",
     ) -> None:
         """Load graph state from the database, replacing in-memory state.
+
+        Only nodes that participate in connections are loaded — files with no
+        connections are not added to the graph.
 
         Build-then-swap: new state is assembled in local variables and assigned
         atomically at the end, so concurrent readers never see an empty graph.
@@ -1397,11 +1446,6 @@ class RustworkxGraph:
         from sqlalchemy import select
 
         from grover.models.connection import FileConnection
-
-        if file_model is None:
-            from grover.models.file import File
-
-            file_model = File
 
         def _prefix(p: str) -> str:
             if not path_prefix:
@@ -1414,15 +1458,7 @@ class RustworkxGraph:
         new_nodes: set[str] = set()
         new_edges: set[tuple[str, str]] = set()
 
-        # Load non-deleted files as nodes
-        result = await session.execute(
-            select(file_model).where(file_model.deleted_at.is_(None))  # type: ignore[union-attr]
-        )
-        for file_row in result.scalars().all():
-            raw_path: str = file_row.path  # type: ignore[unresolved-attribute]
-            new_nodes.add(_prefix(raw_path))
-
-        # Load all edges (topology only)
+        # Load all edges — nodes come exclusively from connection endpoints
         result = await session.execute(select(FileConnection))
         for edge_row in result.scalars().all():
             src = _prefix(edge_row.source_path)
@@ -1448,8 +1484,7 @@ class RustworkxGraph:
 
     def _undirected_neighbors(self, path: str) -> set[str]:
         if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
+            return set()
         neighbors: set[str] = set()
         for s, t in self._edges:
             if s == path:

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
@@ -273,17 +271,16 @@ class TestUpsertWithCustomModel:
 # ---------------------------------------------------------------------------
 
 
-class TestGraphWithCustomModel:
-    async def test_from_sql_with_custom_model(self):
+class TestGraphConnectionsOnly:
+    """from_sql loads only connections — file_model param removed."""
+
+    async def test_from_sql_loads_connections(self):
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
-            # Insert into custom table
-            session.add(WikiFile(path="/wiki/a.md", parent_path="/wiki"))
-            session.add(WikiFile(path="/wiki/b.md", parent_path="/wiki"))
             session.add(
                 FileConnection(
                     source_path="/wiki/a.md",
@@ -295,7 +292,7 @@ class TestGraphWithCustomModel:
             await session.commit()
 
             g = RustworkxGraph()
-            await g.from_sql(session, file_model=WikiFile)
+            await g.from_sql(session)
 
             assert g.has_node("/wiki/a.md")
             assert g.has_node("/wiki/b.md")
@@ -304,7 +301,8 @@ class TestGraphWithCustomModel:
 
         await engine.dispose()
 
-    async def test_from_sql_skips_deleted_custom(self):
+    async def test_from_sql_ignores_files_without_connections(self):
+        """Files in DB with no connections should not appear in the graph."""
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
@@ -312,58 +310,58 @@ class TestGraphWithCustomModel:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             session.add(WikiFile(path="/wiki/active.md", parent_path="/wiki"))
+            session.add(WikiFile(path="/wiki/lonely.md", parent_path="/wiki"))
+            await session.commit()
+
+            g = RustworkxGraph()
+            await g.from_sql(session)
+
+            # No connections → empty graph
+            assert g.node_count == 0
+
+        await engine.dispose()
+
+    async def test_from_sql_empty_db(self):
+        """from_sql on empty DB produces an empty graph."""
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with factory() as session:
+            g = RustworkxGraph()
+            await g.from_sql(session)
+            assert g.node_count == 0
+            assert g.edge_count == 0
+
+        await engine.dispose()
+
+    async def test_connections_with_custom_and_default_tables(self):
+        """Connections are shared — from_sql sees all connections regardless of file model."""
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with factory() as session:
+            # Add files to both tables
+            session.add(File(path="/default.py", parent_path="/"))
+            session.add(WikiFile(path="/wiki/page.md", parent_path="/wiki"))
+            # Connection references both
             session.add(
-                WikiFile(
-                    path="/wiki/deleted.md",
-                    parent_path="/wiki",
-                    deleted_at=datetime.now(UTC),
+                FileConnection(
+                    source_path="/default.py",
+                    target_path="/wiki/page.md",
+                    type="links_to",
+                    path="/default.py[links_to]/wiki/page.md",
                 )
             )
             await session.commit()
 
             g = RustworkxGraph()
-            await g.from_sql(session, file_model=WikiFile)
-
-            assert g.has_node("/wiki/active.md")
-            assert not g.has_node("/wiki/deleted.md")
-
-        await engine.dispose()
-
-    async def test_from_sql_default_model(self):
-        """from_sql without file_model param still uses default File."""
-        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with factory() as session:
-            session.add(File(path="/a.py", parent_path="/"))
-            await session.commit()
-
-            g = RustworkxGraph()
             await g.from_sql(session)
-            assert g.has_node("/a.py")
-
-        await engine.dispose()
-
-    async def test_custom_model_isolation(self):
-        """Data in default File table should not appear when loading with WikiFile."""
-        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with factory() as session:
-            # Add to default table
-            session.add(File(path="/default.py", parent_path="/"))
-            # Add to custom table
-            session.add(WikiFile(path="/wiki/page.md", parent_path="/wiki"))
-            await session.commit()
-
-            # Load with custom model — should only see wiki_files
-            g = RustworkxGraph()
-            await g.from_sql(session, file_model=WikiFile)
+            assert g.has_node("/default.py")
             assert g.has_node("/wiki/page.md")
-            assert not g.has_node("/default.py")
+            assert g.has_edge("/default.py", "/wiki/page.md")
 
         await engine.dispose()

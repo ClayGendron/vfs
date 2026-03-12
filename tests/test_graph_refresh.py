@@ -23,7 +23,6 @@ class TestMountWiring:
         await g.add_mount("/data", engine=async_engine)
         gp = g.get_graph("/data/foo.py")
         assert isinstance(gp, RustworkxGraph)
-        assert gp._refresh_file_model is not None
         assert gp._refresh_path_prefix == "/data"
         await g.close()
 
@@ -43,8 +42,8 @@ class TestMountWiring:
             hidden=True,
         )
         await g.add_mount(mount)
-        # Hidden mount — configure_refresh not called
-        assert graph._refresh_file_model is None
+        # Hidden mount — configure_refresh not called, path_prefix stays default
+        assert graph._refresh_path_prefix == ""
         await g.close()
 
 
@@ -53,13 +52,11 @@ class TestLazyLoadViaFacade:
 
     async def test_lazy_load_on_first_query(self, async_engine: AsyncEngine):
         """Mount with DB data, call pagerank() → graph auto-loads from DB."""
-        # Seed DB with data before mounting
+        # Seed DB with connections before mounting
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
         sf = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
         async with sf() as session:
-            session.add(File(path="/a.py", parent_path="/"))
-            session.add(File(path="/b.py", parent_path="/"))
             session.add(
                 FileConnection(
                     source_path="/a.py",
@@ -93,7 +90,14 @@ class TestLazyLoadViaFacade:
 
         sf = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
         async with sf() as session:
-            session.add(File(path="/a.py", parent_path="/"))
+            session.add(
+                FileConnection(
+                    source_path="/a.py",
+                    target_path="/b.py",
+                    type="imports",
+                    path="/a.py[imports]/b.py",
+                )
+            )
             await session.commit()
 
         g = GroverAsync()
@@ -106,9 +110,16 @@ class TestLazyLoadViaFacade:
         assert gp.has_node("/data/a.py")
         first_load = gp.loaded_at
 
-        # Add new data to DB directly (simulating ETL)
+        # Add new connection to DB directly (simulating ETL)
         async with sf() as session:
-            session.add(File(path="/etl_new.py", parent_path="/"))
+            session.add(
+                FileConnection(
+                    source_path="/etl_new.py",
+                    target_path="/etl_dep.py",
+                    type="imports",
+                    path="/etl_new.py[imports]/etl_dep.py",
+                )
+            )
             await session.commit()
 
         # Query again — no TTL, so no refresh
@@ -123,7 +134,14 @@ class TestLazyLoadViaFacade:
 
         sf = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
         async with sf() as session:
-            session.add(File(path="/a.py", parent_path="/"))
+            session.add(
+                FileConnection(
+                    source_path="/a.py",
+                    target_path="/b.py",
+                    type="imports",
+                    path="/a.py[imports]/b.py",
+                )
+            )
             await session.commit()
 
         g = GroverAsync()
@@ -138,9 +156,16 @@ class TestLazyLoadViaFacade:
         await g.pagerank(path="/data/a.py")
         assert gp.has_node("/data/a.py")
 
-        # Add new data to DB directly (simulating ETL)
+        # Add new connection to DB directly (simulating ETL)
         async with sf() as session:
-            session.add(File(path="/etl_new.py", parent_path="/"))
+            session.add(
+                FileConnection(
+                    source_path="/etl_new.py",
+                    target_path="/etl_dep.py",
+                    type="imports",
+                    path="/etl_new.py[imports]/etl_dep.py",
+                )
+            )
             await session.commit()
 
         # Force staleness

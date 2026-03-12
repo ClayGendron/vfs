@@ -79,13 +79,10 @@ class GraphProvider(Protocol):
 
     def remove_file_subgraph(self, path: str) -> list[str]: ...
 
-    async def from_sql(
-        self, session: AsyncSession, file_model: type | None = None, *, path_prefix: str = ""
-    ) -> None: ...
+    async def from_sql(self, session: AsyncSession, *, path_prefix: str = "") -> None: ...
 
     def configure_refresh(
         self,
-        file_model: type | None = None,
         path_prefix: str = "",
     ) -> None: ...
 

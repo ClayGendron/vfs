@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from grover.providers.graph import RustworkxGraph
 from grover.providers.graph.protocol import GraphProvider
 
@@ -34,11 +32,25 @@ class TestSubgraph:
         assert sub.paths == ()
         assert sub.connection_candidates == []
 
-    async def test_missing_paths_skipped(self) -> None:
+    async def test_unknown_paths_included_as_isolates(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         sub = await g.subgraph(["/a.py", "/missing.py"])
-        assert set(sub.paths) == {"/a.py"}
+        assert "/a.py" in sub.paths
+        assert "/missing.py" in sub.paths
+
+    async def test_subgraph_chunk_candidate_inferred_edge(self) -> None:
+        """Chunk path gets inferred edge to parent file in subgraph."""
+        g = RustworkxGraph()
+        g.add_node("/a.py")
+        sub = await g.subgraph(["/a.py", "/a.py#login"])
+        assert "/a.py" in sub.paths
+        assert "/a.py#login" in sub.paths
+        # Inferred edge from parent to chunk
+        assert len(sub.connection_candidates) == 1
+        cc = sub.connection_candidates[0]
+        assert cc.source_path == "/a.py"
+        assert cc.target_path == "/a.py#login"
 
     async def test_all_nodes(self) -> None:
         g = RustworkxGraph()
@@ -99,10 +111,11 @@ class TestNeighborhood:
         assert "/b.py" in sub.paths
         assert "/c.py" in sub.paths
 
-    async def test_missing_node(self) -> None:
+    async def test_unknown_node_returns_empty(self) -> None:
         g = RustworkxGraph()
-        with pytest.raises(KeyError):
-            await g.neighborhood("/missing.py")
+        result = await g.neighborhood("/missing.py")
+        assert result.success
+        assert len(result) == 0
 
     async def test_depth_0(self) -> None:
         g = RustworkxGraph()

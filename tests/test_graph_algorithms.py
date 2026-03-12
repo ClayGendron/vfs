@@ -58,6 +58,49 @@ class TestPageRank:
         result = await g.pagerank(personalization={"/missing.py": 1.0})
         assert len(result) == 2
 
+    async def test_pagerank_with_unknown_candidates_includes_them(self) -> None:
+        """Unknown candidate paths appear in result as augmented nodes."""
+        from grover.results.search import FileCandidate, FileSearchResult, GraphEvidence
+
+        g = RustworkxGraph()
+        g.add_edge("/a.py", "/b.py", "imports")
+        candidates = FileSearchResult(
+            success=True,
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GraphEvidence(operation="test")]),
+                FileCandidate(path="/b.py", evidence=[GraphEvidence(operation="test")]),
+                FileCandidate(path="/unknown.py", evidence=[GraphEvidence(operation="test")]),
+            ],
+        )
+        result = await g.pagerank(candidates=candidates)
+        assert result.success
+        result_paths = {c.path for c in result.file_candidates}
+        assert "/unknown.py" in result_paths
+
+    async def test_pagerank_with_chunk_candidate_infers_edge(self) -> None:
+        """Chunk candidate gets inferred edge to parent, appears connected."""
+        from grover.results.search import FileCandidate, FileSearchResult, GraphEvidence
+
+        g = RustworkxGraph()
+        g.add_edge("/a.py", "/b.py", "imports")
+        candidates = FileSearchResult(
+            success=True,
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GraphEvidence(operation="test")]),
+                FileCandidate(path="/a.py#login", evidence=[GraphEvidence(operation="test")]),
+            ],
+        )
+        result = await g.pagerank(candidates=candidates)
+        assert result.success
+        result_paths = {c.path for c in result.file_candidates}
+        assert "/a.py" in result_paths
+        assert "/a.py#login" in result_paths
+        # Chunk should have non-zero score due to inferred edge from /a.py
+        chunk_score = next(
+            c.evidence[0].score for c in result.file_candidates if c.path == "/a.py#login"
+        )
+        assert chunk_score > 0
+
 
 # ======================================================================
 # Centrality — Betweenness
@@ -221,10 +264,11 @@ class TestTraversal:
         g.add_edge("/a.py", "/b.py", "imports")
         assert set((await g.ancestors("/a.py")).paths) == set()
 
-    async def test_ancestors_missing_node(self) -> None:
+    async def test_ancestors_unknown_returns_empty(self) -> None:
         g = RustworkxGraph()
-        with pytest.raises(KeyError):
-            await g.ancestors("/missing.py")
+        result = await g.ancestors("/missing.py")
+        assert result.success
+        assert len(result) == 0
 
     async def test_descendants_chain(self) -> None:
         g = RustworkxGraph()

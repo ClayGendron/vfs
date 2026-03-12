@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -222,15 +221,17 @@ class TestPredecessorsAndSuccessors:
         g.add_node("/a.py")
         assert len(await g.successors("/a.py")) == 0
 
-    async def test_predecessors_not_found(self) -> None:
+    async def test_predecessors_unknown_returns_empty(self) -> None:
         g = RustworkxGraph()
-        with pytest.raises(KeyError):
-            await g.predecessors("/missing.py")
+        result = await g.predecessors("/missing.py")
+        assert result.success
+        assert len(result) == 0
 
-    async def test_successors_not_found(self) -> None:
+    async def test_successors_unknown_returns_empty(self) -> None:
         g = RustworkxGraph()
-        with pytest.raises(KeyError):
-            await g.successors("/missing.py")
+        result = await g.successors("/missing.py")
+        assert result.success
+        assert len(result) == 0
 
     async def test_returns_typed_result(self) -> None:
         g = RustworkxGraph()
@@ -274,17 +275,25 @@ class TestPathBetween:
         assert result
         assert list(result.paths) == ["/a.py"]
 
-    async def test_source_missing(self) -> None:
+    async def test_source_missing_returns_no_path(self) -> None:
         g = RustworkxGraph()
         g.add_node("/b.py")
-        with pytest.raises(KeyError):
-            await g.path_between("/missing.py", "/b.py")
+        result = await g.path_between("/missing.py", "/b.py")
+        assert result.success
+        assert not result  # No path found
 
-    async def test_target_missing(self) -> None:
+    async def test_target_missing_returns_no_path(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        with pytest.raises(KeyError):
-            await g.path_between("/a.py", "/missing.py")
+        result = await g.path_between("/a.py", "/missing.py")
+        assert result.success
+        assert not result  # No path found
+
+    async def test_both_missing_returns_no_path(self) -> None:
+        g = RustworkxGraph()
+        result = await g.path_between("/missing1.py", "/missing2.py")
+        assert result.success
+        assert not result
 
 
 # ======================================================================
@@ -307,10 +316,10 @@ class TestContains:
         g.add_node("/file.py")
         assert await g.contains("/file.py") == []
 
-    async def test_not_found(self) -> None:
+    async def test_unknown_returns_empty(self) -> None:
         g = RustworkxGraph()
-        with pytest.raises(KeyError):
-            await g.contains("/missing.py")
+        result = await g.contains("/missing.py")
+        assert result == []
 
 
 # ======================================================================
@@ -427,9 +436,12 @@ class TestToSqlRemoved:
 
 
 class TestFromSql:
-    async def test_loads_nodes_from_files(self, async_session: AsyncSession) -> None:
-        async_session.add(File(path="/a.py", parent_path="/"))
-        async_session.add(File(path="/b.py", parent_path="/"))
+    async def test_loads_nodes_from_connections(self, async_session: AsyncSession) -> None:
+        async_session.add(
+            FileConnection(
+                source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
+            )
+        )
         await async_session.commit()
 
         g = RustworkxGraph()
@@ -452,28 +464,34 @@ class TestFromSql:
         await g.from_sql(async_session)
         assert g.has_edge("/a.py", "/b.py")
 
-    async def test_skips_deleted_files(self, async_session: AsyncSession) -> None:
-        async_session.add(File(path="/a.py", parent_path="/"))
+    async def test_files_without_connections_not_loaded(self, async_session: AsyncSession) -> None:
+        async_session.add(File(path="/lonely.py", parent_path="/"))
         async_session.add(
-            File(
-                path="/deleted.py",
-                parent_path="/",
-                deleted_at=datetime.now(UTC),
+            FileConnection(
+                source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
             )
         )
         await async_session.commit()
 
         g = RustworkxGraph()
         await g.from_sql(async_session)
+        assert not g.has_node("/lonely.py")
         assert g.has_node("/a.py")
-        assert not g.has_node("/deleted.py")
+        assert g.has_node("/b.py")
 
     async def test_clears_existing_graph(self, async_session: AsyncSession) -> None:
         g = RustworkxGraph()
         g.add_node("/old.py")
         assert g.has_node("/old.py")
 
-        async_session.add(File(path="/new.py", parent_path="/"))
+        async_session.add(
+            FileConnection(
+                source_path="/new.py",
+                target_path="/new2.py",
+                type="imports",
+                path="/new.py[imports]/new2.py",
+            )
+        )
         await async_session.commit()
 
         await g.from_sql(async_session)

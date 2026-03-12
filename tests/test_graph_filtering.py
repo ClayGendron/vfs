@@ -40,6 +40,26 @@ class TestNodeSimilarity:
         g.add_node("/b.py")
         assert await g.node_similarity("/a.py", "/b.py") == 0.0
 
+    async def test_unknown_returns_zero(self) -> None:
+        g = RustworkxGraph()
+        g.add_node("/a.py")
+        assert await g.node_similarity("/a.py", "/unknown.py") == 0.0
+        assert await g.node_similarity("/unknown.py", "/a.py") == 0.0
+
+
+# ======================================================================
+# common_neighbors
+# ======================================================================
+
+
+class TestCommonNeighbors:
+    async def test_unknown_returns_empty(self) -> None:
+        g = RustworkxGraph()
+        g.add_node("/a.py")
+        result = await g.common_neighbors("/a.py", "/unknown.py")
+        assert result.success
+        assert len(result) == 0
+
 
 # ======================================================================
 # similar_nodes
