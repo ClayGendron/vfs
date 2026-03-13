@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from grover.results import ReadResult
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult
 from grover.util.content import (
     format_read_output,
     guess_mime_type,
@@ -386,11 +387,10 @@ class TestReplaceEdgeCases:
 
 class TestFormatReadOutput:
     def test_format_read_output_with_offset(self):
-        result = ReadResult(
+        result = FileOperationResult(
             success=True,
-            message="ok",
-            content="line1\nline2\nline3",
-            line_offset=10,
+            message="line_offset=10",
+            file=File(path="/test.txt", content="line1\nline2\nline3"),
         )
         output = format_read_output(result)
         # Lines should start at offset+1 = 11
@@ -399,34 +399,34 @@ class TestFormatReadOutput:
         assert "00013|" in output
 
     def test_format_read_output_truncated(self):
-        result = ReadResult(
+        result = FileOperationResult(
             success=True,
-            message="ok",
-            content="line1\nline2",
-            line_offset=0,
-            truncated=True,
+            message="truncated=True",
+            file=File(path="/test.txt", content="line1\nline2"),
         )
         output = format_read_output(result)
         assert "File has more lines" in output
         assert "offset" in output.lower()
 
     def test_format_read_output_empty(self):
-        result = ReadResult(success=True, message="ok", content="")
+        result = FileOperationResult(
+            success=True, message="ok", file=File(path="/test.txt", content="")
+        )
         output = format_read_output(result)
         assert "empty file" in output.lower()
 
     def test_format_read_output_empty_content(self):
-        result = ReadResult(success=True, message="ok", content="")
+        result = FileOperationResult(
+            success=True, message="ok", file=File(path="/test.txt", content="")
+        )
         output = format_read_output(result)
         assert "empty file" in output.lower()
 
     def test_format_read_output_end_of_file(self):
-        result = ReadResult(
+        result = FileOperationResult(
             success=True,
-            message="ok",
-            content="hello\nworld",
-            total_lines=2,
-            truncated=False,
+            message="total_lines=2",
+            file=File(path="/test.txt", content="hello\nworld"),
         )
         output = format_read_output(result)
         assert "End of file" in output

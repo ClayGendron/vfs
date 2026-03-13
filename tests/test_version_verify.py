@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
@@ -12,7 +11,6 @@ from grover.backends.database import DatabaseFileSystem
 from grover.models.database.version import FileVersionModel
 from grover.models.internal.results import FileOperationResult
 from grover.providers.versioning import SNAPSHOT_INTERVAL
-from grover.results.operations import VerifyVersionResult, VersionChainError
 
 
 def _parse_verify_message(message: str) -> tuple[int, int, int]:
@@ -165,11 +163,7 @@ class TestVerifyChainCorrupted:
         await engine.dispose()
 
     async def test_verify_chain_corrupted_snapshot(self):
-        """Corrupt version 1's snapshot content. Dependent versions should fail.
-
-        Use a multi-line file with line-count-changing corruption so the diff
-        application also fails (hunk out of bounds) for downstream versions.
-        """
+        """Corrupt version 1's snapshot content. Dependent versions should fail."""
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/f.py", "line1\nline2\nline3\n", session=session)
@@ -179,8 +173,7 @@ class TestVerifyChainCorrupted:
                 await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
-            # Corrupt snapshot to a single-line value — diff hunk ranges
-            # will be out of bounds since the diff expects 3 source lines.
+            # Corrupt snapshot to a single-line value
             v1_rec = (
                 await session.execute(
                     select(FileVersionModel).where(
@@ -256,8 +249,6 @@ class TestVerifyChainCorrupted:
             # Should NOT raise — errors are captured in the result
             result = await fs.version_provider.verify_chain(session, file_rec)
 
-            # With snapshot deleted, verify_chain skips versions with no snapshot
-            # so checked may be 1 (only v2 remains) with 0 passed or 0 checked
             assert isinstance(result, FileOperationResult)
         await engine.dispose()
 
@@ -344,47 +335,3 @@ class TestBackendVerifyVersions:
             assert paths["/good.py"].success is True
             assert paths["/bad.py"].success is False
         await engine.dispose()
-
-
-class TestVerifyVersionResultFields:
-    """Test VerifyVersionResult and VersionChainError types."""
-
-    def test_verify_version_result_fields(self):
-        """VerifyVersionResult has expected fields with correct defaults."""
-        result = VerifyVersionResult()
-        assert result.path == ""
-        assert result.success is True
-        assert result.versions_checked == 0
-        assert result.versions_passed == 0
-        assert result.versions_failed == 0
-        assert result.errors == []
-        assert result.message == ""
-
-    def test_version_chain_error_is_frozen(self):
-        """VersionChainError should be immutable."""
-        err = VersionChainError(
-            version=3,
-            expected_hash="abc",
-            actual_hash="def",
-            error="mismatch",
-        )
-        assert err.version == 3
-        assert err.expected_hash == "abc"
-        assert err.actual_hash == "def"
-        assert err.error == "mismatch"
-
-        with pytest.raises(AttributeError):
-            err.version = 5  # type: ignore[misc]
-
-    def test_verify_version_result_is_mutable(self):
-        """VerifyVersionResult should be mutable (facade may mutate path)."""
-        result = VerifyVersionResult(path="/original")
-        result.path = "/prefixed/original"
-        assert result.path == "/prefixed/original"
-
-    def test_verify_version_result_inherits_file_operation_result(self):
-        """VerifyVersionResult is a FileOperationResult subclass (old types)."""
-        from grover.results.operations import FileOperationResult as OldFileOperationResult
-
-        result = VerifyVersionResult()
-        assert isinstance(result, OldFileOperationResult)

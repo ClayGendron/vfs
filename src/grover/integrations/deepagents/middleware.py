@@ -18,10 +18,10 @@ if TYPE_CHECKING:
 
 
 def _format_graph_result(result: object, label: str) -> str:
-    """Format a GraphResult into a readable string."""
-    from grover.results import GraphResult
+    """Format a graph FileSearchResult into a readable string."""
+    from grover.models.internal.results import FileSearchResult
 
-    if isinstance(result, GraphResult):
+    if isinstance(result, FileSearchResult):
         if len(result) == 0:
             return f"No {label} found."
         lines = [f"Found {len(result)} {label}:"]

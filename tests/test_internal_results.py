@@ -1,10 +1,14 @@
-"""Tests for internal result types (FileOperationResult, FileSearchResult)."""
+"""Tests for internal result types (FileSearchSet, FileSearchResult, FileOperationResult)."""
 
 from __future__ import annotations
 
 from grover.models.internal.evidence import Evidence, GlobEvidence, VectorEvidence
 from grover.models.internal.ref import File, FileConnection, Ref
-from grover.models.internal.results import FileOperationResult, FileSearchResult
+from grover.models.internal.results import (
+    FileOperationResult,
+    FileSearchResult,
+    FileSearchSet,
+)
 
 
 class TestFileOperationResult:
@@ -288,3 +292,203 @@ class TestFileSearchResultWithEvidence:
         r2 = FileSearchResult.model_validate(data)
         assert r2.paths == ("/a.py",)
         assert r2.files[0].evidence[0].operation == "glob"
+
+
+# =====================================================================
+# FileSearchSet tests
+# =====================================================================
+
+
+class TestFileSearchSetConstruction:
+    def test_defaults(self):
+        s = FileSearchSet()
+        assert s.files == []
+        assert s.connections == []
+
+    def test_has_no_success_or_message(self):
+        assert "success" not in FileSearchSet.model_fields
+        assert "message" not in FileSearchSet.model_fields
+
+    def test_with_files(self):
+        s = FileSearchSet(files=[File(path="/a.py"), File(path="/b.py")])
+        assert len(s) == 2
+        assert s.paths == ("/a.py", "/b.py")
+
+
+class TestFileSearchSetBool:
+    def test_bool_true_with_files(self):
+        s = FileSearchSet(files=[File(path="/a.py")])
+        assert bool(s) is True
+
+    def test_bool_false_empty(self):
+        s = FileSearchSet()
+        assert bool(s) is False
+
+
+class TestFileSearchSetSetAlgebra:
+    def _make(self, paths: list[str], operation: str = "test") -> FileSearchSet:
+        return FileSearchSet(
+            files=[File(path=p, evidence=[Evidence(operation=operation)]) for p in paths]
+        )
+
+    def test_intersection(self):
+        s1 = self._make(["/a.py", "/b.py"], "glob")
+        s2 = self._make(["/b.py", "/c.py"], "grep")
+        result = s1 & s2
+        assert isinstance(result, FileSearchSet)
+        assert set(result.paths) == {"/b.py"}
+
+    def test_union(self):
+        s1 = self._make(["/a.py"])
+        s2 = self._make(["/b.py"])
+        result = s1 | s2
+        assert set(result.paths) == {"/a.py", "/b.py"}
+
+    def test_difference(self):
+        s1 = self._make(["/a.py", "/b.py"])
+        s2 = self._make(["/b.py"])
+        result = s1 - s2
+        assert set(result.paths) == {"/a.py"}
+
+    def test_pipeline(self):
+        s1 = self._make(["/a.py", "/b.py"])
+        s2 = self._make(["/b.py", "/c.py"])
+        result = s1 >> s2
+        assert set(result.paths) == {"/b.py"}
+
+    def test_not_implemented_with_non_set(self):
+        s = self._make(["/a.py"])
+        assert s.__and__(42) is NotImplemented
+        assert s.__or__(42) is NotImplemented
+        assert s.__sub__(42) is NotImplemented
+        assert s.__rshift__(42) is NotImplemented
+
+
+class TestFileSearchSetExplain:
+    def test_explain_present(self):
+        ev = Evidence(operation="glob", score=0.9)
+        s = FileSearchSet(files=[File(path="/a.py", evidence=[ev])])
+        chain = s.explain("/a.py")
+        assert len(chain) == 1
+        assert chain[0].operation == "glob"
+
+    def test_explain_absent(self):
+        s = FileSearchSet(files=[File(path="/a.py")])
+        assert s.explain("/missing.py") == []
+
+
+class TestFileSearchSetToRefs:
+    def test_to_refs(self):
+        s = FileSearchSet(files=[File(path="/a.py"), File(path="/b.py")])
+        refs = s.to_refs()
+        assert len(refs) == 2
+        assert refs[0].path == "/a.py"
+        assert refs[1].path == "/b.py"
+        assert isinstance(refs[0], Ref)
+
+    def test_to_refs_empty(self):
+        s = FileSearchSet()
+        assert s.to_refs() == []
+
+
+class TestFileSearchSetConnectionPaths:
+    def test_connection_paths(self):
+        conn = FileConnection(
+            source=Ref(path="/a.py"),
+            target=Ref(path="/b.py"),
+            type="imports",
+        )
+        s = FileSearchSet(connections=[conn])
+        assert s.connection_paths == ("/a.py[imports]/b.py",)
+
+    def test_connection_paths_empty(self):
+        s = FileSearchSet()
+        assert s.connection_paths == ()
+
+
+class TestFileSearchResultIsAFileSearchSet:
+    def test_isinstance(self):
+        r = FileSearchResult()
+        assert isinstance(r, FileSearchSet)
+
+    def test_result_has_success_and_message(self):
+        r = FileSearchResult()
+        assert r.success is True
+        assert r.message == ""
+
+    def test_result_inherits_explain(self):
+        ev = Evidence(operation="glob")
+        r = FileSearchResult(files=[File(path="/a.py", evidence=[ev])])
+        assert r.explain("/a.py") == [ev]
+
+    def test_result_inherits_to_refs(self):
+        r = FileSearchResult(files=[File(path="/a.py")])
+        refs = r.to_refs()
+        assert len(refs) == 1
+
+    def test_result_connection_paths(self):
+        conn = FileConnection(
+            source=Ref(path="/x.py"),
+            target=Ref(path="/y.py"),
+            type="calls",
+        )
+        r = FileSearchResult(connections=[conn])
+        assert r.connection_paths == ("/x.py[calls]/y.py",)
+
+
+class TestFileSearchResultFromRefs:
+    def test_from_refs(self):
+        refs = [Ref(path="/a.py"), Ref(path="/b.py")]
+        r = FileSearchResult.from_refs(refs, operation="graph")
+        assert len(r) == 2
+        assert r.paths == ("/a.py", "/b.py")
+        assert r.success is True
+        assert r.files[0].evidence[0].operation == "graph"
+        assert r.message == "2 refs"
+
+    def test_from_refs_empty(self):
+        r = FileSearchResult.from_refs([])
+        assert len(r) == 0
+
+
+class TestSetAlgebraAcceptsFileSearchSet:
+    """FileSearchResult set algebra should accept FileSearchSet operands."""
+
+    def _result(self, paths: list[str]) -> FileSearchResult:
+        return FileSearchResult(
+            files=[File(path=p, evidence=[Evidence(operation="r")]) for p in paths]
+        )
+
+    def _set(self, paths: list[str]) -> FileSearchSet:
+        return FileSearchSet(
+            files=[File(path=p, evidence=[Evidence(operation="s")]) for p in paths]
+        )
+
+    def test_result_and_set(self):
+        r = self._result(["/a.py", "/b.py"])
+        s = self._set(["/b.py", "/c.py"])
+        result = r & s
+        assert isinstance(result, FileSearchResult)
+        assert set(result.paths) == {"/b.py"}
+        assert result.success is True
+
+    def test_result_or_set(self):
+        r = self._result(["/a.py"])
+        s = self._set(["/b.py"])
+        result = r | s
+        assert isinstance(result, FileSearchResult)
+        assert set(result.paths) == {"/a.py", "/b.py"}
+
+    def test_result_sub_set(self):
+        r = self._result(["/a.py", "/b.py"])
+        s = self._set(["/b.py"])
+        result = r - s
+        assert isinstance(result, FileSearchResult)
+        assert set(result.paths) == {"/a.py"}
+
+    def test_result_rshift_set(self):
+        r = self._result(["/a.py", "/b.py"])
+        s = self._set(["/b.py", "/c.py"])
+        result = r >> s
+        assert isinstance(result, FileSearchResult)
+        assert set(result.paths) == {"/b.py"}

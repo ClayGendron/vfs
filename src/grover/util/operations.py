@@ -28,7 +28,6 @@ if TYPE_CHECKING:
 
     from grover.models.database.file import FileModelBase
     from grover.providers.versioning.protocol import VersionProvider
-    from grover.results.operations import FileInfoResult
 
     ContentReader = Callable[[str, AsyncSession], Awaitable[str | None]]
     ContentWriter = Callable[[str, str, AsyncSession], Awaitable[None]]
@@ -42,18 +41,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_READ_LIMIT = 2000
 
 
-def file_to_info(f: FileModelBase) -> FileInfoResult:
-    """Convert a FileModelBase model to a FileInfoResult."""
-    from grover.results.operations import FileInfoResult
-
-    return FileInfoResult(
-        success=True,
-        message="OK",
+def file_to_info(f: FileModelBase) -> File:
+    """Convert a FileModelBase model to a File."""
+    return File(
         path=f.path,
         is_directory=f.is_directory,
         size_bytes=f.size_bytes,
         mime_type=f.mime_type,
-        version=f.current_version,
+        current_version=f.current_version,
         created_at=f.created_at,
         updated_at=f.updated_at,
     )

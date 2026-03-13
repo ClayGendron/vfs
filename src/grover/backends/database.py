@@ -463,7 +463,7 @@ class DatabaseFileSystem:
             path=info.path,
             is_directory=info.is_directory,
             lines=0,
-            current_version=info.version,
+            current_version=info.current_version,
         )
         return FileOperationResult(success=True, message="OK", file=f)
 
@@ -1262,106 +1262,6 @@ class DatabaseFileSystem:
 
         await session.flush()
         return created_dirs, None
-
-    # ------------------------------------------------------------------
-    # Graph methods (inlined from GraphMethodsMixin)
-    # ------------------------------------------------------------------
-
-    def graph_add_node(self, path: str, **attrs: object) -> None:
-        if self.graph_provider is None:
-            return
-        self.graph_provider.add_node(path, **attrs)
-
-    def graph_remove_node(self, path: str) -> None:
-        if self.graph_provider is None:
-            return
-        self.graph_provider.remove_node(path)
-
-    def graph_has_node(self, path: str) -> bool:
-        if self.graph_provider is None:
-            return False
-        return self.graph_provider.has_node(path)
-
-    def graph_get_node(self, path: str) -> dict:
-        if self.graph_provider is None:
-            return {}
-        return self.graph_provider.get_node(path)
-
-    def graph_nodes(self) -> list[str]:
-        if self.graph_provider is None:
-            return []
-        return self.graph_provider.nodes()
-
-    def graph_add_edge(self, source: str, target: str, edge_type: str, **attrs: object) -> None:
-        if self.graph_provider is None:
-            return
-        self.graph_provider.add_edge(source, target, edge_type, **attrs)
-
-    def graph_remove_edge(self, source: str, target: str) -> None:
-        if self.graph_provider is None:
-            return
-        self.graph_provider.remove_edge(source, target)
-
-    def graph_has_edge(self, source: str, target: str) -> bool:
-        if self.graph_provider is None:
-            return False
-        return self.graph_provider.has_edge(source, target)
-
-    async def graph_predecessors(
-        self,
-        path: str,
-        *,
-        session: AsyncSession | None = None,
-    ) -> FileSearchResult:
-        if self.graph_provider is None:
-            return FileSearchResult(success=True, message="No graph provider")
-        old = await self.graph_provider.predecessors(path, session=session)  # type: ignore[arg-type]
-        return self._search_to_internal(old)
-
-    async def graph_successors(
-        self,
-        path: str,
-        *,
-        session: AsyncSession | None = None,
-    ) -> FileSearchResult:
-        if self.graph_provider is None:
-            return FileSearchResult(success=True, message="No graph provider")
-        old = await self.graph_provider.successors(path, session=session)  # type: ignore[arg-type]
-        return self._search_to_internal(old)
-
-    async def graph_path_between(
-        self,
-        source: str,
-        target: str,
-        *,
-        session: AsyncSession | None = None,
-    ) -> FileSearchResult:
-        if self.graph_provider is None:
-            return FileSearchResult(success=True, message="No path found")
-        old = await self.graph_provider.path_between(source, target, session=session)  # type: ignore[arg-type]
-        return self._search_to_internal(old)
-
-    async def graph_contains(self, path: str, *, session: AsyncSession | None = None) -> list[Ref]:
-        if self.graph_provider is None:
-            return []
-        return await self.graph_provider.contains(path, session=session)  # type: ignore[arg-type]
-
-    def graph_remove_file_subgraph(self, path: str) -> list[str]:
-        if self.graph_provider is None:
-            return []
-        return self.graph_provider.remove_file_subgraph(path)
-
-    @property
-    def graph_node_count(self) -> int:
-        if self.graph_provider is None:
-            return 0
-        return self.graph_provider.node_count
-
-    @property
-    def graph_edge_count(self) -> int:
-        if self.graph_provider is None:
-            return 0
-        return self.graph_provider.edge_count
 
     # ------------------------------------------------------------------
     # Chunk methods (inlined from ChunkMethodsMixin)

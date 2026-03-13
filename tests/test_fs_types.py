@@ -1,53 +1,44 @@
-"""Tests for FS result dataclasses."""
+"""Tests for internal result types and File model fields."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from grover.results import (
-    DeleteResult,
-    EditResult,
-    FileInfoResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    RestoreResult,
-    VersionEvidence,
-    WriteResult,
-)
+from grover.models.internal.evidence import VersionEvidence
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult
 
 
-class TestFileInfoResult:
+class TestFileFields:
+    """Test File model with size_bytes, mime_type, and other fields."""
+
     def test_required_fields(self):
-        info = FileInfoResult(path="/hello.txt", is_directory=False)
-        assert info.path == "/hello.txt"
-        assert info.is_directory is False
+        f = File(path="/hello.txt", is_directory=False)
+        assert f.path == "/hello.txt"
+        assert f.is_directory is False
 
     def test_defaults(self):
-        info = FileInfoResult(path="/x", is_directory=True)
-        assert info.size_bytes == 0
-        assert info.mime_type == "text/plain"
-        assert info.version == 0
-        assert info.created_at is None
-        assert info.updated_at is None
-        assert info.permission is None
-        assert info.mount_type is None
+        f = File(path="/x", is_directory=True)
+        assert f.size_bytes == 0
+        assert f.mime_type == ""
+        assert f.current_version == 0
+        assert f.created_at is None
+        assert f.updated_at is None
 
     def test_all_fields(self):
         now = datetime.now(UTC)
-        info = FileInfoResult(
+        f = File(
             path="/src",
             is_directory=True,
             size_bytes=4096,
             mime_type="inode/directory",
-            version=3,
+            current_version=3,
             created_at=now,
             updated_at=now,
-            permission="read_write",
-            mount_type="vfs",
         )
-        assert info.size_bytes == 4096
-        assert info.mount_type == "vfs"
+        assert f.size_bytes == 4096
+        assert f.mime_type == "inode/directory"
+        assert f.current_version == 3
 
 
 class TestVersionEvidence:
@@ -73,98 +64,40 @@ class TestVersionEvidence:
         assert ve.size_bytes == 0
 
 
-class TestReadResult:
+class TestFileOperationResult:
+    """Test the unified FileOperationResult type."""
+
     def test_success(self):
-        r = ReadResult(
+        r = FileOperationResult(
             success=True,
             message="Read 10 lines",
-            content="hello\nworld",
-            path="/test.txt",
-            total_lines=2,
-            lines_read=2,
+            file=File(path="/test.txt", content="hello\nworld"),
         )
         assert r.success is True
-        assert r.content == "hello\nworld"
-        assert r.truncated is False
+        assert r.file.content == "hello\nworld"
 
     def test_failure(self):
-        r = ReadResult(success=False, message="File not found")
+        r = FileOperationResult(success=False, message="File not found")
         assert r.success is False
-        assert r.content == ""
-        assert r.path == ""
+        assert r.file.path == ""
 
-
-class TestWriteResult:
-    def test_created(self):
-        r = WriteResult(success=True, message="Created", path="/new.py", created=True)
-        assert r.created is True
-        assert r.version == 0
-
-    def test_updated(self):
-        r = WriteResult(success=True, message="Updated", path="/old.py", version=5)
-        assert r.created is False
-        assert r.version == 5
-
-
-class TestEditResult:
-    def test_success(self):
-        r = EditResult(success=True, message="Applied", path="/x.py", version=3)
+    def test_defaults(self):
+        r = FileOperationResult()
         assert r.success is True
-        assert r.version == 3
+        assert r.message == ""
+        assert r.file.path == ""
 
-    def test_defaults(self):
-        r = EditResult(success=False, message="err")
-        assert r.path == ""
-        assert r.version == 0
-
-
-class TestDeleteResult:
-    def test_soft_delete(self):
-        r = DeleteResult(success=True, message="Trashed", path="/x.py")
-        assert r.permanent is False
-        assert r.total_deleted is None
-
-    def test_permanent(self):
-        r = DeleteResult(success=True, message="Deleted", permanent=True, total_deleted=3)
-        assert r.permanent is True
-        assert r.total_deleted == 3
-
-
-class TestMkdirResult:
-    def test_created(self):
-        r = MkdirResult(success=True, message="Created", path="/a/b", created_dirs=["/a", "/a/b"])
-        assert r.path == "/a/b"
-        assert len(r.created_dirs) == 2
-
-    def test_defaults(self):
-        r = MkdirResult(success=True, message="ok")
-        assert r.path == ""
-        assert r.created_dirs == []
-
-
-class TestMoveResult:
-    def test_success(self):
-        r = MoveResult(success=True, message="Moved", old_path="/a.py", new_path="/b.py")
-        assert r.old_path == "/a.py"
-        assert r.new_path == "/b.py"
-
-    def test_defaults(self):
-        r = MoveResult(success=False, message="err")
-        assert r.old_path == ""
-        assert r.new_path == ""
-
-
-class TestRestoreResult:
-    def test_success(self):
-        r = RestoreResult(
+    def test_with_file_metadata(self):
+        r = FileOperationResult(
             success=True,
-            message="Restored",
-            path="/x.py",
-            restored_version=2,
+            message="Created",
+            file=File(path="/new.py", current_version=1),
         )
-        assert r.restored_version == 2
+        assert r.file.path == "/new.py"
+        assert r.file.current_version == 1
 
-    def test_defaults(self):
-        r = RestoreResult(success=False, message="err")
-        assert r.path == ""
-        assert r.restored_version == 0
+    def test_file_is_mutable(self):
+        """FileOperationResult file field can be replaced."""
+        r = FileOperationResult(file=File(path="/original"))
+        r.file = File(path="/prefixed/original")
+        assert r.file.path == "/prefixed/original"

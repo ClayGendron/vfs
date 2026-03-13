@@ -49,6 +49,8 @@ class File(Ref):
     embedding: list[float] | None = None
     tokens: int = 0
     lines: int = 0
+    size_bytes: int = 0
+    mime_type: str = ""
     current_version: int = 0
     chunks: list[FileChunk] = []
     versions: list[FileVersion] = []

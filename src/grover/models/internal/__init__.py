@@ -34,6 +34,7 @@ from grover.models.internal.ref import (
 from grover.models.internal.results import (
     FileOperationResult,
     FileSearchResult,
+    FileSearchSet,
 )
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "FileConnection",
     "FileOperationResult",
     "FileSearchResult",
+    "FileSearchSet",
     "FileVersion",
     "GlobEvidence",
     "GraphEvidence",

@@ -1,7 +1,11 @@
-"""New internal result types — FileOperationResult and FileSearchResult.
+"""New internal result types — FileSearchSet, FileSearchResult, FileOperationResult.
 
-These are Pydantic BaseModels that collapse the 30+ old result subclasses
-into two families.  Operations differentiate via Evidence types on Files,
+``FileSearchSet`` carries candidates (files + connections) with set algebra,
+iteration, and path transformations — but no success/message semantics.
+
+``FileSearchResult`` inherits from ``FileSearchSet`` and adds ``success``,
+``message``, and factory methods, collapsing the 30+ old result subclasses
+into a single type.  Operations differentiate via Evidence types on Files,
 not separate result classes.
 """
 
@@ -23,21 +27,19 @@ class FileOperationResult(BaseModel):
     success: bool = True
 
 
-class FileSearchResult(BaseModel):
-    """Result of a multi-file query (search, graph, glob, etc.).
+class FileSearchSet(BaseModel):
+    """An unordered set of file candidates and connections.
 
-    Supports set algebra:
+    Supports set algebra (``&``, ``|``, ``-``, ``>>``), iteration over
+    file paths, and path transformations (``rebase``, ``remap_paths``).
 
-    - ``&`` (intersection) — paths in both, merges evidence
-    - ``|`` (union) — paths from either, merges evidence
-    - ``-`` (difference) — paths in LHS not in RHS
-    - ``>>`` (pipeline) — passes LHS paths as candidates to RHS
+    Unlike ``FileSearchResult`` this type carries **no** ``success`` /
+    ``message`` fields — it is a pure candidate container suitable for
+    passing into search methods as input.
     """
 
     files: list[File] = []
     connections: list[FileConnection] = []
-    message: str = ""
-    success: bool = True
 
     # -----------------------------------------------------------------
     # Properties and iteration
@@ -45,20 +47,40 @@ class FileSearchResult(BaseModel):
 
     @property
     def paths(self) -> tuple[str, ...]:
-        """All file paths in this result."""
+        """All file paths in this set."""
         return tuple(f.path for f in self.files)
+
+    @property
+    def connection_paths(self) -> tuple[str, ...]:
+        """All connection ref-format paths (``source[type]target``)."""
+        return tuple(f"{c.source.path}[{c.type}]{c.target.path}" for c in self.connections)
 
     def __len__(self) -> int:
         return len(self.files)
 
     def __bool__(self) -> bool:
-        return self.success and len(self.files) > 0
+        return len(self.files) > 0
 
     def __iter__(self) -> Iterator[str]:  # type: ignore[override]
         return iter(f.path for f in self.files)
 
     def __contains__(self, path: object) -> bool:
         return any(f.path == path for f in self.files)
+
+    # -----------------------------------------------------------------
+    # Query helpers
+    # -----------------------------------------------------------------
+
+    def explain(self, path: str) -> list[Evidence]:
+        """Return the evidence chain for *path*, or ``[]`` if absent."""
+        for f in self.files:
+            if f.path == path:
+                return list(f.evidence)
+        return []
+
+    def to_refs(self) -> list[Ref]:
+        """Convert file paths to a list of ``Ref`` objects."""
+        return [Ref(path=f.path) for f in self.files]
 
     # -----------------------------------------------------------------
     # Internal helpers
@@ -78,6 +100,8 @@ class FileSearchResult(BaseModel):
             embedding=f1.embedding if f1.embedding is not None else f2.embedding,
             tokens=max(f1.tokens, f2.tokens),
             lines=max(f1.lines, f2.lines),
+            size_bytes=max(f1.size_bytes, f2.size_bytes),
+            mime_type=f1.mime_type or f2.mime_type,
             current_version=max(f1.current_version, f2.current_version),
             chunks=f1.chunks or f2.chunks,
             versions=f1.versions or f2.versions,
@@ -109,31 +133,11 @@ class FileSearchResult(BaseModel):
         )
 
     # -----------------------------------------------------------------
-    # Factories
-    # -----------------------------------------------------------------
-
-    @classmethod
-    def from_paths(cls, paths: list[str], *, operation: str = "unknown") -> Self:
-        """Create a result from a list of paths with default evidence."""
-        files = [
-            File(
-                path=p,
-                evidence=[Evidence(operation=operation)],
-            )
-            for p in paths
-        ]
-        return cls(
-            success=True,
-            message=f"{len(paths)} paths",
-            files=files,
-        )
-
-    # -----------------------------------------------------------------
     # Path transformations
     # -----------------------------------------------------------------
 
     def rebase(self, prefix: str) -> Self:
-        """Return a new result with all paths prefixed by *prefix*."""
+        """Return a new set with all paths prefixed by *prefix*."""
         result = copy.copy(self)
         result.files = [
             File(
@@ -143,6 +147,8 @@ class FileSearchResult(BaseModel):
                 embedding=f.embedding,
                 tokens=f.tokens,
                 lines=f.lines,
+                size_bytes=f.size_bytes,
+                mime_type=f.mime_type,
                 current_version=f.current_version,
                 chunks=f.chunks,
                 versions=f.versions,
@@ -168,7 +174,7 @@ class FileSearchResult(BaseModel):
         return result
 
     def remap_paths(self, fn: Callable[[str], str]) -> Self:
-        """Return a new result with all paths transformed by *fn*.
+        """Return a new set with all paths transformed by *fn*.
 
         If two files map to the same new path, their evidence is merged.
         """
@@ -183,6 +189,8 @@ class FileSearchResult(BaseModel):
                 embedding=f.embedding,
                 tokens=f.tokens,
                 lines=f.lines,
+                size_bytes=f.size_bytes,
+                mime_type=f.mime_type,
                 current_version=f.current_version,
                 chunks=f.chunks,
                 versions=f.versions,
@@ -216,7 +224,7 @@ class FileSearchResult(BaseModel):
 
     def __and__(self, other: object) -> Self:
         """Intersection — paths in both, evidence merged."""
-        if not isinstance(other, FileSearchResult):
+        if not isinstance(other, FileSearchSet):
             return NotImplemented
         d1 = self._as_dict()
         d2 = other._as_dict()
@@ -228,15 +236,13 @@ class FileSearchResult(BaseModel):
         conn_common = set(cd1) & set(cd2)
         conns = [self._merge_connections(cd1[p], cd2[p]) for p in conn_common]
         return type(self)(
-            success=self.success and other.success,
-            message=f"{len(files)} paths",
             files=files,
             connections=conns,
         )
 
     def __or__(self, other: object) -> Self:
         """Union — paths from either, evidence merged."""
-        if not isinstance(other, FileSearchResult):
+        if not isinstance(other, FileSearchSet):
             return NotImplemented
         d1 = self._as_dict()
         d2 = other._as_dict()
@@ -262,15 +268,13 @@ class FileSearchResult(BaseModel):
             else:
                 conns.append(cd2[cp])
         return type(self)(
-            success=self.success or other.success,
-            message=f"{len(files)} paths",
             files=files,
             connections=conns,
         )
 
     def __sub__(self, other: object) -> Self:
         """Difference — paths in LHS not in RHS."""
-        if not isinstance(other, FileSearchResult):
+        if not isinstance(other, FileSearchSet):
             return NotImplemented
         d1 = self._as_dict()
         d2 = other._as_dict()
@@ -282,15 +286,13 @@ class FileSearchResult(BaseModel):
         conn_diff = set(cd1) - set(cd2)
         conns = [cd1[p] for p in conn_diff]
         return type(self)(
-            success=self.success,
-            message=f"{len(files)} paths",
             files=files,
             connections=conns,
         )
 
     def __rshift__(self, other: object) -> Self:
         """Pipeline — passes LHS paths as candidates to RHS."""
-        if not isinstance(other, FileSearchResult):
+        if not isinstance(other, FileSearchSet):
             return NotImplemented
         d1 = self._as_dict()
         d2 = other._as_dict()
@@ -302,8 +304,111 @@ class FileSearchResult(BaseModel):
         conn_common = set(cd1) & set(cd2)
         conns = [self._merge_connections(cd1[p], cd2[p]) for p in conn_common]
         return type(self)(
-            success=self.success and other.success,
-            message=f"{len(files)} paths",
             files=files,
             connections=conns,
+        )
+
+
+class FileSearchResult(FileSearchSet):
+    """Result of a multi-file query (search, graph, glob, etc.).
+
+    Inherits candidate storage and set algebra from ``FileSearchSet``
+    and adds ``success`` / ``message`` fields plus factory methods.
+    """
+
+    message: str = ""
+    success: bool = True
+
+    def __bool__(self) -> bool:
+        return self.success and len(self.files) > 0
+
+    # -----------------------------------------------------------------
+    # Set algebra overrides (propagate success/message)
+    # -----------------------------------------------------------------
+
+    def __and__(self, other: object) -> Self:
+        """Intersection — paths in both, evidence merged."""
+        if not isinstance(other, FileSearchSet):
+            return NotImplemented
+        base = super().__and__(other)
+        other_success = other.success if isinstance(other, FileSearchResult) else True
+        return type(self)(
+            success=self.success and other_success,
+            message=f"{len(base.files)} paths",
+            files=base.files,
+            connections=base.connections,
+        )
+
+    def __or__(self, other: object) -> Self:
+        """Union — paths from either, evidence merged."""
+        if not isinstance(other, FileSearchSet):
+            return NotImplemented
+        base = super().__or__(other)
+        other_success = other.success if isinstance(other, FileSearchResult) else True
+        return type(self)(
+            success=self.success or other_success,
+            message=f"{len(base.files)} paths",
+            files=base.files,
+            connections=base.connections,
+        )
+
+    def __sub__(self, other: object) -> Self:
+        """Difference — paths in LHS not in RHS."""
+        if not isinstance(other, FileSearchSet):
+            return NotImplemented
+        base = super().__sub__(other)
+        return type(self)(
+            success=self.success,
+            message=f"{len(base.files)} paths",
+            files=base.files,
+            connections=base.connections,
+        )
+
+    def __rshift__(self, other: object) -> Self:
+        """Pipeline — passes LHS paths as candidates to RHS."""
+        if not isinstance(other, FileSearchSet):
+            return NotImplemented
+        base = super().__rshift__(other)
+        other_success = other.success if isinstance(other, FileSearchResult) else True
+        return type(self)(
+            success=self.success and other_success,
+            message=f"{len(base.files)} paths",
+            files=base.files,
+            connections=base.connections,
+        )
+
+    # -----------------------------------------------------------------
+    # Factories
+    # -----------------------------------------------------------------
+
+    @classmethod
+    def from_paths(cls, paths: list[str], *, operation: str = "unknown") -> Self:
+        """Create a result from a list of paths with default evidence."""
+        files = [
+            File(
+                path=p,
+                evidence=[Evidence(operation=operation)],
+            )
+            for p in paths
+        ]
+        return cls(
+            success=True,
+            message=f"{len(paths)} paths",
+            files=files,
+        )
+
+    @classmethod
+    def from_refs(cls, refs: list[Ref], *, operation: str = "unknown") -> Self:
+        """Create a result from a list of ``Ref`` objects."""
+        files = [
+            File(
+                path=ref.path,
+                evidence=[Evidence(operation=operation)],
+            )
+            for ref in refs
+        ]
+        return cls(
+            success=True,
+            message=f"{len(refs)} refs",
+            files=files,
         )

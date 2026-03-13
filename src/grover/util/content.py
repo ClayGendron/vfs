@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from grover.util.paths import split_path
 
 if TYPE_CHECKING:
-    from grover.results.operations import ReadResult
+    from grover.models.internal.results import FileOperationResult
 
 
 # =============================================================================
@@ -297,33 +298,55 @@ def get_similar_files(
 # =============================================================================
 
 
-def format_read_output(result: ReadResult) -> str:
-    """Format a ReadResult with line numbers and ``<file>`` wrapper for LLM display.
+def format_read_output(result: FileOperationResult) -> str:
+    """Format a FileOperationResult with line numbers and ``<file>`` wrapper for LLM display.
 
     The *result* should contain raw (unformatted) content from
     a backend's ``read()`` method.  This function adds zero-padded line numbers
     and wraps the output in ``<file>...</file>`` tags, matching the format
     that was previously embedded in ``_format_read_output``.
+
+    Pagination metadata (``total_lines``, ``truncated``, ``line_offset``) is
+    parsed from the structured suffix in ``result.message``.
     """
-    if not result.content:
+    # Support both new FileOperationResult (content on .file) and legacy ReadResult
+    content: str | None
+    if hasattr(result, "file") and hasattr(result.file, "content"):
+        content = result.file.content
+    else:
+        content = getattr(result, "content", None)
+    if not content:
         return "<file>\n(empty file)\n</file>"
 
-    lines = result.content.split("\n")
-    offset = result.line_offset
+    # Try structured message first, fall back to direct attributes (legacy ReadResult)
+    msg = getattr(result, "message", "")
+    offset = int(m.group(1)) if (m := re.search(r"line_offset=(\d+)", msg)) else 0
+    truncated = "truncated=True" in msg
+    total_lines = int(m.group(1)) if (m := re.search(r"total_lines=(\d+)", msg)) else 0
+
+    # Legacy ReadResult has these as direct attributes
+    if not offset:
+        offset = getattr(result, "line_offset", 0)
+    if not truncated:
+        truncated = getattr(result, "truncated", False)
+    if not total_lines:
+        total_lines = getattr(result, "total_lines", 0)
+
+    lines = content.split("\n")
 
     formatted_lines = [f"{str(i + offset + 1).zfill(5)}| {line}" for i, line in enumerate(lines)]
 
     formatted = "<file>\n"
     formatted += "\n".join(formatted_lines)
 
-    if result.truncated:
+    if truncated:
         last_read_line = offset + len(lines)
         formatted += (
             f"\n\n(File has more lines. "
             f"Use 'offset' parameter to read beyond line {last_read_line})"
         )
     else:
-        formatted += f"\n\n(End of file - total {result.total_lines or len(lines)} lines)"
+        formatted += f"\n\n(End of file - total {total_lines or len(lines)} lines)"
 
     formatted += "\n</file>"
     return formatted

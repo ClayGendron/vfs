@@ -7,6 +7,9 @@ import logging
 import os
 from typing import Any
 
+from grover.models.internal.evidence import VectorEvidence
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileSearchResult
 from grover.providers.search.filters import FilterExpression, compile_databricks
 from grover.providers.search.types import (
     DeleteResult,
@@ -16,12 +19,6 @@ from grover.providers.search.types import (
     UpsertResult,
     VectorEntry,
     VectorHit,
-)
-from grover.results.search import (
-    FileSearchResult,
-    LexicalSearchResult,
-    VectorEvidence,
-    VectorSearchResult,
 )
 
 try:
@@ -143,8 +140,8 @@ class DatabricksVectorStore:
         filter: FilterExpression | None = None,
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> VectorSearchResult:
-        """Query the index, returning a ``VectorSearchResult``."""
+    ) -> FileSearchResult:
+        """Query the index, returning a ``FileSearchResult``."""
         hits = await self.search(
             vector,
             k=k,
@@ -154,23 +151,24 @@ class DatabricksVectorStore:
             score_threshold=score_threshold,
         )
 
-        entries: dict[str, list[VectorEvidence]] = {}
+        merged: dict[str, list[VectorEvidence]] = {}
         for hit in hits:
             fp = hit.metadata.get("parent_path") or hit.id
             content = hit.metadata.get("content", "")
             snippet = content[:200] + ("..." if len(content) > 200 else "") if content else ""
             ev = VectorEvidence(operation="vector_search", snippet=snippet)
-            entries.setdefault(fp, []).append(ev)
+            merged.setdefault(fp, []).append(ev)
 
-        return VectorSearchResult(
+        files = [File(path=p, evidence=list(evs)) for p, evs in merged.items()]
+        return FileSearchResult(
             success=True,
-            message=f"Found matches in {len(entries)} file(s)",
-            file_candidates=FileSearchResult._dict_to_candidates(entries),
+            message=f"Found matches in {len(files)} file(s)",
+            files=files,
         )
 
-    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult:
+    async def lexical_search(self, query: str, *, k: int = 10) -> FileSearchResult:
         """Databricks store is vector-only — lexical search returns empty result."""
-        return LexicalSearchResult(
+        return FileSearchResult(
             success=True, message="Lexical search not supported by DatabricksVectorStore"
         )
 

@@ -11,7 +11,7 @@ from sqlmodel import SQLModel
 from grover.backends.database import DatabaseFileSystem
 from grover.models.internal.evidence import VectorEvidence
 from grover.models.internal.ref import File
-from grover.models.internal.results import FileSearchResult as InternalFileSearchResult
+from grover.models.internal.results import FileSearchResult
 from grover.providers.chunks import DefaultChunkProvider
 from grover.providers.versioning import DefaultVersionProvider
 
@@ -210,10 +210,10 @@ class TestStorageProviderExistsGetInfo:
         await engine.dispose()
 
     async def test_get_info_delegates_to_storage(self):
-        from grover.results.operations import FileInfoResult
+        from grover.models.internal.results import FileOperationResult
 
         mock_sp = AsyncMock()
-        mock_info = FileInfoResult(success=True, message="OK", path="/file.py")
+        mock_info = FileOperationResult(success=True, message="OK", file=File(path="/file.py"))
         mock_sp.get_info = AsyncMock(return_value=mock_info)
         fs = DatabaseFileSystem(storage_provider=mock_sp)
 
@@ -232,10 +232,8 @@ class TestStorageProviderQueryDelegation:
     """Query methods delegate to SupportsStorageQueries when available."""
 
     async def test_glob_delegates_to_storage(self):
-        from grover.results.search import GlobResult
-
         mock_sp = _mock_storage_provider()
-        mock_result = GlobResult(success=True, message="1 match", pattern="*.py")
+        mock_result = FileSearchResult(success=True, message="1 match")
         mock_sp.storage_glob = AsyncMock(return_value=mock_result)
 
         # Need it to be recognized as SupportsStorageQueries
@@ -355,7 +353,7 @@ class TestSearchWithProviders:
         mock_embed = _mock_embedding_provider()
         mock_search = _mock_vector_store()
         mock_search.vector_search = AsyncMock(
-            return_value=InternalFileSearchResult(
+            return_value=FileSearchResult(
                 success=True,
                 message="1 match",
                 files=[
