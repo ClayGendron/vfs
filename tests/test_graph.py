@@ -14,19 +14,7 @@ from grover.providers.graph import RustworkxGraph
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.ref import Ref
-
 _mock_session = AsyncMock()
-
-
-# ======================================================================
-# Helpers
-# ======================================================================
-
-
-def _ref_paths(refs: list[Ref]) -> set[str]:
-    """Extract paths from a list of Refs for order-independent comparison."""
-    return {r.path for r in refs}
 
 
 # ======================================================================
@@ -300,52 +288,6 @@ class TestPathBetween:
         result = await g.path_between("/missing1.py", "/missing2.py", session=_mock_session)
         assert result.success
         assert not result
-
-
-# ======================================================================
-# TestContains
-# ======================================================================
-
-
-class TestContains:
-    async def test_returns_all_successors(self) -> None:
-        # Minimal storage — contains() returns all successors (no type filtering)
-        g = RustworkxGraph()
-        g.add_edge("/file.py", "/file.py::Foo", "contains")
-        g.add_edge("/file.py", "/file.py::bar", "contains")
-        g.add_edge("/file.py", "/other.py", "imports")
-        refs = await g.contains("/file.py")
-        assert _ref_paths(refs) == {"/file.py::Foo", "/file.py::bar", "/other.py"}
-
-    async def test_empty(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/file.py")
-        assert await g.contains("/file.py") == []
-
-    async def test_unknown_returns_empty(self) -> None:
-        g = RustworkxGraph()
-        g._loaded_at = 0.0  # mark as loaded so _ensure_fresh is a no-op
-        result = await g.contains("/missing.py")
-        assert result == []
-
-
-# ======================================================================
-# TestByParent
-# ======================================================================
-
-
-class TestByParent:
-    async def test_returns_empty_with_minimal_storage(self) -> None:
-        # Minimal storage — parent_path attrs not stored
-        g = RustworkxGraph()
-        g.add_node("/dir/a.py", parent_path="/dir")
-        g.add_node("/dir/b.py", parent_path="/dir")
-        assert await g.by_parent("/dir") == []
-
-    async def test_no_matches(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py", parent_path="/root")
-        assert await g.by_parent("/nowhere") == []
 
 
 # ======================================================================

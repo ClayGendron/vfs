@@ -185,14 +185,14 @@ class TestGroverGraph:
         # Should contain the greet function chunk
         assert len(result) >= 1
 
-    def test_contains_via_graph_provider(self, grover: Grover):
+    def test_successors_via_graph_provider(self, grover: Grover):
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         grover.write("/project/funcs.py", code)
         grover.flush()
-        refs = grover._run(grover.get_graph().contains("/project/funcs.py"))
-        assert len(refs) >= 2
-        assert any("foo" in r.path for r in refs)
-        assert any("bar" in r.path for r in refs)
+        result = grover._run(grover.get_graph().successors("/project/funcs.py"))
+        assert len(result) >= 2
+        assert any("foo" in p for p in result)
+        assert any("bar" in p for p in result)
 
 
 # ==================================================================

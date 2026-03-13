@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.internal.ref import Ref
     from grover.models.internal.results import FileSearchResult
 
 
@@ -71,10 +70,6 @@ class GraphProvider(Protocol):
     async def predecessors(self, path: str, *, session: AsyncSession) -> FileSearchResult: ...
 
     async def successors(self, path: str, *, session: AsyncSession) -> FileSearchResult: ...
-
-    async def contains(self, path: str, *, session: AsyncSession) -> list[Ref]: ...
-
-    async def by_parent(self, parent_path: str, *, session: AsyncSession) -> list[Ref]: ...
 
     async def subgraph(self, paths: list[str], *, session: AsyncSession) -> FileSearchResult: ...
 

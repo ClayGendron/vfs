@@ -104,8 +104,8 @@ class TestAnalyzeCreatesGraphState:
         assert graph.has_node("/project/funcs.py")
 
         # Find chunk nodes via contains edges
-        chunk_refs = await graph.contains("/project/funcs.py")
-        assert len(chunk_refs) >= 2
+        result = await graph.successors("/project/funcs.py")
+        assert len(result) >= 2
 
     @pytest.mark.asyncio
     async def test_analyze_creates_contains_edges(self, grover: GroverAsync):
@@ -114,8 +114,8 @@ class TestAnalyzeCreatesGraphState:
         await grover.flush()
 
         graph = grover.get_graph("/project/funcs.py")
-        contains = await graph.contains("/project/funcs.py")
-        assert len(contains) >= 2
+        result = await graph.successors("/project/funcs.py")
+        assert len(result) >= 2
 
 
 # ==================================================================

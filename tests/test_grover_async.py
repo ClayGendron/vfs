@@ -258,12 +258,12 @@ class TestGroverAsyncGraph:
         assert grover.get_graph().has_node("/project/mod.py")
 
     @pytest.mark.asyncio
-    async def test_contains_via_graph_provider(self, grover: GroverAsync):
+    async def test_successors_via_graph_provider(self, grover: GroverAsync):
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await grover.write("/project/funcs.py", code)
         await grover.flush()
-        refs = await grover.get_graph().contains("/project/funcs.py")
-        assert len(refs) >= 2
+        result = await grover.get_graph().successors("/project/funcs.py")
+        assert len(result) >= 2
 
     @pytest.mark.asyncio
     async def test_delete_removes_from_graph(self, grover: GroverAsync):

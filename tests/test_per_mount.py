@@ -236,14 +236,14 @@ class TestGraphOpsResolveMount:
         assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_contains_resolves_mount(self, multi_grover: GroverAsync):
-        """contains() via graph provider uses the correct mount's graph."""
+    async def test_successors_via_graph_provider_resolves_mount(self, multi_grover: GroverAsync):
+        """successors() via graph provider uses the correct mount's graph."""
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await multi_grover.write("/mount1/funcs.py", code)
         await multi_grover.flush()
         graph = multi_grover.get_graph("/mount1/funcs.py")
-        refs = await graph.contains("/mount1/funcs.py")
-        assert len(refs) >= 2
+        result = await graph.successors("/mount1/funcs.py")
+        assert len(result) >= 2
 
 
 # ==================================================================
