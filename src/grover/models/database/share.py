@@ -1,7 +1,7 @@
-"""FileShare model — tracks path-based shares between users.
+"""FileShareModel — tracks path-based shares between users.
 
-Provides ``FileShareBase`` (non-table) and ``FileShare`` (concrete table).
-Subclass ``FileShareBase`` with ``table=True`` and a custom ``__tablename__``
+Provides ``FileShareModelBase`` (non-table) and ``FileShareModel`` (concrete table).
+Subclass ``FileShareModelBase`` with ``table=True`` and a custom ``__tablename__``
 to use a different table name per backend.
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 
 
-class FileShareBase(SQLModel):
+class FileShareModelBase(SQLModel):
     """Base fields for a file share record. Subclass with ``table=True`` for a concrete table."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -32,7 +32,7 @@ class FileShareBase(SQLModel):
     )
 
 
-class FileShare(FileShareBase, table=True):
+class FileShareModel(FileShareModelBase, table=True):
     """Default file share table — ``grover_file_shares``."""
 
     __tablename__ = "grover_file_shares"

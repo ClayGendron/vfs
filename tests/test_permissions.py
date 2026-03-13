@@ -13,21 +13,8 @@ import pytest
 
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 from grover.permissions import Permission
-from grover.results import (
-    ConnectionResult,
-    DeleteResult,
-    EditResult,
-    GlobResult,
-    GrepResult,
-    ListDirResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    RestoreResult,
-    ShareResult,
-    WriteResult,
-)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -105,58 +92,58 @@ class TestReadOnlyBlocksMutations:
 
     async def test_read_only_blocks_write(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.write("/ro/new.txt", "content")
-        assert isinstance(result, WriteResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_edit(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.edit("/ro/hello.py", "print('hello')", "print('bye')")
-        assert isinstance(result, EditResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_delete(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.delete("/ro/hello.py")
-        assert isinstance(result, DeleteResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_mkdir(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.mkdir("/ro/newdir")
-        assert isinstance(result, MkdirResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_move(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.move("/ro/hello.py", "/ro/renamed.py")
-        assert isinstance(result, MoveResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_add_connection(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.add_connection("/ro/hello.py", "/ro/sub/nested.py", "imports")
-        assert isinstance(result, ConnectionResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_delete_connection(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.delete_connection("/ro/hello.py", "/ro/sub/nested.py")
-        assert isinstance(result, ConnectionResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_restore_version(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.restore_version("/ro/hello.py", 1)
-        assert isinstance(result, RestoreResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_restore_from_trash(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.restore_from_trash("/ro/hello.py")
-        assert isinstance(result, RestoreResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
 
     async def test_read_only_blocks_share(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.share("/ro/hello.py", "other_user", user_id="owner")
-        assert isinstance(result, ShareResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
         assert "read-only" in result.message.lower()
 
     async def test_read_only_blocks_unshare(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.unshare("/ro/hello.py", "other_user", user_id="owner")
-        assert isinstance(result, ShareResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is False
         assert "read-only" in result.message.lower()
 
@@ -171,26 +158,26 @@ class TestReadOnlyAllowsReads:
 
     async def test_read_only_allows_read(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.read("/ro/hello.py")
-        assert isinstance(result, ReadResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success is True
-        assert "print('hello')" in result.content
+        assert "print('hello')" in result.file.content
 
     async def test_read_only_allows_glob(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.glob("*.py", "/ro")
-        assert isinstance(result, GlobResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
-        assert len(result.file_candidates) >= 1
+        assert len(result.files) >= 1
 
     async def test_read_only_allows_grep(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.grep("print", "/ro")
-        assert isinstance(result, GrepResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     async def test_read_only_allows_list_dir(self, grover_ro: GroverAsync) -> None:
         result = await grover_ro.list_dir("/ro")
-        assert isinstance(result, ListDirResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
-        assert len(result.file_candidates) >= 1
+        assert len(result.files) >= 1
 
     async def test_read_only_allows_graph_queries(self, grover_ro: GroverAsync) -> None:
         graph = grover_ro.get_graph("/ro")
@@ -249,7 +236,7 @@ class TestMixedMountPermissions:
     async def test_ro_mount_allows_read(self, grover_mixed: GroverAsync) -> None:
         result = await grover_mixed.read("/ro/existing.txt")
         assert result.success is True
-        assert result.content == "read-only content"
+        assert result.file.content == "read-only content"
 
     async def test_copy_to_ro_blocked(self, grover_mixed: GroverAsync) -> None:
         # Write to rw first, then try to copy to ro
@@ -349,6 +336,5 @@ class TestReconcileReadOnly:
     async def test_reconcile_skips_ro_mounts(self, grover_mixed: GroverAsync) -> None:
         stats = await grover_mixed.reconcile()
         # Should complete without error — ro mount skipped
-        from grover.results import ReconcileResult
-
-        assert isinstance(stats, ReconcileResult)
+        assert isinstance(stats, FileOperationResult)
+        assert stats.success is True

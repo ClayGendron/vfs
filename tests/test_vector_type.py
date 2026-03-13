@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from grover.models.vector import Vector, VectorType
+from grover.models.database.vector import Vector, VectorType
 
 
 class TestVectorClassGetitem:

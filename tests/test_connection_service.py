@@ -21,9 +21,9 @@ from _helpers import FakeProvider
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
-from grover.models.connection import FileConnection
+from grover.models.database.connection import FileConnectionModel
+from grover.models.internal.results import FileOperationResult
 from grover.providers.graph import RustworkxGraph
-from grover.results import ConnectionResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,16 +58,14 @@ class TestConnectionMethods:
             result = await fs.add_connection("/a.py", "/b.py", "imports", weight=1.0, session=sess)
             await sess.commit()
 
-        assert isinstance(result, ConnectionResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success
-        assert result.source_path == "/a.py"
-        assert result.target_path == "/b.py"
-        assert result.connection_type == "imports"
+        assert result.file.path == "/a.py[imports]/b.py"
         assert "created" in result.message.lower()
 
         # Verify the record exists in DB
         async with factory() as sess:
-            row = await sess.execute(select(FileConnection))
+            row = await sess.execute(select(FileConnectionModel))
             records = list(row.scalars().all())
             assert len(records) == 1
             assert records[0].source_path == "/a.py"
@@ -83,7 +81,7 @@ class TestConnectionMethods:
             result = await fs.add_connection("/src/a.py", "/src/b.py", "imports", session=sess)
             await sess.commit()
 
-        assert result.path == "/src/a.py[imports]/src/b.py"
+        assert result.file.path == "/src/a.py[imports]/src/b.py"
 
     async def test_add_connection_upsert(
         self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
@@ -104,7 +102,7 @@ class TestConnectionMethods:
 
         # Should still be only 1 record
         async with factory() as sess:
-            row = await sess.execute(select(FileConnection))
+            row = await sess.execute(select(FileConnectionModel))
             records = list(row.scalars().all())
             assert len(records) == 1
             assert records[0].weight == 2.0
@@ -129,7 +127,7 @@ class TestConnectionMethods:
 
         # Verify gone
         async with factory() as sess:
-            row = await sess.execute(select(FileConnection))
+            row = await sess.execute(select(FileConnectionModel))
             assert len(list(row.scalars().all())) == 0
 
     async def test_delete_connection_not_found(
@@ -163,7 +161,7 @@ class TestConnectionMethods:
         assert result.success
 
         async with factory() as sess:
-            row = await sess.execute(select(FileConnection))
+            row = await sess.execute(select(FileConnectionModel))
             assert len(list(row.scalars().all())) == 0
 
     async def test_delete_connections_for_path(
@@ -186,7 +184,7 @@ class TestConnectionMethods:
 
         # /x.py -> /y.py should remain
         async with factory() as sess:
-            row = await sess.execute(select(FileConnection))
+            row = await sess.execute(select(FileConnectionModel))
             records = list(row.scalars().all())
             assert len(records) == 1
             assert records[0].source_path == "/x.py"
@@ -220,7 +218,7 @@ class TestConnectionMethods:
             result = await fs.list_connections("/a.py", direction="out", session=sess)
 
         assert len(result.connections) == 1
-        assert result.connections[0].target_path == "/b.py"
+        assert result.connections[0].target.path == "/b.py"
 
     async def test_list_connections_incoming(
         self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
@@ -236,7 +234,7 @@ class TestConnectionMethods:
             result = await fs.list_connections("/a.py", direction="in", session=sess)
 
         assert len(result.connections) == 1
-        assert result.connections[0].source_path == "/c.py"
+        assert result.connections[0].source.path == "/c.py"
 
     async def test_list_connections_filter_by_type(
         self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
@@ -254,7 +252,7 @@ class TestConnectionMethods:
             )
 
         assert len(result.connections) == 1
-        assert result.connections[0].target_path == "/b.py"
+        assert result.connections[0].target.path == "/b.py"
 
     async def test_connection_result_shape(
         self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
@@ -268,10 +266,7 @@ class TestConnectionMethods:
             await sess.commit()
 
         assert result.success is True
-        assert result.path == "/src/main.py[imports]/src/utils.py"
-        assert result.source_path == "/src/main.py"
-        assert result.target_path == "/src/utils.py"
-        assert result.connection_type == "imports"
+        assert result.file.path == "/src/main.py[imports]/src/utils.py"
 
 
 # =========================================================================
@@ -303,12 +298,9 @@ class TestConnectionIntegrationDBFS:
     ) -> None:
         grover, _engine = setup
         result = await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
-        assert isinstance(result, ConnectionResult)
+        assert isinstance(result, FileOperationResult)
         assert result.success
-        assert result.path == "/vfs/a.py[imports]/vfs/b.py"
-        assert result.source_path == "/vfs/a.py"
-        assert result.target_path == "/vfs/b.py"
-        assert result.connection_type == "imports"
+        assert result.file.path == "/vfs/a.py[imports]/vfs/b.py"
 
     async def test_add_connection_updates_graph(
         self, setup: tuple[GroverAsync, AsyncEngine]
@@ -411,7 +403,7 @@ class TestConnectionIntegrationLocalFS:
         grover = setup
         result = await grover.add_connection("/local/a.py", "/local/b.py", "imports")
         assert result.success
-        assert result.path == "/local/a.py[imports]/local/b.py"
+        assert result.file.path == "/local/a.py[imports]/local/b.py"
         await grover.flush()
 
         # Graph updated
@@ -484,7 +476,7 @@ class TestAnalyzeIntegrateConnections:
         # Verify DB has the connection record
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as sess:
-            rows = await sess.execute(select(FileConnection))
+            rows = await sess.execute(select(FileConnectionModel))
             records = list(rows.scalars().all())
             # At least one imports edge
             import_records = [r for r in records if r.type == "imports"]
@@ -508,7 +500,7 @@ class TestAnalyzeIntegrateConnections:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileConnection).where(FileConnection.source_path == "/vfs/mod.py")
+                select(FileConnectionModel).where(FileConnectionModel.source_path == "/vfs/mod.py")
             )
             records = list(rows.scalars().all())
             # Should have sys import, not os
@@ -532,7 +524,7 @@ class TestAnalyzeIntegrateConnections:
         # DB should NOT have any 'contains' edges
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as sess:
-            rows = await sess.execute(select(FileConnection))
+            rows = await sess.execute(select(FileConnectionModel))
             records = list(rows.scalars().all())
             contains_records = [r for r in records if r.type == "contains"]
             assert len(contains_records) == 0
@@ -557,9 +549,9 @@ class TestAnalyzeIntegrateConnections:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileConnection).where(
-                    FileConnection.source_path == "/vfs/c.py",
-                    FileConnection.target_path == "/vfs/b.py",
+                select(FileConnectionModel).where(
+                    FileConnectionModel.source_path == "/vfs/c.py",
+                    FileConnectionModel.target_path == "/vfs/b.py",
                 )
             )
             records = list(rows.scalars().all())
@@ -608,7 +600,7 @@ class TestDeleteOutgoingConnections:
 
         # /c.py -> /a.py and /x.py -> /y.py should remain
         async with factory() as sess:
-            row = await sess.execute(select(FileConnection))
+            row = await sess.execute(select(FileConnectionModel))
             records = list(row.scalars().all())
             assert len(records) == 2
             sources = {r.source_path for r in records}
@@ -672,9 +664,9 @@ class TestGraphProjection:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileConnection).where(
-                    (FileConnection.source_path == "/vfs/a.txt")
-                    | (FileConnection.target_path == "/vfs/a.txt")
+                select(FileConnectionModel).where(
+                    (FileConnectionModel.source_path == "/vfs/a.txt")
+                    | (FileConnectionModel.target_path == "/vfs/a.txt")
                 )
             )
             records = list(rows.scalars().all())

@@ -1,4 +1,4 @@
-"""Tests for configurable file models — custom table names via FileBase/FileVersionBase."""
+"""Tests for configurable file models — custom table names via Model base classes."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from grover.backends.database import DatabaseFileSystem
-from grover.models.connection import FileConnection, FileConnectionBase
-from grover.models.file import File, FileBase
-from grover.models.version import FileVersionBase
+from grover.models.database.connection import FileConnectionModel, FileConnectionModelBase
+from grover.models.database.file import FileModel, FileModelBase
+from grover.models.database.version import FileVersionModelBase
 from grover.providers.graph import RustworkxGraph
 from grover.util.dialect import upsert_file
 
@@ -17,19 +17,19 @@ from grover.util.dialect import upsert_file
 # ---------------------------------------------------------------------------
 
 
-class WikiFile(FileBase, table=True):
+class WikiFile(FileModelBase, table=True):
     """Custom file model with a different table name."""
 
     __tablename__ = "wiki_files"
 
 
-class WikiFileVersion(FileVersionBase, table=True):
+class WikiFileVersion(FileVersionModelBase, table=True):
     """Custom file version model with a different table name."""
 
     __tablename__ = "wiki_file_versions"
 
 
-class WikiFileConnection(FileConnectionBase, table=True):
+class WikiFileConnection(FileConnectionModelBase, table=True):
     """Custom connection model with a different table name."""
 
     __tablename__ = "wiki_file_connections"
@@ -73,18 +73,18 @@ async def _make_default_fs() -> tuple[DatabaseFileSystem, object, object]:
 
 class TestModelInheritance:
     def test_file_base_is_not_a_table(self):
-        """FileBase should not be a concrete table (no __table__)."""
-        assert not hasattr(FileBase, "__table__")
+        """FileModelBase should not be a concrete table (no __table__)."""
+        assert not hasattr(FileModelBase, "__table__")
 
     def test_file_version_base_is_not_a_table(self):
-        assert not hasattr(FileVersionBase, "__table__")
+        assert not hasattr(FileVersionModelBase, "__table__")
 
     def test_custom_model_has_table_name(self):
         assert WikiFile.__tablename__ == "wiki_files"
         assert WikiFileVersion.__tablename__ == "wiki_file_versions"
 
     def test_custom_model_inherits_fields(self):
-        """WikiFile should have all fields from FileBase."""
+        """WikiFile should have all fields from FileModelBase."""
         wiki = WikiFile(path="/test.md", parent_path="/")
         assert wiki.path == "/test.md"
         assert wiki.current_version == 1
@@ -98,9 +98,9 @@ class TestModelInheritance:
         assert wv.content == "hello"
 
     def test_default_file_still_works(self):
-        """Default File model is unchanged."""
-        assert File.__tablename__ == "grover_files"
-        f = File(path="/hello.py", parent_path="/")
+        """Default FileModel model is unchanged."""
+        assert FileModel.__tablename__ == "grover_files"
+        f = FileModel(path="/hello.py", parent_path="/")
         assert f.path == "/hello.py"
 
 
@@ -118,7 +118,7 @@ class TestCustomModelFilesystem:
 
     async def test_default_model_property(self):
         fs, _factory, engine = await _make_default_fs()
-        assert fs.file_model is File
+        assert fs.file_model is FileModel
         await engine.dispose()
 
     async def test_write_and_read(self):
@@ -126,11 +126,11 @@ class TestCustomModelFilesystem:
         async with factory() as session:
             result = await fs.write("/wiki/page.md", "# Hello World\n", session=session)
             assert result.success is True
-            assert result.created is True
+            assert "Created" in result.message
 
             read = await fs.read("/wiki/page.md", session=session)
             assert read.success is True
-            assert "Hello World" in read.content
+            assert "Hello World" in read.file.content
         await engine.dispose()
 
     async def test_edit(self):
@@ -139,10 +139,10 @@ class TestCustomModelFilesystem:
             await fs.write("/page.md", "old content\n", session=session)
             result = await fs.edit("/page.md", "old", "new", session=session)
             assert result.success is True
-            assert result.version == 2
+            assert result.file.current_version == 2
 
             read = await fs.read("/page.md", session=session)
-            assert "new content" in read.content
+            assert "new content" in read.file.content
         await engine.dispose()
 
     async def test_delete_and_trash(self):
@@ -171,7 +171,7 @@ class TestCustomModelFilesystem:
 
             vc_result = await fs.get_version_content("/page.md", 1, session=session)
             assert vc_result.success
-            assert vc_result.content == "v1\n"
+            assert vc_result.file.content == "v1\n"
         await engine.dispose()
 
     async def test_data_written_to_custom_table(self):
@@ -198,7 +198,7 @@ class TestCustomModelFilesystem:
             assert wiki_file.path == "/page.md"
 
             # The default table should be empty
-            result = await session.execute(select(File))
+            result = await session.execute(select(FileModel))
             default_files = result.scalars().all()
             assert len(default_files) == 0
 
@@ -240,13 +240,13 @@ class TestUpsertWithCustomModel:
             assert row.path == "/wiki/page.md"
 
             # Default table should be empty
-            result = await session.execute(select(File))
+            result = await session.execute(select(FileModel))
             assert len(result.scalars().all()) == 0
 
         await engine.dispose()
 
     async def test_upsert_default_model(self):
-        """upsert_file without model param still uses default File."""
+        """upsert_file without model param still uses default FileModel."""
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
@@ -266,7 +266,7 @@ class TestUpsertWithCustomModel:
             )
             await session.commit()
 
-            result = await session.execute(select(File).where(File.path == "/hello.txt"))
+            result = await session.execute(select(FileModel).where(FileModel.path == "/hello.txt"))
             assert result.scalar_one_or_none() is not None
 
         await engine.dispose()
@@ -288,7 +288,7 @@ class TestGraphConnectionsOnly:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             session.add(
-                FileConnection(
+                FileConnectionModel(
                     source_path="/wiki/a.md",
                     target_path="/wiki/b.md",
                     type="links_to",
@@ -342,26 +342,17 @@ class TestGraphConnectionsOnly:
 
         await engine.dispose()
 
-    async def test_from_sql_with_custom_connection_model(self):
-        """from_sql with custom file_connection_model queries the custom table."""
+    async def test_from_sql_uses_default_connection_model(self):
+        """from_sql always uses FileConnectionModel (custom model param removed)."""
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
-            # Insert into custom connection table
+            # Insert into default connection table
             session.add(
-                WikiFileConnection(
-                    source_path="/wiki/a.md",
-                    target_path="/wiki/b.md",
-                    type="links_to",
-                    path="/wiki/a.md[links_to]/wiki/b.md",
-                )
-            )
-            # Insert into default connection table — should NOT be loaded
-            session.add(
-                FileConnection(
+                FileConnectionModel(
                     source_path="/default/x.py",
                     target_path="/default/y.py",
                     type="imports",
@@ -371,14 +362,12 @@ class TestGraphConnectionsOnly:
             await session.commit()
 
             g = RustworkxGraph()
-            await g.from_sql(session, file_connection_model=WikiFileConnection)
+            await g.from_sql(session)
 
-            # Only custom table connections loaded
-            assert g.has_node("/wiki/a.md")
-            assert g.has_node("/wiki/b.md")
-            assert g.has_edge("/wiki/a.md", "/wiki/b.md")
-            assert not g.has_node("/default/x.py")
-            assert not g.has_node("/default/y.py")
+            # Default table connections loaded
+            assert g.has_node("/default/x.py")
+            assert g.has_node("/default/y.py")
+            assert g.has_edge("/default/x.py", "/default/y.py")
             assert g.node_count == 2
 
         await engine.dispose()
@@ -392,11 +381,11 @@ class TestGraphConnectionsOnly:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             # Add files to both tables
-            session.add(File(path="/default.py", parent_path="/"))
+            session.add(FileModel(path="/default.py", parent_path="/"))
             session.add(WikiFile(path="/wiki/page.md", parent_path="/wiki"))
             # Connection references both
             session.add(
-                FileConnection(
+                FileConnectionModel(
                     source_path="/default.py",
                     target_path="/wiki/page.md",
                     type="links_to",

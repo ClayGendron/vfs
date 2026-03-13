@@ -12,25 +12,9 @@ import pytest
 from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import Grover
+from grover.models.internal.results import FileSearchResult
 from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
-from grover.results import (
-    AncestorsResult,
-    BetweennessResult,
-    CommonNeighborsResult,
-    DegreeResult,
-    DescendantsResult,
-    EgoGraphResult,
-    GlobResult,
-    GrepResult,
-    HasPathResult,
-    HitsResult,
-    PageRankResult,
-    PredecessorsResult,
-    ShortestPathResult,
-    SuccessorsResult,
-    VectorSearchResult,
-)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -114,12 +98,12 @@ class TestGroverFilesystem:
         assert grover.write("/project/hello.txt", "hello world")
         result = grover.read("/project/hello.txt")
         assert result.success
-        assert result.content == "hello world"
+        assert result.file.content == "hello world"
 
     def test_edit(self, grover: Grover):
         grover.write("/project/doc.txt", "old text here")
         assert grover.edit("/project/doc.txt", "old", "new")
-        assert grover.read("/project/doc.txt").content == "new text here"
+        assert grover.read("/project/doc.txt").file.content == "new text here"
 
     def test_delete(self, grover: Grover):
         grover.write("/project/tmp.txt", "temporary")
@@ -135,34 +119,34 @@ class TestGroverFilesystem:
         assert "b.txt" in names
 
     def test_exists(self, grover: Grover):
-        assert not grover.exists("/project/nope.txt").exists
+        assert grover.exists("/project/nope.txt").message != "exists"
         grover.write("/project/yes.txt", "yes")
-        assert grover.exists("/project/yes.txt").exists
+        assert grover.exists("/project/yes.txt").message == "exists"
 
     def test_write_overwrite_false_fails_when_exists(self, grover: Grover):
         grover.write("/project/exists.txt", "original")
         result = grover.write("/project/exists.txt", "new", overwrite=False)
         assert not result.success
         # Original content should be unchanged
-        assert grover.read("/project/exists.txt").content == "original"
+        assert grover.read("/project/exists.txt").file.content == "original"
 
     def test_write_overwrite_false_succeeds_for_new(self, grover: Grover):
         result = grover.write("/project/brand_new.txt", "content", overwrite=False)
         assert result.success
-        assert grover.read("/project/brand_new.txt").content == "content"
+        assert grover.read("/project/brand_new.txt").file.content == "content"
 
     def test_edit_replace_all(self, grover: Grover):
         grover.write("/project/multi.txt", "foo bar foo baz foo")
         result = grover.edit("/project/multi.txt", "foo", "qux", replace_all=True)
         assert result.success
-        assert grover.read("/project/multi.txt").content == "qux bar qux baz qux"
+        assert grover.read("/project/multi.txt").file.content == "qux bar qux baz qux"
 
     def test_read_with_offset_and_limit(self, grover: Grover):
         lines = "\n".join(f"line {i}" for i in range(20))
         grover.write("/project/lines.txt", lines)
         result = grover.read("/project/lines.txt", offset=5, limit=3)
         assert result.success
-        content = result.content
+        content = result.file.content
         assert content is not None
         assert "line 5" in content
         assert "line 7" in content
@@ -183,11 +167,11 @@ class TestGroverGraph:
         code = 'import os\n\ndef hello():\n    return "hi"\n'
         grover.write("/project/app.py", code)
         grover.flush()
-        # File should be in graph now
+        # FileModel should be in graph now
         assert grover.get_graph().has_node("/project/app.py")
         # Check predecessors doesn't crash (may be empty if no other file points to it)
         result = grover.predecessors("/project/app.py")
-        assert isinstance(result, PredecessorsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_successors_after_write(self, grover: Grover):
@@ -196,7 +180,7 @@ class TestGroverGraph:
         grover.flush()
         # The file should have "contains" edges to its chunks
         result = grover.successors("/project/greet.py")
-        assert isinstance(result, SuccessorsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         # Should contain the greet function chunk
         assert len(result) >= 1
@@ -222,19 +206,19 @@ class TestGroverSearch:
         grover.write("/project/auth.py", code)
         grover.flush()
         result = grover.vector_search("authenticate")
-        assert isinstance(result, VectorSearchResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         assert len(result) >= 1
 
     def test_vector_search_returns_vector_search_result(self, grover: Grover):
         grover.write("/project/data.txt", "important data content")
         result = grover.vector_search("data")
-        assert isinstance(result, VectorSearchResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_vector_search_empty(self, grover: Grover):
         result = grover.vector_search("nonexistent query")
-        assert isinstance(result, VectorSearchResult)
+        assert isinstance(result, FileSearchResult)
         assert len(result) == 0
 
     def test_vector_search_returns_failure_without_provider(self, grover_no_search: Grover):
@@ -392,11 +376,11 @@ def auth_grover(tmp_path: Path) -> Iterator[Grover]:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from grover.backends.user_scoped import UserScopedFileSystem
-    from grover.models.share import FileShare
+    from grover.models.database.share import FileShareModel
 
     g = Grover()
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-    backend = UserScopedFileSystem(share_model=FileShare)
+    backend = UserScopedFileSystem(share_model=FileShareModel)
     g.add_mount("/ws", backend, engine=engine, embedding_provider=FakeProvider())
     yield g
     g.close()
@@ -407,7 +391,7 @@ class TestGroverSyncAuthenticated:
         auth_grover.write("/ws/notes.md", "hello", user_id="alice")
         result = auth_grover.read("/ws/notes.md", user_id="alice")
         assert result.success is True
-        assert result.content == "hello"
+        assert result.file.content == "hello"
 
     def test_share_unshare(self, auth_grover: Grover):
         auth_grover.write("/ws/notes.md", "data", user_id="alice")
@@ -431,7 +415,7 @@ class TestGroverSyncAuthenticated:
         assert result.success is True
         assert len(result) == 1
         # Path should be an @shared path, not a raw stored path
-        assert result.file_candidates[0].path == "/ws/@shared/alice/a.md"
+        assert result.files[0].path == "/ws/@shared/alice/a.md"
 
     def test_move_and_copy(self, auth_grover: Grover):
         auth_grover.write("/ws/src.md", "content", user_id="alice")
@@ -453,7 +437,7 @@ class TestGroverVersionOps:
         grover.write("/project/doc.txt", "version two")
         result = grover.read_version("/project/doc.txt", 1)
         assert result.success is True
-        assert result.content == "version one"
+        assert result.file.content == "version one"
 
     def test_diff_versions_basic(self, grover: Grover):
         """Sync diff_versions computes a unified diff."""
@@ -461,9 +445,9 @@ class TestGroverVersionOps:
         grover.write("/project/doc.txt", "hello world\n")
         result = grover.diff_versions("/project/doc.txt", 1, 2)
         assert result.success is True
-        assert result.version_a == 1
-        assert result.version_b == 2
-        assert result.diff != ""
+        assert "v1" in result.message
+        assert "v2" in result.message
+        assert result.file.content != ""
 
     def test_diff_versions_invalid_version(self, grover: Grover):
         """Sync diff_versions with nonexistent version returns failure."""
@@ -495,7 +479,7 @@ class TestGroverGraphAlgorithms:
         )
         grover.flush()
         result = grover.ancestors("/project/base.py")
-        assert isinstance(result, AncestorsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_descendants(self, grover: Grover):
@@ -506,7 +490,7 @@ class TestGroverGraphAlgorithms:
         )
         grover.flush()
         result = grover.descendants("/project/root.py")
-        assert isinstance(result, DescendantsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_shortest_path(self, grover: Grover):
@@ -517,7 +501,7 @@ class TestGroverGraphAlgorithms:
         )
         grover.flush()
         result = grover.shortest_path("/project/sp_b.py", "/project/sp_a.py")
-        assert isinstance(result, ShortestPathResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_has_path_no_path(self, grover: Grover):
@@ -525,42 +509,42 @@ class TestGroverGraphAlgorithms:
         grover.write("/project/island_y.py", "Y = 2\n")
         grover.flush()
         result = grover.has_path("/project/island_x.py", "/project/island_y.py")
-        assert isinstance(result, HasPathResult)
+        assert isinstance(result, FileSearchResult)
         assert bool(result) is False
 
     def test_ego_graph(self, grover: Grover):
         grover.write("/project/ego.py", "X = 1\n")
         grover.flush()
         result = grover.ego_graph("/project/ego.py", max_depth=1)
-        assert isinstance(result, EgoGraphResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_pagerank(self, grover: Grover):
         grover.write("/project/pr.py", "X = 1\n")
         grover.flush()
         result = grover.pagerank()
-        assert isinstance(result, PageRankResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_betweenness_centrality(self, grover: Grover):
         grover.write("/project/bw.py", "X = 1\n")
         grover.flush()
         result = grover.betweenness_centrality()
-        assert isinstance(result, BetweennessResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_hits(self, grover: Grover):
         grover.write("/project/ht.py", "X = 1\n")
         grover.flush()
         result = grover.hits()
-        assert isinstance(result, HitsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_degree_centrality(self, grover: Grover):
         grover.write("/project/deg.py", "X = 1\n")
         grover.flush()
         result = grover.degree_centrality()
-        assert isinstance(result, DegreeResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_common_neighbors(self, grover: Grover):
@@ -575,7 +559,7 @@ class TestGroverGraphAlgorithms:
         )
         grover.flush()
         result = grover.common_neighbors("/project/cn_a.py", "/project/cn_b.py")
-        assert isinstance(result, CommonNeighborsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_add_connection_sync(self, grover: Grover):
@@ -617,8 +601,8 @@ class TestGroverSearchCandidates:
 
         candidates = grover.glob("alpha*", "/project")
         filtered = grover.glob("*.py", "/project", candidates=candidates)
-        assert isinstance(filtered, GlobResult)
-        paths = {c.path for c in filtered.file_candidates}
+        assert isinstance(filtered, FileSearchResult)
+        paths = {f.path for f in filtered.files}
         assert "/project/alpha.py" in paths
         assert "/project/beta.py" not in paths
 
@@ -629,8 +613,8 @@ class TestGroverSearchCandidates:
 
         candidates = grover.glob("alpha*", "/project")
         filtered = grover.grep("HELLO", "/project", candidates=candidates)
-        assert isinstance(filtered, GrepResult)
-        paths = {c.path for c in filtered.file_candidates}
+        assert isinstance(filtered, FileSearchResult)
+        paths = {f.path for f in filtered.files}
         assert "/project/alpha.py" in paths
         assert "/project/gamma.py" not in paths
 
@@ -639,4 +623,4 @@ class TestGroverSearchCandidates:
         grover.flush()
         candidates = grover.glob("alpha*", "/project")
         result = grover.glob("*.py", "/project", candidates=candidates)
-        assert type(result) is GlobResult
+        assert isinstance(result, FileSearchResult)

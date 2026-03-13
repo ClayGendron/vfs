@@ -17,22 +17,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from grover.results.operations import FileInfoResult, ReconcileResult
-from grover.results.search import (
-    FileCandidate,
+from grover.models.internal.evidence import (
     GlobEvidence,
-    GlobResult,
     GrepEvidence,
-    GrepResult,
+    LineMatch,
     ListDirEvidence,
-    ListDirResult,
     TreeEvidence,
-    TreeResult,
 )
-from grover.results.search import (
-    LineMatch as SearchLineMatch,
-)
-from grover.util.content import guess_mime_type, has_binary_extension, is_binary_file
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult, FileSearchResult
+from grover.util.content import has_binary_extension, is_binary_file
 from grover.util.paths import normalize_path, validate_path
 from grover.util.patterns import compile_glob
 
@@ -186,36 +180,45 @@ class DiskStorageProvider:
         actual_path = await self._resolve_path(path)
         await asyncio.to_thread(actual_path.mkdir, parents=parents, exist_ok=True)
 
-    async def get_info(self, path: str) -> FileInfoResult:
+    async def get_info(self, path: str) -> FileOperationResult:
         valid, error = validate_path(path)
         if not valid:
-            return FileInfoResult(success=False, message=error, path=path)
+            return FileOperationResult(success=False, message=error or "", file=File(path=path))
 
         path = normalize_path(path)
 
         try:
             actual_path = await self._resolve_path(path)
         except PermissionError as e:
-            return FileInfoResult(success=False, message=str(e), path=path)
+            return FileOperationResult(success=False, message=str(e), file=File(path=path))
 
-        def _stat() -> FileInfoResult:
+        def _stat() -> FileOperationResult:
             if not actual_path.exists():
-                return FileInfoResult(
+                return FileOperationResult(
                     success=False,
                     message=f"File not found: {path}",
-                    path=path,
+                    file=File(path=path),
                 )
             stat = actual_path.stat()
             is_dir = actual_path.is_dir()
-            return FileInfoResult(
+            lines = 0
+            if not is_dir:
+                try:
+                    text = actual_path.read_text(encoding="utf-8")
+                    lines = text.count("\n") + (1 if text else 0)
+                except (UnicodeDecodeError, PermissionError, OSError):
+                    pass
+            return FileOperationResult(
                 success=True,
                 message="OK",
                 path=path,
-                is_directory=is_dir,
-                size_bytes=stat.st_size if not is_dir else 0,
-                mime_type=guess_mime_type(actual_path.name) if not is_dir else "",
-                created_at=datetime.fromtimestamp(stat.st_ctime, tz=UTC),
-                updated_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+                file=File(
+                    path=path,
+                    is_directory=is_dir,
+                    lines=lines,
+                    created_at=datetime.fromtimestamp(stat.st_ctime, tz=UTC),
+                    updated_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+                ),
             )
 
         return await asyncio.to_thread(_stat)
@@ -224,35 +227,32 @@ class DiskStorageProvider:
     # SupportsStorageQueries implementation
     # ------------------------------------------------------------------
 
-    async def storage_glob(self, pattern: str, path: str = "/") -> GlobResult:
+    async def storage_glob(self, pattern: str, path: str = "/") -> FileSearchResult:
         path = normalize_path(path)
 
         if not pattern:
-            return GlobResult(
+            return FileSearchResult(
                 success=False,
                 message="Empty glob pattern",
-                pattern=pattern,
             )
 
         try:
             actual_path = await self._resolve_path(path)
         except PermissionError as e:
-            return GlobResult(success=False, message=str(e), pattern=pattern)
+            return FileSearchResult(success=False, message=str(e))
 
         exists = await asyncio.to_thread(actual_path.exists)
         if not exists:
-            return GlobResult(
+            return FileSearchResult(
                 success=False,
                 message=f"Directory not found: {path}",
-                pattern=pattern,
             )
 
         is_dir = await asyncio.to_thread(actual_path.is_dir)
         if not is_dir:
-            return GlobResult(
+            return FileSearchResult(
                 success=False,
                 message=f"Not a directory: {path}",
-                pattern=pattern,
             )
 
         glob_regex = compile_glob(pattern, path)
@@ -289,10 +289,10 @@ class DiskStorageProvider:
 
         matched = await asyncio.to_thread(_collect_and_match)
 
-        candidates: list[FileCandidate] = []
+        files: list[File] = []
         for vpath, is_d, size in matched:
-            candidates.append(
-                FileCandidate(
+            files.append(
+                File(
                     path=vpath,
                     evidence=[
                         GlobEvidence(
@@ -304,14 +304,13 @@ class DiskStorageProvider:
                 )
             )
 
-        return GlobResult(
+        return FileSearchResult(
             success=True,
-            message=f"Found {len(candidates)} match(es)",
-            file_candidates=candidates,
-            pattern=pattern,
+            message=f"Found {len(files)} match(es)",
+            files=files,
         )
 
-    async def storage_grep(self, pattern: str, path: str = "/", **kwargs: Any) -> GrepResult:
+    async def storage_grep(self, pattern: str, path: str = "/", **kwargs: Any) -> FileSearchResult:
         path = normalize_path(path)
         case_sensitive: bool = kwargs.get("case_sensitive", True)
         fixed_string: bool = kwargs.get("fixed_string", False)
@@ -332,34 +331,31 @@ class DiskStorageProvider:
             flags = 0 if case_sensitive else re.IGNORECASE
             regex = re.compile(regex_pattern, flags)
         except re.error as e:
-            return GrepResult(
+            return FileSearchResult(
                 success=False,
                 message=f"Invalid regex: {e}",
-                pattern=pattern,
             )
 
         # Get candidate files
         if glob_filter:
             glob_result = await self.storage_glob(glob_filter, path)
             if not glob_result.success:
-                return GrepResult(
+                return FileSearchResult(
                     success=False,
                     message=glob_result.message,
-                    pattern=pattern,
                 )
-            candidate_vpaths = list(glob_result.files())
+            candidate_vpaths = list(glob_result)
         else:
             try:
                 actual_path = await self._resolve_path(path)
             except PermissionError as e:
-                return GrepResult(success=False, message=str(e), pattern=pattern)
+                return FileSearchResult(success=False, message=str(e))
 
             exists = await asyncio.to_thread(actual_path.exists)
             if not exists:
-                return GrepResult(
+                return FileSearchResult(
                     success=False,
                     message=f"Path not found: {path}",
-                    pattern=pattern,
                 )
 
             is_file = await asyncio.to_thread(actual_path.is_file)
@@ -369,9 +365,9 @@ class DiskStorageProvider:
 
                 def _collect_files() -> list[str]:
                     vpaths = []
-                    for root, dirs, files in os.walk(actual_path):
+                    for root, dirs, walk_files in os.walk(actual_path):
                         dirs[:] = [d for d in dirs if not d.startswith(".")]
-                        for name in files:
+                        for name in walk_files:
                             if name.startswith("."):
                                 continue
                             full = Path(root) / name
@@ -384,10 +380,9 @@ class DiskStorageProvider:
 
                 candidate_vpaths = await asyncio.to_thread(_collect_files)
 
-        result_candidates: list[FileCandidate] = []
+        result_files: list[File] = []
         files_searched = 0
         files_matched = 0
-        truncated = False
         total_matches = 0
 
         for file_path in candidate_vpaths:
@@ -410,7 +405,7 @@ class DiskStorageProvider:
 
             files_searched += 1
             lines = content.split("\n")
-            file_line_matches: list[SearchLineMatch] = []
+            file_line_matches: list[LineMatch] = []
 
             for i, line in enumerate(lines):
                 has_match = regex.search(line) is not None
@@ -427,7 +422,7 @@ class DiskStorageProvider:
                         ctx_after = tuple(lines[i + 1 : end])
 
                     file_line_matches.append(
-                        SearchLineMatch(
+                        LineMatch(
                             line_number=i + 1,
                             line_content=line,
                             context_before=ctx_before,
@@ -443,8 +438,8 @@ class DiskStorageProvider:
                 if files_only:
                     file_line_matches = [file_line_matches[0]]
 
-                result_candidates.append(
-                    FileCandidate(
+                result_files.append(
+                    File(
                         path=file_path,
                         evidence=[
                             GrepEvidence(
@@ -457,45 +452,36 @@ class DiskStorageProvider:
                 total_matches += len(file_line_matches)
 
                 if max_results > 0 and total_matches >= max_results:
-                    truncated = True
                     break
 
         if count_only:
             total = files_matched if files_only else total_matches
-            return GrepResult(
+            return FileSearchResult(
                 success=True,
                 message=f"Count: {total}",
-                pattern=pattern,
-                files_searched=files_searched,
-                files_matched=files_matched,
-                truncated=truncated,
             )
 
-        return GrepResult(
+        return FileSearchResult(
             success=True,
             message=f"Found {total_matches} match(es) in {files_matched} file(s)",
-            file_candidates=result_candidates,
-            pattern=pattern,
-            files_searched=files_searched,
-            files_matched=files_matched,
-            truncated=truncated,
+            files=result_files,
         )
 
-    async def storage_tree(self, path: str = "/", max_depth: int | None = None) -> TreeResult:
+    async def storage_tree(self, path: str = "/", max_depth: int | None = None) -> FileSearchResult:
         path = normalize_path(path)
 
         try:
             actual_path = await self._resolve_path(path)
         except PermissionError as e:
-            return TreeResult(success=False, message=str(e))
+            return FileSearchResult(success=False, message=str(e))
 
         exists = await asyncio.to_thread(actual_path.exists)
         if not exists:
-            return TreeResult(success=False, message=f"Directory not found: {path}")
+            return FileSearchResult(success=False, message=f"Directory not found: {path}")
 
         is_dir = await asyncio.to_thread(actual_path.is_dir)
         if not is_dir:
-            return TreeResult(success=False, message=f"Not a directory: {path}")
+            return FileSearchResult(success=False, message=f"Not a directory: {path}")
 
         def _walk() -> list[tuple[str, bool, int]]:
             items: list[tuple[str, bool, int]] = []
@@ -531,10 +517,10 @@ class DiskStorageProvider:
 
         disk_items = await asyncio.to_thread(_walk)
 
-        candidates: list[FileCandidate] = []
+        files: list[File] = []
         for vpath, is_d, depth in sorted(disk_items, key=lambda x: x[0]):
-            candidates.append(
-                FileCandidate(
+            files.append(
+                File(
                     path=vpath,
                     evidence=[
                         TreeEvidence(
@@ -546,28 +532,28 @@ class DiskStorageProvider:
                 )
             )
 
-        return TreeResult(
+        return FileSearchResult(
             success=True,
             message=f"{sum(1 for _, d, _ in disk_items if d)} directories, "
             f"{sum(1 for _, d, _ in disk_items if not d)} files",
-            file_candidates=candidates,
+            files=files,
         )
 
-    async def storage_list_dir(self, path: str) -> ListDirResult:
+    async def storage_list_dir(self, path: str) -> FileSearchResult:
         path = normalize_path(path)
 
         try:
             actual_path = await self._resolve_path(path)
         except PermissionError as e:
-            return ListDirResult(success=False, message=str(e))
+            return FileSearchResult(success=False, message=str(e))
 
         exists = await asyncio.to_thread(actual_path.exists)
         if not exists:
-            return ListDirResult(success=False, message=f"Directory not found: {path}")
+            return FileSearchResult(success=False, message=f"Directory not found: {path}")
 
         is_dir = await asyncio.to_thread(actual_path.is_dir)
         if not is_dir:
-            return ListDirResult(success=False, message=f"Not a directory: {path}")
+            return FileSearchResult(success=False, message=f"Not a directory: {path}")
 
         def _scan_dir() -> list[tuple[str, bool, int | None]]:
             items = []
@@ -581,12 +567,12 @@ class DiskStorageProvider:
 
         disk_items = await asyncio.to_thread(_scan_dir)
 
-        candidates: list[FileCandidate] = []
+        files: list[File] = []
         for name, is_d, disk_size in disk_items:
             item_path = f"{path}/{name}" if path != "/" else f"/{name}"
             item_path = normalize_path(item_path)
-            candidates.append(
-                FileCandidate(
+            files.append(
+                File(
                     path=item_path,
                     evidence=[
                         ListDirEvidence(
@@ -598,17 +584,17 @@ class DiskStorageProvider:
                 )
             )
 
-        return ListDirResult(
+        return FileSearchResult(
             success=True,
-            message=f"Listed {len(candidates)} items in {path}",
-            file_candidates=candidates,
+            message=f"Listed {len(files)} items in {path}",
+            files=files,
         )
 
     # ------------------------------------------------------------------
     # SupportsStorageReconcile implementation
     # ------------------------------------------------------------------
 
-    async def reconcile(self, **kwargs: Any) -> ReconcileResult:
+    async def reconcile(self, **kwargs: Any) -> FileOperationResult:
         """Walk disk, compare with DB, create/update/soft-delete as needed.
 
         This method requires DB services passed via kwargs because reconcile
@@ -631,7 +617,10 @@ class DiskStorageProvider:
         file_model = kwargs["file_model"]
         read_content = kwargs["read_content"]
 
-        stats = ReconcileResult()
+        created = 0
+        updated = 0
+        deleted = 0
+        chain_errors = 0
 
         async def _noop_write(
             _path: str,
@@ -678,7 +667,7 @@ class DiskStorageProvider:
                         read_content=read_content,
                         write_content=_noop_write,
                     )
-                    stats.created += 1
+                    created += 1
 
         # Check DB records against disk
         from sqlmodel import select
@@ -699,8 +688,14 @@ class DiskStorageProvider:
                     file.original_path = file.path
                     file.path = to_trash_path(file.path, file.id)
                     file.deleted_at = datetime.now(UTC)
-                    stats.deleted += 1
+                    deleted += 1
 
         await session.flush()
 
-        return stats
+        return FileOperationResult(
+            success=True,
+            message=(
+                f"Reconcile: {created} created, {updated} updated, "
+                f"{deleted} deleted, {chain_errors} chain errors"
+            ),
+        )

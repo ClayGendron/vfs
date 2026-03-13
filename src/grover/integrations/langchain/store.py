@@ -119,11 +119,13 @@ class GroverStore(BaseStore):
         g = cast("Grover", self.grover)
         path = self._key_to_path(op.namespace, op.key)
         read_result = g.read(path)
-        if not read_result.success or read_result.content is None:
+        if not read_result.success or not read_result.file:
+            return None
+        if read_result.file.content is None:
             return None
 
         try:
-            value = json.loads(read_result.content)
+            value = json.loads(read_result.file.content)
         except (json.JSONDecodeError, TypeError):
             return None
 
@@ -161,7 +163,7 @@ class GroverStore(BaseStore):
             except Exception:
                 result = None
 
-            paths = result.paths if result is not None and result.success else ()
+            paths = [f.path for f in result.files] if result is not None and result.success else ()
 
             items: list[SearchItem] = []
             for path in paths:
@@ -175,13 +177,15 @@ class GroverStore(BaseStore):
 
                 # Read file content to get the stored value
                 read_result = g.read(path)
-                if not read_result.success or read_result.content is None:
+                if not read_result.success or not read_result.file:
+                    continue
+                if read_result.file.content is None:
                     continue
 
                 try:
-                    value = json.loads(read_result.content)
+                    value = json.loads(read_result.file.content)
                 except (json.JSONDecodeError, TypeError):
-                    value = {"content": read_result.content}
+                    value = {"content": read_result.file.content}
 
                 items.append(
                     SearchItem(
@@ -216,11 +220,13 @@ class GroverStore(BaseStore):
         g = cast("GroverAsync", self.grover)
         path = self._key_to_path(op.namespace, op.key)
         read_result = await g.read(path)
-        if not read_result.success or read_result.content is None:
+        if not read_result.success or not read_result.file:
+            return None
+        if read_result.file.content is None:
             return None
 
         try:
-            value = json.loads(read_result.content)
+            value = json.loads(read_result.file.content)
         except (json.JSONDecodeError, TypeError):
             return None
 
@@ -256,7 +262,7 @@ class GroverStore(BaseStore):
             except Exception:
                 result = None
 
-            paths = result.paths if result is not None and result.success else ()
+            paths = [f.path for f in result.files] if result is not None and result.success else ()
 
             items: list[SearchItem] = []
             for path in paths:
@@ -267,13 +273,15 @@ class GroverStore(BaseStore):
                     continue
 
                 read_result = await g.read(path)
-                if not read_result.success or read_result.content is None:
+                if not read_result.success or not read_result.file:
+                    continue
+                if read_result.file.content is None:
                     continue
 
                 try:
-                    value = json.loads(read_result.content)
+                    value = json.loads(read_result.file.content)
                 except (json.JSONDecodeError, TypeError):
-                    value = {"content": read_result.content}
+                    value = {"content": read_result.file.content}
 
                 items.append(
                     SearchItem(
@@ -338,19 +346,21 @@ class GroverStore(BaseStore):
 
     def _extract_namespaces(self, tree_result: object) -> set[tuple[str, ...]]:
         """Extract unique namespace tuples from a tree result."""
-        from grover.results import TreeEvidence
+        from grover.models.internal.evidence import TreeEvidence
 
         namespaces: set[tuple[str, ...]] = set()
         prefix_len = len(self.prefix) + 1  # +1 for trailing /
 
-        for c in tree_result.file_candidates:  # type: ignore[union-attr]
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
+        for f in tree_result.files:  # type: ignore[union-attr]
+            is_dir = f.is_directory or any(
+                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
+            )
             if is_dir:
                 continue
-            if not c.path.startswith(self.prefix + "/"):
+            if not f.path.startswith(self.prefix + "/"):
                 continue
 
-            relative = c.path[prefix_len:]
+            relative = f.path[prefix_len:]
             parts = relative.split("/")
             if len(parts) < 2:
                 continue
@@ -393,26 +403,30 @@ class GroverStore(BaseStore):
         if not tree_result.success:
             return []
 
-        from grover.results import TreeEvidence
+        from grover.models.internal.evidence import TreeEvidence
 
         items: list[SearchItem] = []
-        for c in tree_result.file_candidates:
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
+        for f in tree_result.files:
+            is_dir = f.is_directory or any(
+                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
+            )
             if is_dir:
                 continue
-            if not c.path.endswith(".json"):
+            if not f.path.endswith(".json"):
                 continue
 
-            ns, key = self._path_to_namespace_key(c.path)
+            ns, key = self._path_to_namespace_key(f.path)
             if ns is None:
                 continue
 
-            read_result = g.read(c.path)
-            if not read_result.success or read_result.content is None:
+            read_result = g.read(f.path)
+            if not read_result.success or not read_result.file:
+                continue
+            if read_result.file.content is None:
                 continue
 
             try:
-                value = json.loads(read_result.content)
+                value = json.loads(read_result.file.content)
             except (json.JSONDecodeError, TypeError):
                 continue
 
@@ -444,26 +458,30 @@ class GroverStore(BaseStore):
         if not tree_result.success:
             return []
 
-        from grover.results import TreeEvidence
+        from grover.models.internal.evidence import TreeEvidence
 
         items: list[SearchItem] = []
-        for c in tree_result.file_candidates:
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
+        for f in tree_result.files:
+            is_dir = f.is_directory or any(
+                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
+            )
             if is_dir:
                 continue
-            if not c.path.endswith(".json"):
+            if not f.path.endswith(".json"):
                 continue
 
-            ns, key = self._path_to_namespace_key(c.path)
+            ns, key = self._path_to_namespace_key(f.path)
             if ns is None:
                 continue
 
-            read_result = await g.read(c.path)
-            if not read_result.success or read_result.content is None:
+            read_result = await g.read(f.path)
+            if not read_result.success or not read_result.file:
+                continue
+            if read_result.file.content is None:
                 continue
 
             try:
-                value = json.loads(read_result.content)
+                value = json.loads(read_result.file.content)
             except (json.JSONDecodeError, TypeError):
                 continue
 

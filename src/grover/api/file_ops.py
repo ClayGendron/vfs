@@ -6,38 +6,17 @@ from typing import TYPE_CHECKING
 
 from grover.backends.protocol import SupportsReconcile
 from grover.exceptions import MountNotFoundError
+from grover.models.internal.evidence import ListDirEvidence, TreeEvidence
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 from grover.permissions import Permission
 from grover.ref import Ref
-from grover.results import (
-    BatchChunkResult,
-    BatchWriteResult,
-    ChunkResult,
-    DeleteResult,
-    DiffVersionsResult,
-    EditResult,
-    ExistsResult,
-    FileCandidate,
-    FileInfoResult,
-    GetVersionContentResult,
-    ListDirEvidence,
-    ListDirResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    ReconcileResult,
-    RestoreResult,
-    TrashResult,
-    TreeEvidence,
-    TreeResult,
-    VersionResult,
-    WriteResult,
-)
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
     from grover.api.context import GroverContext
-    from grover.models.chunk import FileChunkBase
-    from grover.models.file import FileBase
+    from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.database.file import FileModelBase
 
 
 class FileOpsMixin:
@@ -56,7 +35,7 @@ class FileOpsMixin:
         offset: int = 0,
         limit: int = 2000,
         user_id: str | None = None,
-    ) -> ReadResult:
+    ) -> FileOperationResult:
         path = normalize_path(path)
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
@@ -64,7 +43,7 @@ class FileOpsMixin:
             result = await mount.filesystem.read(
                 rel_path, offset, limit, session=sess, user_id=user_id
             )
-        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+        result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
         return result
 
     async def write(
@@ -74,10 +53,10 @@ class FileOpsMixin:
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return WriteResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
@@ -91,7 +70,9 @@ class FileOpsMixin:
                     session=sess,
                     user_id=user_id,
                 )
-            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+            result.file.path = (
+                self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
+            )
             if result.success:
                 self._ctx.worker.schedule(
                     path,
@@ -99,7 +80,7 @@ class FileOpsMixin:
                 )
             return result
         except Exception as e:
-            return WriteResult(success=False, message=f"Write failed: {e}")
+            return FileOperationResult(success=False, message=f"Write failed: {e}")
 
     async def edit(
         self,
@@ -109,10 +90,10 @@ class FileOpsMixin:
         *,
         replace_all: bool = False,
         user_id: str | None = None,
-    ) -> EditResult:
+    ) -> FileOperationResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return EditResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
@@ -127,7 +108,9 @@ class FileOpsMixin:
                     session=sess,
                     user_id=user_id,
                 )
-            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+            result.file.path = (
+                self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
+            )
             if result.success:
                 self._ctx.worker.schedule(
                     path,
@@ -135,14 +118,14 @@ class FileOpsMixin:
                 )
             return result
         except Exception as e:
-            return EditResult(success=False, message=f"Edit failed: {e}")
+            return FileOperationResult(success=False, message=f"Edit failed: {e}")
 
     async def delete(
         self, path: str, permanent: bool = False, *, user_id: str | None = None
-    ) -> DeleteResult:
+    ) -> FileOperationResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return DeleteResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
@@ -152,13 +135,15 @@ class FileOpsMixin:
                 result = await mount.filesystem.delete(
                     rel_path, permanent, session=sess, user_id=user_id
                 )
-            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+            result.file.path = (
+                self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
+            )
             if result.success:
                 self._ctx.worker.cancel(path)
                 self._ctx.worker.schedule_immediate(self._process_delete(path, user_id))  # type: ignore[attr-defined]
             return result
         except Exception as e:
-            return DeleteResult(success=False, message=f"Delete failed: {e}")
+            return FileOperationResult(success=False, message=f"Delete failed: {e}")
 
     async def mkdir(
         self,
@@ -166,22 +151,19 @@ class FileOpsMixin:
         parents: bool = True,
         *,
         user_id: str | None = None,
-    ) -> MkdirResult:
+    ) -> FileOperationResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return MkdirResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
         async with self._ctx.session_for(mount) as sess:
             result = await mount.filesystem.mkdir(rel_path, parents, session=sess, user_id=user_id)
-        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
-        result.created_dirs = [
-            self._ctx.prefix_path(d, mount.path) or d for d in result.created_dirs
-        ]
+        result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
         return result
 
-    async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListDirResult:
+    async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> FileSearchResult:
         path = normalize_path(path)
 
         if path == "/":
@@ -193,9 +175,9 @@ class FileOpsMixin:
             result = await mount.filesystem.list_dir(rel_path, session=sess, user_id=user_id)
         return result.rebase(mount.path)
 
-    def _list_root(self) -> ListDirResult:
-        candidates = [
-            FileCandidate(
+    def _list_root(self) -> FileSearchResult:
+        files = [
+            File(
                 path=mount.path,
                 evidence=[
                     ListDirEvidence(
@@ -206,48 +188,48 @@ class FileOpsMixin:
             )
             for mount in self._ctx.registry.list_visible_mounts()
         ]
-        return ListDirResult(
+        return FileSearchResult(
             success=True,
-            message=f"Found {len(candidates)} mount(s)",
-            file_candidates=candidates,
+            message=f"Found {len(files)} mount(s)",
+            files=files,
         )
 
-    async def exists(self, path: str, *, user_id: str | None = None) -> ExistsResult:
+    async def exists(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
         path = normalize_path(path)
 
         if path == "/":
-            return ExistsResult(exists=True, path=path)
+            return FileOperationResult(file=File(path=path), success=True)
 
         if self._ctx.registry.has_mount(path):
-            return ExistsResult(exists=True, path=path)
+            return FileOperationResult(file=File(path=path), success=True)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError:
-            return ExistsResult(exists=False, path=path)
+            return FileOperationResult(file=File(path=path), success=False)
 
         assert mount.filesystem is not None
         async with self._ctx.session_for(mount) as sess:
             return await mount.filesystem.exists(rel_path, session=sess, user_id=user_id)
 
-    async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfoResult:
+    async def get_info(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
         path = normalize_path(path)
 
         if self._ctx.registry.has_mount(path):
             for mount in self._ctx.registry.list_mounts():
                 if mount.path == path:
-                    return FileInfoResult(
-                        path=mount.path,
-                        is_directory=True,
-                        permission=mount.permission.value,
-                        mount_type=mount.mount_type,
+                    return FileOperationResult(
+                        file=File(path=mount.path, is_directory=True),
+                        success=True,
                     )
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError:
-            return FileInfoResult(
-                success=False, message=f"No mount found for path: {path}", path=path
+            return FileOperationResult(
+                success=False,
+                message=f"No mount found for path: {path}",
+                file=File(path=path),
             )
 
         assert mount.filesystem is not None
@@ -267,14 +249,14 @@ class FileOpsMixin:
 
     async def move(
         self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False
-    ) -> MoveResult:
+    ) -> FileOperationResult:
         src = normalize_path(src)
         dest = normalize_path(dest)
 
         if err := self._ctx.check_writable(src):
-            return MoveResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
         if err := self._ctx.check_writable(dest):
-            return MoveResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         try:
             src_mount, src_rel = self._ctx.registry.resolve(src)
@@ -287,12 +269,6 @@ class FileOpsMixin:
                     result = await src_mount.filesystem.move(
                         src_rel, dest_rel, session=sess, follow=follow, user_id=user_id
                     )
-                result.old_path = (
-                    self._ctx.prefix_path(result.old_path, src_mount.path) or result.old_path
-                )
-                result.new_path = (
-                    self._ctx.prefix_path(result.new_path, dest_mount.path) or result.new_path
-                )
                 if result.success:
                     self._ctx.worker.cancel(src)
                     self._ctx.worker.schedule_immediate(self._process_move(src, dest, user_id))  # type: ignore[attr-defined]
@@ -304,19 +280,21 @@ class FileOpsMixin:
                     src_rel, session=src_sess, user_id=user_id
                 )
             if not read_result.success:
-                return MoveResult(
+                return FileOperationResult(
                     success=False,
                     message=f"Cannot read source for cross-mount move: {read_result.message}",
                 )
-            if read_result.content is None:
-                return MoveResult(success=False, message=f"Source file has no content: {src}")
+            if read_result.file.content is None:
+                return FileOperationResult(
+                    success=False, message=f"Source file has no content: {src}"
+                )
 
             async with self._ctx.session_for(dest_mount) as dest_sess:
                 write_result = await dest_mount.filesystem.write(
-                    dest_rel, read_result.content, session=dest_sess, user_id=user_id
+                    dest_rel, read_result.file.content, session=dest_sess, user_id=user_id
                 )
             if not write_result.success:
-                return MoveResult(
+                return FileOperationResult(
                     success=False,
                     message=(
                         f"Cannot write to destination for cross-mount move: {write_result.message}"
@@ -328,28 +306,26 @@ class FileOpsMixin:
                     src_rel, permanent=False, session=src_sess, user_id=user_id
                 )
             if not delete_result.success:
-                return MoveResult(
+                return FileOperationResult(
                     success=False,
                     message=f"Copied but failed to delete source: {delete_result.message}",
                 )
 
             self._ctx.worker.cancel(src)
             self._ctx.worker.schedule_immediate(self._process_move(src, dest, user_id))  # type: ignore[attr-defined]
-            return MoveResult(
+            return FileOperationResult(
                 success=True,
                 message=f"Moved {src} -> {dest} (cross-mount)",
-                old_path=src,
-                new_path=dest,
             )
         except Exception as e:
-            return MoveResult(success=False, message=f"Move failed: {e}")
+            return FileOperationResult(success=False, message=f"Move failed: {e}")
 
-    async def copy(self, src: str, dest: str, *, user_id: str | None = None) -> WriteResult:
+    async def copy(self, src: str, dest: str, *, user_id: str | None = None) -> FileOperationResult:
         src = normalize_path(src)
         dest = normalize_path(dest)
 
         if err := self._ctx.check_writable(dest):
-            return WriteResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         try:
             src_mount, src_rel = self._ctx.registry.resolve(src)
@@ -362,7 +338,9 @@ class FileOpsMixin:
                     result = await src_mount.filesystem.copy(
                         src_rel, dest_rel, session=sess, user_id=user_id
                     )
-                result.path = self._ctx.prefix_path(result.path, dest_mount.path) or result.path
+                result.file.path = (
+                    self._ctx.prefix_path(result.file.path, dest_mount.path) or result.file.path
+                )
                 if result.success:
                     self._ctx.worker.schedule(
                         dest,
@@ -376,18 +354,22 @@ class FileOpsMixin:
                     src_rel, session=src_sess, user_id=user_id
                 )
             if not read_result.success:
-                return WriteResult(
+                return FileOperationResult(
                     success=False,
                     message=f"Cannot read source for cross-mount copy: {read_result.message}",
                 )
-            if not read_result.content:
-                return WriteResult(success=False, message=f"Source file has no content: {src}")
+            if not read_result.file.content:
+                return FileOperationResult(
+                    success=False, message=f"Source file has no content: {src}"
+                )
 
             async with self._ctx.session_for(dest_mount) as dest_sess:
                 result = await dest_mount.filesystem.write(
-                    dest_rel, read_result.content, session=dest_sess, user_id=user_id
+                    dest_rel, read_result.file.content, session=dest_sess, user_id=user_id
                 )
-            result.path = self._ctx.prefix_path(result.path, dest_mount.path) or result.path
+            result.file.path = (
+                self._ctx.prefix_path(result.file.path, dest_mount.path) or result.file.path
+            )
             if result.success:
                 self._ctx.worker.schedule(
                     dest,
@@ -395,7 +377,7 @@ class FileOpsMixin:
                 )
             return result
         except Exception as e:
-            return WriteResult(success=False, message=f"Copy failed: {e}")
+            return FileOperationResult(success=False, message=f"Copy failed: {e}")
 
     # ------------------------------------------------------------------
     # Tree (moved from SearchOpsMixin)
@@ -403,12 +385,12 @@ class FileOpsMixin:
 
     async def tree(
         self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
-    ) -> TreeResult:
+    ) -> FileSearchResult:
         path = normalize_path(path)
         try:
             if path == "/":
-                root_candidates = [
-                    FileCandidate(
+                root_files = [
+                    File(
                         path=mount.path,
                         evidence=[
                             TreeEvidence(
@@ -420,7 +402,7 @@ class FileOpsMixin:
                     )
                     for mount in self._ctx.registry.list_visible_mounts()
                 ]
-                combined = TreeResult(success=True, message="", file_candidates=root_candidates)
+                combined = FileSearchResult(success=True, message="", files=root_files)
 
                 if max_depth is None or max_depth > 0:
                     for mount in self._ctx.registry.list_visible_mounts():
@@ -432,9 +414,17 @@ class FileOpsMixin:
                         if result.success:
                             combined = combined | result.rebase(mount.path)
 
-                combined.message = (
-                    f"{combined.total_dirs} directories, {combined.total_files} files"
+                total_dirs = sum(
+                    1
+                    for f in combined.files
+                    if any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
                 )
+                total_files_count = sum(
+                    1
+                    for f in combined.files
+                    if any(isinstance(e, TreeEvidence) and not e.is_directory for e in f.evidence)
+                )
+                combined.message = f"{total_dirs} directories, {total_files_count} files"
                 return combined
 
             mount, rel_path = self._ctx.registry.resolve(path)
@@ -445,13 +435,13 @@ class FileOpsMixin:
                 )
             return result.rebase(mount.path)
         except Exception as e:
-            return TreeResult(success=False, message=f"Tree failed: {e}")
+            return FileSearchResult(success=False, message=f"Tree failed: {e}")
 
     # ------------------------------------------------------------------
     # Version operations (absorbed from VersionTrashMixin)
     # ------------------------------------------------------------------
 
-    async def list_versions(self, path: str, *, user_id: str | None = None) -> VersionResult:
+    async def list_versions(self, path: str, *, user_id: str | None = None) -> FileSearchResult:
         path = normalize_path(path)
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
@@ -460,7 +450,7 @@ class FileOpsMixin:
 
     async def read_version(
         self, path: str, version: int, *, user_id: str | None = None
-    ) -> GetVersionContentResult:
+    ) -> FileOperationResult:
         path = normalize_path(path)
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
@@ -471,46 +461,37 @@ class FileOpsMixin:
 
     async def diff_versions(
         self, path: str, version_a: int, version_b: int, *, user_id: str | None = None
-    ) -> DiffVersionsResult:
+    ) -> FileOperationResult:
         from grover.providers.versioning.diff import compute_diff
 
         path = normalize_path(path)
         result_a = await self.read_version(path, version_a, user_id=user_id)
         if not result_a.success:
-            return DiffVersionsResult(
+            return FileOperationResult(
                 success=False,
                 message=f"Cannot read version {version_a}: {result_a.message}",
-                path=path,
-                version_a=version_a,
-                version_b=version_b,
+                file=File(path=path),
             )
         result_b = await self.read_version(path, version_b, user_id=user_id)
         if not result_b.success:
-            return DiffVersionsResult(
+            return FileOperationResult(
                 success=False,
                 message=f"Cannot read version {version_b}: {result_b.message}",
-                path=path,
-                version_a=version_a,
-                version_b=version_b,
+                file=File(path=path),
             )
-        diff = compute_diff(result_a.content, result_b.content)
-        return DiffVersionsResult(
+        diff = compute_diff(result_a.file.content or "", result_b.file.content or "")
+        return FileOperationResult(
             success=True,
             message=f"Diff between v{version_a} and v{version_b}",
-            path=path,
-            version_a=version_a,
-            version_b=version_b,
-            diff=diff,
-            content_a=result_a.content,
-            content_b=result_b.content,
+            file=File(path=path, content=diff),
         )
 
     async def restore_version(
         self, path: str, version: int, *, user_id: str | None = None
-    ) -> RestoreResult:
+    ) -> FileOperationResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return RestoreResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
@@ -518,7 +499,7 @@ class FileOpsMixin:
             result = await mount.filesystem.restore_version(
                 rel_path, version, session=sess, user_id=user_id
             )
-        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+        result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
         if result.success:
             self._ctx.worker.schedule(
                 path,
@@ -530,9 +511,9 @@ class FileOpsMixin:
     # Trash operations (absorbed from VersionTrashMixin)
     # ------------------------------------------------------------------
 
-    async def list_trash(self, *, user_id: str | None = None) -> TrashResult:
+    async def list_trash(self, *, user_id: str | None = None) -> FileSearchResult:
         """List all items in trash across all mounts."""
-        combined = TrashResult(success=True, message="")
+        combined = FileSearchResult(success=True, message="")
         for mount in self._ctx.registry.list_mounts():
             assert mount.filesystem is not None
             async with self._ctx.session_for(mount) as sess:
@@ -543,10 +524,12 @@ class FileOpsMixin:
         combined.message = f"Found {len(combined)} item(s) in trash"
         return combined
 
-    async def restore_from_trash(self, path: str, *, user_id: str | None = None) -> RestoreResult:
+    async def restore_from_trash(
+        self, path: str, *, user_id: str | None = None
+    ) -> FileOperationResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return RestoreResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
@@ -554,7 +537,7 @@ class FileOpsMixin:
             result = await mount.filesystem.restore_from_trash(
                 rel_path, session=sess, user_id=user_id
             )
-        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+        result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
         if result.success:
             self._ctx.worker.schedule(
                 path,
@@ -562,7 +545,7 @@ class FileOpsMixin:
             )
         return result
 
-    async def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
+    async def empty_trash(self, *, user_id: str | None = None) -> FileOperationResult:
         """Empty trash across all mounts.  Skips read-only mounts."""
         total_deleted = 0
         mounts_processed = 0
@@ -574,22 +557,21 @@ class FileOpsMixin:
                 result = await mount.filesystem.empty_trash(session=sess, user_id=user_id)
             if not result.success:
                 return result
-            total_deleted += result.total_deleted or 0
             mounts_processed += 1
-        return DeleteResult(
+        return FileOperationResult(
             success=True,
-            message=f"Permanently deleted {total_deleted} file(s) from {mounts_processed} mount(s)",
-            total_deleted=total_deleted,
-            permanent=True,
+            message=(
+                f"Permanently deleted {total_deleted} file(s) from {mounts_processed} mount(s)"
+            ),
         )
 
     # ------------------------------------------------------------------
     # Reconciliation (absorbed from VersionTrashMixin)
     # ------------------------------------------------------------------
 
-    async def reconcile(self, mount_path: str | None = None) -> ReconcileResult:
-        """Reconcile disk ↔ DB for capable mounts."""
-        total = ReconcileResult()
+    async def reconcile(self, mount_path: str | None = None) -> FileOperationResult:
+        """Reconcile disk <-> DB for capable mounts."""
+        total = FileOperationResult()
         mounts = self._ctx.registry.list_mounts()
         if mount_path is not None:
             mount_path = normalize_path(mount_path).rstrip("/")
@@ -602,11 +584,7 @@ class FileOpsMixin:
             if cap is None:
                 continue
             async with self._ctx.session_for(mount) as sess:
-                stats = await cap.reconcile(session=sess)
-            total.created += stats.created
-            total.updated += stats.updated
-            total.deleted += stats.deleted
-            total.chain_errors += stats.chain_errors
+                await cap.reconcile(session=sess)
 
         return total
 
@@ -616,36 +594,38 @@ class FileOpsMixin:
 
     async def write_chunk(
         self,
-        chunk: FileChunkBase,
+        chunk: FileChunkModelBase,
         *,
         user_id: str | None = None,
-    ) -> ChunkResult:
+    ) -> FileOperationResult:
         """Write (upsert) a single chunk. Parent file must exist."""
         result = await self.write_chunks([chunk], user_id=user_id)
         if result.results:
             return result.results[0]
-        return ChunkResult(success=result.success, message=result.message, path=chunk.path)
+        return FileOperationResult(
+            success=result.success, message=result.message, file=File(path=chunk.path)
+        )
 
     async def write_chunks(
         self,
-        chunks: list[FileChunkBase],
+        chunks: list[FileChunkModelBase],
         *,
         user_id: str | None = None,
-    ) -> BatchChunkResult:
+    ) -> _BatchChunkResult:
         """Batch write (upsert) chunks. Parent files must exist."""
         if not chunks:
-            return BatchChunkResult(success=True, message="No chunks to write")
+            return _BatchChunkResult(success=True, message="No chunks to write")
 
         # Validate all chunk refs upfront
         for chunk in chunks:
             ref = Ref(chunk.path)
             if not ref.is_chunk:
-                return BatchChunkResult(
+                return _BatchChunkResult(
                     success=False,
                     message=f"Invalid chunk ref (must contain '#'): {chunk.path}",
                 )
             if chunk.file_path != ref.base_path:
-                return BatchChunkResult(
+                return _BatchChunkResult(
                     success=False,
                     message=(
                         f"file_path mismatch: {chunk.file_path} != {ref.base_path} "
@@ -654,12 +634,12 @@ class FileOpsMixin:
                 )
 
         # Track results by original index to preserve input order
-        results_by_idx: dict[int, ChunkResult] = {}
+        results_by_idx: dict[int, FileOperationResult] = {}
 
         # Group chunks by mount, keeping original indices
         from collections import defaultdict
 
-        mount_groups: dict[str, list[tuple[int, FileChunkBase]]] = defaultdict(list)
+        mount_groups: dict[str, list[tuple[int, FileChunkModelBase]]] = defaultdict(list)
         for idx, chunk in enumerate(chunks):
             path = normalize_path(chunk.file_path)
             mount, _rel = self._ctx.registry.resolve(path)
@@ -671,7 +651,9 @@ class FileOpsMixin:
             # Check writable
             if err := self._ctx.check_writable(mount_path + "/dummy"):
                 for idx, c in group:
-                    results_by_idx[idx] = ChunkResult(success=False, message=err, path=c.path)
+                    results_by_idx[idx] = FileOperationResult(
+                        success=False, message=err, file=File(path=c.path)
+                    )
                 continue
 
             assert mount.filesystem is not None
@@ -682,15 +664,15 @@ class FileOpsMixin:
                 for parent in unique_parents:
                     _, rel_parent = self._ctx.registry.resolve(parent)
                     ex = await mount.filesystem.exists(rel_parent, session=sess)
-                    parent_exists[parent] = ex.exists
+                    parent_exists[parent] = ex.message == "exists"
 
-                valid_items: list[tuple[int, FileChunkBase]] = []
+                valid_items: list[tuple[int, FileChunkModelBase]] = []
                 for idx, c in group:
                     if not parent_exists.get(normalize_path(c.file_path), False):
-                        results_by_idx[idx] = ChunkResult(
+                        results_by_idx[idx] = FileOperationResult(
                             success=False,
                             message=f"Parent file not found: {c.file_path}",
-                            path=c.path,
+                            file=File(path=c.path),
                         )
                     else:
                         valid_items.append((idx, c))
@@ -717,7 +699,7 @@ class FileOpsMixin:
                     batch_result = await mount.filesystem.write_chunks(backend_chunks, session=sess)
                     # Re-prefix paths and map back to original indices
                     for i, r in enumerate(batch_result.results):
-                        r.path = self._ctx.prefix_path(r.path, mount.path) or r.path
+                        r.file.path = self._ctx.prefix_path(r.file.path, mount.path) or r.file.path
                         results_by_idx[idx_order[i]] = r
 
         # Build ordered results list
@@ -732,7 +714,7 @@ class FileOpsMixin:
 
         succeeded = sum(1 for r in all_results if r.success)
         failed = len(all_results) - succeeded
-        return BatchChunkResult(
+        return _BatchChunkResult(
             success=failed == 0,
             message=f"Wrote {succeeded} chunk(s)" + (f", {failed} failed" if failed else ""),
             results=all_results,
@@ -746,48 +728,52 @@ class FileOpsMixin:
 
     async def write_file(
         self,
-        file: FileBase,
+        file: FileModelBase,
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         """Write a single file from a model instance."""
         result = await self.write_files([file], overwrite=overwrite, user_id=user_id)
         if result.results:
             return result.results[0]
-        return WriteResult(success=result.success, message=result.message, path=file.path)
+        return FileOperationResult(
+            success=result.success, message=result.message, file=File(path=file.path)
+        )
 
     async def write_files(
         self,
-        files: list[FileBase],
+        files: list[FileModelBase],
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> BatchWriteResult:
+    ) -> _BatchWriteResult:
         """Batch write files from model instances (max 100)."""
         if not files:
-            return BatchWriteResult(success=True, message="No files to write")
+            return _BatchWriteResult(success=True, message="No files to write")
 
         if len(files) > 100:
-            return BatchWriteResult(
+            return _BatchWriteResult(
                 success=False, message="Batch size exceeds maximum of 100 files"
             )
 
         try:
             # Track results by original index
-            results_by_idx: dict[int, WriteResult] = {}
+            results_by_idx: dict[int, FileOperationResult] = {}
 
             # Group files by mount, keeping original indices
             from collections import defaultdict
 
-            mount_groups: dict[str, list[tuple[int, FileBase]]] = defaultdict(list)
+            mount_groups: dict[str, list[tuple[int, FileModelBase]]] = defaultdict(list)
             for idx, f in enumerate(files):
                 path = normalize_path(f.path)
                 try:
                     mount, _rel = self._ctx.registry.resolve(path)
                     mount_groups[mount.path].append((idx, f))
                 except Exception as e:
-                    results_by_idx[idx] = WriteResult(success=False, message=str(e), path=f.path)
+                    results_by_idx[idx] = FileOperationResult(
+                        success=False, message=str(e), file=File(path=f.path)
+                    )
 
             for mount_path, group in mount_groups.items():
                 mount, _ = self._ctx.registry.resolve(mount_path + "/dummy")
@@ -795,7 +781,9 @@ class FileOpsMixin:
                 # Check writable
                 if err := self._ctx.check_writable(mount_path + "/dummy"):
                     for idx, f in group:
-                        results_by_idx[idx] = WriteResult(success=False, message=err, path=f.path)
+                        results_by_idx[idx] = FileOperationResult(
+                            success=False, message=err, file=File(path=f.path)
+                        )
                     continue
 
                 assert mount.filesystem is not None
@@ -823,7 +811,7 @@ class FileOpsMixin:
 
                     # Re-prefix paths and map back to original indices
                     for i, r in enumerate(batch_result.results):
-                        r.path = self._ctx.prefix_path(r.path, mount.path) or r.path
+                        r.file.path = self._ctx.prefix_path(r.file.path, mount.path) or r.file.path
                         results_by_idx[idx_order[i]] = r
 
             # Build ordered results list
@@ -841,7 +829,7 @@ class FileOpsMixin:
 
             succeeded = sum(1 for r in all_results if r.success)
             failed = len(all_results) - succeeded
-            return BatchWriteResult(
+            return _BatchWriteResult(
                 success=failed == 0,
                 message=f"Wrote {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
                 results=all_results,
@@ -849,4 +837,25 @@ class FileOpsMixin:
                 failed=failed,
             )
         except Exception as e:
-            return BatchWriteResult(success=False, message=f"Batch write failed: {e}")
+            return _BatchWriteResult(success=False, message=f"Batch write failed: {e}")
+
+
+# ------------------------------------------------------------------
+# Helper result types for batch operations (kept as simple containers)
+# ------------------------------------------------------------------
+
+
+class _BatchChunkResult(FileOperationResult):
+    """Result of a batch chunk write operation."""
+
+    results: list[FileOperationResult] = []  # noqa: RUF012
+    succeeded: int = 0
+    failed: int = 0
+
+
+class _BatchWriteResult(FileOperationResult):
+    """Result of a batch file write operation."""
+
+    results: list[FileOperationResult] = []  # noqa: RUF012
+    succeeded: int = 0
+    failed: int = 0

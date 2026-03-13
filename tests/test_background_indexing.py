@@ -70,7 +70,7 @@ class TestBackgroundModeAsync:
         graph = grover.get_graph()
         assert graph.has_node("/project/rapid.py")
         result = await grover.read("/project/rapid.py")
-        assert result.content == "VERSION = 4\n"
+        assert result.file.content == "VERSION = 4\n"
 
     @pytest.mark.asyncio
     async def test_write_then_delete_cancels(self, grover: GroverAsync) -> None:

@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from grover.models.chunk import FileChunkBase
-    from grover.results.operations import BatchChunkResult, ChunkListResult, ChunkResult
+    from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.internal.results import FileOperationResult
 
 
 @runtime_checkable
@@ -15,20 +15,20 @@ class ChunkProvider(Protocol):
 
     async def replace_file_chunks(
         self, session: Any, file_path: str, chunks: list[dict]
-    ) -> ChunkResult: ...
+    ) -> FileOperationResult: ...
 
-    async def delete_file_chunks(self, session: Any, file_path: str) -> ChunkResult: ...
+    async def delete_file_chunks(self, session: Any, file_path: str) -> FileOperationResult: ...
 
-    async def list_file_chunks(self, session: Any, file_path: str) -> ChunkListResult: ...
+    async def list_file_chunks(self, session: Any, file_path: str) -> FileOperationResult: ...
 
     async def write_chunk(
         self,
         session: Any,
-        chunk: FileChunkBase,
-    ) -> ChunkResult: ...
+        chunk: FileChunkModelBase,
+    ) -> FileOperationResult: ...
 
     async def write_chunks(
         self,
         session: Any,
-        chunks: list[FileChunkBase],
-    ) -> BatchChunkResult: ...
+        chunks: list[FileChunkModelBase],
+    ) -> FileOperationResult: ...

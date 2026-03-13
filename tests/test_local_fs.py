@@ -79,7 +79,7 @@ class TestPathSecurity:
         async with _session(factory) as session:
             result = await fs.read("/foo/../bar.py", session=session)
         assert result.success is True
-        assert "content" in result.content
+        assert "content" in result.file.content
         await fs.close()
 
 
@@ -159,7 +159,7 @@ class TestDeleteBackup:
         # File should be in trash (backed up to DB)
         async with _session(factory) as session:
             trash = await fs.list_trash(session=session)
-        paths = trash.deleted_paths()
+        paths = trash.paths
         assert "/ephemeral.py" in paths
         await fs.close()
 
@@ -260,7 +260,7 @@ class TestTrashRestoreDisk:
         async with _session(factory) as session:
             read = await fs.read("/restore_me.py", session=session)
         assert read.success is True
-        assert "precious content" in read.content
+        assert "precious content" in read.file.content
         await fs.close()
 
     async def test_restore_edited_file_from_trash(self, tmp_path: Path):
@@ -318,7 +318,7 @@ class TestConcurrentWrites:
             async with _session(factory) as session:
                 read = await fs.read(f"/{name}.py", session=session)
             assert read.success is True
-            assert read.content == expected
+            assert read.file.content == expected
         await fs.close()
 
     async def test_concurrent_read_write(self, tmp_path: Path):
@@ -376,7 +376,7 @@ class TestDirectoryTrashDisk:
         # Both parent and child should be in trash
         async with _session(factory) as session:
             trash = await fs.list_trash(session=session)
-        paths = trash.deleted_paths()
+        paths = trash.paths
         assert "/mydir" in paths
         assert "/mydir/child.py" in paths
         await fs.close()
@@ -408,7 +408,7 @@ class TestDirectoryTrashDisk:
         async with _session(factory) as session:
             read = await fs.read("/mydir/child.py", session=session)
         assert read.success is True
-        assert "child content" in read.content
+        assert "child content" in read.file.content
         await fs.close()
 
 
@@ -495,7 +495,7 @@ class TestLocalFSInheritsDatabaseFS:
         async with _session(factory) as session:
             result = await fs.glob("*.py", session=session)
         assert result.success is True
-        paths = list(result.files())
+        paths = list(result.paths)
         assert "/alpha.py" in paths
         assert "/beta.py" in paths
         await fs.close()
@@ -510,7 +510,7 @@ class TestLocalFSInheritsDatabaseFS:
         async with _session(factory) as session:
             result = await fs.grep("needle", session=session)
         assert result.success is True
-        assert result.files_matched == 1
+        assert len(result.files) == 1
         await fs.close()
 
     async def test_tree_uses_disk(self, tmp_path: Path):
@@ -524,7 +524,7 @@ class TestLocalFSInheritsDatabaseFS:
         async with _session(factory) as session:
             result = await fs.tree("/", session=session)
         assert result.success is True
-        paths = [c.path for c in result.file_candidates]
+        paths = list(result.paths)
         assert "/subdir" in paths
         assert "/subdir/file.py" in paths
         await fs.close()
@@ -538,7 +538,7 @@ class TestLocalFSInheritsDatabaseFS:
 
         async with _session(factory) as session:
             result = await fs.exists("/disk_only.py", session=session)
-        assert result.exists is True
+        assert result.message == "exists"
         await fs.close()
 
     async def test_no_unexpected_method_overrides(self, tmp_path: Path):
@@ -603,7 +603,7 @@ class TestLocalFSInheritsDatabaseFS:
         async with _session(factory) as session:
             versions = await fs.list_versions("/versioned.py", session=session)
         assert versions.success is True
-        assert len(versions.file_candidates) == 2
+        assert len(versions.files) == 2
         await fs.close()
 
     async def test_provider_kwargs_forwarded(self, tmp_path: Path):

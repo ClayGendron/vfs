@@ -11,11 +11,11 @@ from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.backends.protocol import SupportsReBAC
 from grover.exceptions import MountNotFoundError
-from grover.models.chunk import FileChunk
-from grover.models.connection import FileConnection
-from grover.models.file import File
-from grover.models.share import FileShare
-from grover.models.version import FileVersion
+from grover.models.database.chunk import FileChunkModel
+from grover.models.database.connection import FileConnectionModel
+from grover.models.database.file import FileModel
+from grover.models.database.share import FileShareModel
+from grover.models.database.version import FileVersionModel
 from grover.mount import Mount
 from grover.permissions import Permission
 from grover.providers.graph.rustworkx import RustworkxGraph
@@ -28,9 +28,9 @@ if TYPE_CHECKING:
 
     from grover.api.context import GroverContext
     from grover.backends.protocol import GroverFileSystem
-    from grover.models.chunk import FileChunkBase
-    from grover.models.file import FileBase
-    from grover.models.version import FileVersionBase
+    from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.database.file import FileModelBase
+    from grover.models.database.version import FileVersionModelBase
     from grover.providers.embedding.protocol import EmbeddingProvider
     from grover.providers.search.protocol import SearchProvider
 
@@ -54,9 +54,9 @@ class MountMixin:
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
         dialect: str = "sqlite",
-        file_model: type[FileBase] | None = None,
-        file_version_model: type[FileVersionBase] | None = None,
-        file_chunk_model: type[FileChunkBase] | None = None,
+        file_model: type[FileModelBase] | None = None,
+        file_version_model: type[FileVersionModelBase] | None = None,
+        file_chunk_model: type[FileChunkModelBase] | None = None,
         db_schema: str | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
@@ -171,15 +171,11 @@ class MountMixin:
             if hasattr(fs, "_validate_search_dimensions"):
                 fs._validate_search_dimensions()  # type: ignore[union-attr]
 
-        # Configure graph provider for self-refresh from DB
-        if fs is not None and not new_mount.hidden and new_mount.session_factory is not None:
+        # Configure refresh on graph provider so lazy-load knows the path prefix
+        if fs is not None and not new_mount.hidden:
             gp = getattr(fs, "graph_provider", None)
             if gp is not None and hasattr(gp, "configure_refresh"):
-                fcm = getattr(fs, "file_connection_model", None)
-                kwargs: dict = {"path_prefix": new_mount.path}
-                if fcm is not None:
-                    kwargs["file_connection_model"] = fcm
-                gp.configure_refresh(**kwargs)
+                gp.configure_refresh(path_prefix="")  # type: ignore[union-attr]
 
         # Call open() on the filesystem if needed (skip LocalFileSystem — already opened above)
         if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(
@@ -197,9 +193,9 @@ class MountMixin:
         path: str,
         engine: AsyncEngine,
         backend: GroverFileSystem | None,
-        file_model: type[FileBase] | None,
-        file_version_model: type[FileVersionBase] | None,
-        file_chunk_model: type[FileChunkBase] | None,
+        file_model: type[FileModelBase] | None,
+        file_version_model: type[FileVersionModelBase] | None,
+        file_chunk_model: type[FileChunkModelBase] | None,
         db_schema: str | None,
         mount_type: str | None,
         permission: Permission,
@@ -211,9 +207,9 @@ class MountMixin:
         dialect = engine.dialect.name
 
         # Ensure base tables exist
-        fm = file_model or File
-        fvm = file_version_model or FileVersion
-        fcm = file_chunk_model or FileChunk
+        fm = file_model or FileModel
+        fvm = file_version_model or FileVersionModel
+        fcm = file_chunk_model or FileChunkModel
         async with engine.begin() as conn:
             await conn.run_sync(
                 lambda c: fm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
@@ -226,7 +222,7 @@ class MountMixin:
             )
             # Edges table for per-mount graph persistence
             await conn.run_sync(
-                lambda c: FileConnection.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
+                lambda c: FileConnectionModel.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
             )
 
         if backend is None:
@@ -242,7 +238,7 @@ class MountMixin:
         if isinstance(backend, SupportsReBAC):
             async with engine.begin() as conn:
                 await conn.run_sync(
-                    lambda c: FileShare.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
+                    lambda c: FileShareModel.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
                 )
 
         return Mount(
@@ -261,9 +257,9 @@ class MountMixin:
         session_factory: Callable[..., AsyncSession],
         backend: GroverFileSystem | None,
         dialect: str,
-        file_model: type[FileBase] | None,
-        file_version_model: type[FileVersionBase] | None,
-        file_chunk_model: type[FileChunkBase] | None,
+        file_model: type[FileModelBase] | None,
+        file_version_model: type[FileVersionModelBase] | None,
+        file_chunk_model: type[FileChunkModelBase] | None,
         db_schema: str | None,
         mount_type: str | None,
         permission: Permission,

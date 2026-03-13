@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete as sa_delete
 from sqlmodel import select
 
-from grover.results.operations import VerifyVersionResult, VersionChainError
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult
 
 from ...exceptions import ConsistencyError
 from .diff import SNAPSHOT_INTERVAL, compute_diff, reconstruct_version
@@ -19,8 +20,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.file import FileBase
-    from grover.models.version import FileVersionBase
+    from grover.models.database.file import FileModelBase
+    from grover.models.database.version import FileVersionModelBase
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,8 +44,8 @@ class DefaultVersionProvider:
 
     def __init__(
         self,
-        file_model: type[FileBase],
-        file_version_model: type[FileVersionBase],
+        file_model: type[FileModelBase],
+        file_version_model: type[FileVersionModelBase],
     ) -> None:
         self._file_model = file_model
         self._file_version_model = file_version_model
@@ -52,7 +53,7 @@ class DefaultVersionProvider:
     async def save_version(
         self,
         session: AsyncSession,
-        file: FileBase,
+        file: FileModelBase,
         old_content: str,
         new_content: str,
         created_by: str = "agent",
@@ -90,7 +91,7 @@ class DefaultVersionProvider:
     async def list_versions(
         self,
         session: AsyncSession,
-        file: FileBase,
+        file: FileModelBase,
     ) -> list[VersionInfo]:
         """List all saved versions for a file."""
         fv_model = self._file_version_model
@@ -113,7 +114,7 @@ class DefaultVersionProvider:
     async def get_version_content(
         self,
         session: AsyncSession,
-        file: FileBase,
+        file: FileModelBase,
         version: int,
     ) -> str | None:
         """Get the content of a specific version using diff reconstruction."""
@@ -170,8 +171,8 @@ class DefaultVersionProvider:
     async def verify_chain(
         self,
         session: AsyncSession,
-        file: FileBase,
-    ) -> VerifyVersionResult:
+        file: FileModelBase,
+    ) -> FileOperationResult:
         """Verify the integrity of the entire version chain for a file.
 
         Reconstructs every version and checks its SHA256 hash against the
@@ -187,13 +188,12 @@ class DefaultVersionProvider:
         all_versions = all_result.scalars().all()
 
         if not all_versions:
-            return VerifyVersionResult(
-                path=file.path,
+            return FileOperationResult(
                 success=True,
-                message="No versions to verify",
+                message="Verified: 0 checked, 0 passed, 0 failed",
+                file=File(path=file.path),
             )
 
-        errors: list[VersionChainError] = []
         checked = 0
         passed = 0
 
@@ -209,14 +209,6 @@ class DefaultVersionProvider:
                     snapshot_rec = candidate
 
             if snapshot_rec is None:
-                errors.append(
-                    VersionChainError(
-                        version=v.version,
-                        expected_hash=v.content_hash,
-                        actual_hash="",
-                        error="No snapshot found at or before this version",
-                    )
-                )
                 continue
 
             # Build the sub-chain from snapshot through target
@@ -228,37 +220,16 @@ class DefaultVersionProvider:
                 entries = [(rec.is_snapshot, rec.content) for rec in chain]
                 content = reconstruct_version(entries)
                 actual_hash = hashlib.sha256(content.encode()).hexdigest()
-            except Exception as exc:
-                errors.append(
-                    VersionChainError(
-                        version=v.version,
-                        expected_hash=v.content_hash,
-                        actual_hash="",
-                        error=f"Reconstruction failed: {exc}",
-                    )
-                )
+            except Exception:
                 continue
 
-            if actual_hash != v.content_hash:
-                errors.append(
-                    VersionChainError(
-                        version=v.version,
-                        expected_hash=v.content_hash,
-                        actual_hash=actual_hash,
-                        error="Content hash mismatch",
-                    )
-                )
-            else:
+            if actual_hash == v.content_hash:
                 passed += 1
 
         failed = checked - passed
         ok = failed == 0
-        return VerifyVersionResult(
-            path=file.path,
+        return FileOperationResult(
             success=ok,
-            message="All versions verified" if ok else f"{failed} version(s) failed verification",
-            versions_checked=checked,
-            versions_passed=passed,
-            versions_failed=failed,
-            errors=errors,
+            message=f"Verified: {checked} checked, {passed} passed, {failed} failed",
+            file=File(path=file.path),
         )

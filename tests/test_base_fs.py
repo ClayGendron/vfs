@@ -32,11 +32,11 @@ class TestWriteRead:
         async with factory() as session:
             result = await fs.write("/hello.py", "print('hi')\n", session=session)
             assert result.success is True
-            assert result.created is True
+            assert "Created" in result.message
 
             read = await fs.read("/hello.py", session=session)
             assert read.success is True
-            assert "print('hi')" in read.content
+            assert "print('hi')" in read.file.content
         await engine.dispose()
 
     async def test_write_updates_file(self):
@@ -45,8 +45,8 @@ class TestWriteRead:
             await fs.write("/f.py", "v1\n", session=session)
             result = await fs.write("/f.py", "v2\n", session=session)
             assert result.success is True
-            assert result.created is False
-            assert result.version == 2
+            assert "Updated" in result.message
+            assert result.file.current_version == 2
         await engine.dispose()
 
     async def test_write_non_text_rejected(self):
@@ -78,7 +78,7 @@ class TestEdit:
             assert result.success is True
 
             read = await fs.read("/f.py", session=session)
-            assert "earth" in read.content
+            assert "earth" in read.file.content
         await engine.dispose()
 
     async def test_edit_increments_version(self):
@@ -86,7 +86,7 @@ class TestEdit:
         async with factory() as session:
             await fs.write("/f.py", "line1\n", session=session)
             result = await fs.edit("/f.py", "line1", "line2", session=session)
-            assert result.version == 2
+            assert result.file.current_version == 2
         await engine.dispose()
 
     async def test_edit_nonexistent(self):
@@ -123,7 +123,8 @@ class TestVersioning:
             for version_num in range(1, len(contents) + 1):
                 vc = await fs.get_version_content("/f.py", version_num, session=session)
                 assert vc.success, f"Version {version_num} failed: {vc.message}"
-                assert vc.content == contents[version_num - 1], f"Version {version_num} mismatch"
+                expected = contents[version_num - 1]
+                assert vc.file.content == expected, f"v{version_num} mismatch"
         await engine.dispose()
 
     async def test_snapshot_interval(self):
@@ -190,10 +191,10 @@ class TestRestoreVersion:
 
             result = await fs.restore_version("/f.py", 1, session=session)
             assert result.success is True
-            assert result.restored_version == 1
+            assert "version 1" in result.message
 
             read = await fs.read("/f.py", session=session)
-            assert "original" in read.content
+            assert "original" in read.file.content
         await engine.dispose()
 
     async def test_restore_nonexistent_version(self):
@@ -217,7 +218,7 @@ class TestDelete:
             await fs.write("/f.py", "content\n", session=session)
             result = await fs.delete("/f.py", session=session)
             assert result.success is True
-            assert result.permanent is False
+            assert "trash" in result.message
 
             read = await fs.read("/f.py", session=session)
             assert read.success is False
@@ -229,13 +230,13 @@ class TestDelete:
             await fs.write("/f.py", "content\n", session=session)
             result = await fs.delete("/f.py", permanent=True, session=session)
             assert result.success is True
-            assert result.permanent is True
+            assert "Permanently" in result.message
         await engine.dispose()
 
     async def test_permanent_delete_cleans_versions(self):
         from sqlmodel import select
 
-        from grover.models.version import FileVersion
+        from grover.models.database.version import FileVersionModel
 
         fs, factory, engine = await _make_fs()
         async with factory() as session:
@@ -249,7 +250,7 @@ class TestDelete:
 
         # Verify no orphaned version records remain
         async with factory() as session:
-            db_result = await session.execute(select(FileVersion))
+            db_result = await session.execute(select(FileVersionModel))
             assert db_result.scalars().all() == [], "Version records should be deleted"
         await engine.dispose()
 
@@ -289,7 +290,7 @@ class TestTrash:
 
             read = await fs.read("/f.py", session=session)
             assert read.success is True
-            assert "content" in read.content
+            assert "content" in read.file.content
         await engine.dispose()
 
     async def test_restore_not_in_trash(self):
@@ -309,7 +310,7 @@ class TestTrash:
 
             result = await fs.empty_trash(session=session)
             assert result.success is True
-            assert result.total_deleted == 2
+            assert "2 items" in result.message
 
             trash = await fs.list_trash(session=session)
             assert len(trash) == 0
@@ -318,7 +319,7 @@ class TestTrash:
     async def test_empty_trash_cleans_versions(self):
         from sqlmodel import select
 
-        from grover.models.version import FileVersion
+        from grover.models.database.version import FileVersionModel
 
         fs, factory, engine = await _make_fs()
         async with factory() as session:
@@ -329,7 +330,7 @@ class TestTrash:
             await session.commit()
 
         async with factory() as session:
-            result = await session.execute(select(FileVersion))
+            result = await session.execute(select(FileVersionModel))
             assert result.scalars().all() == [], "Version records should be deleted"
         await engine.dispose()
 
@@ -344,11 +345,11 @@ class TestTrash:
             result = await fs.delete("/mydir", session=session)
             assert result.success is True
 
-            assert (await fs.exists("/mydir/a.py", session=session)).exists is False
-            assert (await fs.exists("/mydir/b.py", session=session)).exists is False
+            assert (await fs.exists("/mydir/a.py", session=session)).message == "not found"
+            assert (await fs.exists("/mydir/b.py", session=session)).message == "not found"
 
             trash = await fs.list_trash(session=session)
-            paths = trash.deleted_paths()
+            paths = trash.paths
             assert "/mydir" in paths
             assert "/mydir/a.py" in paths
             assert "/mydir/b.py" in paths
@@ -367,13 +368,13 @@ class TestTrash:
             result = await fs.restore_from_trash("/mydir", session=session)
             assert result.success is True
 
-            assert (await fs.exists("/mydir/a.py", session=session)).exists is True
-            assert (await fs.exists("/mydir/b.py", session=session)).exists is True
+            assert (await fs.exists("/mydir/a.py", session=session)).message == "exists"
+            assert (await fs.exists("/mydir/b.py", session=session)).message == "exists"
 
             read_a = await fs.read("/mydir/a.py", session=session)
-            assert "a content" in read_a.content
+            assert "a content" in read_a.file.content
             read_b = await fs.read("/mydir/b.py", session=session)
-            assert "b content" in read_b.content
+            assert "b content" in read_b.file.content
         await engine.dispose()
 
 
@@ -388,7 +389,7 @@ class TestDirectoryOps:
         async with factory() as session:
             result = await fs.mkdir("/src", session=session)
             assert result.success is True
-            assert "/src" in result.created_dirs
+            assert "Created" in result.message
         await engine.dispose()
 
     async def test_mkdir_parents(self):
@@ -396,7 +397,7 @@ class TestDirectoryOps:
         async with factory() as session:
             result = await fs.mkdir("/a/b/c", session=session)
             assert result.success is True
-            assert len(result.created_dirs) >= 1
+            assert "Created" in result.message
         await engine.dispose()
 
     async def test_mkdir_existing(self):
@@ -405,7 +406,7 @@ class TestDirectoryOps:
             await fs.mkdir("/src", session=session)
             result = await fs.mkdir("/src", session=session)
             assert result.success is True
-            assert result.created_dirs == []
+            assert "already exists" in result.message
         await engine.dispose()
 
     async def test_list_dir(self):
@@ -472,8 +473,8 @@ class TestMoveCopy:
             result = await fs.move("/a.py", "/b.py", session=session)
             assert result.success is True
 
-            assert (await fs.exists("/a.py", session=session)).exists is False
-            assert (await fs.exists("/b.py", session=session)).exists is True
+            assert (await fs.exists("/a.py", session=session)).message == "not found"
+            assert (await fs.exists("/b.py", session=session)).message == "exists"
         await engine.dispose()
 
     async def test_move_empty_file_to_existing(self):
@@ -484,8 +485,8 @@ class TestMoveCopy:
 
             result = await fs.move("/empty.py", "/target.py", session=session)
             assert result.success is True
-            assert (await fs.exists("/empty.py", session=session)).exists is False
-            assert (await fs.exists("/target.py", session=session)).exists is True
+            assert (await fs.exists("/empty.py", session=session)).message == "not found"
+            assert (await fs.exists("/target.py", session=session)).message == "exists"
         await engine.dispose()
 
     async def test_copy_file(self):
@@ -495,8 +496,8 @@ class TestMoveCopy:
             result = await fs.copy("/a.py", "/b.py", session=session)
             assert result.success is True
 
-            assert (await fs.exists("/a.py", session=session)).exists is True
-            assert (await fs.exists("/b.py", session=session)).exists is True
+            assert (await fs.exists("/a.py", session=session)).message == "exists"
+            assert (await fs.exists("/b.py", session=session)).message == "exists"
         await engine.dispose()
 
     async def test_move_to_existing_file_overwrites(self):
@@ -509,11 +510,11 @@ class TestMoveCopy:
             result = await fs.move("/src.py", "/dest.py", session=session)
             assert result.success is True
 
-            assert (await fs.exists("/src.py", session=session)).exists is False
+            assert (await fs.exists("/src.py", session=session)).message == "not found"
 
             read = await fs.read("/dest.py", session=session)
             assert read.success is True
-            assert "source content" in read.content
+            assert "source content" in read.file.content
         await engine.dispose()
 
     async def test_move_to_existing_directory_rejected(self):
@@ -568,11 +569,11 @@ class TestMoveCopy:
 
             read1 = await fs.read("/dst/one.py", session=session)
             assert read1.success is True
-            assert "file one" in read1.content
+            assert "file one" in read1.file.content
 
             read2 = await fs.read("/dst/two.py", session=session)
             assert read2.success is True
-            assert "file two" in read2.content
+            assert "file two" in read2.file.content
         await engine.dispose()
 
 
@@ -585,9 +586,9 @@ class TestExistsGetInfo:
     async def test_exists(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
-            assert (await fs.exists("/nope.py", session=session)).exists is False
+            assert (await fs.exists("/nope.py", session=session)).message == "not found"
             await fs.write("/f.py", "x\n", session=session)
-            assert (await fs.exists("/f.py", session=session)).exists is True
+            assert (await fs.exists("/f.py", session=session)).message == "exists"
         await engine.dispose()
 
     async def test_get_info(self):
@@ -596,7 +597,7 @@ class TestExistsGetInfo:
             await fs.write("/f.py", "hello\n", session=session)
             info = await fs.get_info("/f.py", session=session)
             assert info.success
-            assert info.is_directory is False
+            assert info.file.is_directory is False
         await engine.dispose()
 
     async def test_get_info_nonexistent(self):
@@ -617,7 +618,7 @@ class TestHashValidation:
         """Corrupt a version's content_hash in DB, get_version_content raises ConsistencyError."""
         from sqlmodel import select
 
-        from grover.models.version import FileVersion
+        from grover.models.database.version import FileVersionModel
 
         fs, factory, engine = await _make_fs()
         async with factory() as session:
@@ -625,7 +626,9 @@ class TestHashValidation:
             await session.flush()
 
             # Corrupt the stored content_hash for version 1
-            result = await session.execute(select(FileVersion).where(FileVersion.version == 1))
+            result = await session.execute(
+                select(FileVersionModel).where(FileVersionModel.version == 1)
+            )
             ver = result.scalar_one()
             ver.content_hash = "0000000000000000000000000000000000000000000000000000000000000000"
             await session.flush()
@@ -644,7 +647,7 @@ class TestPathValidationExistsGetInfo:
     async def test_exists_null_byte_path(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
-            assert (await fs.exists("/foo\x00bar", session=session)).exists is False
+            assert (await fs.exists("/foo\x00bar", session=session)).message == "not found"
         await engine.dispose()
 
     async def test_get_info_null_byte_path(self):
@@ -682,7 +685,7 @@ class TestEdgeCases:
             await fs.write("/empty.py", "", session=session)
             result = await fs.read("/empty.py", session=session)
             assert result.success is True
-            assert result.content == ""
+            assert result.file.content == ""
         await engine.dispose()
 
     async def test_write_overwrite_false(self):
@@ -703,8 +706,8 @@ class TestEdgeCases:
             result = await fs.move("/a", "/b", session=session)
             assert result.success is True
 
-            assert (await fs.exists("/b/child.py", session=session)).exists is True
-            assert (await fs.exists("/a/child.py", session=session)).exists is False
+            assert (await fs.exists("/b/child.py", session=session)).message == "exists"
+            assert (await fs.exists("/a/child.py", session=session)).message == "not found"
         await engine.dispose()
 
     async def test_copy_directory_rejected(self):
@@ -816,7 +819,8 @@ class TestVersionReconstructionAcrossSnapshots:
             for version_num in range(1, len(contents) + 1):
                 vc = await fs.get_version_content("/f.py", version_num, session=session)
                 assert vc.success, f"Version {version_num} failed: {vc.message}"
-                assert vc.content == contents[version_num - 1], f"Version {version_num} mismatch"
+                expected = contents[version_num - 1]
+                assert vc.file.content == expected, f"v{version_num} mismatch"
         await engine.dispose()
 
 
@@ -835,7 +839,7 @@ class TestMoveGuards:
             result = await fs.move("/file.py", "/file.py", session=session)
             assert result.success is True
             read = await fs.read("/file.py", session=session)
-            assert read.content == "content\n"
+            assert read.file.content == "content\n"
         await engine.dispose()
 
     async def test_move_directory_into_itself_rejected(self):
@@ -854,7 +858,7 @@ class TestMoveGuards:
             await fs.write("/a/b.py", "content\n", session=session)
             result = await fs.move("/a/b.py", "/a/c.py", session=session)
             assert result.success is True
-            assert (await fs.exists("/a/c.py", session=session)).exists is True
+            assert (await fs.exists("/a/c.py", session=session)).message == "exists"
         await engine.dispose()
 
 
@@ -869,8 +873,8 @@ class TestAtomicMoveOverwrite:
             result = await fs.move("/src.py", "/dest.py", session=session)
             assert result.success is True
             read = await fs.read("/dest.py", session=session)
-            assert read.content == "source\n"
-            assert (await fs.exists("/src.py", session=session)).exists is False
+            assert read.file.content == "source\n"
+            assert (await fs.exists("/src.py", session=session)).message == "not found"
         await engine.dispose()
 
     async def test_move_overwrite_preserves_dest_history(self):
@@ -899,7 +903,7 @@ class TestRestoreOverwrite:
             result = await fs.restore_from_trash("/file.py", session=session)
             assert result.success is True
             read = await fs.read("/file.py", session=session)
-            assert read.content == "original\n"
+            assert read.file.content == "original\n"
         await engine.dispose()
 
     async def test_restore_from_trash_no_conflict(self):
@@ -910,5 +914,5 @@ class TestRestoreOverwrite:
             result = await fs.restore_from_trash("/file.py", session=session)
             assert result.success is True
             read = await fs.read("/file.py", session=session)
-            assert read.content == "content\n"
+            assert read.file.content == "content\n"
         await engine.dispose()

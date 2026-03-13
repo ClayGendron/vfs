@@ -25,58 +25,14 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from grover.backends.protocol import GroverFileSystem
-    from grover.models.chunk import FileChunkBase
-    from grover.models.file import FileBase
-    from grover.models.version import FileVersionBase
+    from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.database.file import FileModelBase
+    from grover.models.database.version import FileVersionModelBase
+    from grover.models.internal.results import FileOperationResult, FileSearchResult
     from grover.mount import Mount
     from grover.providers.embedding.protocol import EmbeddingProvider
     from grover.providers.graph.protocol import GraphProvider
     from grover.providers.search.protocol import SearchProvider
-    from grover.results import (
-        AncestorsResult,
-        BatchChunkResult,
-        BatchWriteResult,
-        BetweennessResult,
-        ChunkResult,
-        ClosenessResult,
-        CommonNeighborsResult,
-        ConnectionResult,
-        DegreeResult,
-        DeleteResult,
-        DescendantsResult,
-        DiffVersionsResult,
-        EditResult,
-        EgoGraphResult,
-        ExistsResult,
-        FileInfoResult,
-        FileSearchResult,
-        GetVersionContentResult,
-        GlobResult,
-        GrepResult,
-        HarmonicResult,
-        HasPathResult,
-        HitsResult,
-        KatzResult,
-        LexicalSearchResult,
-        ListDirResult,
-        MeetingSubgraphResult,
-        MoveResult,
-        PageRankResult,
-        PredecessorsResult,
-        ReadResult,
-        ReconcileResult,
-        RestoreResult,
-        ShareResult,
-        ShareSearchResult,
-        ShortestPathResult,
-        SubgraphSearchResult,
-        SuccessorsResult,
-        TrashResult,
-        TreeResult,
-        VectorSearchResult,
-        VersionResult,
-        WriteResult,
-    )
 
 _T = TypeVar("_T")
 
@@ -199,9 +155,9 @@ class Grover:
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
         dialect: str = "sqlite",
-        file_model: type[FileBase] | None = None,
-        file_version_model: type[FileVersionBase] | None = None,
-        file_chunk_model: type[FileChunkBase] | None = None,
+        file_model: type[FileModelBase] | None = None,
+        file_version_model: type[FileVersionModelBase] | None = None,
+        file_chunk_model: type[FileChunkModelBase] | None = None,
         db_schema: str | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
@@ -246,7 +202,7 @@ class Grover:
         offset: int = 0,
         limit: int = 2000,
         user_id: str | None = None,
-    ) -> ReadResult:
+    ) -> FileOperationResult:
         """Read file content at *path*."""
         return self._run(self._async.read(path, offset=offset, limit=limit, user_id=user_id))
 
@@ -257,7 +213,7 @@ class Grover:
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         """Write *content* to *path*."""
         return self._run(self._async.write(path, content, overwrite=overwrite, user_id=user_id))
 
@@ -269,35 +225,35 @@ class Grover:
         *,
         replace_all: bool = False,
         user_id: str | None = None,
-    ) -> EditResult:
+    ) -> FileOperationResult:
         """Replace *old* with *new* in the file at *path*."""
         return self._run(self._async.edit(path, old, new, replace_all=replace_all, user_id=user_id))
 
     def delete(
         self, path: str, permanent: bool = False, *, user_id: str | None = None
-    ) -> DeleteResult:
+    ) -> FileOperationResult:
         """Delete the file at *path*."""
         return self._run(self._async.delete(path, permanent, user_id=user_id))
 
-    def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListDirResult:
+    def list_dir(self, path: str = "/", *, user_id: str | None = None) -> FileSearchResult:
         """List entries under *path*."""
         return self._run(self._async.list_dir(path, user_id=user_id))
 
-    def exists(self, path: str, *, user_id: str | None = None) -> ExistsResult:
+    def exists(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
         """Check whether *path* exists."""
         return self._run(self._async.exists(path, user_id=user_id))
 
-    def get_info(self, path: str, *, user_id: str | None = None) -> FileInfoResult:
+    def get_info(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
         """Return metadata for *path*."""
         return self._run(self._async.get_info(path, user_id=user_id))
 
     def move(
         self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False
-    ) -> MoveResult:
+    ) -> FileOperationResult:
         """Move a file from *src* to *dest*."""
         return self._run(self._async.move(src, dest, user_id=user_id, follow=follow))
 
-    def copy(self, src: str, dest: str, *, user_id: str | None = None) -> WriteResult:
+    def copy(self, src: str, dest: str, *, user_id: str | None = None) -> FileOperationResult:
         """Copy a file from *src* to *dest*."""
         return self._run(self._async.copy(src, dest, user_id=user_id))
 
@@ -312,7 +268,7 @@ class Grover:
         *,
         candidates: FileSearchResult | None = None,
         user_id: str | None = None,
-    ) -> GlobResult:
+    ) -> FileSearchResult:
         """Find files matching a glob *pattern* under *path*."""
         return self._run(self._async.glob(pattern, path, candidates=candidates, user_id=user_id))
 
@@ -333,7 +289,7 @@ class Grover:
         files_only: bool = False,
         candidates: FileSearchResult | None = None,
         user_id: str | None = None,
-    ) -> GrepResult:
+    ) -> FileSearchResult:
         """Search file contents for *pattern* under *path*."""
         return self._run(
             self._async.grep(
@@ -356,7 +312,7 @@ class Grover:
 
     def tree(
         self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
-    ) -> TreeResult:
+    ) -> FileSearchResult:
         """List all entries under *path* recursively."""
         return self._run(self._async.tree(path, max_depth=max_depth, user_id=user_id))
 
@@ -364,34 +320,34 @@ class Grover:
     # Version / Trash / Reconciliation wrappers (sync)
     # ------------------------------------------------------------------
 
-    def list_versions(self, path: str, *, user_id: str | None = None) -> VersionResult:
+    def list_versions(self, path: str, *, user_id: str | None = None) -> FileSearchResult:
         return self._run(self._async.list_versions(path, user_id=user_id))
 
     def read_version(
         self, path: str, version: int, *, user_id: str | None = None
-    ) -> GetVersionContentResult:
+    ) -> FileOperationResult:
         return self._run(self._async.read_version(path, version, user_id=user_id))
 
     def diff_versions(
         self, path: str, version_a: int, version_b: int, *, user_id: str | None = None
-    ) -> DiffVersionsResult:
+    ) -> FileOperationResult:
         return self._run(self._async.diff_versions(path, version_a, version_b, user_id=user_id))
 
     def restore_version(
         self, path: str, version: int, *, user_id: str | None = None
-    ) -> RestoreResult:
+    ) -> FileOperationResult:
         return self._run(self._async.restore_version(path, version, user_id=user_id))
 
-    def list_trash(self, *, user_id: str | None = None) -> TrashResult:
+    def list_trash(self, *, user_id: str | None = None) -> FileSearchResult:
         return self._run(self._async.list_trash(user_id=user_id))
 
-    def restore_from_trash(self, path: str, *, user_id: str | None = None) -> RestoreResult:
+    def restore_from_trash(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
         return self._run(self._async.restore_from_trash(path, user_id=user_id))
 
-    def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
+    def empty_trash(self, *, user_id: str | None = None) -> FileOperationResult:
         return self._run(self._async.empty_trash(user_id=user_id))
 
-    def reconcile(self, mount_path: str | None = None) -> ReconcileResult:
+    def reconcile(self, mount_path: str | None = None) -> FileOperationResult:
         return self._run(self._async.reconcile(mount_path))
 
     # ------------------------------------------------------------------
@@ -406,7 +362,7 @@ class Grover:
         *,
         user_id: str,
         expires_at: datetime | None = None,
-    ) -> ShareResult:
+    ) -> FileOperationResult:
         """Share a file or directory with another user."""
         return self._run(
             self._async.share(
@@ -418,15 +374,15 @@ class Grover:
             )
         )
 
-    def unshare(self, path: str, grantee_id: str, *, user_id: str) -> ShareResult:
+    def unshare(self, path: str, grantee_id: str, *, user_id: str) -> FileOperationResult:
         """Remove a share for a file or directory."""
         return self._run(self._async.unshare(path, grantee_id, user_id=user_id))
 
-    def list_shares(self, path: str, *, user_id: str) -> ShareSearchResult:
+    def list_shares(self, path: str, *, user_id: str) -> FileSearchResult:
         """List all shares on a given path."""
         return self._run(self._async.list_shares(path, user_id=user_id))
 
-    def list_shared_with_me(self, *, user_id: str) -> ShareSearchResult:
+    def list_shared_with_me(self, *, user_id: str) -> FileSearchResult:
         """List all files shared with the current user."""
         return self._run(self._async.list_shared_with_me(user_id=user_id))
 
@@ -441,7 +397,7 @@ class Grover:
         connection_type: str,
         *,
         weight: float = 1.0,
-    ) -> ConnectionResult:
+    ) -> FileOperationResult:
         return self._run(
             self._async.add_connection(
                 source_path,
@@ -457,7 +413,7 @@ class Grover:
         target_path: str,
         *,
         connection_type: str | None = None,
-    ) -> ConnectionResult:
+    ) -> FileOperationResult:
         return self._run(
             self._async.delete_connection(
                 source_path,
@@ -472,19 +428,19 @@ class Grover:
 
     def write_chunk(
         self,
-        chunk: FileChunkBase,
+        chunk: FileChunkModelBase,
         *,
         user_id: str | None = None,
-    ) -> ChunkResult:
+    ) -> FileOperationResult:
         """Write (upsert) a single chunk."""
         return self._run(self._async.write_chunk(chunk, user_id=user_id))
 
     def write_chunks(
         self,
-        chunks: list[FileChunkBase],
+        chunks: list[FileChunkModelBase],
         *,
         user_id: str | None = None,
-    ) -> BatchChunkResult:
+    ) -> FileOperationResult:
         """Batch write (upsert) chunks."""
         return self._run(self._async.write_chunks(chunks, user_id=user_id))
 
@@ -494,21 +450,21 @@ class Grover:
 
     def write_file(
         self,
-        file: FileBase,
+        file: FileModelBase,
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         """Write a single file from a model instance."""
         return self._run(self._async.write_file(file, overwrite=overwrite, user_id=user_id))
 
     def write_files(
         self,
-        files: list[FileBase],
+        files: list[FileModelBase],
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> BatchWriteResult:
+    ) -> FileOperationResult:
         """Batch write files from model instances."""
         return self._run(self._async.write_files(files, overwrite=overwrite, user_id=user_id))
 
@@ -516,22 +472,22 @@ class Grover:
     # Graph traversal wrappers (sync)
     # ------------------------------------------------------------------
 
-    def predecessors(self, path: str) -> PredecessorsResult:
+    def predecessors(self, path: str) -> FileSearchResult:
         return self._run(self._async.predecessors(path))
 
-    def successors(self, path: str) -> SuccessorsResult:
+    def successors(self, path: str) -> FileSearchResult:
         return self._run(self._async.successors(path))
 
-    def ancestors(self, path: str) -> AncestorsResult:
+    def ancestors(self, path: str) -> FileSearchResult:
         return self._run(self._async.ancestors(path))
 
-    def descendants(self, path: str) -> DescendantsResult:
+    def descendants(self, path: str) -> FileSearchResult:
         return self._run(self._async.descendants(path))
 
-    def shortest_path(self, source: str, target: str) -> ShortestPathResult:
+    def shortest_path(self, source: str, target: str) -> FileSearchResult:
         return self._run(self._async.shortest_path(source, target))
 
-    def has_path(self, source: str, target: str) -> HasPathResult:
+    def has_path(self, source: str, target: str) -> FileSearchResult:
         return self._run(self._async.has_path(source, target))
 
     # ------------------------------------------------------------------
@@ -543,7 +499,7 @@ class Grover:
         candidates: FileSearchResult,
         *,
         path: str | None = None,
-    ) -> SubgraphSearchResult:
+    ) -> FileSearchResult:
         return self._run(self._async.subgraph(candidates, path=path))
 
     def min_meeting_subgraph(
@@ -551,7 +507,7 @@ class Grover:
         candidates: FileSearchResult,
         *,
         max_size: int = 50,
-    ) -> MeetingSubgraphResult:
+    ) -> FileSearchResult:
         return self._run(self._async.min_meeting_subgraph(candidates, max_size=max_size))
 
     def ego_graph(
@@ -561,7 +517,7 @@ class Grover:
         max_depth: int = 2,
         direction: str = "both",
         edge_types: list[str] | None = None,
-    ) -> EgoGraphResult:
+    ) -> FileSearchResult:
         return self._run(
             self._async.ego_graph(
                 path,
@@ -581,7 +537,7 @@ class Grover:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
         personalization: dict[str, float] | None = None,
-    ) -> PageRankResult:
+    ) -> FileSearchResult:
         return self._run(
             self._async.pagerank(path=path, candidates=candidates, personalization=personalization)
         )
@@ -591,7 +547,7 @@ class Grover:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> BetweennessResult:
+    ) -> FileSearchResult:
         return self._run(self._async.betweenness_centrality(path=path, candidates=candidates))
 
     def closeness_centrality(
@@ -599,7 +555,7 @@ class Grover:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> ClosenessResult:
+    ) -> FileSearchResult:
         return self._run(self._async.closeness_centrality(path=path, candidates=candidates))
 
     def harmonic_centrality(
@@ -607,7 +563,7 @@ class Grover:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> HarmonicResult:
+    ) -> FileSearchResult:
         return self._run(self._async.harmonic_centrality(path=path, candidates=candidates))
 
     def katz_centrality(
@@ -615,7 +571,7 @@ class Grover:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> KatzResult:
+    ) -> FileSearchResult:
         return self._run(self._async.katz_centrality(path=path, candidates=candidates))
 
     def degree_centrality(
@@ -623,7 +579,7 @@ class Grover:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> DegreeResult:
+    ) -> FileSearchResult:
         return self._run(self._async.degree_centrality(path=path, candidates=candidates))
 
     def in_degree_centrality(
@@ -631,7 +587,7 @@ class Grover:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> DegreeResult:
+    ) -> FileSearchResult:
         return self._run(self._async.in_degree_centrality(path=path, candidates=candidates))
 
     def out_degree_centrality(
@@ -639,7 +595,7 @@ class Grover:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> DegreeResult:
+    ) -> FileSearchResult:
         return self._run(self._async.out_degree_centrality(path=path, candidates=candidates))
 
     def hits(
@@ -647,7 +603,7 @@ class Grover:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> HitsResult:
+    ) -> FileSearchResult:
         return self._run(self._async.hits(path=path, candidates=candidates))
 
     # ------------------------------------------------------------------
@@ -660,7 +616,7 @@ class Grover:
         path2: str,
         *,
         path: str | None = None,
-    ) -> CommonNeighborsResult:
+    ) -> FileSearchResult:
         return self._run(self._async.common_neighbors(path1, path2, path=path))
 
     # ------------------------------------------------------------------
@@ -675,7 +631,7 @@ class Grover:
         path: str = "/",
         candidates: FileSearchResult | None = None,
         user_id: str | None = None,
-    ) -> VectorSearchResult:
+    ) -> FileSearchResult:
         """Semantic (vector) search over indexed content."""
         return self._run(
             self._async.vector_search(query, k, path=path, candidates=candidates, user_id=user_id)
@@ -689,7 +645,7 @@ class Grover:
         path: str = "/",
         candidates: FileSearchResult | None = None,
         user_id: str | None = None,
-    ) -> LexicalSearchResult:
+    ) -> FileSearchResult:
         """BM25/full-text search over indexed content."""
         return self._run(
             self._async.lexical_search(query, k, path=path, candidates=candidates, user_id=user_id)

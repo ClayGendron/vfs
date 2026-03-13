@@ -10,14 +10,11 @@ from typing import Any
 import numpy as np
 from usearch.index import Index
 
+from grover.models.internal.evidence import VectorEvidence
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileSearchResult
 from grover.providers.search.filters import FilterExpression, compile_dict
 from grover.providers.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
-from grover.results.search import (
-    FileSearchResult,
-    LexicalSearchResult,
-    VectorEvidence,
-    VectorSearchResult,
-)
 
 _INDEX_FILE = "search.usearch"
 _META_FILE = "search_meta.json"
@@ -101,12 +98,12 @@ class LocalVectorStore:
         filter: FilterExpression | None = None,  # noqa: A002
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> VectorSearchResult:
-        """Search for the *k* nearest vectors, returning a ``VectorSearchResult``."""
+    ) -> FileSearchResult:
+        """Search for the *k* nearest vectors, returning a ``FileSearchResult``."""
         self._reject_namespace(namespace)
 
         if len(self) == 0:
-            return VectorSearchResult(success=True, message="No entries indexed")
+            return FileSearchResult(success=True, message="No entries indexed")
 
         query = np.array(vector, dtype=np.float32)
 
@@ -156,7 +153,7 @@ class LocalVectorStore:
 
         hits.sort(key=lambda r: r.score, reverse=True)
 
-        # Wrap into VectorSearchResult
+        # Wrap into FileSearchResult
         entries: dict[str, list[VectorEvidence]] = {}
         for hit in hits:
             fp = hit.metadata.get("parent_path") or hit.id
@@ -165,10 +162,10 @@ class LocalVectorStore:
             ev = VectorEvidence(operation="vector_search", snippet=snippet)
             entries.setdefault(fp, []).append(ev)
 
-        return VectorSearchResult(
+        return FileSearchResult(
             success=True,
             message=f"Found matches in {len(entries)} file(s)",
-            file_candidates=FileSearchResult._dict_to_candidates(entries),
+            files=[File(path=fp, evidence=evs) for fp, evs in entries.items()],
         )
 
     async def search(
@@ -229,9 +226,9 @@ class LocalVectorStore:
         results.sort(key=lambda r: r.score, reverse=True)
         return results
 
-    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult:
+    async def lexical_search(self, query: str, *, k: int = 10) -> FileSearchResult:
         """LocalVectorStore is vector-only — lexical search returns empty result."""
-        return LexicalSearchResult(
+        return FileSearchResult(
             success=True,
             message="Lexical search not supported by LocalVectorStore",
         )

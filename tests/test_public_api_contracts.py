@@ -10,17 +10,8 @@ import pytest
 import grover
 from _helpers import FakeProvider
 from grover.client import Grover, GroverAsync
-from grover.results import (
-    DeleteResult,
-    EditResult,
-    ExistsResult,
-    FileInfoResult,
-    ListDirResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    WriteResult,
-)
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 
 
 class InMemoryBackend:
@@ -45,11 +36,12 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> ReadResult:
+    ) -> FileOperationResult:
         content = self._files.get(path)
         if content is None:
-            return ReadResult(success=False, message=f"Not found: {path}")
-        return ReadResult(success=True, message="OK", content=content, path=path)
+            return FileOperationResult(success=False, message=f"Not found: {path}")
+        f = File(path=path, content=content)
+        return FileOperationResult(success=True, message="OK", file=f)
 
     async def list_dir(
         self,
@@ -57,8 +49,8 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> ListDirResult:
-        return ListDirResult(success=True, message="OK")
+    ) -> FileSearchResult:
+        return FileSearchResult(success=True, message="OK")
 
     async def exists(
         self,
@@ -66,8 +58,13 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> ExistsResult:
-        return ExistsResult(exists=path in self._files, path=path)
+    ) -> FileOperationResult:
+        exists = path in self._files
+        return FileOperationResult(
+            success=True,
+            message="exists" if exists else "not found",
+            file=File(path=path),
+        )
 
     async def get_info(
         self,
@@ -75,10 +72,12 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult:
+    ) -> FileOperationResult:
         if path not in self._files:
-            return FileInfoResult(success=False, message="Not found", path=path)
-        return FileInfoResult(path=path, is_directory=False)
+            return FileOperationResult(success=False, message="Not found", file=File(path=path))
+        return FileOperationResult(
+            success=True, message="OK", file=File(path=path, is_directory=False)
+        )
 
     async def write(
         self,
@@ -90,9 +89,9 @@ class InMemoryBackend:
         session: object | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         self._files[path] = content
-        return WriteResult(success=True, message="OK", path=path)
+        return FileOperationResult(success=True, message="OK", file=File(path=path))
 
     async def edit(
         self,
@@ -104,12 +103,12 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> EditResult:
+    ) -> FileOperationResult:
         content = self._files.get(path)
         if content is None:
-            return EditResult(success=False, message=f"Not found: {path}")
+            return FileOperationResult(success=False, message=f"Not found: {path}")
         self._files[path] = content.replace(old_string, new_string, 1)
-        return EditResult(success=True, message="OK", path=path)
+        return FileOperationResult(success=True, message="OK", file=File(path=path))
 
     async def delete(
         self,
@@ -118,11 +117,11 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> DeleteResult:
+    ) -> FileOperationResult:
         if path not in self._files:
-            return DeleteResult(success=False, message=f"Not found: {path}")
+            return FileOperationResult(success=False, message=f"Not found: {path}")
         del self._files[path]
-        return DeleteResult(success=True, message="OK", path=path, permanent=permanent)
+        return FileOperationResult(success=True, message="OK", file=File(path=path))
 
     async def mkdir(
         self,
@@ -131,8 +130,9 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> MkdirResult:
-        return MkdirResult(success=True, message="OK", path=path)
+    ) -> FileOperationResult:
+        f = File(path=path, is_directory=True)
+        return FileOperationResult(success=True, message="OK", file=f)
 
     async def move(
         self,
@@ -141,12 +141,12 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> MoveResult:
+    ) -> FileOperationResult:
         content = self._files.pop(src, None)
         if content is None:
-            return MoveResult(success=False, message=f"Not found: {src}")
+            return FileOperationResult(success=False, message=f"Not found: {src}")
         self._files[dest] = content
-        return MoveResult(success=True, message="OK", old_path=src, new_path=dest)
+        return FileOperationResult(success=True, message="OK", file=File(path=dest))
 
     async def copy(
         self,
@@ -155,12 +155,12 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         content = self._files.get(src)
         if content is None:
-            return WriteResult(success=False, message=f"Not found: {src}")
+            return FileOperationResult(success=False, message=f"Not found: {src}")
         self._files[dest] = content
-        return WriteResult(success=True, message="OK", path=dest)
+        return FileOperationResult(success=True, message="OK", file=File(path=dest))
 
 
 class OpenFailBackend(InMemoryBackend):
@@ -216,9 +216,9 @@ async def test_async_write_edit_delete_return_result_types(tmp_path: Path) -> No
         edit_result = await g.edit("/app/file.txt", "hello", "world")
         delete_result = await g.delete("/app/file.txt", permanent=True)
 
-        assert isinstance(write_result, WriteResult)
-        assert isinstance(edit_result, EditResult)
-        assert isinstance(delete_result, DeleteResult)
+        assert isinstance(write_result, FileOperationResult)
+        assert isinstance(edit_result, FileOperationResult)
+        assert isinstance(delete_result, FileOperationResult)
         assert write_result.success
         assert edit_result.success
         assert delete_result.success
@@ -235,7 +235,7 @@ async def test_async_write_commit_failure_returns_failed_result(tmp_path: Path) 
         mount.session_factory = BadCommitSession
 
         result = await g.write("/app/file.txt", "hello")
-        assert isinstance(result, WriteResult)
+        assert isinstance(result, FileOperationResult)
         assert not result.success
         assert "commit" in result.message.lower()
     finally:
@@ -250,9 +250,9 @@ def test_sync_write_edit_delete_return_result_types(tmp_path: Path) -> None:
         edit_result = g.edit("/app/file.txt", "hello", "world")
         delete_result = g.delete("/app/file.txt", permanent=True)
 
-        assert isinstance(write_result, WriteResult)
-        assert isinstance(edit_result, EditResult)
-        assert isinstance(delete_result, DeleteResult)
+        assert isinstance(write_result, FileOperationResult)
+        assert isinstance(edit_result, FileOperationResult)
+        assert isinstance(delete_result, FileOperationResult)
         assert write_result.success
         assert edit_result.success
         assert delete_result.success
@@ -268,7 +268,7 @@ def test_sync_write_commit_failure_returns_failed_result(tmp_path: Path) -> None
         mount.session_factory = BadCommitSession
 
         result = g.write("/app/file.txt", "hello")
-        assert isinstance(result, WriteResult)
+        assert isinstance(result, FileOperationResult)
         assert not result.success
         assert "commit" in result.message.lower()
     finally:

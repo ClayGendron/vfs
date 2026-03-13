@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from grover.models.internal.results import FileSearchResult
     from grover.providers.search.filters import FilterExpression
     from grover.providers.search.types import (
         DeleteResult,
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
         VectorEntry,
         VectorHit,
     )
-    from grover.results.search import LexicalSearchResult, VectorSearchResult
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ class SearchProvider(Protocol):
         filter: Any = None,
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> VectorSearchResult: ...
+    ) -> FileSearchResult: ...
 
     async def delete(
         self,
@@ -65,7 +65,7 @@ class SearchProvider(Protocol):
     ) -> list[VectorEntry | None]: ...
 
     # Lexical search (stores that don't support it return empty result)
-    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult: ...
+    async def lexical_search(self, query: str, *, k: int = 10) -> FileSearchResult: ...
 
     # Lifecycle
     async def connect(self) -> None: ...

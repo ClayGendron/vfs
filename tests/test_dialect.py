@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
-from grover.models.file import File
+from grover.models.database.file import FileModel
 from grover.util.dialect import _upsert_mssql, get_dialect, now_expression, upsert_file
 
 
@@ -60,7 +60,7 @@ class TestUpsertFile:
             await session.commit()
             assert rowcount >= 0
 
-            result = await session.execute(select(File).where(File.path == "/hello.txt"))
+            result = await session.execute(select(FileModel).where(FileModel.path == "/hello.txt"))
             file = result.scalar_one_or_none()
             assert file is not None
             assert file.path == "/hello.txt"
@@ -103,7 +103,7 @@ class TestUpsertFile:
             )
             await session.commit()
 
-            result = await session.execute(select(File).where(File.path == "/hello.txt"))
+            result = await session.execute(select(FileModel).where(FileModel.path == "/hello.txt"))
             file = result.scalar_one_or_none()
             assert file is not None
             assert file.current_version == 2
@@ -214,7 +214,7 @@ class TestUpsertSqlitePgBranches:
             )
             await session.commit()
 
-            result = await session.execute(select(File).where(File.path == "/up.txt"))
+            result = await session.execute(select(FileModel).where(FileModel.path == "/up.txt"))
             f = result.scalar_one()
             assert f.mime_type == "text/markdown"
             # current_version should NOT be updated (not in update_keys)
@@ -252,7 +252,7 @@ class TestUpsertSqlitePgBranches:
             )
             await session.commit()
 
-            result = await session.execute(select(File).where(File.path == "/dn.txt"))
+            result = await session.execute(select(FileModel).where(FileModel.path == "/dn.txt"))
             f = result.scalar_one()
             assert f.current_version == 1
 
@@ -331,7 +331,7 @@ class TestUpsertMssql:
             mock_session,
             values={"id": "m1", "path": "/m.txt", "current_version": 1},
             conflict_keys=["path"],
-            model=File,
+            model=FileModel,
         )
         call_args = mock_session.execute.call_args
         sql_text = str(call_args[0][0])
@@ -351,7 +351,7 @@ class TestUpsertMssql:
             mock_session,
             values={"id": "m2", "path": "/m.txt", "mime_type": "text/plain"},
             conflict_keys=["path"],
-            model=File,
+            model=FileModel,
             schema="dbo",
         )
         sql_text = str(mock_session.execute.call_args[0][0])
@@ -372,7 +372,7 @@ class TestUpsertMssql:
                 "current_version": 5,
             },
             conflict_keys=["path"],
-            model=File,
+            model=FileModel,
             update_keys=["mime_type"],
         )
         sql_text = str(mock_session.execute.call_args[0][0])
@@ -391,7 +391,7 @@ class TestUpsertMssql:
             mock_session,
             values={"path": "/m.txt"},
             conflict_keys=["path"],
-            model=File,
+            model=FileModel,
         )
         sql_text = str(mock_session.execute.call_args[0][0])
         assert "WHEN NOT MATCHED" in sql_text

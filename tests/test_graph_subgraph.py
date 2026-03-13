@@ -20,7 +20,7 @@ class TestSubgraph:
         sub = await g.subgraph(["/a.py", "/b.py", "/c.py"])
         assert set(sub.paths) == {"/a.py", "/b.py", "/c.py"}
         # Only edges with both endpoints in the subgraph
-        edge_pairs = {(cc.source_path, cc.target_path) for cc in sub.connection_candidates}
+        edge_pairs = {(cc.source.path, cc.target.path) for cc in sub.connections}
         assert ("/a.py", "/b.py") in edge_pairs
         assert ("/b.py", "/c.py") in edge_pairs
         assert ("/c.py", "/d.py") not in edge_pairs
@@ -30,7 +30,7 @@ class TestSubgraph:
         g.add_edge("/a.py", "/b.py", "imports")
         sub = await g.subgraph([])
         assert sub.paths == ()
-        assert sub.connection_candidates == []
+        assert sub.connections == []
 
     async def test_unknown_paths_included_as_isolates(self) -> None:
         g = RustworkxGraph()
@@ -47,17 +47,17 @@ class TestSubgraph:
         assert "/a.py" in sub.paths
         assert "/a.py#login" in sub.paths
         # Inferred edge from parent to chunk
-        assert len(sub.connection_candidates) == 1
-        cc = sub.connection_candidates[0]
-        assert cc.source_path == "/a.py"
-        assert cc.target_path == "/a.py#login"
+        assert len(sub.connections) == 1
+        cc = sub.connections[0]
+        assert cc.source.path == "/a.py"
+        assert cc.target.path == "/a.py#login"
 
     async def test_all_nodes(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         sub = await g.subgraph(["/a.py", "/b.py", "/c.py"])
-        assert len(sub.connection_candidates) == 2
+        assert len(sub.connections) == 2
 
     async def test_result_is_file_search_result(self) -> None:
         g = RustworkxGraph()
@@ -164,7 +164,7 @@ class TestMeetingSubgraph:
         g.add_node("/a.py")
         sub = await g.meeting_subgraph(["/a.py"])
         assert set(sub.paths) == {"/a.py"}
-        assert sub.connection_candidates == []
+        assert sub.connections == []
 
     async def test_three_starts(self) -> None:
         g = RustworkxGraph()
@@ -196,11 +196,11 @@ class TestMeetingSubgraph:
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         sub = await g.meeting_subgraph(["/a.py", "/c.py"])
-        # Every file candidate should have a score from the enrichment
+        # Every file should have a score from the enrichment
         assert len(sub) > 0
-        for c in sub.file_candidates:
-            assert len(c.evidence) > 0
-            assert isinstance(c.evidence[0].score, float)
+        for f in sub.files:
+            assert len(f.evidence) > 0
+            assert isinstance(f.evidence[0].score, float)
 
 
 # ======================================================================

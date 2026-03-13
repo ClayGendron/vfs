@@ -6,11 +6,11 @@ import pytest
 from sqlmodel import Session, SQLModel, select
 
 from grover.models import (
-    File,
-    FileConnection,
-    FileShare,
-    FileShareBase,
-    FileVersion,
+    FileConnectionModel,
+    FileModel,
+    FileShareModel,
+    FileShareModelBase,
+    FileVersionModel,
 )
 from grover.providers.versioning import apply_diff, compute_diff, reconstruct_version
 
@@ -33,7 +33,7 @@ class TestTableCreation:
 
 class TestDefaultFactories:
     def test_grover_file_defaults(self, session: Session):
-        f = File(path="/hello.txt", parent_path="/")
+        f = FileModel(path="/hello.txt", parent_path="/")
         session.add(f)
         session.commit()
         session.refresh(f)
@@ -50,7 +50,7 @@ class TestDefaultFactories:
         assert f.original_path is None
 
     def test_file_version_defaults(self, session: Session):
-        fv = FileVersion(file_id="abc", version=1, is_snapshot=True, content="hello")
+        fv = FileVersionModel(file_id="abc", version=1, is_snapshot=True, content="hello")
         session.add(fv)
         session.commit()
         session.refresh(fv)
@@ -63,7 +63,7 @@ class TestDefaultFactories:
         assert fv.created_by is None
 
     def test_file_version_with_new_fields(self, session: Session):
-        fv = FileVersion(
+        fv = FileVersionModel(
             file_id="abc",
             version=2,
             is_snapshot=False,
@@ -81,7 +81,7 @@ class TestDefaultFactories:
         assert fv.created_by == "agent"
 
     def test_file_connection_defaults(self, session: Session):
-        conn = FileConnection(
+        conn = FileConnectionModel(
             source_path="/a.py",
             target_path="/b.py",
             type="imports",
@@ -98,17 +98,17 @@ class TestDefaultFactories:
         assert conn.weight == 1.0
 
     def test_query_round_trip(self, session: Session):
-        """Insert and query back a File."""
-        f = File(path="/test.py", parent_path="/")
+        """Insert and query back a FileModel."""
+        f = FileModel(path="/test.py", parent_path="/")
         session.add(f)
         session.commit()
 
-        result = session.exec(select(File).where(File.path == "/test.py")).first()
+        result = session.exec(select(FileModel).where(FileModel.path == "/test.py")).first()
         assert result is not None
         assert result.path == "/test.py"
 
     def test_grover_file_directory(self, session: Session):
-        d = File(
+        d = FileModel(
             path="/src",
             parent_path="/",
             is_directory=True,
@@ -120,7 +120,7 @@ class TestDefaultFactories:
         assert d.is_directory is True
 
     def test_grover_file_with_content(self, session: Session):
-        f = File(
+        f = FileModel(
             path="/readme.md",
             parent_path="/",
             content="# Hello",
@@ -134,14 +134,14 @@ class TestDefaultFactories:
         assert f.content_hash == "abc123"
 
     def test_file_vector_default_none(self, session: Session):
-        f = File(path="/vec.txt", parent_path="/")
+        f = FileModel(path="/vec.txt", parent_path="/")
         session.add(f)
         session.commit()
         session.refresh(f)
         assert f.vector is None
 
     def test_file_version_file_path_field(self, session: Session):
-        fv = FileVersion(
+        fv = FileVersionModel(
             file_id="abc",
             file_path="/hello.txt",
             version=3,
@@ -154,11 +154,11 @@ class TestDefaultFactories:
         assert fv.file_path == "/hello.txt"
 
     def test_file_version_path_property(self):
-        fv = FileVersion(file_id="abc", file_path="/hello.txt", version=3)
+        fv = FileVersionModel(file_id="abc", file_path="/hello.txt", version=3)
         assert fv.path == "/hello.txt@3"
 
     def test_file_connection_path_format(self, session: Session):
-        conn = FileConnection(
+        conn = FileConnectionModel(
             source_path="/a.py",
             target_path="/b.py",
             type="imports",
@@ -177,14 +177,14 @@ class TestDefaultFactories:
 
 class TestFileBaseOwnerId:
     def test_file_base_owner_id_default_none(self, session: Session):
-        f = File(path="/no_owner.txt", parent_path="/")
+        f = FileModel(path="/no_owner.txt", parent_path="/")
         session.add(f)
         session.commit()
         session.refresh(f)
         assert f.owner_id is None
 
     def test_file_base_owner_id_set(self, session: Session):
-        f = File(
+        f = FileModel(
             path="/owned.txt",
             parent_path="/",
             owner_id="alice",
@@ -196,13 +196,13 @@ class TestFileBaseOwnerId:
 
 
 # ---------------------------------------------------------------------------
-# FileShare model
+# FileShareModel model
 # ---------------------------------------------------------------------------
 
 
 class TestFileShare:
     def test_file_share_create(self, session: Session):
-        share = FileShare(
+        share = FileShareModel(
             path="/alice/notes.md",
             grantee_id="bob",
             permission="read",
@@ -221,7 +221,7 @@ class TestFileShare:
         assert share.expires_at is None
 
     def test_file_share_defaults(self, session: Session):
-        share = FileShare(
+        share = FileShareModel(
             path="/a/b.txt",
             grantee_id="charlie",
             granted_by="alice",
@@ -234,9 +234,9 @@ class TestFileShare:
         assert share.expires_at is None
 
     def test_file_share_base_subclass(self, engine):
-        """Custom table name via subclassing FileShareBase."""
+        """Custom table name via subclassing FileShareModelBase."""
 
-        class CustomShare(FileShareBase, table=True):
+        class CustomShare(FileShareModelBase, table=True):
             __tablename__ = "custom_shares"
 
         SQLModel.metadata.create_all(engine)
@@ -247,7 +247,7 @@ class TestFileShare:
         assert "grover_file_shares" in engine.dialect.get_table_names(engine.connect())
 
     def test_file_share_write_permission(self, session: Session):
-        share = FileShare(
+        share = FileShareModel(
             path="/alice/project/",
             grantee_id="bob",
             permission="write",
@@ -270,18 +270,18 @@ class TestFileVersionUniqueConstraint:
     def test_duplicate_file_version_rejected(self, session: Session):
         from sqlalchemy.exc import IntegrityError
 
-        fv1 = FileVersion(file_id="abc", version=1, is_snapshot=True, content="v1")
+        fv1 = FileVersionModel(file_id="abc", version=1, is_snapshot=True, content="v1")
         session.add(fv1)
         session.commit()
 
-        fv2 = FileVersion(file_id="abc", version=1, is_snapshot=True, content="v1dup")
+        fv2 = FileVersionModel(file_id="abc", version=1, is_snapshot=True, content="v1dup")
         session.add(fv2)
         with pytest.raises(IntegrityError):
             session.commit()
 
     def test_same_version_different_file_allowed(self, session: Session):
-        fv1 = FileVersion(file_id="abc", version=1, is_snapshot=True, content="v1a")
-        fv2 = FileVersion(file_id="xyz", version=1, is_snapshot=True, content="v1b")
+        fv1 = FileVersionModel(file_id="abc", version=1, is_snapshot=True, content="v1a")
+        fv2 = FileVersionModel(file_id="xyz", version=1, is_snapshot=True, content="v1b")
         session.add(fv1)
         session.add(fv2)
         session.commit()

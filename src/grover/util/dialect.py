@@ -8,7 +8,7 @@ from sqlalchemy import func, text
 from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 
-from grover.models.file import File
+from grover.models.database.file import FileModel
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -53,7 +53,7 @@ async def upsert_file(
     - MSSQL: MERGE INTO ... WITH (HOLDLOCK)
     """
     if model is None:
-        model = File
+        model = FileModel
 
     if dialect == "mssql":
         return await _upsert_mssql(

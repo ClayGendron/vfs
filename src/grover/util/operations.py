@@ -13,14 +13,9 @@ from typing import TYPE_CHECKING, Any
 
 from sqlmodel import select
 
-from grover.results.operations import (
-    DeleteResult,
-    EditResult,
-    MoveResult,
-    ReadResult,
-    WriteResult,
-)
-from grover.results.search import FileCandidate, ListDirEvidence, ListDirResult
+from grover.models.internal.evidence import ListDirEvidence
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 
 from .content import compute_content_hash, guess_mime_type, is_text_file
 from .paths import is_trash_path, normalize_path, split_path, to_trash_path, validate_path
@@ -31,14 +26,14 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.file import FileBase
+    from grover.models.database.file import FileModelBase
     from grover.providers.versioning.protocol import VersionProvider
     from grover.results.operations import FileInfoResult
 
     ContentReader = Callable[[str, AsyncSession], Awaitable[str | None]]
     ContentWriter = Callable[[str, str, AsyncSession], Awaitable[None]]
     ContentDeleter = Callable[[str, AsyncSession], Awaitable[None]]
-    GetFileRecord = Callable[..., Awaitable["FileBase | None"]]
+    GetFileRecord = Callable[..., Awaitable["FileModelBase | None"]]
     EnsureParentDirs = Callable[[AsyncSession, str, str | None], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
@@ -47,8 +42,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_READ_LIMIT = 2000
 
 
-def file_to_info(f: FileBase) -> FileInfoResult:
-    """Convert a FileBase model to a FileInfoResult."""
+def file_to_info(f: FileModelBase) -> FileInfoResult:
+    """Convert a FileModelBase model to a FileInfoResult."""
     from grover.results.operations import FileInfoResult
 
     return FileInfoResult(
@@ -65,7 +60,7 @@ def file_to_info(f: FileBase) -> FileInfoResult:
 
 
 async def check_external_edit(
-    file: FileBase,
+    file: FileModelBase,
     current_content: str,
     session: AsyncSession,
     *,
@@ -123,31 +118,31 @@ async def read_file(
     *,
     get_file_record: GetFileRecord,
     read_content: ContentReader,
-) -> ReadResult:
+) -> FileOperationResult:
     """Orchestrate a file read: validate → lookup → read → paginate."""
     valid, error = validate_path(path)
     if not valid:
-        return ReadResult(success=False, message=error)
+        return FileOperationResult(success=False, message=error)
 
     path = normalize_path(path)
 
     if is_trash_path(path):
-        return ReadResult(success=False, message=f"Cannot read from trash: {path}")
+        return FileOperationResult(success=False, message=f"Cannot read from trash: {path}")
 
     file = await get_file_record(session, path)
 
     if not file:
-        return ReadResult(success=False, message=f"File not found: {path}")
+        return FileOperationResult(success=False, message=f"File not found: {path}")
 
     if file.is_directory:
-        return ReadResult(
+        return FileOperationResult(
             success=False,
             message=f"Path is a directory, not a file: {path}",
         )
 
     content = await read_content(path, session)
     if content is None:
-        return ReadResult(success=False, message=f"File content not found: {path}")
+        return FileOperationResult(success=False, message=f"File content not found: {path}")
 
     return paginate_content(content, path, offset, limit)
 
@@ -157,21 +152,19 @@ def paginate_content(
     path: str,
     offset: int,
     limit: int,
-) -> ReadResult:
+) -> FileOperationResult:
     """Paginate file content and return raw text."""
     lines = content.split("\n")
     total_lines = len(lines)
 
     if total_lines == 0 or (total_lines == 1 and lines[0] == ""):
-        return ReadResult(
+        return FileOperationResult(
             success=True,
-            message="File is empty.",
-            content="",
-            path=path,
-            total_lines=0,
-            lines_read=0,
-            truncated=False,
-            line_offset=offset,
+            message=(
+                "File is empty."
+                f" (total_lines=0, lines_read=0, truncated=False, line_offset={offset})"
+            ),
+            file=File(path=path, content="", lines=0),
         )
 
     end_line = min(len(lines), offset + limit)
@@ -180,15 +173,14 @@ def paginate_content(
     last_read_line = offset + len(output_lines)
     has_more = total_lines > last_read_line
 
-    return ReadResult(
+    return FileOperationResult(
         success=True,
-        message=f"Read {len(output_lines)} lines from {path}",
-        content="\n".join(output_lines),
-        path=path,
-        total_lines=total_lines,
-        lines_read=len(output_lines),
-        truncated=has_more,
-        line_offset=offset,
+        message=(
+            f"Read {len(output_lines)} lines from {path}"
+            f" (total_lines={total_lines}, lines_read={len(output_lines)},"
+            f" truncated={has_more}, line_offset={offset})"
+        ),
+        file=File(path=path, content="\n".join(output_lines), lines=total_lines),
     )
 
 
@@ -202,21 +194,21 @@ async def write_file(
     get_file_record: GetFileRecord,
     versioning: VersionProvider,
     ensure_parent_dirs: EnsureParentDirs,
-    file_model: type[FileBase],
+    file_model: type[FileModelBase],
     read_content: ContentReader,
     write_content: ContentWriter,
     owner_id: str | None = None,
-) -> WriteResult:
+) -> FileOperationResult:
     """Orchestrate a file write: validate → version → write → flush."""
     valid, error = validate_path(path)
     if not valid:
-        return WriteResult(success=False, message=error)
+        return FileOperationResult(success=False, message=error)
 
     path = normalize_path(path)
     _, name = split_path(path)
 
     if not is_text_file(name):
-        return WriteResult(
+        return FileOperationResult(
             success=False,
             message=(
                 f"Cannot write non-text file: {name}. "
@@ -230,10 +222,10 @@ async def write_file(
 
     if existing:
         if existing.is_directory:
-            return WriteResult(success=False, message=f"Path is a directory: {path}")
+            return FileOperationResult(success=False, message=f"Path is a directory: {path}")
 
         if not overwrite and not existing.deleted_at:
-            return WriteResult(
+            return FileOperationResult(
                 success=False,
                 message=f"File already exists: {path}",
             )
@@ -308,12 +300,10 @@ async def write_file(
         created = True
         version = 1
 
-    return WriteResult(
+    return FileOperationResult(
         success=True,
         message=f"{'Created' if created else 'Updated'}: {path} (v{version})",
-        path=path,
-        created=created,
-        version=version,
+        file=File(path=path, current_version=version),
     )
 
 
@@ -329,25 +319,25 @@ async def edit_file(
     versioning: VersionProvider,
     read_content: ContentReader,
     write_content: ContentWriter,
-) -> EditResult:
+) -> FileOperationResult:
     """Orchestrate a file edit: validate → read → replace → write → flush."""
     valid, error = validate_path(path)
     if not valid:
-        return EditResult(success=False, message=error)
+        return FileOperationResult(success=False, message=error)
 
     path = normalize_path(path)
 
     file = await get_file_record(session, path)
 
     if not file:
-        return EditResult(success=False, message=f"File not found: {path}")
+        return FileOperationResult(success=False, message=f"File not found: {path}")
 
     if file.is_directory:
-        return EditResult(success=False, message=f"Cannot edit directory: {path}")
+        return FileOperationResult(success=False, message=f"Cannot edit directory: {path}")
 
     content = await read_content(path, session)
     if content is None:
-        return EditResult(success=False, message=f"File content not found: {path}")
+        return FileOperationResult(success=False, message=f"File content not found: {path}")
 
     # Detect and record external edits before applying the edit
     await check_external_edit(file, content, session, versioning=versioning)
@@ -355,10 +345,10 @@ async def edit_file(
     result = replace(content, old_string, new_string, replace_all)
 
     if not result.success:
-        return EditResult(
+        return FileOperationResult(
             success=False,
             message=result.error or "Edit failed",
-            path=path,
+            file=File(path=path),
         )
 
     new_content = result.content
@@ -378,11 +368,10 @@ async def edit_file(
     await write_content(path, new_content, session)
     await session.flush()
 
-    return EditResult(
+    return FileOperationResult(
         success=True,
         message=f"Edit applied to {path} (v{file.current_version})",
-        path=path,
-        version=file.current_version,
+        file=File(path=path, current_version=file.current_version),
     )
 
 
@@ -393,20 +382,20 @@ async def delete_file(
     *,
     get_file_record: GetFileRecord,
     versioning: VersionProvider,
-    file_model: type[FileBase],
+    file_model: type[FileModelBase],
     delete_content: ContentDeleter,
-) -> DeleteResult:
+) -> FileOperationResult:
     """Orchestrate a file delete: validate → soft-delete or permanent."""
     valid, error = validate_path(path)
     if not valid:
-        return DeleteResult(success=False, message=error)
+        return FileOperationResult(success=False, message=error)
 
     path = normalize_path(path)
 
     file = await get_file_record(session, path)
 
     if not file:
-        return DeleteResult(success=False, message=f"File not found: {path}")
+        return FileOperationResult(success=False, message=f"File not found: {path}")
 
     model = file_model
     if permanent:
@@ -444,11 +433,10 @@ async def delete_file(
 
     await session.flush()
 
-    return DeleteResult(
+    return FileOperationResult(
         success=True,
         message=f"{'Permanently deleted' if permanent else 'Moved to trash'}: {path}",
-        path=path,
-        permanent=permanent,
+        file=File(path=path),
     )
 
 
@@ -460,12 +448,12 @@ async def move_file(
     get_file_record: GetFileRecord,
     versioning: VersionProvider,
     ensure_parent_dirs: EnsureParentDirs,
-    file_model: type[FileBase],
+    file_model: type[FileModelBase],
     read_content: ContentReader,
     write_content: ContentWriter,
     delete_content: ContentDeleter,
     follow: bool = False,
-) -> MoveResult:
+) -> FileOperationResult:
     """Orchestrate a file move within the same backend.
 
     Parameters
@@ -478,29 +466,28 @@ async def move_file(
     """
     valid, error = validate_path(src)
     if not valid:
-        return MoveResult(success=False, message=error)
+        return FileOperationResult(success=False, message=error)
 
     src = normalize_path(src)
     dest = normalize_path(dest)
 
     valid, error = validate_path(dest)
     if not valid:
-        return MoveResult(success=False, message=error)
+        return FileOperationResult(success=False, message=error)
 
     if src == dest:
-        return MoveResult(
+        return FileOperationResult(
             success=True,
-            message="Source and destination are the same",
-            old_path=src,
-            new_path=dest,
+            message=f"Source and destination are the same ({src} -> {dest})",
+            file=File(path=dest),
         )
 
     src_file = await get_file_record(session, src)
     if not src_file:
-        return MoveResult(success=False, message=f"Source not found: {src}")
+        return FileOperationResult(success=False, message=f"Source not found: {src}")
 
     if src_file.is_directory and dest.startswith(src + "/"):
-        return MoveResult(
+        return FileOperationResult(
             success=False,
             message=f"Cannot move directory into itself: {dest} is inside {src}",
         )
@@ -508,12 +495,12 @@ async def move_file(
     dest_file = await get_file_record(session, dest)
     if dest_file:
         if dest_file.is_directory:
-            return MoveResult(
+            return FileOperationResult(
                 success=False,
                 message=f"Destination is a directory: {dest}",
             )
         if src_file.is_directory:
-            return MoveResult(
+            return FileOperationResult(
                 success=False,
                 message=f"Cannot move directory over file: {dest}",
             )
@@ -521,7 +508,7 @@ async def move_file(
         # Overwrite existing dest with source content
         content = await read_content(src, session)
         if content is None:
-            return MoveResult(success=False, message=f"Source content not found: {src}")
+            return FileOperationResult(success=False, message=f"Source content not found: {src}")
         old_dest_content = await read_content(dest, session) or ""
 
         # Update dest metadata with source content
@@ -558,11 +545,10 @@ async def move_file(
         except Exception:
             logger.warning("Failed to clean up old content at %s", src)
 
-        return MoveResult(
+        return FileOperationResult(
             success=True,
             message=f"Moved {src} to {dest}",
-            old_path=src,
-            new_path=dest,
+            file=File(path=dest),
         )
 
     # ---- No existing dest ----
@@ -606,11 +592,10 @@ async def move_file(
             except Exception:
                 logger.warning("Failed to clean up old content at %s", old_path)
 
-        return MoveResult(
+        return FileOperationResult(
             success=True,
             message=f"Moved {src} to {dest}",
-            old_path=src,
-            new_path=dest,
+            file=File(path=dest),
         )
 
     # follow=False: clean break — new records at dest, source soft-deleted
@@ -692,7 +677,7 @@ async def move_file(
         # Single file clean break
         content = await read_content(src, session)
         if content is None:
-            return MoveResult(success=False, message=f"Source content not found: {src}")
+            return FileOperationResult(success=False, message=f"Source content not found: {src}")
 
         # Soft-delete source
         src_file.original_path = src_file.path
@@ -722,11 +707,10 @@ async def move_file(
         except Exception:
             logger.warning("Failed to clean up old content at %s", src)
 
-    return MoveResult(
+    return FileOperationResult(
         success=True,
         message=f"Moved {src} to {dest}",
-        old_path=src,
-        new_path=dest,
+        file=File(path=dest),
     )
 
 
@@ -737,21 +721,21 @@ async def copy_file(
     *,
     get_file_record: GetFileRecord,
     read_content: ContentReader,
-    write_fn: Callable[..., Awaitable[WriteResult]],
-) -> WriteResult:
+    write_fn: Callable[..., Awaitable[FileOperationResult]],
+) -> FileOperationResult:
     """Orchestrate a file copy: read src → write to dest."""
     src = normalize_path(src)
 
     src_file = await get_file_record(session, src)
     if not src_file:
-        return WriteResult(success=False, message=f"Source not found: {src}")
+        return FileOperationResult(success=False, message=f"Source not found: {src}")
 
     if src_file.is_directory:
-        return WriteResult(success=False, message="Directory copy not yet implemented")
+        return FileOperationResult(success=False, message="Directory copy not yet implemented")
 
     content = await read_content(src, session)
     if content is None:
-        return WriteResult(success=False, message=f"Source content not found: {src}")
+        return FileOperationResult(success=False, message=f"Source content not found: {src}")
 
     return await write_fn(dest, content, "copy", overwrite=True, session=session)
 
@@ -761,8 +745,8 @@ async def list_dir_db(
     session: AsyncSession,
     *,
     get_file_record: GetFileRecord,
-    file_model: type[FileBase],
-) -> ListDirResult:
+    file_model: type[FileModelBase],
+) -> FileSearchResult:
     """List files and directories from database records."""
 
     path = normalize_path(path)
@@ -770,9 +754,9 @@ async def list_dir_db(
     if path != "/":
         dir_file = await get_file_record(session, path)
         if not dir_file:
-            return ListDirResult(success=False, message=f"Directory not found: {path}")
+            return FileSearchResult(success=False, message=f"Directory not found: {path}")
         if not dir_file.is_directory:
-            return ListDirResult(success=False, message=f"Not a directory: {path}")
+            return FileSearchResult(success=False, message=f"Not a directory: {path}")
 
     model = file_model
     if path == "/":
@@ -790,12 +774,13 @@ async def list_dir_db(
             )
         )
 
-    candidates: list[FileCandidate] = []
+    candidates: list[File] = []
     for f in result.scalars().all():
         info = file_to_info(f)
         candidates.append(
-            FileCandidate(
+            File(
                 path=info.path,
+                is_directory=info.is_directory,
                 evidence=[
                     ListDirEvidence(
                         operation="list_dir",
@@ -806,8 +791,8 @@ async def list_dir_db(
             )
         )
 
-    return ListDirResult(
+    return FileSearchResult(
         success=True,
         message=f"Listed {len(candidates)} items in {path}",
-        file_candidates=candidates,
+        files=candidates,
     )

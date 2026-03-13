@@ -165,16 +165,15 @@ class TestDiskStorageGetInfo:
         await dsp.write_content("/info.txt", "some content")
         info = await dsp.get_info("/info.txt")
         assert info.success
-        assert info.path == "/info.txt"
-        assert not info.is_directory
-        assert info.size_bytes > 0
+        assert info.file.path == "/info.txt"
+        assert not info.file.is_directory
 
     async def test_get_info_directory(self, tmp_path: Path) -> None:
         dsp = DiskStorageProvider(tmp_path)
         await dsp.mkdir("/mydir")
         info = await dsp.get_info("/mydir")
         assert info.success
-        assert info.is_directory
+        assert info.file.is_directory
 
     async def test_get_info_missing(self, tmp_path: Path) -> None:
         dsp = DiskStorageProvider(tmp_path)
@@ -214,7 +213,7 @@ class TestDiskStorageGlob:
 
         result = await dsp.storage_glob("*.py")
         assert result.success
-        paths = list(result.files())
+        paths = [f.path for f in result.files]
         assert "/a.py" in paths
         assert "/b.py" in paths
         assert "/readme.md" not in paths
@@ -226,7 +225,7 @@ class TestDiskStorageGlob:
 
         result = await dsp.storage_glob("**/*.py")
         assert result.success
-        paths = list(result.files())
+        paths = [f.path for f in result.files]
         assert "/src/main.py" in paths
         assert "/src/lib/utils.py" in paths
 
@@ -244,7 +243,7 @@ class TestDiskStorageGrep:
 
         result = await dsp.storage_grep("import")
         assert result.success
-        paths = [c.path for c in result.file_candidates]
+        paths = [f.path for f in result.files]
         assert "/a.py" in paths
         assert "/b.py" not in paths
 
@@ -254,7 +253,7 @@ class TestDiskStorageGrep:
 
         result = await dsp.storage_grep("hello", case_sensitive=False)
         assert result.success
-        assert len(result.file_candidates) == 1
+        assert len(result.files) == 1
 
     async def test_grep_invalid_regex(self, tmp_path: Path) -> None:
         dsp = DiskStorageProvider(tmp_path)
@@ -271,7 +270,7 @@ class TestDiskStorageTree:
 
         result = await dsp.storage_tree()
         assert result.success
-        paths = [c.path for c in result.file_candidates]
+        paths = [f.path for f in result.files]
         assert "/src" in paths
         assert "/src/main.py" in paths
         assert "/src/lib" in paths
@@ -283,7 +282,7 @@ class TestDiskStorageTree:
 
         result = await dsp.storage_tree(max_depth=1)
         assert result.success
-        paths = [c.path for c in result.file_candidates]
+        paths = [f.path for f in result.files]
         assert "/a" in paths
         # Depth 2+ should be excluded
         assert "/a/b/c/deep.txt" not in paths
@@ -298,7 +297,7 @@ class TestDiskStorageListDir:
 
         result = await dsp.storage_list_dir("/")
         assert result.success
-        paths = [c.path for c in result.file_candidates]
+        paths = [f.path for f in result.files]
         assert "/file1.txt" in paths
         assert "/file2.txt" in paths
         assert "/subdir" in paths
@@ -316,7 +315,7 @@ class TestDiskStorageListDir:
 
         result = await dsp.storage_list_dir("/")
         assert result.success
-        paths = [c.path for c in result.file_candidates]
+        paths = [f.path for f in result.files]
         assert "/visible.txt" in paths
         assert "/.hidden" not in paths
 

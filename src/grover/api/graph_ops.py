@@ -5,33 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from grover.exceptions import MountNotFoundError
-from grover.results import ConnectionResult
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
     from grover.api.context import GroverContext
     from grover.mount import Mount
     from grover.providers.graph.protocol import GraphProvider
-    from grover.results import (
-        AncestorsResult,
-        BetweennessResult,
-        ClosenessResult,
-        CommonNeighborsResult,
-        DegreeResult,
-        DescendantsResult,
-        EgoGraphResult,
-        FileSearchResult,
-        HarmonicResult,
-        HasPathResult,
-        HitsResult,
-        KatzResult,
-        MeetingSubgraphResult,
-        PageRankResult,
-        PredecessorsResult,
-        ShortestPathResult,
-        SubgraphSearchResult,
-        SuccessorsResult,
-    )
 
 
 class GraphOpsMixin:
@@ -52,26 +32,20 @@ class GraphOpsMixin:
         source_path: str,
         target_path: str,
         connection_type: str,
-    ) -> tuple[Mount, None] | tuple[None, ConnectionResult]:
+    ) -> tuple[Mount, None] | tuple[None, FileOperationResult]:
         """Validate writable access and resolve mount for a connection operation."""
         if err := self._ctx.check_writable(source_path):
-            return None, ConnectionResult(
+            return None, FileOperationResult(
                 success=False,
                 message=err,
-                source_path=source_path,
-                target_path=target_path,
-                connection_type=connection_type,
             )
 
         try:
             mount, _rel = self._ctx.registry.resolve(source_path)
         except MountNotFoundError:
-            return None, ConnectionResult(
+            return None, FileOperationResult(
                 success=False,
                 message=f"No mount found for path: {source_path}",
-                source_path=source_path,
-                target_path=target_path,
-                connection_type=connection_type,
             )
 
         assert mount.filesystem is not None
@@ -84,7 +58,7 @@ class GraphOpsMixin:
         connection_type: str,
         *,
         weight: float = 1.0,
-    ) -> ConnectionResult:
+    ) -> FileOperationResult:
         """Add a connection between two files, persisted through the filesystem."""
         source_path = normalize_path(source_path)
         target_path = normalize_path(target_path)
@@ -117,7 +91,7 @@ class GraphOpsMixin:
         target_path: str,
         *,
         connection_type: str | None = None,
-    ) -> ConnectionResult:
+    ) -> FileOperationResult:
         """Delete a connection between two files."""
         source_path = normalize_path(source_path)
         target_path = normalize_path(target_path)
@@ -147,37 +121,37 @@ class GraphOpsMixin:
     # Traversal queries — async delegates with session pass-through
     # ------------------------------------------------------------------
 
-    async def predecessors(self, path: str) -> PredecessorsResult:
+    async def predecessors(self, path: str) -> FileSearchResult:
         """Return graph predecessors of *path* (nodes with edges pointing to it)."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
             return await gp.predecessors(path, session=sess)
 
-    async def successors(self, path: str) -> SuccessorsResult:
+    async def successors(self, path: str) -> FileSearchResult:
         """Return graph successors of *path* (nodes it points to)."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
             return await gp.successors(path, session=sess)
 
-    async def ancestors(self, path: str) -> AncestorsResult:
+    async def ancestors(self, path: str) -> FileSearchResult:
         """Return all nodes reachable by following edges backward from *path*."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
             return await gp.ancestors(path, session=sess)
 
-    async def descendants(self, path: str) -> DescendantsResult:
+    async def descendants(self, path: str) -> FileSearchResult:
         """Return all nodes reachable by following edges forward from *path*."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
             return await gp.descendants(path, session=sess)
 
-    async def shortest_path(self, source: str, target: str) -> ShortestPathResult:
+    async def shortest_path(self, source: str, target: str) -> FileSearchResult:
         """Return the shortest path from *source* to *target*."""
         gp, mount = self._ctx.resolve_graph_with_mount(source)
         async with self._ctx.session_for(mount) as sess:
             return await gp.path_between(source, target, session=sess)
 
-    async def has_path(self, source: str, target: str) -> HasPathResult:
+    async def has_path(self, source: str, target: str) -> FileSearchResult:
         """Check if a directed path exists from *source* to *target*."""
         gp, mount = self._ctx.resolve_graph_with_mount(source)
         async with self._ctx.session_for(mount) as sess:
@@ -192,7 +166,7 @@ class GraphOpsMixin:
         candidates: FileSearchResult,
         *,
         path: str | None = None,
-    ) -> SubgraphSearchResult:
+    ) -> FileSearchResult:
         """Extract the induced subgraph for nodes in *candidates*."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -203,7 +177,7 @@ class GraphOpsMixin:
         candidates: FileSearchResult,
         *,
         max_size: int = 50,
-    ) -> MeetingSubgraphResult:
+    ) -> FileSearchResult:
         """Extract the subgraph connecting candidate nodes via shortest paths."""
         paths = list(candidates.paths)
         gp, mount = self._ctx.resolve_graph_any_with_mount(paths[0] if paths else None)
@@ -217,7 +191,7 @@ class GraphOpsMixin:
         max_depth: int = 2,
         direction: str = "both",
         edge_types: list[str] | None = None,
-    ) -> EgoGraphResult:
+    ) -> FileSearchResult:
         """Extract the neighborhood subgraph around *path*."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -239,7 +213,7 @@ class GraphOpsMixin:
         path: str | None = None,
         candidates: FileSearchResult | None = None,
         personalization: dict[str, float] | None = None,
-    ) -> PageRankResult:
+    ) -> FileSearchResult:
         """Run PageRank on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -250,7 +224,7 @@ class GraphOpsMixin:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> BetweennessResult:
+    ) -> FileSearchResult:
         """Betweenness centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -261,7 +235,7 @@ class GraphOpsMixin:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> ClosenessResult:
+    ) -> FileSearchResult:
         """Closeness centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -272,7 +246,7 @@ class GraphOpsMixin:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> HarmonicResult:
+    ) -> FileSearchResult:
         """Harmonic centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -283,7 +257,7 @@ class GraphOpsMixin:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> KatzResult:
+    ) -> FileSearchResult:
         """Katz centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -294,7 +268,7 @@ class GraphOpsMixin:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> DegreeResult:
+    ) -> FileSearchResult:
         """Degree centrality (in + out) on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -305,7 +279,7 @@ class GraphOpsMixin:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> DegreeResult:
+    ) -> FileSearchResult:
         """In-degree centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -316,7 +290,7 @@ class GraphOpsMixin:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> DegreeResult:
+    ) -> FileSearchResult:
         """Out-degree centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -327,7 +301,7 @@ class GraphOpsMixin:
         *,
         path: str | None = None,
         candidates: FileSearchResult | None = None,
-    ) -> HitsResult:
+    ) -> FileSearchResult:
         """HITS hub and authority scores."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
@@ -343,7 +317,7 @@ class GraphOpsMixin:
         path2: str,
         *,
         path: str | None = None,
-    ) -> CommonNeighborsResult:
+    ) -> FileSearchResult:
         """Find common neighbors of two nodes."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:

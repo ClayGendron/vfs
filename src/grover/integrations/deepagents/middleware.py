@@ -39,11 +39,11 @@ def _format_version_list(result: object, path: str) -> str:
     if len(result) == 0:  # type: ignore[arg-type]
         return f"No versions found for {path}."
 
-    from grover.results import VersionEvidence
+    from grover.models.internal.evidence import VersionEvidence
 
     lines = [f"Version history for {path} ({len(result)} versions):"]  # type: ignore[arg-type]
-    for candidate in result.file_candidates:  # type: ignore[union-attr]
-        for ev in candidate.evidence:
+    for f in result.files:  # type: ignore[union-attr]
+        for ev in f.evidence:
             if isinstance(ev, VersionEvidence):
                 line = f"  v{ev.version}: {ev.created_at:%Y-%m-%d %H:%M:%S}"
                 line += f" | {ev.size_bytes} bytes | hash={ev.content_hash[:12]}"
@@ -59,10 +59,11 @@ def _format_version_content(result: object, path: str, version: int) -> str:
     if not result.success:  # type: ignore[union-attr]
         return f"Error: {result.message}"  # type: ignore[union-attr]
 
-    if not result.content:  # type: ignore[union-attr]
+    content = result.file.content if result.file else None  # type: ignore[union-attr]
+    if not content:
         return f"Error: No content found for {path} v{version}."
 
-    return f"Content of {path} v{version}:\n{result.content}"  # type: ignore[union-attr]
+    return f"Content of {path} v{version}:\n{content}"
 
 
 def _format_restore_result(result: object) -> str:
@@ -70,10 +71,9 @@ def _format_restore_result(result: object) -> str:
     if not result.success:  # type: ignore[union-attr]
         return f"Error: {result.message}"  # type: ignore[union-attr]
 
-    return (
-        f"Restored {result.path} to v{result.restored_version}. "  # type: ignore[union-attr]
-        f"Current version is now v{result.version}."  # type: ignore[union-attr]
-    )
+    file_path = result.file.path if result.file else "unknown"  # type: ignore[union-attr]
+    new_version = result.file.current_version if result.file else 0  # type: ignore[union-attr]
+    return f"Restored {file_path}. Current version is now v{new_version}."
 
 
 def _format_delete_result(result: object, path: str) -> str:
@@ -93,7 +93,7 @@ def _format_trash_list(result: object) -> str:
         return "Trash is empty."
 
     lines = [f"Trash ({len(result)} items):"]  # type: ignore[arg-type]
-    lines.extend(f"  - {path}" for path in result.paths)  # type: ignore[union-attr]
+    lines.extend(f"  - {f.path}" for f in result.files)  # type: ignore[union-attr]
     return "\n".join(lines)
 
 
@@ -102,7 +102,8 @@ def _format_trash_restore(result: object) -> str:
     if not result.success:  # type: ignore[union-attr]
         return f"Error: {result.message}"  # type: ignore[union-attr]
 
-    return f"Restored {result.path} from trash."  # type: ignore[union-attr]
+    file_path = result.file.path if result.file else "unknown"  # type: ignore[union-attr]
+    return f"Restored {file_path} from trash."
 
 
 def _format_search_result(result: object, query: str) -> str:
@@ -113,13 +114,15 @@ def _format_search_result(result: object, query: str) -> str:
     if len(result) == 0:  # type: ignore[arg-type]
         return f"No results found for: {query}"
 
+    from grover.models.internal.evidence import VectorEvidence
+
     lines = [f"Search results for '{query}' ({len(result)} files):"]  # type: ignore[arg-type]
-    for i, path in enumerate(result.paths, 1):  # type: ignore[union-attr]
-        line = f"  {i}. {path}"
-        lines.append(line)
-        for snippet in result.snippets(path)[:3]:  # type: ignore[union-attr]
-            snippet_text = snippet.replace("\n", " ")
-            lines.append(f"     {snippet_text}")
+    for i, f in enumerate(result.files, 1):  # type: ignore[union-attr]
+        lines.append(f"  {i}. {f.path}")
+        snippets = [
+            ev.snippet for ev in f.evidence if isinstance(ev, VectorEvidence) and ev.snippet
+        ]
+        lines.extend(f"     {s.replace(chr(10), ' ')}" for s in snippets[:3])
     return "\n".join(lines)
 
 

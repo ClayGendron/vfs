@@ -20,8 +20,8 @@ from sqlmodel import SQLModel, select
 from _helpers import FakeProvider
 from grover.backends.database import DatabaseFileSystem
 from grover.client import GroverAsync
-from grover.models.chunk import FileChunk
-from grover.models.connection import FileConnection
+from grover.models.database.chunk import FileChunkModel
+from grover.models.database.connection import FileConnectionModel
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -139,7 +139,7 @@ class TestAnalyzeSessionBatching:
         # Verify DB has connection records
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileConnection).where(FileConnection.source_path == "/vfs/main.py")
+                select(FileConnectionModel).where(FileConnectionModel.source_path == "/vfs/main.py")
             )
             records = list(rows.scalars().all())
             assert len(records) >= 3  # os, sys, json imports
@@ -151,7 +151,7 @@ class TestAnalyzeSessionBatching:
         # Verify chunks in DB
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileChunk).where(FileChunk.file_path == "/vfs/main.py")
+                select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py")
             )
             chunks = list(rows.scalars().all())
             assert len(chunks) >= 2  # hello function + Foo class
@@ -174,7 +174,7 @@ class TestAnalyzeSessionBatching:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileConnection).where(FileConnection.source_path == "/vfs/mod.py")
+                select(FileConnectionModel).where(FileConnectionModel.source_path == "/vfs/mod.py")
             )
             records = list(rows.scalars().all())
             targets = [r.target_path for r in records]
@@ -199,7 +199,7 @@ class TestAnalyzeSessionBatching:
         # DB records should be committed and visible
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileConnection).where(FileConnection.source_path == "/vfs/main.py")
+                select(FileConnectionModel).where(FileConnectionModel.source_path == "/vfs/main.py")
             )
             records = list(rows.scalars().all())
             assert len(records) >= 1, "DB records should be visible after commit"
@@ -237,12 +237,12 @@ class TestAnalyzeSessionBatching:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as sess:
             chunk_rows = await sess.execute(
-                select(FileChunk).where(FileChunk.file_path == "/vfs/main.py")
+                select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py")
             )
             assert len(list(chunk_rows.scalars().all())) == 0, "Chunks should be rolled back"
 
             conn_rows = await sess.execute(
-                select(FileConnection).where(FileConnection.source_path == "/vfs/main.py")
+                select(FileConnectionModel).where(FileConnectionModel.source_path == "/vfs/main.py")
             )
             assert len(list(conn_rows.scalars().all())) == 0, "Connections should be rolled back"
 
@@ -288,7 +288,7 @@ class TestDeletedSessionBatching:
         # Verify records exist before delete
         async with factory() as sess:
             chunks = await sess.execute(
-                select(FileChunk).where(FileChunk.file_path == "/vfs/main.py")
+                select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py")
             )
             assert len(list(chunks.scalars().all())) > 0, "Setup: chunks should exist"
 
@@ -299,12 +299,12 @@ class TestDeletedSessionBatching:
         # Verify all records cleaned up
         async with factory() as sess:
             chunk_rows = await sess.execute(
-                select(FileChunk).where(FileChunk.file_path == "/vfs/main.py")
+                select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py")
             )
             assert len(list(chunk_rows.scalars().all())) == 0, "Chunks not cleaned up"
 
             conn_rows = await sess.execute(
-                select(FileConnection).where(FileConnection.source_path == "/vfs/main.py")
+                select(FileConnectionModel).where(FileConnectionModel.source_path == "/vfs/main.py")
             )
             assert len(list(conn_rows.scalars().all())) == 0, "Connections not cleaned up"
 
@@ -364,7 +364,7 @@ class TestAnalyzeEdgeCases:
 
         # DB should NOT have any 'contains' edges
         async with factory() as sess:
-            rows = await sess.execute(select(FileConnection))
+            rows = await sess.execute(select(FileConnectionModel))
             records = list(rows.scalars().all())
             contains_records = [r for r in records if r.type == "contains"]
             assert len(contains_records) == 0
@@ -393,7 +393,7 @@ class TestAnalyzeEdgeCases:
 
         # Clear any existing connections
         async with factory() as sess:
-            rows = await sess.execute(select(FileConnection))
+            rows = await sess.execute(select(FileConnectionModel))
             for row in rows.scalars().all():
                 await sess.delete(row)
             await sess.commit()
@@ -403,7 +403,7 @@ class TestAnalyzeEdgeCases:
 
         # Verify no connections written
         async with factory() as sess:
-            rows = await sess.execute(select(FileConnection))
+            rows = await sess.execute(select(FileConnectionModel))
             assert len(list(rows.scalars().all())) == 0
 
         await g.close()
@@ -440,7 +440,7 @@ class TestAnalyzeEdgeCases:
         # DB should have NO connections (read-only fallback skips DB)
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileConnection).where(FileConnection.source_path == "/ro/main.py")
+                select(FileConnectionModel).where(FileConnectionModel.source_path == "/ro/main.py")
             )
             assert len(list(rows.scalars().all())) == 0
 

@@ -49,15 +49,16 @@ def _require_async(backend: GroverBackend) -> GroverAsync:
 
 
 def _format_ls_info_entries(entries: object) -> list[FileInfo]:
-    """Convert a ListDirResult to a list of FileInfo dicts."""
-    from grover.results import ListDirEvidence
+    """Convert a FileSearchResult to a list of FileInfo dicts."""
+    from grover.models.internal.evidence import ListDirEvidence
 
     result: list[FileInfo] = []
-    for entry_path in entries.paths:  # type: ignore[union-attr]
-        evs = entries.explain(entry_path)  # type: ignore[union-attr]
-        is_dir = any(isinstance(e, ListDirEvidence) and e.is_directory for e in evs)
+    for f in entries.files:  # type: ignore[union-attr]
+        is_dir = f.is_directory or any(
+            isinstance(e, ListDirEvidence) and e.is_directory for e in f.evidence
+        )
         info: FileInfo = {
-            "path": entry_path,
+            "path": f.path,
             "is_dir": is_dir,
         }
         result.append(info)
@@ -69,7 +70,7 @@ def _format_read_result(file_path: str, result: object, offset: int) -> str:
     if not result.success:  # type: ignore[union-attr]
         return f"Error: {result.message}"  # type: ignore[union-attr]
 
-    content = result.content  # type: ignore[union-attr]
+    content = result.file.content if hasattr(result, "file") and result.file else None  # type: ignore[union-attr]
     if content is None:
         return f"Error: No content for {file_path}"
 
@@ -81,28 +82,37 @@ def _format_read_result(file_path: str, result: object, offset: int) -> str:
 
 
 def _format_grep_result(result: object) -> list[GrepMatch]:
-    """Convert a GrepResult to a list of GrepMatch dicts."""
-    return [
-        {
-            "path": file_path,
-            "line": lm.line_number,
-            "text": lm.line_content,
-        }
-        for file_path, lm in result.all_matches()  # type: ignore[union-attr]
-    ]
+    """Convert a FileSearchResult to a list of GrepMatch dicts."""
+    from grover.models.internal.evidence import GrepEvidence
+
+    matches: list[GrepMatch] = []
+    for f in result.files:  # type: ignore[union-attr]
+        for ev in f.evidence:
+            if isinstance(ev, GrepEvidence):
+                matches.extend(
+                    {
+                        "path": f.path,
+                        "line": lm.line_number,
+                        "text": lm.line_content,
+                    }
+                    for lm in ev.line_matches
+                )
+    return matches
 
 
 def _format_glob_info(result: object) -> list[FileInfo]:
-    """Convert a GlobResult to a list of FileInfo dicts."""
+    """Convert a FileSearchResult to a list of FileInfo dicts."""
+    from grover.models.internal.evidence import GlobEvidence
+
     infos: list[FileInfo] = []
-    for entry_path in result.paths:  # type: ignore[union-attr]
-        ev = result.file_info(entry_path)  # type: ignore[union-attr]
+    for f in result.files:  # type: ignore[union-attr]
+        glob_ev = next((e for e in f.evidence if isinstance(e, GlobEvidence)), None)
         info: FileInfo = {
-            "path": entry_path,
-            "is_dir": ev.is_directory if ev else False,
+            "path": f.path,
+            "is_dir": glob_ev.is_directory if glob_ev else f.is_directory,
         }
-        if ev and ev.size_bytes is not None:
-            info["size"] = ev.size_bytes
+        if glob_ev and glob_ev.size_bytes is not None:
+            info["size"] = glob_ev.size_bytes
         infos.append(info)
     return infos
 
@@ -366,8 +376,9 @@ class GroverBackend(BackendProtocol):
         if replace_all:
             try:
                 read_result = g.read(file_path)
-                if read_result.success and read_result.content is not None:
-                    occurrences = read_result.content.count(old_string)
+                rc = read_result.file.content if read_result.file else None
+                if read_result.success and rc is not None:
+                    occurrences = rc.count(old_string)
             except Exception:
                 occurrences = 1
 
@@ -399,8 +410,9 @@ class GroverBackend(BackendProtocol):
         if replace_all:
             try:
                 read_result = await g.read(file_path)
-                if read_result.success and read_result.content is not None:
-                    occurrences = read_result.content.count(old_string)
+                rc = read_result.file.content if read_result.file else None
+                if read_result.success and rc is not None:
+                    occurrences = rc.count(old_string)
             except Exception:
                 occurrences = 1
 
@@ -598,13 +610,14 @@ class GroverBackend(BackendProtocol):
                 responses.append(FileDownloadResponse(path=file_path, error="file_not_found"))
                 continue
 
-            if not result.success or result.content is None:
+            rc = result.file.content if hasattr(result, "file") and result.file else None
+            if not result.success or rc is None:
                 responses.append(FileDownloadResponse(path=file_path, error="file_not_found"))
             else:
                 responses.append(
                     FileDownloadResponse(
                         path=file_path,
-                        content=result.content.encode("utf-8"),
+                        content=rc.encode("utf-8"),
                     )
                 )
 
@@ -626,13 +639,14 @@ class GroverBackend(BackendProtocol):
                 responses.append(FileDownloadResponse(path=file_path, error="file_not_found"))
                 continue
 
-            if not result.success or result.content is None:
+            rc = result.file.content if hasattr(result, "file") and result.file else None
+            if not result.success or rc is None:
                 responses.append(FileDownloadResponse(path=file_path, error="file_not_found"))
             else:
                 responses.append(
                     FileDownloadResponse(
                         path=file_path,
-                        content=result.content.encode("utf-8"),
+                        content=rc.encode("utf-8"),
                     )
                 )
 

@@ -1,6 +1,6 @@
-"""FileVersion model
+"""FileVersionModel — version records for tracked files.
 
-Provides ``FileBaseVersion`` non-table base class.
+Provides ``FileVersionModelBase`` non-table base class.
 Subclass with ``table=True`` and a custom ``__tablename__`` to use a
 different table name per backend.
 """
@@ -13,10 +13,10 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from grover.models.vector import Vector, VectorType
+from .vector import Vector, VectorType
 
 
-class FileVersionBase(SQLModel):
+class FileVersionModelBase(SQLModel):
     """Base fields for a file version record. Subclass with ``table=True`` for a concrete table."""
 
     __table_args__ = (UniqueConstraint("file_id", "version"),)
@@ -42,7 +42,7 @@ class FileVersionBase(SQLModel):
         return f"{self.file_path}@{self.version}"
 
 
-class FileVersion(FileVersionBase, table=True):
+class FileVersionModel(FileVersionModelBase, table=True):
     """Default file version table — ``grover_file_versions``."""
 
     __tablename__ = "grover_file_versions"

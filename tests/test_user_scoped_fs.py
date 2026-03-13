@@ -13,12 +13,62 @@ from sqlmodel import select
 
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.exceptions import AuthenticationRequiredError
-from grover.models.file import File
-from grover.models.share import FileShare
-from grover.results import ShareEvidence, ShareResult
+from grover.models.database.file import FileModel
+from grover.models.database.share import FileShareModel
+from grover.models.internal.evidence import ListDirEvidence, ShareEvidence
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
+
+# ---------------------------------------------------------------------------
+# Helpers for new result types
+# ---------------------------------------------------------------------------
+
+
+def _all_matches(
+    result: FileSearchResult,
+) -> list[tuple[str, object]]:
+    """Return (path, LineMatch) pairs from all GrepEvidence in result.files."""
+    from grover.models.internal.evidence import GrepEvidence
+
+    out: list[tuple[str, object]] = []
+    for f in result.files:
+        for e in f.evidence:
+            if isinstance(e, GrepEvidence):
+                out.extend((f.path, lm) for lm in e.line_matches)
+    return out
+
+
+def _directories(result: FileSearchResult) -> list[str]:
+    """Return paths of entries that are directories (via ListDirEvidence)."""
+    dirs: list[str] = []
+    for f in result.files:
+        if f.is_directory:
+            dirs.append(f.path)
+            continue
+        for e in f.evidence:
+            if isinstance(e, ListDirEvidence) and e.is_directory:
+                dirs.append(f.path)
+                break
+    return dirs
+
+
+def _files_only(result: FileSearchResult) -> list[str]:
+    """Return paths of entries that are NOT directories."""
+    files: list[str] = []
+    for f in result.files:
+        if f.is_directory:
+            continue
+        is_dir = False
+        for e in f.evidence:
+            if isinstance(e, ListDirEvidence) and e.is_directory:
+                is_dir = True
+                break
+        if not is_dir:
+            files.append(f.path)
+    return files
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +85,7 @@ async def usfs(async_engine: AsyncEngine) -> UserScopedFileSystem:
 @pytest.fixture
 async def shared_usfs(async_engine: AsyncEngine) -> UserScopedFileSystem:
     """UserScopedFileSystem with sharing configured."""
-    return UserScopedFileSystem(share_model=FileShare)
+    return UserScopedFileSystem(share_model=FileShareModel)
 
 
 @pytest.fixture
@@ -140,12 +190,12 @@ class TestReadWrite:
     ):
         result = await usfs.write("/notes.md", "hello", session=async_session, user_id="alice")
         assert result.success is True
-        assert result.path == "/notes.md"
+        assert result.file.path == "/notes.md"
 
         read_result = await usfs.read("/notes.md", session=async_session, user_id="alice")
         assert read_result.success is True
-        assert read_result.content == "hello"
-        assert read_result.path == "/notes.md"
+        assert read_result.file.content == "hello"
+        assert read_result.file.path == "/notes.md"
 
     async def test_two_users_isolated(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -166,8 +216,8 @@ class TestReadWrite:
         r1 = await usfs.read("/notes.md", session=async_session, user_id="alice")
         r2 = await usfs.read("/notes.md", session=async_session, user_id="bob")
 
-        assert r1.content == "alice's notes"
-        assert r2.content == "bob's notes"
+        assert r1.file.content == "alice's notes"
+        assert r2.file.content == "bob's notes"
 
     async def test_user_cannot_see_other_user(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -190,7 +240,9 @@ class TestReadWrite:
             session=async_session,
             user_id="alice",
         )
-        result = await async_session.execute(select(File).where(File.path == "/alice/notes.md"))
+        result = await async_session.execute(
+            select(FileModel).where(FileModel.path == "/alice/notes.md")
+        )
         file = result.scalar_one_or_none()
         assert file is not None
         assert file.path == "/alice/notes.md"
@@ -236,7 +288,7 @@ class TestOperations:
         )
         assert result.success is True
         read_result = await usfs.read("/notes.md", session=async_session, user_id="alice")
-        assert read_result.content == "goodbye world"
+        assert read_result.file.content == "goodbye world"
 
     async def test_delete(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -251,13 +303,15 @@ class TestOperations:
     async def test_mkdir(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         result = await usfs.mkdir("/mydir", session=async_session, user_id="alice")
         assert result.success is True
-        assert result.path == "/mydir"
+        assert result.file.path == "/mydir"
 
     async def test_mkdir_sets_owner_id(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.mkdir("/mydir", session=async_session, user_id="alice")
-        result = await async_session.execute(select(File).where(File.path == "/alice/mydir"))
+        result = await async_session.execute(
+            select(FileModel).where(FileModel.path == "/alice/mydir")
+        )
         file = result.scalar_one_or_none()
         assert file is not None
         assert file.path == "/alice/mydir"
@@ -272,9 +326,9 @@ class TestOperations:
             user_id="alice",
         )
         result = await usfs.exists("/notes.md", session=async_session, user_id="alice")
-        assert result.exists is True
+        assert result.message == "exists"
         result = await usfs.exists("/notes.md", session=async_session, user_id="bob")
-        assert result.exists is False
+        assert result.message != "exists"
 
     async def test_get_info(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -285,7 +339,7 @@ class TestOperations:
         )
         info = await usfs.get_info("/notes.md", session=async_session, user_id="alice")
         assert info.success
-        assert info.path == "/notes.md"
+        assert info.file.path == "/notes.md"
 
     async def test_get_info_other_user_none(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -314,7 +368,7 @@ class TestOperations:
         )
         assert result.success is True
         read_result = await usfs.read("/b.md", session=async_session, user_id="alice")
-        assert read_result.content == "content"
+        assert read_result.file.content == "content"
 
     async def test_move(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -331,7 +385,7 @@ class TestOperations:
         )
         assert result.success is True
         read_result = await usfs.read("/new.md", session=async_session, user_id="alice")
-        assert read_result.content == "content"
+        assert read_result.file.content == "content"
 
     async def test_glob(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -361,7 +415,7 @@ class TestOperations:
         )
         result = await usfs.grep("hello", "/", session=async_session, user_id="alice")
         assert result.success is True
-        all_matches = result.all_matches()
+        all_matches = _all_matches(result)
         assert len(all_matches) == 1
         assert all_matches[0][0] == "/notes.md"
 
@@ -376,7 +430,7 @@ class TestOperations:
         )
         result = await usfs.grep("import", "/", session=async_session, user_id="alice")
         assert result.success is True
-        for path, _lm in result.all_matches():
+        for path, _lm in _all_matches(result):
             assert not path.startswith("/alice/")
 
     async def test_tree(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
@@ -411,7 +465,7 @@ class TestOperations:
             user_id="alice",
         )
         assert result.success is True
-        all_matches = result.all_matches()
+        all_matches = _all_matches(result)
         assert len(all_matches) == 1
         assert all_matches[0][0] == "/notes.md"
 
@@ -470,7 +524,7 @@ class TestSharedAccess:
             user_id="bob",
         )
         assert result.success is True
-        assert result.content == "alice's notes"
+        assert result.file.content == "alice's notes"
 
     async def test_read_shared_no_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -514,7 +568,7 @@ class TestSharedAccess:
         assert result.success is True
 
         read_result = await shared_usfs.read("/notes.md", session=async_session, user_id="alice")
-        assert read_result.content == "updated by bob"
+        assert read_result.file.content == "updated by bob"
 
     async def test_write_shared_read_only_denied(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -589,7 +643,7 @@ class TestSharedAccess:
             session=async_session,
             user_id="bob",
         )
-        assert result.exists is True
+        assert result.message == "exists"
 
     async def test_exists_shared_no_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -605,7 +659,7 @@ class TestSharedAccess:
             session=async_session,
             user_id="bob",
         )
-        assert result.exists is False
+        assert result.message != "exists"
 
     async def test_get_info_shared(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -670,7 +724,7 @@ class TestSharedAccess:
             user_id="bob",
         )
         assert result.success is True
-        assert result.content == "content"
+        assert result.file.content == "content"
 
     async def test_shared_read_returns_shared_path(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -696,7 +750,7 @@ class TestSharedAccess:
             user_id="bob",
         )
         assert result.success is True
-        assert result.path == "/@shared/alice/notes.md"
+        assert result.file.path == "/@shared/alice/notes.md"
 
     async def test_shared_write_returns_shared_path(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -722,7 +776,7 @@ class TestSharedAccess:
             user_id="bob",
         )
         assert result.success is True
-        assert result.path == "/@shared/alice/notes.md"
+        assert result.file.path == "/@shared/alice/notes.md"
 
     async def test_shared_get_info_returns_shared_path(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -747,7 +801,7 @@ class TestSharedAccess:
             user_id="bob",
         )
         assert info.success
-        assert info.path == "/@shared/alice/notes.md"
+        assert info.file.path == "/@shared/alice/notes.md"
 
     async def test_shared_access_denied_without_sharing_service(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -805,7 +859,7 @@ class TestSharedListDir:
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "alice" in names
         assert "charlie" in names
-        assert set(result.paths) == set(result.directories())
+        assert set(result.paths) == set(_directories(result))
 
     async def test_shared_owner_level(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -885,7 +939,7 @@ class TestSharedListDir:
         assert result.success is True
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"deep"}
-        assert len(result.directories()) == 1
+        assert len(_directories(result)) == 1
 
         # Level 2
         result = await shared_usfs.list_dir(
@@ -902,7 +956,7 @@ class TestSharedListDir:
         )
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"file.md"}
-        assert len(result.files()) == 1
+        assert len(_files_only(result)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -932,12 +986,12 @@ class TestTrashScoping:
         alice_trash = await usfs.list_trash(session=async_session, user_id="alice")
         assert alice_trash.success
         assert len(alice_trash) == 1
-        assert alice_trash.file_candidates[0].path.endswith("a.md")
+        assert alice_trash.files[0].path.endswith("a.md")
 
         bob_trash = await usfs.list_trash(session=async_session, user_id="bob")
         assert bob_trash.success
         assert len(bob_trash) == 1
-        assert bob_trash.file_candidates[0].path.endswith("b.md")
+        assert bob_trash.files[0].path.endswith("b.md")
 
     async def test_restore_own_file(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -953,7 +1007,7 @@ class TestTrashScoping:
 
         r = await usfs.read("/mine.md", session=async_session, user_id="alice")
         assert r.success
-        assert r.content == "my data"
+        assert r.file.content == "my data"
 
     async def test_restore_other_user_denied(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -979,7 +1033,7 @@ class TestTrashScoping:
 
         result = await usfs.empty_trash(session=async_session, user_id="alice")
         assert result.success
-        assert result.total_deleted == 1
+        assert "1" in result.message
 
         bob_trash = await usfs.list_trash(session=async_session, user_id="bob")
         assert len(bob_trash) == 1
@@ -1009,7 +1063,7 @@ class TestVersions:
             "/notes.md", 1, session=async_session, user_id="alice"
         )
         assert result.success is True
-        assert result.content == "v1"
+        assert result.file.content == "v1"
 
     async def test_restore_version(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write("/notes.md", "v1", session=async_session, user_id="alice")
@@ -1019,7 +1073,7 @@ class TestVersions:
         assert result.success is True
 
         read_result = await usfs.read("/notes.md", session=async_session, user_id="alice")
-        assert read_result.content == "v1"
+        assert read_result.file.content == "v1"
 
 
 # ---------------------------------------------------------------------------
@@ -1044,11 +1098,12 @@ class TestShareCRUD:
             user_id="alice",
             session=async_session,
         )
-        assert isinstance(share, ShareResult)
-        assert share.path == "/notes.md"
-        assert share.grantee_id == "bob"
-        assert share.permission == "read"
-        assert share.granted_by == "alice"
+        assert isinstance(share, FileOperationResult)
+        assert share.success is True
+        assert share.file.path == "/notes.md"
+        assert "bob" in share.message
+        assert "read" in share.message
+        assert "alice" in share.message
 
     async def test_unshare_removes_record(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1112,10 +1167,7 @@ class TestShareCRUD:
         )
         assert len(result) == 2
         grantees = {
-            e.grantee_id
-            for c in result.file_candidates
-            for e in c.evidence
-            if isinstance(e, ShareEvidence)
+            e.grantee_id for c in result.files for e in c.evidence if isinstance(e, ShareEvidence)
         }
         assert grantees == {"bob", "charlie"}
 
@@ -1138,8 +1190,8 @@ class TestShareCRUD:
 
         result = await shared_usfs.list_shared_with_me(user_id="bob", session=async_session)
         assert len(result) == 1
-        assert result.file_candidates[0].path == "/@shared/alice/notes.md"
-        evs = result.file_candidates[0].evidence
+        assert result.files[0].path == "/@shared/alice/notes.md"
+        evs = result.files[0].evidence
         share_ev = next(e for e in evs if isinstance(e, ShareEvidence))
         assert share_ev.permission == "read"
 
@@ -1179,7 +1231,7 @@ class TestShareCRUD:
             user_id="bob",
         )
         assert result.success is True
-        assert result.content == "shared content"
+        assert result.file.content == "shared content"
 
 
 # ---------------------------------------------------------------------------
@@ -1191,7 +1243,7 @@ class TestProtocolCompliance:
     def test_supports_rebac_protocol(self):
         from grover.backends.protocol import SupportsReBAC
 
-        usfs = UserScopedFileSystem(share_model=FileShare)
+        usfs = UserScopedFileSystem(share_model=FileShareModel)
         assert isinstance(usfs, SupportsReBAC)
 
     def test_supports_storage_backend_protocol(self):
@@ -1313,7 +1365,7 @@ class TestSecurityVulnerabilities:
             user_id="bob",
         )
         assert result.success is True
-        assert len(result.all_matches()) >= 1
+        assert len(_all_matches(result)) >= 1
 
     async def test_grep_shared_returns_shared_paths(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1332,7 +1384,7 @@ class TestSecurityVulnerabilities:
             user_id="bob",
         )
         assert result.success is True
-        for path, _lm in result.all_matches():
+        for path, _lm in _all_matches(result):
             assert path.startswith("/@shared/alice"), f"Expected @shared path, got {path}"
 
     async def test_tree_shared_no_permission_denied(
@@ -1645,7 +1697,7 @@ class TestSecurityVulnerabilities:
         await usfs.write("/secret.txt", "bob secret", session=async_session, user_id="bob")
         result = await usfs.read("/../bob/secret.txt", session=async_session, user_id="alice")
         # Should NOT return bob's file — path resolves within alice's namespace
-        assert result.success is False or result.content != "bob secret"
+        assert result.success is False or result.file.content != "bob secret"
 
     async def test_write_traversal_stays_in_namespace(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1654,7 +1706,7 @@ class TestSecurityVulnerabilities:
         await usfs.write("/secret.txt", "original", session=async_session, user_id="bob")
         await usfs.write("/../bob/secret.txt", "hacked", session=async_session, user_id="alice")
         result = await usfs.read("/secret.txt", session=async_session, user_id="bob")
-        assert result.content == "original"
+        assert result.file.content == "original"
 
     async def test_delete_traversal_stays_in_namespace(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1664,4 +1716,4 @@ class TestSecurityVulnerabilities:
         await usfs.delete("/../bob/secret.txt", session=async_session, user_id="alice")
         result = await usfs.read("/secret.txt", session=async_session, user_id="bob")
         assert result.success is True
-        assert result.content == "bob data"
+        assert result.file.content == "bob data"

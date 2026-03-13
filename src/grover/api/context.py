@@ -17,9 +17,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.analyzers import AnalyzerRegistry
+    from grover.models.internal.results import FileOperationResult
     from grover.mount import Mount, MountRegistry
     from grover.providers.graph.protocol import GraphProvider
-    from grover.results import FileInfoResult
     from grover.worker import BackgroundWorker
 
 logger = logging.getLogger(__name__)
@@ -91,11 +91,9 @@ class GroverContext:
             return mount_path
         return mount_path + path
 
-    def prefix_file_info(self, info: FileInfoResult, mount: Mount) -> FileInfoResult:
-        prefixed_path = self.prefix_path(info.path, mount.path) or info.path
-        info.path = prefixed_path
-        info.mount_type = mount.mount_type
-        info.permission = self.registry.get_permission(prefixed_path).value
+    def prefix_file_info(self, info: FileOperationResult, mount: Mount) -> FileOperationResult:
+        prefixed_path = self.prefix_path(info.file.path, mount.path) or info.file.path
+        info.file.path = prefixed_path
         return info
 
     # ------------------------------------------------------------------

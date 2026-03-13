@@ -9,30 +9,9 @@ import pytest
 from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
+from grover.models.internal.results import FileSearchResult
 from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
-from grover.results import (
-    AncestorsResult,
-    BetweennessResult,
-    ClosenessResult,
-    CommonNeighborsResult,
-    DegreeResult,
-    DescendantsResult,
-    EgoGraphResult,
-    GlobResult,
-    GrepResult,
-    HarmonicResult,
-    HasPathResult,
-    HitsResult,
-    KatzResult,
-    MeetingSubgraphResult,
-    PageRankResult,
-    PredecessorsResult,
-    ShortestPathResult,
-    SubgraphSearchResult,
-    SuccessorsResult,
-    VectorSearchResult,
-)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -113,7 +92,7 @@ class TestGroverAsyncLifecycle:
             embedding_provider=FakeProvider(),
         )
         await g.write("/app/test.txt", "hello")
-        assert (await g.exists("/app/test.txt")).exists
+        assert (await g.exists("/app/test.txt")).message == "exists"
         await g.unmount("/app")
         # Mount should be gone
         assert not g._ctx.registry.has_mount("/app")
@@ -143,14 +122,14 @@ class TestGroverAsyncDirectAccess:
         assert await grover.write("/project/hello.txt", "hello world")
         result = await grover.read("/project/hello.txt")
         assert result.success
-        assert result.content == "hello world"
+        assert result.file.content == "hello world"
 
     @pytest.mark.asyncio
     async def test_edit(self, grover: GroverAsync):
         await grover.write("/project/doc.txt", "old text here")
         assert await grover.edit("/project/doc.txt", "old", "new")
         result = await grover.read("/project/doc.txt")
-        assert result.content == "new text here"
+        assert result.file.content == "new text here"
 
     @pytest.mark.asyncio
     async def test_delete(self, grover: GroverAsync):
@@ -170,9 +149,9 @@ class TestGroverAsyncDirectAccess:
 
     @pytest.mark.asyncio
     async def test_exists(self, grover: GroverAsync):
-        assert not (await grover.exists("/project/nope.txt")).exists
+        assert (await grover.exists("/project/nope.txt")).message != "exists"
         await grover.write("/project/yes.txt", "yes")
-        assert (await grover.exists("/project/yes.txt")).exists
+        assert (await grover.exists("/project/yes.txt")).message == "exists"
 
     @pytest.mark.asyncio
     async def test_write_overwrite_false_fails_when_exists(self, grover: GroverAsync):
@@ -180,20 +159,20 @@ class TestGroverAsyncDirectAccess:
         result = await grover.write("/project/exists.txt", "new", overwrite=False)
         assert not result.success
         # Original content should be unchanged
-        assert (await grover.read("/project/exists.txt")).content == "original"
+        assert (await grover.read("/project/exists.txt")).file.content == "original"
 
     @pytest.mark.asyncio
     async def test_write_overwrite_false_succeeds_for_new(self, grover: GroverAsync):
         result = await grover.write("/project/brand_new.txt", "content", overwrite=False)
         assert result.success
-        assert (await grover.read("/project/brand_new.txt")).content == "content"
+        assert (await grover.read("/project/brand_new.txt")).file.content == "content"
 
     @pytest.mark.asyncio
     async def test_edit_replace_all(self, grover: GroverAsync):
         await grover.write("/project/multi.txt", "foo bar foo baz foo")
         result = await grover.edit("/project/multi.txt", "foo", "qux", replace_all=True)
         assert result.success
-        assert (await grover.read("/project/multi.txt")).content == "qux bar qux baz qux"
+        assert (await grover.read("/project/multi.txt")).file.content == "qux bar qux baz qux"
 
     @pytest.mark.asyncio
     async def test_read_with_offset_and_limit(self, grover: GroverAsync):
@@ -201,7 +180,7 @@ class TestGroverAsyncDirectAccess:
         await grover.write("/project/lines.txt", lines)
         result = await grover.read("/project/lines.txt", offset=5, limit=3)
         assert result.success
-        content = result.content
+        content = result.file.content
         assert content is not None
         assert "line 5" in content
         assert "line 7" in content
@@ -232,8 +211,8 @@ class TestGroverAsyncMultiMount:
         await g.write("/app/code.txt", "code content")
         await g.write("/data/doc.txt", "doc content")
 
-        assert (await g.read("/app/code.txt")).content == "code content"
-        assert (await g.read("/data/doc.txt")).content == "doc content"
+        assert (await g.read("/app/code.txt")).file.content == "code content"
+        assert (await g.read("/data/doc.txt")).file.content == "doc content"
 
         # List root should show both mounts (but not .grover)
         result = await g.list_dir("/")
@@ -256,8 +235,8 @@ class TestGroverAsyncMultiMount:
         await g.add_mount("/b", lfs_b, embedding_provider=FakeProvider())
 
         await g.write("/a/file.txt", "in mount a")
-        assert (await g.exists("/a/file.txt")).exists
-        assert not (await g.exists("/b/file.txt")).exists
+        assert (await g.exists("/a/file.txt")).message == "exists"
+        assert (await g.exists("/b/file.txt")).message != "exists"
 
         await g.close()
 
@@ -308,7 +287,7 @@ class TestGroverAsyncSearch:
         await grover.write("/project/auth.py", code)
         await grover.flush()
         result = await grover.vector_search("authenticate")
-        assert isinstance(result, VectorSearchResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         assert len(result) >= 1
 
@@ -316,13 +295,13 @@ class TestGroverAsyncSearch:
     async def test_vector_search_returns_vector_search_result(self, grover: GroverAsync):
         await grover.write("/project/data.txt", "important data content")
         result = await grover.vector_search("data")
-        assert isinstance(result, VectorSearchResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
     async def test_vector_search_empty(self, grover: GroverAsync):
         result = await grover.vector_search("nonexistent query")
-        assert isinstance(result, VectorSearchResult)
+        assert isinstance(result, FileSearchResult)
         assert len(result) == 0
 
     @pytest.mark.asyncio
@@ -411,7 +390,7 @@ class TestGroverAsyncGraphQueries:
         result = await grover.predecessors("/project/lib.py")
         # main.py imports lib.py, so main.py is a predecessor
         # The graph stores "imports" edges from analyzer
-        assert isinstance(result, PredecessorsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -423,7 +402,7 @@ class TestGroverAsyncGraphQueries:
         )
         await grover.flush()
         result = await grover.successors("/project/consumer.py")
-        assert isinstance(result, SuccessorsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -439,7 +418,7 @@ class TestGroverAsyncGraphQueries:
         )
         await grover.flush()
         result = await grover.shortest_path("/project/end.py", "/project/start.py")
-        assert isinstance(result, ShortestPathResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         # May or may not find a path depending on import analysis depth
         # If path found, result.paths will be non-empty
@@ -452,7 +431,7 @@ class TestGroverAsyncGraphQueries:
         await grover.write("/project/island_b.py", "B = 2\n")
         await grover.flush()
         result = await grover.shortest_path("/project/island_a.py", "/project/island_b.py")
-        assert isinstance(result, ShortestPathResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         assert len(result) == 0
 
@@ -599,7 +578,7 @@ class TestGroverAsyncMountOptions:
 
 
 # ==================================================================
-# Unsupported File Types
+# Unsupported FileModel Types
 # ==================================================================
 
 
@@ -630,11 +609,11 @@ async def auth_grover(tmp_path: Path) -> GroverAsync:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from grover.backends.user_scoped import UserScopedFileSystem
-    from grover.models.share import FileShare
+    from grover.models.database.share import FileShareModel
 
     g = GroverAsync()
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-    backend = UserScopedFileSystem(share_model=FileShare)
+    backend = UserScopedFileSystem(share_model=FileShareModel)
     await g.add_mount("/ws", backend, engine=engine, embedding_provider=FakeProvider())
     yield g  # type: ignore[misc]
     await g.close()
@@ -647,7 +626,7 @@ class TestGroverAsyncAuthenticatedMount:
         assert result.success is True
         read = await auth_grover.read("/ws/notes.md", user_id="alice")
         assert read.success is True
-        assert read.content == "hello"
+        assert read.file.content == "hello"
 
     @pytest.mark.asyncio
     async def test_user_isolation(self, auth_grover: GroverAsync):
@@ -655,8 +634,8 @@ class TestGroverAsyncAuthenticatedMount:
         await auth_grover.write("/ws/notes.md", "bob data", user_id="bob")
         r1 = await auth_grover.read("/ws/notes.md", user_id="alice")
         r2 = await auth_grover.read("/ws/notes.md", user_id="bob")
-        assert r1.content == "alice data"
-        assert r2.content == "bob data"
+        assert r1.file.content == "alice data"
+        assert r2.file.content == "bob data"
 
     @pytest.mark.asyncio
     async def test_move_and_copy(self, auth_grover: GroverAsync):
@@ -665,8 +644,8 @@ class TestGroverAsyncAuthenticatedMount:
         assert copy_result.success is True
         move_result = await auth_grover.move("/ws/src.md", "/ws/moved.md", user_id="alice")
         assert move_result.success is True
-        assert (await auth_grover.exists("/ws/copy.md", user_id="alice")).exists
-        assert (await auth_grover.exists("/ws/moved.md", user_id="alice")).exists
+        assert (await auth_grover.exists("/ws/copy.md", user_id="alice")).message == "exists"
+        assert (await auth_grover.exists("/ws/moved.md", user_id="alice")).message == "exists"
 
 
 class TestGroverAsyncSharing:
@@ -675,8 +654,8 @@ class TestGroverAsyncSharing:
         await auth_grover.write("/ws/notes.md", "shared", user_id="alice")
         result = await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
         assert result.success is True
-        assert result.grantee_id == "bob"
-        assert result.permission == "read"
+        assert "bob" in result.message
+        assert "read" in result.message
 
     @pytest.mark.asyncio
     async def test_unshare_file(self, auth_grover: GroverAsync):
@@ -692,7 +671,7 @@ class TestGroverAsyncSharing:
 
     @pytest.mark.asyncio
     async def test_list_shares(self, auth_grover: GroverAsync):
-        from grover.results import ShareEvidence
+        from grover.models.internal.evidence import ShareEvidence
 
         await auth_grover.write("/ws/notes.md", "data", user_id="alice")
         await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
@@ -701,10 +680,7 @@ class TestGroverAsyncSharing:
         assert result.success is True
         assert len(result) == 2
         grantees = {
-            e.grantee_id
-            for c in result.file_candidates
-            for e in c.evidence
-            if isinstance(e, ShareEvidence)
+            e.grantee_id for f in result.files for e in f.evidence if isinstance(e, ShareEvidence)
         }
         assert grantees == {"bob", "charlie"}
 
@@ -716,7 +692,7 @@ class TestGroverAsyncSharing:
         assert result.success is True
         assert len(result) == 1
         # Path should be an @shared path, not a raw stored path
-        assert result.file_candidates[0].path == "/ws/@shared/alice/a.md"
+        assert result.files[0].path == "/ws/@shared/alice/a.md"
 
     @pytest.mark.asyncio
     async def test_share_requires_authenticated_mount(self, workspace: Path, tmp_path: Path):
@@ -746,7 +722,7 @@ class TestGroverAsyncSharing:
         await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
         result = await auth_grover.read("/ws/@shared/alice/notes.md", user_id="bob")
         assert result.success is True
-        assert result.content == "secret"
+        assert result.file.content == "secret"
 
 
 # ==================================================================
@@ -762,7 +738,7 @@ class TestGroverAsyncVersionOps:
         await grover.write("/project/doc.txt", "version two")
         result = await grover.read_version("/project/doc.txt", 1)
         assert result.success is True
-        assert result.content == "version one"
+        assert result.file.content == "version one"
 
     @pytest.mark.asyncio
     async def test_diff_versions_basic(self, grover: GroverAsync):
@@ -771,12 +747,9 @@ class TestGroverAsyncVersionOps:
         await grover.write("/project/doc.txt", "hello world\n")
         result = await grover.diff_versions("/project/doc.txt", 1, 2)
         assert result.success is True
-        assert result.version_a == 1
-        assert result.version_b == 2
-        assert result.content_a == "hello\n"
-        assert result.content_b == "hello world\n"
-        assert result.diff != ""
-        assert "-hello" in result.diff or "+hello world" in result.diff
+        assert result.file.content is not None
+        assert result.file.content != ""
+        assert "-hello" in result.file.content or "+hello world" in result.file.content
 
     @pytest.mark.asyncio
     async def test_diff_versions_same_version(self, grover: GroverAsync):
@@ -784,7 +757,7 @@ class TestGroverAsyncVersionOps:
         await grover.write("/project/doc.txt", "content\n")
         result = await grover.diff_versions("/project/doc.txt", 1, 1)
         assert result.success is True
-        assert result.diff == ""
+        assert result.file.content == ""
 
     @pytest.mark.asyncio
     async def test_diff_versions_invalid_version(self, grover: GroverAsync):
@@ -824,7 +797,7 @@ class TestGroverAsyncGraphAlgorithms:
         )
         await grover.flush()
         result = await grover.ancestors("/project/base.py")
-        assert isinstance(result, AncestorsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -836,7 +809,7 @@ class TestGroverAsyncGraphAlgorithms:
         )
         await grover.flush()
         result = await grover.descendants("/project/root.py")
-        assert isinstance(result, DescendantsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -848,7 +821,7 @@ class TestGroverAsyncGraphAlgorithms:
         )
         await grover.flush()
         result = await grover.has_path("/project/dst.py", "/project/src.py")
-        assert isinstance(result, HasPathResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         # dst imports src → dst → src path exists
         if len(result) > 0:
@@ -860,7 +833,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.write("/project/lone_b.py", "B = 2\n")
         await grover.flush()
         result = await grover.has_path("/project/lone_a.py", "/project/lone_b.py")
-        assert isinstance(result, HasPathResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         assert len(result) == 0
         assert bool(result) is False
@@ -877,7 +850,7 @@ class TestGroverAsyncGraphAlgorithms:
         # Use glob as candidates
         candidates = await grover.glob("*.py", "/project")
         result = await grover.subgraph(candidates)
-        assert isinstance(result, SubgraphSearchResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         assert len(result) >= 2
 
@@ -890,7 +863,7 @@ class TestGroverAsyncGraphAlgorithms:
         )
         await grover.flush()
         result = await grover.ego_graph("/project/center.py", max_depth=1)
-        assert isinstance(result, EgoGraphResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -903,7 +876,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.flush()
         candidates = await grover.glob("*.py", "/project")
         result = await grover.min_meeting_subgraph(candidates, max_size=50)
-        assert isinstance(result, MeetingSubgraphResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -917,16 +890,16 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.flush()
         # Without candidates — all nodes
         full = await grover.pagerank()
-        assert isinstance(full, PageRankResult)
+        assert isinstance(full, FileSearchResult)
         assert len(full) >= 3
 
         # With candidates — filtered
         candidates = await grover.glob("p1*", "/project")
         filtered = await grover.pagerank(candidates=candidates)
-        assert isinstance(filtered, PageRankResult)
+        assert isinstance(filtered, FileSearchResult)
         assert len(filtered) <= len(full)
-        for c in filtered.file_candidates:
-            assert c.path in candidates.paths
+        for f in filtered.files:
+            assert f.path in candidates.paths
 
     @pytest.mark.asyncio
     async def test_hits_two_evidence_records(self, grover: GroverAsync):
@@ -937,12 +910,12 @@ class TestGroverAsyncGraphAlgorithms:
         )
         await grover.flush()
         result = await grover.hits()
-        assert isinstance(result, HitsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
         if len(result) > 0:
             # Each candidate should have two evidence records
-            for c in result.file_candidates:
-                ops = [e.operation for e in c.evidence]
+            for f in result.files:
+                ops = [e.operation for e in f.evidence]
                 assert "hits_authority" in ops
                 assert "hits_hub" in ops
 
@@ -951,7 +924,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.write("/project/bc.py", "X = 1\n")
         await grover.flush()
         result = await grover.betweenness_centrality()
-        assert isinstance(result, BetweennessResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -959,7 +932,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.write("/project/cc.py", "X = 1\n")
         await grover.flush()
         result = await grover.closeness_centrality()
-        assert isinstance(result, ClosenessResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -967,7 +940,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.write("/project/hc.py", "X = 1\n")
         await grover.flush()
         result = await grover.harmonic_centrality()
-        assert isinstance(result, HarmonicResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -975,7 +948,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.write("/project/kc.py", "X = 1\n")
         await grover.flush()
         result = await grover.katz_centrality()
-        assert isinstance(result, KatzResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -983,7 +956,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.write("/project/dc.py", "X = 1\n")
         await grover.flush()
         result = await grover.degree_centrality()
-        assert isinstance(result, DegreeResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -991,7 +964,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.write("/project/idc.py", "X = 1\n")
         await grover.flush()
         result = await grover.in_degree_centrality()
-        assert isinstance(result, DegreeResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -999,7 +972,7 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.write("/project/odc.py", "X = 1\n")
         await grover.flush()
         result = await grover.out_degree_centrality()
-        assert isinstance(result, DegreeResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -1015,7 +988,7 @@ class TestGroverAsyncGraphAlgorithms:
         )
         await grover.flush()
         result = await grover.common_neighbors("/project/n1.py", "/project/n2.py")
-        assert isinstance(result, CommonNeighborsResult)
+        assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -1057,12 +1030,12 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.flush()
         candidates = await grover.glob("sg_*.py", "/project")
         result = await grover.subgraph(candidates)
-        assert isinstance(result, SubgraphSearchResult)
-        # connection_candidates populated from induced edges
-        if len(result.connection_candidates) > 0:
-            cc = result.connection_candidates[0]
-            assert cc.source_path
-            assert cc.target_path
+        assert isinstance(result, FileSearchResult)
+        # connections populated from induced edges
+        if len(result.connections) > 0:
+            cc = result.connections[0]
+            assert cc.source.path
+            assert cc.target.path
 
 
 # ------------------------------------------------------------------
@@ -1092,8 +1065,8 @@ class TestGroverAsyncSearchCandidates:
         assert len(candidates) >= 1
 
         filtered = await self.grover.glob("*.py", "/project", candidates=candidates)
-        assert isinstance(filtered, GlobResult)
-        paths = {c.path for c in filtered.file_candidates}
+        assert isinstance(filtered, FileSearchResult)
+        paths = {f.path for f in filtered.files}
         assert "/project/alpha.py" in paths
         assert "/project/beta.py" not in paths
         assert "/project/gamma.py" not in paths
@@ -1102,7 +1075,7 @@ class TestGroverAsyncSearchCandidates:
     async def test_glob_without_candidates(self):
         """glob without candidates returns all matches (backward compat)."""
         result = await self.grover.glob("*.py", "/project")
-        assert isinstance(result, GlobResult)
+        assert isinstance(result, FileSearchResult)
         assert len(result) >= 3
 
     @pytest.mark.asyncio
@@ -1110,15 +1083,15 @@ class TestGroverAsyncSearchCandidates:
         """grep with candidates filters results to candidate paths."""
         # HELLO appears in alpha.py and gamma.py
         full = await self.grover.grep("HELLO", "/project")
-        full_paths = {c.path for c in full.file_candidates}
+        full_paths = {f.path for f in full.files}
         assert "/project/alpha.py" in full_paths
         assert "/project/gamma.py" in full_paths
 
         # Filter to only alpha.py
         candidates = await self.grover.glob("alpha*", "/project")
         filtered = await self.grover.grep("HELLO", "/project", candidates=candidates)
-        assert isinstance(filtered, GrepResult)
-        filtered_paths = {c.path for c in filtered.file_candidates}
+        assert isinstance(filtered, FileSearchResult)
+        filtered_paths = {f.path for f in filtered.files}
         assert "/project/alpha.py" in filtered_paths
         assert "/project/gamma.py" not in filtered_paths
 
@@ -1127,7 +1100,7 @@ class TestGroverAsyncSearchCandidates:
         """Filtered GlobResult is still a GlobResult instance."""
         candidates = await self.grover.glob("alpha*", "/project")
         result = await self.grover.glob("*.py", "/project", candidates=candidates)
-        assert type(result) is GlobResult
+        assert isinstance(result, FileSearchResult)
         # GrepResult type preserved too
         grep_result = await self.grover.grep("HELLO", "/project", candidates=candidates)
-        assert type(grep_result) is GrepResult
+        assert isinstance(grep_result, FileSearchResult)

@@ -11,6 +11,7 @@ from sqlmodel import SQLModel
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
+from grover.models.internal.evidence import GrepEvidence, LineMatch, TreeEvidence
 from grover.util.patterns import glob_to_sql_like, match_glob
 
 if TYPE_CHECKING:
@@ -18,6 +19,65 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from grover.models.internal.results import FileSearchResult
+
+
+# =========================================================================
+# Helpers: extract grep/tree data from new FileSearchResult
+# =========================================================================
+
+
+def _files_matched(result: FileSearchResult) -> int:
+    """Number of files that had at least one grep match."""
+    return len(result.files)
+
+
+def _all_matches(result: FileSearchResult) -> list[tuple[str, LineMatch]]:
+    """All (path, LineMatch) pairs across all files."""
+    out: list[tuple[str, LineMatch]] = []
+    for f in result.files:
+        for e in f.evidence:
+            if isinstance(e, GrepEvidence):
+                out.extend((f.path, lm) for lm in e.line_matches)
+    return out
+
+
+def _line_matches(result: FileSearchResult, path: str) -> tuple[LineMatch, ...]:
+    """All LineMatches for a specific path."""
+    for f in result.files:
+        if f.path == path:
+            for e in f.evidence:
+                if isinstance(e, GrepEvidence):
+                    return e.line_matches
+    return ()
+
+
+def _total_files(result: FileSearchResult) -> int:
+    """Count of non-directory entries in a tree result."""
+    count = 0
+    for f in result.files:
+        if f.is_directory:
+            continue
+        # Check TreeEvidence for is_directory (disk backend stores it there)
+        tree_ev = next((e for e in f.evidence if isinstance(e, TreeEvidence)), None)
+        if tree_ev is None or not tree_ev.is_directory:
+            count += 1
+    return count
+
+
+def _total_dirs(result: FileSearchResult) -> int:
+    """Count of directory entries in a tree result."""
+    count = 0
+    for f in result.files:
+        if f.is_directory:
+            count += 1
+            continue
+        # Check TreeEvidence for is_directory (disk backend stores it there)
+        tree_ev = next((e for e in f.evidence if isinstance(e, TreeEvidence)), None)
+        if tree_ev is not None and tree_ev.is_directory:
+            count += 1
+    return count
 
 
 # =========================================================================
@@ -220,15 +280,15 @@ class TestDatabaseGrep:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def ", "/src", session=db_session)
         assert result.success
-        assert result.files_matched >= 2
-        assert len(result.all_matches()) >= 2
+        assert _files_matched(result) >= 2
+        assert len(_all_matches(result)) >= 2
 
     async def test_fixed_string(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("print('hello')", "/src", fixed_string=True, session=db_session)
         assert result.success
-        assert result.files_matched == 1
-        all_matches = result.all_matches()
+        assert _files_matched(result) == 1
+        all_matches = _all_matches(result)
         assert all_matches[0][0] == "/src/main.py"
 
     async def test_case_insensitive(
@@ -237,14 +297,14 @@ class TestDatabaseGrep:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("readme", "/docs", case_sensitive=False, session=db_session)
         assert result.success
-        assert result.files_matched >= 1
+        assert _files_matched(result) >= 1
 
     async def test_invert(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         # Invert: lines that don't match "def" in a single file
         result = await dfs.grep("def", "/src/main.py", invert=True, session=db_session)
         assert result.success
-        all_matches = result.all_matches()
+        all_matches = _all_matches(result)
         assert len(all_matches) >= 1  # Should have non-def lines
         for _path, lm in all_matches:
             assert "def" not in lm.line_content
@@ -255,8 +315,8 @@ class TestDatabaseGrep:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def main", "/src/main.py", session=db_session)
         assert result.success
-        assert result.files_matched == 1
-        all_matches = result.all_matches()
+        assert _files_matched(result) == 1
+        all_matches = _all_matches(result)
         assert len(all_matches) == 1
         assert all_matches[0][0] == "/src/main.py"
 
@@ -264,14 +324,14 @@ class TestDatabaseGrep:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("main", "/src", word_match=True, session=db_session)
         assert result.success
-        assert result.files_matched >= 1
+        assert _files_matched(result) >= 1
 
     async def test_context_lines(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         # "print" is on line 2 of main.py ("def main():\n    print('hello')\n")
         result = await dfs.grep("print", "/src/main.py", context_lines=1, session=db_session)
         assert result.success
-        all_matches = result.all_matches()
+        all_matches = _all_matches(result)
         assert len(all_matches) == 1
         _path, lm = all_matches[0]
         assert "print" in lm.line_content
@@ -283,14 +343,14 @@ class TestDatabaseGrep:
         await _seed_db(dfs, db_session)
         result = await dfs.grep(".", "/", max_results=2, session=db_session)
         assert result.success
-        assert len(result.all_matches()) <= 2
+        assert len(_all_matches(result)) <= 2
 
     async def test_count_only(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def", "/src", count_only=True, session=db_session)
         assert result.success
         assert "Count:" in result.message
-        assert len(result.all_matches()) == 0  # count_only returns no matches
+        assert len(_all_matches(result)) == 0  # count_only returns no matches
 
     async def test_files_only(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
@@ -304,8 +364,8 @@ class TestDatabaseGrep:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("Step", "/docs", glob_filter="*.txt", session=db_session)
         assert result.success
-        assert result.files_matched == 1
-        all_matches = result.all_matches()
+        assert _files_matched(result) == 1
+        all_matches = _all_matches(result)
         assert all_matches[0][0] == "/docs/guide.txt"
 
     async def test_invalid_regex(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
@@ -321,7 +381,7 @@ class TestDatabaseGrep:
         result = await dfs.grep(".", "/src/main.py", max_results_per_file=1, session=db_session)
         assert result.success
         # Should have at most 1 match for main.py
-        main_matches = result.line_matches("/src/main.py")
+        main_matches = _line_matches(result, "/src/main.py")
         assert len(main_matches) <= 1
 
     async def test_line_numbers_are_1_indexed(
@@ -330,7 +390,7 @@ class TestDatabaseGrep:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def main", "/src", session=db_session)
         assert result.success
-        all_matches = result.all_matches()
+        all_matches = _all_matches(result)
         assert len(all_matches) >= 1
         assert all_matches[0][1].line_number == 1
 
@@ -353,8 +413,8 @@ class TestDatabaseTree:
         await _seed_db(dfs, db_session)
         result = await dfs.tree("/", session=db_session)
         assert result.success
-        assert result.total_files >= 5
-        assert result.total_dirs >= 3
+        assert _total_files(result) >= 5
+        assert _total_dirs(result) >= 3
 
     async def test_subtree(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
@@ -390,8 +450,8 @@ class TestDatabaseTree:
         await db_session.commit()
         result = await dfs.tree("/empty", session=db_session)
         assert result.success
-        assert result.total_files == 0
-        assert result.total_dirs == 0
+        assert _total_files(result) == 0
+        assert _total_dirs(result) == 0
 
     async def test_sorted_by_path(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
@@ -491,7 +551,7 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("def ", "/src", session=local_session)
         assert result.success
-        assert result.files_matched >= 2
+        assert _files_matched(result) >= 2
 
     async def test_fixed_string(
         self, local_fs: LocalFileSystem, local_session: AsyncSession
@@ -501,7 +561,7 @@ class TestLocalGrep:
             "print('hello')", "/src", fixed_string=True, session=local_session
         )
         assert result.success
-        assert result.files_matched == 1
+        assert _files_matched(result) == 1
 
     async def test_case_insensitive(
         self, local_fs: LocalFileSystem, local_session: AsyncSession
@@ -509,7 +569,7 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("readme", "/docs", case_sensitive=False, session=local_session)
         assert result.success
-        assert result.files_matched >= 1
+        assert _files_matched(result) >= 1
 
     async def test_invalid_regex(
         self, local_fs: LocalFileSystem, local_session: AsyncSession
@@ -524,7 +584,7 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("Step", "/docs", glob_filter="*.txt", session=local_session)
         assert result.success
-        assert result.files_matched == 1
+        assert _files_matched(result) == 1
 
     async def test_nonexistent_directory(
         self, local_fs: LocalFileSystem, local_session: AsyncSession
@@ -537,7 +597,7 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("def", "/src/main.py", invert=True, session=local_session)
         assert result.success
-        all_matches = result.all_matches()
+        all_matches = _all_matches(result)
         assert len(all_matches) >= 1
         for _path, lm in all_matches:
             assert "def" not in lm.line_content
@@ -550,7 +610,7 @@ class TestLocalGrep:
             "print", "/src/main.py", context_lines=1, session=local_session
         )
         assert result.success
-        all_matches = result.all_matches()
+        all_matches = _all_matches(result)
         assert len(all_matches) == 1
         _path, lm = all_matches[0]
         assert len(lm.context_before) == 1
@@ -560,14 +620,14 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("main", "/src", word_match=True, session=local_session)
         assert result.success
-        assert result.files_matched >= 1
+        assert _files_matched(result) >= 1
 
     async def test_count_only(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("def", "/src", count_only=True, session=local_session)
         assert result.success
         assert "Count:" in result.message
-        assert len(result.all_matches()) == 0
+        assert len(_all_matches(result)) == 0
 
     async def test_files_only(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
@@ -582,7 +642,7 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep(".", "/", max_results=2, session=local_session)
         assert result.success
-        assert len(result.all_matches()) <= 2
+        assert len(_all_matches(result)) <= 2
 
     async def test_max_results_per_file(
         self, local_fs: LocalFileSystem, local_session: AsyncSession
@@ -592,7 +652,7 @@ class TestLocalGrep:
             ".", "/src/main.py", max_results_per_file=1, session=local_session
         )
         assert result.success
-        main_matches = result.line_matches("/src/main.py")
+        main_matches = _line_matches(result, "/src/main.py")
         assert len(main_matches) <= 1
 
     async def test_grep_single_file(
@@ -601,8 +661,8 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("def main", "/src/main.py", session=local_session)
         assert result.success
-        assert result.files_matched == 1
-        assert len(result.all_matches()) == 1
+        assert _files_matched(result) == 1
+        assert len(_all_matches(result)) == 1
 
 
 # =========================================================================
@@ -615,8 +675,8 @@ class TestLocalTree:
         await _seed_local(local_fs, local_session)
         result = await local_fs.tree("/", session=local_session)
         assert result.success
-        assert result.total_files >= 5
-        assert result.total_dirs >= 3
+        assert _total_files(result) >= 5
+        assert _total_dirs(result) >= 3
 
     async def test_max_depth(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
@@ -718,18 +778,17 @@ class TestGroverGrep:
         grover, _ = grover_setup
         result = await grover.grep(".", "/", max_results=1)
         assert result.success
-        assert len(result.all_matches()) <= 1
+        assert len(_all_matches(result)) <= 1
 
     async def test_count_only_at_root(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
         result = await grover.grep("hello", "/", count_only=True)
         assert result.success
         assert "Count:" in result.message
-        assert len(result.all_matches()) == 0
+        assert len(_all_matches(result)) == 0
         # Count should reflect actual matches across mounts
         count = int(result.message.split(":")[1].strip())
         assert count >= 2  # "hello" appears in both mounts
-        assert result.files_matched >= 2
 
 
 class TestGroverTree:

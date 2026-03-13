@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from grover.backends.user_scoped import UserScopedFileSystem
-from grover.models.share import FileShare
+from grover.models.database.share import FileShareModel
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def usfs() -> UserScopedFileSystem:
-    return UserScopedFileSystem(share_model=FileShare)
+    return UserScopedFileSystem(share_model=FileShareModel)
 
 
 # ---------------------------------------------------------------------------

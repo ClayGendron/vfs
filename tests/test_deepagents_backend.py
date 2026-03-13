@@ -149,14 +149,14 @@ class TestWrite:
         assert result.error is None
         assert result.path == "/project/new.txt"
         # Verify file was actually created
-        assert grover.read("/project/new.txt").content == "hello"
+        assert grover.read("/project/new.txt").file.content == "hello"
 
     def test_write_existing_file_returns_error(self, backend: GroverBackend, grover: Grover):
         grover.write("/project/exists.txt", "original")
         result = backend.write("/project/exists.txt", "new content")
         assert result.error is not None
         # Original content unchanged
-        assert grover.read("/project/exists.txt").content == "original"
+        assert grover.read("/project/exists.txt").file.content == "original"
 
     def test_write_returns_files_update_none(self, backend: GroverBackend):
         result = backend.write("/project/test.txt", "content")
@@ -175,13 +175,13 @@ class TestEdit:
         assert result.error is None
         assert result.path == "/project/doc.txt"
         assert result.files_update is None
-        assert grover.read("/project/doc.txt").content == "goodbye world"
+        assert grover.read("/project/doc.txt").file.content == "goodbye world"
 
     def test_edit_replace_all(self, backend: GroverBackend, grover: Grover):
         grover.write("/project/multi.txt", "foo bar foo baz foo")
         result = backend.edit("/project/multi.txt", "foo", "qux", replace_all=True)
         assert result.error is None
-        assert grover.read("/project/multi.txt").content == "qux bar qux baz qux"
+        assert grover.read("/project/multi.txt").file.content == "qux bar qux baz qux"
 
     def test_edit_missing_file_returns_error(self, backend: GroverBackend):
         result = backend.edit("/project/nope.txt", "old", "new")
@@ -276,8 +276,8 @@ class TestUploadDownload:
         assert len(responses) == 2
         for resp in responses:
             assert resp.error is None
-        assert grover.read("/project/up1.txt").content == "content one"
-        assert grover.read("/project/up2.txt").content == "content two"
+        assert grover.read("/project/up1.txt").file.content == "content one"
+        assert grover.read("/project/up2.txt").file.content == "content two"
 
     def test_upload_files_existing_returns_error(self, backend: GroverBackend, grover: Grover):
         grover.write("/project/exists.txt", "original")
@@ -399,7 +399,7 @@ class TestAsyncNative:
         result = await backend_async.aedit("/project/doc.txt", "hello", "goodbye")
         assert result.error is None
         read = await grover_async.read("/project/doc.txt")
-        assert read.content == "goodbye world"
+        assert read.file.content == "goodbye world"
 
     async def test_agrep_raw(self, backend_async: GroverBackend, grover_async: GroverAsync):
         await grover_async.write("/project/code.py", "def hello():\n    return 42\n")

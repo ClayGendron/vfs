@@ -1,7 +1,7 @@
-"""FileChunk model — DB-backed chunk storage.
+"""FileChunkModel — DB-backed chunk storage.
 
-Provides ``FileChunkBase`` (non-table base) and ``FileChunk`` (concrete table).
-Subclass ``FileChunkBase`` with ``table=True`` and a custom ``__tablename__``
+Provides ``FileChunkModelBase`` (non-table base) and ``FileChunkModel`` (concrete table).
+Subclass ``FileChunkModelBase`` with ``table=True`` and a custom ``__tablename__``
 to use a different table name per backend.
 """
 
@@ -13,10 +13,10 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 
-from grover.models.vector import Vector, VectorType
+from .vector import Vector, VectorType
 
 
-class FileChunkBase(SQLModel):
+class FileChunkModelBase(SQLModel):
     """Base fields for a file chunk. Subclass with ``table=True`` for a concrete table."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -37,7 +37,7 @@ class FileChunkBase(SQLModel):
     )
 
 
-class FileChunk(FileChunkBase, table=True):
+class FileChunkModel(FileChunkModelBase, table=True):
     """Default file chunk table — ``grover_file_chunks``."""
 
     __tablename__ = "grover_file_chunks"

@@ -6,17 +6,17 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from grover.exceptions import MountNotFoundError
+from grover.models.internal.evidence import ListDirEvidence
 from grover.permissions import Permission
 from grover.providers.search.extractors import (
     EmbeddableChunk,
     extract_from_chunks,
     extract_from_file,
 )
-from grover.results import ListDirEvidence
 
 if TYPE_CHECKING:
     from grover.api.context import GroverContext
-    from grover.models.chunk import FileChunkBase
+    from grover.models.database.chunk import FileChunkModelBase
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class IndexMixin:
             result = await self.read(path)  # type: ignore[attr-defined]
             if not result.success:
                 return
-            content = result.content
+            content = result.file.content if result.file else None
         if content is not None:
             await self._analyze_and_integrate(path, content, user_id=user_id)
 
@@ -98,7 +98,7 @@ class IndexMixin:
             weight=weight,
         )
 
-    async def _process_chunk_write(self, chunk: FileChunkBase) -> None:
+    async def _process_chunk_write(self, chunk: FileChunkModelBase) -> None:
         """Update graph and search index after a chunk write."""
         if not self._ctx.initialized:
             return
@@ -294,10 +294,11 @@ class IndexMixin:
         if not result.success:
             return
 
-        for entry_path in result.paths:
+        for entry_file in result.files:
+            entry_path = entry_file.path
             if "/.grover/" in entry_path:
                 continue
-            evs = result.explain(entry_path)
+            evs = entry_file.evidence
             is_dir = any(isinstance(e, ListDirEvidence) and e.is_directory for e in evs)
             if is_dir:
                 await self._walk_and_index(entry_path, stats)
@@ -313,8 +314,8 @@ class IndexMixin:
 
     async def _read_file_content(self, path: str) -> str | None:
         read_result = await self.read(path)  # type: ignore[attr-defined]
-        if read_result.success:
-            return read_result.content
+        if read_result.success and read_result.file:
+            return read_result.file.content
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)

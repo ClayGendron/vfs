@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from grover.results.operations import VerifyVersionResult
+    from grover.models.internal.results import FileOperationResult
 
 
 @runtime_checkable
@@ -27,4 +27,4 @@ class VersionProvider(Protocol):
 
     async def get_version_content(self, session: Any, file: Any, version: int) -> str | None: ...
 
-    async def verify_chain(self, session: Any, file: Any) -> VerifyVersionResult: ...
+    async def verify_chain(self, session: Any, file: Any) -> FileOperationResult: ...

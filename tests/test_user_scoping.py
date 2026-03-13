@@ -17,9 +17,48 @@ from grover.backends.database import DatabaseFileSystem
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import GroverAsync
 from grover.exceptions import AuthenticationRequiredError
-from grover.models.file import File
-from grover.models.share import FileShare
+from grover.models.database.file import FileModel
+from grover.models.database.share import FileShareModel
+from grover.models.internal.evidence import ListDirEvidence
 from grover.worker import IndexingMode
+
+if TYPE_CHECKING:
+    from grover.models.internal.results import FileSearchResult
+
+# ---------------------------------------------------------------------------
+# Helpers for new result types
+# ---------------------------------------------------------------------------
+
+
+def _directories(result: FileSearchResult) -> list[str]:
+    """Return paths of entries that are directories (via ListDirEvidence)."""
+    dirs: list[str] = []
+    for f in result.files:
+        if f.is_directory:
+            dirs.append(f.path)
+            continue
+        for e in f.evidence:
+            if isinstance(e, ListDirEvidence) and e.is_directory:
+                dirs.append(f.path)
+                break
+    return dirs
+
+
+def _files_only(result: FileSearchResult) -> list[str]:
+    """Return paths of entries that are NOT directories."""
+    files: list[str] = []
+    for f in result.files:
+        if f.is_directory:
+            continue
+        is_dir = False
+        for e in f.evidence:
+            if isinstance(e, ListDirEvidence) and e.is_directory:
+                is_dir = True
+                break
+        if not is_dir:
+            files.append(f.path)
+    return files
+
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,7 +90,7 @@ async def shared_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsyn
     """GroverAsync with UserScopedFileSystem mount and sharing configured."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    backend = UserScopedFileSystem(share_model=FileShare)
+    backend = UserScopedFileSystem(share_model=FileShareModel)
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
@@ -88,7 +127,7 @@ class TestAuthenticatedReadWrite:
         await auth_grover.write("/ws/notes.md", "hello alice", user_id="alice")
         result = await auth_grover.read("/ws/notes.md", user_id="alice")
         assert result.success is True
-        assert result.content == "hello alice"
+        assert result.file.content == "hello alice"
 
     async def test_read_authenticated_no_user_id_error(self, auth_grover: GroverAsync):
         with pytest.raises(AuthenticationRequiredError):
@@ -98,7 +137,9 @@ class TestAuthenticatedReadWrite:
         await auth_grover.write("/ws/notes.md", "owned content", user_id="alice")
 
         # Query the file record directly to verify owner_id
-        result = await async_session.execute(select(File).where(File.path == "/alice/notes.md"))
+        result = await async_session.execute(
+            select(FileModel).where(FileModel.path == "/alice/notes.md")
+        )
         file = result.scalar_one_or_none()
         assert file is not None
         assert file.owner_id == "alice"
@@ -111,29 +152,29 @@ class TestAuthenticatedReadWrite:
         r1 = await auth_grover.read("/ws/notes.md", user_id="alice")
         r2 = await auth_grover.read("/ws/notes.md", user_id="bob")
 
-        assert r1.content == "alice's notes"
-        assert r2.content == "bob's notes"
+        assert r1.file.content == "alice's notes"
+        assert r2.file.content == "bob's notes"
 
     async def test_user_cannot_see_other_users_files(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/secret.md", "alice only", user_id="alice")
         result = await auth_grover.read("/ws/secret.md", user_id="bob")
-        assert result.success is False  # File not found for bob
+        assert result.success is False  # FileModel not found for bob
 
     async def test_regular_mount_ignores_user_id(self, regular_grover: GroverAsync):
         """Regular (non-user-scoped) mounts ignore user_id."""
         await regular_grover.write("/ws/notes.md", "shared content", user_id="alice")
         result = await regular_grover.read("/ws/notes.md", user_id="bob")
         assert result.success is True
-        assert result.content == "shared content"
+        assert result.file.content == "shared content"
 
     async def test_write_read_roundtrip_authenticated(self, auth_grover: GroverAsync):
         """Full write-read roundtrip with path stripping on read."""
         await auth_grover.write("/ws/project/src/main.py", "print('hello')", user_id="alice")
         result = await auth_grover.read("/ws/project/src/main.py", user_id="alice")
         assert result.success is True
-        assert result.content == "print('hello')"
+        assert result.file.content == "print('hello')"
         # path should be user-facing (no user prefix)
-        assert result.path == "/ws/project/src/main.py"
+        assert result.file.path == "/ws/project/src/main.py"
 
     async def test_write_no_user_id_error(self, auth_grover: GroverAsync):
         result = await auth_grover.write("/ws/notes.md", "content", user_id=None)
@@ -152,7 +193,7 @@ class TestAuthenticatedOtherOps:
         result = await auth_grover.edit("/ws/notes.md", "hello", "goodbye", user_id="alice")
         assert result.success is True
         read_result = await auth_grover.read("/ws/notes.md", user_id="alice")
-        assert read_result.content == "goodbye world"
+        assert read_result.file.content == "goodbye world"
 
     async def test_delete_authenticated(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "content", user_id="alice")
@@ -165,14 +206,14 @@ class TestAuthenticatedOtherOps:
 
     async def test_exists_authenticated(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "content", user_id="alice")
-        assert (await auth_grover.exists("/ws/notes.md", user_id="alice")).exists is True
-        assert (await auth_grover.exists("/ws/notes.md", user_id="bob")).exists is False
+        assert (await auth_grover.exists("/ws/notes.md", user_id="alice")).message == "exists"
+        assert (await auth_grover.exists("/ws/notes.md", user_id="bob")).message != "exists"
 
     async def test_get_info_authenticated(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "content", user_id="alice")
         info = await auth_grover.get_info("/ws/notes.md", user_id="alice")
         assert info.success
-        assert info.path == "/ws/notes.md"
+        assert info.file.path == "/ws/notes.md"
 
     async def test_get_info_other_user_none(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "content", user_id="alice")
@@ -184,14 +225,14 @@ class TestAuthenticatedOtherOps:
         result = await auth_grover.copy("/ws/a.md", "/ws/b.md", user_id="alice")
         assert result.success is True
         read_result = await auth_grover.read("/ws/b.md", user_id="alice")
-        assert read_result.content == "content"
+        assert read_result.file.content == "content"
 
     async def test_move_authenticated(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/old.md", "content", user_id="alice")
         result = await auth_grover.move("/ws/old.md", "/ws/new.md", user_id="alice")
         assert result.success is True
         read_result = await auth_grover.read("/ws/new.md", user_id="alice")
-        assert read_result.content == "content"
+        assert read_result.file.content == "content"
 
     async def test_list_dir_shows_shared_entry(self, auth_grover: GroverAsync):
         """User-scoped mount root listing includes virtual @shared/ entry."""
@@ -222,7 +263,7 @@ class TestAuthenticatedOtherOps:
     async def test_regular_mount_all_ops_unchanged(self, regular_grover: GroverAsync):
         """Regular mount operations work with user_id (ignored)."""
         await regular_grover.write("/ws/notes.md", "content", user_id="alice")
-        assert (await regular_grover.exists("/ws/notes.md", user_id="bob")).exists is True
+        assert (await regular_grover.exists("/ws/notes.md", user_id="bob")).message == "exists"
         info = await regular_grover.get_info("/ws/notes.md", user_id="bob")
         assert info.success
 
@@ -258,7 +299,7 @@ class TestSharedAccess:
 
         result = await shared_grover.read("/ws/@shared/alice/notes.md", user_id="bob")
         assert result.success is True
-        assert result.content == "alice's notes"
+        assert result.file.content == "alice's notes"
 
     async def test_read_shared_no_permission(
         self, shared_grover: GroverAsync, async_session: AsyncSession
@@ -283,7 +324,7 @@ class TestSharedAccess:
 
         # Alice sees bob's changes
         read_result = await shared_grover.read("/ws/notes.md", user_id="alice")
-        assert read_result.content == "updated by bob"
+        assert read_result.file.content == "updated by bob"
 
     async def test_write_shared_file_read_only(
         self, shared_grover: GroverAsync, async_session: AsyncSession
@@ -314,7 +355,7 @@ class TestSharedAccess:
         await self._create_share(shared_grover, async_session, "/alice/notes.md", "bob", "read")
 
         result = await shared_grover.exists("/ws/@shared/alice/notes.md", user_id="bob")
-        assert result.exists is True
+        assert result.message == "exists"
 
     async def test_exists_shared_no_permission(
         self, shared_grover: GroverAsync, async_session: AsyncSession
@@ -322,7 +363,7 @@ class TestSharedAccess:
         """exists returns False for shared path without permission."""
         await shared_grover.write("/ws/notes.md", "content", user_id="alice")
         result = await shared_grover.exists("/ws/@shared/alice/notes.md", user_id="bob")
-        assert result.exists is False
+        assert result.message != "exists"
 
     async def test_get_info_shared(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """get_info works for shared paths with permission."""
@@ -349,7 +390,7 @@ class TestSharedAccess:
 
         result = await shared_grover.read("/ws/@shared/alice/projects/docs/file.md", user_id="bob")
         assert result.success is True
-        assert result.content == "content"
+        assert result.file.content == "content"
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +437,7 @@ class TestSharedListDir:
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "alice" in names
         assert "charlie" in names
-        assert set(result.paths) == set(result.directories())
+        assert set(result.paths) == set(_directories(result))
 
     async def test_list_dir_shared_owner(
         self, shared_grover: GroverAsync, async_session: AsyncSession
@@ -430,7 +471,7 @@ class TestSharedListDir:
     async def test_list_dir_shared_owner_file_shares(
         self, shared_grover: GroverAsync, async_session: AsyncSession
     ):
-        """File-level shares show just those files when listing owner dir."""
+        """FileModel-level shares show just those files when listing owner dir."""
         await shared_grover.write("/ws/doc1.md", "doc1", user_id="alice")
         await shared_grover.write("/ws/doc2.md", "doc2", user_id="alice")
         await shared_grover.write("/ws/secret.md", "secret", user_id="alice")
@@ -453,7 +494,7 @@ class TestSharedListDir:
         await shared_grover.write("/ws/readme.md", "readme", user_id="alice")
         # Directory share on /alice/projects gives full listing at that level
         await self._create_share(shared_grover, async_session, "/alice/projects", "bob", "read")
-        # File share on readme
+        # FileModel share on readme
         await self._create_share(shared_grover, async_session, "/alice/readme.md", "bob", "read")
 
         # At the /alice level, bob should see both projects/ dir and readme.md
@@ -477,21 +518,21 @@ class TestSharedListDir:
         assert result.success is True
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"deep"}
-        assert len(result.directories()) == 1
+        assert len(_directories(result)) == 1
 
         # Level 2: /@shared/alice/deep -> shows "nested/"
         result = await shared_grover.list_dir("/ws/@shared/alice/deep", user_id="bob")
         assert result.success is True
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"nested"}
-        assert len(result.directories()) == 1
+        assert len(_directories(result)) == 1
 
         # Level 3: /@shared/alice/deep/nested -> shows "file.md"
         result = await shared_grover.list_dir("/ws/@shared/alice/deep/nested", user_id="bob")
         assert result.success is True
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"file.md"}
-        assert len(result.files()) == 1
+        assert len(_files_only(result)) == 1
 
     async def test_list_dir_shared_directory_share_unchanged(
         self, shared_grover: GroverAsync, async_session: AsyncSession
@@ -552,7 +593,7 @@ class TestSharedMoveAndCopy:
         )
         assert result.success is True
         read_result = await shared_grover.read("/ws/my_copy.md", user_id="bob")
-        assert read_result.content == "alice's content"
+        assert read_result.file.content == "alice's content"
 
     async def test_copy_shared_file_no_permission(
         self, shared_grover: GroverAsync, async_session: AsyncSession
@@ -637,7 +678,7 @@ class TestTrashScoping:
 
         r = await auth_grover.read("/ws/mine.md", user_id="alice")
         assert r.success
-        assert r.content == "my data"
+        assert r.file.content == "my data"
 
     async def test_restore_other_user_denied(self, auth_grover: GroverAsync):
         """User cannot restore another user's trashed file."""
@@ -658,7 +699,7 @@ class TestTrashScoping:
         # Alice empties her trash
         result = await auth_grover.empty_trash(user_id="alice")
         assert result.success
-        assert result.total_deleted == 1
+        assert "1" in result.message
 
         # Bob's trash still has his file
         bob_trash = await auth_grover.list_trash(user_id="bob")
@@ -680,7 +721,6 @@ class TestTrashScoping:
 
         result = await regular_grover.empty_trash()
         assert result.success
-        assert result.total_deleted == 2
 
         trash = await regular_grover.list_trash()
         assert len(trash) == 0

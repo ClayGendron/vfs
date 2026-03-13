@@ -52,9 +52,9 @@ class TestProtocolChecks:
         assert isinstance(usfs, GroverFileSystem)
 
     def test_user_scoped_supports_rebac(self) -> None:
-        from grover.models.share import FileShare
+        from grover.models.database.share import FileShareModel
 
-        usfs = UserScopedFileSystem(share_model=FileShare)
+        usfs = UserScopedFileSystem(share_model=FileShareModel)
         assert isinstance(usfs, SupportsReBAC)
 
 
@@ -110,7 +110,7 @@ class TestSessionRollback:
             # Original content must still be intact (session was rolled back)
             read = await grover.read("/db/test.txt")
             assert read.success
-            assert read.content == "original"
+            assert read.file.content == "original"
         finally:
             mount.filesystem.write = original_write  # type: ignore[assignment]
 

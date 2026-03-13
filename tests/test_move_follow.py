@@ -9,7 +9,7 @@ import pytest
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import GroverAsync
-from grover.models.share import FileShare
+from grover.models.database.share import FileShareModel
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
@@ -54,7 +54,7 @@ async def grover_with_sharing(
 ) -> AsyncIterator[GroverAsync]:
     """GroverAsync with a UserScopedFileSystem backend that has sharing configured."""
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-    backend = UserScopedFileSystem(share_model=FileShare)
+    backend = UserScopedFileSystem(share_model=FileShareModel)
     await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g
     await g.close()
@@ -145,7 +145,7 @@ class TestMoveFileFollow:
     @pytest.mark.asyncio
     async def test_move_follow_shares_updated(self, session_factory):
         """follow=True with sharing updates share paths (via USFS)."""
-        usfs = UserScopedFileSystem(share_model=FileShare)
+        usfs = UserScopedFileSystem(share_model=FileShareModel)
         async with session_factory() as sess:
             await usfs.write("/doc.md", "data", session=sess, user_id="alice")
             await usfs._create_share(sess, "/alice/doc.md", "bob", "read", "alice")
@@ -167,7 +167,7 @@ class TestMoveFileFollow:
     @pytest.mark.asyncio
     async def test_move_no_follow_shares_stale(self, session_factory):
         """follow=False does NOT update share paths -- they become stale."""
-        usfs = UserScopedFileSystem(share_model=FileShare)
+        usfs = UserScopedFileSystem(share_model=FileShareModel)
         async with session_factory() as sess:
             await usfs.write("/doc.md", "data", session=sess, user_id="alice")
             await usfs._create_share(sess, "/alice/doc.md", "bob", "read", "alice")
@@ -208,7 +208,7 @@ class TestMoveFileFollow:
             # Content preserved
             r = await dfs.read("/dst/b.py", session=sess)
             assert r.success
-            assert r.content == "file b"
+            assert r.file.content == "file b"
 
     @pytest.mark.asyncio
     async def test_move_follow_nested_dest_creates_parent_dirs(
@@ -230,10 +230,10 @@ class TestMoveFileFollow:
             assert nested is not None
             assert nested.is_directory is True
 
-            # File should be readable
+            # FileModel should be readable
             r = await dfs.read("/deep/nested/dest.py", session=sess)
             assert r.success
-            assert r.content == "content"
+            assert r.file.content == "content"
 
     @pytest.mark.asyncio
     async def test_move_no_follow_directory(self, dfs: DatabaseFileSystem, session_factory):
@@ -257,12 +257,12 @@ class TestMoveFileFollow:
             # Content preserved
             r = await dfs.read("/dst/a.py", session=sess)
             assert r.success
-            assert r.content == "file a"
+            assert r.file.content == "file a"
 
     @pytest.mark.asyncio
     async def test_move_follow_overwrite_shares_updated(self, session_factory):
         """follow=True overwrite: shares on src path updated to dest (via USFS)."""
-        usfs = UserScopedFileSystem(share_model=FileShare)
+        usfs = UserScopedFileSystem(share_model=FileShareModel)
         async with session_factory() as sess:
             await usfs.write("/src.md", "source", session=sess, user_id="alice")
             await usfs.write("/dst.md", "dest", session=sess, user_id="alice")
@@ -296,7 +296,7 @@ class TestMoveFileFollow:
             assert sub is not None
             assert sub.is_directory is True
 
-            # File should not be a directory
+            # FileModel should not be a directory
             f = await dfs._get_file_record(sess, "/dst/sub/file.py")
             assert f is not None
             assert f.is_directory is False
@@ -304,7 +304,7 @@ class TestMoveFileFollow:
             # Content preserved
             r = await dfs.read("/dst/sub/file.py", session=sess)
             assert r.success
-            assert r.content == "code"
+            assert r.file.content == "code"
 
 
 # ==================================================================
@@ -321,11 +321,10 @@ class TestGroverMoveFollow:
         await grover.write("/ws/notes.md", "data", user_id="alice")
         result = await grover.move("/ws/notes.md", "/ws/moved.md", user_id="alice", follow=True)
         assert result.success is True
-        assert result.new_path == "/ws/moved.md"
 
         r = await grover.read("/ws/moved.md", user_id="alice")
         assert r.success
-        assert r.content == "data"
+        assert r.file.content == "data"
 
     @pytest.mark.asyncio
     async def test_move_follow_shares_updated(self, grover_with_sharing: GroverAsync):
@@ -365,4 +364,4 @@ class TestGroverMoveFollow:
 
         r = await grover.read("/ws/new.md", user_id="alice")
         assert r.success
-        assert r.content == "old"
+        assert r.file.content == "old"

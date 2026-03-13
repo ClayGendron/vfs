@@ -1,7 +1,7 @@
-"""FileConnection model — directed edges in the knowledge graph.
+"""FileConnectionModel — directed edges in the knowledge graph.
 
-Provides ``FileConnectionBase`` (non-table base) and ``FileConnection``
-(concrete table).  Subclass ``FileConnectionBase`` with ``table=True`` and
+Provides ``FileConnectionModelBase`` (non-table base) and ``FileConnectionModel``
+(concrete table).  Subclass ``FileConnectionModelBase`` with ``table=True`` and
 a custom ``__tablename__`` to use a different table name per backend.
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 
 
-class FileConnectionBase(SQLModel):
+class FileConnectionModelBase(SQLModel):
     """Base fields for a graph edge. Subclass with ``table=True`` for a concrete table.
 
     The ``path`` field is the canonical edge identity in ``source[type]target``
@@ -38,7 +38,7 @@ class FileConnectionBase(SQLModel):
     )
 
 
-class FileConnection(FileConnectionBase, table=True):
+class FileConnectionModel(FileConnectionModelBase, table=True):
     """Default graph edge table — ``grover_file_connections``."""
 
     __tablename__ = "grover_file_connections"

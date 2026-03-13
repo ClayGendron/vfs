@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from grover import GroverAsync, IndexingMode
 from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.models.share import FileShare
+from grover.models.database.share import FileShareModel
 
 
 async def main() -> None:
@@ -19,7 +19,7 @@ async def main() -> None:
     await g.add_mount("/project", engine=project_engine)
 
     # ── Mount 2: UserScopedFileSystem at /users ──
-    user_fs = UserScopedFileSystem(FileShare)
+    user_fs = UserScopedFileSystem(FileShareModel)
     await g.add_mount("/users", user_fs, engine=users_engine)
 
     # ================================================================
@@ -205,7 +205,7 @@ dev = ["pytest", "coverage"]
     result = await g.exists("/project/nope.py")
     print(f"exists /project/nope.py: {result.exists}")
 
-    # File info
+    # FileModel info
     result = await g.get_info("/project/src/app.py")
     print(f"\ninfo /project/src/app.py: size={result.size_bytes} v={result.version}")
 

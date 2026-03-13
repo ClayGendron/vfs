@@ -1,10 +1,10 @@
-"""Tests for FileConnection model — CRUD, defaults, table name, Base/Concrete subclassing."""
+"""Tests for FileConnectionModel model — CRUD, defaults, table name, Base/Concrete subclassing."""
 
 from __future__ import annotations
 
 from sqlmodel import Session, SQLModel, select
 
-from grover.models.connection import FileConnection, FileConnectionBase
+from grover.models.database.connection import FileConnectionModel, FileConnectionModelBase
 
 
 class TestFileConnectionModel:
@@ -13,7 +13,7 @@ class TestFileConnectionModel:
         assert "grover_file_connections" in engine.dialect.get_table_names(engine.connect())
 
     def test_defaults(self, session: Session):
-        conn = FileConnection(
+        conn = FileConnectionModel(
             source_path="/a.py",
             target_path="/b.py",
             path="/a.py[]/b.py",
@@ -31,7 +31,7 @@ class TestFileConnectionModel:
         assert conn.created_at is not None
 
     def test_with_type_and_weight(self, session: Session):
-        conn = FileConnection(
+        conn = FileConnectionModel(
             source_path="/a.py",
             target_path="/b.py",
             type="imports",
@@ -46,7 +46,7 @@ class TestFileConnectionModel:
         assert conn.weight == 0.5
 
     def test_round_trip(self, session: Session):
-        conn = FileConnection(
+        conn = FileConnectionModel(
             source_path="/src/auth.py",
             target_path="/src/auth.py#login",
             type="contains",
@@ -56,7 +56,7 @@ class TestFileConnectionModel:
         session.commit()
 
         result = session.exec(
-            select(FileConnection).where(FileConnection.source_path == "/src/auth.py")
+            select(FileConnectionModel).where(FileConnectionModel.source_path == "/src/auth.py")
         ).first()
         assert result is not None
         assert result.target_path == "/src/auth.py#login"
@@ -65,7 +65,7 @@ class TestFileConnectionModel:
     def test_multiple_edges_same_source(self, session: Session):
         for target in ["/b.py", "/c.py", "/d.py"]:
             session.add(
-                FileConnection(
+                FileConnectionModel(
                     source_path="/a.py",
                     target_path=target,
                     type="imports",
@@ -75,14 +75,14 @@ class TestFileConnectionModel:
         session.commit()
 
         results = session.exec(
-            select(FileConnection).where(FileConnection.source_path == "/a.py")
+            select(FileConnectionModel).where(FileConnectionModel.source_path == "/a.py")
         ).all()
         assert len(results) == 3
 
     def test_base_subclass_custom_table(self, engine):
-        """Custom table name via subclassing FileConnectionBase."""
+        """Custom table name via subclassing FileConnectionModelBase."""
 
-        class CustomConnection(FileConnectionBase, table=True):
+        class CustomConnection(FileConnectionModelBase, table=True):
             __tablename__ = "custom_connections"
 
         SQLModel.metadata.create_all(engine)
@@ -90,15 +90,15 @@ class TestFileConnectionModel:
         assert "custom_connections" in tables
 
     def test_unique_ids(self, session: Session):
-        conn1 = FileConnection(source_path="/a.py", target_path="/b.py", path="/a.py[]/b.py")
-        conn2 = FileConnection(source_path="/a.py", target_path="/c.py", path="/a.py[]/c.py")
+        conn1 = FileConnectionModel(source_path="/a.py", target_path="/b.py", path="/a.py[]/b.py")
+        conn2 = FileConnectionModel(source_path="/a.py", target_path="/c.py", path="/a.py[]/c.py")
         session.add_all([conn1, conn2])
         session.commit()
         assert conn1.id != conn2.id
 
     def test_path_is_canonical_identity(self, session: Session):
         """path field stores the source[type]target canonical identity."""
-        conn = FileConnection(
+        conn = FileConnectionModel(
             source_path="/x.py",
             target_path="/y.py",
             type="imports",
@@ -114,11 +114,15 @@ class TestFileConnectionModel:
         import pytest
         from sqlalchemy.exc import IntegrityError
 
-        conn1 = FileConnection(source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py")
+        conn1 = FileConnectionModel(
+            source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py"
+        )
         session.add(conn1)
         session.commit()
 
-        conn2 = FileConnection(source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py")
+        conn2 = FileConnectionModel(
+            source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py"
+        )
         session.add(conn2)
         with pytest.raises(IntegrityError):
             session.commit()
@@ -126,7 +130,7 @@ class TestFileConnectionModel:
 
 class TestFileConnectionExports:
     def test_importable_from_models(self):
-        from grover.models import FileConnection, FileConnectionBase
+        from grover.models import FileConnectionModel, FileConnectionModelBase
 
-        assert FileConnection is not None
-        assert FileConnectionBase is not None
+        assert FileConnectionModel is not None
+        assert FileConnectionModelBase is not None

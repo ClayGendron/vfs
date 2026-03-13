@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
-from grover.models.connection import FileConnection
-from grover.models.file import File
+from grover.models.database.connection import FileConnectionModel
+from grover.models.database.file import FileModel
 from grover.providers.graph import RustworkxGraph
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.ref import Ref
+
+_mock_session = AsyncMock()
 
 
 # ======================================================================
@@ -201,42 +204,44 @@ class TestPredecessorsAndSuccessors:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/c.py", "/b.py", "imports")
-        result = await g.predecessors("/b.py")
+        result = await g.predecessors("/b.py", session=_mock_session)
         assert set(result.paths) == {"/a.py", "/c.py"}
 
     async def test_successors_outgoing(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "imports")
-        result = await g.successors("/a.py")
+        result = await g.successors("/a.py", session=_mock_session)
         assert set(result.paths) == {"/b.py", "/c.py"}
 
     async def test_predecessors_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        assert len(await g.predecessors("/a.py")) == 0
+        assert len(await g.predecessors("/a.py", session=_mock_session)) == 0
 
     async def test_successors_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        assert len(await g.successors("/a.py")) == 0
+        assert len(await g.successors("/a.py", session=_mock_session)) == 0
 
     async def test_predecessors_unknown_returns_empty(self) -> None:
         g = RustworkxGraph()
-        result = await g.predecessors("/missing.py")
+        g._loaded_at = 0.0  # mark as loaded so _ensure_fresh is a no-op
+        result = await g.predecessors("/missing.py", session=_mock_session)
         assert result.success
         assert len(result) == 0
 
     async def test_successors_unknown_returns_empty(self) -> None:
         g = RustworkxGraph()
-        result = await g.successors("/missing.py")
+        g._loaded_at = 0.0  # mark as loaded so _ensure_fresh is a no-op
+        result = await g.successors("/missing.py", session=_mock_session)
         assert result.success
         assert len(result) == 0
 
     async def test_returns_typed_result(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        result = await g.predecessors("/b.py")
+        result = await g.predecessors("/b.py", session=_mock_session)
         assert len(result) == 1
         assert result.paths[0] == "/a.py"
 
@@ -250,7 +255,7 @@ class TestPathBetween:
     async def test_direct(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        result = await g.path_between("/a.py", "/b.py")
+        result = await g.path_between("/a.py", "/b.py", session=_mock_session)
         assert result
         assert list(result.paths) == ["/a.py", "/b.py"]
 
@@ -258,7 +263,7 @@ class TestPathBetween:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        result = await g.path_between("/a.py", "/c.py")
+        result = await g.path_between("/a.py", "/c.py", session=_mock_session)
         assert result
         assert list(result.paths) == ["/a.py", "/b.py", "/c.py"]
 
@@ -266,32 +271,33 @@ class TestPathBetween:
         g = RustworkxGraph()
         g.add_node("/a.py")
         g.add_node("/b.py")
-        assert not await g.path_between("/a.py", "/b.py")
+        assert not await g.path_between("/a.py", "/b.py", session=_mock_session)
 
     async def test_same_node(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        result = await g.path_between("/a.py", "/a.py")
+        result = await g.path_between("/a.py", "/a.py", session=_mock_session)
         assert result
         assert list(result.paths) == ["/a.py"]
 
     async def test_source_missing_returns_no_path(self) -> None:
         g = RustworkxGraph()
         g.add_node("/b.py")
-        result = await g.path_between("/missing.py", "/b.py")
+        result = await g.path_between("/missing.py", "/b.py", session=_mock_session)
         assert result.success
         assert not result  # No path found
 
     async def test_target_missing_returns_no_path(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        result = await g.path_between("/a.py", "/missing.py")
+        result = await g.path_between("/a.py", "/missing.py", session=_mock_session)
         assert result.success
         assert not result  # No path found
 
     async def test_both_missing_returns_no_path(self) -> None:
         g = RustworkxGraph()
-        result = await g.path_between("/missing1.py", "/missing2.py")
+        g._loaded_at = 0.0  # mark as loaded so _ensure_fresh is a no-op
+        result = await g.path_between("/missing1.py", "/missing2.py", session=_mock_session)
         assert result.success
         assert not result
 
@@ -318,6 +324,7 @@ class TestContains:
 
     async def test_unknown_returns_empty(self) -> None:
         g = RustworkxGraph()
+        g._loaded_at = 0.0  # mark as loaded so _ensure_fresh is a no-op
         result = await g.contains("/missing.py")
         assert result == []
 
@@ -438,7 +445,7 @@ class TestToSqlRemoved:
 class TestFromSql:
     async def test_loads_nodes_from_connections(self, async_session: AsyncSession) -> None:
         async_session.add(
-            FileConnection(
+            FileConnectionModel(
                 source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
             )
         )
@@ -451,10 +458,10 @@ class TestFromSql:
         assert g.node_count == 2
 
     async def test_loads_edges(self, async_session: AsyncSession) -> None:
-        async_session.add(File(path="/a.py", parent_path="/"))
-        async_session.add(File(path="/b.py", parent_path="/"))
+        async_session.add(FileModel(path="/a.py", parent_path="/"))
+        async_session.add(FileModel(path="/b.py", parent_path="/"))
         async_session.add(
-            FileConnection(
+            FileConnectionModel(
                 source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
             )
         )
@@ -465,9 +472,9 @@ class TestFromSql:
         assert g.has_edge("/a.py", "/b.py")
 
     async def test_files_without_connections_not_loaded(self, async_session: AsyncSession) -> None:
-        async_session.add(File(path="/lonely.py", parent_path="/"))
+        async_session.add(FileModel(path="/lonely.py", parent_path="/"))
         async_session.add(
-            FileConnection(
+            FileConnectionModel(
                 source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
             )
         )
@@ -485,7 +492,7 @@ class TestFromSql:
         assert g.has_node("/old.py")
 
         async_session.add(
-            FileConnection(
+            FileConnectionModel(
                 source_path="/new.py",
                 target_path="/new2.py",
                 type="imports",
@@ -501,7 +508,7 @@ class TestFromSql:
     async def test_auto_creates_nodes_for_dangling_edges(self, async_session: AsyncSession) -> None:
         # Edge endpoints not in grover_files — from_sql should still load them
         async_session.add(
-            FileConnection(
+            FileConnectionModel(
                 source_path="/orphan_a.py",
                 target_path="/orphan_b.py",
                 type="imports",
@@ -520,16 +527,16 @@ class TestFromSql:
 class TestFromSqlRoundTrip:
     async def test_from_sql_loads_topology(self, async_session: AsyncSession) -> None:
         """from_sql loads nodes from files and edges from connections."""
-        async_session.add(File(path="/a.py", parent_path="/"))
-        async_session.add(File(path="/b.py", parent_path="/"))
-        async_session.add(File(path="/c.py", parent_path="/"))
+        async_session.add(FileModel(path="/a.py", parent_path="/"))
+        async_session.add(FileModel(path="/b.py", parent_path="/"))
+        async_session.add(FileModel(path="/c.py", parent_path="/"))
         async_session.add(
-            FileConnection(
+            FileConnectionModel(
                 source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
             )
         )
         async_session.add(
-            FileConnection(
+            FileConnectionModel(
                 source_path="/b.py", target_path="/c.py", type="calls", path="/b.py[calls]/c.py"
             )
         )

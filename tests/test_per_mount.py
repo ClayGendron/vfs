@@ -9,9 +9,9 @@ import pytest
 from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
+from grover.models.internal.results import FileSearchResult as InternalFileSearchResult
 from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
-from grover.results import GraphResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -223,7 +223,7 @@ class TestGraphOpsResolveMount:
         await multi_grover.write("/mount1/lib.py", "def helper():\n    return 42\n")
         await multi_grover.flush()
         result = await multi_grover.predecessors("/mount1/lib.py")
-        assert isinstance(result, GraphResult)
+        assert isinstance(result, InternalFileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -232,7 +232,7 @@ class TestGraphOpsResolveMount:
         await multi_grover.write("/mount2/consumer.py", "def main():\n    pass\n")
         await multi_grover.flush()
         result = await multi_grover.successors("/mount2/consumer.py")
-        assert isinstance(result, GraphResult)
+        assert isinstance(result, InternalFileSearchResult)
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -241,7 +241,8 @@ class TestGraphOpsResolveMount:
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await multi_grover.write("/mount1/funcs.py", code)
         await multi_grover.flush()
-        refs = await multi_grover.get_graph("/mount1/funcs.py").contains("/mount1/funcs.py")
+        graph = multi_grover.get_graph("/mount1/funcs.py")
+        refs = await graph.contains("/mount1/funcs.py")
         assert len(refs) >= 2
 
 

@@ -8,6 +8,19 @@ from grover.providers.graph import RustworkxGraph
 from grover.providers.graph.protocol import GraphProvider
 
 # ======================================================================
+# Helper
+# ======================================================================
+
+
+def _score_for(result, path: str) -> float:
+    """Return the first evidence score for *path* in a FileSearchResult."""
+    for f in result.files:
+        if f.path == path:
+            return f.evidence[0].score if f.evidence else 0.0
+    raise KeyError(f"Path not found in result: {path!r}")
+
+
+# ======================================================================
 # Centrality — PageRank
 # ======================================================================
 
@@ -19,10 +32,10 @@ class TestPageRank:
         g.add_edge("/b.py", "/c.py", "imports")
         result = await g.pagerank()
         assert len(result) == 3
-        total = sum(c.evidence[0].score for c in result.file_candidates)
+        total = sum(f.evidence[0].score for f in result.files)
         assert abs(total - 1.0) < 0.01
         # Sink node (c) should have highest score in a chain
-        assert result.explain("/c.py")[0].score > result.explain("/a.py")[0].score
+        assert _score_for(result, "/c.py") > _score_for(result, "/a.py")
 
     async def test_personalized(self) -> None:
         g = RustworkxGraph()
@@ -31,7 +44,7 @@ class TestPageRank:
         result = await g.pagerank(personalization={"/a.py": 1.0})
         assert len(result) == 3
         # Personalization biases toward /a.py's neighborhood
-        assert result.explain("/a.py")[0].score > 0
+        assert _score_for(result, "/a.py") > 0
 
     async def test_empty_graph(self) -> None:
         g = RustworkxGraph()
@@ -42,7 +55,7 @@ class TestPageRank:
         g.add_node("/a.py")
         result = await g.pagerank()
         assert len(result) == 1
-        assert abs(result.explain("/a.py")[0].score - 1.0) < 0.01
+        assert abs(_score_for(result, "/a.py") - 1.0) < 0.01
 
     async def test_nonexistent_personalization_key_ignored(self) -> None:
         g = RustworkxGraph()
@@ -60,45 +73,47 @@ class TestPageRank:
 
     async def test_pagerank_with_unknown_candidates_includes_them(self) -> None:
         """Unknown candidate paths appear in result as augmented nodes."""
-        from grover.results.search import FileCandidate, FileSearchResult, GraphEvidence
+        from grover.models.internal.evidence import GraphEvidence
+        from grover.models.internal.ref import File
+        from grover.models.internal.results import FileSearchResult
 
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         candidates = FileSearchResult(
             success=True,
-            file_candidates=[
-                FileCandidate(path="/a.py", evidence=[GraphEvidence(operation="test")]),
-                FileCandidate(path="/b.py", evidence=[GraphEvidence(operation="test")]),
-                FileCandidate(path="/unknown.py", evidence=[GraphEvidence(operation="test")]),
+            files=[
+                File(path="/a.py", evidence=[GraphEvidence(operation="test")]),
+                File(path="/b.py", evidence=[GraphEvidence(operation="test")]),
+                File(path="/unknown.py", evidence=[GraphEvidence(operation="test")]),
             ],
         )
         result = await g.pagerank(candidates=candidates)
         assert result.success
-        result_paths = {c.path for c in result.file_candidates}
+        result_paths = {f.path for f in result.files}
         assert "/unknown.py" in result_paths
 
     async def test_pagerank_with_chunk_candidate_infers_edge(self) -> None:
         """Chunk candidate gets inferred edge to parent, appears connected."""
-        from grover.results.search import FileCandidate, FileSearchResult, GraphEvidence
+        from grover.models.internal.evidence import GraphEvidence
+        from grover.models.internal.ref import File
+        from grover.models.internal.results import FileSearchResult
 
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         candidates = FileSearchResult(
             success=True,
-            file_candidates=[
-                FileCandidate(path="/a.py", evidence=[GraphEvidence(operation="test")]),
-                FileCandidate(path="/a.py#login", evidence=[GraphEvidence(operation="test")]),
+            files=[
+                File(path="/a.py", evidence=[GraphEvidence(operation="test")]),
+                File(path="/a.py#login", evidence=[GraphEvidence(operation="test")]),
             ],
         )
         result = await g.pagerank(candidates=candidates)
         assert result.success
-        result_paths = {c.path for c in result.file_candidates}
+        result_paths = {f.path for f in result.files}
         assert "/a.py" in result_paths
         assert "/a.py#login" in result_paths
         # Chunk should have non-zero score due to inferred edge from /a.py
-        chunk_score = next(
-            c.evidence[0].score for c in result.file_candidates if c.path == "/a.py#login"
-        )
+        chunk_score = next(f.evidence[0].score for f in result.files if f.path == "/a.py#login")
         assert chunk_score > 0
 
 
@@ -113,16 +128,16 @@ class TestBetweennessCentrality:
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         result = await g.betweenness_centrality()
-        assert result.explain("/b.py")[0].score >= result.explain("/a.py")[0].score
-        assert result.explain("/b.py")[0].score >= result.explain("/c.py")[0].score
+        assert _score_for(result, "/b.py") >= _score_for(result, "/a.py")
+        assert _score_for(result, "/b.py") >= _score_for(result, "/c.py")
 
     async def test_no_edges(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         g.add_node("/b.py")
         result = await g.betweenness_centrality()
-        assert result.explain("/a.py")[0].score == 0.0
-        assert result.explain("/b.py")[0].score == 0.0
+        assert _score_for(result, "/a.py") == 0.0
+        assert _score_for(result, "/b.py") == 0.0
 
 
 # ======================================================================
@@ -141,7 +156,7 @@ class TestClosenessCentrality:
         g.add_edge("/center.py", "/c.py", "imports")
         g.add_edge("/c.py", "/center.py", "imports")
         result = await g.closeness_centrality()
-        assert result.explain("/center.py")[0].score >= result.explain("/a.py")[0].score
+        assert _score_for(result, "/center.py") >= _score_for(result, "/a.py")
 
 
 # ======================================================================
@@ -156,7 +171,7 @@ class TestKatzCentrality:
         g.add_edge("/b.py", "/c.py", "imports")
         result = await g.katz_centrality()
         assert len(result) == 3
-        assert all(c.evidence[0].score > 0 for c in result.file_candidates)
+        assert all(f.evidence[0].score > 0 for f in result.files)
 
     async def test_empty_graph(self) -> None:
         g = RustworkxGraph()
@@ -175,7 +190,7 @@ class TestDegreeCentrality:
         g.add_edge("/hub.py", "/b.py", "imports")
         g.add_edge("/c.py", "/hub.py", "imports")
         result = await g.degree_centrality()
-        assert result.explain("/hub.py")[0].score >= result.explain("/a.py")[0].score
+        assert _score_for(result, "/hub.py") >= _score_for(result, "/a.py")
 
     async def test_in_vs_out(self) -> None:
         # Asymmetric: /a.py has 2 outgoing, /b.py has 2 incoming
@@ -186,9 +201,9 @@ class TestDegreeCentrality:
         in_result = await g.in_degree_centrality()
         out_result = await g.out_degree_centrality()
         # /b.py has 2 incoming edges
-        assert in_result.explain("/b.py")[0].score > in_result.explain("/a.py")[0].score
+        assert _score_for(in_result, "/b.py") > _score_for(in_result, "/a.py")
         # /a.py has 2 outgoing edges
-        assert out_result.explain("/a.py")[0].score > out_result.explain("/b.py")[0].score
+        assert _score_for(out_result, "/a.py") > _score_for(out_result, "/b.py")
 
 
 # ======================================================================

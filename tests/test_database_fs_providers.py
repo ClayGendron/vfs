@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel
 
 from grover.backends.database import DatabaseFileSystem
+from grover.models.internal.evidence import VectorEvidence
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileSearchResult as InternalFileSearchResult
 from grover.providers.chunks import DefaultChunkProvider
 from grover.providers.versioning import DefaultVersionProvider
-from grover.results.search import FileCandidate, VectorEvidence, VectorSearchResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -193,18 +195,18 @@ class TestStorageProviderExistsGetInfo:
 
         result = await fs.exists("/file.py")
 
-        assert result.exists is True
+        assert result.message == "exists"
         mock_sp.exists.assert_called_once_with("/file.py")
 
     async def test_exists_no_storage_uses_db(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             result = await fs.exists("/nonexistent.py", session=session)
-            assert result.exists is False
+            assert result.message == "not found"
 
             await fs.write("/exists.py", "content", session=session)
             result = await fs.exists("/exists.py", session=session)
-            assert result.exists is True
+            assert result.message == "exists"
         await engine.dispose()
 
     async def test_get_info_delegates_to_storage(self):
@@ -252,7 +254,7 @@ class TestStorageProviderQueryDelegation:
             await fs.write("/src/b.py", "world\n", session=session)
             result = await fs.glob("*.py", "/src", session=session)
             assert result.success
-            assert len(result.file_candidates) == 2
+            assert len(result.files) == 2
         await engine.dispose()
 
     async def test_grep_no_storage_uses_db(self):
@@ -263,7 +265,7 @@ class TestStorageProviderQueryDelegation:
             await fs.write("/src/b.py", "goodbye world\n", session=session)
             result = await fs.grep("hello", "/src", session=session)
             assert result.success
-            assert result.files_matched == 1
+            assert len(result.files) == 1
         await engine.dispose()
 
     async def test_tree_no_storage_uses_db(self):
@@ -288,76 +290,6 @@ class TestStorageProviderQueryDelegation:
 # ------------------------------------------------------------------
 # Graph methods — noop when None
 # ------------------------------------------------------------------
-
-
-class TestGraphMethodsNoop:
-    """Graph methods return appropriate defaults when graph_provider is None."""
-
-    def test_graph_add_node_noop(self):
-        fs = DatabaseFileSystem()
-        assert fs.graph_provider is None
-        fs.graph_add_node("/a.py")  # Should not raise
-
-    def test_graph_has_node_returns_false(self):
-        fs = DatabaseFileSystem()
-        assert fs.graph_has_node("/a.py") is False
-
-    async def test_graph_predecessors_returns_empty(self):
-        fs = DatabaseFileSystem()
-        result = await fs.graph_predecessors("/a.py")
-        assert len(result) == 0
-        assert result.success is True
-
-    async def test_graph_successors_returns_empty(self):
-        fs = DatabaseFileSystem()
-        result = await fs.graph_successors("/a.py")
-        assert len(result) == 0
-        assert result.success is True
-
-    def test_graph_node_count_returns_zero(self):
-        fs = DatabaseFileSystem()
-        assert fs.graph_node_count == 0
-
-    def test_graph_edge_count_returns_zero(self):
-        fs = DatabaseFileSystem()
-        assert fs.graph_edge_count == 0
-
-    def test_graph_get_node_returns_empty(self):
-        fs = DatabaseFileSystem()
-        assert fs.graph_get_node("/a.py") == {}
-
-    def test_graph_nodes_returns_empty(self):
-        fs = DatabaseFileSystem()
-        assert fs.graph_nodes() == []
-
-    async def test_graph_path_between_returns_empty(self):
-        fs = DatabaseFileSystem()
-        result = await fs.graph_path_between("/a.py", "/b.py")
-        assert not result
-        assert result.success is True
-
-
-class TestGraphMethodsWithProvider:
-    """Graph methods delegate to provider when set."""
-
-    def test_graph_add_node_delegates(self):
-        mock_graph = MagicMock()
-        fs = DatabaseFileSystem(graph_provider=mock_graph)
-        fs.graph_add_node("/a.py", kind="file")
-        mock_graph.add_node.assert_called_once_with("/a.py", kind="file")
-
-    def test_graph_has_node_delegates(self):
-        mock_graph = MagicMock()
-        mock_graph.has_node.return_value = True
-        fs = DatabaseFileSystem(graph_provider=mock_graph)
-        assert fs.graph_has_node("/a.py") is True
-        mock_graph.has_node.assert_called_once_with("/a.py")
-
-    def test_graph_add_edge_delegates(self):
-        mock_graph = MagicMock()
-        fs = DatabaseFileSystem(graph_provider=mock_graph)
-        fs.graph_add_edge("/a.py", "/b.py", "imports")
-        mock_graph.add_edge.assert_called_once_with("/a.py", "/b.py", "imports")
 
 
 # ------------------------------------------------------------------
@@ -423,11 +355,11 @@ class TestSearchWithProviders:
         mock_embed = _mock_embedding_provider()
         mock_search = _mock_vector_store()
         mock_search.vector_search = AsyncMock(
-            return_value=VectorSearchResult(
+            return_value=InternalFileSearchResult(
                 success=True,
                 message="1 match",
-                file_candidates=[
-                    FileCandidate(
+                files=[
+                    File(
                         path="/a.py",
                         evidence=[
                             VectorEvidence(
@@ -448,9 +380,9 @@ class TestSearchWithProviders:
         result = await fs.vector_search("hello")
 
         assert result.success is True
-        assert len(result.file_candidates) == 1
-        assert result.file_candidates[0].path == "/a.py"
-        assert result.file_candidates[0].evidence[0].snippet == "hello world"
+        assert len(result.files) == 1
+        assert result.files[0].path == "/a.py"
+        assert result.files[0].evidence[0].snippet == "hello world"
 
     async def test_search_has_delegates_to_local_store(self):
         """search_has delegates to LocalVectorStore when available."""
@@ -574,7 +506,7 @@ class TestInlinedMethods:
 
             versions = await fs.list_versions("/test.py", session=session)
             assert versions.success
-            assert len(versions.file_candidates) == 2
+            assert len(versions.files) == 2
         await engine.dispose()
 
     async def test_chunk_methods(self):
@@ -591,7 +523,7 @@ class TestInlinedMethods:
 
             chunks = await fs.list_file_chunks("/test.py", session=session)
             assert chunks.success
-            assert len(chunks.chunks) == 1
+            assert len(chunks.file.chunks) == 1
         await engine.dispose()
 
 

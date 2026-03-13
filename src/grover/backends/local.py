@@ -16,23 +16,17 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from grover.backends.database import DatabaseFileSystem
+from grover.models.internal.results import FileOperationResult
 from grover.providers.storage.disk import DiskStorageProvider
-from grover.results.operations import (
-    DeleteResult,
-    MkdirResult,
-    ReadResult,
-    ReconcileResult,
-    RestoreResult,
-)
 from grover.util.content import get_similar_files, is_binary_file
 from grover.util.operations import paginate_content, write_file
 from grover.util.paths import normalize_path, to_trash_path, validate_path
 
 if TYPE_CHECKING:
-    from grover.models.chunk import FileChunkBase
-    from grover.models.connection import FileConnectionBase
-    from grover.models.file import FileBase
-    from grover.models.version import FileVersionBase
+    from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.database.connection import FileConnectionModelBase
+    from grover.models.database.file import FileModelBase
+    from grover.models.database.version import FileVersionModelBase
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +64,10 @@ class LocalFileSystem(DatabaseFileSystem):
         self,
         workspace_dir: str | Path | None = None,
         data_dir: str | Path | None = None,
-        file_model: type[FileBase] | None = None,
-        file_version_model: type[FileVersionBase] | None = None,
-        file_chunk_model: type[FileChunkBase] | None = None,
-        file_connection_model: type[FileConnectionBase] | None = None,
+        file_model: type[FileModelBase] | None = None,
+        file_version_model: type[FileVersionModelBase] | None = None,
+        file_chunk_model: type[FileChunkModelBase] | None = None,
+        file_connection_model: type[FileConnectionModelBase] | None = None,
         schema: str | None = None,
         **provider_kwargs: object,
     ) -> None:
@@ -188,20 +182,20 @@ class LocalFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ReadResult:
+    ) -> FileOperationResult:
         """Read file with binary detection and similar file suggestions."""
         sess = self._require_session(session)
 
         valid, error = validate_path(path)
         if not valid:
-            return ReadResult(success=False, message=error)
+            return FileOperationResult(success=False, message=error)
 
         path = normalize_path(path)
 
         try:
             actual_path = await self._disk._resolve_path(path)
         except PermissionError as e:
-            return ReadResult(success=False, message=str(e))
+            return FileOperationResult(success=False, message=str(e))
 
         exists = await asyncio.to_thread(actual_path.exists)
         if not exists:
@@ -212,22 +206,24 @@ class LocalFileSystem(DatabaseFileSystem):
                 )
                 if suggestions:
                     suggestion_text = "\n".join(f"  {s}" for s in suggestions)
-                    return ReadResult(
+                    return FileOperationResult(
                         success=False,
                         message=f"File not found: {path}\n\nDid you mean?\n{suggestion_text}",
                     )
-            return ReadResult(success=False, message=f"File not found: {path}")
+            return FileOperationResult(success=False, message=f"File not found: {path}")
 
         if await asyncio.to_thread(is_binary_file, actual_path):
-            return ReadResult(success=False, message=f"Cannot read binary file: {path}")
+            return FileOperationResult(success=False, message=f"Cannot read binary file: {path}")
 
         if await asyncio.to_thread(actual_path.is_dir):
-            return ReadResult(success=False, message=f"Path is a directory, not a file: {path}")
+            return FileOperationResult(
+                success=False, message=f"Path is a directory, not a file: {path}"
+            )
 
         content = await self._read_content(path, sess)
 
         if content is None:
-            return ReadResult(success=False, message=f"Could not read file: {path}")
+            return FileOperationResult(success=False, message=f"Could not read file: {path}")
 
         return paginate_content(content, path, offset, limit)
 
@@ -242,7 +238,7 @@ class LocalFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> DeleteResult:
+    ) -> FileOperationResult:
         """Delete file, backing up content to the database first.
 
         Content-before-commit: DB soft-delete -> flush -> unlink disk -> return.
@@ -292,7 +288,7 @@ class LocalFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> MkdirResult:
+    ) -> FileOperationResult:
         """Create directory in database and on disk."""
         result = await super().mkdir(path, parents, session=session, user_id=user_id)
 
@@ -313,14 +309,14 @@ class LocalFileSystem(DatabaseFileSystem):
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> RestoreResult:
+    ) -> FileOperationResult:
         """Restore a file from trash, writing content back to disk."""
         sess = self._require_session(session)
         result = await super().restore_from_trash(path, session=sess, owner_id=owner_id)
         if not result.success:
             return result
 
-        restored_path = result.path or path
+        restored_path = (result.file.path if result.file else None) or path
         file = await self._get_file_record(sess, restored_path)
         if file:
             if file.is_directory:
@@ -340,16 +336,16 @@ class LocalFileSystem(DatabaseFileSystem):
                             child.current_version,
                             session=sess,
                         )
-                        if vc.success and vc.content is not None:
-                            await self._write_content(child.path, vc.content, sess)
+                        if vc.success and vc.file and vc.file.content is not None:
+                            await self._write_content(child.path, vc.file.content, sess)
             else:
                 vc = await self.get_version_content(
                     restored_path,
                     file.current_version,
                     session=sess,
                 )
-                if vc.success and vc.content is not None:
-                    await self._write_content(restored_path, vc.content, sess)
+                if vc.success and vc.file and vc.file.content is not None:
+                    await self._write_content(restored_path, vc.file.content, sess)
 
         return result
 
@@ -361,10 +357,11 @@ class LocalFileSystem(DatabaseFileSystem):
         self,
         *,
         session: AsyncSession | None = None,
-    ) -> ReconcileResult:
+    ) -> FileOperationResult:
         """Walk disk, compare with DB, create/update/soft-delete as needed."""
         sess = self._require_session(session)
-        stats = ReconcileResult()
+        created = 0
+        deleted = 0
 
         # Walk workspace files
         disk_paths: set[str] = set()
@@ -415,7 +412,7 @@ class LocalFileSystem(DatabaseFileSystem):
                         read_content=self._read_content,
                         write_content=_noop_write,
                     )
-                    stats.created += 1
+                    created += 1
 
         # Check DB records against disk
         from sqlmodel import select
@@ -434,12 +431,18 @@ class LocalFileSystem(DatabaseFileSystem):
                     file.original_path = file.path
                     file.path = to_trash_path(file.path, file.id)
                     file.deleted_at = datetime.now(UTC)
-                    stats.deleted += 1
+                    deleted += 1
 
         await sess.flush()
 
         # Verify version chain integrity
         verification_results = await self.verify_all_versions(session=sess)
-        stats.chain_errors = sum(r.versions_failed for r in verification_results)
+        chain_errors = sum(1 for r in verification_results if not r.success)
 
-        return stats
+        return FileOperationResult(
+            success=True,
+            message=(
+                f"Reconcile complete: {created} created, {deleted} deleted, "
+                f"{chain_errors} chain errors"
+            ),
+        )

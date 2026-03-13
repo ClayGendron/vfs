@@ -1,6 +1,8 @@
-"""Tests for FileChunk model and DefaultChunkProvider."""
+"""Tests for FileChunkModel model and DefaultChunkProvider."""
 
 from __future__ import annotations
+
+import re
 
 import pytest
 from sqlmodel import Session, SQLModel, select
@@ -8,8 +10,15 @@ from sqlmodel import Session, SQLModel, select
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.backends.protocol import GroverFileSystem
-from grover.models.chunk import FileChunk, FileChunkBase
+from grover.models.database.chunk import FileChunkModel, FileChunkModelBase
 from grover.providers.chunks import DefaultChunkProvider
+
+
+def _parse_count(message: str) -> int:
+    """Parse an integer from a message like '3 chunks replaced' or '1 chunks deleted'."""
+    m = re.search(r"(\d+)", message)
+    return int(m.group(1)) if m else 0
+
 
 # ---------------------------------------------------------------------------
 # Model tests (sync — same pattern as test_models.py)
@@ -22,7 +31,7 @@ class TestFileChunkModel:
         assert "grover_file_chunks" in engine.dialect.get_table_names(engine.connect())
 
     def test_defaults(self, session: Session):
-        chunk = FileChunk(
+        chunk = FileChunkModel(
             file_path="/src/main.py",
             path="/src/main.py#MyClass",
         )
@@ -41,9 +50,9 @@ class TestFileChunkModel:
         assert chunk.updated_at is not None
 
     def test_base_subclass_custom_table(self, engine):
-        """Custom table name via subclassing FileChunkBase."""
+        """Custom table name via subclassing FileChunkModelBase."""
 
-        class CustomChunk(FileChunkBase, table=True):
+        class CustomChunk(FileChunkModelBase, table=True):
             __tablename__ = "custom_chunks"
 
         SQLModel.metadata.create_all(engine)
@@ -51,8 +60,8 @@ class TestFileChunkModel:
         assert "custom_chunks" in tables
 
     def test_round_trip(self, session: Session):
-        """Insert and query back a FileChunk."""
-        chunk = FileChunk(
+        """Insert and query back a FileChunkModel."""
+        chunk = FileChunkModel(
             file_path="/test.py",
             path="/test.py#foo",
             line_start=10,
@@ -63,7 +72,9 @@ class TestFileChunkModel:
         session.add(chunk)
         session.commit()
 
-        result = session.exec(select(FileChunk).where(FileChunk.file_path == "/test.py")).first()
+        result = session.exec(
+            select(FileChunkModel).where(FileChunkModel.file_path == "/test.py")
+        ).first()
         assert result is not None
         assert result.line_start == 10
         assert result.line_end == 20
@@ -71,7 +82,7 @@ class TestFileChunkModel:
 
     def test_multiple_chunks_per_file(self, session: Session):
         for i in range(3):
-            chunk = FileChunk(
+            chunk = FileChunkModel(
                 file_path="/src/main.py",
                 path=f"/src/main.py#fn{i}",
                 line_start=i * 10,
@@ -80,7 +91,9 @@ class TestFileChunkModel:
             session.add(chunk)
         session.commit()
 
-        result = session.exec(select(FileChunk).where(FileChunk.file_path == "/src/main.py")).all()
+        result = session.exec(
+            select(FileChunkModel).where(FileChunkModel.file_path == "/src/main.py")
+        ).all()
         assert len(result) == 3
 
 
@@ -92,7 +105,7 @@ class TestFileChunkModel:
 class TestDefaultChunkProvider:
     @pytest.fixture
     def service(self):
-        return DefaultChunkProvider(FileChunk)
+        return DefaultChunkProvider(FileChunkModel)
 
     async def test_replace_inserts(self, service, async_session):
         chunks = [
@@ -112,12 +125,12 @@ class TestDefaultChunkProvider:
             },
         ]
         result = await service.replace_file_chunks(async_session, "/a.py", chunks)
-        assert result.count == 2
+        assert _parse_count(result.message) == 2
 
-        result = await service.list_file_chunks(async_session, "/a.py")
-        assert len(result.chunks) == 2
-        assert result.chunks[0].path == "/a.py#foo"
-        assert result.chunks[1].path == "/a.py#bar"
+        list_result = await service.list_file_chunks(async_session, "/a.py")
+        assert len(list_result.file.chunks) == 2
+        assert list_result.file.chunks[0].path == "/a.py#foo"
+        assert list_result.file.chunks[1].path == "/a.py#bar"
 
     async def test_replace_replaces(self, service, async_session):
         """Second replace deletes old chunks and inserts new."""
@@ -126,30 +139,30 @@ class TestDefaultChunkProvider:
 
         new = [{"path": "new", "content": "new"}]
         result = await service.replace_file_chunks(async_session, "/a.py", new)
-        assert result.count == 1
+        assert _parse_count(result.message) == 1
 
-        result = await service.list_file_chunks(async_session, "/a.py")
-        assert len(result.chunks) == 1
-        assert result.chunks[0].path == "new"
+        list_result = await service.list_file_chunks(async_session, "/a.py")
+        assert len(list_result.file.chunks) == 1
+        assert list_result.file.chunks[0].path == "new"
 
     async def test_replace_returns_count(self, service, async_session):
         chunks = [{"path": f"c{i}"} for i in range(5)]
         result = await service.replace_file_chunks(async_session, "/a.py", chunks)
-        assert result.count == 5
+        assert _parse_count(result.message) == 5
 
     async def test_delete(self, service, async_session):
         chunks = [{"path": "c"}]
         await service.replace_file_chunks(async_session, "/a.py", chunks)
 
         result = await service.delete_file_chunks(async_session, "/a.py")
-        assert result.count == 1
+        assert _parse_count(result.message) == 1
 
-        result = await service.list_file_chunks(async_session, "/a.py")
-        assert len(result.chunks) == 0
+        list_result = await service.list_file_chunks(async_session, "/a.py")
+        assert len(list_result.file.chunks) == 0
 
     async def test_delete_nonexistent(self, service, async_session):
         result = await service.delete_file_chunks(async_session, "/none.py")
-        assert result.count == 0
+        assert _parse_count(result.message) == 0
 
     async def test_list_ordered_by_line_start(self, service, async_session):
         chunks = [
@@ -160,11 +173,11 @@ class TestDefaultChunkProvider:
         await service.replace_file_chunks(async_session, "/a.py", chunks)
 
         result = await service.list_file_chunks(async_session, "/a.py")
-        assert [r.line_start for r in result.chunks] == [10, 20, 30]
+        assert [r.line_start for r in result.file.chunks] == [10, 20, 30]
 
     async def test_list_empty(self, service, async_session):
         result = await service.list_file_chunks(async_session, "/missing.py")
-        assert result.chunks == []
+        assert result.file.chunks == []
 
     async def test_replace_isolates_files(self, service, async_session):
         """Replacing chunks for file A does not affect file B."""
@@ -176,10 +189,10 @@ class TestDefaultChunkProvider:
 
         a_result = await service.list_file_chunks(async_session, "/a.py")
         b_result = await service.list_file_chunks(async_session, "/b.py")
-        assert len(a_result.chunks) == 1
-        assert a_result.chunks[0].path == "a2"
-        assert len(b_result.chunks) == 1
-        assert b_result.chunks[0].path == "b"
+        assert len(a_result.file.chunks) == 1
+        assert a_result.file.chunks[0].path == "a2"
+        assert len(b_result.file.chunks) == 1
+        assert b_result.file.chunks[0].path == "b"
 
 
 # ---------------------------------------------------------------------------
@@ -214,11 +227,11 @@ class TestDatabaseFSChunks:
             },
         ]
         result = await dbfs.replace_file_chunks("/a.py", chunks, session=async_session)
-        assert result.count == 1
+        assert _parse_count(result.message) == 1
 
-        result = await dbfs.list_file_chunks("/a.py", session=async_session)
-        assert len(result.chunks) == 1
-        assert result.chunks[0].path == "/a.py#foo"
+        list_result = await dbfs.list_file_chunks("/a.py", session=async_session)
+        assert len(list_result.file.chunks) == 1
+        assert list_result.file.chunks[0].path == "/a.py#foo"
 
     async def test_delete_through_backend(self, async_session):
         dbfs = DatabaseFileSystem()
@@ -226,18 +239,18 @@ class TestDatabaseFSChunks:
         await dbfs.replace_file_chunks("/a.py", chunks, session=async_session)
 
         result = await dbfs.delete_file_chunks("/a.py", session=async_session)
-        assert result.count == 1
+        assert _parse_count(result.message) == 1
 
-        result = await dbfs.list_file_chunks("/a.py", session=async_session)
-        assert result.chunks == []
+        list_result = await dbfs.list_file_chunks("/a.py", session=async_session)
+        assert list_result.file.chunks == []
 
     async def test_replace_and_list_multiple(self, async_session):
         dbfs = DatabaseFileSystem()
         chunks = [{"path": f"c{i}", "line_start": i * 10} for i in range(3)]
         result = await dbfs.replace_file_chunks("/multi.py", chunks, session=async_session)
-        assert result.count == 3
+        assert _parse_count(result.message) == 3
 
-        result = await dbfs.list_file_chunks("/multi.py", session=async_session)
-        assert len(result.chunks) == 3
+        list_result = await dbfs.list_file_chunks("/multi.py", session=async_session)
+        assert len(list_result.file.chunks) == 3
         # Ordered by line_start
-        assert [r.line_start for r in result.chunks] == [0, 10, 20]
+        assert [r.line_start for r in list_result.file.chunks] == [0, 10, 20]

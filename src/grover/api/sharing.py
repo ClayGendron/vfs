@@ -6,11 +6,8 @@ from typing import TYPE_CHECKING
 
 from grover.backends.protocol import SupportsReBAC
 from grover.exceptions import MountNotFoundError
-from grover.results import (
-    FileCandidate,
-    ShareResult,
-    ShareSearchResult,
-)
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
@@ -36,7 +33,7 @@ class ShareMixin:
         *,
         user_id: str,
         expires_at: datetime | None = None,
-    ) -> ShareResult:
+    ) -> FileOperationResult:
         """Share a file or directory with another user.
 
         Requires a backend that supports sharing (e.g. ``UserScopedFileSystem``).
@@ -44,16 +41,16 @@ class ShareMixin:
 
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return ShareResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError as e:
-            return ShareResult(success=False, message=str(e))
+            return FileOperationResult(success=False, message=str(e))
 
         cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
-            return ShareResult(
+            return FileOperationResult(
                 success=False,
                 message="Backend does not support sharing",
             )
@@ -61,7 +58,7 @@ class ShareMixin:
         async with self._ctx.session_for(mount) as sess:
             assert sess is not None
             try:
-                share_info = await cap.share(
+                await cap.share(
                     rel_path,
                     grantee_id,
                     permission,
@@ -70,15 +67,12 @@ class ShareMixin:
                     expires_at=expires_at,
                 )
             except ValueError as e:
-                return ShareResult(success=False, message=str(e))
+                return FileOperationResult(success=False, message=str(e))
 
-        return ShareResult(
+        return FileOperationResult(
             success=True,
             message=f"Shared {path} with {grantee_id} ({permission})",
-            path=path,
-            grantee_id=share_info.grantee_id,
-            permission=share_info.permission,
-            granted_by=share_info.granted_by,
+            file=File(path=path),
         )
 
     async def unshare(
@@ -87,21 +81,21 @@ class ShareMixin:
         grantee_id: str,
         *,
         user_id: str,
-    ) -> ShareResult:
+    ) -> FileOperationResult:
         """Remove a share for a file or directory."""
 
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return ShareResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError as e:
-            return ShareResult(success=False, message=str(e))
+            return FileOperationResult(success=False, message=str(e))
 
         cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
-            return ShareResult(
+            return FileOperationResult(
                 success=False,
                 message="Backend does not support sharing",
             )
@@ -110,7 +104,7 @@ class ShareMixin:
             assert sess is not None
             result = await cap.unshare(rel_path, grantee_id, user_id=user_id, session=sess)
 
-        result.path = path
+        result.file.path = path
         return result
 
     async def list_shares(
@@ -118,18 +112,18 @@ class ShareMixin:
         path: str,
         *,
         user_id: str,
-    ) -> ShareSearchResult:
+    ) -> FileSearchResult:
         """List all shares on a given path."""
 
         path = normalize_path(path)
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
         except MountNotFoundError as e:
-            return ShareSearchResult(success=False, message=str(e))
+            return FileSearchResult(success=False, message=str(e))
 
         cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
-            return ShareSearchResult(
+            return FileSearchResult(
                 success=False,
                 message="Backend does not support sharing",
             )
@@ -145,9 +139,9 @@ class ShareMixin:
         self,
         *,
         user_id: str,
-    ) -> ShareSearchResult:
+    ) -> FileSearchResult:
         """List all files shared with the current user across all mounts."""
-        all_candidates: list[FileCandidate] = []
+        all_files: list[File] = []
         for mount in self._ctx.registry.list_mounts():
             cap = self._ctx.get_capability(mount.filesystem, SupportsReBAC)
             if cap is None:
@@ -157,10 +151,10 @@ class ShareMixin:
                 result = await cap.list_shared_with_me(user_id=user_id, session=sess)
             # Backend returns paths like /@shared/alice/a.md — rebase to mount
             rebased = result.rebase(mount.path)
-            all_candidates.extend(rebased.file_candidates)
+            all_files.extend(rebased.files)
 
-        return ShareSearchResult(
+        return FileSearchResult(
             success=True,
-            message=f"Found {len(all_candidates)} share(s)",
-            file_candidates=all_candidates,
+            message=f"Found {len(all_files)} share(s)",
+            files=all_files,
         )

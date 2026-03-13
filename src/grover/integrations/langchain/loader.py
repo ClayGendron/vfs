@@ -104,11 +104,11 @@ class GroverLoader(BaseLoader):
 
             # Read file content
             read_result = g.read(file_path)
-            if not read_result.success or read_result.content is None:
+            if not read_result.success or not read_result.file or read_result.file.content is None:
                 continue
 
             yield Document(
-                page_content=read_result.content,
+                page_content=read_result.file.content,
                 metadata={
                     "path": file_path,
                     "source": file_path,
@@ -145,11 +145,11 @@ class GroverLoader(BaseLoader):
                     continue
 
             read_result = await g.read(file_path)
-            if not read_result.success or read_result.content is None:
+            if not read_result.success or not read_result.file or read_result.file.content is None:
                 continue
 
             yield Document(
-                page_content=read_result.content,
+                page_content=read_result.file.content,
                 metadata={
                     "path": file_path,
                     "source": file_path,
@@ -164,12 +164,14 @@ class GroverLoader(BaseLoader):
         result = g.tree(self.path, max_depth=None if self.recursive else 1)
         if not result.success:
             return []
-        from grover.results import TreeEvidence
+        from grover.models.internal.evidence import TreeEvidence
 
         entries = []
-        for c in result.file_candidates:
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
-            entries.append({"path": c.path, "is_directory": is_dir, "size_bytes": None})
+        for f in result.files:
+            is_dir = f.is_directory or any(
+                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
+            )
+            entries.append({"path": f.path, "is_directory": is_dir, "size_bytes": None})
         return entries
 
     async def _alist_entries(self) -> list[dict[str, Any]]:
@@ -178,10 +180,12 @@ class GroverLoader(BaseLoader):
         result = await g.tree(self.path, max_depth=None if self.recursive else 1)
         if not result.success:
             return []
-        from grover.results import TreeEvidence
+        from grover.models.internal.evidence import TreeEvidence
 
         entries = []
-        for c in result.file_candidates:
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
-            entries.append({"path": c.path, "is_directory": is_dir, "size_bytes": None})
+        for f in result.files:
+            is_dir = f.is_directory or any(
+                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
+            )
+            entries.append({"path": f.path, "is_directory": is_dir, "size_bytes": None})
         return entries

@@ -15,8 +15,6 @@ if TYPE_CHECKING:
         CallbackManagerForRetrieverRun,
     )
 
-    from grover.results import VectorSearchResult
-
 
 class GroverRetriever(BaseRetriever):
     """LangChain retriever backed by Grover's semantic search.
@@ -84,7 +82,7 @@ class GroverRetriever(BaseRetriever):
         if not result.success:
             return []
 
-        return [self._path_to_document(path, result) for path in result.paths]
+        return [self._file_to_document(f) for f in result.files]
 
     async def _aget_relevant_documents(
         self,
@@ -108,16 +106,21 @@ class GroverRetriever(BaseRetriever):
         if not result.success:
             return []
 
-        return [self._path_to_document(path, result) for path in result.paths]
+        return [self._file_to_document(f) for f in result.files]
 
     @staticmethod
-    def _path_to_document(path: str, result: "VectorSearchResult") -> Document:
-        """Convert a path from VectorSearchResult to a LangChain Document."""
-        metadata: dict[str, object] = {
-            "path": path,
-        }
+    def _file_to_document(f: object) -> Document:
+        """Convert a File from FileSearchResult to a LangChain Document."""
+        from grover.models.internal.evidence import VectorEvidence
+
+        path: str = f.path  # type: ignore[union-attr]
+        metadata: dict[str, object] = {"path": path}
         # Build page_content from vector evidence snippets
-        snippets = list(result.snippets(path))
+        snippets = [
+            ev.snippet
+            for ev in f.evidence  # type: ignore[union-attr]
+            if isinstance(ev, VectorEvidence) and ev.snippet
+        ]
         if snippets:
             metadata["chunks"] = len(snippets)
         page_content = "\n\n".join(snippets) if snippets else path

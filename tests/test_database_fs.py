@@ -61,7 +61,7 @@ class TestSessionInjection:
             assert result.success
             read = await db.read("/hello.txt", session=session)
             assert read.success
-            assert read.content == "hello"
+            assert read.file.content == "hello"
         await engine.dispose()
 
     async def test_write_without_session_raises(self):
@@ -99,7 +99,7 @@ class TestFlushBehavior:
             # Data visible in same session (flushed)
             read = await db.read("/flushed.txt", session=session)
             assert read.success
-            assert read.content == "data"
+            assert read.file.content == "data"
             # Don't commit — session will rollback on close
         # Data should NOT persist without explicit commit
         async with factory() as session:
@@ -115,7 +115,7 @@ class TestFlushBehavior:
         async with factory() as session:
             read = await db.read("/committed.txt", session=session)
             assert read.success
-            assert read.content == "data"
+            assert read.file.content == "data"
         await engine.dispose()
 
 
@@ -168,7 +168,7 @@ class TestConcurrencySafety:
             await db.write("/s2.txt", "from s2", session=s2)
             read = await db.read("/s2.txt", session=s2)
             assert read.success
-            assert read.content == "from s2"
+            assert read.file.content == "from s2"
         finally:
             await s1.close()
             await s2.close()

@@ -13,54 +13,25 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from grover.exceptions import GroverError
-from grover.models.chunk import FileChunk
-from grover.models.connection import FileConnection
-from grover.models.file import File
-from grover.models.version import FileVersion
+from grover.models.database.chunk import FileChunkModel
+from grover.models.database.connection import FileConnectionModel
+from grover.models.database.file import FileModel
+from grover.models.database.version import FileVersionModel
+from grover.models.internal.evidence import (
+    GlobEvidence,
+    GrepEvidence,
+    TrashEvidence,
+    TreeEvidence,
+    VersionEvidence,
+)
+from grover.models.internal.evidence import (
+    LineMatch as SearchLineMatch,
+)
+from grover.models.internal.ref import File, FileConnection, Ref
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 from grover.providers.chunks import DefaultChunkProvider
 from grover.providers.search.types import SearchResult, VectorEntry
 from grover.providers.versioning import DefaultVersionProvider
-from grover.ref import Ref
-from grover.results.operations import (
-    BatchChunkResult,
-    BatchWriteResult,
-    ChunkListResult,
-    ChunkResult,
-    ConnectionListResult,
-    ConnectionResult,
-    DeleteResult,
-    EditResult,
-    ExistsResult,
-    FileInfoResult,
-    GetVersionContentResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    RestoreResult,
-    VerifyVersionResult,
-    WriteResult,
-)
-from grover.results.search import (
-    FileCandidate,
-    GlobEvidence,
-    GlobResult,
-    GrepEvidence,
-    GrepResult,
-    ListDirResult,
-    PredecessorsResult,
-    ShortestPathResult,
-    SuccessorsResult,
-    TrashEvidence,
-    TrashResult,
-    TreeEvidence,
-    TreeResult,
-    VectorSearchResult,
-    VersionEvidence,
-    VersionResult,
-)
-from grover.results.search import (
-    LineMatch as SearchLineMatch,
-)
 from grover.util.content import (
     compute_content_hash,
     guess_mime_type,
@@ -85,10 +56,10 @@ from grover.util.patterns import compile_glob, glob_to_sql_like
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.chunk import FileChunkBase
-    from grover.models.connection import FileConnectionBase
-    from grover.models.file import FileBase
-    from grover.models.version import FileVersionBase
+    from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.database.connection import FileConnectionModelBase
+    from grover.models.database.file import FileModelBase
+    from grover.models.database.version import FileVersionModelBase
     from grover.providers.chunks.protocol import ChunkProvider
     from grover.providers.embedding.protocol import EmbeddingProvider
     from grover.providers.graph.protocol import GraphProvider
@@ -99,6 +70,14 @@ if TYPE_CHECKING:
     from grover.providers.versioning.protocol import VersionProvider
 
 logger = logging.getLogger(__name__)
+
+
+class _BatchFileResult(FileOperationResult):
+    """Internal batch write result for write_files (includes per-file results list)."""
+
+    results: list[FileOperationResult] = []  # noqa: RUF012
+    succeeded: int = 0
+    failed: int = 0
 
 
 class DatabaseFileSystem:
@@ -121,10 +100,10 @@ class DatabaseFileSystem:
     def __init__(
         self,
         dialect: str = "sqlite",
-        file_model: type[FileBase] | None = None,
-        file_version_model: type[FileVersionBase] | None = None,
-        file_chunk_model: type[FileChunkBase] | None = None,
-        file_connection_model: type[FileConnectionBase] | None = None,
+        file_model: type[FileModelBase] | None = None,
+        file_version_model: type[FileVersionModelBase] | None = None,
+        file_chunk_model: type[FileChunkModelBase] | None = None,
+        file_connection_model: type[FileConnectionModelBase] | None = None,
         schema: str | None = None,
         *,
         storage_provider: StorageProvider | None = None,
@@ -136,11 +115,11 @@ class DatabaseFileSystem:
     ) -> None:
         self.dialect = dialect
         self.schema = schema
-        self.file_model: type[FileBase] = file_model or File
-        self.file_version_model: type[FileVersionBase] = file_version_model or FileVersion
-        self.file_chunk_model: type[FileChunkBase] = file_chunk_model or FileChunk
-        self.file_connection_model: type[FileConnectionBase] = (
-            file_connection_model or FileConnection
+        self.file_model: type[FileModelBase] = file_model or FileModel
+        self.file_version_model: type[FileVersionModelBase] = file_version_model or FileVersionModel
+        self.file_chunk_model: type[FileChunkModelBase] = file_chunk_model or FileChunkModel
+        self.file_connection_model: type[FileConnectionModelBase] = (
+            file_connection_model or FileConnectionModel
         )
 
         # Pluggable providers
@@ -163,6 +142,39 @@ class DatabaseFileSystem:
         return session
 
     # ------------------------------------------------------------------
+    # Conversion helpers: old result types → new internal types
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _op_to_internal(old: object) -> FileOperationResult:
+        """Convert an old FileOperationResult subclass to the new internal type."""
+        success = getattr(old, "success", True)
+        message = getattr(old, "message", "")
+        path = getattr(old, "path", "")
+        content = getattr(old, "content", None) or None
+        version = getattr(old, "version", 0)
+        lines_read = getattr(old, "lines_read", 0)
+        f = (
+            File(path=path, content=content, current_version=version, lines=lines_read)
+            if path
+            else None
+        )
+        return FileOperationResult(success=success, message=message, file=f)
+
+    @staticmethod
+    def _search_to_internal(old: object) -> FileSearchResult:
+        """Convert an old or new FileSearchResult to the internal type."""
+        success = getattr(old, "success", True)
+        message = getattr(old, "message", "")
+        # New internal type already has .files
+        if isinstance(old, FileSearchResult):
+            return old
+        # Old dataclass-based type has .file_candidates
+        old_candidates = getattr(old, "file_candidates", [])
+        files = [File(path=c.path, evidence=list(c.evidence)) for c in old_candidates]
+        return FileSearchResult(success=success, message=message, files=files)
+
+    # ------------------------------------------------------------------
     # File record lookup (absorbed from MetadataService)
     # ------------------------------------------------------------------
 
@@ -171,7 +183,7 @@ class DatabaseFileSystem:
         session: AsyncSession,
         path: str,
         include_deleted: bool = False,
-    ) -> FileBase | None:
+    ) -> FileModelBase | None:
         """Look up a file record by path.
 
         Absorbed from the former ``MetadataService.get_file()``.
@@ -191,7 +203,7 @@ class DatabaseFileSystem:
         session: AsyncSession,
         paths: list[str],
         include_deleted: bool = False,
-    ) -> dict[str, FileBase]:
+    ) -> dict[str, FileModelBase]:
         """Look up multiple file records by path in a single query.
 
         Returns a dict mapping path -> record for all found files.
@@ -269,7 +281,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ReadResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await read_file(
             path,
@@ -290,7 +302,7 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await write_file(
             path,
@@ -317,7 +329,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> EditResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await edit_file(
             path,
@@ -339,7 +351,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> DeleteResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await delete_file(
             path,
@@ -358,24 +370,23 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> MkdirResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         created_dirs, error = await self._mkdir_impl(sess, path, parents)
         if error is not None:
-            return MkdirResult(success=False, message=error)
+            return FileOperationResult(success=False, message=error)
         path = normalize_path(path)
+        f = File(path=path, is_directory=True)
         if created_dirs:
-            return MkdirResult(
+            return FileOperationResult(
                 success=True,
                 message=f"Created directory: {path}",
-                path=path,
-                created_dirs=created_dirs,
+                file=f,
             )
-        return MkdirResult(
+        return FileOperationResult(
             success=True,
             message=f"Directory already exists: {path}",
-            path=path,
-            created_dirs=[],
+            file=f,
         )
 
     async def list_dir(
@@ -384,9 +395,10 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListDirResult:
+    ) -> FileSearchResult:
         if self.storage_provider is not None:
-            return await self.storage_provider.storage_list_dir(path)
+            old = await self.storage_provider.storage_list_dir(path)
+            return self._search_to_internal(old)
         sess = self._require_session(session)
         return await list_dir_db(
             path,
@@ -401,19 +413,28 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ExistsResult:
+    ) -> FileOperationResult:
         if self.storage_provider is not None:
-            result = await self.storage_provider.exists(path)
-            return ExistsResult(exists=result, path=normalize_path(path))
+            found = await self.storage_provider.exists(path)
+            p = normalize_path(path)
+            return FileOperationResult(
+                success=True,
+                message="exists" if found else "not found",
+                file=File(path=p),
+            )
         sess = self._require_session(session)
         valid, _error = validate_path(path)
         if not valid:
-            return ExistsResult(exists=False, path=path)
+            return FileOperationResult(success=True, message="not found", file=File(path=path))
         path = normalize_path(path)
         if path == "/":
-            return ExistsResult(exists=True, path=path)
+            return FileOperationResult(success=True, message="exists", file=File(path=path))
         file = await self._get_file_record(sess, path)
-        return ExistsResult(exists=file is not None, path=path)
+        return FileOperationResult(
+            success=True,
+            message="exists" if file is not None else "not found",
+            file=File(path=path),
+        )
 
     async def get_info(
         self,
@@ -421,18 +442,29 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult:
+    ) -> FileOperationResult:
         if self.storage_provider is not None:
             return await self.storage_provider.get_info(path)
         sess = self._require_session(session)
         valid, error = validate_path(path)
         if not valid:
-            return FileInfoResult(success=False, message=error, path=path)
+            return FileOperationResult(success=False, message=error, file=File(path=path))
         path = normalize_path(path)
         file = await self._get_file_record(sess, path)
         if not file:
-            return FileInfoResult(success=False, message=f"File not found: {path}", path=path)
-        return file_to_info(file)
+            return FileOperationResult(
+                success=False,
+                message=f"File not found: {path}",
+                file=File(path=path),
+            )
+        info = file_to_info(file)
+        f = File(
+            path=info.path,
+            is_directory=info.is_directory,
+            lines=0,
+            current_version=info.version,
+        )
+        return FileOperationResult(success=True, message="OK", file=f)
 
     async def move(
         self,
@@ -442,7 +474,7 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         follow: bool = False,
         user_id: str | None = None,
-    ) -> MoveResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await move_file(
             src,
@@ -465,7 +497,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await copy_file(
             src,
@@ -487,33 +519,31 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> GlobResult:
+    ) -> FileSearchResult:
         if self.storage_provider is not None:
-            return await self.storage_provider.storage_glob(pattern, path)
+            old = await self.storage_provider.storage_glob(pattern, path)
+            return self._search_to_internal(old)
         sess = self._require_session(session)
         path = normalize_path(path)
 
         if not pattern:
-            return GlobResult(
+            return FileSearchResult(
                 success=False,
                 message="Empty glob pattern",
-                pattern=pattern,
             )
 
         # Verify base directory exists (unless root)
         if path != "/":
             dir_file = await self._get_file_record(sess, path)
             if not dir_file:
-                return GlobResult(
+                return FileSearchResult(
                     success=False,
                     message=f"Directory not found: {path}",
-                    pattern=pattern,
                 )
             if not dir_file.is_directory:
-                return GlobResult(
+                return FileSearchResult(
                     success=False,
                     message=f"Not a directory: {path}",
-                    pattern=pattern,
                 )
 
         model = self.file_model
@@ -551,12 +581,13 @@ class DatabaseFileSystem:
             f for f in db_files if glob_regex is not None and glob_regex.match(f.path) is not None
         ]
 
-        candidates: list[FileCandidate] = []
+        files: list[File] = []
         for f in matched:
             info = file_to_info(f)
-            candidates.append(
-                FileCandidate(
+            files.append(
+                File(
                     path=info.path,
+                    is_directory=info.is_directory,
                     evidence=[
                         GlobEvidence(
                             operation="glob",
@@ -568,11 +599,10 @@ class DatabaseFileSystem:
                 )
             )
 
-        return GlobResult(
+        return FileSearchResult(
             success=True,
-            message=f"Found {len(candidates)} match(es)",
-            file_candidates=candidates,
-            pattern=pattern,
+            message=f"Found {len(files)} match(es)",
+            files=files,
         )
 
     async def grep(
@@ -592,9 +622,9 @@ class DatabaseFileSystem:
         files_only: bool = False,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> GrepResult:
+    ) -> FileSearchResult:
         if self.storage_provider is not None:
-            return await self.storage_provider.storage_grep(
+            old = await self.storage_provider.storage_grep(
                 pattern,
                 path,
                 glob_filter=glob_filter,
@@ -608,6 +638,7 @@ class DatabaseFileSystem:
                 count_only=count_only,
                 files_only=files_only,
             )
+            return self._search_to_internal(old)
         sess = self._require_session(session)
         path = normalize_path(path)
         context_lines = max(0, context_lines)
@@ -620,22 +651,21 @@ class DatabaseFileSystem:
             flags = 0 if case_sensitive else re.IGNORECASE
             regex = re.compile(regex_pattern, flags)
         except re.error as e:
-            return GrepResult(
+            return FileSearchResult(
                 success=False,
                 message=f"Invalid regex: {e}",
-                pattern=pattern,
             )
 
         # Get candidate files
         if glob_filter:
             glob_result = await self.glob(glob_filter, path, session=sess)
             if not glob_result.success:
-                return GrepResult(
+                return FileSearchResult(
                     success=False,
                     message=glob_result.message,
-                    pattern=pattern,
                 )
-            candidate_paths = list(glob_result.files())
+            # Extract non-directory paths from glob result
+            candidate_paths = [f.path for f in glob_result.files if not f.is_directory]
         else:
             model = self.file_model
             if path != "/":
@@ -652,10 +682,9 @@ class DatabaseFileSystem:
                     )
                     candidate_paths = [row[0] for row in result.all()]
                 else:
-                    return GrepResult(
+                    return FileSearchResult(
                         success=False,
                         message=f"Path not found: {path}",
-                        pattern=pattern,
                     )
             else:
                 result = await sess.execute(
@@ -666,10 +695,9 @@ class DatabaseFileSystem:
                 )
                 candidate_paths = [row[0] for row in result.all()]
 
-        result_candidates: list[FileCandidate] = []
+        result_files: list[File] = []
         files_searched = 0
         files_matched = 0
-        truncated = False
         total_matches = 0
 
         for file_path in candidate_paths:
@@ -715,8 +743,8 @@ class DatabaseFileSystem:
                 if files_only:
                     file_line_matches = [file_line_matches[0]]
 
-                result_candidates.append(
-                    FileCandidate(
+                result_files.append(
+                    File(
                         path=file_path,
                         evidence=[
                             GrepEvidence(
@@ -729,28 +757,19 @@ class DatabaseFileSystem:
                 total_matches += len(file_line_matches)
 
                 if max_results > 0 and total_matches >= max_results:
-                    truncated = True
                     break
 
         if count_only:
             total = files_matched if files_only else total_matches
-            return GrepResult(
+            return FileSearchResult(
                 success=True,
                 message=f"Count: {total}",
-                pattern=pattern,
-                files_searched=files_searched,
-                files_matched=files_matched,
-                truncated=truncated,
             )
 
-        return GrepResult(
+        return FileSearchResult(
             success=True,
             message=f"Found {total_matches} match(es) in {files_matched} file(s)",
-            file_candidates=result_candidates,
-            pattern=pattern,
-            files_searched=files_searched,
-            files_matched=files_matched,
-            truncated=truncated,
+            files=result_files,
         )
 
     async def tree(
@@ -760,9 +779,10 @@ class DatabaseFileSystem:
         max_depth: int | None = None,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> TreeResult:
+    ) -> FileSearchResult:
         if self.storage_provider is not None:
-            return await self.storage_provider.storage_tree(path, max_depth=max_depth)
+            old = await self.storage_provider.storage_tree(path, max_depth=max_depth)
+            return self._search_to_internal(old)
         sess = self._require_session(session)
         path = normalize_path(path)
 
@@ -770,12 +790,12 @@ class DatabaseFileSystem:
         if path != "/":
             dir_file = await self._get_file_record(sess, path)
             if not dir_file:
-                return TreeResult(
+                return FileSearchResult(
                     success=False,
                     message=f"Directory not found: {path}",
                 )
             if not dir_file.is_directory:
-                return TreeResult(
+                return FileSearchResult(
                     success=False,
                     message=f"Not a directory: {path}",
                 )
@@ -799,16 +819,17 @@ class DatabaseFileSystem:
         result = await sess.execute(select(model).where(*conditions))
         all_files = list(result.scalars().all())
 
-        candidates: list[FileCandidate] = []
+        files: list[File] = []
         total_files = 0
         total_dirs = 0
 
         for f in all_files:
             info = file_to_info(f)
             depth = info.path.count("/") - base_depth
-            candidates.append(
-                FileCandidate(
+            files.append(
+                File(
                     path=info.path,
+                    is_directory=info.is_directory,
                     evidence=[
                         TreeEvidence(
                             operation="tree",
@@ -823,11 +844,11 @@ class DatabaseFileSystem:
             else:
                 total_files += 1
 
-        candidates.sort(key=lambda c: c.path)
-        return TreeResult(
+        files.sort(key=lambda f: f.path)
+        return FileSearchResult(
             success=True,
             message=f"{total_dirs} directories, {total_files} files",
-            file_candidates=candidates,
+            files=files,
         )
 
     # ------------------------------------------------------------------
@@ -840,17 +861,17 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> TrashResult:
+    ) -> FileSearchResult:
         sess = self._require_session(session)
         model = self.file_model
         conditions = [model.deleted_at.is_not(None)]  # type: ignore[unresolved-attribute]
         if owner_id is not None:
             conditions.append(model.owner_id == owner_id)
         result = await sess.execute(select(model).where(*conditions))
-        files = result.scalars().all()
+        db_files = result.scalars().all()
 
-        candidates = [
-            FileCandidate(
+        files = [
+            File(
                 path=f.original_path or f.path,
                 evidence=[
                     TrashEvidence(
@@ -860,13 +881,13 @@ class DatabaseFileSystem:
                     )
                 ],
             )
-            for f in files
+            for f in db_files
         ]
 
-        return TrashResult(
+        return FileSearchResult(
             success=True,
-            message=f"Found {len(candidates)} items in trash",
-            file_candidates=candidates,
+            message=f"Found {len(files)} items in trash",
+            files=files,
         )
 
     async def restore_from_trash(
@@ -876,7 +897,7 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> RestoreResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         path = normalize_path(path)
 
@@ -891,7 +912,7 @@ class DatabaseFileSystem:
         file = result.scalar_one_or_none()
 
         if not file:
-            return RestoreResult(success=False, message=f"File not in trash: {path}")
+            return FileOperationResult(success=False, message=f"File not in trash: {path}")
 
         original = file.original_path or path
 
@@ -936,10 +957,10 @@ class DatabaseFileSystem:
 
         await sess.flush()
 
-        return RestoreResult(
+        return FileOperationResult(
             success=True,
             message=f"Restored from trash: {path}",
-            path=path,
+            file=File(path=path),
         )
 
     async def empty_trash(
@@ -948,28 +969,26 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> DeleteResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         model = self.file_model
         conditions = [model.deleted_at.is_not(None)]  # type: ignore[unresolved-attribute]
         if owner_id is not None:
             conditions.append(model.owner_id == owner_id)
         result = await sess.execute(select(model).where(*conditions))
-        files = result.scalars().all()
+        db_files = result.scalars().all()
 
-        count = len(files)
-        for file in files:
+        count = len(db_files)
+        for file in db_files:
             await self.version_provider.delete_versions(sess, file.id)
             await self._delete_content(file.original_path or file.path, sess)
             await sess.delete(file)
 
         await sess.flush()
 
-        return DeleteResult(
+        return FileOperationResult(
             success=True,
             message=f"Permanently deleted {count} items from trash",
-            permanent=True,
-            total_deleted=count,
         )
 
     # ------------------------------------------------------------------
@@ -984,7 +1003,7 @@ class DatabaseFileSystem:
         *,
         weight: float = 1.0,
         session: AsyncSession | None = None,
-    ) -> ConnectionResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         model = self.file_connection_model
         path = f"{source_path}[{connection_type}]{target_path}"
@@ -995,12 +1014,10 @@ class DatabaseFileSystem:
         if existing is not None:
             existing.weight = weight
             await sess.flush()
-            return ConnectionResult(
-                path=path,
-                source_path=source_path,
-                target_path=target_path,
-                connection_type=connection_type,
+            return FileOperationResult(
+                success=True,
                 message="Connection updated",
+                file=File(path=path),
             )
 
         record = model(
@@ -1012,12 +1029,10 @@ class DatabaseFileSystem:
         )
         sess.add(record)
         await sess.flush()
-        return ConnectionResult(
-            path=path,
-            source_path=source_path,
-            target_path=target_path,
-            connection_type=connection_type,
+        return FileOperationResult(
+            success=True,
             message="Connection created",
+            file=File(path=path),
         )
 
     async def delete_connection(
@@ -1027,7 +1042,7 @@ class DatabaseFileSystem:
         *,
         connection_type: str | None = None,
         session: AsyncSession | None = None,
-    ) -> ConnectionResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         model = self.file_connection_model
 
@@ -1036,22 +1051,17 @@ class DatabaseFileSystem:
             result = await sess.execute(select(model).where(model.path == path))
             row = result.scalar_one_or_none()
             if row is None:
-                return ConnectionResult(
+                return FileOperationResult(
                     success=False,
-                    path=path,
-                    source_path=source_path,
-                    target_path=target_path,
-                    connection_type=connection_type,
                     message=f"Connection not found: {path}",
+                    file=File(path=path),
                 )
             await sess.delete(row)
             await sess.flush()
-            return ConnectionResult(
-                path=path,
-                source_path=source_path,
-                target_path=target_path,
-                connection_type=connection_type,
+            return FileOperationResult(
+                success=True,
                 message="Connection deleted",
+                file=File(path=path),
             )
 
         # Delete all connections between source and target
@@ -1063,18 +1073,15 @@ class DatabaseFileSystem:
         )
         rows = list(result.scalars().all())
         if not rows:
-            return ConnectionResult(
+            return FileOperationResult(
                 success=False,
-                source_path=source_path,
-                target_path=target_path,
                 message=f"No connections found from {source_path} to {target_path}",
             )
         for row in rows:
             await sess.delete(row)
         await sess.flush()
-        return ConnectionResult(
-            source_path=source_path,
-            target_path=target_path,
+        return FileOperationResult(
+            success=True,
             message=f"Deleted {len(rows)} connection(s)",
         )
 
@@ -1117,7 +1124,7 @@ class DatabaseFileSystem:
         direction: str = "both",
         connection_type: str | None = None,
         session: AsyncSession | None = None,
-    ) -> ConnectionListResult:
+    ) -> FileSearchResult:
         sess = self._require_session(session)
         model = self.file_connection_model
         conditions = []
@@ -1134,8 +1141,21 @@ class DatabaseFileSystem:
 
         stmt = select(model).where(*conditions)
         result = await sess.execute(stmt)
-        connections = list(result.scalars().all())
-        return ConnectionListResult(connections=connections, path=path)  # type: ignore[arg-type]
+        db_connections = list(result.scalars().all())
+        connections = [
+            FileConnection(
+                source=Ref(path=c.source_path),
+                target=Ref(path=c.target_path),
+                type=c.type,
+                weight=c.weight,
+            )
+            for c in db_connections
+        ]
+        return FileSearchResult(
+            success=True,
+            message=f"Found {len(connections)} connection(s)",
+            connections=connections,
+        )
 
     # ------------------------------------------------------------------
     # Directory helpers (inlined from DirectoryService)
@@ -1286,20 +1306,23 @@ class DatabaseFileSystem:
             return False
         return self.graph_provider.has_edge(source, target)
 
-    async def graph_predecessors(self, path: str) -> PredecessorsResult:
+    async def graph_predecessors(self, path: str) -> FileSearchResult:
         if self.graph_provider is None:
-            return PredecessorsResult(success=True, message="No graph provider")
-        return await self.graph_provider.predecessors(path)
+            return FileSearchResult(success=True, message="No graph provider")
+        old = await self.graph_provider.predecessors(path)
+        return self._search_to_internal(old)
 
-    async def graph_successors(self, path: str) -> SuccessorsResult:
+    async def graph_successors(self, path: str) -> FileSearchResult:
         if self.graph_provider is None:
-            return SuccessorsResult(success=True, message="No graph provider")
-        return await self.graph_provider.successors(path)
+            return FileSearchResult(success=True, message="No graph provider")
+        old = await self.graph_provider.successors(path)
+        return self._search_to_internal(old)
 
-    async def graph_path_between(self, source: str, target: str) -> ShortestPathResult:
+    async def graph_path_between(self, source: str, target: str) -> FileSearchResult:
         if self.graph_provider is None:
-            return ShortestPathResult(success=True, message="No path found")
-        return await self.graph_provider.path_between(source, target)
+            return FileSearchResult(success=True, message="No path found")
+        old = await self.graph_provider.path_between(source, target)
+        return self._search_to_internal(old)
 
     async def graph_contains(self, path: str) -> list[Ref]:
         if self.graph_provider is None:
@@ -1333,7 +1356,7 @@ class DatabaseFileSystem:
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-    ) -> ChunkResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await self.chunk_provider.replace_file_chunks(sess, file_path, chunks)
 
@@ -1342,7 +1365,7 @@ class DatabaseFileSystem:
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> ChunkResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await self.chunk_provider.delete_file_chunks(sess, file_path)
 
@@ -1351,25 +1374,25 @@ class DatabaseFileSystem:
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> ChunkListResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await self.chunk_provider.list_file_chunks(sess, file_path)
 
     async def write_chunk(
         self,
-        chunk: FileChunkBase,
+        chunk: FileChunkModelBase,
         *,
         session: AsyncSession | None = None,
-    ) -> ChunkResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await self.chunk_provider.write_chunk(sess, chunk)
 
     async def write_chunks(
         self,
-        chunks: list[FileChunkBase],
+        chunks: list[FileChunkModelBase],
         *,
         session: AsyncSession | None = None,
-    ) -> BatchChunkResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         return await self.chunk_provider.write_chunks(sess, chunks)
 
@@ -1379,37 +1402,35 @@ class DatabaseFileSystem:
 
     async def write_file(
         self,
-        file: FileBase,
+        file: FileModelBase,
         *,
         overwrite: bool = True,
         created_by: str = "agent",
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         """Write a single file from a model instance. Delegates to write_files."""
         sess = self._require_session(session)
-        result = await self.write_files(
+        batch = await self.write_files(
             [file],
             overwrite=overwrite,
             created_by=created_by,
             session=sess,
             owner_id=owner_id,
         )
-        if result.results:
-            return result.results[0]
-        return WriteResult(success=result.success, message=result.message, path=file.path)
+        return batch
 
     async def write_files(
         self,
-        files: list[FileBase],
+        files: list[FileModelBase],
         *,
         overwrite: bool = True,
         created_by: str = "agent",
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> BatchWriteResult:
+    ) -> FileOperationResult:
         """Batch write files from model instances with minimized DB queries.
 
         One SELECT IN for existing records, per-file versioning, one flush.
@@ -1417,26 +1438,28 @@ class DatabaseFileSystem:
         """
         sess = self._require_session(session)
         now = datetime.now(UTC)
-        results_by_idx: dict[int, WriteResult] = {}
+        results_by_idx: dict[int, FileOperationResult] = {}
 
         if not files:
-            return BatchWriteResult(success=True, message="No files to write")
+            return FileOperationResult(success=True, message="No files to write")
 
         # Extract and validate paths, tracking original index
         valid_items: list[tuple[int, str, str]] = []  # (idx, path, content)
         for i, f in enumerate(files):
             valid, error = validate_path(f.path)
             if not valid:
-                results_by_idx[i] = WriteResult(success=False, message=error, path=f.path)
+                results_by_idx[i] = FileOperationResult(
+                    success=False, message=error, file=File(path=f.path)
+                )
                 continue
 
             path = normalize_path(f.path)
             _, name = split_path(path)
             if not is_text_file(name):
-                results_by_idx[i] = WriteResult(
+                results_by_idx[i] = FileOperationResult(
                     success=False,
                     message=f"Cannot write non-text file: {name}",
-                    path=path,
+                    file=File(path=path),
                 )
                 continue
 
@@ -1450,10 +1473,10 @@ class DatabaseFileSystem:
             if path in seen_paths:
                 # Supersede earlier entry
                 prev_idx = valid_items[seen_paths[path]][0]
-                results_by_idx[prev_idx] = WriteResult(
+                results_by_idx[prev_idx] = FileOperationResult(
                     success=False,
                     message=f"Superseded by later entry in batch: {path}",
-                    path=path,
+                    file=File(path=path),
                 )
             seen_paths[path] = len(deduped_items)
             deduped_items.append(item)
@@ -1464,12 +1487,9 @@ class DatabaseFileSystem:
             results = [results_by_idx[i] for i in range(len(files))]
             succeeded = sum(1 for r in results if r.success)
             failed = len(results) - succeeded
-            return BatchWriteResult(
+            return FileOperationResult(
                 success=failed == 0,
                 message=f"Wrote {succeeded} file(s), {failed} failed",
-                results=results,
-                succeeded=succeeded,
-                failed=failed,
             )
 
         # ONE query: batch lookup existing records
@@ -1484,18 +1504,18 @@ class DatabaseFileSystem:
 
                 if existing:
                     if existing.is_directory:
-                        results_by_idx[idx] = WriteResult(
+                        results_by_idx[idx] = FileOperationResult(
                             success=False,
                             message=f"Path is a directory: {path}",
-                            path=path,
+                            file=File(path=path),
                         )
                         continue
 
                     if not overwrite and not existing.deleted_at:
-                        results_by_idx[idx] = WriteResult(
+                        results_by_idx[idx] = FileOperationResult(
                             success=False,
                             message=f"File already exists: {path}",
-                            path=path,
+                            file=File(path=path),
                         )
                         continue
 
@@ -1527,12 +1547,10 @@ class DatabaseFileSystem:
                         )
 
                     await self._write_content(path, content, sess)
-                    results_by_idx[idx] = WriteResult(
+                    results_by_idx[idx] = FileOperationResult(
                         success=True,
                         message=f"Updated: {path} (v{existing.current_version})",
-                        path=path,
-                        created=False,
-                        version=existing.current_version,
+                        file=File(path=path, current_version=existing.current_version),
                     )
                 else:
                     # New file
@@ -1553,16 +1571,16 @@ class DatabaseFileSystem:
                         sess, new_file, "", content, created_by
                     )
                     await self._write_content(path, content, sess)
-                    results_by_idx[idx] = WriteResult(
+                    results_by_idx[idx] = FileOperationResult(
                         success=True,
                         message=f"Created: {path} (v1)",
-                        path=path,
-                        created=True,
-                        version=1,
+                        file=File(path=path, current_version=1),
                     )
             except Exception as e:
-                results_by_idx[idx] = WriteResult(
-                    success=False, message=f"Write failed: {e}", path=path
+                results_by_idx[idx] = FileOperationResult(
+                    success=False,
+                    message=f"Write failed: {e}",
+                    file=File(path=path),
                 )
 
         await sess.flush()
@@ -1570,7 +1588,7 @@ class DatabaseFileSystem:
         results = [results_by_idx[i] for i in range(len(files))]
         succeeded = sum(1 for r in results if r.success)
         failed = len(results) - succeeded
-        return BatchWriteResult(
+        return _BatchFileResult(
             success=failed == 0,
             message=f"Wrote {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
             results=results,
@@ -1588,16 +1606,17 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> VersionResult:
+    ) -> FileSearchResult:
         sess = self._require_session(session)
         path = normalize_path(path)
         file = await self._get_file_record(sess, path)
         if not file:
-            return VersionResult(success=False, message=f"File not found: {path}")
+            return FileSearchResult(success=False, message=f"File not found: {path}")
         versions = await self.version_provider.list_versions(sess, file)
-        candidates = [
-            FileCandidate(
+        files = [
+            File(
                 path=f"{path}@{v.version}",
+                current_version=v.version,
                 evidence=[
                     VersionEvidence(
                         operation="version",
@@ -1611,10 +1630,10 @@ class DatabaseFileSystem:
             )
             for v in versions
         ]
-        return VersionResult(
+        return FileSearchResult(
             success=True,
             message=f"Found {len(versions)} version(s)",
-            file_candidates=candidates,
+            files=files,
         )
 
     async def get_version_content(
@@ -1624,22 +1643,26 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> GetVersionContentResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         path = normalize_path(path)
         file = await self._get_file_record(sess, path)
         if not file:
-            return GetVersionContentResult(
+            return FileOperationResult(
                 success=False,
                 message=f"File not found: {path}",
             )
         content = await self.version_provider.get_version_content(sess, file, version)
         if content is None:
-            return GetVersionContentResult(
+            return FileOperationResult(
                 success=False,
                 message=f"Version {version} not found for {path}",
             )
-        return GetVersionContentResult(success=True, message="OK", content=content)
+        return FileOperationResult(
+            success=True,
+            message="OK",
+            file=File(path=path, content=content, current_version=version),
+        )
 
     async def restore_version(
         self,
@@ -1648,29 +1671,28 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> RestoreResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         path = normalize_path(path)
         vc_result = await self.get_version_content(path, version, session=sess)
-        if not vc_result.success or vc_result.content is None:
-            return RestoreResult(
+        if not vc_result.success or not vc_result.file or vc_result.file.content is None:
+            return FileOperationResult(
                 success=False,
                 message=f"Version {version} not found for {path}",
             )
 
         write_result = await self.write(
             path,
-            vc_result.content,
+            vc_result.file.content,
             created_by="restore",
             session=sess,
         )
 
-        return RestoreResult(
+        new_version = write_result.file.current_version if write_result.file else 0
+        return FileOperationResult(
             success=True,
             message=f"Restored {path} to version {version}",
-            path=path,
-            restored_version=version,
-            version=write_result.version,
+            file=File(path=path, current_version=new_version),
         )
 
     async def verify_versions(
@@ -1679,15 +1701,15 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> VerifyVersionResult:
+    ) -> FileOperationResult:
         sess = self._require_session(session)
         path = normalize_path(path)
         file = await self._get_file_record(sess, path)
         if not file:
-            return VerifyVersionResult(
+            return FileOperationResult(
                 success=False,
                 message=f"File not found: {path}",
-                path=path,
+                file=File(path=path),
             )
         return await self.version_provider.verify_chain(sess, file)
 
@@ -1696,7 +1718,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> list[VerifyVersionResult]:
+    ) -> list[FileOperationResult]:
         sess = self._require_session(session)
         model = self.file_model
         result = await sess.execute(
@@ -1705,7 +1727,7 @@ class DatabaseFileSystem:
                 model.is_directory.is_(False),  # type: ignore[union-attr]
             )
         )
-        results: list[VerifyVersionResult] = []
+        results: list[FileOperationResult] = []
         for file in result.scalars().all():
             results.append(await self.version_provider.verify_chain(sess, file))  # noqa: PERF401
         return results
@@ -1804,21 +1826,22 @@ class DatabaseFileSystem:
             else:
                 await self.search_provider.delete([path])
 
-    async def vector_search(self, query: str, k: int = 10) -> VectorSearchResult:
+    async def vector_search(self, query: str, k: int = 10) -> FileSearchResult:
         """Embed *query*, call ``search_provider.vector_search()``, return result."""
         if self.embedding_provider is None:
-            return VectorSearchResult(
+            return FileSearchResult(
                 success=False,
                 message="Cannot search: no embedding provider configured",
             )
         if self.search_provider is None:
-            return VectorSearchResult(
+            return FileSearchResult(
                 success=False,
                 message="Cannot search: no search provider configured",
             )
 
         vector = await self._search_embed(query)
-        return await self.search_provider.vector_search(vector, k=k)
+        old = await self.search_provider.vector_search(vector, k=k)
+        return self._search_to_internal(old)
 
     async def lexical_search(
         self,

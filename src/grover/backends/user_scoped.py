@@ -19,42 +19,18 @@ from sqlmodel import select
 
 from grover.backends.database import DatabaseFileSystem
 from grover.exceptions import AuthenticationRequiredError
-from grover.results.operations import (
-    ChunkListResult,
-    ChunkResult,
-    DeleteResult,
-    EditResult,
-    ExistsResult,
-    FileInfoResult,
-    GetVersionContentResult,
-    MkdirResult,
-    MoveResult,
-    ReadResult,
-    RestoreResult,
-    ShareResult,
-    WriteResult,
-)
-from grover.results.search import (
-    FileCandidate,
-    GlobResult,
-    GrepResult,
-    ListDirEvidence,
-    ListDirResult,
-    ShareEvidence,
-    ShareSearchResult,
-    TrashResult,
-    TreeResult,
-    VersionResult,
-)
+from grover.models.internal.evidence import ListDirEvidence, ShareEvidence
+from grover.models.internal.ref import File
+from grover.models.internal.results import FileOperationResult, FileSearchResult
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.chunk import FileChunkBase
-    from grover.models.file import FileBase
-    from grover.models.share import FileShareBase
-    from grover.models.version import FileVersionBase
+    from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.database.file import FileModelBase
+    from grover.models.database.share import FileShareModelBase
+    from grover.models.database.version import FileVersionModelBase
     from grover.providers.chunks.protocol import ChunkProvider
     from grover.providers.embedding.protocol import EmbeddingProvider
     from grover.providers.graph.protocol import GraphProvider
@@ -78,12 +54,12 @@ class UserScopedFileSystem(DatabaseFileSystem):
 
     def __init__(
         self,
-        share_model: type[FileShareBase] | None = None,
+        share_model: type[FileShareModelBase] | None = None,
         *,
         dialect: str = "sqlite",
-        file_model: type[FileBase] | None = None,
-        file_version_model: type[FileVersionBase] | None = None,
-        file_chunk_model: type[FileChunkBase] | None = None,
+        file_model: type[FileModelBase] | None = None,
+        file_version_model: type[FileVersionModelBase] | None = None,
+        file_chunk_model: type[FileChunkModelBase] | None = None,
         schema: str | None = None,
         storage_provider: StorageProvider | None = None,
         graph_provider: GraphProvider | None = None,
@@ -181,9 +157,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
             return None
         return self._strip_user_prefix(stored_path, user_id)
 
-    def _restore_file_info(self, info: FileInfoResult, user_id: str) -> FileInfoResult:
-        """Strip user prefix from a FileInfoResult's path."""
-        info.path = self._strip_user_prefix(info.path, user_id)
+    def _restore_file_info(self, info: FileOperationResult, user_id: str) -> FileOperationResult:
+        """Strip user prefix from a FileOperationResult's file path."""
+        if info.file:
+            info.file.path = self._strip_user_prefix(info.file.path, user_id)
         return info
 
     # ------------------------------------------------------------------
@@ -199,7 +176,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         granted_by: str,
         *,
         expires_at: datetime | None = None,
-    ) -> FileShareBase:
+    ) -> FileShareModelBase:
         """Create a share record. Flushes but does not commit."""
         if permission not in ("read", "write"):
             raise ValueError(f"Invalid permission: {permission!r}. Must be 'read' or 'write'.")
@@ -241,7 +218,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         self,
         session: AsyncSession,
         path: str,
-    ) -> list[FileShareBase]:
+    ) -> list[FileShareModelBase]:
         """List all shares for a given path."""
         assert self._share_model is not None
         path = normalize_path(path)
@@ -253,7 +230,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         self,
         session: AsyncSession,
         grantee_id: str,
-    ) -> list[FileShareBase]:
+    ) -> list[FileShareModelBase]:
         """List all shares granted to a grantee."""
         assert self._share_model is not None
         model = self._share_model
@@ -265,7 +242,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         session: AsyncSession,
         grantee_id: str,
         prefix: str,
-    ) -> list[FileShareBase]:
+    ) -> list[FileShareModelBase]:
         """List non-expired shares for *grantee_id* strictly under *prefix*."""
         assert self._share_model is not None
         prefix = normalize_path(prefix)
@@ -281,7 +258,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             )
         )
         shares = result.scalars().all()
-        active: list[FileShareBase] = []
+        active: list[FileShareModelBase] = []
         for share in shares:
             if not share.path.startswith(prefix_slash):
                 continue
@@ -399,7 +376,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         segments: list[str],
         user_id: str,
         session: AsyncSession,
-    ) -> ListDirResult:
+    ) -> FileSearchResult:
         """List virtual ``@shared/`` directories.
 
         - ``/@shared`` → list distinct owners who shared with *user_id*
@@ -407,7 +384,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         - ``/@shared/{owner}/sub/...`` → list sub-path (permission-checked)
         """
         if self._share_model is None:
-            return ListDirResult(
+            return FileSearchResult(
                 success=True,
                 message="No sharing configured",
             )
@@ -420,11 +397,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 parts = share.path.strip("/").split("/")
                 if parts:
                     owners.add(parts[0])
-            result_candidates: list[FileCandidate] = []
+            result_files: list[File] = []
             for owner in sorted(owners):
                 entry_path = f"/@shared/{owner}"
-                result_candidates.append(
-                    FileCandidate(
+                result_files.append(
+                    File(
                         path=entry_path,
                         evidence=[
                             ListDirEvidence(
@@ -434,10 +411,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
                         ],
                     )
                 )
-            return ListDirResult(
+            return FileSearchResult(
                 success=True,
-                message=f"Found {len(result_candidates)} shared owner(s)",
-                file_candidates=result_candidates,
+                message=f"Found {len(result_files)} shared owner(s)",
+                files=result_files,
             )
 
         # /@shared/{owner}/... — resolve to /{owner}/... and list
@@ -479,7 +456,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             else:
                 direct_files.add(remainder)
 
-        result_candidates: list[FileCandidate] = []
+        result_files: list[File] = []
         base = shared_prefix if sub_path == "/" else f"{shared_prefix}{sub_path}"
 
         for name in sorted(direct_files):
@@ -492,8 +469,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             except Exception:
                 pass
             entry_path = f"{base}/{name}"
-            result_candidates.append(
-                FileCandidate(
+            result_files.append(
+                File(
                     path=entry_path,
                     evidence=[
                         ListDirEvidence(
@@ -507,8 +484,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
 
         for name in sorted(child_dirs):
             entry_path = f"{base}/{name}"
-            result_candidates.append(
-                FileCandidate(
+            result_files.append(
+                File(
                     path=entry_path,
                     evidence=[
                         ListDirEvidence(
@@ -519,10 +496,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 )
             )
 
-        return ListDirResult(
+        return FileSearchResult(
             success=True,
-            message=f"Found {len(result_candidates)} shared item(s)",
-            file_candidates=result_candidates,
+            message=f"Found {len(result_files)} shared item(s)",
+            files=result_files,
         )
 
     # ------------------------------------------------------------------
@@ -537,7 +514,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ReadResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -546,7 +523,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             await self._check_share_access(sess, stored, uid, "read")
         result = await super().read(stored, offset, limit, session=sess)
         orig = path if is_shared else None
-        result.path = self._restore_path(result.path, uid, orig) or ""
+        if result.file:
+            result.file.path = self._restore_path(result.file.path, uid, orig) or ""
         return result
 
     async def write(
@@ -559,7 +537,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -575,7 +553,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             owner_id=uid,
         )
         orig = path if is_shared else None
-        result.path = self._restore_path(result.path, uid, orig) or ""
+        if result.file:
+            result.file.path = self._restore_path(result.file.path, uid, orig) or ""
         return result
 
     async def edit(
@@ -588,7 +567,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> EditResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -604,7 +583,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             session=sess,
         )
         orig = path if is_shared else None
-        result.path = self._restore_path(result.path, uid, orig) or ""
+        if result.file:
+            result.file.path = self._restore_path(result.file.path, uid, orig) or ""
         return result
 
     async def delete(
@@ -614,7 +594,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> DeleteResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -623,7 +603,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             await self._check_share_access(sess, stored, uid, "write")
         result = await super().delete(stored, permanent, session=sess)
         orig = path if is_shared else None
-        result.path = self._restore_path(result.path, uid, orig) or ""
+        if result.file:
+            result.file.path = self._restore_path(result.file.path, uid, orig) or ""
         return result
 
     async def mkdir(
@@ -633,9 +614,9 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> MkdirResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
-        is_shared, owner, _rest = self._is_shared_access(path)
+        is_shared, _owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
         sess = self._require_session(session)
         if is_shared:
@@ -647,34 +628,21 @@ class UserScopedFileSystem(DatabaseFileSystem):
             owner_id=uid,
         )
         if error is not None:
-            return MkdirResult(success=False, message=error)
+            return FileOperationResult(success=False, message=error)
         stored = normalize_path(stored)
         # For shared paths, display the @shared path; for own paths, strip prefix
-        if is_shared:
-            display_path = path
-
-            def _display(d: str) -> str:
-                assert owner is not None
-                stripped = self._strip_user_prefix(d, owner)
-                return f"/@shared/{owner}{stripped}" if stripped != "/" else f"/@shared/{owner}"
-        else:
-            display_path = self._strip_user_prefix(stored, uid)
-
-            def _display(d: str) -> str:
-                return self._strip_user_prefix(d, uid)
+        display_path = path if is_shared else self._strip_user_prefix(stored, uid)
 
         if created_dirs:
-            return MkdirResult(
+            return FileOperationResult(
                 success=True,
                 message=f"Created directory: {display_path}",
-                path=display_path,
-                created_dirs=[_display(d) for d in created_dirs],
+                file=File(path=display_path, is_directory=True),
             )
-        return MkdirResult(
+        return FileOperationResult(
             success=True,
             message=f"Directory already exists: {display_path}",
-            path=display_path,
-            created_dirs=[],
+            file=File(path=display_path, is_directory=True),
         )
 
     async def list_dir(
@@ -683,7 +651,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListDirResult:
+    ) -> FileSearchResult:
         uid = self._require_user_id(user_id)
         sess = self._require_session(session)
 
@@ -700,8 +668,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
 
         # At root, add virtual @shared/ entry
         if path == "/":
-            result.file_candidates.append(
-                FileCandidate(
+            result.files.append(
+                File(
                     path="/@shared",
                     evidence=[
                         ListDirEvidence(
@@ -721,7 +689,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ExistsResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -730,7 +698,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             try:
                 await self._check_share_access(sess, stored, uid, "read")
             except PermissionError:
-                return ExistsResult(exists=False, path=path)
+                return FileOperationResult(success=False, message="Not found")
         return await super().exists(stored, session=sess)
 
     async def get_info(
@@ -739,7 +707,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> FileInfoResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -748,11 +716,12 @@ class UserScopedFileSystem(DatabaseFileSystem):
             try:
                 await self._check_share_access(sess, stored, uid, "read")
             except PermissionError:
-                return FileInfoResult(success=False, message="Access denied", path=path)
+                return FileOperationResult(success=False, message="Access denied")
         info = await super().get_info(stored, session=sess)
         if info.success:
             if is_shared:
-                info.path = path
+                if info.file:
+                    info.file.path = path
             else:
                 self._restore_file_info(info, uid)
         return info
@@ -765,7 +734,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         session: AsyncSession | None = None,
         follow: bool = False,
         user_id: str | None = None,
-    ) -> MoveResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         src_shared = self._is_shared_access(src)[0]
         dest_shared = self._is_shared_access(dest)[0]
@@ -787,10 +756,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
         # Update share paths after successful follow-move
         if result.success and follow and self._share_model is not None:
             await self._update_share_paths(sess, src_stored, dest_stored)
-        src_orig = src if src_shared else None
         dest_orig = dest if dest_shared else None
-        result.old_path = self._restore_path(result.old_path, uid, src_orig) or result.old_path
-        result.new_path = self._restore_path(result.new_path, uid, dest_orig) or result.new_path
+        if result.file:
+            restored = self._restore_path(result.file.path, uid, dest_orig)
+            result.file.path = restored or result.file.path
         return result
 
     async def copy(
@@ -800,7 +769,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> WriteResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         src_shared = self._is_shared_access(src)[0]
         dest_shared = self._is_shared_access(dest)[0]
@@ -815,18 +784,18 @@ class UserScopedFileSystem(DatabaseFileSystem):
         # (copy_file calls self.write which would re-enter our override)
         src_file = await self._get_file_record(sess, src_stored)
         if not src_file:
-            return WriteResult(
+            return FileOperationResult(
                 success=False,
                 message=f"Source not found: {src}",
             )
         if src_file.is_directory:
-            return WriteResult(
+            return FileOperationResult(
                 success=False,
                 message="Directory copy not yet implemented",
             )
         content = await self._read_content(src_stored, sess)
         if content is None:
-            return WriteResult(
+            return FileOperationResult(
                 success=False,
                 message=f"Source content not found: {src}",
             )
@@ -839,7 +808,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             owner_id=uid,
         )
         dest_orig = dest if dest_shared else None
-        result.path = self._restore_path(result.path, uid, dest_orig) or ""
+        if result.file:
+            result.file.path = self._restore_path(result.file.path, uid, dest_orig) or ""
         return result
 
     # ------------------------------------------------------------------
@@ -853,7 +823,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> GlobResult:
+    ) -> FileSearchResult:
         uid = self._require_user_id(user_id)
         is_shared, owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
@@ -891,7 +861,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         files_only: bool = False,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> GrepResult:
+    ) -> FileSearchResult:
         uid = self._require_user_id(user_id)
         is_shared, owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
@@ -905,10 +875,9 @@ class UserScopedFileSystem(DatabaseFileSystem):
         if glob_filter is not None:
             glob_result = await super().glob(glob_filter, stored, session=sess)
             if not glob_result.success:
-                return GrepResult(
+                return FileSearchResult(
                     success=False,
                     message=glob_result.message,
-                    pattern=pattern,
                 )
             # Pass candidate paths as a synthetic glob filter that matches
             # the resolved stored paths. Since super().grep with glob_filter
@@ -917,12 +886,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
             resolved_glob_filter = None
 
             # Get the set of candidate file paths from glob
-            candidate_paths = set(glob_result.files())
+            candidate_paths = {f.path for f in glob_result.files}
             if not candidate_paths:
-                return GrepResult(
+                return FileSearchResult(
                     success=True,
                     message="No files match glob filter",
-                    pattern=pattern,
                 )
 
         result = await super().grep(
@@ -947,9 +915,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             import copy as _copy
 
             result = _copy.copy(result)
-            result.file_candidates = [
-                c for c in result.file_candidates if c.path in candidate_paths
-            ]
+            result.files = [c for c in result.files if c.path in candidate_paths]
 
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
@@ -971,7 +937,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         max_depth: int | None = None,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> TreeResult:
+    ) -> FileSearchResult:
         uid = self._require_user_id(user_id)
         is_shared, owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
@@ -1006,7 +972,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> VersionResult:
+    ) -> FileSearchResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -1022,7 +988,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> GetVersionContentResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -1038,7 +1004,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> RestoreResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -1048,26 +1014,25 @@ class UserScopedFileSystem(DatabaseFileSystem):
         # Call super() methods directly to avoid polymorphic dispatch
         # (restore_version calls self.get_version_content and self.write)
         vc_result = await super().get_version_content(stored, version, session=sess)
-        if not vc_result.success or vc_result.content is None:
-            return RestoreResult(
+        if not vc_result.success or not vc_result.file or vc_result.file.content is None:
+            return FileOperationResult(
                 success=False,
                 message=f"Version {version} not found for {path}",
             )
         write_result = await super().write(
             stored,
-            vc_result.content,
+            vc_result.file.content,
             created_by="restore",
             session=sess,
         )
         orig = path if is_shared else None
-        result = RestoreResult(
+        restored_path = self._restore_path(stored, uid, orig) or ""
+        new_version = write_result.file.current_version if write_result.file else 0
+        return FileOperationResult(
             success=True,
             message=f"Restored {path} to version {version}",
-            path=self._restore_path(stored, uid, orig) or "",
-            restored_version=version,
-            version=write_result.version,
+            file=File(path=restored_path, current_version=new_version),
         )
-        return result
 
     # ------------------------------------------------------------------
     # Trash operations (overrides)
@@ -1079,7 +1044,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> TrashResult:
+    ) -> FileSearchResult:
         uid = self._require_user_id(user_id)
         result = await super().list_trash(
             session=session,
@@ -1096,7 +1061,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> RestoreResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         stored = self._resolve_path(path, uid)
         result = await super().restore_from_trash(
@@ -1104,7 +1069,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             session=session,
             owner_id=uid,
         )
-        result.path = self._restore_path(result.path, uid) or ""
+        if result.file:
+            result.file.path = self._restore_path(result.file.path, uid) or ""
         return result
 
     async def empty_trash(
@@ -1113,7 +1079,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         session: AsyncSession | None = None,
         owner_id: str | None = None,
         user_id: str | None = None,
-    ) -> DeleteResult:
+    ) -> FileOperationResult:
         uid = self._require_user_id(user_id)
         return await super().empty_trash(session=session, owner_id=uid)
 
@@ -1130,7 +1096,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         user_id: str,
         session: AsyncSession | None = None,
         expires_at: datetime | None = None,
-    ) -> ShareResult:
+    ) -> FileOperationResult:
         """Create a share on a user-facing path."""
         uid = self._require_user_id(user_id)
         if self._is_shared_access(path)[0]:
@@ -1147,13 +1113,13 @@ class UserScopedFileSystem(DatabaseFileSystem):
             uid,
             expires_at=expires_at,
         )
-        return ShareResult(
+        return FileOperationResult(
             success=True,
-            message=f"Shared {path} with {grantee_id}",
-            path=path,
-            grantee_id=share_record.grantee_id,
-            permission=share_record.permission,
-            granted_by=share_record.granted_by,
+            message=(
+                f"Shared {path} with {share_record.grantee_id} "
+                f"({share_record.permission}, granted by {share_record.granted_by})"
+            ),
+            file=File(path=path),
         )
 
     async def unshare(
@@ -1163,7 +1129,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         user_id: str,
         session: AsyncSession | None = None,
-    ) -> ShareResult:
+    ) -> FileOperationResult:
         """Remove a share on a user-facing path."""
         uid = self._require_user_id(user_id)
         if self._is_shared_access(path)[0]:
@@ -1174,17 +1140,15 @@ class UserScopedFileSystem(DatabaseFileSystem):
         sess = self._require_session(session)
         removed = await self._remove_share(sess, stored, grantee_id)
         if removed:
-            return ShareResult(
+            return FileOperationResult(
                 success=True,
                 message=f"Removed share on {path} for {grantee_id}",
-                path=path,
-                grantee_id=grantee_id,
+                file=File(path=path),
             )
-        return ShareResult(
+        return FileOperationResult(
             success=False,
             message=f"No share found on {path} for {grantee_id}",
-            path=path,
-            grantee_id=grantee_id,
+            file=File(path=path),
         )
 
     async def list_shares_on_path(
@@ -1193,21 +1157,21 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         user_id: str,
         session: AsyncSession | None = None,
-    ) -> ShareSearchResult:
+    ) -> FileSearchResult:
         """List shares on a user-facing path."""
         uid = self._require_user_id(user_id)
         if self._is_shared_access(path)[0]:
             raise PermissionError("Cannot manage shares on paths you do not own")
         if self._share_model is None:
-            return ShareSearchResult(
+            return FileSearchResult(
                 success=True,
                 message="No sharing configured",
             )
         stored = self._resolve_path(path, uid)
         sess = self._require_session(session)
         shares = await self._list_shares_on_path(sess, stored)
-        candidates = [
-            FileCandidate(
+        files = [
+            File(
                 path=path,
                 evidence=[
                     ShareEvidence(
@@ -1221,10 +1185,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
             )
             for s in shares
         ]
-        return ShareSearchResult(
+        return FileSearchResult(
             success=True,
             message=f"Found {len(shares)} share(s)",
-            file_candidates=candidates,
+            files=files,
         )
 
     async def list_shared_with_me(
@@ -1232,7 +1196,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         user_id: str,
         session: AsyncSession | None = None,
-    ) -> ShareSearchResult:
+    ) -> FileSearchResult:
         """List all shares granted to *user_id*.
 
         Converts stored ``/{owner}/rest`` paths to ``@shared/{owner}/rest``
@@ -1240,13 +1204,13 @@ class UserScopedFileSystem(DatabaseFileSystem):
         """
         uid = self._require_user_id(user_id)
         if self._share_model is None:
-            return ShareSearchResult(
+            return FileSearchResult(
                 success=True,
                 message="No sharing configured",
             )
         sess = self._require_session(session)
         shares = await self._list_shared_with(sess, uid)
-        candidates: list[FileCandidate] = []
+        files: list[File] = []
         for s in shares:
             # Convert stored /{owner}/rest to @shared/{owner}/rest
             parts = s.path.strip("/").split("/", 1)
@@ -1257,8 +1221,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 user_path = f"/@shared/{parts[0]}"
             else:
                 user_path = s.path
-            candidates.append(
-                FileCandidate(
+            files.append(
+                File(
                     path=user_path,
                     evidence=[
                         ShareEvidence(
@@ -1271,10 +1235,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
                     ],
                 )
             )
-        return ShareSearchResult(
+        return FileSearchResult(
             success=True,
             message=f"Found {len(shares)} share(s)",
-            file_candidates=candidates,
+            files=files,
         )
 
     # ------------------------------------------------------------------
@@ -1287,7 +1251,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-    ) -> ChunkResult:
+    ) -> FileOperationResult:
         # No user scoping on replace — stored path should already be resolved
         return await super().replace_file_chunks(file_path, chunks, session=session)
 
@@ -1296,7 +1260,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> ChunkResult:
+    ) -> FileOperationResult:
         # No user scoping on delete — stored path should already be resolved
         return await super().delete_file_chunks(file_path, session=session)
 
@@ -1305,6 +1269,6 @@ class UserScopedFileSystem(DatabaseFileSystem):
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> ChunkListResult:
+    ) -> FileOperationResult:
         # No user scoping on list — stored path should already be resolved
         return await super().list_file_chunks(file_path, session=session)

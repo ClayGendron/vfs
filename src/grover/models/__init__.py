@@ -1,26 +1,66 @@
-"""SQLModel database models for Grover."""
+"""Grover models — re-exports from database/ and internal/."""
 
-from grover.models.chunk import FileChunk, FileChunkBase
-from grover.models.connection import FileConnection, FileConnectionBase
-from grover.models.file import (
-    File,
-    FileBase,
+from grover.models.database.chunk import FileChunkModel, FileChunkModelBase
+from grover.models.database.connection import FileConnectionModel, FileConnectionModelBase
+from grover.models.database.file import (
+    FileModel,
+    FileModelBase,
 )
-from grover.models.share import FileShare, FileShareBase
-from grover.models.vector import Vector, VectorType
-from grover.models.version import FileVersion, FileVersionBase
+from grover.models.database.share import FileShareModel, FileShareModelBase
+from grover.models.database.vector import Vector, VectorType
+from grover.models.database.version import FileVersionModel, FileVersionModelBase
+from grover.models.internal.evidence import (
+    Evidence,
+    GlobEvidence,
+    GraphEvidence,
+    GrepEvidence,
+    HybridEvidence,
+    LexicalEvidence,
+    LineMatch,
+    ListDirEvidence,
+    ShareEvidence,
+    TrashEvidence,
+    TreeEvidence,
+    VectorEvidence,
+    VersionEvidence,
+)
+from grover.models.internal.ref import (
+    File,
+    FileChunk,
+    FileConnection,
+    FileVersion,
+    Ref,
+)
 
 __all__ = [
+    "Evidence",
     "File",
-    "FileBase",
     "FileChunk",
-    "FileChunkBase",
+    "FileChunkModel",
+    "FileChunkModelBase",
     "FileConnection",
-    "FileConnectionBase",
-    "FileShare",
-    "FileShareBase",
+    "FileConnectionModel",
+    "FileConnectionModelBase",
+    "FileModel",
+    "FileModelBase",
+    "FileShareModel",
+    "FileShareModelBase",
     "FileVersion",
-    "FileVersionBase",
+    "FileVersionModel",
+    "FileVersionModelBase",
+    "GlobEvidence",
+    "GraphEvidence",
+    "GrepEvidence",
+    "HybridEvidence",
+    "LexicalEvidence",
+    "LineMatch",
+    "ListDirEvidence",
+    "Ref",
+    "ShareEvidence",
+    "TrashEvidence",
+    "TreeEvidence",
     "Vector",
+    "VectorEvidence",
     "VectorType",
+    "VersionEvidence",
 ]

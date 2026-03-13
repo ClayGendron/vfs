@@ -179,7 +179,7 @@ class TestRestoreVersion:
         assert "Restored" in result
         # Verify content was restored
         read = grover.read("/project/doc.txt")
-        assert read.content == "original"
+        assert read.file.content == "original"
 
     def test_restore_version_bad_version(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/doc.txt", "content")
@@ -235,7 +235,7 @@ class TestRestoreFromTrash:
         # File should be readable again
         read = grover.read("/project/restore_me.txt")
         assert read.success
-        assert read.content == "precious data"
+        assert read.file.content == "precious data"
 
     def test_restore_from_trash_not_in_trash(self, middleware: GroverMiddleware):
         tool = next(t for t in middleware.tools if t.name == "restore_from_trash")

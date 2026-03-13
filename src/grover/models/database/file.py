@@ -1,6 +1,6 @@
-"""File model
+"""FileModel — DB model for tracked files.
 
-Provides ``FileBase`` non-table base class.
+Provides ``FileModelBase`` non-table base class.
 Subclass with ``table=True`` and a custom ``__tablename__`` to use a
 different table name per backend.
 """
@@ -13,10 +13,10 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 
-from grover.models.vector import Vector, VectorType
+from .vector import Vector, VectorType
 
 
-class FileBase(SQLModel):
+class FileModelBase(SQLModel):
     """Base fields for a tracked file. Subclass with ``table=True`` for a concrete table."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -46,7 +46,7 @@ class FileBase(SQLModel):
     )
 
 
-class File(FileBase, table=True):
+class FileModel(FileModelBase, table=True):
     """Default file table — ``grover_files``."""
 
     __tablename__ = "grover_files"
