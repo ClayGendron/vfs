@@ -256,9 +256,7 @@ class TestFetch:
 
     @pytest.mark.asyncio
     async def test_fetch_missing(self, store, mock_index):
-        mock_index.similarity_search.return_value = _make_search_response(
-            [], ["id", "vector", "score"]
-        )
+        mock_index.similarity_search.return_value = _make_search_response([], ["id", "vector", "score"])
         results = await store.fetch(["/missing.py"])
         assert results == [None]
 

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
+from grover.models.internal.results import FileSearchSet
 from grover.providers.graph import RustworkxGraph
 from grover.providers.graph.protocol import GraphProvider
+
+_session = AsyncMock()
 
 # ======================================================================
 # Helper
@@ -20,6 +25,10 @@ def _score_for(result, path: str) -> float:
     raise KeyError(f"Path not found in result: {path!r}")
 
 
+def _paths(*paths: str) -> FileSearchSet:
+    return FileSearchSet.from_paths(list(paths))
+
+
 # ======================================================================
 # Centrality — PageRank
 # ======================================================================
@@ -30,7 +39,7 @@ class TestPageRank:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        result = await g.pagerank()
+        result = await g.pagerank(FileSearchSet(), session=_session)
         assert len(result) == 3
         total = sum(f.evidence[0].score for f in result.files)
         assert abs(total - 1.0) < 0.01
@@ -41,19 +50,20 @@ class TestPageRank:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        result = await g.pagerank(personalization={"/a.py": 1.0})
+        result = await g.pagerank(FileSearchSet(), personalization={"/a.py": 1.0}, session=_session)
         assert len(result) == 3
         # Personalization biases toward /a.py's neighborhood
         assert _score_for(result, "/a.py") > 0
 
     async def test_empty_graph(self) -> None:
         g = RustworkxGraph()
-        assert len(await g.pagerank()) == 0
+        g.loaded_at = 1.0  # prevent _ensure_fresh from calling from_sql
+        assert len(await g.pagerank(FileSearchSet(), session=_session)) == 0
 
     async def test_single_node(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        result = await g.pagerank()
+        result = await g.pagerank(FileSearchSet(), session=_session)
         assert len(result) == 1
         assert abs(_score_for(result, "/a.py") - 1.0) < 0.01
 
@@ -61,60 +71,18 @@ class TestPageRank:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         # /missing.py is not in the graph — should be silently skipped
-        result = await g.pagerank(personalization={"/missing.py": 1.0, "/a.py": 0.5})
+        result = await g.pagerank(
+            FileSearchSet(), personalization={"/missing.py": 1.0, "/a.py": 0.5}, session=_session
+        )
         assert len(result) == 2
 
     async def test_all_personalization_keys_missing(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         # All keys missing — falls back to uniform personalization
-        result = await g.pagerank(personalization={"/missing.py": 1.0})
+        result = await g.pagerank(FileSearchSet(), personalization={"/missing.py": 1.0}, session=_session)
         assert len(result) == 2
 
-    async def test_pagerank_with_unknown_candidates_includes_them(self) -> None:
-        """Unknown candidate paths appear in result as augmented nodes."""
-        from grover.models.internal.evidence import GraphEvidence
-        from grover.models.internal.ref import File
-        from grover.models.internal.results import FileSearchResult
-
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        candidates = FileSearchResult(
-            success=True,
-            files=[
-                File(path="/a.py", evidence=[GraphEvidence(operation="test")]),
-                File(path="/b.py", evidence=[GraphEvidence(operation="test")]),
-                File(path="/unknown.py", evidence=[GraphEvidence(operation="test")]),
-            ],
-        )
-        result = await g.pagerank(candidates=candidates)
-        assert result.success
-        result_paths = {f.path for f in result.files}
-        assert "/unknown.py" in result_paths
-
-    async def test_pagerank_with_chunk_candidate_infers_edge(self) -> None:
-        """Chunk candidate gets inferred edge to parent, appears connected."""
-        from grover.models.internal.evidence import GraphEvidence
-        from grover.models.internal.ref import File
-        from grover.models.internal.results import FileSearchResult
-
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        candidates = FileSearchResult(
-            success=True,
-            files=[
-                File(path="/a.py", evidence=[GraphEvidence(operation="test")]),
-                File(path="/a.py#login", evidence=[GraphEvidence(operation="test")]),
-            ],
-        )
-        result = await g.pagerank(candidates=candidates)
-        assert result.success
-        result_paths = {f.path for f in result.files}
-        assert "/a.py" in result_paths
-        assert "/a.py#login" in result_paths
-        # Chunk should have non-zero score due to inferred edge from /a.py
-        chunk_score = next(f.evidence[0].score for f in result.files if f.path == "/a.py#login")
-        assert chunk_score > 0
 
 
 # ======================================================================
@@ -127,7 +95,7 @@ class TestBetweennessCentrality:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        result = await g.betweenness_centrality()
+        result = await g.betweenness_centrality(FileSearchSet(), session=_session)
         assert _score_for(result, "/b.py") >= _score_for(result, "/a.py")
         assert _score_for(result, "/b.py") >= _score_for(result, "/c.py")
 
@@ -135,7 +103,7 @@ class TestBetweennessCentrality:
         g = RustworkxGraph()
         g.add_node("/a.py")
         g.add_node("/b.py")
-        result = await g.betweenness_centrality()
+        result = await g.betweenness_centrality(FileSearchSet(), session=_session)
         assert _score_for(result, "/a.py") == 0.0
         assert _score_for(result, "/b.py") == 0.0
 
@@ -155,7 +123,7 @@ class TestClosenessCentrality:
         g.add_edge("/b.py", "/center.py", "imports")
         g.add_edge("/center.py", "/c.py", "imports")
         g.add_edge("/c.py", "/center.py", "imports")
-        result = await g.closeness_centrality()
+        result = await g.closeness_centrality(FileSearchSet(), session=_session)
         assert _score_for(result, "/center.py") >= _score_for(result, "/a.py")
 
 
@@ -169,13 +137,14 @@ class TestKatzCentrality:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        result = await g.katz_centrality()
+        result = await g.katz_centrality(FileSearchSet(), session=_session)
         assert len(result) == 3
         assert all(f.evidence[0].score > 0 for f in result.files)
 
     async def test_empty_graph(self) -> None:
         g = RustworkxGraph()
-        assert len(await g.katz_centrality()) == 0
+        g.loaded_at = 1.0  # prevent _ensure_fresh from calling from_sql
+        assert len(await g.katz_centrality(FileSearchSet(), session=_session)) == 0
 
 
 # ======================================================================
@@ -189,7 +158,7 @@ class TestDegreeCentrality:
         g.add_edge("/hub.py", "/a.py", "imports")
         g.add_edge("/hub.py", "/b.py", "imports")
         g.add_edge("/c.py", "/hub.py", "imports")
-        result = await g.degree_centrality()
+        result = await g.degree_centrality(FileSearchSet(), session=_session)
         assert _score_for(result, "/hub.py") >= _score_for(result, "/a.py")
 
     async def test_in_vs_out(self) -> None:
@@ -198,68 +167,12 @@ class TestDegreeCentrality:
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "imports")
         g.add_edge("/d.py", "/b.py", "calls")
-        in_result = await g.in_degree_centrality()
-        out_result = await g.out_degree_centrality()
+        in_result = await g.in_degree_centrality(FileSearchSet(), session=_session)
+        out_result = await g.out_degree_centrality(FileSearchSet(), session=_session)
         # /b.py has 2 incoming edges
         assert _score_for(in_result, "/b.py") > _score_for(in_result, "/a.py")
         # /a.py has 2 outgoing edges
         assert _score_for(out_result, "/a.py") > _score_for(out_result, "/b.py")
-
-
-# ======================================================================
-# Connectivity
-# ======================================================================
-
-
-class TestConnectivity:
-    async def test_weakly_connected_single(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/c.py", "imports")
-        components = await g.weakly_connected_components()
-        assert len(components) == 1
-        assert components[0] == {"/a.py", "/b.py", "/c.py"}
-
-    async def test_weakly_connected_multiple(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_node("/c.py")
-        components = await g.weakly_connected_components()
-        assert len(components) == 2
-
-    async def test_strongly_connected_cycle(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/a.py", "imports")
-        components = await g.strongly_connected_components()
-        # The cycle {a, b} forms one SCC
-        scc_sizes = sorted(len(c) for c in components)
-        assert 2 in scc_sizes
-
-    async def test_strongly_connected_dag(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/c.py", "imports")
-        components = await g.strongly_connected_components()
-        # In a DAG, each node is its own SCC
-        assert all(len(c) == 1 for c in components)
-        assert len(components) == 3
-
-    async def test_is_weakly_connected_true(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        assert await g.is_weakly_connected() is True
-
-    async def test_is_weakly_connected_false(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py")
-        g.add_node("/b.py")
-        assert await g.is_weakly_connected() is False
-
-    async def test_is_weakly_connected_empty(self) -> None:
-        g = RustworkxGraph()
-        # Empty graph — NullGraph handled, returns True
-        assert await g.is_weakly_connected() is True
 
 
 # ======================================================================
@@ -272,16 +185,17 @@ class TestTraversal:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        assert set((await g.ancestors("/c.py")).paths) == {"/a.py", "/b.py"}
+        assert set((await g.ancestors(_paths("/c.py"), session=_session)).paths) == {"/a.py", "/b.py"}
 
     async def test_ancestors_no_parents(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        assert set((await g.ancestors("/a.py")).paths) == set()
+        assert set((await g.ancestors(_paths("/a.py"), session=_session)).paths) == set()
 
     async def test_ancestors_unknown_returns_empty(self) -> None:
         g = RustworkxGraph()
-        result = await g.ancestors("/missing.py")
+        g.loaded_at = 1.0  # prevent _ensure_fresh from calling from_sql
+        result = await g.ancestors(_paths("/missing.py"), session=_session)
         assert result.success
         assert len(result) == 0
 
@@ -289,84 +203,13 @@ class TestTraversal:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        assert set((await g.descendants("/a.py")).paths) == {"/b.py", "/c.py"}
+        assert set((await g.descendants(_paths("/a.py"), session=_session)).paths) == {"/b.py", "/c.py"}
 
     async def test_descendants_leaf(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        assert set((await g.descendants("/b.py")).paths) == set()
+        assert set((await g.descendants(_paths("/b.py"), session=_session)).paths) == set()
 
-    async def test_all_simple_paths_diamond(self) -> None:
-        # A->B->D and A->C->D: 2 distinct paths
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/a.py", "/c.py", "imports")
-        g.add_edge("/b.py", "/d.py", "imports")
-        g.add_edge("/c.py", "/d.py", "imports")
-        paths = await g.all_simple_paths("/a.py", "/d.py")
-        assert len(paths) == 2
-        path_sets = {tuple(p) for p in paths}
-        assert ("/a.py", "/b.py", "/d.py") in path_sets
-        assert ("/a.py", "/c.py", "/d.py") in path_sets
-
-    async def test_all_simple_paths_cutoff(self) -> None:
-        # A->B->C->D, A->D (direct)
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/c.py", "imports")
-        g.add_edge("/c.py", "/d.py", "imports")
-        g.add_edge("/a.py", "/d.py", "imports")
-        # With small cutoff, only short paths
-        paths = await g.all_simple_paths("/a.py", "/d.py", cutoff=2)
-        # cutoff=2 limits path length — only the direct A->D path (2 nodes)
-        assert len(paths) >= 1
-        for p in paths:
-            assert len(p) <= 2
-
-    async def test_all_simple_paths_no_path(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py")
-        g.add_node("/b.py")
-        paths = await g.all_simple_paths("/a.py", "/b.py")
-        assert paths == []
-
-    async def test_topological_sort_dag(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/c.py", "imports")
-        order = await g.topological_sort()
-        assert len(order) == 3
-        # All edges should go forward in the sort order
-        idx = {path: i for i, path in enumerate(order)}
-        assert idx["/a.py"] < idx["/b.py"]
-        assert idx["/b.py"] < idx["/c.py"]
-
-    async def test_topological_sort_cycle(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/a.py", "imports")
-        with pytest.raises(ValueError, match="Graph contains cycles"):
-            await g.topological_sort()
-
-    async def test_shortest_path_length_adjacent(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        result = await g.shortest_path_length("/a.py", "/b.py")
-        assert result == 1.0
-
-    async def test_shortest_path_length_multi_hop(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        g.add_edge("/b.py", "/c.py", "imports")
-        result = await g.shortest_path_length("/a.py", "/c.py")
-        # Minimal storage — all edges are unit weight
-        assert result == 2.0
-
-    async def test_shortest_path_length_no_path(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py")
-        g.add_node("/b.py")
-        assert await g.shortest_path_length("/a.py", "/b.py") is None
 
 
 # ======================================================================

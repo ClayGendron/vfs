@@ -39,9 +39,7 @@ class TestCreateShare:
         assert share.granted_by == "alice"
         assert share.id  # UUID set
 
-    async def test_create_share_write(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_create_share_write(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         share = await usfs._create_share(
             async_session,
             "/alice/project/",
@@ -51,9 +49,7 @@ class TestCreateShare:
         )
         assert share.permission == "write"
 
-    async def test_create_share_invalid_permission(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_create_share_invalid_permission(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         with pytest.raises(ValueError, match="Invalid permission"):
             await usfs._create_share(
                 async_session,
@@ -63,9 +59,7 @@ class TestCreateShare:
                 granted_by="alice",
             )
 
-    async def test_create_share_with_expiry(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_create_share_with_expiry(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         expires = datetime.now(UTC) + timedelta(hours=1)
         share = await usfs._create_share(
             async_session,
@@ -95,9 +89,7 @@ class TestRemoveShare:
         removed = await usfs._remove_share(async_session, "/alice/notes.md", "bob")
         assert removed is True
 
-    async def test_remove_share_nonexistent(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_remove_share_nonexistent(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         removed = await usfs._remove_share(async_session, "/nonexistent.md", "bob")
         assert removed is False
 
@@ -108,9 +100,7 @@ class TestRemoveShare:
 
 
 class TestListSharesOnPath:
-    async def test_list_shares_on_path(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_list_shares_on_path(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs._create_share(
             async_session,
             "/alice/notes.md",
@@ -130,9 +120,7 @@ class TestListSharesOnPath:
         grantees = {s.grantee_id for s in shares}
         assert grantees == {"bob", "charlie"}
 
-    async def test_list_shares_on_path_empty(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_list_shares_on_path_empty(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         shares = await usfs._list_shares_on_path(async_session, "/nobody/file.md")
         assert shares == []
 
@@ -170,9 +158,7 @@ class TestListSharedWith:
 
 
 class TestListSharesUnderPrefix:
-    async def test_list_shares_under_prefix_basic(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_list_shares_under_prefix_basic(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         """Returns shares strictly under the prefix."""
         await usfs._create_share(
             async_session,
@@ -193,9 +179,7 @@ class TestListSharesUnderPrefix:
         paths = {s.path for s in shares}
         assert paths == {"/alice/doc1.md", "/alice/doc2.md"}
 
-    async def test_list_shares_under_prefix_no_matches(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_list_shares_under_prefix_no_matches(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         """Returns empty list when no shares exist under prefix."""
         shares = await usfs._list_shares_under_prefix(async_session, "bob", "/alice")
         assert shares == []
@@ -326,9 +310,7 @@ class TestCheckPermission:
         result = await usfs._check_permission(async_session, "/alice/secret.md", "bob")
         assert result is False
 
-    async def test_write_required_read_share(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_write_required_read_share(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         """Write required but only read share exists -> False."""
         await usfs._create_share(
             async_session,
@@ -337,14 +319,10 @@ class TestCheckPermission:
             permission="read",
             granted_by="alice",
         )
-        result = await usfs._check_permission(
-            async_session, "/alice/notes.md", "bob", required="write"
-        )
+        result = await usfs._check_permission(async_session, "/alice/notes.md", "bob", required="write")
         assert result is False
 
-    async def test_write_required_write_share(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_write_required_write_share(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs._create_share(
             async_session,
             "/alice/notes.md",
@@ -352,14 +330,10 @@ class TestCheckPermission:
             permission="write",
             granted_by="alice",
         )
-        result = await usfs._check_permission(
-            async_session, "/alice/notes.md", "bob", required="write"
-        )
+        result = await usfs._check_permission(async_session, "/alice/notes.md", "bob", required="write")
         assert result is True
 
-    async def test_read_required_write_share(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_read_required_write_share(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         """Write share implies read access."""
         await usfs._create_share(
             async_session,
@@ -368,9 +342,7 @@ class TestCheckPermission:
             permission="write",
             granted_by="alice",
         )
-        result = await usfs._check_permission(
-            async_session, "/alice/notes.md", "bob", required="read"
-        )
+        result = await usfs._check_permission(async_session, "/alice/notes.md", "bob", required="read")
         assert result is True
 
     async def test_expired_share(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
@@ -401,9 +373,7 @@ class TestCheckPermission:
         result = await usfs._check_permission(async_session, "/alice/notes.md", "bob")
         assert result is True
 
-    async def test_root_share_grants_all(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_root_share_grants_all(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         """Share on / grants access to everything under it."""
         await usfs._create_share(
             async_session,
@@ -422,9 +392,7 @@ class TestCheckPermission:
 
 
 class TestUpdateSharePaths:
-    async def test_update_share_paths(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_update_share_paths(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs._create_share(
             async_session,
             "/alice/old/notes.md",
@@ -437,15 +405,11 @@ class TestUpdateSharePaths:
         shares = await usfs._list_shared_with(async_session, "bob")
         assert shares[0].path == "/alice/new/notes.md"
 
-    async def test_update_share_paths_no_matches(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_update_share_paths_no_matches(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         count = await usfs._update_share_paths(async_session, "/nonexistent", "/other")
         assert count == 0
 
-    async def test_update_share_paths_exact_match(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_update_share_paths_exact_match(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         """Exact path match also gets updated."""
         await usfs._create_share(
             async_session,
@@ -459,9 +423,7 @@ class TestUpdateSharePaths:
         shares = await usfs._list_shared_with(async_session, "bob")
         assert shares[0].path == "/alice/final.md"
 
-    async def test_update_share_paths_directory(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_update_share_paths_directory(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         """Directory share path and children get updated."""
         await usfs._create_share(
             async_session,

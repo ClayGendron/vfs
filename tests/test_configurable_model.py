@@ -303,7 +303,7 @@ class TestGraphConnectionsOnly:
             assert g.has_node("/wiki/a.md")
             assert g.has_node("/wiki/b.md")
             assert g.has_edge("/wiki/a.md", "/wiki/b.md")
-            assert g.node_count == 2
+            assert len(g.nodes) == 2
 
         await engine.dispose()
 
@@ -323,7 +323,7 @@ class TestGraphConnectionsOnly:
             await g.from_sql(session)
 
             # No connections → empty graph
-            assert g.node_count == 0
+            assert len(g.nodes) == 0
 
         await engine.dispose()
 
@@ -337,8 +337,8 @@ class TestGraphConnectionsOnly:
         async with factory() as session:
             g = RustworkxGraph()
             await g.from_sql(session)
-            assert g.node_count == 0
-            assert g.edge_count == 0
+            assert len(g.nodes) == 0
+            assert len(g.edges) == 0
 
         await engine.dispose()
 
@@ -368,7 +368,7 @@ class TestGraphConnectionsOnly:
             assert g.has_node("/default/x.py")
             assert g.has_node("/default/y.py")
             assert g.has_edge("/default/x.py", "/default/y.py")
-            assert g.node_count == 2
+            assert len(g.nodes) == 2
 
         await engine.dispose()
 

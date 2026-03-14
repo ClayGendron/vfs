@@ -21,9 +21,7 @@ from grover.providers.search.types import (
 # ------------------------------------------------------------------
 
 
-def _make_match(
-    match_id: str, score: float, metadata: dict | None = None, values: list | None = None
-):
+def _make_match(match_id: str, score: float, metadata: dict | None = None, values: list | None = None):
     """Create a mock Pinecone match object."""
     m = SimpleNamespace()
     m.id = match_id
@@ -33,9 +31,7 @@ def _make_match(
     return m
 
 
-def _make_index_model(
-    name: str, dimension: int = 128, metric: str = "cosine", host: str = "host.pinecone.io"
-):
+def _make_index_model(name: str, dimension: int = 128, metric: str = "cosine", host: str = "host.pinecone.io"):
     """Create a mock Pinecone IndexModel."""
     m = SimpleNamespace()
     m.name = name
@@ -303,9 +299,7 @@ class TestFetch:
 class TestNamespaces:
     @pytest.mark.asyncio
     async def test_list_namespaces(self, store, mock_index):
-        page = SimpleNamespace(
-            namespaces=[SimpleNamespace(name="ns1"), SimpleNamespace(name="ns2")]
-        )
+        page = SimpleNamespace(namespaces=[SimpleNamespace(name="ns1"), SimpleNamespace(name="ns2")])
         # list_namespaces() returns an async iterator directly, not a coroutine
         store._index.list_namespaces = MagicMock(return_value=_async_iter([page]))
         results = await store.list_namespaces()
@@ -376,9 +370,7 @@ class TestIndexLifecycle:
 class TestHybridSearch:
     @pytest.mark.asyncio
     async def test_hybrid_search_dense_only(self, store, mock_index):
-        mock_index.query.return_value = SimpleNamespace(
-            matches=[_make_match("/a.py", 0.9, {"content": "x"}, [0.1])]
-        )
+        mock_index.query.return_value = SimpleNamespace(matches=[_make_match("/a.py", 0.9, {"content": "x"}, [0.1])])
         results = await store.hybrid_search(dense_vector=[0.1, 0.2], k=5)
         assert len(results) == 1
         call_kwargs = mock_index.query.call_args.kwargs
@@ -423,9 +415,7 @@ class TestReranking:
                 SimpleNamespace(index=0, score=0.70),  # /a.py reranked lower
             ]
         )
-        results = await store.reranked_search(
-            [0.1], "beta query", k=5, rerank_model="test-model", rerank_top_n=2
-        )
+        results = await store.reranked_search([0.1], "beta query", k=5, rerank_model="test-model", rerank_top_n=2)
         assert len(results) == 2
         assert results[0].id == "/b.py"
         assert results[0].score == 0.95

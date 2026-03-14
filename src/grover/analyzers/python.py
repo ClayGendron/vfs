@@ -163,9 +163,7 @@ class PythonAnalyzer:
             elif isinstance(node, ast.ImportFrom):
                 if node.level and node.level > 0:
                     # Relative import
-                    target = self._resolve_relative_import(
-                        parent_dir, node.module or "", node.level
-                    )
+                    target = self._resolve_relative_import(parent_dir, node.module or "", node.level)
                 else:
                     target = self._module_to_path(node.module or "")
                 edges.append(

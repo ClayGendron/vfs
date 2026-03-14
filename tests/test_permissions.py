@@ -182,13 +182,13 @@ class TestReadOnlyAllowsReads:
     async def test_read_only_allows_graph_queries(self, grover_ro: GroverAsync) -> None:
         graph = grover_ro.get_graph("/ro")
         assert graph is not None
-        assert isinstance(graph.node_count, int)
-        assert graph.node_count >= 0
+        assert isinstance(len(graph.nodes), int)
+        assert len(graph.nodes) >= 0
 
     async def test_read_only_allows_graph_edges(self, grover_ro: GroverAsync) -> None:
         graph = grover_ro.get_graph("/ro")
         # edges() is a read-only graph provider operation, always works
-        edges = graph.edges()
+        edges = graph.edges
         assert isinstance(edges, list)
 
 
@@ -291,9 +291,7 @@ class TestIndexingSkipsReadOnly:
 class TestAnalyzeIntegrateReadOnly:
     """Connection persistence in _analyze_and_integrate respects read-only."""
 
-    async def test_analyze_skips_connection_writes_for_readonly(
-        self, grover_mixed: GroverAsync
-    ) -> None:
+    async def test_analyze_skips_connection_writes_for_readonly(self, grover_mixed: GroverAsync) -> None:
         """Even if _analyze_and_integrate is called on a read-only path,
         it should not attempt to persist connections to the database.
         The in-memory graph edges are fine (non-persistent), but DB writes

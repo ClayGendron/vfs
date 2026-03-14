@@ -192,9 +192,7 @@ class TestEdit:
         result = backend.edit("/project/doc.txt", "xyz_not_here", "replaced")
         assert result.error is not None
 
-    def test_edit_non_unique_without_replace_all_returns_error(
-        self, backend: GroverBackend, grover: Grover
-    ):
+    def test_edit_non_unique_without_replace_all_returns_error(self, backend: GroverBackend, grover: Grover):
         grover.write("/project/dup.txt", "foo bar foo")
         result = backend.edit("/project/dup.txt", "foo", "baz")
         assert result.error is not None

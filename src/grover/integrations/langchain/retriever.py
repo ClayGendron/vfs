@@ -93,8 +93,7 @@ class GroverRetriever(BaseRetriever):
         """Async variant — native async when GroverAsync, TypeError otherwise."""
         if not self._is_async:
             raise TypeError(
-                "Async methods require GroverAsync. "
-                "Pass a GroverAsync instance or use sync methods instead."
+                "Async methods require GroverAsync. Pass a GroverAsync instance or use sync methods instead."
             )
 
         g = cast("GroverAsync", self.grover)

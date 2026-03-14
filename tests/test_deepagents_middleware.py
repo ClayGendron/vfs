@@ -129,9 +129,7 @@ class TestToolRegistration:
 
 
 class TestListVersions:
-    def test_list_versions_returns_formatted_history(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_list_versions_returns_formatted_history(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/doc.txt", "v1 content")
         grover.write("/project/doc.txt", "v2 content")
         tool = next(t for t in middleware.tools if t.name == "list_versions")
@@ -150,9 +148,7 @@ class TestListVersions:
 
 
 class TestGetVersionContent:
-    def test_get_version_content_returns_old_content(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_get_version_content_returns_old_content(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/doc.txt", "original content")
         grover.write("/project/doc.txt", "updated content")
         tool = next(t for t in middleware.tools if t.name == "get_version_content")
@@ -168,9 +164,7 @@ class TestGetVersionContent:
 
 
 class TestRestoreVersion:
-    def test_restore_version_creates_new_version(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_restore_version_creates_new_version(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/doc.txt", "original")
         grover.write("/project/doc.txt", "modified")
         tool = next(t for t in middleware.tools if t.name == "restore_version")
@@ -249,9 +243,7 @@ class TestRestoreFromTrash:
 
 
 class TestSearchSemantic:
-    def test_search_semantic_returns_ranked_results(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_search_semantic_returns_ranked_results(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/auth.py", "def authenticate(user, password): pass")
         grover.write("/project/math.py", "def add(a, b): return a + b")
         grover.index("/project")
@@ -354,33 +346,25 @@ class TestAsyncTools:
         for tool in middleware.tools:
             assert tool.coroutine is None, f"Tool {tool.name} should not have coroutine"
 
-    async def test_list_versions_ainvoke(
-        self, middleware_async: GroverMiddleware, grover_async: GroverAsync
-    ):
+    async def test_list_versions_ainvoke(self, middleware_async: GroverMiddleware, grover_async: GroverAsync):
         await grover_async.write("/project/doc.txt", "v1")
         await grover_async.write("/project/doc.txt", "v2")
         tool = next(t for t in middleware_async.tools if t.name == "list_versions")
         result = await tool.ainvoke({"path": "/project/doc.txt"})
         assert "Version history" in result
 
-    async def test_delete_file_ainvoke(
-        self, middleware_async: GroverMiddleware, grover_async: GroverAsync
-    ):
+    async def test_delete_file_ainvoke(self, middleware_async: GroverMiddleware, grover_async: GroverAsync):
         await grover_async.write("/project/temp.txt", "content")
         tool = next(t for t in middleware_async.tools if t.name == "delete_file")
         result = await tool.ainvoke({"path": "/project/temp.txt"})
         assert "Deleted" in result
 
-    async def test_list_trash_ainvoke(
-        self, middleware_async: GroverMiddleware, grover_async: GroverAsync
-    ):
+    async def test_list_trash_ainvoke(self, middleware_async: GroverMiddleware, grover_async: GroverAsync):
         tool = next(t for t in middleware_async.tools if t.name == "list_trash")
         result = await tool.ainvoke({})
         assert "empty" in result.lower()
 
-    async def test_graph_tools_invoke_with_async(
-        self, middleware_async: GroverMiddleware, grover_async: GroverAsync
-    ):
+    async def test_graph_tools_invoke_with_async(self, middleware_async: GroverMiddleware, grover_async: GroverAsync):
         """Graph tools should work via async invoke with GroverAsync."""
         await grover_async.write("/project/standalone.py", "x = 42\n")
         await grover_async.index("/project")

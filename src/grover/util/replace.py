@@ -286,8 +286,7 @@ def replace(
             return ReplaceResult(
                 success=False,
                 error=(
-                    f"replace_all=True is only allowed with exact matches. "
-                    f"Found fuzzy match using '{method}' method."
+                    f"replace_all=True is only allowed with exact matches. Found fuzzy match using '{method}' method."
                 ),
             )
 
@@ -320,8 +319,7 @@ def replace(
             success=False,
             error=(
                 f"Found {len(matches)} matches. "
-                "Provide more context in old_string to identify a unique match.\n\n"
-                + "\n\n---\n\n".join(match_info)
+                "Provide more context in old_string to identify a unique match.\n\n" + "\n\n---\n\n".join(match_info)
             ),
             matches=matches,
         )

@@ -117,9 +117,7 @@ class TestConnectionMethods:
             await sess.commit()
 
         async with factory() as sess:
-            result = await fs.delete_connection(
-                "/a.py", "/b.py", connection_type="imports", session=sess
-            )
+            result = await fs.delete_connection("/a.py", "/b.py", connection_type="imports", session=sess)
             await sess.commit()
 
         assert result.success
@@ -136,9 +134,7 @@ class TestConnectionMethods:
         fs, factory, _engine = setup
 
         async with factory() as sess:
-            result = await fs.delete_connection(
-                "/a.py", "/b.py", connection_type="imports", session=sess
-            )
+            result = await fs.delete_connection("/a.py", "/b.py", connection_type="imports", session=sess)
 
         assert not result.success
         assert "not found" in result.message.lower()
@@ -247,9 +243,7 @@ class TestConnectionMethods:
             await sess.commit()
 
         async with factory() as sess:
-            result = await fs.list_connections(
-                "/a.py", direction="out", connection_type="imports", session=sess
-            )
+            result = await fs.list_connections("/a.py", direction="out", connection_type="imports", session=sess)
 
         assert len(result.connections) == 1
         assert result.connections[0].target.path == "/b.py"
@@ -260,9 +254,7 @@ class TestConnectionMethods:
         fs, factory, _engine = setup
 
         async with factory() as sess:
-            result = await fs.add_connection(
-                "/src/main.py", "/src/utils.py", "imports", weight=0.5, session=sess
-            )
+            result = await fs.add_connection("/src/main.py", "/src/utils.py", "imports", weight=0.5, session=sess)
             await sess.commit()
 
         assert result.success is True
@@ -293,18 +285,14 @@ class TestConnectionIntegrationDBFS:
         await g.close()
         await engine.dispose()
 
-    async def test_add_connection_returns_result(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_add_connection_returns_result(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _engine = setup
         result = await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         assert isinstance(result, FileOperationResult)
         assert result.success
         assert result.file.path == "/vfs/a.py[imports]/vfs/b.py"
 
-    async def test_add_connection_updates_graph(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_add_connection_updates_graph(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.flush()
@@ -313,9 +301,7 @@ class TestConnectionIntegrationDBFS:
         assert isinstance(graph, RustworkxGraph)
         assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
 
-    async def test_delete_connection_removes_from_db_and_graph(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_delete_connection_removes_from_db_and_graph(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.flush()
@@ -328,9 +314,7 @@ class TestConnectionIntegrationDBFS:
         # Graph updated via worker
         assert not grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
-    async def test_delete_connection_updates_graph(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_delete_connection_updates_graph(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.flush()
@@ -340,9 +324,7 @@ class TestConnectionIntegrationDBFS:
         await grover.flush()
         assert not grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
-    async def test_add_connection_creates_graph_edges(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_add_connection_creates_graph_edges(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.add_connection("/vfs/a.py", "/vfs/c.py", "calls")
@@ -352,9 +334,7 @@ class TestConnectionIntegrationDBFS:
         assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
         assert graph.has_edge("/vfs/a.py", "/vfs/c.py")
 
-    async def test_failed_add_does_not_update_graph(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_failed_add_does_not_update_graph(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """add_connection to a nonexistent mount should fail without graph update."""
         grover, _engine = setup
         result = await grover.add_connection("/nope/a.py", "/nope/b.py", "imports")
@@ -364,9 +344,7 @@ class TestConnectionIntegrationDBFS:
         graph = grover.get_graph("/vfs")
         assert not graph.has_edge("/nope/a.py", "/nope/b.py")
 
-    async def test_multiple_connection_types_between_same_files(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_multiple_connection_types_between_same_files(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _engine = setup
         r1 = await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         r2 = await grover.add_connection("/vfs/a.py", "/vfs/b.py", "calls")
@@ -415,9 +393,7 @@ class TestConnectionIntegrationLocalFS:
         await grover.add_connection("/local/a.py", "/local/b.py", "imports")
         await grover.flush()
 
-        result = await grover.delete_connection(
-            "/local/a.py", "/local/b.py", connection_type="imports"
-        )
+        result = await grover.delete_connection("/local/a.py", "/local/b.py", connection_type="imports")
         await grover.flush()
         assert result.success
         assert not grover.get_graph("/local").has_edge("/local/a.py", "/local/b.py")
@@ -457,9 +433,7 @@ class TestAnalyzeIntegrateConnections:
         await g.close()
         await engine.dispose()
 
-    async def test_analyze_persists_edges_through_fs(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_analyze_persists_edges_through_fs(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Writing Python code that imports a module should persist the edge through FS."""
         grover, engine = setup
 
@@ -482,9 +456,7 @@ class TestAnalyzeIntegrateConnections:
             import_records = [r for r in records if r.type == "imports"]
             assert len(import_records) >= 1
 
-    async def test_reanalyze_replaces_stale_edges(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_reanalyze_replaces_stale_edges(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Re-writing a file should replace old edges with new ones."""
         grover, engine = setup
 
@@ -507,9 +479,7 @@ class TestAnalyzeIntegrateConnections:
             targets = [r.target_path for r in records]
             assert any("sys" in t for t in targets)
 
-    async def test_contains_edges_not_persisted_to_db(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_contains_edges_not_persisted_to_db(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Structural 'contains' edges should stay in-memory, not written to DB."""
         grover, engine = setup
 
@@ -529,9 +499,7 @@ class TestAnalyzeIntegrateConnections:
             contains_records = [r for r in records if r.type == "contains"]
             assert len(contains_records) == 0
 
-    async def test_reanalyze_preserves_incoming_edges(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_reanalyze_preserves_incoming_edges(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Re-analyzing a file should not delete connections from OTHER files to this one."""
         grover, engine = setup
 
@@ -585,9 +553,7 @@ class TestDeleteOutgoingConnections:
         fs, factory, _engine = setup
 
         async with factory() as sess:
-            await fs.add_connection(
-                "/a.py", "/b.py", "imports", session=sess
-            )  # outgoing from /a.py
+            await fs.add_connection("/a.py", "/b.py", "imports", session=sess)  # outgoing from /a.py
             await fs.add_connection("/c.py", "/a.py", "calls", session=sess)  # incoming to /a.py
             await fs.add_connection("/x.py", "/y.py", "imports", session=sess)  # unrelated
             await sess.commit()
@@ -631,9 +597,7 @@ class TestGraphProjection:
         await g.close()
         await engine.dispose()
 
-    async def test_connection_adds_nodes_and_edge_to_graph(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_connection_adds_nodes_and_edge_to_graph(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
         await grover.flush()
@@ -643,9 +607,7 @@ class TestGraphProjection:
         assert graph.has_node("/vfs/b.py")
         assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
 
-    async def test_delete_file_cleans_up_connections(
-        self, setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_delete_file_cleans_up_connections(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Deleting a file should clean up its connection DB records."""
         grover, engine = setup
 

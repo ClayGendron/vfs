@@ -8,17 +8,8 @@ from typing import TYPE_CHECKING
 from sqlmodel import select
 
 from grover.models.internal.ref import File, FileChunk
-from grover.models.internal.results import FileOperationResult
+from grover.models.internal.results import BatchResult, FileOperationResult
 from grover.util.content import compute_content_hash
-
-
-class _BatchChunkResult(FileOperationResult):
-    """Internal batch chunk write result (includes per-chunk results list)."""
-
-    results: list[FileOperationResult] = []  # noqa: RUF012
-    succeeded: int = 0
-    failed: int = 0
-
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -124,15 +115,13 @@ class DefaultChunkProvider:
         batch_result = await self.write_chunks(session, [chunk])
         if batch_result.success and batch_result.results:
             return batch_result.results[0]
-        return FileOperationResult(
-            success=False, message="Write failed", file=File(path=chunk.path)
-        )
+        return FileOperationResult(success=False, message="Write failed", file=File(path=chunk.path))
 
     async def write_chunks(
         self,
         session: AsyncSession,
         chunks: list[FileChunkModelBase],
-    ) -> _BatchChunkResult:
+    ) -> BatchResult:
         """Batch upsert chunks. System manages content_hash and timestamps."""
         model = self._chunk_model
         now = datetime.now(UTC)
@@ -142,9 +131,7 @@ class DefaultChunkProvider:
         existing_result = await session.execute(
             select(model).where(model.path.in_(chunk_paths))  # type: ignore[arg-type]
         )
-        existing_map: dict[str, FileChunkModelBase] = {
-            row.path: row for row in existing_result.scalars().all()
-        }
+        existing_map: dict[str, FileChunkModelBase] = {row.path: row for row in existing_result.scalars().all()}
 
         individual_results: list[FileOperationResult] = []
         for chunk in chunks:
@@ -190,7 +177,7 @@ class DefaultChunkProvider:
 
         succeeded = sum(1 for r in individual_results if r.success)
         failed = len(individual_results) - succeeded
-        return _BatchChunkResult(
+        return BatchResult(
             success=failed == 0,
             message=f"{succeeded} succeeded, {failed} failed",
             results=individual_results,

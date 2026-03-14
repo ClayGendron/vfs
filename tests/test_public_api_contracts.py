@@ -11,7 +11,7 @@ import grover
 from _helpers import FakeProvider
 from grover.client import Grover, GroverAsync
 from grover.models.internal.ref import File
-from grover.models.internal.results import FileOperationResult, FileSearchResult
+from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
 
 
 class InMemoryBackend:
@@ -75,9 +75,7 @@ class InMemoryBackend:
     ) -> FileOperationResult:
         if path not in self._files:
             return FileOperationResult(success=False, message="Not found", file=File(path=path))
-        return FileOperationResult(
-            success=True, message="OK", file=File(path=path, is_directory=False)
-        )
+        return FileOperationResult(success=True, message="OK", file=File(path=path, is_directory=False))
 
     async def write(
         self,
@@ -296,6 +294,8 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
     class MinimalGraph:
         """Graph with only CRUD methods — no algorithm methods."""
 
+        nodes: set[str] = set()
+
         def add_node(self, path: str, **attrs: object) -> None: ...
         def remove_node(self, path: str) -> None: ...
         def has_node(self, path: str) -> bool:
@@ -303,9 +303,6 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
 
         def get_node(self, path: str) -> dict:
             return {}
-
-        def nodes(self) -> list[str]:
-            return []
 
         def add_edge(self, source: str, target: str, edge_type: str, **kw: object) -> None: ...
         def remove_edge(self, source: str, target: str) -> None: ...
@@ -315,6 +312,7 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         def get_edge(self, source: str, target: str) -> dict:
             return {}
 
+        @property
         def edges(self) -> list:
             return []
 
@@ -327,23 +325,6 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         def path_between(self, source: str, target: str) -> None:
             return None
 
-        def contains(self, path: str) -> list:
-            return []
-
-        def by_parent(self, parent_path: str) -> list:
-            return []
-
-        def remove_file_subgraph(self, path: str) -> list[str]:
-            return []
-
-        @property
-        def node_count(self) -> int:
-            return 0
-
-        @property
-        def edge_count(self) -> int:
-            return 0
-
         def is_dag(self) -> bool:
             return True
 
@@ -354,10 +335,10 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         mount = next(m for m in ga._ctx.registry.list_visible_mounts() if m.path == "/app")
         mount.filesystem.graph_provider = MinimalGraph()
         with pytest.raises(AttributeError):
-            await ga.pagerank(path="/app")
+            await ga.pagerank(FileSearchSet.from_paths(["/app"]))
         with pytest.raises(AttributeError):
-            await ga.betweenness_centrality(path="/app")
+            await ga.betweenness_centrality(FileSearchSet.from_paths(["/app"]))
         with pytest.raises(AttributeError):
-            await ga.hits(path="/app")
+            await ga.hits(FileSearchSet.from_paths(["/app"]))
     finally:
         await ga.close()

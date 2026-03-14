@@ -171,9 +171,7 @@ class TestLocalFileSystemRequiresSession:
         with pytest.raises(GroverError, match="requires a session"):
             await lfs.delete("/test.txt", session=None)
 
-    async def test_list_dir_without_session_succeeds_with_disk_provider(
-        self, lfs: LocalFileSystem
-    ) -> None:
+    async def test_list_dir_without_session_succeeds_with_disk_provider(self, lfs: LocalFileSystem) -> None:
         # list_dir delegates to DiskStorageProvider — no session needed
         result = await lfs.list_dir("/", session=None)
         assert result.success is True

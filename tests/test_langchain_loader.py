@@ -185,9 +185,7 @@ class TestIsAsyncFlag:
 
 
 class TestLoaderAlazLoad:
-    async def test_alazy_load_yields_documents(
-        self, loader_async: GroverLoader, grover_async: GroverAsync
-    ):
+    async def test_alazy_load_yields_documents(self, loader_async: GroverLoader, grover_async: GroverAsync):
         await grover_async.write("/project/a.txt", "content a")
         await grover_async.write("/project/b.py", "print('b')")
 
@@ -206,9 +204,7 @@ class TestLoaderAlazLoad:
         assert len(docs) == 1
         assert docs[0].metadata["path"] == "/project/code.py"
 
-    async def test_alazy_load_skips_binary(
-        self, loader_async: GroverLoader, grover_async: GroverAsync
-    ):
+    async def test_alazy_load_skips_binary(self, loader_async: GroverLoader, grover_async: GroverAsync):
         await grover_async.write("/project/code.py", "print('hi')")
         await grover_async.write("/project/image.png", "fake binary")
 

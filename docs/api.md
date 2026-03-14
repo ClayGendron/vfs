@@ -551,7 +551,8 @@ Each search result contains `file_candidates: list[FileCandidate]`, where each c
 | `VectorSearchResult` | `VectorEvidence` | `snippet` |
 | `LexicalSearchResult` | `LexicalEvidence` | `score`, `snippet` |
 | `HybridSearchResult` | (mixed) | Vector + lexical evidence |
-| `GraphResult` | `GraphEvidence` | `edge_type`, `direction`, `weight` |
+| `GraphResult` (relationship) | `GraphRelationshipEvidence` | `paths: list[str]` |
+| `GraphResult` (centrality) | `GraphCentralityEvidence` | `scores: dict[str, float]` |
 
 #### Query results (frozen, tuple-based)
 

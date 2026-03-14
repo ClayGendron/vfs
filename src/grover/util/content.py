@@ -341,10 +341,7 @@ def format_read_output(result: FileOperationResult) -> str:
 
     if truncated:
         last_read_line = offset + len(lines)
-        formatted += (
-            f"\n\n(File has more lines. "
-            f"Use 'offset' parameter to read beyond line {last_read_line})"
-        )
+        formatted += f"\n\n(File has more lines. Use 'offset' parameter to read beyond line {last_read_line})"
     else:
         formatted += f"\n\n(End of file - total {total_lines or len(lines)} lines)"
 

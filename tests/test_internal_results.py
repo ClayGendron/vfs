@@ -115,9 +115,7 @@ class TestFileSearchResultFromPaths:
 
 class TestFileSearchResultSetAlgebra:
     def _make(self, paths: list[str], operation: str = "test") -> FileSearchResult:
-        return FileSearchResult(
-            files=[File(path=p, evidence=[Evidence(operation=operation)]) for p in paths]
-        )
+        return FileSearchResult(files=[File(path=p, evidence=[Evidence(operation=operation)]) for p in paths])
 
     def test_intersection(self):
         r1 = self._make(["/a.py", "/b.py", "/c.py"], "glob")
@@ -327,9 +325,7 @@ class TestFileSearchSetBool:
 
 class TestFileSearchSetSetAlgebra:
     def _make(self, paths: list[str], operation: str = "test") -> FileSearchSet:
-        return FileSearchSet(
-            files=[File(path=p, evidence=[Evidence(operation=operation)]) for p in paths]
-        )
+        return FileSearchSet(files=[File(path=p, evidence=[Evidence(operation=operation)]) for p in paths])
 
     def test_intersection(self):
         s1 = self._make(["/a.py", "/b.py"], "glob")
@@ -455,14 +451,10 @@ class TestSetAlgebraAcceptsFileSearchSet:
     """FileSearchResult set algebra should accept FileSearchSet operands."""
 
     def _result(self, paths: list[str]) -> FileSearchResult:
-        return FileSearchResult(
-            files=[File(path=p, evidence=[Evidence(operation="r")]) for p in paths]
-        )
+        return FileSearchResult(files=[File(path=p, evidence=[Evidence(operation="r")]) for p in paths])
 
     def _set(self, paths: list[str]) -> FileSearchSet:
-        return FileSearchSet(
-            files=[File(path=p, evidence=[Evidence(operation="s")]) for p in paths]
-        )
+        return FileSearchSet(files=[File(path=p, evidence=[Evidence(operation="s")]) for p in paths])
 
     def test_result_and_set(self):
         r = self._result(["/a.py", "/b.py"])

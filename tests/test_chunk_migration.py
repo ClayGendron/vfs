@@ -10,6 +10,7 @@ from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.backends.protocol import GroverFileSystem
 from grover.client import GroverAsync
+from grover.models.internal.results import FileSearchSet
 from grover.providers.search.local import LocalVectorStore
 
 if TYPE_CHECKING:
@@ -104,7 +105,7 @@ class TestAnalyzeCreatesGraphState:
         assert graph.has_node("/project/funcs.py")
 
         # Find chunk nodes via contains edges
-        result = await graph.successors("/project/funcs.py")
+        result = await graph.successors(FileSearchSet.from_paths(["/project/funcs.py"]))
         assert len(result) >= 2
 
     @pytest.mark.asyncio
@@ -114,7 +115,7 @@ class TestAnalyzeCreatesGraphState:
         await grover.flush()
 
         graph = grover.get_graph("/project/funcs.py")
-        result = await graph.successors("/project/funcs.py")
+        result = await graph.successors(FileSearchSet.from_paths(["/project/funcs.py"]))
         assert len(result) >= 2
 
 
@@ -234,8 +235,8 @@ class TestMoveReIndexesChunks:
 
 class TestHardenedGraphCleanup:
     @pytest.mark.asyncio
-    async def test_removes_children_by_contains_edge(self, grover: GroverAsync):
-        """remove_file_subgraph should find children via 'contains' edges."""
+    async def test_remove_node_removes_parent(self, grover: GroverAsync):
+        """remove_node removes the node and cleans incident edges."""
         graph = grover.get_graph()
 
         # Manually create nodes with only a contains edge (no parent_path attr)
@@ -243,14 +244,16 @@ class TestHardenedGraphCleanup:
         graph.add_node("/test/child1")
         graph.add_edge("/test/parent.py", "/test/child1", edge_type="contains")
 
-        removed = graph.remove_file_subgraph("/test/parent.py")
-        assert "/test/parent.py" in removed
-        assert "/test/child1" in removed
-        assert not graph.has_node("/test/child1")
+        graph.remove_node("/test/parent.py")
+        assert not graph.has_node("/test/parent.py")
+        # Child still exists (remove_node only removes the specified node)
+        assert graph.has_node("/test/child1")
+        # But the edge is cleaned up
+        assert not graph.has_edge("/test/parent.py", "/test/child1")
 
     @pytest.mark.asyncio
-    async def test_removes_children_by_multiple_edge_types(self, grover: GroverAsync):
-        """Children connected by any edge type should be removed."""
+    async def test_remove_node_cleans_edges(self, grover: GroverAsync):
+        """Removing a node cleans up all incident edges."""
         graph = grover.get_graph()
 
         graph.add_node("/test/parent.py")
@@ -259,11 +262,10 @@ class TestHardenedGraphCleanup:
         graph.add_node("/test/child_b")
         graph.add_edge("/test/parent.py", "/test/child_b", edge_type="imports")
 
-        removed = graph.remove_file_subgraph("/test/parent.py")
-        assert "/test/child_a" in removed
-        assert "/test/child_b" in removed
-        assert not graph.has_node("/test/child_a")
-        assert not graph.has_node("/test/child_b")
+        graph.remove_node("/test/parent.py")
+        assert not graph.has_node("/test/parent.py")
+        assert not graph.has_edge("/test/parent.py", "/test/child_a")
+        assert not graph.has_edge("/test/parent.py", "/test/child_b")
 
 
 # ==================================================================

@@ -39,17 +39,11 @@ class LangChainEmbedding:
         model_name: str | None = None,
     ) -> None:
         if not _HAS_LANGCHAIN:
-            msg = (
-                "langchain-core is required for LangChainEmbedding. "
-                "Install it with: pip install grover[langchain]"
-            )
+            msg = "langchain-core is required for LangChainEmbedding. Install it with: pip install grover[langchain]"
             raise ImportError(msg)
 
         if not isinstance(embeddings, _LCEmbeddings):
-            msg = (
-                "embeddings must be a langchain_core.embeddings.Embeddings instance, "
-                f"got {type(embeddings).__name__}"
-            )
+            msg = f"embeddings must be a langchain_core.embeddings.Embeddings instance, got {type(embeddings).__name__}"
             raise TypeError(msg)
 
         self._embeddings = embeddings

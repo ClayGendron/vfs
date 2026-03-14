@@ -58,10 +58,7 @@ class PineconeVectorStore:
         namespace: str = "",
     ) -> None:
         if not _HAS_PINECONE:
-            msg = (
-                "pinecone is required for PineconeVectorStore. "
-                "Install it with: pip install grover[pinecone]"
-            )
+            msg = "pinecone is required for PineconeVectorStore. Install it with: pip install grover[pinecone]"
             raise ImportError(msg)
 
         self._index_name = index_name
@@ -178,9 +175,7 @@ class PineconeVectorStore:
 
     async def lexical_search(self, query: str, *, k: int = 10) -> FileSearchResult:
         """Pinecone is vector-only — lexical search returns empty result."""
-        return FileSearchResult(
-            success=True, message="Lexical search not supported by PineconeVectorStore"
-        )
+        return FileSearchResult(success=True, message="Lexical search not supported by PineconeVectorStore")
 
     async def delete(
         self,

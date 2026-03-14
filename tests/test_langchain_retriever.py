@@ -91,9 +91,7 @@ async def retriever_async(grover_async_with_search: GroverAsync) -> GroverRetrie
 
 
 class TestRetrieverReturnsDocuments:
-    def test_retriever_returns_documents(
-        self, retriever: GroverRetriever, grover_with_search: Grover
-    ):
+    def test_retriever_returns_documents(self, retriever: GroverRetriever, grover_with_search: Grover):
         grover_with_search.write("/project/auth.py", "def authenticate(user, password): pass")
         grover_with_search.index()
 
@@ -110,9 +108,7 @@ class TestRetrieverReturnsDocuments:
 
 
 class TestRetrieverDocumentMetadata:
-    def test_retriever_document_metadata(
-        self, retriever: GroverRetriever, grover_with_search: Grover
-    ):
+    def test_retriever_document_metadata(self, retriever: GroverRetriever, grover_with_search: Grover):
         grover_with_search.write("/project/utils.py", "def helper(): return 42")
         grover_with_search.index()
 
@@ -140,9 +136,7 @@ class TestRetrieverEmptyResults:
 
 
 class TestRetrieverInvokeInterface:
-    def test_retriever_invoke_interface(
-        self, retriever: GroverRetriever, grover_with_search: Grover
-    ):
+    def test_retriever_invoke_interface(self, retriever: GroverRetriever, grover_with_search: Grover):
         grover_with_search.write("/project/main.py", "print('hello world')")
         grover_with_search.index()
 
@@ -196,9 +190,7 @@ class TestRetrieverAsync:
     async def test_aget_relevant_documents(
         self, retriever_async: GroverRetriever, grover_async_with_search: GroverAsync
     ):
-        await grover_async_with_search.write(
-            "/project/auth.py", "def authenticate(user, password): pass"
-        )
+        await grover_async_with_search.write("/project/auth.py", "def authenticate(user, password): pass")
         await grover_async_with_search.index()
 
         docs = await retriever_async._aget_relevant_documents(
@@ -210,9 +202,7 @@ class TestRetrieverAsync:
         for doc in docs:
             assert isinstance(doc, Document)
 
-    async def test_ainvoke(
-        self, retriever_async: GroverRetriever, grover_async_with_search: GroverAsync
-    ):
+    async def test_ainvoke(self, retriever_async: GroverRetriever, grover_async_with_search: GroverAsync):
         await grover_async_with_search.write("/project/main.py", "print('hello world')")
         await grover_async_with_search.index()
 

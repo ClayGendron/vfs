@@ -173,9 +173,7 @@ class TestSyntheticVersionProperties:
             await fs.write("/app.py", "final\n", session=session)
 
             # Query the version 2 record directly
-            file_result = await session.execute(
-                select(FileModel).where(FileModel.path == "/app.py")
-            )
+            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersionModel).where(
@@ -195,9 +193,7 @@ class TestSyntheticVersionProperties:
             await _simulate_external_edit(session, "/app.py", "external\n")
             await fs.write("/app.py", "final\n", session=session)
 
-            file_result = await session.execute(
-                select(FileModel).where(FileModel.path == "/app.py")
-            )
+            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersionModel).where(
@@ -222,9 +218,7 @@ class TestSyntheticVersionProperties:
             assert vc2.file.content == external_content
 
             expected_hash = hashlib.sha256(external_content.encode()).hexdigest()
-            file_result = await session.execute(
-                select(FileModel).where(FileModel.path == "/app.py")
-            )
+            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersionModel).where(
@@ -263,9 +257,7 @@ class TestExternalEditEdgeCases:
             # Create a file, then clear its content_hash to simulate
             # a file record that never had a hash tracked
             await fs.write("/app.py", "content\n", session=session)
-            file_result = await session.execute(
-                select(FileModel).where(FileModel.path == "/app.py")
-            )
+            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
             file = file_result.scalar_one()
             file.content_hash = None
             await session.flush()
@@ -316,9 +308,7 @@ class TestCheckExternalEditUnit:
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/app.py", "content\n", session=session)
-            file_result = await session.execute(
-                select(FileModel).where(FileModel.path == "/app.py")
-            )
+            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
             file = file_result.scalar_one()
             original_version = file.current_version
 
@@ -337,9 +327,7 @@ class TestCheckExternalEditUnit:
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/app.py", "content\n", session=session)
-            file_result = await session.execute(
-                select(FileModel).where(FileModel.path == "/app.py")
-            )
+            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
             file = file_result.scalar_one()
             original_version = file.current_version
 
@@ -362,9 +350,7 @@ class TestCheckExternalEditUnit:
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/app.py", "content\n", session=session)
-            file_result = await session.execute(
-                select(FileModel).where(FileModel.path == "/app.py")
-            )
+            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
             file = file_result.scalar_one()
             file.content_hash = None
 

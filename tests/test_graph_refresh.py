@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from grover.client import GroverAsync
 from grover.models.database.connection import FileConnectionModel
 from grover.models.database.file import FileModel
+from grover.models.internal.results import FileSearchSet
 from grover.providers.graph import RustworkxGraph
 
 if TYPE_CHECKING:
@@ -69,14 +70,14 @@ class TestLazyLoadViaFacade:
         gp = g.get_graph()
         assert isinstance(gp, RustworkxGraph)
         # Graph is empty — needs_refresh is True
-        assert gp.node_count == 0
+        assert len(gp.nodes) == 0
         assert gp.needs_refresh is True
 
         # Query via facade triggers lazy load
-        result = await g.pagerank(path="/data/a.py")
+        result = await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))
         assert result.success
         # Graph should now be populated
-        assert gp.node_count >= 2
+        assert len(gp.nodes) >= 2
         assert gp.loaded_at is not None
         await g.close()
 
@@ -102,7 +103,7 @@ class TestLazyLoadViaFacade:
         assert isinstance(gp, RustworkxGraph)
 
         # Trigger initial load
-        await g.pagerank(path="/data/a.py")
+        await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))
         assert gp.has_node("/a.py")
         first_load = gp.loaded_at
 
@@ -119,7 +120,7 @@ class TestLazyLoadViaFacade:
             await session.commit()
 
         # Query again — no TTL, so no refresh
-        await g.pagerank(path="/data/a.py")
+        await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))
         assert gp.loaded_at == first_load  # Same load time — no reload
         assert not gp.has_node("/etl_new.py")  # Stale data
         await g.close()
@@ -151,7 +152,7 @@ class TestLazyLoadViaFacade:
         gp = g.get_graph()
 
         # Trigger initial load
-        await g.pagerank(path="/data/a.py")
+        await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))
         assert gp.has_node("/a.py")
 
         # Add new connection to DB directly (simulating ETL)
@@ -167,11 +168,11 @@ class TestLazyLoadViaFacade:
             await session.commit()
 
         # Force staleness: loaded 2 seconds ago, stale_after=1
-        gp._loaded_at = time.monotonic() - 2
+        gp.loaded_at = time.monotonic() - 2
         assert gp.needs_refresh is True
 
         # Query again — TTL expired, auto-refreshes
-        await g.pagerank(path="/data/a.py")
+        await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))
         assert gp.has_node("/etl_new.py")  # Fresh data
         await g.close()
 
@@ -204,12 +205,12 @@ class TestLazyLoadViaFacade:
         await g.add_mount("/data", fs, engine=async_engine)
 
         # Trigger initial load
-        await g.pagerank(path="/data/a.py")
+        await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))
         assert graph.has_edge("/a.py", "/b.py")
 
         # Force staleness: loaded 2 seconds ago, stale_after=1
-        graph._loaded_at = time.monotonic() - 2
-        await g.pagerank(path="/data/a.py")
+        graph.loaded_at = time.monotonic() - 2
+        await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))
 
         # Connection is still there after refresh
         assert graph.has_edge("/a.py", "/b.py")

@@ -1,23 +1,21 @@
 """Evidence types — why a path appeared in a search result.
 
-All evidence types are frozen Pydantic BaseModels. They attach to
+All evidence types are frozen dataclasses. They attach to
 ``File``, ``FileChunk``, ``FileVersion``, and ``FileConnection`` objects
 to explain how each entity was discovered by an operation.
 """
 
+from dataclasses import dataclass, field
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
 
-
-class Evidence(BaseModel):
+@dataclass(frozen=True, slots=True)
+class Evidence:
     """Base evidence — why an entity appeared in a result."""
-
-    model_config = ConfigDict(frozen=True)
 
     operation: str
     score: float = 0.0
-    query_args: dict = {}
+    query_args: dict = field(default_factory=dict)
 
 
 # =====================================================================
@@ -25,10 +23,9 @@ class Evidence(BaseModel):
 # =====================================================================
 
 
-class LineMatch(BaseModel):
+@dataclass(frozen=True, slots=True)
+class LineMatch:
     """A single line match within a file."""
-
-    model_config = ConfigDict(frozen=True)
 
     line_number: int
     line_content: str
@@ -36,6 +33,7 @@ class LineMatch(BaseModel):
     context_after: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
 class GlobEvidence(Evidence):
     """Evidence from a glob match."""
 
@@ -44,12 +42,14 @@ class GlobEvidence(Evidence):
     mime_type: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
 class GrepEvidence(Evidence):
     """Evidence from a grep match."""
 
     line_matches: tuple[LineMatch, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
 class TreeEvidence(Evidence):
     """Evidence from a tree listing."""
 
@@ -57,6 +57,7 @@ class TreeEvidence(Evidence):
     is_directory: bool = False
 
 
+@dataclass(frozen=True, slots=True)
 class ListDirEvidence(Evidence):
     """Evidence from a directory listing."""
 
@@ -69,6 +70,7 @@ class ListDirEvidence(Evidence):
 # =====================================================================
 
 
+@dataclass(frozen=True, slots=True)
 class TrashEvidence(Evidence):
     """Evidence from a trash listing."""
 
@@ -76,6 +78,7 @@ class TrashEvidence(Evidence):
     original_path: str = ""
 
 
+@dataclass(frozen=True, slots=True)
 class VersionEvidence(Evidence):
     """Evidence from a version listing."""
 
@@ -86,6 +89,7 @@ class VersionEvidence(Evidence):
     created_by: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
 class ShareEvidence(Evidence):
     """Evidence from a share listing."""
 
@@ -100,18 +104,21 @@ class ShareEvidence(Evidence):
 # =====================================================================
 
 
+@dataclass(frozen=True, slots=True)
 class VectorEvidence(Evidence):
     """Evidence from a vector (semantic) search."""
 
     snippet: str = ""
 
 
+@dataclass(frozen=True, slots=True)
 class LexicalEvidence(Evidence):
     """Evidence from a lexical (BM25/full-text) search."""
 
     snippet: str = ""
 
 
+@dataclass(frozen=True, slots=True)
 class HybridEvidence(Evidence):
     """Evidence from a hybrid search."""
 
@@ -123,8 +130,18 @@ class HybridEvidence(Evidence):
 # =====================================================================
 
 
-class GraphEvidence(Evidence):
-    """Evidence from a graph query."""
+@dataclass(frozen=True, slots=True)
+class GraphRelationshipEvidence(Evidence):
+    """Evidence from a graph relationship query (predecessors, successors, ancestors, descendants).
 
-    algorithm: str = ""
-    relationship: str = ""
+    *paths* lists the candidate nodes this file is related to.
+    """
+
+    paths: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class GraphCentralityEvidence(Evidence):
+    """Evidence from a graph centrality algorithm (pagerank, betweenness, etc.)."""
+
+    scores: dict[str, float] = field(default_factory=dict)

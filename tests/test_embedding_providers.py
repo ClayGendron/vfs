@@ -127,9 +127,7 @@ class TestOpenAIEmbedding:
     @pytest.mark.asyncio
     async def test_dimensions_passed_to_api(self):
         provider = self._make_provider(dimensions=256)
-        provider._client.embeddings.create = AsyncMock(
-            return_value=self._mock_response([[0.1] * 256])
-        )
+        provider._client.embeddings.create = AsyncMock(return_value=self._mock_response([[0.1] * 256]))
 
         await provider.embed("test")
 
@@ -139,9 +137,7 @@ class TestOpenAIEmbedding:
     @pytest.mark.asyncio
     async def test_dimensions_not_passed_when_none(self):
         provider = self._make_provider()
-        provider._client.embeddings.create = AsyncMock(
-            return_value=self._mock_response([[0.1] * 1536])
-        )
+        provider._client.embeddings.create = AsyncMock(return_value=self._mock_response([[0.1] * 1536]))
 
         await provider.embed("test")
 

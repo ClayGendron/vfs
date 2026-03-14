@@ -41,10 +41,7 @@ def _validate_path(path: str) -> str | None:
 def _require_async(backend: GroverBackend) -> GroverAsync:
     """Raise TypeError if backend is not async-capable. Return narrowed GroverAsync."""
     if not backend._is_async:
-        raise TypeError(
-            "Async methods require GroverAsync. "
-            "Pass a GroverAsync instance or use sync methods instead."
-        )
+        raise TypeError("Async methods require GroverAsync. Pass a GroverAsync instance or use sync methods instead.")
     return cast("GroverAsync", backend.grover)
 
 
@@ -54,9 +51,7 @@ def _format_ls_info_entries(entries: object) -> list[FileInfo]:
 
     result: list[FileInfo] = []
     for f in entries.files:  # type: ignore[union-attr]
-        is_dir = f.is_directory or any(
-            isinstance(e, ListDirEvidence) and e.is_directory for e in f.evidence
-        )
+        is_dir = f.is_directory or any(isinstance(e, ListDirEvidence) and e.is_directory for e in f.evidence)
         info: FileInfo = {
             "path": f.path,
             "is_dir": is_dir,

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from grover.models.database.connection import FileConnectionModel
 from grover.models.database.file import FileModel
+from grover.models.internal.results import FileSearchSet
 from grover.providers.graph import RustworkxGraph
 
 if TYPE_CHECKING:
@@ -29,15 +30,13 @@ class TestFromSql:
         """from_sql on empty DB should produce an empty graph."""
         g = RustworkxGraph()
         await g.from_sql(async_session)
-        assert g.node_count == 0
-        assert g.edge_count == 0
+        assert len(g.nodes) == 0
+        assert len(g.edges) == 0
 
     async def test_loads_nodes_and_edges(self, async_session: AsyncSession):
         """Connection endpoints should be loaded as nodes and edges."""
         async_session.add(
-            FileConnectionModel(
-                source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
-            )
+            FileConnectionModel(source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py")
         )
         await async_session.flush()
 
@@ -47,8 +46,8 @@ class TestFromSql:
         assert g.has_node("/a.py")
         assert g.has_node("/b.py")
         assert g.has_edge("/a.py", "/b.py")
-        assert g.node_count == 2
-        assert g.edge_count == 1
+        assert len(g.nodes) == 2
+        assert len(g.edges) == 1
 
     async def test_dangling_edge_creates_node(self, async_session: AsyncSession):
         """Edges referencing paths not in the files table should auto-create nodes."""
@@ -110,8 +109,8 @@ class TestFromSql:
 
         # After from_sql, old state is fully replaced — no empty intermediate
         await g.from_sql(async_session)
-        assert g.node_count == 2
-        assert g.edge_count == 1
+        assert len(g.nodes) == 2
+        assert len(g.edges) == 1
         assert g.has_node("/new.py")
         assert g.has_node("/new2.py")
         assert not g.has_node("/old.py")
@@ -128,9 +127,7 @@ class TestFromSql:
         assert g.loaded_at is not None
         assert before <= g.loaded_at <= after
 
-    async def test_from_sql_with_stale_after_does_not_immediately_need_refresh(
-        self, async_session: AsyncSession
-    ):
+    async def test_from_sql_with_stale_after_does_not_immediately_need_refresh(self, async_session: AsyncSession):
         """After from_sql() with stale_after=60, needs_refresh is False immediately."""
         g = RustworkxGraph(stale_after=60)
         await g.from_sql(async_session)
@@ -165,7 +162,7 @@ class TestFromSql:
         assert not g.has_node("/lonely.py")
         assert g.has_node("/a.py")
         assert g.has_node("/b.py")
-        assert g.node_count == 2
+        assert len(g.nodes) == 2
 
 
 class TestStaleness:
@@ -183,17 +180,17 @@ class TestStaleness:
 
     def test_needs_refresh_false_after_load_no_stale_after(self):
         g = RustworkxGraph()  # stale_after=None default
-        g._loaded_at = time.monotonic()
+        g.loaded_at = time.monotonic()
         assert g.needs_refresh is False
 
     def test_needs_refresh_true_when_stale(self):
         g = RustworkxGraph(stale_after=1)
-        g._loaded_at = time.monotonic() - 2  # loaded 2 seconds ago, TTL is 1
+        g.loaded_at = time.monotonic() - 2  # loaded 2 seconds ago, TTL is 1
         assert g.needs_refresh is True
 
     def test_needs_refresh_false_when_fresh(self):
         g = RustworkxGraph(stale_after=3600)
-        g._loaded_at = time.monotonic()
+        g.loaded_at = time.monotonic()
         assert g.needs_refresh is False
 
     def test_stale_after_attribute(self):
@@ -254,7 +251,7 @@ class TestEnsureFresh:
         g = RustworkxGraph()
 
         # Graph is empty but calling predecessors with session triggers lazy load
-        result = await g.predecessors("/b.py", session=async_session)
+        result = await g.predecessors(FileSearchSet.from_paths(["/b.py"]), session=async_session)
         assert result.success
         assert len(result.files) == 1
         assert result.files[0].path == "/a.py"
@@ -276,7 +273,7 @@ class TestEnsureFresh:
         assert g.has_node("/a.py")
 
         # Simulate staleness: loaded 2 seconds ago, TTL is 1
-        g._loaded_at = time.monotonic() - 2
+        g.loaded_at = time.monotonic() - 2
         assert g.needs_refresh is True
 
         # Add new connection to DB

@@ -52,9 +52,7 @@ def _snippets(result: FileSearchResult, path: str) -> tuple[str, ...]:
     """Return all vector search snippets for *path*."""
     for f in result.files:
         if f.path == path:
-            return tuple(
-                e.snippet for e in f.evidence if isinstance(e, VectorEvidence) and e.snippet
-            )
+            return tuple(e.snippet for e in f.evidence if isinstance(e, VectorEvidence) and e.snippet)
     return ()
 
 
@@ -214,9 +212,7 @@ class TestGrepQueryApi:
 class TestVectorSearchQueryApi:
     @pytest.mark.asyncio
     async def test_vector_search_returns_vector_search_result(self, grover: GroverAsync):
-        await grover.write(
-            "/project/auth.py", 'def authenticate():\n    """Auth user."""\n    pass\n'
-        )
+        await grover.write("/project/auth.py", 'def authenticate():\n    """Auth user."""\n    pass\n')
         result = await grover.vector_search("authenticate")
         assert isinstance(result, FileSearchResult)
         assert result.success is True
@@ -232,9 +228,7 @@ class TestVectorSearchQueryApi:
 
     @pytest.mark.asyncio
     async def test_vector_search_paths_are_strings(self, grover: GroverAsync):
-        await grover.write(
-            "/project/hit.py", 'def findme():\n    """Find this function."""\n    pass\n'
-        )
+        await grover.write("/project/hit.py", 'def findme():\n    """Find this function."""\n    pass\n')
         result = await grover.vector_search("findme")
         for path in result.paths:
             assert isinstance(path, str)
@@ -265,9 +259,7 @@ class TestVectorSearchQueryApi:
     async def test_vector_search_path_scoping(self, grover: GroverAsync):
         """Search with path filter should scope results."""
         await grover.write("/project/src/main.py", 'def main_func():\n    """Main."""\n    pass\n')
-        await grover.write(
-            "/project/tests/test.py", 'def test_func():\n    """Test."""\n    pass\n'
-        )
+        await grover.write("/project/tests/test.py", 'def test_func():\n    """Test."""\n    pass\n')
         result = await grover.vector_search("func", path="/project/src")
         assert result.success is True
 

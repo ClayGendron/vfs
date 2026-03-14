@@ -12,7 +12,7 @@ import pytest
 from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import Grover
-from grover.models.internal.results import FileSearchResult
+from grover.models.internal.results import FileSearchResult, FileSearchSet
 from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
 
@@ -170,7 +170,7 @@ class TestGroverGraph:
         # FileModel should be in graph now
         assert grover.get_graph().has_node("/project/app.py")
         # Check predecessors doesn't crash (may be empty if no other file points to it)
-        result = grover.predecessors("/project/app.py")
+        result = grover.predecessors(FileSearchSet.from_paths(["/project/app.py"]))
         assert isinstance(result, FileSearchResult)
         assert result.success is True
 
@@ -179,7 +179,7 @@ class TestGroverGraph:
         grover.write("/project/greet.py", code)
         grover.flush()
         # The file should have "contains" edges to its chunks
-        result = grover.successors("/project/greet.py")
+        result = grover.successors(FileSearchSet.from_paths(["/project/greet.py"]))
         assert isinstance(result, FileSearchResult)
         assert result.success is True
         # Should contain the greet function chunk
@@ -189,7 +189,7 @@ class TestGroverGraph:
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         grover.write("/project/funcs.py", code)
         grover.flush()
-        result = grover._run(grover.get_graph().successors("/project/funcs.py"))
+        result = grover._run(grover.get_graph().successors(FileSearchSet.from_paths(["/project/funcs.py"])))
         assert len(result) >= 2
         assert any("foo" in p for p in result)
         assert any("bar" in p for p in result)
@@ -310,9 +310,7 @@ class TestGroverEventHandlers:
         )
         grover.flush()
         # Verify it's in search (search provider is now on the filesystem)
-        mount = next(
-            m for m in grover._async._ctx.registry.list_visible_mounts() if m.path == "/project"
-        )
+        mount = next(m for m in grover._async._ctx.registry.list_visible_mounts() if m.path == "/project")
         sp = mount.filesystem.search_provider
         assert sp is not None
         assert sp.has("/project/vanish.py#vanishing_function")
@@ -478,7 +476,7 @@ class TestGroverGraphAlgorithms:
             "from base import X\n\ndef child():\n    return X\n",
         )
         grover.flush()
-        result = grover.ancestors("/project/base.py")
+        result = grover.ancestors(FileSearchSet.from_paths(["/project/base.py"]))
         assert isinstance(result, FileSearchResult)
         assert result.success is True
 
@@ -489,76 +487,42 @@ class TestGroverGraphAlgorithms:
             "from root import X\n\ndef leaf():\n    return X\n",
         )
         grover.flush()
-        result = grover.descendants("/project/root.py")
+        result = grover.descendants(FileSearchSet.from_paths(["/project/root.py"]))
         assert isinstance(result, FileSearchResult)
         assert result.success is True
-
-    def test_shortest_path(self, grover: Grover):
-        grover.write("/project/sp_a.py", "X = 1\n")
-        grover.write(
-            "/project/sp_b.py",
-            "from sp_a import X\n\ndef sp_b():\n    return X\n",
-        )
-        grover.flush()
-        result = grover.shortest_path("/project/sp_b.py", "/project/sp_a.py")
-        assert isinstance(result, FileSearchResult)
-        assert result.success is True
-
-    def test_has_path_no_path(self, grover: Grover):
-        grover.write("/project/island_x.py", "X = 1\n")
-        grover.write("/project/island_y.py", "Y = 2\n")
-        grover.flush()
-        result = grover.has_path("/project/island_x.py", "/project/island_y.py")
-        assert isinstance(result, FileSearchResult)
-        assert bool(result) is False
 
     def test_ego_graph(self, grover: Grover):
         grover.write("/project/ego.py", "X = 1\n")
         grover.flush()
-        result = grover.ego_graph("/project/ego.py", max_depth=1)
+        result = grover.ego_graph(FileSearchSet.from_paths(["/project/ego.py"]), max_depth=1)
         assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_pagerank(self, grover: Grover):
         grover.write("/project/pr.py", "X = 1\n")
         grover.flush()
-        result = grover.pagerank()
+        result = grover.pagerank(FileSearchSet())
         assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_betweenness_centrality(self, grover: Grover):
         grover.write("/project/bw.py", "X = 1\n")
         grover.flush()
-        result = grover.betweenness_centrality()
+        result = grover.betweenness_centrality(FileSearchSet())
         assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_hits(self, grover: Grover):
         grover.write("/project/ht.py", "X = 1\n")
         grover.flush()
-        result = grover.hits()
+        result = grover.hits(FileSearchSet())
         assert isinstance(result, FileSearchResult)
         assert result.success is True
 
     def test_degree_centrality(self, grover: Grover):
         grover.write("/project/deg.py", "X = 1\n")
         grover.flush()
-        result = grover.degree_centrality()
-        assert isinstance(result, FileSearchResult)
-        assert result.success is True
-
-    def test_common_neighbors(self, grover: Grover):
-        grover.write("/project/cn_shared.py", "S = 1\n")
-        grover.write(
-            "/project/cn_a.py",
-            "from cn_shared import S\n\ndef a():\n    return S\n",
-        )
-        grover.write(
-            "/project/cn_b.py",
-            "from cn_shared import S\n\ndef b():\n    return S\n",
-        )
-        grover.flush()
-        result = grover.common_neighbors("/project/cn_a.py", "/project/cn_b.py")
+        result = grover.degree_centrality(FileSearchSet())
         assert isinstance(result, FileSearchResult)
         assert result.success is True
 
@@ -577,9 +541,7 @@ class TestGroverGraphAlgorithms:
         grover.flush()
         grover.add_connection("/project/dconn_a.py", "/project/dconn_b.py", "imports")
         grover.flush()
-        result = grover.delete_connection(
-            "/project/dconn_a.py", "/project/dconn_b.py", connection_type="imports"
-        )
+        result = grover.delete_connection("/project/dconn_a.py", "/project/dconn_b.py", connection_type="imports")
         assert result.success is True
         grover.flush()
         assert not grover.get_graph().has_edge("/project/dconn_a.py", "/project/dconn_b.py")

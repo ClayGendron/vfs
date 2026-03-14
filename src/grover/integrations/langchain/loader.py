@@ -121,8 +121,7 @@ class GroverLoader(BaseLoader):
         """Async variant — native async when GroverAsync, TypeError otherwise."""
         if not self._is_async:
             raise TypeError(
-                "Async methods require GroverAsync. "
-                "Pass a GroverAsync instance or use sync methods instead."
+                "Async methods require GroverAsync. Pass a GroverAsync instance or use sync methods instead."
             )
 
         g = cast("GroverAsync", self.grover)
@@ -168,9 +167,7 @@ class GroverLoader(BaseLoader):
 
         entries = []
         for f in result.files:
-            is_dir = f.is_directory or any(
-                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
-            )
+            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             entries.append({"path": f.path, "is_directory": is_dir, "size_bytes": None})
         return entries
 
@@ -184,8 +181,6 @@ class GroverLoader(BaseLoader):
 
         entries = []
         for f in result.files:
-            is_dir = f.is_directory or any(
-                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
-            )
+            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             entries.append({"path": f.path, "is_directory": is_dir, "size_bytes": None})
         return entries

@@ -220,9 +220,7 @@ class TestDatabaseGlob:
         # Should not include deep subdirectory files
         assert "/src/sub/deep.py" not in paths
 
-    async def test_double_star_pattern(
-        self, dfs: DatabaseFileSystem, db_session: AsyncSession
-    ) -> None:
+    async def test_double_star_pattern(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.glob("**/*.py", "/src", session=db_session)
         assert result.success
@@ -244,9 +242,7 @@ class TestDatabaseGlob:
         assert result.success
         assert len(result) == 0
 
-    async def test_nonexistent_directory(
-        self, dfs: DatabaseFileSystem, db_session: AsyncSession
-    ) -> None:
+    async def test_nonexistent_directory(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.glob("*.py", "/nonexistent", session=db_session)
         assert not result.success
@@ -291,9 +287,7 @@ class TestDatabaseGrep:
         all_matches = _all_matches(result)
         assert all_matches[0][0] == "/src/main.py"
 
-    async def test_case_insensitive(
-        self, dfs: DatabaseFileSystem, db_session: AsyncSession
-    ) -> None:
+    async def test_case_insensitive(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("readme", "/docs", case_sensitive=False, session=db_session)
         assert result.success
@@ -309,9 +303,7 @@ class TestDatabaseGrep:
         for _path, lm in all_matches:
             assert "def" not in lm.line_content
 
-    async def test_grep_single_file(
-        self, dfs: DatabaseFileSystem, db_session: AsyncSession
-    ) -> None:
+    async def test_grep_single_file(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def main", "/src/main.py", session=db_session)
         assert result.success
@@ -374,9 +366,7 @@ class TestDatabaseGrep:
         assert not result.success
         assert "invalid regex" in result.message.lower() or "Invalid" in result.message
 
-    async def test_max_results_per_file(
-        self, dfs: DatabaseFileSystem, db_session: AsyncSession
-    ) -> None:
+    async def test_max_results_per_file(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep(".", "/src/main.py", max_results_per_file=1, session=db_session)
         assert result.success
@@ -384,9 +374,7 @@ class TestDatabaseGrep:
         main_matches = _line_matches(result, "/src/main.py")
         assert len(main_matches) <= 1
 
-    async def test_line_numbers_are_1_indexed(
-        self, dfs: DatabaseFileSystem, db_session: AsyncSession
-    ) -> None:
+    async def test_line_numbers_are_1_indexed(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def main", "/src", session=db_session)
         assert result.success
@@ -394,9 +382,7 @@ class TestDatabaseGrep:
         assert len(all_matches) >= 1
         assert all_matches[0][1].line_number == 1
 
-    async def test_nonexistent_directory(
-        self, dfs: DatabaseFileSystem, db_session: AsyncSession
-    ) -> None:
+    async def test_nonexistent_directory(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def", "/nonexistent", session=db_session)
         assert not result.success
@@ -437,9 +423,7 @@ class TestDatabaseTree:
         # deep.py is at depth 2 relative to /src, should be excluded
         assert "/src/sub/deep.py" not in paths
 
-    async def test_nonexistent_directory(
-        self, dfs: DatabaseFileSystem, db_session: AsyncSession
-    ) -> None:
+    async def test_nonexistent_directory(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.tree("/nonexistent", session=db_session)
         assert not result.success
@@ -503,9 +487,7 @@ async def _seed_local(lfs: LocalFileSystem, session: AsyncSession) -> None:
 
 
 class TestLocalGlob:
-    async def test_star_pattern(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_star_pattern(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.glob("*.py", "/src", session=local_session)
         assert result.success
@@ -514,9 +496,7 @@ class TestLocalGlob:
         assert "/src/utils.py" in paths
         assert "/src/sub/deep.py" not in paths
 
-    async def test_double_star(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_double_star(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.glob("**/*.py", "/src", session=local_session)
         assert result.success
@@ -524,17 +504,13 @@ class TestLocalGlob:
         assert "/src/main.py" in paths
         assert "/src/sub/deep.py" in paths
 
-    async def test_empty_result(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_empty_result(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.glob("*.rs", "/src", session=local_session)
         assert result.success
         assert len(result) == 0
 
-    async def test_nonexistent_directory(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_nonexistent_directory(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         result = await local_fs.glob("*.py", "/nonexistent", session=local_session)
         assert not result.success
 
@@ -545,50 +521,36 @@ class TestLocalGlob:
 
 
 class TestLocalGrep:
-    async def test_basic_regex(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_basic_regex(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("def ", "/src", session=local_session)
         assert result.success
         assert _files_matched(result) >= 2
 
-    async def test_fixed_string(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_fixed_string(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
-        result = await local_fs.grep(
-            "print('hello')", "/src", fixed_string=True, session=local_session
-        )
+        result = await local_fs.grep("print('hello')", "/src", fixed_string=True, session=local_session)
         assert result.success
         assert _files_matched(result) == 1
 
-    async def test_case_insensitive(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_case_insensitive(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("readme", "/docs", case_sensitive=False, session=local_session)
         assert result.success
         assert _files_matched(result) >= 1
 
-    async def test_invalid_regex(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_invalid_regex(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("[invalid", "/src", session=local_session)
         assert not result.success
 
-    async def test_glob_filter(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_glob_filter(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("Step", "/docs", glob_filter="*.txt", session=local_session)
         assert result.success
         assert _files_matched(result) == 1
 
-    async def test_nonexistent_directory(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_nonexistent_directory(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         result = await local_fs.grep("def", "/nonexistent", session=local_session)
         assert not result.success
         assert "not found" in result.message.lower()
@@ -602,13 +564,9 @@ class TestLocalGrep:
         for _path, lm in all_matches:
             assert "def" not in lm.line_content
 
-    async def test_context_lines(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_context_lines(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
-        result = await local_fs.grep(
-            "print", "/src/main.py", context_lines=1, session=local_session
-        )
+        result = await local_fs.grep("print", "/src/main.py", context_lines=1, session=local_session)
         assert result.success
         all_matches = _all_matches(result)
         assert len(all_matches) == 1
@@ -636,28 +594,20 @@ class TestLocalGrep:
         file_paths = list(result.paths)
         assert len(file_paths) == len(set(file_paths))
 
-    async def test_max_results(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_max_results(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep(".", "/", max_results=2, session=local_session)
         assert result.success
         assert len(_all_matches(result)) <= 2
 
-    async def test_max_results_per_file(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_max_results_per_file(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
-        result = await local_fs.grep(
-            ".", "/src/main.py", max_results_per_file=1, session=local_session
-        )
+        result = await local_fs.grep(".", "/src/main.py", max_results_per_file=1, session=local_session)
         assert result.success
         main_matches = _line_matches(result, "/src/main.py")
         assert len(main_matches) <= 1
 
-    async def test_grep_single_file(
-        self, local_fs: LocalFileSystem, local_session: AsyncSession
-    ) -> None:
+    async def test_grep_single_file(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("def main", "/src/main.py", session=local_session)
         assert result.success
@@ -734,9 +684,7 @@ async def grover_setup(tmp_path: Path) -> AsyncIterator[tuple[GroverAsync, Async
 
 
 class TestGroverGlob:
-    async def test_root_glob_aggregates(
-        self, grover_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_root_glob_aggregates(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
         result = await grover.glob("**/*.py", "/")
         assert result.success
@@ -754,9 +702,7 @@ class TestGroverGlob:
 
 
 class TestGroverGrep:
-    async def test_root_grep_aggregates(
-        self, grover_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_root_grep_aggregates(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
         result = await grover.grep("hello")
         assert result.success
@@ -772,9 +718,7 @@ class TestGroverGrep:
         assert "/db/hello.py" in file_paths
         assert "/local/world.py" not in file_paths
 
-    async def test_max_results_across_mounts(
-        self, grover_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_max_results_across_mounts(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
         result = await grover.grep(".", "/", max_results=1)
         assert result.success
@@ -792,9 +736,7 @@ class TestGroverGrep:
 
 
 class TestGroverTree:
-    async def test_root_tree_includes_mounts(
-        self, grover_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_root_tree_includes_mounts(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
         result = await grover.tree("/")
         assert result.success
@@ -814,9 +756,7 @@ class TestGroverTree:
         assert "/db/hello.py" in paths
         assert "/local/world.py" not in paths
 
-    async def test_root_tree_max_depth_0(
-        self, grover_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_root_tree_max_depth_0(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
         result = await grover.tree("/", max_depth=0)
         assert result.success
@@ -828,9 +768,7 @@ class TestGroverTree:
         # No files inside mounts
         assert "/db/hello.py" not in paths
 
-    async def test_root_tree_max_depth_1(
-        self, grover_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_root_tree_max_depth_1(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
         result = await grover.tree("/", max_depth=1)
         assert result.success

@@ -9,7 +9,7 @@ import pytest
 from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
-from grover.models.internal.results import FileSearchResult as InternalFileSearchResult
+from grover.models.internal.results import FileSearchResult as InternalFileSearchResult, FileSearchSet
 from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
 
@@ -96,9 +96,7 @@ class TestMountInjection:
     @pytest.mark.asyncio
     async def test_no_graph_attr_on_grover(self, grover: GroverAsync):
         """GroverAsync should not have self.graph (removed in favour of per-mount)."""
-        assert not hasattr(grover, "graph") or not isinstance(
-            getattr(type(grover), "graph", None), property
-        )
+        assert not hasattr(grover, "graph") or not isinstance(getattr(type(grover), "graph", None), property)
 
     @pytest.mark.asyncio
     async def test_get_graph_returns_mount_graph(self, grover: GroverAsync):
@@ -109,12 +107,8 @@ class TestMountInjection:
     @pytest.mark.asyncio
     async def test_get_graph_with_path(self, multi_grover: GroverAsync):
         """get_graph(path) returns the correct mount's graph."""
-        m1 = next(
-            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
-        )
-        m2 = next(
-            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2"
-        )
+        m1 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1")
+        m2 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2")
         assert multi_grover.get_graph("/mount1/file.py") is m1.filesystem.graph_provider
         assert multi_grover.get_graph("/mount2/file.py") is m2.filesystem.graph_provider
 
@@ -146,24 +140,16 @@ class TestSearchRouting:
     @pytest.mark.asyncio
     async def test_vector_search_single_mount(self, multi_grover: GroverAsync):
         """Search scoped to one mount only returns results from that mount."""
-        await multi_grover.write(
-            "/mount1/auth.py", 'def authenticate():\n    """Auth."""\n    pass\n'
-        )
-        await multi_grover.write(
-            "/mount2/data.py", 'def process_data():\n    """Data."""\n    pass\n'
-        )
+        await multi_grover.write("/mount1/auth.py", 'def authenticate():\n    """Auth."""\n    pass\n')
+        await multi_grover.write("/mount2/data.py", 'def process_data():\n    """Data."""\n    pass\n')
         result = await multi_grover.vector_search("authenticate", path="/mount1")
         assert all("/mount1" in p for p in result.paths)
 
     @pytest.mark.asyncio
     async def test_vector_search_cross_mount_aggregation(self, multi_grover: GroverAsync):
         """Root search aggregates across mounts."""
-        await multi_grover.write(
-            "/mount1/mod.py", 'def compute():\n    """Compute stuff."""\n    pass\n'
-        )
-        await multi_grover.write(
-            "/mount2/lib.py", 'def compute_more():\n    """Compute more."""\n    pass\n'
-        )
+        await multi_grover.write("/mount1/mod.py", 'def compute():\n    """Compute stuff."""\n    pass\n')
+        await multi_grover.write("/mount2/lib.py", 'def compute_more():\n    """Compute more."""\n    pass\n')
         await multi_grover.flush()
         result = await multi_grover.vector_search("compute", path="/")
         # Should have results from both mounts
@@ -188,12 +174,8 @@ class TestPerMountIndexing:
         """Writing a file should populate the correct mount's graph."""
         await multi_grover.write("/mount1/code.py", "def foo():\n    pass\n")
         await multi_grover.flush()
-        m1 = next(
-            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
-        )
-        m2 = next(
-            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2"
-        )
+        m1 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1")
+        m2 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2")
         assert m1.filesystem.graph_provider.has_node("/mount1/code.py")
         assert not m2.filesystem.graph_provider.has_node("/mount1/code.py")
 
@@ -202,9 +184,7 @@ class TestPerMountIndexing:
         """Deleting a file should clean up the correct mount's graph."""
         await multi_grover.write("/mount1/gone.py", "def gone():\n    pass\n")
         await multi_grover.flush()
-        m1 = next(
-            m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
-        )
+        m1 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1")
         assert m1.filesystem.graph_provider.has_node("/mount1/gone.py")
         await multi_grover.delete("/mount1/gone.py")
         await multi_grover.flush()
@@ -222,7 +202,7 @@ class TestGraphOpsResolveMount:
         """predecessors() uses the correct mount's graph."""
         await multi_grover.write("/mount1/lib.py", "def helper():\n    return 42\n")
         await multi_grover.flush()
-        result = await multi_grover.predecessors("/mount1/lib.py")
+        result = await multi_grover.predecessors(FileSearchSet.from_paths(["/mount1/lib.py"]))
         assert isinstance(result, InternalFileSearchResult)
         assert result.success is True
 
@@ -231,7 +211,7 @@ class TestGraphOpsResolveMount:
         """successors() uses the correct mount's graph."""
         await multi_grover.write("/mount2/consumer.py", "def main():\n    pass\n")
         await multi_grover.flush()
-        result = await multi_grover.successors("/mount2/consumer.py")
+        result = await multi_grover.successors(FileSearchSet.from_paths(["/mount2/consumer.py"]))
         assert isinstance(result, InternalFileSearchResult)
         assert result.success is True
 
@@ -242,7 +222,7 @@ class TestGraphOpsResolveMount:
         await multi_grover.write("/mount1/funcs.py", code)
         await multi_grover.flush()
         graph = multi_grover.get_graph("/mount1/funcs.py")
-        result = await graph.successors("/mount1/funcs.py")
+        result = await graph.successors(FileSearchSet.from_paths(["/mount1/funcs.py"]))
         assert len(result) >= 2
 
 
@@ -299,9 +279,7 @@ class TestEngineMountGraphSearch:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         try:
-            await g.add_mount(
-                "/sf", session_factory=factory, dialect="sqlite", embedding_provider=FakeProvider()
-            )
+            await g.add_mount("/sf", session_factory=factory, dialect="sqlite", embedding_provider=FakeProvider())
             mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/sf")
             assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)
         finally:

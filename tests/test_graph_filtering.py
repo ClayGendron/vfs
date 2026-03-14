@@ -1,94 +1,13 @@
-"""Tests for node similarity."""
+"""Tests for node similarity (removed methods).
+
+common_neighbors, node_similarity, and similar_nodes have been removed
+from RustworkxGraph. This file is kept as a placeholder.
+"""
 
 from __future__ import annotations
 
 from grover.providers.graph import RustworkxGraph
 from grover.providers.graph.protocol import GraphProvider
-
-# ======================================================================
-# node_similarity
-# ======================================================================
-
-
-class TestNodeSimilarity:
-    async def test_identical_neighbors(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/c.py", "imports")
-        g.add_edge("/a.py", "/d.py", "imports")
-        g.add_edge("/b.py", "/c.py", "imports")
-        g.add_edge("/b.py", "/d.py", "imports")
-        assert await g.node_similarity("/a.py", "/b.py") == 1.0
-
-    async def test_disjoint_neighbors(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/x.py", "imports")
-        g.add_edge("/b.py", "/y.py", "imports")
-        assert await g.node_similarity("/a.py", "/b.py") == 0.0
-
-    async def test_partial_overlap(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/c.py", "imports")
-        g.add_edge("/a.py", "/d.py", "imports")
-        g.add_edge("/b.py", "/c.py", "imports")
-        g.add_edge("/b.py", "/e.py", "imports")
-        sim = await g.node_similarity("/a.py", "/b.py")
-        assert abs(sim - 1 / 3) < 0.001
-
-    async def test_no_neighbors(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py")
-        g.add_node("/b.py")
-        assert await g.node_similarity("/a.py", "/b.py") == 0.0
-
-    async def test_unknown_returns_zero(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py")
-        assert await g.node_similarity("/a.py", "/unknown.py") == 0.0
-        assert await g.node_similarity("/unknown.py", "/a.py") == 0.0
-
-
-# ======================================================================
-# common_neighbors
-# ======================================================================
-
-
-class TestCommonNeighbors:
-    async def test_unknown_returns_empty(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py")
-        result = await g.common_neighbors("/a.py", "/unknown.py")
-        assert result.success
-        assert len(result) == 0
-
-
-# ======================================================================
-# similar_nodes
-# ======================================================================
-
-
-class TestSimilarNodes:
-    async def test_returns_top_k(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/c.py", "imports")
-        g.add_edge("/b.py", "/c.py", "imports")
-        g.add_node("/d.py")
-        result = await g.similar_nodes("/a.py", k=2)
-        assert len(result) <= 2
-        assert result[0][0] == "/b.py"
-        assert result[0][1] > 0
-
-    async def test_self_excluded(self) -> None:
-        g = RustworkxGraph()
-        g.add_edge("/a.py", "/b.py", "imports")
-        result = await g.similar_nodes("/a.py")
-        paths = [r[0] for r in result]
-        assert "/a.py" not in paths
-
-    async def test_empty_graph(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py")
-        result = await g.similar_nodes("/a.py")
-        assert result == []
 
 
 # ======================================================================

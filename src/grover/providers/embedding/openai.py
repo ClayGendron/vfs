@@ -46,18 +46,12 @@ class OpenAIEmbedding:
         batch_size: int = 512,
     ) -> None:
         if not _HAS_OPENAI:
-            msg = (
-                "openai is required for OpenAIEmbedding. "
-                "Install it with: pip install grover[openai]"
-            )
+            msg = "openai is required for OpenAIEmbedding. Install it with: pip install grover[openai]"
             raise ImportError(msg)
 
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not resolved_key:
-            msg = (
-                "No OpenAI API key provided. Pass api_key= or set the "
-                "OPENAI_API_KEY environment variable."
-            )
+            msg = "No OpenAI API key provided. Pass api_key= or set the OPENAI_API_KEY environment variable."
             raise ValueError(msg)
 
         self._model = model

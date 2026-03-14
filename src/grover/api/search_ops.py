@@ -37,9 +37,7 @@ class SearchOpsMixin:
                 for mount in self._ctx.registry.list_visible_mounts():
                     assert mount.filesystem is not None
                     async with self._ctx.session_for(mount) as sess:
-                        result = await mount.filesystem.glob(
-                            pattern, "/", session=sess, user_id=user_id
-                        )
+                        result = await mount.filesystem.glob(pattern, "/", session=sess, user_id=user_id)
                     if result.success:
                         combined = combined | result.rebase(mount.path)
                 combined.message = f"Found {len(combined)} match(es)"
@@ -48,9 +46,7 @@ class SearchOpsMixin:
                 mount, rel_path = self._ctx.registry.resolve(path)
                 assert mount.filesystem is not None
                 async with self._ctx.session_for(mount) as sess:
-                    result = await mount.filesystem.glob(
-                        pattern, rel_path, session=sess, user_id=user_id
-                    )
+                    result = await mount.filesystem.glob(pattern, rel_path, session=sess, user_id=user_id)
                 final = result.rebase(mount.path)
         except Exception as e:
             return FileSearchResult(success=False, message=f"Glob failed: {e}")
@@ -243,9 +239,7 @@ class SearchOpsMixin:
                 for mount in self._ctx.registry.list_visible_mounts():
                     assert mount.filesystem is not None
                     async with self._ctx.session_for(mount) as sess:
-                        fts_results = await mount.filesystem.lexical_search(
-                            query, k=k, session=sess
-                        )
+                        fts_results = await mount.filesystem.lexical_search(query, k=k, session=sess)
                     mount_entries: dict[str, list[Any]] = {}
                     for sr in fts_results:
                         fp = mount.path + sr.ref.path
@@ -317,9 +311,7 @@ class SearchOpsMixin:
             and getattr(mount.filesystem, "embedding_provider", None) is not None
             for mount in self._ctx.registry.list_visible_mounts()
         )
-        has_lexical = any(
-            mount.filesystem is not None for mount in self._ctx.registry.list_visible_mounts()
-        )
+        has_lexical = any(mount.filesystem is not None for mount in self._ctx.registry.list_visible_mounts())
 
         if has_vector:
             vec_result = await self.vector_search(query, k=k, path=path, user_id=user_id)

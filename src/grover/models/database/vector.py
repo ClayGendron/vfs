@@ -69,10 +69,7 @@ class Vector(list[float]):
                 raise TypeError(msg)
             dim, model = params
             if not isinstance(dim, int) or not isinstance(model, str):
-                msg = (
-                    f"Vector[...] tuple must be (int, str), "
-                    f"got ({type(dim).__name__}, {type(model).__name__})"
-                )
+                msg = f"Vector[...] tuple must be (int, str), got ({type(dim).__name__}, {type(model).__name__})"
                 raise TypeError(msg)
             attrs = {"_dimension": dim, "_model_name": model}
             return type(f"Vector[{dim}, '{model}']", (cls,), attrs)
@@ -164,10 +161,7 @@ class VectorType(TypeDecorator[Vector]):
             and value._model_name is not None
             and value._model_name != self.model_name
         ):
-            msg = (
-                f"Vector bind: model name mismatch — "
-                f"column expects '{self.model_name}', got '{value._model_name}'"
-            )
+            msg = f"Vector bind: model name mismatch — column expects '{self.model_name}', got '{value._model_name}'"
             raise ValueError(msg)
         return json.dumps(list(value))
 

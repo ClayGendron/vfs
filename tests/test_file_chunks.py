@@ -72,9 +72,7 @@ class TestFileChunkModel:
         session.add(chunk)
         session.commit()
 
-        result = session.exec(
-            select(FileChunkModel).where(FileChunkModel.file_path == "/test.py")
-        ).first()
+        result = session.exec(select(FileChunkModel).where(FileChunkModel.file_path == "/test.py")).first()
         assert result is not None
         assert result.line_start == 10
         assert result.line_end == 20
@@ -91,9 +89,7 @@ class TestFileChunkModel:
             session.add(chunk)
         session.commit()
 
-        result = session.exec(
-            select(FileChunkModel).where(FileChunkModel.file_path == "/src/main.py")
-        ).all()
+        result = session.exec(select(FileChunkModel).where(FileChunkModel.file_path == "/src/main.py")).all()
         assert len(result) == 3
 
 

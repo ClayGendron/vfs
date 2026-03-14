@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from grover.models.internal.evidence import (
     Evidence,
     GlobEvidence,
-    GraphEvidence,
+    GraphCentralityEvidence,
+    GraphRelationshipEvidence,
     GrepEvidence,
     HybridEvidence,
     LexicalEvidence,
@@ -34,7 +35,7 @@ class TestEvidence:
 
     def test_frozen(self):
         e = Evidence(operation="glob")
-        with pytest.raises(ValidationError):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             e.operation = "grep"  # type: ignore[misc]
 
     def test_with_query_args(self):
@@ -141,21 +142,36 @@ class TestHybridEvidence:
         assert e.snippet == ""
 
 
-class TestGraphEvidence:
+class TestGraphRelationshipEvidence:
     def test_defaults(self):
-        e = GraphEvidence(operation="pagerank")
-        assert e.algorithm == ""
-        assert e.relationship == ""
+        e = GraphRelationshipEvidence(operation="predecessors")
+        assert e.paths == []
 
-    def test_with_metadata(self):
-        e = GraphEvidence(
+    def test_with_paths(self):
+        e = GraphRelationshipEvidence(
             operation="predecessors",
-            algorithm="predecessors",
-            relationship="imports",
             score=0.8,
+            paths=["/a.py", "/b.py"],
         )
-        assert e.algorithm == "predecessors"
-        assert e.relationship == "imports"
+        assert e.operation == "predecessors"
+        assert e.score == 0.8
+        assert e.paths == ["/a.py", "/b.py"]
+
+
+class TestGraphCentralityEvidence:
+    def test_defaults(self):
+        e = GraphCentralityEvidence(operation="pagerank")
+        assert e.scores == {}
+
+    def test_with_scores(self):
+        e = GraphCentralityEvidence(
+            operation="pagerank",
+            score=0.75,
+            scores={"pagerank": 0.75},
+        )
+        assert e.operation == "pagerank"
+        assert e.score == 0.75
+        assert e.scores == {"pagerank": 0.75}
 
 
 class TestVersionEvidence:

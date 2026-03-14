@@ -168,9 +168,7 @@ class DatabricksVectorStore:
 
     async def lexical_search(self, query: str, *, k: int = 10) -> FileSearchResult:
         """Databricks store is vector-only — lexical search returns empty result."""
-        return FileSearchResult(
-            success=True, message="Lexical search not supported by DatabricksVectorStore"
-        )
+        return FileSearchResult(success=True, message="Lexical search not supported by DatabricksVectorStore")
 
     async def delete(
         self,
@@ -214,11 +212,7 @@ class DatabricksVectorStore:
             row_dict = dict(zip(columns, row, strict=False))
             entry_id = str(row_dict.get(self._pk_column, ""))
             vec = row_dict.get(self._vector_column)
-            meta = {
-                mk: mv
-                for mk, mv in row_dict.items()
-                if mk not in (self._pk_column, self._vector_column, "score")
-            }
+            meta = {mk: mv for mk, mv in row_dict.items() if mk not in (self._pk_column, self._vector_column, "score")}
             found[entry_id] = VectorEntry(
                 id=entry_id,
                 vector=list(vec) if vec else [],
@@ -388,9 +382,7 @@ class DatabricksVectorStore:
             metadata: dict[str, Any] = {}
             if include_metadata:
                 metadata = {
-                    mk: mv
-                    for mk, mv in row_dict.items()
-                    if mk not in (self._pk_column, "score", self._vector_column)
+                    mk: mv for mk, mv in row_dict.items() if mk not in (self._pk_column, "score", self._vector_column)
                 }
 
             results.append(

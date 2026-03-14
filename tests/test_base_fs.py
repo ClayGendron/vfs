@@ -626,9 +626,7 @@ class TestHashValidation:
             await session.flush()
 
             # Corrupt the stored content_hash for version 1
-            result = await session.execute(
-                select(FileVersionModel).where(FileVersionModel.version == 1)
-            )
+            result = await session.execute(select(FileVersionModel).where(FileVersionModel.version == 1))
             ver = result.scalar_one()
             ver.content_hash = "0000000000000000000000000000000000000000000000000000000000000000"
             await session.flush()

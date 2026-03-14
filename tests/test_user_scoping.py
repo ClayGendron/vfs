@@ -137,9 +137,7 @@ class TestAuthenticatedReadWrite:
         await auth_grover.write("/ws/notes.md", "owned content", user_id="alice")
 
         # Query the file record directly to verify owner_id
-        result = await async_session.execute(
-            select(FileModel).where(FileModel.path == "/alice/notes.md")
-        )
+        result = await async_session.execute(select(FileModel).where(FileModel.path == "/alice/notes.md"))
         file = result.scalar_one_or_none()
         assert file is not None
         assert file.owner_id == "alice"
@@ -301,34 +299,26 @@ class TestSharedAccess:
         assert result.success is True
         assert result.file.content == "alice's notes"
 
-    async def test_read_shared_no_permission(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_read_shared_no_permission(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Bob cannot read alice's file without a share."""
         await shared_grover.write("/ws/notes.md", "alice's notes", user_id="alice")
 
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_grover.read("/ws/@shared/alice/notes.md", user_id="bob")
 
-    async def test_write_shared_file_with_write_perm(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_write_shared_file_with_write_perm(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Bob writes to alice's file via @shared/ with write share."""
         await shared_grover.write("/ws/notes.md", "original", user_id="alice")
         await self._create_share(shared_grover, async_session, "/alice/notes.md", "bob", "write")
 
-        result = await shared_grover.write(
-            "/ws/@shared/alice/notes.md", "updated by bob", user_id="bob"
-        )
+        result = await shared_grover.write("/ws/@shared/alice/notes.md", "updated by bob", user_id="bob")
         assert result.success is True
 
         # Alice sees bob's changes
         read_result = await shared_grover.read("/ws/notes.md", user_id="alice")
         assert read_result.file.content == "updated by bob"
 
-    async def test_write_shared_file_read_only(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_write_shared_file_read_only(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Bob cannot write to alice's file with only read share."""
         await shared_grover.write("/ws/notes.md", "original", user_id="alice")
         await self._create_share(shared_grover, async_session, "/alice/notes.md", "bob", "read")
@@ -337,16 +327,12 @@ class TestSharedAccess:
         assert result.success is False
         assert "access denied" in result.message.lower()
 
-    async def test_edit_shared_file_with_write_perm(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_edit_shared_file_with_write_perm(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Bob edits alice's file via @shared/ with write share."""
         await shared_grover.write("/ws/notes.md", "hello world", user_id="alice")
         await self._create_share(shared_grover, async_session, "/alice/notes.md", "bob", "write")
 
-        result = await shared_grover.edit(
-            "/ws/@shared/alice/notes.md", "hello", "goodbye", user_id="bob"
-        )
+        result = await shared_grover.edit("/ws/@shared/alice/notes.md", "hello", "goodbye", user_id="bob")
         assert result.success is True
 
     async def test_exists_shared(self, shared_grover: GroverAsync, async_session: AsyncSession):
@@ -357,9 +343,7 @@ class TestSharedAccess:
         result = await shared_grover.exists("/ws/@shared/alice/notes.md", user_id="bob")
         assert result.message == "exists"
 
-    async def test_exists_shared_no_permission(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_exists_shared_no_permission(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """exists returns False for shared path without permission."""
         await shared_grover.write("/ws/notes.md", "content", user_id="alice")
         result = await shared_grover.exists("/ws/@shared/alice/notes.md", user_id="bob")
@@ -373,17 +357,13 @@ class TestSharedAccess:
         info = await shared_grover.get_info("/ws/@shared/alice/notes.md", user_id="bob")
         assert info.success
 
-    async def test_get_info_shared_no_permission(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_get_info_shared_no_permission(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """get_info returns success=False for shared path without permission."""
         await shared_grover.write("/ws/notes.md", "content", user_id="alice")
         info = await shared_grover.get_info("/ws/@shared/alice/notes.md", user_id="bob")
         assert not info.success
 
-    async def test_directory_share_grants_children(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_directory_share_grants_children(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Share on /alice/projects grants read to /alice/projects/docs/file.md."""
         await shared_grover.write("/ws/projects/docs/file.md", "content", user_id="alice")
         await self._create_share(shared_grover, async_session, "/alice/projects", "bob", "read")
@@ -416,9 +396,7 @@ class TestSharedListDir:
         await backend._create_share(async_session, path, grantee_id, permission, granted_by)
         await async_session.commit()
 
-    async def test_list_dir_shared_root(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_list_dir_shared_root(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """/@shared lists distinct owners who shared with user."""
         await shared_grover.write("/ws/a.md", "a", user_id="alice")
         await shared_grover.write("/ws/b.md", "b", user_id="charlie")
@@ -439,9 +417,7 @@ class TestSharedListDir:
         assert "charlie" in names
         assert set(result.paths) == set(_directories(result))
 
-    async def test_list_dir_shared_owner(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_list_dir_shared_owner(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """/@shared/{owner} lists that owner's shared content."""
         await shared_grover.write("/ws/notes.md", "content", user_id="alice")
         await shared_grover.write("/ws/readme.md", "readme", user_id="alice")
@@ -460,17 +436,13 @@ class TestSharedListDir:
         assert result.success is True
         assert len(result) == 0
 
-    async def test_list_dir_shared_owner_no_permission(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_list_dir_shared_owner_no_permission(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """/@shared/{owner} without share raises PermissionError."""
         await shared_grover.write("/ws/notes.md", "content", user_id="alice")
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_grover.list_dir("/ws/@shared/alice", user_id="bob")
 
-    async def test_list_dir_shared_owner_file_shares(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_list_dir_shared_owner_file_shares(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """FileModel-level shares show just those files when listing owner dir."""
         await shared_grover.write("/ws/doc1.md", "doc1", user_id="alice")
         await shared_grover.write("/ws/doc2.md", "doc2", user_id="alice")
@@ -485,9 +457,7 @@ class TestSharedListDir:
         # secret.md should NOT appear
         assert "secret.md" not in names
 
-    async def test_list_dir_shared_owner_mixed_shares(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_list_dir_shared_owner_mixed_shares(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Directory share lists everything; file shares outside that dir also appear."""
         await shared_grover.write("/ws/projects/a.py", "a", user_id="alice")
         await shared_grover.write("/ws/projects/b.py", "b", user_id="alice")
@@ -504,14 +474,10 @@ class TestSharedListDir:
         assert "projects" in names
         assert "readme.md" in names
 
-    async def test_list_dir_shared_deep_navigation(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_list_dir_shared_deep_navigation(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Deep file share shows intermediate dirs at each level."""
         await shared_grover.write("/ws/deep/nested/file.md", "deep content", user_id="alice")
-        await self._create_share(
-            shared_grover, async_session, "/alice/deep/nested/file.md", "bob", "read"
-        )
+        await self._create_share(shared_grover, async_session, "/alice/deep/nested/file.md", "bob", "read")
 
         # Level 1: /@shared/alice -> shows "deep/"
         result = await shared_grover.list_dir("/ws/@shared/alice", user_id="bob")
@@ -581,53 +547,37 @@ class TestSharedMoveAndCopy:
         await backend._create_share(async_session, path, grantee_id, permission, granted_by)
         await async_session.commit()
 
-    async def test_copy_shared_file_with_read_perm(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_copy_shared_file_with_read_perm(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Bob can copy alice's file to his own space with read share."""
         await shared_grover.write("/ws/notes.md", "alice's content", user_id="alice")
         await self._create_share(shared_grover, async_session, "/alice/notes.md", "bob", "read")
 
-        result = await shared_grover.copy(
-            "/ws/@shared/alice/notes.md", "/ws/my_copy.md", user_id="bob"
-        )
+        result = await shared_grover.copy("/ws/@shared/alice/notes.md", "/ws/my_copy.md", user_id="bob")
         assert result.success is True
         read_result = await shared_grover.read("/ws/my_copy.md", user_id="bob")
         assert read_result.file.content == "alice's content"
 
-    async def test_copy_shared_file_no_permission(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_copy_shared_file_no_permission(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Bob cannot copy alice's file without a share."""
         await shared_grover.write("/ws/notes.md", "alice's content", user_id="alice")
-        result = await shared_grover.copy(
-            "/ws/@shared/alice/notes.md", "/ws/stolen.md", user_id="bob"
-        )
+        result = await shared_grover.copy("/ws/@shared/alice/notes.md", "/ws/stolen.md", user_id="bob")
         assert result.success is False
         assert "access denied" in result.message.lower()
 
-    async def test_move_shared_file_no_permission(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_move_shared_file_no_permission(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Bob cannot move alice's file without a share."""
         await shared_grover.write("/ws/notes.md", "alice's content", user_id="alice")
-        result = await shared_grover.move(
-            "/ws/@shared/alice/notes.md", "/ws/stolen.md", user_id="bob"
-        )
+        result = await shared_grover.move("/ws/@shared/alice/notes.md", "/ws/stolen.md", user_id="bob")
         assert result.success is False
         assert "access denied" in result.message.lower()
 
-    async def test_move_shared_file_with_write_perm(
-        self, shared_grover: GroverAsync, async_session: AsyncSession
-    ):
+    async def test_move_shared_file_with_write_perm(self, shared_grover: GroverAsync, async_session: AsyncSession):
         """Bob can move alice's shared file with write permission on directory."""
         await shared_grover.write("/ws/old.md", "content", user_id="alice")
         # Directory-level share covers both source and destination
         await self._create_share(shared_grover, async_session, "/alice", "bob", "write")
 
-        result = await shared_grover.move(
-            "/ws/@shared/alice/old.md", "/ws/@shared/alice/new.md", user_id="bob"
-        )
+        result = await shared_grover.move("/ws/@shared/alice/old.md", "/ws/@shared/alice/new.md", user_id="bob")
         assert result.success is True
 
 

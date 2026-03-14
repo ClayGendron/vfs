@@ -155,10 +155,7 @@ def paginate_content(
     if total_lines == 0 or (total_lines == 1 and lines[0] == ""):
         return FileOperationResult(
             success=True,
-            message=(
-                "File is empty."
-                f" (total_lines=0, lines_read=0, truncated=False, line_offset={offset})"
-            ),
+            message=(f"File is empty. (total_lines=0, lines_read=0, truncated=False, line_offset={offset})"),
             file=File(path=path, content="", lines=0),
         )
 
@@ -205,10 +202,7 @@ async def write_file(
     if not is_text_file(name):
         return FileOperationResult(
             success=False,
-            message=(
-                f"Cannot write non-text file: {name}. "
-                "Use allowed extensions (.py, .js, .json, .md, etc.)"
-            ),
+            message=(f"Cannot write non-text file: {name}. Use allowed extensions (.py, .js, .json, .md, etc.)"),
         )
 
     content_hash, size_bytes = compute_content_hash(content)

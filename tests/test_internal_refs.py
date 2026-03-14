@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 
 from grover.models.internal.ref import File, FileChunk, FileConnection, FileVersion, Ref
@@ -14,9 +15,9 @@ class TestRef:
 
     def test_serialization_round_trip(self):
         r = Ref(path="/a/b.py")
-        data = r.model_dump()
+        data = dataclasses.asdict(r)
         assert data == {"path": "/a/b.py"}
-        r2 = Ref.model_validate(data)
+        r2 = Ref(**data)
         assert r2.path == "/a/b.py"
 
 
@@ -65,10 +66,11 @@ class TestFile:
 
     def test_serialization(self):
         f = File(path="/a.py", content="x = 1", lines=1)
-        data = f.model_dump()
+        data = dataclasses.asdict(f)
         assert data["path"] == "/a.py"
         assert data["content"] == "x = 1"
-        f2 = File.model_validate(data)
+        # Round-trip reconstruction (without nested types for simplicity)
+        f2 = File(path=data["path"], content=data["content"])
         assert f2.path == "/a.py"
         assert f2.content == "x = 1"
 
@@ -157,14 +159,19 @@ class TestFileConnection:
             target=Ref(path="/b.py"),
             type="imports",
         )
-        data = conn.model_dump()
+        data = dataclasses.asdict(conn)
         assert data["source"]["path"] == "/a.py"
         assert data["target"]["path"] == "/b.py"
-        conn2 = FileConnection.model_validate(data)
+        # Reconstruct from dict
+        conn2 = FileConnection(
+            source=Ref(**data["source"]),
+            target=Ref(**data["target"]),
+            type=data["type"],
+        )
         assert conn2.source.path == "/a.py"
 
     def test_not_ref_subclass(self):
-        """FileConnection is not a Ref — it's a standalone BaseModel."""
+        """FileConnection is not a Ref — it's a standalone dataclass."""
         conn = FileConnection(
             source=Ref(path="/a.py"),
             target=Ref(path="/b.py"),

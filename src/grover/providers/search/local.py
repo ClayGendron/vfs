@@ -119,17 +119,13 @@ class LocalVectorStore:
             filter_dict = compile_dict(filter)
 
         hits: list[VectorHit] = []
-        for match_key, distance in zip(
-            matches.keys.tolist(), matches.distances.tolist(), strict=True
-        ):
+        for match_key, distance in zip(matches.keys.tolist(), matches.distances.tolist(), strict=True):
             meta = self._key_to_meta.get(int(match_key))
             if meta is None:
                 continue
 
             # Apply metadata filter
-            if filter_dict is not None and not all(
-                meta.get(fk) == fv for fk, fv in filter_dict.items()
-            ):
+            if filter_dict is not None and not all(meta.get(fk) == fv for fk, fv in filter_dict.items()):
                 continue
 
             score = 1.0 - distance
@@ -198,15 +194,11 @@ class LocalVectorStore:
             filter_dict = compile_dict(filter)
 
         results: list[VectorHit] = []
-        for match_key, distance in zip(
-            matches.keys.tolist(), matches.distances.tolist(), strict=True
-        ):
+        for match_key, distance in zip(matches.keys.tolist(), matches.distances.tolist(), strict=True):
             meta = self._key_to_meta.get(int(match_key))
             if meta is None:
                 continue
-            if filter_dict is not None and not all(
-                meta.get(fk) == fv for fk, fv in filter_dict.items()
-            ):
+            if filter_dict is not None and not all(meta.get(fk) == fv for fk, fv in filter_dict.items()):
                 continue
             score = 1.0 - distance
             if score_threshold is not None and score < score_threshold:

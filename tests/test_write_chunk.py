@@ -49,14 +49,10 @@ class TestDefaultChunkProviderWriteChunk:
         assert listed.file.chunks[0].content == "def foo(): pass"
 
     async def test_write_chunk_upserts_existing(self, service, async_session: AsyncSession):
-        chunk = FileChunkModel(
-            file_path="/a.py", path="/a.py#foo", content="v1", line_start=1, line_end=3
-        )
+        chunk = FileChunkModel(file_path="/a.py", path="/a.py#foo", content="v1", line_start=1, line_end=3)
         await service.write_chunk(async_session, chunk)
 
-        updated = FileChunkModel(
-            file_path="/a.py", path="/a.py#foo", content="v2", line_start=5, line_end=10
-        )
+        updated = FileChunkModel(file_path="/a.py", path="/a.py#foo", content="v2", line_start=5, line_end=10)
         result = await service.write_chunk(async_session, updated)
         assert result.success is True
 
@@ -82,8 +78,7 @@ class TestDefaultChunkProviderWriteChunk:
 
     async def test_write_chunks_batch(self, service, async_session: AsyncSession):
         chunks = [
-            FileChunkModel(file_path="/a.py", path=f"/a.py#fn{i}", content=f"def fn{i}(): pass")
-            for i in range(3)
+            FileChunkModel(file_path="/a.py", path=f"/a.py#fn{i}", content=f"def fn{i}(): pass") for i in range(3)
         ]
         result = await service.write_chunks(async_session, chunks)
         assert result.success is True

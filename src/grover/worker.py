@@ -65,9 +65,7 @@ class BackgroundWorker:
     # Scheduling
     # ------------------------------------------------------------------
 
-    def schedule(
-        self, key: str, coro_factory: Callable[[], Coroutine[object, object, None]]
-    ) -> None:
+    def schedule(self, key: str, coro_factory: Callable[[], Coroutine[object, object, None]]) -> None:
         """Schedule debounced work for *key*.
 
         If there is already pending work for *key*, it is replaced.

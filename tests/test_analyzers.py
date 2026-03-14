@@ -98,14 +98,10 @@ class TestBuildChunkPath:
         assert build_chunk_path("/a/b/c/d.py", "foo") == "/a/b/c/d.py#foo"
 
     def test_dotted_filename(self):
-        assert build_chunk_path("/src/auth.test.py", "test_login") == (
-            "/src/auth.test.py#test_login"
-        )
+        assert build_chunk_path("/src/auth.test.py", "test_login") == ("/src/auth.test.py#test_login")
 
     def test_dunder_method(self):
-        assert build_chunk_path("/src/cls.py", "MyClass.__init__") == (
-            "/src/cls.py#MyClass.__init__"
-        )
+        assert build_chunk_path("/src/cls.py", "MyClass.__init__") == ("/src/cls.py#MyClass.__init__")
 
 
 # ===================================================================

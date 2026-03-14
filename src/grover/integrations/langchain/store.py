@@ -93,8 +93,7 @@ class GroverStore(BaseStore):
     async def abatch(self, ops: Iterable[Op]) -> list[Result]:
         if not self._is_async:
             raise TypeError(
-                "Async methods require GroverAsync. "
-                "Pass a GroverAsync instance or use sync methods instead."
+                "Async methods require GroverAsync. Pass a GroverAsync instance or use sync methods instead."
             )
 
         results: list[Result] = []
@@ -295,9 +294,7 @@ class GroverStore(BaseStore):
 
             return items[op.offset : op.offset + op.limit]
 
-        return await self._alist_items_in_namespace(
-            op.namespace_prefix, limit=op.limit, offset=op.offset
-        )
+        return await self._alist_items_in_namespace(op.namespace_prefix, limit=op.limit, offset=op.offset)
 
     async def _ahandle_list_namespaces(self, op: ListNamespacesOp) -> list[tuple[str, ...]]:
         g = cast("GroverAsync", self.grover)
@@ -352,9 +349,7 @@ class GroverStore(BaseStore):
         prefix_len = len(self.prefix) + 1  # +1 for trailing /
 
         for f in tree_result.files:  # type: ignore[union-attr]
-            is_dir = f.is_directory or any(
-                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
-            )
+            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             if is_dir:
                 continue
             if not f.path.startswith(self.prefix + "/"):
@@ -407,9 +402,7 @@ class GroverStore(BaseStore):
 
         items: list[SearchItem] = []
         for f in tree_result.files:
-            is_dir = f.is_directory or any(
-                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
-            )
+            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             if is_dir:
                 continue
             if not f.path.endswith(".json"):
@@ -462,9 +455,7 @@ class GroverStore(BaseStore):
 
         items: list[SearchItem] = []
         for f in tree_result.files:
-            is_dir = f.is_directory or any(
-                isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence
-            )
+            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             if is_dir:
                 continue
             if not f.path.endswith(".json"):
@@ -512,18 +503,14 @@ class GroverStore(BaseStore):
                 result = [
                     ns
                     for ns in result
-                    if len(ns) >= len(pattern)
-                    and all(p == "*" or p == n for p, n in zip(pattern, ns, strict=False))
+                    if len(ns) >= len(pattern) and all(p == "*" or p == n for p, n in zip(pattern, ns, strict=False))
                 ]
             elif match_type == "suffix":
                 result = [
                     ns
                     for ns in result
                     if len(ns) >= len(pattern)
-                    and all(
-                        p == "*" or p == n
-                        for p, n in zip(reversed(pattern), reversed(ns), strict=False)
-                    )
+                    and all(p == "*" or p == n for p, n in zip(reversed(pattern), reversed(ns), strict=False))
                 ]
 
         return result

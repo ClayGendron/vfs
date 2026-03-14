@@ -74,9 +74,7 @@ class TestFileConnectionModel:
             )
         session.commit()
 
-        results = session.exec(
-            select(FileConnectionModel).where(FileConnectionModel.source_path == "/a.py")
-        ).all()
+        results = session.exec(select(FileConnectionModel).where(FileConnectionModel.source_path == "/a.py")).all()
         assert len(results) == 3
 
     def test_base_subclass_custom_table(self, engine):
@@ -114,15 +112,11 @@ class TestFileConnectionModel:
         import pytest
         from sqlalchemy.exc import IntegrityError
 
-        conn1 = FileConnectionModel(
-            source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py"
-        )
+        conn1 = FileConnectionModel(source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py")
         session.add(conn1)
         session.commit()
 
-        conn2 = FileConnectionModel(
-            source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py"
-        )
+        conn2 = FileConnectionModel(source_path="/a.py", target_path="/b.py", path="/a.py[imports]/b.py")
         session.add(conn2)
         with pytest.raises(IntegrityError):
             session.commit()

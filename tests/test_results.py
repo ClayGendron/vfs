@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from grover.models.internal.evidence import (
     Evidence,
     GlobEvidence,
-    GraphEvidence,
+    GraphRelationshipEvidence,
     GrepEvidence,
     HybridEvidence,
     LexicalEvidence,
@@ -121,12 +121,10 @@ class TestEvidence:
         e = HybridEvidence(operation="hybrid_search", snippet="mixed")
         assert e.snippet == "mixed"
 
-    def test_graph_evidence(self):
-        e = GraphEvidence(
-            operation="predecessors", algorithm="predecessors", relationship="imports"
-        )
-        assert e.algorithm == "predecessors"
-        assert e.relationship == "imports"
+    def test_graph_relationship_evidence(self):
+        e = GraphRelationshipEvidence(operation="predecessors", paths=["/a.py", "/b.py"])
+        assert e.operation == "predecessors"
+        assert e.paths == ["/a.py", "/b.py"]
 
 
 # =====================================================================
@@ -356,9 +354,7 @@ class TestSetAlgebra:
 
 
 class TestSetAlgebraConnections:
-    def _make_conn(
-        self, src: str, tgt: str, conn_type: str = "imports", operation: str = "test"
-    ) -> FileConnection:
+    def _make_conn(self, src: str, tgt: str, conn_type: str = "imports", operation: str = "test") -> FileConnection:
         return FileConnection(
             source=Ref(path=src),
             target=Ref(path=tgt),
@@ -426,15 +422,15 @@ class TestGraphStyleSetAlgebra:
             success=True,
             message="2 node(s)",
             files=[
-                File(path="/a.py", evidence=[GraphEvidence(operation="graph", algorithm="op1")]),
-                File(path="/b.py", evidence=[GraphEvidence(operation="graph", algorithm="op1")]),
+                File(path="/a.py", evidence=[GraphRelationshipEvidence(operation="op1")]),
+                File(path="/b.py", evidence=[GraphRelationshipEvidence(operation="op1")]),
             ],
             connections=[
                 FileConnection(
                     source=Ref(path="/a.py"),
                     target=Ref(path="/b.py"),
                     type="imports",
-                    evidence=[GraphEvidence(operation="graph", algorithm="op1")],
+                    evidence=[GraphRelationshipEvidence(operation="op1")],
                 )
             ],
         )
@@ -442,15 +438,15 @@ class TestGraphStyleSetAlgebra:
             success=True,
             message="2 node(s)",
             files=[
-                File(path="/b.py", evidence=[GraphEvidence(operation="graph", algorithm="op2")]),
-                File(path="/c.py", evidence=[GraphEvidence(operation="graph", algorithm="op2")]),
+                File(path="/b.py", evidence=[GraphRelationshipEvidence(operation="op2")]),
+                File(path="/c.py", evidence=[GraphRelationshipEvidence(operation="op2")]),
             ],
             connections=[
                 FileConnection(
                     source=Ref(path="/b.py"),
                     target=Ref(path="/c.py"),
                     type="calls",
-                    evidence=[GraphEvidence(operation="graph", algorithm="op2")],
+                    evidence=[GraphRelationshipEvidence(operation="op2")],
                 )
             ],
         )

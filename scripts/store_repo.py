@@ -292,11 +292,11 @@ def main() -> None:
         print("=" * 60)
 
         graph = g.graph
-        print(f"\n  Graph nodes: {graph.node_count}")
-        print(f"  Graph edges: {graph.edge_count}")
+        print(f"\n  Graph nodes: {len(graph.nodes)}")
+        print(f"  Graph edges: {len(graph.edges)}")
 
-        code_nodes = [n for n in graph.nodes() if n.startswith("/code/")]
-        docs_nodes = [n for n in graph.nodes() if n.startswith("/docs/")]
+        code_nodes = [n for n in graph.nodes if n.startswith("/code/")]
+        docs_nodes = [n for n in graph.nodes if n.startswith("/docs/")]
         print(f"  Nodes in /code: {len(code_nodes)}")
         print(f"  Nodes in /docs: {len(docs_nodes)}")
 

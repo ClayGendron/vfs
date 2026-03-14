@@ -409,16 +409,12 @@ class TestFormatReadOutput:
         assert "offset" in output.lower()
 
     def test_format_read_output_empty(self):
-        result = FileOperationResult(
-            success=True, message="ok", file=File(path="/test.txt", content="")
-        )
+        result = FileOperationResult(success=True, message="ok", file=File(path="/test.txt", content=""))
         output = format_read_output(result)
         assert "empty file" in output.lower()
 
     def test_format_read_output_empty_content(self):
-        result = FileOperationResult(
-            success=True, message="ok", file=File(path="/test.txt", content="")
-        )
+        result = FileOperationResult(success=True, message="ok", file=File(path="/test.txt", content=""))
         output = format_read_output(result)
         assert "empty file" in output.lower()
 

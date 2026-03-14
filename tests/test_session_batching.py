@@ -104,9 +104,7 @@ async def dbfs_setup(tmp_path: Path):
 class TestAnalyzeSessionBatching:
     """Verify _analyze_and_integrate uses a single batched session."""
 
-    async def test_analyze_uses_single_session(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_analyze_uses_single_session(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """_analyze_and_integrate should open exactly 1 session (not N+4)."""
         g, _engine = dbfs_setup
 
@@ -125,9 +123,7 @@ class TestAnalyzeSessionBatching:
         assert stats["edges_added"] >= 3  # os, sys, json
         assert stats["chunks_created"] >= 2  # hello, Foo
 
-    async def test_analyze_persists_edges_correctly(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_analyze_persists_edges_correctly(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Batched session should correctly persist connections, chunks, and emit events."""
         g, engine = dbfs_setup
 
@@ -150,15 +146,11 @@ class TestAnalyzeSessionBatching:
 
         # Verify chunks in DB
         async with factory() as sess:
-            rows = await sess.execute(
-                select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py")
-            )
+            rows = await sess.execute(select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py"))
             chunks = list(rows.scalars().all())
             assert len(chunks) >= 2  # hello function + Foo class
 
-    async def test_analyze_replaces_stale_edges(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_analyze_replaces_stale_edges(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Rewriting a file should replace old edges with new ones."""
         g, engine = dbfs_setup
 
@@ -182,9 +174,7 @@ class TestAnalyzeSessionBatching:
             # No leftover os import edge
             assert not any(t.endswith("/os") for t in targets)
 
-    async def test_analyze_edges_projected_after_commit(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_analyze_edges_projected_after_commit(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Edges should be projected into graph after DB commit, with DB records visible."""
         g, engine = dbfs_setup
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -204,9 +194,7 @@ class TestAnalyzeSessionBatching:
             records = list(rows.scalars().all())
             assert len(records) >= 1, "DB records should be visible after commit"
 
-    async def test_analyze_atomicity_on_failure(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_analyze_atomicity_on_failure(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """If add_connection fails mid-loop, all DB changes should roll back."""
         g, engine = dbfs_setup
 
@@ -236,9 +224,7 @@ class TestAnalyzeSessionBatching:
         # Verify: no chunks or connections from the failed attempt
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as sess:
-            chunk_rows = await sess.execute(
-                select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py")
-            )
+            chunk_rows = await sess.execute(select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py"))
             assert len(list(chunk_rows.scalars().all())) == 0, "Chunks should be rolled back"
 
             conn_rows = await sess.execute(
@@ -255,9 +241,7 @@ class TestAnalyzeSessionBatching:
 class TestDeletedSessionBatching:
     """Verify _process_delete uses a single batched session."""
 
-    async def test_on_file_deleted_uses_single_session(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_on_file_deleted_uses_single_session(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Deleting a file should use 1 session for cleanup (was 3)."""
         g, _engine = dbfs_setup
 
@@ -274,9 +258,7 @@ class TestDeletedSessionBatching:
 
         assert counter.count == 1, f"Expected 1 session, got {counter.count}"
 
-    async def test_on_file_deleted_cleans_up_all_records(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_on_file_deleted_cleans_up_all_records(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Deleting a file should remove search entries, chunks, and connections."""
         g, engine = dbfs_setup
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -287,9 +269,7 @@ class TestDeletedSessionBatching:
 
         # Verify records exist before delete
         async with factory() as sess:
-            chunks = await sess.execute(
-                select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py")
-            )
+            chunks = await sess.execute(select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py"))
             assert len(list(chunks.scalars().all())) > 0, "Setup: chunks should exist"
 
         # Delete the file
@@ -298,9 +278,7 @@ class TestDeletedSessionBatching:
 
         # Verify all records cleaned up
         async with factory() as sess:
-            chunk_rows = await sess.execute(
-                select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py")
-            )
+            chunk_rows = await sess.execute(select(FileChunkModel).where(FileChunkModel.file_path == "/vfs/main.py"))
             assert len(list(chunk_rows.scalars().all())) == 0, "Chunks not cleaned up"
 
             conn_rows = await sess.execute(
@@ -317,9 +295,7 @@ class TestDeletedSessionBatching:
 class TestMovedSessionBatching:
     """Verify _process_move uses a single session for old-path cleanup."""
 
-    async def test_on_file_moved_uses_single_session(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_on_file_moved_uses_single_session(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """Moving a file should use 1 session for old-path cleanup (was 3)."""
         g, _engine = dbfs_setup
 
@@ -347,9 +323,7 @@ class TestMovedSessionBatching:
 class TestAnalyzeEdgeCases:
     """Edge case tests for batched session behavior."""
 
-    async def test_analyze_contains_edges_not_persisted(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
+    async def test_analyze_contains_edges_not_persisted(self, dbfs_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         """'contains' edges should stay in-memory only, not in DB. (Regression check.)"""
         g, engine = dbfs_setup
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

@@ -49,9 +49,7 @@ def dfs() -> DatabaseFileSystem:
 
 
 @pytest.fixture
-async def grover_with_sharing(
-    session_factory, engine: AsyncEngine, tmp_path: Path
-) -> AsyncIterator[GroverAsync]:
+async def grover_with_sharing(session_factory, engine: AsyncEngine, tmp_path: Path) -> AsyncIterator[GroverAsync]:
     """GroverAsync with a UserScopedFileSystem backend that has sharing configured."""
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     backend = UserScopedFileSystem(share_model=FileShareModel)
@@ -126,9 +124,7 @@ class TestMoveFileFollow:
             assert len(versions_after) == 2
 
     @pytest.mark.asyncio
-    async def test_move_no_follow_no_version_history(
-        self, dfs: DatabaseFileSystem, session_factory
-    ):
+    async def test_move_no_follow_no_version_history(self, dfs: DatabaseFileSystem, session_factory):
         """follow=False creates fresh file -- version history starts at v1."""
         async with session_factory() as sess:
             await dfs.write("/old.py", "v1", session=sess)
@@ -150,9 +146,7 @@ class TestMoveFileFollow:
             await usfs.write("/doc.md", "data", session=sess, user_id="alice")
             await usfs._create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
-            result = await usfs.move(
-                "/doc.md", "/renamed.md", session=sess, follow=True, user_id="alice"
-            )
+            result = await usfs.move("/doc.md", "/renamed.md", session=sess, follow=True, user_id="alice")
             assert result.success is True
 
             # Share should be updated to new path
@@ -172,9 +166,7 @@ class TestMoveFileFollow:
             await usfs.write("/doc.md", "data", session=sess, user_id="alice")
             await usfs._create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
-            result = await usfs.move(
-                "/doc.md", "/renamed.md", session=sess, follow=False, user_id="alice"
-            )
+            result = await usfs.move("/doc.md", "/renamed.md", session=sess, follow=False, user_id="alice")
             assert result.success is True
 
             # Share still points to old path (stale)
@@ -211,9 +203,7 @@ class TestMoveFileFollow:
             assert r.file.content == "file b"
 
     @pytest.mark.asyncio
-    async def test_move_follow_nested_dest_creates_parent_dirs(
-        self, dfs: DatabaseFileSystem, session_factory
-    ):
+    async def test_move_follow_nested_dest_creates_parent_dirs(self, dfs: DatabaseFileSystem, session_factory):
         """follow=True to a nested path creates parent directories."""
         async with session_factory() as sess:
             await dfs.write("/src.py", "content", session=sess)
@@ -268,9 +258,7 @@ class TestMoveFileFollow:
             await usfs.write("/dst.md", "dest", session=sess, user_id="alice")
             await usfs._create_share(sess, "/alice/src.md", "bob", "read", "alice")
 
-            result = await usfs.move(
-                "/src.md", "/dst.md", session=sess, follow=True, user_id="alice"
-            )
+            result = await usfs.move("/src.md", "/dst.md", session=sess, follow=True, user_id="alice")
             assert result.success is True
 
             # Share moved to dest
@@ -279,9 +267,7 @@ class TestMoveFileFollow:
             assert dst_shares[0].grantee_id == "bob"
 
     @pytest.mark.asyncio
-    async def test_move_no_follow_directory_preserves_is_directory(
-        self, dfs: DatabaseFileSystem, session_factory
-    ):
+    async def test_move_no_follow_directory_preserves_is_directory(self, dfs: DatabaseFileSystem, session_factory):
         """follow=False on dir with nested subdirs preserves is_directory flag."""
         async with session_factory() as sess:
             await dfs.mkdir("/src", session=sess)

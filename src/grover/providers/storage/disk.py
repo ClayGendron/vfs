@@ -71,9 +71,7 @@ class DiskStorageProvider:
         try:
             resolved.relative_to(self.workspace_dir)
         except ValueError:
-            raise PermissionError(
-                f"Path traversal detected: {virtual_path} resolves outside workspace"
-            ) from None
+            raise PermissionError(f"Path traversal detected: {virtual_path} resolves outside workspace") from None
 
         return resolved
 
@@ -694,7 +692,6 @@ class DiskStorageProvider:
         return FileOperationResult(
             success=True,
             message=(
-                f"Reconcile: {created} created, {updated} updated, "
-                f"{deleted} deleted, {chain_errors} chain errors"
+                f"Reconcile: {created} created, {updated} updated, {deleted} deleted, {chain_errors} chain errors"
             ),
         )
