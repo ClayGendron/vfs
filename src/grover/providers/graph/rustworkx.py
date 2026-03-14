@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import rustworkx
 
 from grover.models.database.connection import FileConnectionModel, FileConnectionModelBase
-from grover.models.internal.evidence import GraphCentralityEvidence, GraphRelationshipEvidence
+from grover.models.internal.evidence import Evidence, GraphCentralityEvidence, GraphRelationshipEvidence
 from grover.models.internal.ref import File, FileConnection, Ref
 from grover.models.internal.results import FileSearchResult, FileSearchSet
 from grover.ref import Ref as LegacyRef
@@ -457,7 +457,7 @@ class RustworkxGraph:
                 break
 
         # Build induced subgraph from visited nodes
-        ev = [GraphRelationshipEvidence(operation="neighborhood", paths=[path])]
+        ev: list[Evidence] = [GraphRelationshipEvidence(operation="neighborhood", paths=[path])]
         connections: list[FileConnection] = []
         for s in visited:
             connections.extend(
@@ -482,7 +482,7 @@ class RustworkxGraph:
         operation: str,
     ) -> tuple[list[File], list[FileConnection], str]:
         """Build File list, FileConnection list, and message from node/edge sets."""
-        ev = [GraphRelationshipEvidence(operation=operation)]
+        ev: list[Evidence] = [GraphRelationshipEvidence(operation=operation)]
         connections: list[FileConnection] = []
         for s in node_set:
             connections.extend(
@@ -542,7 +542,7 @@ class RustworkxGraph:
         await self._ensure_fresh(session)
         valid_seeds = [p for p in candidates.paths if p in self.nodes]
         if len(valid_seeds) <= 1:
-            ev = [GraphRelationshipEvidence(operation="meeting_subgraph", paths=valid_seeds)]
+            ev: list[Evidence] = [GraphRelationshipEvidence(operation="meeting_subgraph", paths=valid_seeds)]
             files = [File(path=p, evidence=ev) for p in valid_seeds]
             return FileSearchResult(
                 success=True,
@@ -608,7 +608,7 @@ class RustworkxGraph:
         kept = RustworkxGraph._strip_leaves(kept, edges_out, edges_in, seed_set)
 
         # Build result
-        ev = [GraphRelationshipEvidence(operation="meeting_subgraph")]
+        ev: list[Evidence] = [GraphRelationshipEvidence(operation="meeting_subgraph")]
         connections: list[FileConnection] = []
         for s in kept:
             connections.extend(
