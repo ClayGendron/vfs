@@ -89,10 +89,7 @@ class MountMixin:
         if isinstance(mount_or_path, Mount):
             new_mount = mount_or_path
             # Auto-detect LocalFileSystem: open() and extract session_factory if not set
-            if (
-                isinstance(new_mount.filesystem, LocalFileSystem)
-                and new_mount.session_factory is None
-            ):
+            if isinstance(new_mount.filesystem, LocalFileSystem) and new_mount.session_factory is None:
                 await new_mount.filesystem.open()
                 new_mount.session_factory = new_mount.filesystem.session_factory
         elif engine is not None:
@@ -130,9 +127,7 @@ class MountMixin:
             # Resolve path: either from positional arg or keyword
             actual_path = mount_or_path if mount_or_path is not None else path
             if actual_path is None or filesystem is None:
-                raise ValueError(
-                    "Provide a Mount object, (path + filesystem), or engine/session_factory"
-                )
+                raise ValueError("Provide a Mount object, (path + filesystem), or engine/session_factory")
 
             # For local backends, eagerly init DB and extract session_factory
             sf = session_factory
@@ -171,16 +166,8 @@ class MountMixin:
             if hasattr(fs, "_validate_search_dimensions"):
                 fs._validate_search_dimensions()  # type: ignore[union-attr]
 
-        # Configure refresh on graph provider so lazy-load knows the path prefix
-        if fs is not None and not new_mount.hidden:
-            gp = getattr(fs, "graph_provider", None)
-            if gp is not None and hasattr(gp, "configure_refresh"):
-                gp.configure_refresh(path_prefix="")
-
         # Call open() on the filesystem if needed (skip LocalFileSystem — already opened above)
-        if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(
-            new_mount.filesystem, "open"
-        ):
+        if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(new_mount.filesystem, "open"):
             await new_mount.filesystem.open()
 
         self._ctx.registry.add_mount(new_mount)

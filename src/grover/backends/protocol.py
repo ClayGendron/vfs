@@ -2,7 +2,7 @@
 
 ``GroverFileSystem`` is the single protocol that every backend must
 implement.  It covers CRUD, queries, versioning, trash, search,
-connections, and file chunks.
+connections, file chunks, and graph operations.
 
 There are two opt-in capability protocols:
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from grover.models.database.chunk import FileChunkModelBase
     from grover.models.database.file import FileModelBase
-    from grover.models.internal.results import FileOperationResult, FileSearchResult
+    from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
     from grover.providers.search.extractors import EmbeddableChunk
     from grover.providers.search.types import SearchResult
 
@@ -58,7 +58,7 @@ class GroverFileSystem(Protocol):
         offset: int = 0,
         limit: int = 2000,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -66,7 +66,7 @@ class GroverFileSystem(Protocol):
         self,
         path: str = "/",
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
 
@@ -74,7 +74,7 @@ class GroverFileSystem(Protocol):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -82,7 +82,7 @@ class GroverFileSystem(Protocol):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -97,7 +97,7 @@ class GroverFileSystem(Protocol):
         created_by: str = "agent",
         *,
         overwrite: bool = True,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
@@ -108,7 +108,7 @@ class GroverFileSystem(Protocol):
         *,
         overwrite: bool = True,
         created_by: str = "agent",
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
@@ -119,7 +119,7 @@ class GroverFileSystem(Protocol):
         *,
         overwrite: bool = True,
         created_by: str = "agent",
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
@@ -132,7 +132,7 @@ class GroverFileSystem(Protocol):
         replace_all: bool = False,
         created_by: str = "agent",
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -141,7 +141,7 @@ class GroverFileSystem(Protocol):
         path: str,
         permanent: bool = False,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -150,7 +150,7 @@ class GroverFileSystem(Protocol):
         path: str,
         parents: bool = True,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -159,7 +159,7 @@ class GroverFileSystem(Protocol):
         src: str,
         dest: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         follow: bool = False,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
@@ -169,7 +169,7 @@ class GroverFileSystem(Protocol):
         src: str,
         dest: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -182,7 +182,7 @@ class GroverFileSystem(Protocol):
         pattern: str,
         path: str = "/",
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
 
@@ -201,7 +201,7 @@ class GroverFileSystem(Protocol):
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
 
@@ -210,7 +210,7 @@ class GroverFileSystem(Protocol):
         path: str = "/",
         *,
         max_depth: int | None = None,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
 
@@ -222,7 +222,7 @@ class GroverFileSystem(Protocol):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
 
@@ -231,7 +231,7 @@ class GroverFileSystem(Protocol):
         path: str,
         version: int,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -240,7 +240,7 @@ class GroverFileSystem(Protocol):
         path: str,
         version: int,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
@@ -248,14 +248,14 @@ class GroverFileSystem(Protocol):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
     async def verify_all_versions(
         self,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> list[FileOperationResult]: ...
 
@@ -266,7 +266,7 @@ class GroverFileSystem(Protocol):
     async def list_trash(
         self,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
@@ -275,7 +275,7 @@ class GroverFileSystem(Protocol):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
@@ -283,7 +283,7 @@ class GroverFileSystem(Protocol):
     async def empty_trash(
         self,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> FileOperationResult: ...
@@ -296,14 +296,14 @@ class GroverFileSystem(Protocol):
         self,
         entries: list[EmbeddableChunk],
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> None: ...
 
     async def search_remove_file(
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> None: ...
 
     async def vector_search(self, query: str, k: int = 10) -> FileSearchResult: ...
@@ -313,7 +313,7 @@ class GroverFileSystem(Protocol):
         query: str,
         *,
         k: int = 10,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> list[SearchResult]: ...
 
     # ------------------------------------------------------------------
@@ -327,7 +327,7 @@ class GroverFileSystem(Protocol):
         connection_type: str,
         *,
         weight: float = 1.0,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
 
     async def delete_connection(
@@ -336,7 +336,7 @@ class GroverFileSystem(Protocol):
         target_path: str,
         *,
         connection_type: str | None = None,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
 
     async def list_connections(
@@ -345,7 +345,7 @@ class GroverFileSystem(Protocol):
         *,
         direction: str = "both",
         connection_type: str | None = None,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
 
     # ------------------------------------------------------------------
@@ -357,36 +357,107 @@ class GroverFileSystem(Protocol):
         file_path: str,
         chunks: list[dict],
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
 
     async def delete_file_chunks(
         self,
         file_path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
 
     async def list_file_chunks(
         self,
         file_path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
 
     async def write_chunk(
         self,
         chunk: FileChunkModelBase,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
 
     async def write_chunks(
         self,
         chunks: list[FileChunkModelBase],
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
+
+    # ------------------------------------------------------------------
+    # Graph queries
+    # ------------------------------------------------------------------
+
+    async def predecessors(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
+
+    async def successors(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
+
+    async def ancestors(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
+
+    async def descendants(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
+
+    async def neighborhood(
+        self,
+        candidates: FileSearchSet,
+        *,
+        max_depth: int = 2,
+        session: AsyncSession,
+    ) -> FileSearchResult: ...
+
+    async def meeting_subgraph(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
+
+    async def min_meeting_subgraph(
+        self,
+        candidates: FileSearchSet,
+        *,
+        session: AsyncSession,
+    ) -> FileSearchResult: ...
+
+    async def pagerank(
+        self,
+        candidates: FileSearchSet,
+        *,
+        personalization: dict[str, float] | None = None,
+        session: AsyncSession,
+    ) -> FileSearchResult: ...
+
+    async def betweenness_centrality(
+        self,
+        candidates: FileSearchSet,
+        *,
+        session: AsyncSession,
+    ) -> FileSearchResult: ...
+
+    async def closeness_centrality(
+        self,
+        candidates: FileSearchSet,
+        *,
+        session: AsyncSession,
+    ) -> FileSearchResult: ...
+
+    async def katz_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
+
+    async def degree_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
+
+    async def in_degree_centrality(
+        self,
+        candidates: FileSearchSet,
+        *,
+        session: AsyncSession,
+    ) -> FileSearchResult: ...
+
+    async def out_degree_centrality(
+        self,
+        candidates: FileSearchSet,
+        *,
+        session: AsyncSession,
+    ) -> FileSearchResult: ...
+
+    async def hits(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
 
 @runtime_checkable
@@ -405,7 +476,7 @@ class SupportsReBAC(Protocol):
         permission: str,
         *,
         user_id: str,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         expires_at: datetime | None = None,
     ) -> FileOperationResult: ...
 
@@ -415,7 +486,7 @@ class SupportsReBAC(Protocol):
         grantee_id: str,
         *,
         user_id: str,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...
 
     async def list_shares_on_path(
@@ -423,14 +494,14 @@ class SupportsReBAC(Protocol):
         path: str,
         *,
         user_id: str,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileSearchResult: ...
 
     async def list_shared_with_me(
         self,
         *,
         user_id: str,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileSearchResult: ...
 
 
@@ -441,5 +512,5 @@ class SupportsReconcile(Protocol):
     async def reconcile(
         self,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult: ...

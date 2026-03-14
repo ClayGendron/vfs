@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from grover.models.database.chunk import FileChunkModelBase
     from grover.models.database.file import FileModelBase
     from grover.models.database.version import FileVersionModelBase
-    from grover.models.internal.results import FileOperationResult, FileSearchResult
+    from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
     from grover.mount import Mount
     from grover.providers.embedding.protocol import EmbeddingProvider
     from grover.providers.graph.protocol import GraphProvider
@@ -229,9 +229,7 @@ class Grover:
         """Replace *old* with *new* in the file at *path*."""
         return self._run(self._async.edit(path, old, new, replace_all=replace_all, user_id=user_id))
 
-    def delete(
-        self, path: str, permanent: bool = False, *, user_id: str | None = None
-    ) -> FileOperationResult:
+    def delete(self, path: str, permanent: bool = False, *, user_id: str | None = None) -> FileOperationResult:
         """Delete the file at *path*."""
         return self._run(self._async.delete(path, permanent, user_id=user_id))
 
@@ -247,9 +245,7 @@ class Grover:
         """Return metadata for *path*."""
         return self._run(self._async.get_info(path, user_id=user_id))
 
-    def move(
-        self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False
-    ) -> FileOperationResult:
+    def move(self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False) -> FileOperationResult:
         """Move a file from *src* to *dest*."""
         return self._run(self._async.move(src, dest, user_id=user_id, follow=follow))
 
@@ -310,9 +306,7 @@ class Grover:
             )
         )
 
-    def tree(
-        self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
-    ) -> FileSearchResult:
+    def tree(self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None) -> FileSearchResult:
         """List all entries under *path* recursively."""
         return self._run(self._async.tree(path, max_depth=max_depth, user_id=user_id))
 
@@ -323,9 +317,7 @@ class Grover:
     def list_versions(self, path: str, *, user_id: str | None = None) -> FileSearchResult:
         return self._run(self._async.list_versions(path, user_id=user_id))
 
-    def read_version(
-        self, path: str, version: int, *, user_id: str | None = None
-    ) -> FileOperationResult:
+    def read_version(self, path: str, version: int, *, user_id: str | None = None) -> FileOperationResult:
         return self._run(self._async.read_version(path, version, user_id=user_id))
 
     def diff_versions(
@@ -333,9 +325,7 @@ class Grover:
     ) -> FileOperationResult:
         return self._run(self._async.diff_versions(path, version_a, version_b, user_id=user_id))
 
-    def restore_version(
-        self, path: str, version: int, *, user_id: str | None = None
-    ) -> FileOperationResult:
+    def restore_version(self, path: str, version: int, *, user_id: str | None = None) -> FileOperationResult:
         return self._run(self._async.restore_version(path, version, user_id=user_id))
 
     def list_trash(self, *, user_id: str | None = None) -> FileSearchResult:
@@ -472,60 +462,27 @@ class Grover:
     # Graph traversal wrappers (sync)
     # ------------------------------------------------------------------
 
-    def predecessors(self, path: str) -> FileSearchResult:
-        return self._run(self._async.predecessors(path))
+    def predecessors(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.predecessors(candidates))
 
-    def successors(self, path: str) -> FileSearchResult:
-        return self._run(self._async.successors(path))
+    def successors(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.successors(candidates))
 
-    def ancestors(self, path: str) -> FileSearchResult:
-        return self._run(self._async.ancestors(path))
+    def ancestors(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.ancestors(candidates))
 
-    def descendants(self, path: str) -> FileSearchResult:
-        return self._run(self._async.descendants(path))
-
-    def shortest_path(self, source: str, target: str) -> FileSearchResult:
-        return self._run(self._async.shortest_path(source, target))
-
-    def has_path(self, source: str, target: str) -> FileSearchResult:
-        return self._run(self._async.has_path(source, target))
+    def descendants(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.descendants(candidates))
 
     # ------------------------------------------------------------------
     # Graph subgraph wrappers (sync)
     # ------------------------------------------------------------------
 
-    def subgraph(
-        self,
-        candidates: FileSearchResult,
-        *,
-        path: str | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.subgraph(candidates, path=path))
+    def min_meeting_subgraph(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.min_meeting_subgraph(candidates))
 
-    def min_meeting_subgraph(
-        self,
-        candidates: FileSearchResult,
-        *,
-        max_size: int = 50,
-    ) -> FileSearchResult:
-        return self._run(self._async.min_meeting_subgraph(candidates, max_size=max_size))
-
-    def ego_graph(
-        self,
-        path: str,
-        *,
-        max_depth: int = 2,
-        direction: str = "both",
-        edge_types: list[str] | None = None,
-    ) -> FileSearchResult:
-        return self._run(
-            self._async.ego_graph(
-                path,
-                max_depth=max_depth,
-                direction=direction,
-                edge_types=edge_types,
-            )
-        )
+    def ego_graph(self, candidates: FileSearchSet, *, max_depth: int = 2) -> FileSearchResult:
+        return self._run(self._async.ego_graph(candidates, max_depth=max_depth))
 
     # ------------------------------------------------------------------
     # Graph centrality wrappers (sync)
@@ -533,91 +490,32 @@ class Grover:
 
     def pagerank(
         self,
+        candidates: FileSearchSet,
         *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
         personalization: dict[str, float] | None = None,
     ) -> FileSearchResult:
-        return self._run(
-            self._async.pagerank(path=path, candidates=candidates, personalization=personalization)
-        )
+        return self._run(self._async.pagerank(candidates, personalization=personalization))
 
-    def betweenness_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.betweenness_centrality(path=path, candidates=candidates))
+    def betweenness_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.betweenness_centrality(candidates))
 
-    def closeness_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.closeness_centrality(path=path, candidates=candidates))
+    def closeness_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.closeness_centrality(candidates))
 
-    def harmonic_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.harmonic_centrality(path=path, candidates=candidates))
+    def katz_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.katz_centrality(candidates))
 
-    def katz_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.katz_centrality(path=path, candidates=candidates))
+    def degree_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.degree_centrality(candidates))
 
-    def degree_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.degree_centrality(path=path, candidates=candidates))
+    def in_degree_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.in_degree_centrality(candidates))
 
-    def in_degree_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.in_degree_centrality(path=path, candidates=candidates))
+    def out_degree_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.out_degree_centrality(candidates))
 
-    def out_degree_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.out_degree_centrality(path=path, candidates=candidates))
-
-    def hits(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.hits(path=path, candidates=candidates))
-
-    # ------------------------------------------------------------------
-    # Other graph operations (sync)
-    # ------------------------------------------------------------------
-
-    def common_neighbors(
-        self,
-        path1: str,
-        path2: str,
-        *,
-        path: str | None = None,
-    ) -> FileSearchResult:
-        return self._run(self._async.common_neighbors(path1, path2, path=path))
+    def hits(self, candidates: FileSearchSet) -> FileSearchResult:
+        return self._run(self._async.hits(candidates))
 
     # ------------------------------------------------------------------
     # Search wrappers (sync)
@@ -633,9 +531,7 @@ class Grover:
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Semantic (vector) search over indexed content."""
-        return self._run(
-            self._async.vector_search(query, k, path=path, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.vector_search(query, k, path=path, candidates=candidates, user_id=user_id))
 
     def lexical_search(
         self,
@@ -647,9 +543,7 @@ class Grover:
         user_id: str | None = None,
     ) -> FileSearchResult:
         """BM25/full-text search over indexed content."""
-        return self._run(
-            self._async.lexical_search(query, k, path=path, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.lexical_search(query, k, path=path, candidates=candidates, user_id=user_id))
 
     def hybrid_search(
         self,
@@ -663,9 +557,7 @@ class Grover:
     ) -> FileSearchResult:
         """Hybrid search combining vector and lexical results."""
         return self._run(
-            self._async.hybrid_search(
-                query, k, alpha=alpha, path=path, candidates=candidates, user_id=user_id
-            )
+            self._async.hybrid_search(query, k, alpha=alpha, path=path, candidates=candidates, user_id=user_id)
         )
 
     def search(
@@ -679,9 +571,7 @@ class Grover:
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Composable search pipeline: optional glob/grep → vector search."""
-        return self._run(
-            self._async.search(query, path=path, glob=glob, grep=grep, k=k, user_id=user_id)
-        )
+        return self._run(self._async.search(query, path=path, glob=glob, grep=grep, k=k, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Index and persistence

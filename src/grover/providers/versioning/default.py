@@ -62,10 +62,7 @@ class DefaultVersionProvider:
         version_num = file.current_version
         is_snap = (version_num % SNAPSHOT_INTERVAL == 0) or (version_num == 1)
 
-        if is_snap or not old_content:
-            content = new_content
-        else:
-            content = compute_diff(old_content, new_content)
+        content = new_content if is_snap or not old_content else compute_diff(old_content, new_content)
 
         new_content_bytes = new_content.encode()
         version = self._file_version_model(
@@ -212,9 +209,7 @@ class DefaultVersionProvider:
                 continue
 
             # Build the sub-chain from snapshot through target
-            chain = [
-                rec for rec in all_versions if snapshot_rec.version <= rec.version <= v.version
-            ]
+            chain = [rec for rec in all_versions if snapshot_rec.version <= rec.version <= v.version]
 
             try:
                 entries = [(rec.is_snapshot, rec.content) for rec in chain]

@@ -30,9 +30,7 @@ class IndexMixin:
     # Processing methods (called by worker via schedule/schedule_immediate)
     # ------------------------------------------------------------------
 
-    async def _process_write(
-        self, path: str, content: str | None = None, user_id: str | None = None
-    ) -> None:
+    async def _process_write(self, path: str, content: str | None = None, user_id: str | None = None) -> None:
         """Analyze and integrate a written/edited/restored file."""
         if not self._ctx.initialized:
             return
@@ -56,7 +54,7 @@ class IndexMixin:
         try:
             graph = self._ctx.resolve_graph(path)
             if graph.has_node(path):
-                graph.remove_file_subgraph(path)
+                graph.remove_node(path)
         except RuntimeError:
             pass  # Mount may not have a graph
         # DB cleanup: search, chunks, connections in a single session
@@ -149,9 +147,7 @@ class IndexMixin:
     # Core pipeline
     # ------------------------------------------------------------------
 
-    async def _analyze_and_integrate(
-        self, path: str, content: str, *, user_id: str | None = None
-    ) -> dict[str, int]:
+    async def _analyze_and_integrate(self, path: str, content: str, *, user_id: str | None = None) -> dict[str, int]:
         import hashlib
 
         stats = {"chunks_created": 0, "edges_added": 0}
@@ -167,7 +163,7 @@ class IndexMixin:
 
         # In-memory graph cleanup + re-add
         if graph.has_node(path):
-            graph.remove_file_subgraph(path)
+            graph.remove_node(path)
         graph.add_node(path)
 
         analysis = self._ctx.analyzer_registry.analyze_file(path, content)

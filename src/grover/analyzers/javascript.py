@@ -38,9 +38,7 @@ class JavaScriptAnalyzer:
     def analyze_file(self, path: str, content: str) -> AnalysisResult:
         if not _HAS_TREESITTER:
             if not JavaScriptAnalyzer._warned:
-                logger.warning(
-                    "tree-sitter not available; JavaScriptAnalyzer returning empty results"
-                )
+                logger.warning("tree-sitter not available; JavaScriptAnalyzer returning empty results")
                 JavaScriptAnalyzer._warned = True
             return [], []
         if not content.strip():
@@ -66,18 +64,13 @@ class TypeScriptAnalyzer:
     def analyze_file(self, path: str, content: str) -> AnalysisResult:
         if not _HAS_TREESITTER:
             if not TypeScriptAnalyzer._warned:
-                logger.warning(
-                    "tree-sitter not available; TypeScriptAnalyzer returning empty results"
-                )
+                logger.warning("tree-sitter not available; TypeScriptAnalyzer returning empty results")
                 TypeScriptAnalyzer._warned = True
             return [], []
         if not content.strip():
             return [], []
 
-        if path.endswith(".tsx"):
-            lang = tree_sitter.Language(_tsx_language())
-        else:
-            lang = tree_sitter.Language(_ts_language())
+        lang = tree_sitter.Language(_tsx_language() if path.endswith(".tsx") else _ts_language())
         return _analyze_js_tree(path, content, lang)
 
 

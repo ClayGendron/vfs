@@ -43,11 +43,10 @@ class GroverContext:
     # ------------------------------------------------------------------
 
     @asynccontextmanager
-    async def session_for(self, mount: Mount) -> AsyncGenerator[AsyncSession | None]:
-        """Yield a session for the given mount, or ``None`` for non-SQL backends."""
+    async def session_for(self, mount: Mount) -> AsyncGenerator[AsyncSession]:
+        """Yield a session for the given mount."""
         if mount.session_factory is None:
-            yield None
-            return
+            raise RuntimeError(f"No session factory on mount {mount.path}")
 
         session = mount.session_factory()
         try:

@@ -180,11 +180,10 @@ class LocalFileSystem(DatabaseFileSystem):
         offset: int = 0,
         limit: int = 2000,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult:
         """Read file with binary detection and similar file suggestions."""
-        sess = self._require_session(session)
 
         valid, error = validate_path(path)
         if not valid:
@@ -201,9 +200,7 @@ class LocalFileSystem(DatabaseFileSystem):
         if not exists:
             parent_exists = await asyncio.to_thread(actual_path.parent.exists)
             if parent_exists:
-                suggestions = await asyncio.to_thread(
-                    get_similar_files, actual_path.parent, actual_path.name
-                )
+                suggestions = await asyncio.to_thread(get_similar_files, actual_path.parent, actual_path.name)
                 if suggestions:
                     suggestion_text = "\n".join(f"  {s}" for s in suggestions)
                     return FileOperationResult(
@@ -216,11 +213,9 @@ class LocalFileSystem(DatabaseFileSystem):
             return FileOperationResult(success=False, message=f"Cannot read binary file: {path}")
 
         if await asyncio.to_thread(actual_path.is_dir):
-            return FileOperationResult(
-                success=False, message=f"Path is a directory, not a file: {path}"
-            )
+            return FileOperationResult(success=False, message=f"Path is a directory, not a file: {path}")
 
-        content = await self._read_content(path, sess)
+        content = await self._read_content(path, session)
 
         if content is None:
             return FileOperationResult(success=False, message=f"Could not read file: {path}")
@@ -236,7 +231,7 @@ class LocalFileSystem(DatabaseFileSystem):
         path: str,
         permanent: bool = False,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult:
         """Delete file, backing up content to the database first.
@@ -244,15 +239,14 @@ class LocalFileSystem(DatabaseFileSystem):
         Content-before-commit: DB soft-delete -> flush -> unlink disk -> return.
         VFS commits after.
         """
-        sess = self._require_session(session)
         norm = normalize_path(path)
 
         # Read content from disk before anything else
-        content = await self._read_content(norm, sess)
+        content = await self._read_content(norm, session)
 
         # Ensure a DB record exists so delete can soft-delete it
         if content is not None:
-            file = await self._get_file_record(sess, norm)
+            file = await self._get_file_record(session, norm)
             if file is None:
                 # Disk-only file: create a DB record + version 1 snapshot
                 await write_file(
@@ -260,7 +254,7 @@ class LocalFileSystem(DatabaseFileSystem):
                     content,
                     "backup",
                     True,
-                    sess,
+                    session,
                     get_file_record=self._get_file_record,
                     versioning=self.version_provider,
                     ensure_parent_dirs=self._ensure_parent_dirs,
@@ -269,11 +263,11 @@ class LocalFileSystem(DatabaseFileSystem):
                     write_content=self._write_content,
                 )
 
-        result = await super().delete(norm, permanent, session=sess, user_id=user_id)
+        result = await super().delete(norm, permanent, session=session, user_id=user_id)
 
         # Remove from disk regardless of soft/permanent
         if result.success:
-            await self._delete_content(norm, sess)
+            await self._delete_content(norm, session)
 
         return result
 
@@ -286,7 +280,7 @@ class LocalFileSystem(DatabaseFileSystem):
         path: str,
         parents: bool = True,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         user_id: str | None = None,
     ) -> FileOperationResult:
         """Create directory in database and on disk."""
@@ -306,24 +300,23 @@ class LocalFileSystem(DatabaseFileSystem):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> FileOperationResult:
         """Restore a file from trash, writing content back to disk."""
-        sess = self._require_session(session)
-        result = await super().restore_from_trash(path, session=sess, owner_id=owner_id)
+        result = await super().restore_from_trash(path, session=session, owner_id=owner_id)
         if not result.success:
             return result
 
         restored_path = (result.file.path if result.file else None) or path
-        file = await self._get_file_record(sess, restored_path)
+        file = await self._get_file_record(session, restored_path)
         if file:
             if file.is_directory:
                 from sqlmodel import select
 
                 model = self.file_model
-                children_result = await sess.execute(
+                children_result = await session.execute(
                     select(model).where(
                         model.path.startswith(restored_path + "/"),
                         model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
@@ -334,18 +327,18 @@ class LocalFileSystem(DatabaseFileSystem):
                         vc = await self.get_version_content(
                             child.path,
                             child.current_version,
-                            session=sess,
+                            session=session,
                         )
                         if vc.success and vc.file and vc.file.content is not None:
-                            await self._write_content(child.path, vc.file.content, sess)
+                            await self._write_content(child.path, vc.file.content, session)
             else:
                 vc = await self.get_version_content(
                     restored_path,
                     file.current_version,
-                    session=sess,
+                    session=session,
                 )
                 if vc.success and vc.file and vc.file.content is not None:
-                    await self._write_content(restored_path, vc.file.content, sess)
+                    await self._write_content(restored_path, vc.file.content, session)
 
         return result
 
@@ -356,10 +349,9 @@ class LocalFileSystem(DatabaseFileSystem):
     async def reconcile(
         self,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileOperationResult:
         """Walk disk, compare with DB, create/update/soft-delete as needed."""
-        sess = self._require_session(session)
         created = 0
         deleted = 0
 
@@ -394,17 +386,17 @@ class LocalFileSystem(DatabaseFileSystem):
         for vpath in items:
             disk_paths.add(vpath)
 
-            file = await self._get_file_record(sess, vpath)
+            file = await self._get_file_record(session, vpath)
             if file is None:
                 # File on disk but not in DB — create DB record only
-                content = await self._read_content(vpath, sess)
+                content = await self._read_content(vpath, session)
                 if content is not None:
                     await write_file(
                         vpath,
                         content,
                         "reconcile",
                         True,
-                        sess,
+                        session,
                         get_file_record=self._get_file_record,
                         versioning=self.version_provider,
                         ensure_parent_dirs=self._ensure_parent_dirs,
@@ -418,7 +410,7 @@ class LocalFileSystem(DatabaseFileSystem):
         from sqlmodel import select
 
         model = self.file_model
-        result = await sess.execute(
+        result = await session.execute(
             select(model).where(
                 model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                 model.is_directory.is_(False),  # type: ignore[union-attr]
@@ -433,16 +425,13 @@ class LocalFileSystem(DatabaseFileSystem):
                     file.deleted_at = datetime.now(UTC)
                     deleted += 1
 
-        await sess.flush()
+        await session.flush()
 
         # Verify version chain integrity
-        verification_results = await self.verify_all_versions(session=sess)
+        verification_results = await self.verify_all_versions(session=session)
         chain_errors = sum(1 for r in verification_results if not r.success)
 
         return FileOperationResult(
             success=True,
-            message=(
-                f"Reconcile complete: {created} created, {deleted} deleted, "
-                f"{chain_errors} chain errors"
-            ),
+            message=(f"Reconcile complete: {created} created, {deleted} deleted, {chain_errors} chain errors"),
         )

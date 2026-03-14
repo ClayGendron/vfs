@@ -11,23 +11,35 @@ not separate result classes.
 
 import copy
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import Self
-
-from pydantic import BaseModel
 
 from grover.models.internal.evidence import Evidence
 from grover.models.internal.ref import File, FileConnection, Ref
 
 
-class FileOperationResult(BaseModel):
+@dataclass(slots=True)
+class FileOperationResult:
     """Result of a single-file operation (read, write, delete, etc.)."""
 
-    file: File = File(path="")
+    file: File = field(default_factory=lambda: File(path=""))
     message: str = ""
     success: bool = True
 
 
-class FileSearchSet(BaseModel):
+@dataclass(slots=True)
+class BatchResult:
+    """Result of a batch operation (multiple file or chunk writes)."""
+
+    results: list[FileOperationResult] = field(default_factory=list)
+    message: str = ""
+    success: bool = True
+    succeeded: int = 0
+    failed: int = 0
+
+
+@dataclass(slots=True)
+class FileSearchSet:
     """An unordered set of file candidates and connections.
 
     Supports set algebra (``&``, ``|``, ``-``, ``>>``), iteration over
@@ -38,8 +50,17 @@ class FileSearchSet(BaseModel):
     passing into search methods as input.
     """
 
-    files: list[File] = []
-    connections: list[FileConnection] = []
+    files: list[File] = field(default_factory=list)
+    connections: list[FileConnection] = field(default_factory=list)
+
+    # -----------------------------------------------------------------
+    # Factories
+    # -----------------------------------------------------------------
+
+    @classmethod
+    def from_paths(cls, paths: list[str]) -> Self:
+        """Create a set from a list of paths (no evidence — added by consumers)."""
+        return cls(files=[File(path=p) for p in paths])
 
     # -----------------------------------------------------------------
     # Properties and iteration
@@ -61,7 +82,7 @@ class FileSearchSet(BaseModel):
     def __bool__(self) -> bool:
         return len(self.files) > 0
 
-    def __iter__(self) -> Iterator[str]:  # type: ignore[override]
+    def __iter__(self) -> Iterator[str]:
         return iter(f.path for f in self.files)
 
     def __contains__(self, path: object) -> bool:
@@ -309,6 +330,7 @@ class FileSearchSet(BaseModel):
         )
 
 
+@dataclass(slots=True)
 class FileSearchResult(FileSearchSet):
     """Result of a multi-file query (search, graph, glob, etc.).
 
@@ -330,7 +352,7 @@ class FileSearchResult(FileSearchSet):
         """Intersection — paths in both, evidence merged."""
         if not isinstance(other, FileSearchSet):
             return NotImplemented
-        base = super().__and__(other)
+        base = FileSearchSet.__and__(self, other)
         other_success = other.success if isinstance(other, FileSearchResult) else True
         return type(self)(
             success=self.success and other_success,
@@ -343,7 +365,7 @@ class FileSearchResult(FileSearchSet):
         """Union — paths from either, evidence merged."""
         if not isinstance(other, FileSearchSet):
             return NotImplemented
-        base = super().__or__(other)
+        base = FileSearchSet.__or__(self, other)
         other_success = other.success if isinstance(other, FileSearchResult) else True
         return type(self)(
             success=self.success or other_success,
@@ -356,7 +378,7 @@ class FileSearchResult(FileSearchSet):
         """Difference — paths in LHS not in RHS."""
         if not isinstance(other, FileSearchSet):
             return NotImplemented
-        base = super().__sub__(other)
+        base = FileSearchSet.__sub__(self, other)
         return type(self)(
             success=self.success,
             message=f"{len(base.files)} paths",
@@ -368,7 +390,7 @@ class FileSearchResult(FileSearchSet):
         """Pipeline — passes LHS paths as candidates to RHS."""
         if not isinstance(other, FileSearchSet):
             return NotImplemented
-        base = super().__rshift__(other)
+        base = FileSearchSet.__rshift__(self, other)
         other_success = other.success if isinstance(other, FileSearchResult) else True
         return type(self)(
             success=self.success and other_success,

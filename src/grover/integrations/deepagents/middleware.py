@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Annotated, cast
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.tools import BaseTool, StructuredTool
 
+from grover.models.internal.results import FileSearchSet
+
 if TYPE_CHECKING:
     from grover.client import Grover, GroverAsync
 
@@ -119,9 +121,7 @@ def _format_search_result(result: object, query: str) -> str:
     lines = [f"Search results for '{query}' ({len(result)} files):"]  # type: ignore[arg-type]
     for i, f in enumerate(result.files, 1):  # type: ignore[union-attr]
         lines.append(f"  {i}. {f.path}")
-        snippets = [
-            ev.snippet for ev in f.evidence if isinstance(ev, VectorEvidence) and ev.snippet
-        ]
+        snippets = [ev.snippet for ev in f.evidence if isinstance(ev, VectorEvidence) and ev.snippet]
         lines.extend(f"     {s.replace(chr(10), ' ')}" for s in snippets[:3])
     return "\n".join(lines)
 
@@ -427,9 +427,7 @@ class GroverMiddleware(AgentMiddleware):
         grover_a = cast("GroverAsync", self.grover) if is_async else None
 
         def search_semantic(
-            query: Annotated[
-                str, "Natural language search query describing what you're looking for"
-            ],
+            query: Annotated[str, "Natural language search query describing what you're looking for"],
             k: Annotated[int, "Maximum number of results to return"] = 10,
         ) -> str:
             if grover_a is not None:
@@ -480,7 +478,7 @@ class GroverMiddleware(AgentMiddleware):
                 return asyncio.run(successors_async(path))
             assert grover_s is not None
             try:
-                result = grover_s.successors(path)
+                result = grover_s.successors(FileSearchSet.from_paths([path]))
             except Exception as e:
                 return f"Error: {e}"
             return _format_graph_result(result, "successors")
@@ -488,7 +486,7 @@ class GroverMiddleware(AgentMiddleware):
         async def successors_async(path: str) -> str:
             assert grover_a is not None
             try:
-                result = await grover_a.successors(path)
+                result = await grover_a.successors(FileSearchSet.from_paths([path]))
             except Exception as e:
                 return f"Error: {e}"
             return _format_graph_result(result, "successors")
@@ -518,7 +516,7 @@ class GroverMiddleware(AgentMiddleware):
                 return asyncio.run(predecessors_async(path))
             assert grover_s is not None
             try:
-                result = grover_s.predecessors(path)
+                result = grover_s.predecessors(FileSearchSet.from_paths([path]))
             except Exception as e:
                 return f"Error: {e}"
             return _format_graph_result(result, "predecessors")
@@ -526,7 +524,7 @@ class GroverMiddleware(AgentMiddleware):
         async def predecessors_async(path: str) -> str:
             assert grover_a is not None
             try:
-                result = await grover_a.predecessors(path)
+                result = await grover_a.predecessors(FileSearchSet.from_paths([path]))
             except Exception as e:
                 return f"Error: {e}"
             return _format_graph_result(result, "predecessors")

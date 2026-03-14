@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from grover.exceptions import MountNotFoundError
-from grover.models.internal.results import FileOperationResult, FileSearchResult
+from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
@@ -22,6 +22,63 @@ class GraphOpsMixin:
     def get_graph(self, path: str | None = None) -> GraphProvider:
         """Return the graph for the mount owning *path*, or the first available."""
         return self._ctx.resolve_graph_any(path)
+
+    # ------------------------------------------------------------------
+    # Multi-mount dispatch
+    # ------------------------------------------------------------------
+
+    def _group_by_mount(self, candidates: FileSearchSet) -> list[tuple[Mount, FileSearchSet]]:
+        """Group candidate paths by their owning mount."""
+        groups: dict[str, tuple[Mount, list[str]]] = {}
+        for path in candidates.paths:
+            try:
+                mount, _rel = self._ctx.registry.resolve(path)
+            except MountNotFoundError:
+                continue
+            key = mount.path
+            if key not in groups:
+                groups[key] = (mount, [])
+            groups[key][1].append(path)
+        return [(mount, FileSearchSet.from_paths(paths)) for mount, paths in groups.values()]
+
+    def _all_graph_mounts(self) -> list[Mount]:
+        """Return all mounts that have a graph provider."""
+        return [
+            m
+            for m in self._ctx.registry.list_visible_mounts()
+            if m.filesystem is not None and getattr(m.filesystem, "graph_provider", None) is not None
+        ]
+
+    async def _dispatch_graph(
+        self,
+        candidates: FileSearchSet,
+        method: str,
+        **kwargs: object,
+    ) -> FileSearchResult:
+        """Split candidates by mount, call filesystem graph method, union results."""
+        if candidates.paths:
+            mount_groups = self._group_by_mount(candidates)
+        else:
+            # Empty candidates = run on all mounts with graphs
+            mount_groups = [(m, FileSearchSet()) for m in self._all_graph_mounts()]
+
+        if not mount_groups:
+            return FileSearchResult(success=False, message="No mounts found")
+
+        results: list[FileSearchResult] = []
+        for mount, subset in mount_groups:
+            assert mount.filesystem is not None
+            fn = getattr(mount.filesystem, method)
+            async with self._ctx.session_for(mount) as sess:
+                result = await fn(subset, session=sess, **kwargs)
+                results.append(result)
+
+        if len(results) == 1:
+            return results[0]
+        combined = results[0]
+        for r in results[1:]:
+            combined = combined | r
+        return combined
 
     # ------------------------------------------------------------------
     # Connection operations (persist through FS, graph updated via worker)
@@ -118,207 +175,74 @@ class GraphOpsMixin:
         return result
 
     # ------------------------------------------------------------------
-    # Traversal queries — async delegates with session pass-through
+    # Traversal queries
     # ------------------------------------------------------------------
 
-    async def predecessors(self, path: str) -> FileSearchResult:
-        """Return graph predecessors of *path* (nodes with edges pointing to it)."""
-        gp, mount = self._ctx.resolve_graph_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.predecessors(path, session=sess)  # type: ignore[arg-type]
+    async def predecessors(self, candidates: FileSearchSet) -> FileSearchResult:
+        """Return graph predecessors (nodes with edges pointing to candidates)."""
+        return await self._dispatch_graph(candidates, "predecessors")
 
-    async def successors(self, path: str) -> FileSearchResult:
-        """Return graph successors of *path* (nodes it points to)."""
-        gp, mount = self._ctx.resolve_graph_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.successors(path, session=sess)  # type: ignore[arg-type]
+    async def successors(self, candidates: FileSearchSet) -> FileSearchResult:
+        """Return graph successors (nodes candidates point to)."""
+        return await self._dispatch_graph(candidates, "successors")
 
-    async def ancestors(self, path: str) -> FileSearchResult:
-        """Return all nodes reachable by following edges backward from *path*."""
-        gp, mount = self._ctx.resolve_graph_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.ancestors(path, session=sess)  # type: ignore[arg-type]
+    async def ancestors(self, candidates: FileSearchSet) -> FileSearchResult:
+        """Return all nodes reachable by following edges backward from candidates."""
+        return await self._dispatch_graph(candidates, "ancestors")
 
-    async def descendants(self, path: str) -> FileSearchResult:
-        """Return all nodes reachable by following edges forward from *path*."""
-        gp, mount = self._ctx.resolve_graph_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.descendants(path, session=sess)  # type: ignore[arg-type]
-
-    async def shortest_path(self, source: str, target: str) -> FileSearchResult:
-        """Return the shortest path from *source* to *target*."""
-        gp, mount = self._ctx.resolve_graph_with_mount(source)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.path_between(source, target, session=sess)  # type: ignore[arg-type]
-
-    async def has_path(self, source: str, target: str) -> FileSearchResult:
-        """Check if a directed path exists from *source* to *target*."""
-        gp, mount = self._ctx.resolve_graph_with_mount(source)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.has_path(source, target, session=sess)  # type: ignore[arg-type]
+    async def descendants(self, candidates: FileSearchSet) -> FileSearchResult:
+        """Return all nodes reachable by following edges forward from candidates."""
+        return await self._dispatch_graph(candidates, "descendants")
 
     # ------------------------------------------------------------------
-    # Subgraph extraction — async delegates with session pass-through
+    # Subgraph extraction
     # ------------------------------------------------------------------
 
-    async def subgraph(
-        self,
-        candidates: FileSearchResult,
-        *,
-        path: str | None = None,
-    ) -> FileSearchResult:
-        """Extract the induced subgraph for nodes in *candidates*."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.subgraph(list(candidates.paths), session=sess)  # type: ignore[arg-type]
+    async def min_meeting_subgraph(self, candidates: FileSearchSet) -> FileSearchResult:
+        """Extract the minimum subgraph connecting candidate nodes."""
+        return await self._dispatch_graph(candidates, "min_meeting_subgraph")
 
-    async def min_meeting_subgraph(
-        self,
-        candidates: FileSearchResult,
-        *,
-        max_size: int = 50,
-    ) -> FileSearchResult:
-        """Extract the subgraph connecting candidate nodes via shortest paths."""
-        paths = list(candidates.paths)
-        gp, mount = self._ctx.resolve_graph_any_with_mount(paths[0] if paths else None)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.meeting_subgraph(paths, max_size=max_size, session=sess)  # type: ignore[arg-type]
-
-    async def ego_graph(
-        self,
-        path: str,
-        *,
-        max_depth: int = 2,
-        direction: str = "both",
-        edge_types: list[str] | None = None,
-    ) -> FileSearchResult:
-        """Extract the neighborhood subgraph around *path*."""
-        gp, mount = self._ctx.resolve_graph_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.neighborhood(
-                path,
-                max_depth=max_depth,
-                direction=direction,
-                edge_types=edge_types,
-                session=sess,  # type: ignore[arg-type]
-            )
+    async def ego_graph(self, candidates: FileSearchSet, *, max_depth: int = 2) -> FileSearchResult:
+        """Extract the neighborhood subgraph around candidates."""
+        return await self._dispatch_graph(candidates, "neighborhood", max_depth=max_depth)
 
     # ------------------------------------------------------------------
-    # Centrality algorithms — async delegates with session pass-through
+    # Centrality algorithms
     # ------------------------------------------------------------------
 
     async def pagerank(
         self,
+        candidates: FileSearchSet,
         *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
         personalization: dict[str, float] | None = None,
     ) -> FileSearchResult:
         """Run PageRank on the knowledge graph."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.pagerank(candidates, personalization=personalization, session=sess)  # type: ignore[arg-type]
+        return await self._dispatch_graph(candidates, "pagerank", personalization=personalization)
 
-    async def betweenness_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
+    async def betweenness_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
         """Betweenness centrality on the knowledge graph."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.betweenness_centrality(candidates, session=sess)  # type: ignore[arg-type]
+        return await self._dispatch_graph(candidates, "betweenness_centrality")
 
-    async def closeness_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
+    async def closeness_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
         """Closeness centrality on the knowledge graph."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.closeness_centrality(candidates, session=sess)  # type: ignore[arg-type]
+        return await self._dispatch_graph(candidates, "closeness_centrality")
 
-    async def harmonic_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
-        """Harmonic centrality on the knowledge graph."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.harmonic_centrality(candidates, session=sess)  # type: ignore[arg-type]
-
-    async def katz_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
+    async def katz_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
         """Katz centrality on the knowledge graph."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.katz_centrality(candidates, session=sess)  # type: ignore[arg-type]
+        return await self._dispatch_graph(candidates, "katz_centrality")
 
-    async def degree_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
+    async def degree_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
         """Degree centrality (in + out) on the knowledge graph."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.degree_centrality(candidates, session=sess)  # type: ignore[arg-type]
+        return await self._dispatch_graph(candidates, "degree_centrality")
 
-    async def in_degree_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
+    async def in_degree_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
         """In-degree centrality on the knowledge graph."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.in_degree_centrality(candidates, session=sess)  # type: ignore[arg-type]
+        return await self._dispatch_graph(candidates, "in_degree_centrality")
 
-    async def out_degree_centrality(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
+    async def out_degree_centrality(self, candidates: FileSearchSet) -> FileSearchResult:
         """Out-degree centrality on the knowledge graph."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.out_degree_centrality(candidates, session=sess)  # type: ignore[arg-type]
+        return await self._dispatch_graph(candidates, "out_degree_centrality")
 
-    async def hits(
-        self,
-        *,
-        path: str | None = None,
-        candidates: FileSearchResult | None = None,
-    ) -> FileSearchResult:
+    async def hits(self, candidates: FileSearchSet) -> FileSearchResult:
         """HITS hub and authority scores."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.hits(candidates, session=sess)  # type: ignore[arg-type]
-
-    # ------------------------------------------------------------------
-    # Other graph operations — async delegates with session pass-through
-    # ------------------------------------------------------------------
-
-    async def common_neighbors(
-        self,
-        path1: str,
-        path2: str,
-        *,
-        path: str | None = None,
-    ) -> FileSearchResult:
-        """Find common neighbors of two nodes."""
-        gp, mount = self._ctx.resolve_graph_any_with_mount(path)
-        async with self._ctx.session_for(mount) as sess:
-            return await gp.common_neighbors(path1, path2, session=sess)  # type: ignore[arg-type]
+        return await self._dispatch_graph(candidates, "hits")
