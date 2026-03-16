@@ -21,9 +21,9 @@ class FileVersionModelBase(SQLModel):
 
     __table_args__ = (UniqueConstraint("file_id", "version"),)
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    file_id: str = Field(index=True)
-    file_path: str = Field(default="", index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=1024, primary_key=True)
+    file_id: str = Field(max_length=1024, index=True)
+    file_path: str = Field(default="", max_length=1024, index=True)
     version: int = Field(default=1)
     is_snapshot: bool = Field(default=False)
     content: str = Field(default="")

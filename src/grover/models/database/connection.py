@@ -22,10 +22,10 @@ class FileConnectionModelBase(SQLModel):
     persisted separately for efficient queries.
     """
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    path: str = Field(default="", unique=True, index=True)
-    source_path: str = Field(index=True)
-    target_path: str = Field(index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=1024, primary_key=True)
+    path: str = Field(default="", max_length=1024, unique=True, index=True)
+    source_path: str = Field(max_length=1024, index=True)
+    target_path: str = Field(max_length=1024, index=True)
     type: str = Field(default="")
     weight: float = Field(default=1.0)
     created_at: datetime = Field(

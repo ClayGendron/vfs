@@ -19,9 +19,9 @@ from .vector import Vector, VectorType
 class FileModelBase(SQLModel):
     """Base fields for a tracked file. Subclass with ``table=True`` for a concrete table."""
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    path: str = Field(index=True, unique=True)
-    parent_path: str = Field(default="", index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=1024, primary_key=True)
+    path: str = Field(max_length=1024, index=True, unique=True)
+    parent_path: str = Field(default="", max_length=1024, index=True)
     is_directory: bool = Field(default=False)
     content: str | None = Field(default=None)
     content_hash: str | None = Field(default=None)
@@ -30,7 +30,7 @@ class FileModelBase(SQLModel):
     size_bytes: int = Field(default=0)
     current_version: int = Field(default=1)
     original_path: str | None = Field(default=None)
-    owner_id: str | None = Field(default=None, index=True)
+    owner_id: str | None = Field(default=None, max_length=1024, index=True)
     vector: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

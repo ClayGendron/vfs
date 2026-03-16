@@ -19,9 +19,9 @@ from .vector import Vector, VectorType
 class FileChunkModelBase(SQLModel):
     """Base fields for a file chunk. Subclass with ``table=True`` for a concrete table."""
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    path: str = Field(default="", index=True)
-    file_path: str = Field(index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=1024, primary_key=True)
+    path: str = Field(default="", max_length=1024, index=True)
+    file_path: str = Field(max_length=1024, index=True)
     content: str = Field(default="")
     content_hash: str = Field(default="")
     line_start: int = Field(default=0)

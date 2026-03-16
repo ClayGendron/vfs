@@ -17,9 +17,9 @@ from sqlmodel import Field, SQLModel
 class FileShareModelBase(SQLModel):
     """Base fields for a file share record. Subclass with ``table=True`` for a concrete table."""
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    path: str = Field(index=True)
-    grantee_id: str = Field(index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=1024, primary_key=True)
+    path: str = Field(max_length=1024, index=True)
+    grantee_id: str = Field(max_length=1024, index=True)
     permission: str = Field(default="read")
     granted_by: str = Field(default="")
     created_at: datetime = Field(
