@@ -29,32 +29,28 @@ Search providers (`embedding_provider`, `search_provider`) are configured per-mo
 ### Mount / Unmount
 
 ```python
-g.add_mount(path, filesystem=None, *, engine=None, session_factory=None,
-            dialect="sqlite", file_model=None, file_version_model=None,
-            file_chunk_model=None, db_schema=None, mount_type=None,
-            permission=Permission.READ_WRITE, label="", hidden=False,
+g.add_mount(path=None, *, mount=None, filesystem=None,
+            engine_config=None, session_config=None,
+            mount_type=None, permission=Permission.READ_WRITE,
+            label="", hidden=False,
             embedding_provider=None, search_provider=None)
 g.unmount(path)
 ```
 
-Mount a storage backend at a virtual path. You can pass either:
+Mount a storage backend at a virtual path. You can pass one of:
 
-- A `filesystem` object (e.g., `LocalFileSystem`, `DatabaseFileSystem`)
-- An `engine` (SQLAlchemy `AsyncEngine`) — Grover will create a `DatabaseFileSystem` automatically
-- A `session_factory` — same as engine, but you control session creation
-- A `Mount` object directly
+- `engine_config=EngineConfig(...)` — Grover creates and owns the engine
+- `session_config=SessionConfig(...)` — your app owns the engine and session factory
+- `filesystem=LocalFileSystem(...)` or `filesystem=DatabaseFileSystem()` — pre-created backend instance
+- `mount=mount` — a pre-built `Mount` object directly
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `path` | `str` | required | Virtual mount path (e.g., `"/project"`) |
+| `path` | `str | None` | `None` | Virtual mount path (e.g., `"/project"`). Required unless passing `mount=`. |
+| `mount` | `Mount | None` | `None` | Pre-built mount object. Mutually exclusive with all other parameters. |
 | `filesystem` | `GroverFileSystem | None` | `None` | Pre-created backend instance |
-| `engine` | `AsyncEngine | None` | `None` | SQLAlchemy async engine (creates DatabaseFileSystem) |
-| `session_factory` | `Callable[..., AsyncSession] | None` | `None` | Custom session factory |
-| `dialect` | `str` | `"sqlite"` | Database dialect (`"sqlite"`, `"postgresql"`, `"mssql"`) |
-| `file_model` | `type | None` | `None` | Custom SQLModel file table class |
-| `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
-| `file_chunk_model` | `type | None` | `None` | Custom SQLModel file chunk table class |
-| `db_schema` | `str | None` | `None` | Database schema name |
+| `engine_config` | `EngineConfig | None` | `None` | Config for Grover-owned engine (see [EngineConfig / SessionConfig](#engineconfig--sessionconfig) below) |
+| `session_config` | `SessionConfig | None` | `None` | Config for app-owned session factory (see below) |
 | `mount_type` | `str | None` | `None` | Mount type label (auto-detected if `None`) |
 | `permission` | `Permission` | `READ_WRITE` | `Permission.READ_WRITE` or `Permission.READ_ONLY` |
 | `label` | `str` | `""` | Human-readable mount label |
@@ -63,6 +59,52 @@ Mount a storage backend at a virtual path. You can pass either:
 | `search_provider` | `SearchProvider | None` | `None` | Search backend (e.g., `LocalVectorStore`, `PineconeVectorStore`). Required for vector search. |
 
 **Provider injection**: `add_mount()` auto-creates a `RustworkxGraph` as graph provider for non-hidden mounts. Search providers are never auto-created — you must pass both `embedding_provider` and `search_provider` to enable vector search. If either is missing, search operations return `success=False`.
+
+#### EngineConfig / SessionConfig
+
+```python
+from grover import EngineConfig, SessionConfig, create_async_engine_factory
+```
+
+**`EngineConfig`** — Grover creates and owns the async engine. The engine is stored on the `Mount` and disposed on unmount/close.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `url` | `str | None` | `None` | Database URL (e.g., `"postgresql+asyncpg://..."`, `"sqlite+aiosqlite://..."`). Mutually exclusive with `engine_factory`. |
+| `engine_factory` | `Callable[[], AsyncEngine] | None` | `None` | Deferred engine factory for advanced setups. Mutually exclusive with `url`. |
+| `schema` | `str | None` | `None` | Database schema name |
+| `create_tables` | `bool` | `True` | Whether to create tables on mount |
+| `file_model` | `type | None` | `None` | Custom SQLModel file table class |
+| `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
+| `file_chunk_model` | `type | None` | `None` | Custom SQLModel file chunk table class |
+
+**`SessionConfig`** — your app owns the engine and session factory. Grover does not manage engine lifecycle.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `session_factory` | `Callable[[], AsyncSession]` | required | Zero-arg callable that returns an `AsyncSession` |
+| `dialect` | `str | None` | `None` | Explicit dialect override. Inferred from session factory bind if not set. |
+| `schema` | `str | None` | `None` | Database schema name |
+| `file_model` | `type | None` | `None` | Custom SQLModel file table class |
+| `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
+| `file_chunk_model` | `type | None` | `None` | Custom SQLModel file chunk table class |
+
+**`create_async_engine_factory`** — helper to create deferred engine factories for databases that need custom `connect_args` or other engine options.
+
+```python
+# Simple — Grover creates engine from URL
+await g.add_mount("/data", engine_config=EngineConfig(url="postgresql+asyncpg://localhost/mydb"))
+
+# Advanced — custom engine factory
+factory = create_async_engine_factory(
+    "mssql+aioodbc://...",
+    connect_args={"TrustServerCertificate": "yes"},
+)
+await g.add_mount("/data", engine_config=EngineConfig(engine_factory=factory, schema="grover"))
+
+# App-owned session
+await g.add_mount("/data", session_config=SessionConfig(session_factory=my_session_factory))
+```
 
 For user-scoped mounts, pass a `UserScopedFileSystem` as the filesystem (see [architecture.md](architecture.md#user-scoped-file-systems)).
 
@@ -605,11 +647,10 @@ Implements: `GroverFileSystem`, `SupportsReconcile`.
 ### DatabaseFileSystem
 
 ```python
-DatabaseFileSystem(*, dialect="sqlite", file_model=None,
-                   file_version_model=None, schema=None)
+DatabaseFileSystem()
 ```
 
-Pure-database storage. All content lives in the `File.content` column. Stateless — requires a session to be injected by VFS.
+Pure-database storage. All content lives in the `File.content` column. Stateless — requires a session to be injected by VFS. Configuration (dialect, schema, model overrides) is set internally via `_configure()` at mount time based on the `EngineConfig` or `SessionConfig` passed to `add_mount()`.
 
 Implements: `GroverFileSystem`.
 

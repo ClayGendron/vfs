@@ -41,7 +41,7 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     g = Grover()
     g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
     )
     yield g
@@ -59,7 +59,7 @@ async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
     g = GroverAsync()
     await g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
     )
     yield g  # type: ignore[misc]
@@ -341,10 +341,9 @@ class TestFactories:
             backend.grover.close()
 
     def test_from_database_factory(self, tmp_path: Path):
-        from sqlalchemy.ext.asyncio import create_async_engine
+        from grover.models.config import EngineConfig
 
-        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-        backend = GroverBackend.from_database(engine)
+        backend = GroverBackend.from_database(EngineConfig(url="sqlite+aiosqlite://"))
         try:
             result = backend.write("/test.txt", "hello")
             assert result.error is None
@@ -481,7 +480,7 @@ def _make_sync_backend(tmp_path: Path) -> tuple[GroverBackend, GroverAsync]:
         g = GroverAsync()
         await g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         return g

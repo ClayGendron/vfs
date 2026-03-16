@@ -34,7 +34,7 @@ class TestBackgroundModeAsync:
         g = GroverAsync()
         await g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
             search_provider=LocalVectorStore(dimension=FAKE_DIM),
         )
@@ -149,7 +149,7 @@ class TestBackgroundModeAsync:
         g = GroverAsync()
         await g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         await g.write("/project/close_test.py", "def test():\n    pass\n")
@@ -183,7 +183,7 @@ class TestBackgroundModeSync:
         g = Grover()
         g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
             search_provider=LocalVectorStore(dimension=FAKE_DIM),
         )
@@ -209,7 +209,7 @@ class TestBackgroundModeSync:
         g = Grover()
         g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         g.write("/project/drain.py", "def drain():\n    pass\n")
@@ -233,7 +233,7 @@ class TestManualMode:
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
         await g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         yield g  # type: ignore[misc]

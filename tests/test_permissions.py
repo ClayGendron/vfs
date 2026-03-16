@@ -52,7 +52,7 @@ async def grover_ro(workspace: Path, tmp_path: Path) -> GroverAsync:
     g = GroverAsync()
     await g.add_mount(
         "/ro",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         permission=Permission.READ_ONLY,
     )
     yield g  # type: ignore[misc]
@@ -70,12 +70,12 @@ async def grover_mixed(workspace: Path, rw_workspace: Path, tmp_path: Path) -> G
     g = GroverAsync()
     await g.add_mount(
         "/ro",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "ro_local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "ro_local"),
         permission=Permission.READ_ONLY,
     )
     await g.add_mount(
         "/rw",
-        LocalFileSystem(workspace_dir=rw_workspace, data_dir=data / "rw_local"),
+        filesystem=LocalFileSystem(workspace_dir=rw_workspace, data_dir=data / "rw_local"),
         permission=Permission.READ_WRITE,
     )
     yield g  # type: ignore[misc]

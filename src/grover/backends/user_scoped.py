@@ -27,10 +27,7 @@ from grover.util.paths import normalize_path
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.database.chunk import FileChunkModelBase
-    from grover.models.database.file import FileModelBase
     from grover.models.database.share import FileShareModelBase
-    from grover.models.database.version import FileVersionModelBase
     from grover.providers.chunks.protocol import ChunkProvider
     from grover.providers.embedding.protocol import EmbeddingProvider
     from grover.providers.graph.protocol import GraphProvider
@@ -56,11 +53,6 @@ class UserScopedFileSystem(DatabaseFileSystem):
         self,
         share_model: type[FileShareModelBase] | None = None,
         *,
-        dialect: str = "sqlite",
-        file_model: type[FileModelBase] | None = None,
-        file_version_model: type[FileVersionModelBase] | None = None,
-        file_chunk_model: type[FileChunkModelBase] | None = None,
-        schema: str | None = None,
         storage_provider: StorageProvider | None = None,
         graph_provider: GraphProvider | None = None,
         search_provider: SearchProvider | None = None,
@@ -69,11 +61,6 @@ class UserScopedFileSystem(DatabaseFileSystem):
         chunk_provider: ChunkProvider | None = None,
     ) -> None:
         super().__init__(
-            dialect=dialect,
-            file_model=file_model,
-            file_version_model=file_version_model,
-            file_chunk_model=file_chunk_model,
-            schema=schema,
             storage_provider=storage_provider,
             graph_provider=graph_provider,
             search_provider=search_provider,

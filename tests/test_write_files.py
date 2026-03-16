@@ -36,7 +36,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     g = GroverAsync()
     await g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
@@ -50,7 +50,7 @@ async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
     g = GroverAsync()
     await g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -110,7 +110,7 @@ class TestWriteFile:
         g = GroverAsync()
         await g.add_mount(
             "/readonly",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             permission=Permission.READ_ONLY,
         )
         try:
@@ -174,7 +174,7 @@ class TestWriteFiles:
         g = GroverAsync()
         await g.add_mount(
             "/readonly",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             permission=Permission.READ_ONLY,
         )
         try:
@@ -234,7 +234,7 @@ class TestWriteFilesSync:
         g = Grover()
         g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         )
         yield g
         g.close()

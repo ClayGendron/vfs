@@ -39,7 +39,7 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     g = Grover()
     g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
@@ -52,7 +52,7 @@ def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     """Grover without search to test graceful degradation."""
     data = tmp_path / "grover_data"
     g = Grover()
-    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -68,7 +68,7 @@ class TestGroverConstruction:
         g = Grover()
         g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         try:
@@ -81,7 +81,7 @@ class TestGroverConstruction:
         g = Grover()
         g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         g.close()
@@ -377,15 +377,18 @@ class TestGroverEdgeCases:
 @pytest.fixture
 def auth_grover(tmp_path: Path) -> Iterator[Grover]:
     """Sync Grover with a UserScopedFileSystem backend."""
-    from sqlalchemy.ext.asyncio import create_async_engine
-
     from grover.backends.user_scoped import UserScopedFileSystem
+    from grover.models.config import EngineConfig
     from grover.models.database.share import FileShareModel
 
     g = Grover()
-    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     backend = UserScopedFileSystem(share_model=FileShareModel)
-    g.add_mount("/ws", backend, engine=engine, embedding_provider=FakeProvider())
+    g.add_mount(
+        "/ws",
+        filesystem=backend,
+        engine_config=EngineConfig(url="sqlite+aiosqlite://"),
+        embedding_provider=FakeProvider(),
+    )
     yield g
     g.close()
 

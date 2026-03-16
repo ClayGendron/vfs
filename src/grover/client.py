@@ -19,15 +19,13 @@ from grover.permissions import Permission
 from grover.worker import BackgroundWorker, IndexingMode
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Coroutine
     from datetime import datetime
 
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-
     from grover.backends.protocol import GroverFileSystem
+    from grover.models.config import EngineConfig, SessionConfig
     from grover.models.database.chunk import FileChunkModelBase
     from grover.models.database.file import FileModelBase
-    from grover.models.database.version import FileVersionModelBase
     from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
     from grover.mount import Mount
     from grover.providers.embedding.protocol import EmbeddingProvider
@@ -49,21 +47,22 @@ class GroverAsync(
 
     Mount-first API: create an instance, then add mounts.
 
-    Engine-based DB mount (primary API)::
-
-        engine = create_async_engine("postgresql+asyncpg://...")
-        g = GroverAsync()
-        await g.add_mount("/data", engine=engine)
-
-    With search (pass embedding_provider to add_mount)::
+    EngineConfig (Grover manages the engine)::
 
         g = GroverAsync()
-        await g.add_mount("/data", engine=engine, embedding_provider=embed)
+        await g.add_mount(
+            "/data", engine_config=EngineConfig(url="postgresql+asyncpg://...")
+        )
 
-    Direct access — auto-commits per operation::
+    SessionConfig (app manages the engine)::
 
         g = GroverAsync()
-        await g.add_mount("/app", backend)
+        await g.add_mount("/data", session_config=SessionConfig(session_factory=sf))
+
+    Direct filesystem::
+
+        g = GroverAsync()
+        await g.add_mount("/app", filesystem=LocalFileSystem(workspace_dir="."))
         await g.write("/app/test.py", "print('hi')")
     """
 
@@ -91,9 +90,7 @@ class Grover:
     Usage::
 
         g = Grover()
-        g.add_mount(
-            "/project", LocalFileSystem(workspace_dir="."), embedding_provider=embed
-        )
+        g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir="."))
         g.write("/project/hello.py", "print('hi')")
         g.close()
     """
@@ -149,16 +146,12 @@ class Grover:
 
     def add_mount(
         self,
-        path_or_mount: str | Mount | None = None,
-        filesystem: GroverFileSystem | None = None,
+        path: str | None = None,
         *,
-        engine: AsyncEngine | None = None,
-        session_factory: Callable[..., AsyncSession] | None = None,
-        dialect: str = "sqlite",
-        file_model: type[FileModelBase] | None = None,
-        file_version_model: type[FileVersionModelBase] | None = None,
-        file_chunk_model: type[FileChunkModelBase] | None = None,
-        db_schema: str | None = None,
+        mount: Mount | None = None,
+        filesystem: GroverFileSystem | None = None,
+        engine_config: EngineConfig | None = None,
+        session_config: SessionConfig | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
@@ -169,15 +162,11 @@ class Grover:
         """Add a mount at *path* with *filesystem*."""
         self._run(
             self._async.add_mount(
-                path_or_mount,
-                filesystem,
-                engine=engine,
-                session_factory=session_factory,
-                dialect=dialect,
-                file_model=file_model,
-                file_version_model=file_version_model,
-                file_chunk_model=file_chunk_model,
-                db_schema=db_schema,
+                path,
+                mount=mount,
+                filesystem=filesystem,
+                engine_config=engine_config,
+                session_config=session_config,
                 mount_type=mount_type,
                 permission=permission,
                 label=label,

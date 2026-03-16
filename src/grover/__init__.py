@@ -7,6 +7,7 @@ __version__ = "0.0.6"
 
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import Grover, GroverAsync
+from grover.models.config import EngineConfig, SessionConfig, create_async_engine_factory
 from grover.models.internal.evidence import (
     Evidence,
     GlobEvidence,
@@ -69,6 +70,7 @@ __all__ = [
     "DefaultVersionProvider",
     "DiskStorageProvider",
     "EmbeddingProvider",
+    "EngineConfig",
     "Evidence",
     "File",
     "FileChunk",
@@ -95,6 +97,7 @@ __all__ = [
     "Mount",
     "Ref",
     "SearchProvider",
+    "SessionConfig",
     "ShareEvidence",
     "StorageProvider",
     "SubgraphResult",
@@ -106,6 +109,7 @@ __all__ = [
     "VersionProvider",
     "__version__",
     "and_",
+    "create_async_engine_factory",
     "eq",
     "exists",
     "gt",

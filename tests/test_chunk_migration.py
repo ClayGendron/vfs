@@ -36,7 +36,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     g = GroverAsync()
     await g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )

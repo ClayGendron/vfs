@@ -10,6 +10,7 @@ import pytest
 from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
+from grover.models.config import EngineConfig, SessionConfig
 from grover.models.internal.results import FileSearchResult as InternalFileSearchResult
 from grover.models.internal.results import FileSearchSet
 from grover.providers.graph import RustworkxGraph
@@ -45,7 +46,7 @@ async def grover(workspace1: Path, tmp_path: Path) -> GroverAsync:
     lfs = LocalFileSystem(workspace_dir=workspace1, data_dir=data / "local")
     await g.add_mount(
         "/project",
-        lfs,
+        filesystem=lfs,
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
@@ -61,13 +62,13 @@ async def multi_grover(workspace1: Path, workspace2: Path, tmp_path: Path) -> Gr
     lfs2 = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local2")
     await g.add_mount(
         "/mount1",
-        lfs1,
+        filesystem=lfs1,
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
     await g.add_mount(
         "/mount2",
-        lfs2,
+        filesystem=lfs2,
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
@@ -245,14 +246,11 @@ class TestEngineMountGraphSearch:
     @pytest.mark.asyncio
     async def test_engine_mount_gets_graph_and_search(self, tmp_path: Path):
         """Engine-based mounts also get per-mount graph and search."""
-        from sqlalchemy.ext.asyncio import create_async_engine
-
         g = GroverAsync()
-        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         try:
             await g.add_mount(
                 "/db",
-                engine=engine,
+                engine_config=EngineConfig(url="sqlite+aiosqlite://"),
                 embedding_provider=FakeProvider(),
                 search_provider=LocalVectorStore(dimension=FAKE_DIM),
             )
@@ -266,7 +264,6 @@ class TestEngineMountGraphSearch:
             assert g.get_graph("/db").has_node("/db/test.py")
         finally:
             await g.close()
-            await engine.dispose()
 
     @pytest.mark.asyncio
     async def test_session_factory_mount_gets_graph(self, tmp_path: Path):
@@ -284,7 +281,11 @@ class TestEngineMountGraphSearch:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         try:
-            await g.add_mount("/sf", session_factory=factory, dialect="sqlite", embedding_provider=FakeProvider())
+            await g.add_mount(
+                "/sf",
+                session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
+                embedding_provider=FakeProvider(),
+            )
             mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/sf")
             assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)
         finally:

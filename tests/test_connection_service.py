@@ -21,6 +21,7 @@ from _helpers import FakeProvider
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
+from grover.models.config import SessionConfig
 from grover.models.database.connection import FileConnectionModel
 from grover.models.internal.results import FileOperationResult
 from grover.providers.graph import RustworkxGraph
@@ -45,7 +46,7 @@ class TestConnectionMethods:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem(dialect="sqlite")
+        fs = DatabaseFileSystem()
         yield fs, factory, engine  # type: ignore[misc]
         await engine.dispose()
 
@@ -276,10 +277,11 @@ class TestConnectionIntegrationDBFS:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem(dialect="sqlite")
+        fs = DatabaseFileSystem()
 
         g = GroverAsync()
-        await g.add_mount("/vfs", fs, session_factory=factory)
+        sc = SessionConfig(session_factory=factory, dialect="sqlite")
+        await g.add_mount("/vfs", filesystem=fs, session_config=sc)
 
         yield g, engine  # type: ignore[misc]
         await g.close()
@@ -372,7 +374,7 @@ class TestConnectionIntegrationLocalFS:
 
         g = GroverAsync()
         lfs = LocalFileSystem(workspace_dir=ws, data_dir=data / "local")
-        await g.add_mount("/local", lfs)
+        await g.add_mount("/local", filesystem=lfs)
 
         yield g  # type: ignore[misc]
         await g.close()
@@ -424,10 +426,11 @@ class TestAnalyzeIntegrateConnections:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem(dialect="sqlite")
+        fs = DatabaseFileSystem()
 
         g = GroverAsync()
-        await g.add_mount("/vfs", fs, session_factory=factory, embedding_provider=FakeProvider())
+        sc = SessionConfig(session_factory=factory, dialect="sqlite")
+        await g.add_mount("/vfs", filesystem=fs, session_config=sc, embedding_provider=FakeProvider())
 
         yield g, engine  # type: ignore[misc]
         await g.close()
@@ -543,7 +546,7 @@ class TestDeleteOutgoingConnections:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem(dialect="sqlite")
+        fs = DatabaseFileSystem()
         yield fs, factory, engine  # type: ignore[misc]
         await engine.dispose()
 
@@ -588,10 +591,11 @@ class TestGraphProjection:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem(dialect="sqlite")
+        fs = DatabaseFileSystem()
 
         g = GroverAsync()
-        await g.add_mount("/vfs", fs, session_factory=factory)
+        sc = SessionConfig(session_factory=factory, dialect="sqlite")
+        await g.add_mount("/vfs", filesystem=fs, session_config=sc)
 
         yield g, engine  # type: ignore[misc]
         await g.close()
@@ -650,10 +654,11 @@ class TestSaveNoEdgePersistence:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem(dialect="sqlite")
+        fs = DatabaseFileSystem()
 
         g = GroverAsync()
-        await g.add_mount("/vfs", fs, session_factory=factory)
+        sc = SessionConfig(session_factory=factory, dialect="sqlite")
+        await g.add_mount("/vfs", filesystem=fs, session_config=sc)
 
         yield g, engine  # type: ignore[misc]
         await g.close()

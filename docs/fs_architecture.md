@@ -302,25 +302,26 @@ Backends define `open()` and `close()` methods instead of context managers:
 
 There are no `__aenter__`/`__aexit__` methods on VFS, GroverAsync, or Grover.
 
-## DB Mount Setup: `engine=` API
+## DB Mount Setup: `engine_config=` API
 
 ```mermaid
 sequenceDiagram
     participant App
     participant GA as GroverAsync
     participant DFS as DatabaseFileSystem
-    participant MC as MountConfig
+    participant EC as EngineConfig
     participant MR as MountRegistry
     participant Engine as AsyncEngine
 
-    App->>GA: mount("/data", engine=engine)
+    App->>GA: add_mount("/data", engine_config=EngineConfig(url=...))
+    GA->>EC: create engine from url (or call engine_factory)
     GA->>Engine: detect dialect (engine.dialect.name)
     GA->>Engine: ensure tables (File, FileVersion)
     GA->>GA: async_sessionmaker(engine) → session_factory
-    GA->>DFS: DatabaseFileSystem(dialect, file_model, ...)
+    GA->>DFS: DatabaseFileSystem()
+    GA->>DFS: _configure(dialect, schema, models)
     Note over DFS: Stateless — no session, no engine ref
-    GA->>MC: MountConfig(backend=DFS, session_factory=sf)
-    GA->>MR: add_mount(config)
+    GA->>MR: add_mount(Mount with engine stored for lifecycle)
 ```
 
 ## Soft-Delete / Restore (Directories)

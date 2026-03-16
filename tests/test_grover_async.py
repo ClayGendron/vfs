@@ -43,7 +43,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     g = GroverAsync()
     await g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
@@ -55,7 +55,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
 async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync()
-    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    await g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -77,7 +77,7 @@ class TestGroverAsyncLifecycle:
         g = GroverAsync()
         await g.add_mount(
             "/app",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         assert g._ctx.initialized
@@ -89,7 +89,7 @@ class TestGroverAsyncLifecycle:
         g = GroverAsync()
         await g.add_mount(
             "/app",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         await g.write("/app/test.txt", "hello")
@@ -105,7 +105,7 @@ class TestGroverAsyncLifecycle:
         g = GroverAsync()
         await g.add_mount(
             "/app",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         await g.close()
@@ -200,12 +200,12 @@ class TestGroverAsyncMultiMount:
         g = GroverAsync()
         await g.add_mount(
             "/app",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_app"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_app"),
             embedding_provider=FakeProvider(),
         )
         await g.add_mount(
             "/data",
-            LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_data"),
+            filesystem=LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_data"),
             embedding_provider=FakeProvider(),
         )
 
@@ -230,8 +230,8 @@ class TestGroverAsyncMultiMount:
         g = GroverAsync()
         lfs_a = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a")
         lfs_b = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b")
-        await g.add_mount("/a", lfs_a, embedding_provider=FakeProvider())
-        await g.add_mount("/b", lfs_b, embedding_provider=FakeProvider())
+        await g.add_mount("/a", filesystem=lfs_a, embedding_provider=FakeProvider())
+        await g.add_mount("/b", filesystem=lfs_b, embedding_provider=FakeProvider())
 
         await g.write("/a/file.txt", "in mount a")
         assert (await g.exists("/a/file.txt")).message == "exists"
@@ -343,8 +343,8 @@ class TestGroverAsyncIndex:
         g = GroverAsync()
         lfs_a = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a")
         lfs_b = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b")
-        await g.add_mount("/a", lfs_a, embedding_provider=FakeProvider())
-        await g.add_mount("/b", lfs_b, embedding_provider=FakeProvider())
+        await g.add_mount("/a", filesystem=lfs_a, embedding_provider=FakeProvider())
+        await g.add_mount("/b", filesystem=lfs_b, embedding_provider=FakeProvider())
 
         (workspace / "a.py").write_text("def a():\n    pass\n")
         (workspace2 / "b.py").write_text("def b():\n    pass\n")
@@ -467,12 +467,12 @@ class TestGroverAsyncMountOptions:
         ws_hidden.mkdir()
         await g.add_mount(
             "/hidden",
-            LocalFileSystem(workspace_dir=ws_hidden, data_dir=data / "local_hidden"),
+            filesystem=LocalFileSystem(workspace_dir=ws_hidden, data_dir=data / "local_hidden"),
             hidden=True,
         )
         await g.add_mount(
             "/visible",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_visible"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_visible"),
             embedding_provider=FakeProvider(),
         )
         result = await g.list_dir()
@@ -490,13 +490,15 @@ class TestGroverAsyncMountOptions:
         )
         from sqlmodel import SQLModel
 
+        from grover.models.config import SessionConfig
+
         data = tmp_path / "grover_data"
         g = GroverAsync()
 
         # Local mount
         await g.add_mount(
             "/local",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
             embedding_provider=FakeProvider(),
         )
         local_mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/local")
@@ -507,7 +509,10 @@ class TestGroverAsyncMountOptions:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        await g.add_mount("/db", session_factory=factory, dialect="sqlite")
+        await g.add_mount(
+            "/db",
+            session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
+        )
         db_mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/db")
         assert db_mount.mount_type == "vfs"
 
@@ -520,7 +525,7 @@ class TestGroverAsyncMountOptions:
         g = GroverAsync()
         await g.add_mount(
             "/app",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
             embedding_provider=FakeProvider(),
         )
         # Should not raise
@@ -533,7 +538,7 @@ class TestGroverAsyncMountOptions:
         g = GroverAsync()
         await g.add_mount(
             "/app",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
             embedding_provider=FakeProvider(),
         )
         await g.write("/app/file.py", "def demo():\n    pass\n")
@@ -576,15 +581,18 @@ class TestGroverAsyncUnsupportedFiles:
 @pytest.fixture
 async def auth_grover(tmp_path: Path) -> GroverAsync:
     """GroverAsync with a UserScopedFileSystem backend."""
-    from sqlalchemy.ext.asyncio import create_async_engine
-
     from grover.backends.user_scoped import UserScopedFileSystem
+    from grover.models.config import EngineConfig
     from grover.models.database.share import FileShareModel
 
     g = GroverAsync()
-    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     backend = UserScopedFileSystem(share_model=FileShareModel)
-    await g.add_mount("/ws", backend, engine=engine, embedding_provider=FakeProvider())
+    await g.add_mount(
+        "/ws",
+        filesystem=backend,
+        engine_config=EngineConfig(url="sqlite+aiosqlite://"),
+        embedding_provider=FakeProvider(),
+    )
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -668,7 +676,7 @@ class TestGroverAsyncSharing:
         g = GroverAsync()
         await g.add_mount(
             "/app",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
         result = await g.share("/app/test.md", "bob", user_id="alice")

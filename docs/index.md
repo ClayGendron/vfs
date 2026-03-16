@@ -54,7 +54,7 @@ g = Grover()
 
 # Mount a local project directory
 backend = LocalFileSystem(workspace_dir="/path/to/project")
-g.add_mount("/project", backend)
+g.add_mount("/project", filesystem=backend)
 
 # Write files — every write is automatically versioned
 g.write("/project/hello.py", "def greet(name):\n    return f'Hello, {name}!'\n")
@@ -90,7 +90,7 @@ A full async API is also available:
 from grover import GroverAsync
 
 g = GroverAsync()
-await g.add_mount("/project", backend)
+await g.add_mount("/project", filesystem=backend)
 await g.write("/project/hello.py", "...")
 await g.save()
 await g.close()
@@ -145,15 +145,16 @@ Grover supports two storage backends through a common protocol:
 Both backends support versioning and trash. You can mount them side by side:
 
 ```python
-from grover.fs import LocalFileSystem, DatabaseFileSystem
+from grover import EngineConfig
+from grover.backends import LocalFileSystem
 
 g = Grover()
 
 # Local code on disk
-g.add_mount("/code", LocalFileSystem(workspace_dir="./my-project"))
+g.add_mount("/code", filesystem=LocalFileSystem(workspace_dir="./my-project"))
 
 # Shared docs in PostgreSQL
-g.add_mount("/docs", DatabaseFileSystem(dialect="postgresql"))
+g.add_mount("/docs", engine_config=EngineConfig(url="postgresql+asyncpg://localhost/mydb"))
 ```
 
 ---

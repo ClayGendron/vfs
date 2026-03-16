@@ -17,6 +17,7 @@ from grover.backends.database import DatabaseFileSystem
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import GroverAsync
 from grover.exceptions import AuthenticationRequiredError
+from grover.models.config import SessionConfig
 from grover.models.database.file import FileModel
 from grover.models.database.share import FileShareModel
 from grover.models.internal.evidence import ListDirEvidence
@@ -80,7 +81,9 @@ async def auth_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsync:
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-    await g.add_mount("/ws", backend, session_factory=session_factory)
+    await g.add_mount(
+        "/ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
+    )
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -94,7 +97,9 @@ async def shared_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsyn
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-    await g.add_mount("/ws", backend, session_factory=session_factory)
+    await g.add_mount(
+        "/ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
+    )
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -108,7 +113,9 @@ async def regular_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsy
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-    await g.add_mount("/ws", backend, session_factory=session_factory)
+    await g.add_mount(
+        "/ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
+    )
     yield g  # type: ignore[misc]
     await g.close()
 

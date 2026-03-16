@@ -17,6 +17,7 @@ from grover.backends.protocol import (
 )
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import GroverAsync
+from grover.models.config import SessionConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,11 +40,11 @@ class TestProtocolChecks:
         assert isinstance(lfs, SupportsReconcile)
 
     def test_database_satisfies_grover_filesystem(self) -> None:
-        dfs = DatabaseFileSystem(dialect="sqlite")
+        dfs = DatabaseFileSystem()
         assert isinstance(dfs, GroverFileSystem)
 
     def test_database_does_not_support_reconcile(self) -> None:
-        dfs = DatabaseFileSystem(dialect="sqlite")
+        dfs = DatabaseFileSystem()
         assert not isinstance(dfs, SupportsReconcile)
 
     def test_user_scoped_satisfies_grover_filesystem(self) -> None:
@@ -75,7 +76,11 @@ class TestSessionRollback:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
         g = GroverAsync()
-        await g.add_mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
+        await g.add_mount(
+            "/db",
+            filesystem=DatabaseFileSystem(),
+            session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
+        )
         yield g, factory
         await g.close()
         await engine.dispose()
@@ -120,10 +125,12 @@ class TestSessionRollback:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        dfs = DatabaseFileSystem(dialect="sqlite")
+        dfs = DatabaseFileSystem()
 
         g = GroverAsync()
-        await g.add_mount("/fail", dfs, session_factory=factory)
+        await g.add_mount(
+            "/fail", filesystem=dfs, session_config=SessionConfig(session_factory=factory, dialect="sqlite")
+        )
 
         # Monkey-patch write to raise
         async def _exploding_write(*args, **kwargs):

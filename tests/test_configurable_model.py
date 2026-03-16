@@ -47,11 +47,12 @@ async def _make_custom_fs() -> tuple[DatabaseFileSystem, object, object]:
         await conn.run_sync(SQLModel.metadata.create_all)
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    fs = DatabaseFileSystem(
-        dialect="sqlite",
-        file_model=WikiFile,
-        file_version_model=WikiFileVersion,
-    )
+    fs = DatabaseFileSystem()
+    # Configure custom models (normally done via EngineConfig/SessionConfig + _configure)
+    fs.file_model = WikiFile
+    fs.file_version_model = WikiFileVersion
+    fs.file_connection_model = WikiFileConnection
+    fs._init_default_providers()
     return fs, factory, engine
 
 
@@ -62,7 +63,7 @@ async def _make_default_fs() -> tuple[DatabaseFileSystem, object, object]:
         await conn.run_sync(SQLModel.metadata.create_all)
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    fs = DatabaseFileSystem(dialect="sqlite")
+    fs = DatabaseFileSystem()
     return fs, factory, engine
 
 
@@ -181,11 +182,11 @@ class TestCustomModelFilesystem:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem(
-            dialect="sqlite",
-            file_model=WikiFile,
-            file_version_model=WikiFileVersion,
-        )
+        fs = DatabaseFileSystem()
+        fs.file_model = WikiFile
+        fs.file_version_model = WikiFileVersion
+        fs.file_connection_model = WikiFileConnection
+        fs._init_default_providers()
         async with factory() as session:
             await fs.write("/page.md", "wiki content\n", session=session)
             await session.commit()

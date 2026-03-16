@@ -11,7 +11,7 @@ from grover.util.paths import normalize_path
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from grover.backends.protocol import GroverFileSystem
 
@@ -34,6 +34,7 @@ class Mount:
         filesystem: GroverFileSystem | None = None,
         *,
         session_factory: Callable[..., AsyncSession] | None = None,
+        engine: AsyncEngine | None = None,
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         mount_type: str = "vfs",
@@ -43,6 +44,7 @@ class Mount:
         self.path: str = normalize_path(path).rstrip("/")
         self.filesystem: GroverFileSystem | None = filesystem
         self.session_factory: Callable[..., AsyncSession] | None = session_factory
+        self.engine: AsyncEngine | None = engine
         self.permission: Permission = permission
         self.label: str = label or self.path.lstrip("/") or "root"
         self.mount_type: str = mount_type

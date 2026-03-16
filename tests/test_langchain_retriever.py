@@ -44,7 +44,7 @@ def grover_with_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     g = Grover()
     g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
@@ -56,7 +56,7 @@ def grover_with_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
 def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data_nosearch"
     g = Grover()
-    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -72,7 +72,7 @@ async def grover_async_with_search(workspace: Path, tmp_path: Path) -> GroverAsy
     g = GroverAsync()
     await g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
@@ -236,7 +236,7 @@ def _make_sync_retriever(tmp_path: Path) -> tuple[GroverRetriever, GroverAsync]:
         g = GroverAsync()
         await g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
             search_provider=LocalVectorStore(dimension=FAKE_DIM),
         )

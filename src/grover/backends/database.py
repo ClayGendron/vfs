@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.models.config import EngineConfig, SessionConfig
     from grover.models.database.chunk import FileChunkModelBase
     from grover.models.database.connection import FileConnectionModelBase
     from grover.models.database.file import FileModelBase
@@ -91,12 +92,6 @@ class DatabaseFileSystem:
 
     def __init__(
         self,
-        dialect: str = "sqlite",
-        file_model: type[FileModelBase] | None = None,
-        file_version_model: type[FileVersionModelBase] | None = None,
-        file_chunk_model: type[FileChunkModelBase] | None = None,
-        file_connection_model: type[FileConnectionModelBase] | None = None,
-        schema: str | None = None,
         *,
         storage_provider: StorageProvider | None = None,
         graph_provider: GraphProvider | None = None,
@@ -105,12 +100,14 @@ class DatabaseFileSystem:
         version_provider: VersionProvider | None = None,
         chunk_provider: ChunkProvider | None = None,
     ) -> None:
-        self.dialect = dialect
-        self.schema = schema
-        self.file_model: type[FileModelBase] = file_model or FileModel
-        self.file_version_model: type[FileVersionModelBase] = file_version_model or FileVersionModel
-        self.file_chunk_model: type[FileChunkModelBase] = file_chunk_model or FileChunkModel
-        self.file_connection_model: type[FileConnectionModelBase] = file_connection_model or FileConnectionModel
+        # Config defaults — overwritten by _configure() when mounting via
+        # EngineConfig / SessionConfig.
+        self.dialect: str = "sqlite"
+        self.schema: str | None = None
+        self.file_model: type[FileModelBase] = FileModel
+        self.file_version_model: type[FileVersionModelBase] = FileVersionModel
+        self.file_chunk_model: type[FileChunkModelBase] = FileChunkModel
+        self.file_connection_model: type[FileConnectionModelBase] = FileConnectionModel
 
         # Pluggable providers
         self.storage_provider = storage_provider
@@ -122,6 +119,26 @@ class DatabaseFileSystem:
 
         # Validate search dimensions if both providers set
         self._validate_search_dimensions()
+
+    def _init_default_providers(self) -> None:
+        """Re-create default version/chunk providers from current models.
+
+        Called by ``_configure()`` after model attributes change.
+        """
+        self.version_provider = DefaultVersionProvider(self.file_model, self.file_version_model)
+        self.chunk_provider = DefaultChunkProvider(self.file_chunk_model)
+
+    def _configure(self, config: EngineConfig | SessionConfig, dialect: str) -> None:
+        """Apply config from EngineConfig or SessionConfig. Called by add_mount."""
+
+        self.dialect = dialect
+        self.schema = config.schema
+        self.file_model = config.file_model
+        self.file_version_model = config.file_version_model
+        self.file_chunk_model = config.file_chunk_model
+        self.file_connection_model = config.file_connection_model
+        # Re-initialize default providers with potentially new models
+        self._init_default_providers()
 
     # ------------------------------------------------------------------
     # Conversion helpers: old result types → new internal types

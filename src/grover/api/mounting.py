@@ -11,26 +11,16 @@ from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.backends.protocol import SupportsReBAC
 from grover.exceptions import MountNotFoundError
-from grover.models.database.chunk import FileChunkModel
-from grover.models.database.connection import FileConnectionModel
-from grover.models.database.file import FileModel
 from grover.models.database.share import FileShareModel
-from grover.models.database.version import FileVersionModel
 from grover.mount import Mount
 from grover.permissions import Permission
 from grover.providers.graph.rustworkx import RustworkxGraph
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from sqlalchemy.ext.asyncio import AsyncEngine
-
     from grover.api.context import GroverContext
     from grover.backends.protocol import GroverFileSystem
-    from grover.models.database.chunk import FileChunkModelBase
-    from grover.models.database.file import FileModelBase
-    from grover.models.database.version import FileVersionModelBase
+    from grover.models.config import EngineConfig, SessionConfig
     from grover.providers.embedding.protocol import EmbeddingProvider
     from grover.providers.search.protocol import SearchProvider
 
@@ -48,21 +38,16 @@ class MountMixin:
 
     async def add_mount(
         self,
-        mount_or_path: str | Mount | None = None,
-        filesystem: GroverFileSystem | None = None,
+        path: str | None = None,
         *,
-        engine: AsyncEngine | None = None,
-        session_factory: Callable[..., AsyncSession] | None = None,
-        dialect: str = "sqlite",
-        file_model: type[FileModelBase] | None = None,
-        file_version_model: type[FileVersionModelBase] | None = None,
-        file_chunk_model: type[FileChunkModelBase] | None = None,
-        db_schema: str | None = None,
+        mount: Mount | None = None,
+        filesystem: GroverFileSystem | None = None,
+        engine_config: EngineConfig | None = None,
+        session_config: SessionConfig | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         hidden: bool = False,
-        path: str | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         search_provider: SearchProvider | None = None,
     ) -> None:
@@ -70,67 +55,55 @@ class MountMixin:
 
         Usage::
 
-            # From a Mount object
+            # From a pre-built Mount object
             mount = Mount(path="/project", filesystem=LocalFileSystem(...))
-            await g.add_mount(mount)
+            await g.add_mount(mount=mount)
 
-            # From keyword arguments (filesystem-based)
-            await g.add_mount("/data", LocalFileSystem(workspace_dir="."))
+            # Filesystem-based (LocalFileSystem or custom backend)
+            await g.add_mount("/data", filesystem=LocalFileSystem(workspace_dir="."))
 
-            # Engine-based (auto-creates session factory + DatabaseFileSystem)
-            await g.add_mount("/data", engine=engine)
+            # Engine-based — Grover creates and owns the engine
+            await g.add_mount(
+                "/data", engine_config=EngineConfig(url="sqlite+aiosqlite:///db")
+            )
 
-            # With search — pass embedding_provider to enable vector search
-            await g.add_mount("/data", engine=engine, embedding_provider=embed)
-
-            # Session-factory-based
-            await g.add_mount("/data", filesystem, session_factory=sf)
+            # Session-factory-based — app owns engine lifecycle
+            await g.add_mount("/data", session_config=SessionConfig(session_factory=sf))
         """
-        if isinstance(mount_or_path, Mount):
-            new_mount = mount_or_path
+        if mount is not None:
+            new_mount = mount
             # Auto-detect LocalFileSystem: open() and extract session_factory if not set
             if isinstance(new_mount.filesystem, LocalFileSystem) and new_mount.session_factory is None:
                 await new_mount.filesystem.open()
                 new_mount.session_factory = new_mount.filesystem.session_factory
-        elif engine is not None:
-            if session_factory is not None:
-                raise ValueError("Provide engine or session_factory, not both")
+        elif engine_config is not None:
+            if session_config is not None:
+                raise ValueError("Provide engine_config or session_config, not both")
             new_mount = await self._create_engine_mount(
-                mount_or_path or path or "",
-                engine,
+                path or "",
+                engine_config,
                 filesystem,
-                file_model,
-                file_version_model,
-                file_chunk_model,
-                db_schema,
                 mount_type,
                 permission,
                 label,
                 hidden,
             )
-        elif session_factory is not None:
+        elif session_config is not None:
             new_mount = self._create_session_factory_mount(
-                mount_or_path or path or "",
-                session_factory,
+                path or "",
+                session_config,
                 filesystem,
-                dialect,
-                file_model,
-                file_version_model,
-                file_chunk_model,
-                db_schema,
                 mount_type,
                 permission,
                 label,
                 hidden,
             )
         else:
-            # Resolve path: either from positional arg or keyword
-            actual_path = mount_or_path if mount_or_path is not None else path
-            if actual_path is None or filesystem is None:
-                raise ValueError("Provide a Mount object, (path + filesystem), or engine/session_factory")
+            if path is None or filesystem is None:
+                raise ValueError("Provide mount=Mount(...), (path + filesystem=), engine_config=, or session_config=")
 
             # For local backends, eagerly init DB and extract session_factory
-            sf = session_factory
+            sf = None
             mt = mount_type
             if isinstance(filesystem, LocalFileSystem):
                 await filesystem.open()
@@ -139,7 +112,7 @@ class MountMixin:
                     mt = "local"
 
             new_mount = Mount(
-                path=actual_path,
+                path=path,
                 filesystem=filesystem,
                 session_factory=sf,
                 permission=permission,
@@ -178,60 +151,57 @@ class MountMixin:
     async def _create_engine_mount(
         self,
         path: str,
-        engine: AsyncEngine,
+        config: EngineConfig,
         backend: GroverFileSystem | None,
-        file_model: type[FileModelBase] | None,
-        file_version_model: type[FileVersionModelBase] | None,
-        file_chunk_model: type[FileChunkModelBase] | None,
-        db_schema: str | None,
         mount_type: str | None,
         permission: Permission,
         label: str,
         hidden: bool,
     ) -> Mount:
-        """Build a Mount from an async engine."""
+        """Build a Mount from an EngineConfig — Grover owns the engine."""
+        engine = config.create_engine()
         sf = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         dialect = engine.dialect.name
 
-        # Ensure base tables exist
-        fm = file_model or FileModel
-        fvm = file_version_model or FileVersionModel
-        fcm = file_chunk_model or FileChunkModel
-        async with engine.begin() as conn:
-            await conn.run_sync(
-                lambda c: fm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-            )
-            await conn.run_sync(
-                lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-            )
-            await conn.run_sync(
-                lambda c: fcm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-            )
-            # Edges table for per-mount graph persistence
-            await conn.run_sync(
-                lambda c: FileConnectionModel.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
-            )
-
         if backend is None:
-            backend = DatabaseFileSystem(  # type: ignore[assignment]
-                dialect=dialect,
-                file_model=file_model,
-                file_version_model=file_version_model,
-                file_chunk_model=file_chunk_model,
-                schema=db_schema,
-            )
+            backend = DatabaseFileSystem()  # type: ignore[assignment]
 
-        # Create share table if backend supports sharing
-        if isinstance(backend, SupportsReBAC):
+        # Configure the filesystem with settings from EngineConfig
+        if isinstance(backend, DatabaseFileSystem):
+            backend._configure(config, dialect)
+
+        # Ensure base tables exist
+        if config.create_tables:
+            fm = config.file_model
+            fvm = config.file_version_model
+            fcm = config.file_chunk_model
+            fconn = config.file_connection_model
             async with engine.begin() as conn:
                 await conn.run_sync(
-                    lambda c: FileShareModel.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
+                    lambda c: fm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
                 )
+                await conn.run_sync(
+                    lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+                )
+                await conn.run_sync(
+                    lambda c: fcm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+                )
+                await conn.run_sync(
+                    lambda c: fconn.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+                )
+
+            # Create share table if backend supports sharing
+            if isinstance(backend, SupportsReBAC):
+                async with engine.begin() as conn:
+                    await conn.run_sync(
+                        lambda c: FileShareModel.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
+                    )
 
         return Mount(
             path=path,
             filesystem=backend,
             session_factory=sf,
+            engine=engine,
             mount_type=mount_type or "vfs",
             permission=permission,
             label=label,
@@ -241,62 +211,35 @@ class MountMixin:
     def _create_session_factory_mount(
         self,
         path: str,
-        session_factory: Callable[..., AsyncSession],
+        config: SessionConfig,
         backend: GroverFileSystem | None,
-        dialect: str,
-        file_model: type[FileModelBase] | None,
-        file_version_model: type[FileVersionModelBase] | None,
-        file_chunk_model: type[FileChunkModelBase] | None,
-        db_schema: str | None,
         mount_type: str | None,
         permission: Permission,
         label: str,
         hidden: bool,
     ) -> Mount:
-        """Build a Mount from a caller-provided session factory."""
+        """Build a Mount from a SessionConfig — app owns the engine."""
+        # Infer dialect from session factory's bind
+        dialect = config.dialect
+        if dialect is None:
+            bind = getattr(config.session_factory, "kw", {}).get("bind")
+            if bind is not None:
+                dialect = bind.dialect.name
+        if dialect is None:
+            raise ValueError("Cannot infer dialect from session factory. Pass dialect= explicitly in SessionConfig.")
+
         if backend is None:
-            backend = DatabaseFileSystem(  # type: ignore[assignment]
-                dialect=dialect,
-                file_model=file_model,
-                file_version_model=file_version_model,
-                file_chunk_model=file_chunk_model,
-                schema=db_schema,
-            )
+            backend = DatabaseFileSystem()  # type: ignore[assignment]
+
+        # Configure the filesystem with settings from SessionConfig
+        if isinstance(backend, DatabaseFileSystem):
+            backend._configure(config, dialect)
 
         return Mount(
             path=path,
             filesystem=backend,
-            session_factory=session_factory,
+            session_factory=config.session_factory,
             mount_type=mount_type or "vfs",
-            permission=permission,
-            label=label,
-            hidden=hidden,
-        )
-
-    async def _create_backend_mount(
-        self,
-        path: str,
-        backend: GroverFileSystem,
-        mount_type: str | None,
-        permission: Permission,
-        label: str,
-        hidden: bool,
-    ) -> Mount:
-        """Build a Mount from a pre-constructed backend."""
-        if mount_type is None:
-            mount_type = "local" if isinstance(backend, LocalFileSystem) else "vfs"
-
-        # For local backends, eagerly init DB and expose session_factory
-        sf: Callable[..., AsyncSession] | None = None
-        if isinstance(backend, LocalFileSystem):
-            await backend.open()
-            sf = backend.session_factory
-
-        return Mount(
-            path=path,
-            filesystem=backend,
-            session_factory=sf,
-            mount_type=mount_type,
             permission=permission,
             label=label,
             hidden=hidden,
@@ -318,4 +261,7 @@ class MountMixin:
         backend = mount.filesystem
         if hasattr(backend, "close"):
             await backend.close()
+        # Dispose engine if Grover owns it (EngineConfig path)
+        if mount.engine is not None:
+            await mount.engine.dispose()
         self._ctx.registry.remove_mount(path)

@@ -9,6 +9,7 @@ import pytest
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import GroverAsync
+from grover.models.config import SessionConfig
 from grover.models.database.share import FileShareModel
 from grover.worker import IndexingMode
 
@@ -45,7 +46,7 @@ def session_factory(engine: AsyncEngine):
 
 @pytest.fixture
 def dfs() -> DatabaseFileSystem:
-    return DatabaseFileSystem(dialect="sqlite")
+    return DatabaseFileSystem()
 
 
 @pytest.fixture
@@ -53,7 +54,8 @@ async def grover_with_sharing(session_factory, engine: AsyncEngine, tmp_path: Pa
     """GroverAsync with a UserScopedFileSystem backend that has sharing configured."""
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     backend = UserScopedFileSystem(share_model=FileShareModel)
-    await g.add_mount("/ws", backend, session_factory=session_factory)
+    sc = SessionConfig(session_factory=session_factory, dialect="sqlite")
+    await g.add_mount("/ws", filesystem=backend, session_config=sc)
     yield g
     await g.close()
 

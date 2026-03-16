@@ -53,7 +53,7 @@ g = Grover()
 
 # Mount a local project directory
 backend = LocalFileSystem(workspace_dir="/path/to/project")
-g.add_mount("/project", backend)
+g.add_mount("/project", filesystem=backend)
 
 # Write files — every write is automatically versioned
 # Indexing happens in the background (graph + search update asynchronously)
@@ -82,7 +82,7 @@ from grover.providers.search import LocalVectorStore
 from grover.providers.embedding import OpenAIEmbedding
 
 g2 = Grover()
-g2.add_mount("/project", backend,
+g2.add_mount("/project", filesystem=backend,
              embedding_provider=OpenAIEmbedding(model="text-embedding-3-small"),
              search_provider=LocalVectorStore(dimension=1536))
 result = g2.vector_search("greeting function", k=5)
@@ -107,7 +107,7 @@ A full async API is also available:
 from grover import GroverAsync
 
 g = GroverAsync()
-await g.add_mount("/project", backend)
+await g.add_mount("/project", filesystem=backend)
 await g.write("/project/hello.py", "...")
 await g.flush()   # wait for background indexing before querying
 await g.save()
@@ -120,7 +120,7 @@ For batch imports where you want to write many files before indexing, use manual
 from grover import Grover, IndexingMode
 
 g = Grover(indexing_mode=IndexingMode.MANUAL)
-g.add_mount("/project", backend)
+g.add_mount("/project", filesystem=backend)
 
 # Write many files — no background indexing
 for path, content in files:
@@ -176,15 +176,16 @@ Grover supports two storage backends through a common protocol:
 Both backends support versioning and trash. You can mount them side by side:
 
 ```python
-from grover.backends import LocalFileSystem, DatabaseFileSystem
+from grover import EngineConfig
+from grover.backends import LocalFileSystem
 
 g = Grover()
 
 # Local code on disk
-g.add_mount("/code", LocalFileSystem(workspace_dir="./my-project"))
+g.add_mount("/code", filesystem=LocalFileSystem(workspace_dir="./my-project"))
 
 # Shared docs in PostgreSQL
-g.add_mount("/docs", DatabaseFileSystem(dialect="postgresql"))
+g.add_mount("/docs", engine_config=EngineConfig(url="postgresql+asyncpg://localhost/mydb"))
 ```
 
 ### User-scoped mounts
@@ -192,11 +193,13 @@ g.add_mount("/docs", DatabaseFileSystem(dialect="postgresql"))
 For multi-tenant deployments, mount a `UserScopedFileSystem` to enable per-user namespacing:
 
 ```python
+from grover import EngineConfig
 from grover.backends.user_scoped import UserScopedFileSystem
 
 g = GroverAsync()
 backend = UserScopedFileSystem()
-await g.add_mount("/ws", backend, engine=engine)
+await g.add_mount("/ws", filesystem=backend,
+                  engine_config=EngineConfig(url="postgresql+asyncpg://localhost/mydb"))
 
 # Each user has their own namespace
 await g.write("/ws/notes.md", "hello", user_id="alice")

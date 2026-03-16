@@ -11,6 +11,7 @@ from sqlmodel import SQLModel
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
+from grover.models.config import SessionConfig
 from grover.models.internal.evidence import GrepEvidence, LineMatch, TreeEvidence
 from grover.models.internal.results import FileSearchSet
 from grover.util.patterns import glob_to_sql_like, match_glob
@@ -188,7 +189,7 @@ async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 @pytest.fixture
 def dfs() -> DatabaseFileSystem:
-    return DatabaseFileSystem(dialect="sqlite")
+    return DatabaseFileSystem()
 
 
 async def _seed_db(dfs: DatabaseFileSystem, session: AsyncSession) -> None:
@@ -660,7 +661,7 @@ async def grover_setup(tmp_path: Path) -> AsyncIterator[tuple[GroverAsync, Async
         await conn.run_sync(SQLModel.metadata.create_all)
 
     db_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    dfs = DatabaseFileSystem(dialect="sqlite")
+    dfs = DatabaseFileSystem()
 
     # Local backend
     local_dir = tmp_path / "workspace"
@@ -668,9 +669,9 @@ async def grover_setup(tmp_path: Path) -> AsyncIterator[tuple[GroverAsync, Async
     data_dir = tmp_path / ".grover_data"
 
     g = GroverAsync()
-    await g.add_mount("/db", dfs, session_factory=db_factory)
+    await g.add_mount("/db", filesystem=dfs, session_config=SessionConfig(session_factory=db_factory, dialect="sqlite"))
     lfs = LocalFileSystem(workspace_dir=local_dir, data_dir=data_dir / "local")
-    await g.add_mount("/local", lfs)
+    await g.add_mount("/local", filesystem=lfs)
 
     # Seed both mounts
     await g.write("/db/hello.py", "print('hello from db')\n")

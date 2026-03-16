@@ -96,7 +96,7 @@ async def grover(tmp_path: Path) -> GroverAsync:
     workspace.mkdir()
     await g.add_mount(
         "/project",
-        LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=_FAKE_DIM),
     )
@@ -279,7 +279,7 @@ class TestVectorSearchQueryApi:
         workspace.mkdir()
         await g.add_mount(
             "/project",
-            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+            filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         )
         try:
             has_search = any(

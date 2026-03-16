@@ -169,10 +169,10 @@ There is no `mount.graph`, `mount.search`, or protocol dispatch on Mount. Mount 
 
 ```python
 # No search — graph and filesystem only
-g.add_mount("/project", LocalFileSystem(workspace_dir="."))
+g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir="."))
 
 # With search — pass providers to add_mount
-g.add_mount("/data", engine=engine,
+g.add_mount("/data", engine_config=EngineConfig(url="sqlite+aiosqlite:///data.db"),
             embedding_provider=OpenAIEmbedding(model="text-embedding-3-small"),
             search_provider=LocalVectorStore(dimension=1536))
 ```
@@ -247,15 +247,15 @@ VFS creates a session per operation via `_session_for(mount)`. The session is in
 
 **LocalFileSystem** manages its own SQLite engine internally (lazy init with `asyncio.Lock`), but session creation is still driven by VFS.
 
-**DatabaseFileSystem** is fully stateless — it holds no engine, no session factory, and no mutable state. It receives everything it needs through the injected session. This makes it safe for concurrent use in web servers.
+**DatabaseFileSystem** is fully stateless — it holds no engine, no session factory, and no mutable state. It receives everything it needs through the injected session. Configuration (dialect, schema, model overrides) is set internally via `_configure()` at mount time based on the `EngineConfig` or `SessionConfig` passed to `add_mount()`. This makes it safe for concurrent use in web servers.
 
 ## Mount-first architecture
 
 All file operations go through mount paths. There is no global filesystem — you mount backends at virtual paths and interact through those paths:
 
 ```python
-g.add_mount("/code", LocalFileSystem(workspace_dir="."))
-g.add_mount("/docs", DatabaseFileSystem(dialect="postgresql"))
+g.add_mount("/code", filesystem=LocalFileSystem(workspace_dir="."))
+g.add_mount("/docs", engine_config=EngineConfig(url="postgresql+asyncpg://localhost/mydb"))
 
 g.read("/code/src/main.py")   # → routes to LocalFileSystem
 g.read("/docs/guide.md")      # → routes to DatabaseFileSystem
@@ -353,7 +353,8 @@ To create a user-scoped mount, pass a `UserScopedFileSystem` as the backend:
 from grover.backends.user_scoped import UserScopedFileSystem
 
 backend = UserScopedFileSystem()
-await g.add_mount("/ws", backend, engine=engine)
+await g.add_mount("/ws", filesystem=backend,
+                  engine_config=EngineConfig(url="postgresql+asyncpg://localhost/mydb"))
 ```
 
 When `user_id` is provided:

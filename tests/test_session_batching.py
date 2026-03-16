@@ -20,6 +20,7 @@ from sqlmodel import SQLModel, select
 from _helpers import FakeProvider
 from grover.backends.database import DatabaseFileSystem
 from grover.client import GroverAsync
+from grover.models.config import SessionConfig
 from grover.models.database.chunk import FileChunkModel
 from grover.models.database.connection import FileConnectionModel
 
@@ -86,10 +87,15 @@ async def dbfs_setup(tmp_path: Path):
         await conn.run_sync(SQLModel.metadata.create_all)
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    fs = DatabaseFileSystem(dialect="sqlite")
+    fs = DatabaseFileSystem()
 
     g = GroverAsync()
-    await g.add_mount("/vfs", fs, session_factory=factory, embedding_provider=FakeProvider())
+    await g.add_mount(
+        "/vfs",
+        filesystem=fs,
+        session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
+        embedding_provider=FakeProvider(),
+    )
 
     yield g, engine
     await g.close()
@@ -352,10 +358,15 @@ class TestAnalyzeEdgeCases:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem(dialect="sqlite")
+        fs = DatabaseFileSystem()
 
         g = GroverAsync()
-        await g.add_mount("/vfs", fs, session_factory=factory, embedding_provider=FakeProvider())
+        await g.add_mount(
+            "/vfs",
+            filesystem=fs,
+            session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
+            embedding_provider=FakeProvider(),
+        )
 
         # Write the file while mount is writable
         await g.write("/vfs/main.py", "x = 1\n")
@@ -392,10 +403,15 @@ class TestAnalyzeEdgeCases:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        dfs = DatabaseFileSystem(dialect="sqlite")
+        dfs = DatabaseFileSystem()
 
         g = GroverAsync()
-        await g.add_mount("/ro", dfs, session_factory=factory, permission=Permission.READ_ONLY)
+        await g.add_mount(
+            "/ro",
+            filesystem=dfs,
+            session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
+            permission=Permission.READ_ONLY,
+        )
         # Seed a file via a writable mount, then test analysis on the read-only one
         # We need to write the file directly through the backend to seed it
         async with factory() as sess:

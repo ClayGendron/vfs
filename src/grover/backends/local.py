@@ -6,7 +6,6 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
@@ -21,12 +20,6 @@ from grover.providers.storage.disk import DiskStorageProvider
 from grover.util.content import get_similar_files, is_binary_file
 from grover.util.operations import paginate_content, write_file
 from grover.util.paths import normalize_path, to_trash_path, validate_path
-
-if TYPE_CHECKING:
-    from grover.models.database.chunk import FileChunkModelBase
-    from grover.models.database.connection import FileConnectionModelBase
-    from grover.models.database.file import FileModelBase
-    from grover.models.database.version import FileVersionModelBase
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +57,6 @@ class LocalFileSystem(DatabaseFileSystem):
         self,
         workspace_dir: str | Path | None = None,
         data_dir: str | Path | None = None,
-        file_model: type[FileModelBase] | None = None,
-        file_version_model: type[FileVersionModelBase] | None = None,
-        file_chunk_model: type[FileChunkModelBase] | None = None,
-        file_connection_model: type[FileConnectionModelBase] | None = None,
-        schema: str | None = None,
         **provider_kwargs: object,
     ) -> None:
         self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd()
@@ -82,12 +70,6 @@ class LocalFileSystem(DatabaseFileSystem):
         self._disk = DiskStorageProvider(self.workspace_dir)
 
         super().__init__(
-            dialect="sqlite",
-            file_model=file_model,
-            file_version_model=file_version_model,
-            file_chunk_model=file_chunk_model,
-            file_connection_model=file_connection_model,
-            schema=schema,
             storage_provider=self._disk,
             **provider_kwargs,  # type: ignore[arg-type]
         )

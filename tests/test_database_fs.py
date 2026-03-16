@@ -18,7 +18,7 @@ async def _make_db_fs():
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    db = DatabaseFileSystem(dialect="sqlite")
+    db = DatabaseFileSystem()
     return db, factory, engine
 
 

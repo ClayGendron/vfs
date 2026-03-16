@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from grover.client import GroverAsync
+from grover.models.config import EngineConfig, SessionConfig
 from grover.models.database.connection import FileConnectionModel
 from grover.models.database.file import FileModel
 from grover.models.internal.results import FileSearchSet
@@ -17,15 +18,15 @@ if TYPE_CHECKING:
 class TestMountWiring:
     """Verify graph provider is wired correctly during add_mount."""
 
-    async def test_graph_provider_is_rustworkx_after_mount(self, async_engine: AsyncEngine):
+    async def test_graph_provider_is_rustworkx_after_mount(self):
         """After add_mount(), the graph provider is a RustworkxGraph."""
         g = GroverAsync()
-        await g.add_mount("/data", engine=async_engine)
+        await g.add_mount("/data", engine_config=EngineConfig(url="sqlite+aiosqlite://"))
         gp = g.get_graph("/data/foo.py")
         assert isinstance(gp, RustworkxGraph)
         await g.close()
 
-    async def test_hidden_mount_graph_provider_not_wired(self, async_engine: AsyncEngine):
+    async def test_hidden_mount_graph_provider_not_wired(self):
         """Hidden mounts should not have configure_refresh called on graph provider."""
         g = GroverAsync()
         graph = RustworkxGraph()
@@ -37,10 +38,9 @@ class TestMountWiring:
         mount = Mount(
             path="/__hidden",
             filesystem=fs,
-            session_factory=None,
             hidden=True,
         )
-        await g.add_mount(mount)
+        await g.add_mount(mount=mount)
         # Hidden mount — graph provider is still a RustworkxGraph (unchanged)
         assert isinstance(graph, RustworkxGraph)
         await g.close()
@@ -66,7 +66,7 @@ class TestLazyLoadViaFacade:
             await session.commit()
 
         g = GroverAsync()
-        await g.add_mount("/data", engine=async_engine)
+        await g.add_mount("/data", session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
         gp = g.get_graph()
         assert isinstance(gp, RustworkxGraph)
         # Graph is empty — needs_refresh is True
@@ -98,7 +98,7 @@ class TestLazyLoadViaFacade:
             await session.commit()
 
         g = GroverAsync()
-        await g.add_mount("/data", engine=async_engine)
+        await g.add_mount("/data", session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
         gp = g.get_graph()
         assert isinstance(gp, RustworkxGraph)
 
@@ -148,7 +148,7 @@ class TestLazyLoadViaFacade:
         from grover.backends.database import DatabaseFileSystem
 
         fs = DatabaseFileSystem(graph_provider=graph)
-        await g.add_mount("/data", fs, engine=async_engine)
+        await g.add_mount("/data", filesystem=fs, session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
         gp = g.get_graph()
 
         # Trigger initial load
@@ -202,7 +202,7 @@ class TestLazyLoadViaFacade:
         from grover.backends.database import DatabaseFileSystem
 
         fs = DatabaseFileSystem(graph_provider=graph)
-        await g.add_mount("/data", fs, engine=async_engine)
+        await g.add_mount("/data", filesystem=fs, session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
 
         # Trigger initial load
         await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))

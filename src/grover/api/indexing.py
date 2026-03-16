@@ -359,3 +359,9 @@ class IndexMixin:
                     await mount.filesystem.close()
                 except Exception:
                     logger.warning("Backend close failed for %s", mount.path, exc_info=True)
+            # Dispose engine if Grover owns it (EngineConfig path)
+            if mount.engine is not None:
+                try:
+                    await mount.engine.dispose()
+                except Exception:
+                    logger.warning("Engine dispose failed for %s", mount.path, exc_info=True)

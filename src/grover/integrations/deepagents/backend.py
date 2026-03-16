@@ -20,11 +20,8 @@ from deepagents.backends.utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-
     from grover.client import Grover, GroverAsync
+    from grover.models.config import EngineConfig
 
 
 def _validate_path(path: str) -> str | None:
@@ -165,28 +162,20 @@ class GroverBackend(BackendProtocol):
         if data_dir is not None:
             fs_kwargs["data_dir"] = data_dir
         g = Grover()
-        g.add_mount("/", LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
+        g.add_mount("/", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
         return cls(g)
 
     @classmethod
     def from_database(
         cls,
-        engine: AsyncEngine,
-        session_factory: Callable[..., AsyncSession] | None = None,
+        engine_config: EngineConfig,
         **mount_kwargs: Any,
     ) -> GroverBackend:
         """Create a GroverBackend with a DatabaseFileSystem mounted at ``/``."""
-        from grover.backends.database import DatabaseFileSystem
         from grover.client import Grover
 
         g = Grover()
-        g.add_mount(
-            "/",
-            DatabaseFileSystem(),  # type: ignore[arg-type]
-            engine=engine,
-            session_factory=session_factory,
-            **mount_kwargs,
-        )
+        g.add_mount("/", engine_config=engine_config, **mount_kwargs)
         return cls(g)
 
     @classmethod
@@ -205,28 +194,20 @@ class GroverBackend(BackendProtocol):
         if data_dir is not None:
             fs_kwargs["data_dir"] = data_dir
         g = GroverAsync()
-        await g.add_mount("/", LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
+        await g.add_mount("/", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
         return cls(g)
 
     @classmethod
     async def from_database_async(
         cls,
-        engine: AsyncEngine,
-        session_factory: Callable[..., AsyncSession] | None = None,
+        engine_config: EngineConfig,
         **mount_kwargs: Any,
     ) -> GroverBackend:
         """Create a GroverBackend with a GroverAsync + DatabaseFileSystem at ``/``."""
-        from grover.backends.database import DatabaseFileSystem
         from grover.client import GroverAsync
 
         g = GroverAsync()
-        await g.add_mount(
-            "/",
-            DatabaseFileSystem(),  # type: ignore[arg-type]
-            engine=engine,
-            session_factory=session_factory,
-            **mount_kwargs,
-        )
+        await g.add_mount("/", engine_config=engine_config, **mount_kwargs)
         return cls(g)
 
     # ------------------------------------------------------------------
