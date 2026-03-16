@@ -66,6 +66,7 @@ class GroverFileSystem(Protocol):
         self,
         path: str = "/",
         *,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
@@ -182,6 +183,7 @@ class GroverFileSystem(Protocol):
         pattern: str,
         path: str = "/",
         *,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
@@ -201,6 +203,7 @@ class GroverFileSystem(Protocol):
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
@@ -210,6 +213,7 @@ class GroverFileSystem(Protocol):
         path: str = "/",
         *,
         max_depth: int | None = None,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult: ...
@@ -306,7 +310,9 @@ class GroverFileSystem(Protocol):
         session: AsyncSession,
     ) -> None: ...
 
-    async def vector_search(self, query: str, k: int = 10) -> FileSearchResult: ...
+    async def vector_search(
+        self, query: str, k: int = 10, *, candidates: FileSearchSet | None = None
+    ) -> FileSearchResult: ...
 
     async def lexical_search(
         self,
@@ -410,12 +416,7 @@ class GroverFileSystem(Protocol):
 
     async def meeting_subgraph(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
-    async def min_meeting_subgraph(
-        self,
-        candidates: FileSearchSet,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
+    async def min_meeting_subgraph(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
     async def pagerank(
         self,
@@ -425,37 +426,17 @@ class GroverFileSystem(Protocol):
         session: AsyncSession,
     ) -> FileSearchResult: ...
 
-    async def betweenness_centrality(
-        self,
-        candidates: FileSearchSet,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
+    async def betweenness_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
-    async def closeness_centrality(
-        self,
-        candidates: FileSearchSet,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
+    async def closeness_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
     async def katz_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
     async def degree_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
-    async def in_degree_centrality(
-        self,
-        candidates: FileSearchSet,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
+    async def in_degree_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
-    async def out_degree_centrality(
-        self,
-        candidates: FileSearchSet,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
+    async def out_degree_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 
     async def hits(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult: ...
 

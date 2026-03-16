@@ -75,7 +75,7 @@ g.read(path, *, user_id=None) -> ReadResult
 g.write(path, content, *, user_id=None) -> WriteResult
 g.edit(path, old, new, *, user_id=None) -> EditResult
 g.delete(path, permanent=False, *, user_id=None) -> DeleteResult
-g.list_dir(path="/", *, user_id=None) -> ListDirResult
+g.list_dir(path="/", *, candidates=None, user_id=None) -> ListDirResult
 g.exists(path, *, user_id=None) -> ExistsResult
 g.move(src, dest, *, user_id=None, follow=False) -> MoveResult
 g.copy(src, dest, *, user_id=None) -> WriteResult
@@ -87,7 +87,7 @@ g.copy(src, dest, *, user_id=None) -> WriteResult
 | `write(path, content)` | Write content to a file. Creates the file if it doesn't exist, creates a new version if it does. Returns `WriteResult` with `success`, `created`, `version`. |
 | `edit(path, old, new)` | Find-and-replace within a file. Returns `EditResult` with `success` and `version`. |
 | `delete(path, permanent=False)` | Delete a file. Default is soft-delete (moves to trash). Pass `permanent=True` for permanent deletion. Returns `DeleteResult`. |
-| `list_dir(path)` | List directory entries. Returns candidates with `path` and `is_directory`. On user-scoped mounts, the user's root listing includes a virtual `@shared/` entry. |
+| `list_dir(path)` | List directory entries at *path*. `"/"` lists mount points. An optional `candidates` kwarg (`FileSearchSet`) post-filters results to the intersection. On user-scoped mounts, the user's root listing includes a virtual `@shared/` entry. |
 | `exists(path)` | Check if a path exists. Returns `ExistsResult` with `exists: bool`. |
 | `move(src, dest, *, follow=False)` | Move a file or directory. Default (`follow=False`) creates a clean break — new file record at dest, source soft-deleted, no version history carryover. `follow=True` does an in-place rename — same file record, versions follow, share paths updated. Returns `MoveResult`. |
 | `copy(src, dest)` | Copy a file to a new path. Returns `WriteResult`. |
@@ -177,14 +177,14 @@ g.move("/project/old.py", "/project/new.py", follow=True)
 ```python
 g.glob(pattern, path="/", *, candidates=None) -> GlobResult
 g.grep(pattern, path="/", *, candidates=None, ...) -> GrepResult
-g.tree(path="/", *, max_depth=None) -> TreeResult
+g.tree(path="/", *, max_depth=None, candidates=None) -> TreeResult
 ```
 
 | Method | Description |
 |--------|-------------|
-| `glob(pattern, path, *, candidates)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `file_candidates` (list of `FileCandidate`). If `candidates` is provided, results are filtered to the intersection. |
-| `grep(pattern, path, *, candidates, ...)` | Search file contents with regex. Returns `GrepResult` with `file_candidates` (list of `FileCandidate`). Each candidate's evidence includes `GrepEvidence` with `line_matches`. If `candidates` is provided, results are filtered to the intersection. |
-| `tree(path, max_depth)` | List all entries recursively. Returns `TreeResult` with `entries`, `total_files`, `total_dirs`. |
+| `glob(pattern, path, *, candidates)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `file_candidates` (list of `FileCandidate`). If `candidates` (`FileSearchSet`) is provided, results are filtered to the intersection. |
+| `grep(pattern, path, *, candidates, ...)` | Search file contents with regex. Returns `GrepResult` with `file_candidates` (list of `FileCandidate`). Each candidate's evidence includes `GrepEvidence` with `line_matches`. If `candidates` (`FileSearchSet`) is provided, only candidate files are searched (pre-filter). |
+| `tree(path, *, max_depth, candidates)` | List all entries under *path* recursively. `"/"` trees all mounts. An optional `candidates` kwarg (`FileSearchSet`) post-filters results to the intersection. Returns `TreeResult` with `entries`, `total_files`, `total_dirs`. |
 
 **grep options:**
 
@@ -215,7 +215,7 @@ g.verify_all_versions(mount_path=None) -> list[VerifyVersionResult]
 
 | Method | Description |
 |--------|-------------|
-| `list_versions(path)` | List all versions of a file. Returns `VersionResult` (a `FileSearchResult` subclass) with `candidates` — each candidate's path is `"{file_path}@{version}"` and evidence is `VersionEvidence` with `version`, `content_hash`, `size_bytes`, `created_at`, `created_by`. Versions with `created_by="external"` are synthetic snapshots auto-inserted when an external edit was detected. |
+| `list_versions(path)` | List all versions for a single file. Returns `VersionResult` (a `FileSearchResult` subclass) with candidates — each candidate's path is `"{file_path}@{version}"` and evidence is `VersionEvidence` with `version`, `content_hash`, `size_bytes`, `created_at`, `created_by`. Versions with `created_by="external"` are synthetic snapshots auto-inserted when an external edit was detected. |
 | `get_version_content(path, version)` | Retrieve the content of a specific version. Returns `GetVersionContentResult`. |
 | `restore_version(path, version)` | Restore a file to a previous version (creates a new version with the old content). Returns `RestoreResult`. |
 | `verify_versions(path)` | Verify the version chain integrity for a single file. Reconstructs every version and checks SHA256 hashes. Returns `VerifyVersionResult` with per-version pass/fail details in `errors: list[VersionChainError]`. |
@@ -341,19 +341,35 @@ g.find_nodes(*, path=None, **attrs) -> GraphResult
 g.vector_search(query, k=10, *, path="/", candidates=None, user_id=None) -> VectorSearchResult
 g.lexical_search(query, k=10, *, path="/", candidates=None, user_id=None) -> LexicalSearchResult
 g.hybrid_search(query, k=10, *, alpha=0.5, path="/", candidates=None, user_id=None) -> FileSearchResult
-g.search(query, *, path="/", glob=None, grep=None, k=10, user_id=None) -> FileSearchResult
+g.search(query, *, path="/", glob=None, grep=None, k=10, candidates=None, user_id=None) -> FileSearchResult
 ```
+
+All search methods accept an optional `candidates: FileSearchSet | None` parameter. When provided, results are filtered to only include files present in the candidates set. This enables composable pipelines where the output of one query feeds into the next.
 
 | Method | Description |
 |--------|-------------|
-| `vector_search(query, k, *, candidates)` | Semantic search using embedding + vector store. Requires `embedding_provider` and `search_provider` on the mount. Returns `VectorSearchResult`. If `candidates` is provided, results are filtered to the intersection. |
+| `vector_search(query, k, *, candidates)` | Semantic search using embedding + vector store. Requires `embedding_provider` and `search_provider` on the mount. Returns `VectorSearchResult`. If `candidates` (`FileSearchSet`) is provided, results are post-filtered to the intersection. |
 | `lexical_search(query, k, *, candidates)` | BM25/full-text keyword search via the filesystem's DB-backed lexical search. Returns `LexicalSearchResult`. If `candidates` is provided, results are filtered to the intersection. |
-| `hybrid_search(query, k, alpha, *, candidates)` | Combines vector and lexical results. `alpha` controls the blend: 1.0 = pure vector, 0.0 = pure lexical. Falls back to whichever is available. If `candidates` is provided, results are filtered to the intersection. |
-| `search(query, ...)` | Composable search pipeline: optional glob/grep filters followed by vector search. Use `glob` and `grep` to pre-filter before vector search. |
+| `hybrid_search(query, k, alpha, *, candidates)` | Combines vector and lexical results. `alpha` controls the blend: 1.0 = pure vector, 0.0 = pure lexical. Passes `candidates` through to sub-calls. |
+| `search(query, *, candidates, ...)` | Composable search pipeline: optional glob/grep filters followed by vector search. If `candidates` is provided, it seeds the pipeline as the initial filter set. |
 
 Search is routed through per-mount filesystem providers. When `path="/"`, results are aggregated across all mounts. When `path` targets a specific mount, search is scoped to that mount.
 
 Returns `success=False` results if the required providers (`search_provider`, `embedding_provider`) are not configured on the mount.
+
+**Composable pipelines:** Since `FileSearchResult` is a subclass of `FileSearchSet`, the output of any query method can feed directly into the `candidates` parameter of another:
+
+```python
+# Glob → grep → vector search pipeline
+py_files = g.glob("**/*.py")           # FileSearchResult (is-a FileSearchSet)
+with_auth = g.grep("auth", candidates=py_files)  # only searches .py files
+relevant = g.vector_search("login flow", candidates=with_auth)
+
+# list_dir / tree use path + optional candidates filter
+g.list_dir("/src")                    # list /src directory
+g.tree("/tests", max_depth=2)         # tree /tests directory
+g.list_versions("/src/main.py")       # versions for a single file
+```
 
 ### Index and Persistence
 

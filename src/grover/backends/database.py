@@ -366,18 +366,25 @@ class DatabaseFileSystem:
         self,
         path: str = "/",
         *,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult:
         if self.storage_provider is not None:
             old = await self.storage_provider.storage_list_dir(path)
-            return self._search_to_internal(old)
-        return await list_dir_db(
-            path,
-            session,
-            get_file_record=self._get_file_record,
-            file_model=self.file_model,
-        )
+            result = self._search_to_internal(old)
+        else:
+            result = await list_dir_db(
+                path,
+                session,
+                get_file_record=self._get_file_record,
+                file_model=self.file_model,
+            )
+        if candidates is not None and result.success:
+            allowed = set(candidates.paths)
+            result.files = [f for f in result.files if f.path in allowed]
+            result.message = f"Found {len(result.files)} item(s) (filtered)"
+        return result
 
     async def exists(
         self,
@@ -485,12 +492,18 @@ class DatabaseFileSystem:
         pattern: str,
         path: str = "/",
         *,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult:
         if self.storage_provider is not None:
             old = await self.storage_provider.storage_glob(pattern, path)
-            return self._search_to_internal(old)
+            result = self._search_to_internal(old)
+            if candidates is not None:
+                allowed = set(candidates.paths)
+                result.files = [f for f in result.files if f.path in allowed]
+                result.message = f"Found {len(result.files)} match(es) (filtered)"
+            return result
         path = normalize_path(path)
 
         if not pattern:
@@ -564,6 +577,10 @@ class DatabaseFileSystem:
                 )
             )
 
+        if candidates is not None:
+            allowed = set(candidates.paths)
+            files = [f for f in files if f.path in allowed]
+
         return FileSearchResult(
             success=True,
             message=f"Found {len(files)} match(es)",
@@ -585,6 +602,7 @@ class DatabaseFileSystem:
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult:
@@ -603,7 +621,12 @@ class DatabaseFileSystem:
                 count_only=count_only,
                 files_only=files_only,
             )
-            return self._search_to_internal(old)
+            result = self._search_to_internal(old)
+            if candidates is not None:
+                allowed = set(candidates.paths)
+                result.files = [f for f in result.files if f.path in allowed]
+                result.message = f"Found {len(result.files)} match(es) (filtered)"
+            return result
         path = normalize_path(path)
         context_lines = max(0, context_lines)
 
@@ -658,6 +681,11 @@ class DatabaseFileSystem:
                     )
                 )
                 candidate_paths = [row[0] for row in result.all()]
+
+        # Pre-filter by candidates set
+        if candidates is not None:
+            allowed = set(candidates.paths)
+            candidate_paths = [p for p in candidate_paths if p in allowed]
 
         result_files: list[File] = []
         files_searched = 0
@@ -741,12 +769,18 @@ class DatabaseFileSystem:
         path: str = "/",
         *,
         max_depth: int | None = None,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult:
         if self.storage_provider is not None:
             old = await self.storage_provider.storage_tree(path, max_depth=max_depth)
-            return self._search_to_internal(old)
+            result = self._search_to_internal(old)
+            if candidates is not None:
+                allowed = set(candidates.paths)
+                result.files = [f for f in result.files if f.path in allowed]
+                result.message = f"Found {len(result.files)} item(s) (filtered)"
+            return result
         path = normalize_path(path)
 
         # Verify base directory exists (unless root)
@@ -808,11 +842,16 @@ class DatabaseFileSystem:
                 total_files += 1
 
         files.sort(key=lambda f: f.path)
-        return FileSearchResult(
+        tree_result = FileSearchResult(
             success=True,
             message=f"{total_dirs} directories, {total_files} files",
             files=files,
         )
+        if candidates is not None:
+            allowed = set(candidates.paths)
+            tree_result.files = [f for f in tree_result.files if f.path in allowed]
+            tree_result.message = f"Found {len(tree_result.files)} item(s) (filtered)"
+        return tree_result
 
     # ------------------------------------------------------------------
     # Trash operations
@@ -1684,7 +1723,9 @@ class DatabaseFileSystem:
             else:
                 await self.search_provider.delete([path])
 
-    async def vector_search(self, query: str, k: int = 10) -> FileSearchResult:
+    async def vector_search(
+        self, query: str, k: int = 10, *, candidates: FileSearchSet | None = None
+    ) -> FileSearchResult:
         """Embed *query*, call ``search_provider.vector_search()``, return result."""
         if self.embedding_provider is None:
             return FileSearchResult(
@@ -1699,7 +1740,12 @@ class DatabaseFileSystem:
 
         vector = await self._search_embed(query)
         old = await self.search_provider.vector_search(vector, k=k)
-        return self._search_to_internal(old)
+        result = self._search_to_internal(old)
+        if candidates is not None:
+            allowed = set(candidates.paths)
+            result.files = [f for f in result.files if f.path in allowed]
+            result.message = f"Found {len(result.files)} match(es) (filtered)"
+        return result
 
     async def lexical_search(
         self,

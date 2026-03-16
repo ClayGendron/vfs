@@ -216,7 +216,7 @@ class TestGroverAsyncMultiMount:
         assert (await g.read("/data/doc.txt")).file.content == "doc content"
 
         # List root should show both mounts (but not .grover)
-        result = await g.list_dir("/")
+        result = await g.list_dir()
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "app" in names
         assert "data" in names
@@ -475,7 +475,7 @@ class TestGroverAsyncMountOptions:
             LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_visible"),
             embedding_provider=FakeProvider(),
         )
-        result = await g.list_dir("/")
+        result = await g.list_dir()
         names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "visible" in names
         assert "hidden" not in names

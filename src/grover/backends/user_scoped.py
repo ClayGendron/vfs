@@ -21,7 +21,7 @@ from grover.backends.database import DatabaseFileSystem
 from grover.exceptions import AuthenticationRequiredError
 from grover.models.internal.evidence import ListDirEvidence, ShareEvidence
 from grover.models.internal.ref import File
-from grover.models.internal.results import FileOperationResult, FileSearchResult
+from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
@@ -638,6 +638,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         self,
         path: str = "/",
         *,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult:
@@ -649,7 +650,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
             return await self._list_shared_dir(segments, uid, session)
 
         stored = self._resolve_path(path, uid)
-        result = await super().list_dir(stored, session=session)
+        # Resolve candidates to stored paths
+        resolved_candidates: FileSearchSet | None = None
+        if candidates is not None:
+            resolved_candidates = FileSearchSet.from_paths([self._resolve_path(p, uid) for p in candidates.paths])
+        result = await super().list_dir(stored, candidates=resolved_candidates, session=session)
 
         # Remap stored paths back to user-facing paths
         result = result.remap_paths(lambda p: self._restore_path(p, uid) or p)
@@ -805,6 +810,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         pattern: str,
         path: str = "/",
         *,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult:
@@ -813,7 +819,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         stored = self._resolve_path(path, uid)
         if is_shared:
             await self._check_share_access(session, stored, uid, "read")
-        result = await super().glob(pattern, stored, session=session)
+        # Resolve candidates to stored paths
+        resolved_candidates: FileSearchSet | None = None
+        if candidates is not None:
+            resolved_candidates = FileSearchSet.from_paths([self._resolve_path(p, uid) for p in candidates.paths])
+        result = await super().glob(pattern, stored, candidates=resolved_candidates, session=session)
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
             result = result.remap_paths(
@@ -842,6 +852,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult:
@@ -875,6 +886,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
                     message="No files match glob filter",
                 )
 
+        # Resolve candidates to stored paths
+        resolved_candidates: FileSearchSet | None = None
+        if candidates is not None:
+            resolved_candidates = FileSearchSet.from_paths([self._resolve_path(p, uid) for p in candidates.paths])
+
         result = await super().grep(
             pattern,
             stored,
@@ -888,6 +904,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             max_results_per_file=max_results_per_file,
             count_only=count_only,
             files_only=files_only,
+            candidates=resolved_candidates,
             session=session,
         )
 
@@ -917,6 +934,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         path: str = "/",
         *,
         max_depth: int | None = None,
+        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> FileSearchResult:
@@ -925,22 +943,25 @@ class UserScopedFileSystem(DatabaseFileSystem):
         stored = self._resolve_path(path, uid)
         if is_shared:
             await self._check_share_access(session, stored, uid, "read")
+        # Resolve candidates to stored paths
+        resolved_candidates: FileSearchSet | None = None
+        if candidates is not None:
+            resolved_candidates = FileSearchSet.from_paths([self._resolve_path(p, uid) for p in candidates.paths])
         result = await super().tree(
             stored,
             max_depth=max_depth,
+            candidates=resolved_candidates,
             session=session,
         )
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
             result = result.remap_paths(
-                lambda p: (
-                    shared_prefix + (self._strip_user_prefix(p, owner) or "")
-                    if self._strip_user_prefix(p, owner) != "/"
-                    else shared_prefix
+                lambda p, _o=owner, _sp=shared_prefix: (
+                    _sp + (self._strip_user_prefix(p, _o) or "") if self._strip_user_prefix(p, _o) != "/" else _sp
                 )
             )
         else:
-            result = result.remap_paths(lambda p: self._restore_path(p, uid) or p)
+            result = result.remap_paths(lambda p, _uid=uid: self._restore_path(p, _uid) or p)
         return result
 
     # ------------------------------------------------------------------

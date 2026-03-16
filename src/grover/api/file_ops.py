@@ -8,7 +8,7 @@ from grover.backends.protocol import SupportsReconcile
 from grover.exceptions import MountNotFoundError
 from grover.models.internal.evidence import ListDirEvidence, TreeEvidence
 from grover.models.internal.ref import File
-from grover.models.internal.results import BatchResult, FileOperationResult, FileSearchResult
+from grover.models.internal.results import BatchResult, FileOperationResult, FileSearchResult, FileSearchSet
 from grover.permissions import Permission
 from grover.ref import Ref
 from grover.util.paths import normalize_path
@@ -23,6 +23,14 @@ class FileOpsMixin:
     """File CRUD, version, trash, and reconciliation operations extracted from GroverAsync."""
 
     _ctx: GroverContext
+
+    @staticmethod
+    def _split_candidates(candidates: FileSearchSet | None, mount_path: str) -> FileSearchSet | None:
+        """Strip mount prefix from candidate paths belonging to this mount."""
+        if candidates is None:
+            return None
+        paths = [p.removeprefix(mount_path) or "/" for p in candidates.paths if p.startswith(mount_path)]
+        return FileSearchSet.from_paths(paths) if paths else FileSearchSet()
 
     # ------------------------------------------------------------------
     # FS Operations (absorbed from VFS)
@@ -151,17 +159,28 @@ class FileOpsMixin:
         result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
         return result
 
-    async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> FileSearchResult:
+    async def list_dir(
+        self, path: str = "/", *, candidates: FileSearchSet | None = None, user_id: str | None = None
+    ) -> FileSearchResult:
         path = normalize_path(path)
 
         if path == "/":
             return self._list_root()
 
-        mount, rel_path = self._ctx.registry.resolve(path)
+        try:
+            mount, rel_path = self._ctx.registry.resolve(path)
+        except MountNotFoundError:
+            return FileSearchResult(success=False, message=f"No mount found for path: {path}")
+
         assert mount.filesystem is not None
+        mount_candidates = self._split_candidates(candidates, mount.path)
         async with self._ctx.session_for(mount) as sess:
-            result = await mount.filesystem.list_dir(rel_path, session=sess, user_id=user_id)
-        return result.rebase(mount.path)
+            result = await mount.filesystem.list_dir(
+                rel_path, candidates=mount_candidates, session=sess, user_id=user_id
+            )
+        if result.success:
+            result = result.rebase(mount.path)
+        return result
 
     def _list_root(self) -> FileSearchResult:
         files = [
@@ -356,7 +375,12 @@ class FileOpsMixin:
     # ------------------------------------------------------------------
 
     async def tree(
-        self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
+        self,
+        path: str = "/",
+        *,
+        max_depth: int | None = None,
+        candidates: FileSearchSet | None = None,
+        user_id: str | None = None,
     ) -> FileSearchResult:
         path = normalize_path(path)
         try:
@@ -379,9 +403,14 @@ class FileOpsMixin:
                 if max_depth is None or max_depth > 0:
                     for mount in self._ctx.registry.list_visible_mounts():
                         assert mount.filesystem is not None
+                        mount_candidates = self._split_candidates(candidates, mount.path)
                         async with self._ctx.session_for(mount) as sess:
                             result = await mount.filesystem.tree(
-                                "/", max_depth=max_depth, session=sess, user_id=user_id
+                                "/",
+                                max_depth=max_depth,
+                                candidates=mount_candidates,
+                                session=sess,
+                                user_id=user_id,
                             )
                         if result.success:
                             combined = combined | result.rebase(mount.path)
@@ -399,9 +428,26 @@ class FileOpsMixin:
 
             mount, rel_path = self._ctx.registry.resolve(path)
             assert mount.filesystem is not None
+            mount_candidates = self._split_candidates(candidates, mount.path)
             async with self._ctx.session_for(mount) as sess:
-                result = await mount.filesystem.tree(rel_path, max_depth=max_depth, session=sess, user_id=user_id)
-            return result.rebase(mount.path)
+                result = await mount.filesystem.tree(
+                    rel_path,
+                    max_depth=max_depth,
+                    candidates=mount_candidates,
+                    session=sess,
+                    user_id=user_id,
+                )
+            if result.success:
+                result = result.rebase(mount.path)
+
+            total_dirs = sum(
+                1 for f in result.files if any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
+            )
+            total_files_count = sum(
+                1 for f in result.files if any(isinstance(e, TreeEvidence) and not e.is_directory for e in f.evidence)
+            )
+            result.message = f"{total_dirs} directories, {total_files_count} files"
+            return result
         except Exception as e:
             return FileSearchResult(success=False, message=f"Tree failed: {e}")
 
@@ -414,7 +460,8 @@ class FileOpsMixin:
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
         async with self._ctx.session_for(mount) as sess:
-            return await mount.filesystem.list_versions(rel_path, session=sess, user_id=user_id)
+            result = await mount.filesystem.list_versions(rel_path, session=sess, user_id=user_id)
+        return result
 
     async def read_version(self, path: str, version: int, *, user_id: str | None = None) -> FileOperationResult:
         path = normalize_path(path)

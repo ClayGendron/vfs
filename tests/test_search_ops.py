@@ -12,6 +12,7 @@ from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
 from grover.models.internal.evidence import GrepEvidence, LineMatch, TreeEvidence
+from grover.models.internal.results import FileSearchSet
 from grover.util.patterns import glob_to_sql_like, match_glob
 
 if TYPE_CHECKING:
@@ -738,7 +739,7 @@ class TestGroverGrep:
 class TestGroverTree:
     async def test_root_tree_includes_mounts(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
-        result = await grover.tree("/")
+        result = await grover.tree()
         assert result.success
         paths = set(result.paths)
         # Mount roots should be present
@@ -758,7 +759,7 @@ class TestGroverTree:
 
     async def test_root_tree_max_depth_0(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
-        result = await grover.tree("/", max_depth=0)
+        result = await grover.tree(max_depth=0)
         assert result.success
         # With depth 0 at root, should only show mount roots (no children)
         paths = set(result.paths)
@@ -770,7 +771,7 @@ class TestGroverTree:
 
     async def test_root_tree_max_depth_1(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
-        result = await grover.tree("/", max_depth=1)
+        result = await grover.tree(max_depth=1)
         assert result.success
         paths = set(result.paths)
         # Mount roots (depth 0) and their children (depth 1)
@@ -778,3 +779,138 @@ class TestGroverTree:
         assert "/local" in paths
         assert "/db/hello.py" in paths
         assert "/local/world.py" in paths
+
+
+# =========================================================================
+# Candidates filtering tests
+# =========================================================================
+
+
+class TestGlobWithCandidates:
+    """Test that glob respects the candidates filter."""
+
+    async def test_glob_with_candidates_filters(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        # Only allow hello.py as a candidate — data.txt should be excluded
+        cands = FileSearchSet.from_paths(["/db/hello.py"])
+        result = await grover.glob("**/*", "/", candidates=cands)
+        assert result.success
+        paths = set(result.paths)
+        assert "/db/hello.py" in paths
+        assert "/db/data.txt" not in paths
+        assert "/local/world.py" not in paths
+
+    async def test_glob_none_candidates_no_filter(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.glob("**/*.py", "/", candidates=None)
+        assert result.success
+        assert len(result) >= 2
+
+
+class TestGrepWithCandidates:
+    """Test that grep respects the candidates filter."""
+
+    async def test_grep_with_candidates_filters(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        # Both files contain "hello", but only allow /db/hello.py
+        cands = FileSearchSet.from_paths(["/db/hello.py"])
+        result = await grover.grep("hello", candidates=cands)
+        assert result.success
+        paths = set(result.paths)
+        assert "/db/hello.py" in paths
+        assert "/local/world.py" not in paths
+
+    async def test_grep_none_candidates_no_filter(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.grep("hello", candidates=None)
+        assert result.success
+        assert len(result) >= 2
+
+
+class TestListDirWithCandidates:
+    """Test list_dir with path + optional candidates filter."""
+
+    async def test_list_dir_specific_mount(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.list_dir("/db")
+        assert result.success
+        paths = set(result.paths)
+        assert "/db/hello.py" in paths
+        assert "/local/world.py" not in paths
+
+    async def test_list_dir_with_candidates_filter(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        # Only allow hello.py as a candidate
+        cands = FileSearchSet.from_paths(["/db/hello.py"])
+        result = await grover.list_dir("/db", candidates=cands)
+        assert result.success
+        paths = set(result.paths)
+        assert "/db/hello.py" in paths
+        assert "/db/data.txt" not in paths
+
+    async def test_default_returns_root(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.list_dir()
+        assert result.success
+        # Should list mount roots
+        paths = set(result.paths)
+        assert "/db" in paths
+        assert "/local" in paths
+
+
+class TestTreeWithCandidates:
+    """Test tree with path + optional candidates filter."""
+
+    async def test_tree_specific_mount(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.tree("/db")
+        assert result.success
+        paths = set(result.paths)
+        assert "/db/hello.py" in paths
+        assert "/local/world.py" not in paths
+
+    async def test_tree_with_candidates_filter(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        # Only allow hello.py as a candidate
+        cands = FileSearchSet.from_paths(["/db/hello.py"])
+        result = await grover.tree("/", candidates=cands)
+        assert result.success
+        paths = set(result.paths)
+        assert "/db/hello.py" in paths
+        assert "/db/data.txt" not in paths
+
+    async def test_default_returns_root(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.tree()
+        assert result.success
+        paths = set(result.paths)
+        assert "/db" in paths
+        assert "/local" in paths
+
+
+class TestListVersionsPathBased:
+    """Test list_versions with path-based API (single file, no candidates)."""
+
+    async def test_list_versions_single_file(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        # Write a second version to create version history
+        await grover.write("/db/hello.py", "print('updated')\n")
+        result = await grover.list_versions("/db/hello.py")
+        assert result.success
+        assert len(result) >= 2  # At least 2 versions
+
+
+class TestFileSearchResultAsCandidate:
+    """Test that FileSearchResult works as candidates (Liskov substitution)."""
+
+    async def test_search_result_as_candidates(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        # First get a glob result (which is a FileSearchResult, subclass of FileSearchSet)
+        glob_result = await grover.glob("**/*.py", "/")
+        assert glob_result.success
+        # Use it directly as candidates for grep
+        grep_result = await grover.grep("hello", candidates=glob_result)
+        assert grep_result.success
+        # Should only search .py files
+        for path in grep_result.paths:
+            assert path.endswith(".py")

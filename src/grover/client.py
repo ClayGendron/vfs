@@ -233,9 +233,11 @@ class Grover:
         """Delete the file at *path*."""
         return self._run(self._async.delete(path, permanent, user_id=user_id))
 
-    def list_dir(self, path: str = "/", *, user_id: str | None = None) -> FileSearchResult:
+    def list_dir(
+        self, path: str = "/", *, candidates: FileSearchSet | None = None, user_id: str | None = None
+    ) -> FileSearchResult:
         """List entries under *path*."""
-        return self._run(self._async.list_dir(path, user_id=user_id))
+        return self._run(self._async.list_dir(path, candidates=candidates, user_id=user_id))
 
     def exists(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
         """Check whether *path* exists."""
@@ -262,7 +264,7 @@ class Grover:
         pattern: str,
         path: str = "/",
         *,
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Find files matching a glob *pattern* under *path*."""
@@ -283,7 +285,7 @@ class Grover:
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Search file contents for *pattern* under *path*."""
@@ -306,9 +308,16 @@ class Grover:
             )
         )
 
-    def tree(self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None) -> FileSearchResult:
+    def tree(
+        self,
+        path: str = "/",
+        *,
+        max_depth: int | None = None,
+        candidates: FileSearchSet | None = None,
+        user_id: str | None = None,
+    ) -> FileSearchResult:
         """List all entries under *path* recursively."""
-        return self._run(self._async.tree(path, max_depth=max_depth, user_id=user_id))
+        return self._run(self._async.tree(path, max_depth=max_depth, candidates=candidates, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Version / Trash / Reconciliation wrappers (sync)
@@ -527,7 +536,7 @@ class Grover:
         k: int = 10,
         *,
         path: str = "/",
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Semantic (vector) search over indexed content."""
@@ -539,7 +548,7 @@ class Grover:
         k: int = 10,
         *,
         path: str = "/",
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult:
         """BM25/full-text search over indexed content."""
@@ -552,7 +561,7 @@ class Grover:
         *,
         alpha: float = 0.5,
         path: str = "/",
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Hybrid search combining vector and lexical results."""
@@ -568,10 +577,13 @@ class Grover:
         glob: str | None = None,
         grep: str | None = None,
         k: int = 10,
+        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Composable search pipeline: optional glob/grep → vector search."""
-        return self._run(self._async.search(query, path=path, glob=glob, grep=grep, k=k, user_id=user_id))
+        return self._run(
+            self._async.search(query, path=path, glob=glob, grep=grep, k=k, candidates=candidates, user_id=user_id)
+        )
 
     # ------------------------------------------------------------------
     # Index and persistence
