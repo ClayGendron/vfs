@@ -101,13 +101,13 @@ Provider protocols are co-located with their provider implementations. Each subd
 ```python
 class StorageProvider(Protocol):    # Disk I/O: read/write/delete content
 class GraphProvider(Protocol):      # Node/edge CRUD + graph queries
-class SearchProvider(Protocol):     # Vector + lexical search
+class SearchProvider(Protocol):     # Vector storage + index management
 class EmbeddingProvider(Protocol):  # Text → vector embedding
 class VersionProvider(Protocol):    # Diff-based version storage
 class ChunkProvider(Protocol):      # Code chunk CRUD
 ```
 
-`GraphProvider` is the core graph protocol — `RustworkxGraph` implements it plus the algorithm capability protocols. `SearchProvider` unifies vector and lexical search — `LocalVectorStore`, `PineconeVectorStore`, and `DatabricksVectorStore` implement it directly. `EmbeddingProvider` stays separate from `SearchProvider` because embedding is stateless and shared across operations.
+`GraphProvider` is the core graph protocol — `RustworkxGraph` implements it plus the algorithm capability protocols. `SearchProvider` handles vector storage and index management — `LocalVectorStore`, `PineconeVectorStore`, and `DatabricksVectorStore` implement it directly. Methods accept domain types (`File`, `BatchResult`, `FileSearchResult`) instead of search-specific types. Lexical search is handled by `DatabaseFileSystem` via DB-native FTS, not the search provider. `EmbeddingProvider` stays separate from `SearchProvider` because embedding is stateless and shared across operations.
 
 ### Graph capability protocols
 
@@ -394,27 +394,13 @@ On user-scoped mounts, trash operations are scoped by `owner_id`. Each user can 
 The search layer uses two provider protocols on the filesystem:
 
 - **EmbeddingProvider** — converts text to vectors. Async-first, with `embed()` and `embed_batch()` methods. Built-in providers: OpenAI (API), LangChain adapter (any LangChain `Embeddings` instance).
-- **SearchProvider** — stores and searches vectors, with optional lexical search. Async-first. Built-in stores: `LocalVectorStore` (in-process usearch HNSW), `PineconeVectorStore` (Pinecone cloud), `DatabricksVectorStore` (Databricks Vector Search).
+- **SearchProvider** — vector storage and index management. Async-first. Methods use domain types: `upsert(files=...)` takes `File` objects, `delete(files=...)` takes path strings, `vector_search()` returns `FileSearchResult` with optional `candidates` post-filtering. Built-in stores: `LocalVectorStore` (in-process usearch HNSW), `PineconeVectorStore` (Pinecone cloud), `DatabricksVectorStore` (Databricks Vector Search).
 
 Both providers live directly on the filesystem. `DatabaseFileSystem.SearchMethodsMixin` orchestrates them: embed text via `embedding_provider` → store/search vectors via `search_provider.vector_search()`. There is no `SearchEngine` intermediary — the filesystem itself coordinates embedding and search.
 
 **No auto-creation**: Unlike the `graph_provider` (which is auto-injected as a `RustworkxGraph`), search providers are never auto-created. Users must explicitly pass both `search_provider` and `embedding_provider` to `add_mount()`. If either is missing, search operations return `success=False` with a descriptive message.
 
 **Construction-time validation**: When both `embedding_provider` and `search_provider` are set on a filesystem, `_validate_search_dimensions()` checks that the store's dimension (if exposed) matches the provider's `dimensions`. This catches model swaps and dimension mismatches before data is indexed.
-
-### Capability protocols (search)
-
-Like filesystem backends, vector stores can advertise capabilities via runtime-checkable protocols:
-
-| Protocol | What it enables | Stores |
-|----------|----------------|--------|
-| `SupportsNamespaces` | Namespace partitioning | Pinecone |
-| `SupportsMetadataFilter` | Filter expressions on metadata | Pinecone, Databricks |
-| `SupportsIndexLifecycle` | Create/delete/list indexes | Pinecone, Databricks |
-| `SupportsHybridSearch` | Dense + sparse/keyword search | Pinecone, Databricks |
-| `SupportsReranking` | Server-side reranking | Pinecone |
-| `SupportsTextSearch` | Text query without external embeddings | (custom) |
-| `SupportsTextIngest` | Text upsert without external embeddings | (custom) |
 
 ### Filter expression AST
 

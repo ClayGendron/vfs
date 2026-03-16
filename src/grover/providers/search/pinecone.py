@@ -3,22 +3,13 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from grover.models.internal.evidence import VectorEvidence
 from grover.models.internal.ref import File
-from grover.models.internal.results import FileSearchResult
+from grover.models.internal.results import BatchResult, FileOperationResult, FileSearchResult, FileSearchSet
 from grover.providers.search.filters import FilterExpression, compile_pinecone
-from grover.providers.search.types import (
-    DeleteResult,
-    IndexConfig,
-    IndexInfo,
-    SparseVector,
-    UpsertResult,
-    VectorEntry,
-    VectorHit,
-)
+from grover.providers.search.protocol import IndexConfig, parent_path_from_id
 
 try:
     from pinecone import PineconeAsyncio, ServerlessSpec
@@ -35,18 +26,18 @@ _UPSERT_BATCH_SIZE = 1000
 
 
 class PineconeVectorStore:
-    """Pinecone vector store with full capability support.
+    """Pinecone vector store.
 
-    Implements ``SearchProvider``, ``SupportsNamespaces``,
-    ``SupportsMetadataFilter``, ``SupportsIndexLifecycle``,
-    ``SupportsHybridSearch``, and ``SupportsReranking``.
+    Implements ``SearchProvider``.  Also provides Pinecone-specific extras
+    (namespaces, hybrid search, reranking, filter compilation) that are
+    not part of the core protocol.
 
     Usage::
 
         store = PineconeVectorStore(index_name="my-index")
         await store.connect()
-        await store.upsert([VectorEntry(id="a", vector=[0.1, ...], metadata={})])
-        results = await store.search([0.1, ...], k=5)
+        await store.upsert(files=[File(path="/a.py", embedding=[0.1, ...])])
+        result = await store.vector_search([0.1, ...], k=5)
         await store.close()
     """
 
@@ -62,52 +53,89 @@ class PineconeVectorStore:
             raise ImportError(msg)
 
         self._index_name = index_name
-        self._api_key = api_key or os.environ.get("PINECONE_API_KEY", "")
+        self._api_key = api_key or ""
         self._default_namespace = namespace
         self._client: PineconeAsyncio | None = None
         self._index: Any | None = None
 
     # ------------------------------------------------------------------
-    # VectorStore protocol
+    # SearchProvider protocol
     # ------------------------------------------------------------------
 
-    async def upsert(
-        self,
-        entries: list[VectorEntry],
-        *,
-        namespace: str | None = None,
-    ) -> UpsertResult:
+    async def create_index(self, config: IndexConfig) -> None:
+        """Create a Pinecone index."""
+        client = self._require_client()
+
+        spec_config = config.cloud_config
+        if "cloud" in spec_config and "region" in spec_config:
+            spec = ServerlessSpec(
+                cloud=spec_config["cloud"],
+                region=spec_config["region"],
+            )
+        else:
+            spec = spec_config.get("spec", ServerlessSpec(cloud="aws", region="us-east-1"))
+
+        await client.create_index(
+            name=config.name,
+            dimension=config.dimension,
+            metric=config.metric,
+            spec=spec,
+        )
+
+    async def upsert(self, *, files: list[File], namespace: str | None = None) -> BatchResult:
         """Batch upsert vectors. Chunks at 1000 vectors per API call."""
         ns = namespace if namespace is not None else self._default_namespace
         idx = self._require_index()
 
-        total = 0
-        for i in range(0, len(entries), _UPSERT_BATCH_SIZE):
-            batch = entries[i : i + _UPSERT_BATCH_SIZE]
+        succeeded = 0
+        for i in range(0, len(files), _UPSERT_BATCH_SIZE):
+            batch = files[i : i + _UPSERT_BATCH_SIZE]
             vectors = [
                 {
-                    "id": e.id,
-                    "values": e.vector,
-                    "metadata": e.metadata,
+                    "id": f.path,
+                    "values": f.embedding,
+                    "metadata": {},
                 }
-                for e in batch
+                for f in batch
             ]
             resp = await idx.upsert(vectors=vectors, namespace=ns)
-            total += getattr(resp, "upserted_count", len(batch))
+            succeeded += getattr(resp, "upserted_count", len(batch))
 
-        return UpsertResult(upserted_count=total)
+        results = [FileOperationResult(file=File(path=f.path), success=True) for f in files]
+        return BatchResult(
+            results=results,
+            succeeded=succeeded,
+            failed=0,
+            success=True,
+            message=f"Upserted {succeeded} entries",
+        )
 
-    async def search(
+    async def delete(self, *, files: list[str], namespace: str | None = None) -> BatchResult:
+        """Delete vectors by their IDs."""
+        ns = namespace if namespace is not None else self._default_namespace
+        idx = self._require_index()
+        await idx.delete(ids=files, namespace=ns)
+        results = [FileOperationResult(file=File(path=p), success=True) for p in files]
+        return BatchResult(
+            results=results,
+            succeeded=len(files),
+            failed=0,
+            success=True,
+            message=f"Deleted {len(files)} entries",
+        )
+
+    async def vector_search(
         self,
         vector: list[float],
         *,
         k: int = 10,
+        candidates: FileSearchSet | None = None,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
         include_metadata: bool = True,
         score_threshold: float | None = None,
-    ) -> list[VectorHit]:
-        """Query the index for nearest vectors."""
+    ) -> FileSearchResult:
+        """Query the index, returning a ``FileSearchResult``."""
         ns = namespace if namespace is not None else self._default_namespace
         idx = self._require_index()
 
@@ -123,99 +151,36 @@ class PineconeVectorStore:
 
         resp = await idx.query(**kwargs)
 
-        results: list[VectorHit] = []
+        merged: dict[str, list[VectorEvidence]] = {}
         for match in resp.matches:
             score = match.score
             if score_threshold is not None and score < score_threshold:
                 continue
-            results.append(
-                VectorHit(
-                    id=match.id,
-                    score=score,
-                    metadata=dict(match.metadata) if match.metadata else {},
-                    vector=list(match.values) if match.values else None,
-                )
-            )
-        return results
-
-    async def vector_search(
-        self,
-        vector: list[float],
-        *,
-        k: int = 10,
-        namespace: str | None = None,
-        filter: FilterExpression | None = None,
-        include_metadata: bool = True,
-        score_threshold: float | None = None,
-    ) -> FileSearchResult:
-        """Query the index, returning a ``FileSearchResult``."""
-        hits = await self.search(
-            vector,
-            k=k,
-            namespace=namespace,
-            filter=filter,
-            include_metadata=include_metadata,
-            score_threshold=score_threshold,
-        )
-
-        merged: dict[str, list[VectorEvidence]] = {}
-        for hit in hits:
-            fp = hit.metadata.get("parent_path") or hit.id
-            content = hit.metadata.get("content", "")
+            fp = parent_path_from_id(match.id)
+            content = ""
+            if match.metadata:
+                content = match.metadata.get("content", "")
             snippet = content[:200] + ("..." if len(content) > 200 else "") if content else ""
             ev = VectorEvidence(operation="vector_search", snippet=snippet)
             merged.setdefault(fp, []).append(ev)
 
-        files = [File(path=p, evidence=list(evs)) for p, evs in merged.items()]
-        return FileSearchResult(
+        result_files = [File(path=p, evidence=list(evs)) for p, evs in merged.items()]
+        result = FileSearchResult(
             success=True,
-            message=f"Found matches in {len(files)} file(s)",
-            files=files,
+            message=f"Found matches in {len(result_files)} file(s)",
+            files=result_files,
         )
 
-    async def lexical_search(self, query: str, *, k: int = 10) -> FileSearchResult:
-        """Pinecone is vector-only — lexical search returns empty result."""
-        return FileSearchResult(success=True, message="Lexical search not supported by PineconeVectorStore")
+        if candidates is not None:
+            allowed = set(candidates.paths)
+            result.files = [f for f in result.files if f.path in allowed]
+            result.message = f"Found {len(result.files)} match(es) (filtered)"
 
-    async def delete(
-        self,
-        ids: list[str],
-        *,
-        namespace: str | None = None,
-    ) -> DeleteResult:
-        """Delete vectors by their IDs."""
-        ns = namespace if namespace is not None else self._default_namespace
-        idx = self._require_index()
-        await idx.delete(ids=ids, namespace=ns)
-        # Pinecone delete is fire-and-forget; actual count unknown
-        return DeleteResult(deleted_count=len(ids))
+        return result
 
-    async def fetch(
-        self,
-        ids: list[str],
-        *,
-        namespace: str | None = None,
-    ) -> list[VectorEntry | None]:
-        """Fetch vectors by their IDs."""
-        ns = namespace if namespace is not None else self._default_namespace
-        idx = self._require_index()
-        resp = await idx.fetch(ids=ids, namespace=ns)
-
-        results: list[VectorEntry | None] = []
-        vectors_map = resp.vectors if resp.vectors else {}
-        for entry_id in ids:
-            vec = vectors_map.get(entry_id)
-            if vec is None:
-                results.append(None)
-            else:
-                results.append(
-                    VectorEntry(
-                        id=vec.id,
-                        vector=list(vec.values) if vec.values else [],
-                        metadata=dict(vec.metadata) if vec.metadata else {},
-                    )
-                )
-        return results
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def connect(self) -> None:
         """Initialize the Pinecone async client and get index handle."""
@@ -239,7 +204,7 @@ class PineconeVectorStore:
         return self._index_name
 
     # ------------------------------------------------------------------
-    # SupportsNamespaces
+    # Pinecone-specific extras (not protocol)
     # ------------------------------------------------------------------
 
     async def list_namespaces(self) -> list[str]:
@@ -258,76 +223,42 @@ class PineconeVectorStore:
         idx = self._require_index()
         await idx.delete_namespace(namespace)
 
-    # ------------------------------------------------------------------
-    # SupportsMetadataFilter
-    # ------------------------------------------------------------------
-
     def compile_filter(self, expr: FilterExpression) -> dict[str, Any]:
         """Compile a FilterExpression to Pinecone's MongoDB-style filter dict."""
         return compile_pinecone(expr)
-
-    # ------------------------------------------------------------------
-    # SupportsIndexLifecycle
-    # ------------------------------------------------------------------
-
-    async def create_index(self, config: IndexConfig) -> None:
-        """Create a Pinecone index."""
-        client = self._require_client()
-
-        spec_config = config.cloud_config
-        if "cloud" in spec_config and "region" in spec_config:
-            spec = ServerlessSpec(
-                cloud=spec_config["cloud"],
-                region=spec_config["region"],
-            )
-        else:
-            spec = spec_config.get("spec", ServerlessSpec(cloud="aws", region="us-east-1"))
-
-        await client.create_index(
-            name=config.name,
-            dimension=config.dimension,
-            metric=config.metric,
-            spec=spec,
-        )
 
     async def delete_index(self, name: str) -> None:
         """Delete a Pinecone index."""
         client = self._require_client()
         await client.delete_index(name)
 
-    async def list_indexes(self) -> list[IndexInfo]:
+    async def list_indexes(self) -> list[dict[str, Any]]:
         """List all Pinecone indexes."""
         client = self._require_client()
         indexes = await client.list_indexes()
         return [
-            IndexInfo(
-                name=idx.name,
-                dimension=idx.dimension,
-                metric=idx.metric,
-                vector_count=getattr(idx, "total_vector_count", 0) or 0,
-                metadata={
-                    "host": getattr(idx, "host", ""),
-                    "status": getattr(idx, "status", {}),
-                },
-            )
+            {
+                "name": idx.name,
+                "dimension": idx.dimension,
+                "metric": idx.metric,
+                "vector_count": getattr(idx, "total_vector_count", 0) or 0,
+                "host": getattr(idx, "host", ""),
+                "status": getattr(idx, "status", {}),
+            }
             for idx in indexes
         ]
-
-    # ------------------------------------------------------------------
-    # SupportsHybridSearch
-    # ------------------------------------------------------------------
 
     async def hybrid_search(
         self,
         *,
         dense_vector: list[float] | None = None,
-        sparse_vector: SparseVector | None = None,
+        sparse_vector: Any | None = None,
         query_text: str | None = None,
         k: int = 10,
         alpha: float = 0.5,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
-    ) -> list[VectorHit]:
+    ) -> FileSearchResult:
         """Run a hybrid search combining dense and sparse vectors."""
         ns = namespace if namespace is not None else self._default_namespace
         idx = self._require_index()
@@ -351,19 +282,18 @@ class PineconeVectorStore:
 
         resp = await idx.query(**kwargs)
 
-        return [
-            VectorHit(
-                id=match.id,
-                score=match.score,
-                metadata=dict(match.metadata) if match.metadata else {},
-                vector=list(match.values) if match.values else None,
-            )
-            for match in resp.matches
-        ]
+        merged: dict[str, list[VectorEvidence]] = {}
+        for match in resp.matches:
+            fp = parent_path_from_id(match.id)
+            ev = VectorEvidence(operation="hybrid_search", snippet="")
+            merged.setdefault(fp, []).append(ev)
 
-    # ------------------------------------------------------------------
-    # SupportsReranking
-    # ------------------------------------------------------------------
+        result_files = [File(path=p, evidence=list(evs)) for p, evs in merged.items()]
+        return FileSearchResult(
+            success=True,
+            message=f"Found matches in {len(result_files)} file(s)",
+            files=result_files,
+        )
 
     async def reranked_search(
         self,
@@ -375,23 +305,20 @@ class PineconeVectorStore:
         rerank_top_n: int | None = None,
         namespace: str | None = None,
         filter: FilterExpression | None = None,
-    ) -> list[VectorHit]:
+    ) -> FileSearchResult:
         """Search with server-side reranking via Pinecone Inference."""
-        # First, get initial results
-        search_results = await self.search(
+        search_result = await self.vector_search(
             vector,
             k=k,
             namespace=namespace,
             filter=filter,
-            include_metadata=True,
         )
 
-        if not search_results:
-            return []
+        if not search_result.files:
+            return search_result
 
-        # Rerank using Pinecone Inference API
         client = self._require_client()
-        documents = [{"id": r.id, "text": r.metadata.get("content", r.id)} for r in search_results]
+        documents = [{"id": f.path, "text": f.path} for f in search_result.files]
 
         model = rerank_model or "bge-reranker-v2-m3"
         top_n = rerank_top_n or len(documents)
@@ -404,19 +331,16 @@ class PineconeVectorStore:
             return_documents=True,
         )
 
-        reranked: list[VectorHit] = []
+        reranked_files: list[File] = []
         for item in rerank_resp.data:
-            original_idx = item.index
-            original = search_results[original_idx]
-            reranked.append(
-                VectorHit(
-                    id=original.id,
-                    score=item.score,
-                    metadata=original.metadata,
-                    vector=original.vector,
-                )
-            )
-        return reranked
+            original = search_result.files[item.index]
+            reranked_files.append(original)
+
+        return FileSearchResult(
+            success=True,
+            message=f"Found matches in {len(reranked_files)} file(s)",
+            files=reranked_files,
+        )
 
     # ------------------------------------------------------------------
     # Internal

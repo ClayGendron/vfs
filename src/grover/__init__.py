@@ -25,6 +25,7 @@ from grover.models.internal.evidence import (
 )
 from grover.models.internal.ref import File, FileChunk, FileConnection, FileVersion
 from grover.models.internal.results import (
+    BatchResult,
     FileOperationResult,
     FileSearchResult,
     FileSearchSet,
@@ -57,27 +58,12 @@ from grover.providers.search.filters import (
     not_in,
     or_,
 )
-from grover.providers.search.protocol import (
-    SupportsHybridSearch,
-    SupportsIndexLifecycle,
-    SupportsMetadataFilter,
-    SupportsNamespaces,
-    SupportsReranking,
-)
-from grover.providers.search.types import (
-    DeleteResult as SearchDeleteResult,
-)
-from grover.providers.search.types import (
-    IndexConfig,
-    IndexInfo,
-    SearchResult,
-    UpsertResult,
-    VectorEntry,
-)
+from grover.providers.search.protocol import IndexConfig
 from grover.ref import Ref
 from grover.worker import IndexingMode
 
 __all__ = [
+    "BatchResult",
     "ChunkProvider",
     "DefaultChunkProvider",
     "DefaultVersionProvider",
@@ -102,29 +88,19 @@ __all__ = [
     "GroverAsync",
     "HybridEvidence",
     "IndexConfig",
-    "IndexInfo",
     "IndexingMode",
     "LexicalEvidence",
     "LineMatch",
     "ListDirEvidence",
     "Mount",
     "Ref",
-    "SearchDeleteResult",
     "SearchProvider",
-    "SearchResult",
     "ShareEvidence",
     "StorageProvider",
     "SubgraphResult",
-    "SupportsHybridSearch",
-    "SupportsIndexLifecycle",
-    "SupportsMetadataFilter",
-    "SupportsNamespaces",
-    "SupportsReranking",
     "TrashEvidence",
     "TreeEvidence",
-    "UpsertResult",
     "UserScopedFileSystem",
-    "VectorEntry",
     "VectorEvidence",
     "VersionEvidence",
     "VersionProvider",

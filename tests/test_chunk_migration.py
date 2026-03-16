@@ -276,14 +276,14 @@ class TestHardenedGraphCleanup:
 
 
 # ==================================================================
-# Vector metadata has chunk fields
+# Vector store indexes chunk paths
 # ==================================================================
 
 
-class TestVectorMetadata:
+class TestVectorChunkPaths:
     @pytest.mark.asyncio
-    async def test_vector_metadata_has_chunk_fields(self, grover: GroverAsync):
-        """Vector entries should include chunk_name, line_start, line_end in metadata."""
+    async def test_chunk_vectors_use_hash_paths(self, grover: GroverAsync):
+        """Chunk vectors are indexed with path#chunk_name IDs."""
         await grover.write("/project/funcs.py", PYTHON_CODE)
         await grover.flush()
 
@@ -291,15 +291,7 @@ class TestVectorMetadata:
         local_store = mount.filesystem.search_provider
         assert local_store is not None
 
-        # Check metadata of stored vectors
-        found = False
-        for meta in local_store._key_to_meta.values():
-            parent = meta.get("parent_path")
-            if parent == "/project/funcs.py":
-                assert "chunk_name" in meta
-                assert "line_start" in meta
-                assert "line_end" in meta
-                assert meta["chunk_name"] is not None
-                found = True
-                break
-        assert found, "No chunk vector found with parent_path=/project/funcs.py"
+        # Collect all stored IDs
+        ids = [meta.get("id", "") for meta in local_store._key_to_meta.values()]
+        chunk_ids = [i for i in ids if "#" in i]
+        assert chunk_ids, f"Expected chunk IDs with '#', got: {ids}"

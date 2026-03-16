@@ -12,9 +12,9 @@ from usearch.index import Index
 
 from grover.models.internal.evidence import Evidence, VectorEvidence
 from grover.models.internal.ref import File
-from grover.models.internal.results import FileSearchResult
+from grover.models.internal.results import BatchResult, FileOperationResult, FileSearchResult, FileSearchSet
 from grover.providers.search.filters import FilterExpression, compile_dict
-from grover.providers.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
+from grover.providers.search.protocol import IndexConfig, parent_path_from_id
 
 _INDEX_FILE = "search.usearch"
 _META_FILE = "search_meta.json"
@@ -24,8 +24,8 @@ class LocalVectorStore:
     """In-process vector store backed by usearch HNSW index.
 
     Implements the ``SearchProvider`` protocol for local development use.
-    Does **not** support namespaces (raises ``ValueError`` if non-None is
-    passed).  Supports simple equality-based metadata filtering.
+    Supports simple equality-based metadata filtering via extra kwargs
+    on ``vector_search``.
 
     Thread-safe via :class:`threading.Lock`.
     """
@@ -48,25 +48,23 @@ class LocalVectorStore:
         self._parent_to_children: dict[str, set[str]] = {}
 
     # ------------------------------------------------------------------
-    # VectorStore protocol
+    # SearchProvider protocol
     # ------------------------------------------------------------------
 
-    async def upsert(
-        self,
-        entries: list[VectorEntry],
-        *,
-        namespace: str | None = None,
-    ) -> UpsertResult:
+    async def create_index(self, config: IndexConfig) -> None:
+        """No-op — local store creates the index in __init__."""
+
+    async def upsert(self, *, files: list[File]) -> BatchResult:
         """Insert or update vector entries."""
-        self._reject_namespace(namespace)
+        results: list[FileOperationResult] = []
+        succeeded = 0
 
-        count = 0
-        for entry in entries:
+        for file in files:
             # Remove old entry if it exists (deduplication)
-            if entry.id in self._id_to_key:
-                self._remove_by_id(entry.id)
+            if file.path in self._id_to_key:
+                self._remove_by_id(file.path)
 
-            vector = np.array(entry.vector, dtype=np.float32)
+            vector = np.array(file.embedding, dtype=np.float32)
             key = self._next_key
             self._next_key += 1
 
@@ -74,34 +72,37 @@ class LocalVectorStore:
                 self._index.add(key, vector)
 
             self._key_to_meta[key] = {
-                "id": entry.id,
-                "vector": entry.vector,
-                **entry.metadata,
+                "id": file.path,
+                "vector": file.embedding,
             }
-            self._id_to_key[entry.id] = key
+            self._id_to_key[file.path] = key
 
-            # Track parent-child relationships
-            parent = entry.metadata.get("parent_path")
-            if parent is not None:
-                self._parent_to_children.setdefault(parent, set()).add(entry.id)
+            # Track parent-child relationships for chunk entries
+            if "#" in file.path:
+                parent = parent_path_from_id(file.path)
+                self._parent_to_children.setdefault(parent, set()).add(file.path)
 
-            count += 1
+            results.append(FileOperationResult(file=File(path=file.path), success=True))
+            succeeded += 1
 
-        return UpsertResult(upserted_count=count)
+        return BatchResult(
+            results=results,
+            succeeded=succeeded,
+            failed=0,
+            success=True,
+            message=f"Upserted {succeeded} entries",
+        )
 
     async def vector_search(
         self,
         vector: list[float],
         *,
         k: int = 10,
-        namespace: str | None = None,
+        candidates: FileSearchSet | None = None,
         filter: FilterExpression | None = None,  # noqa: A002
-        include_metadata: bool = True,
         score_threshold: float | None = None,
     ) -> FileSearchResult:
         """Search for the *k* nearest vectors, returning a ``FileSearchResult``."""
-        self._reject_namespace(namespace)
-
         if len(self) == 0:
             return FileSearchResult(success=True, message="No entries indexed")
 
@@ -118,7 +119,12 @@ class LocalVectorStore:
         if filter is not None:
             filter_dict = compile_dict(filter)
 
-        hits: list[VectorHit] = []
+        # Candidate set for post-filtering
+        allowed: set[str] | None = None
+        if candidates is not None:
+            allowed = set(candidates.paths)
+
+        hits: list[tuple[str, float]] = []
         for match_key, distance in zip(matches.keys.tolist(), matches.distances.tolist(), strict=True):
             meta = self._key_to_meta.get(int(match_key))
             if meta is None:
@@ -133,142 +139,55 @@ class LocalVectorStore:
             if score_threshold is not None and score < score_threshold:
                 continue
 
-            result_meta = {mk: mv for mk, mv in meta.items() if mk not in ("id", "vector")}
+            entry_id = meta["id"]
+            fp = parent_path_from_id(entry_id)
 
-            hits.append(
-                VectorHit(
-                    id=meta["id"],
-                    score=score,
-                    metadata=result_meta if include_metadata else {},
-                    vector=meta.get("vector") if include_metadata else None,
-                )
-            )
+            if allowed is not None and fp not in allowed:
+                continue
+
+            hits.append((fp, score))
 
             if len(hits) >= k:
                 break
 
-        hits.sort(key=lambda r: r.score, reverse=True)
+        hits.sort(key=lambda r: r[1], reverse=True)
 
         # Wrap into FileSearchResult
         entries: dict[str, list[Evidence]] = {}
-        for hit in hits:
-            fp = hit.metadata.get("parent_path") or hit.id
-            content = hit.metadata.get("content", "")
-            snippet = content[:200] + ("..." if len(content) > 200 else "") if content else ""
-            ev = VectorEvidence(operation="vector_search", snippet=snippet)
+        for fp, _score in hits:
+            ev = VectorEvidence(operation="vector_search", snippet="")
             entries.setdefault(fp, []).append(ev)
 
-        return FileSearchResult(
+        result = FileSearchResult(
             success=True,
             message=f"Found matches in {len(entries)} file(s)",
             files=[File(path=fp, evidence=evs) for fp, evs in entries.items()],
         )
+        return result
 
-    async def search(
-        self,
-        vector: list[float],
-        *,
-        k: int = 10,
-        namespace: str | None = None,
-        filter: FilterExpression | None = None,  # noqa: A002
-        include_metadata: bool = True,
-        score_threshold: float | None = None,
-    ) -> list[VectorHit]:
-        """Legacy alias — returns raw ``VectorHit`` list.
+    async def delete(self, *, files: list[str]) -> BatchResult:
+        """Delete vectors by their IDs."""
+        results: list[FileOperationResult] = []
+        succeeded = 0
 
-        Kept for backward compatibility with ``VectorStore`` protocol.
-        """
-        self._reject_namespace(namespace)
+        for entry_id in files:
+            if self._remove_by_id(entry_id):
+                results.append(FileOperationResult(file=File(path=entry_id), success=True))
+                succeeded += 1
+            else:
+                results.append(FileOperationResult(file=File(path=entry_id), success=False, message="Not found"))
 
-        if len(self) == 0:
-            return []
-
-        query = np.array(vector, dtype=np.float32)
-        effective_k = min(k * 3, len(self)) if filter is not None else min(k, len(self))
-
-        with self._lock:
-            matches = self._index.search(query, effective_k)
-
-        filter_dict: dict[str, Any] | None = None
-        if filter is not None:
-            filter_dict = compile_dict(filter)
-
-        results: list[VectorHit] = []
-        for match_key, distance in zip(matches.keys.tolist(), matches.distances.tolist(), strict=True):
-            meta = self._key_to_meta.get(int(match_key))
-            if meta is None:
-                continue
-            if filter_dict is not None and not all(meta.get(fk) == fv for fk, fv in filter_dict.items()):
-                continue
-            score = 1.0 - distance
-            if score_threshold is not None and score < score_threshold:
-                continue
-            result_meta = {mk: mv for mk, mv in meta.items() if mk not in ("id", "vector")}
-            results.append(
-                VectorHit(
-                    id=meta["id"],
-                    score=score,
-                    metadata=result_meta if include_metadata else {},
-                    vector=meta.get("vector") if include_metadata else None,
-                )
-            )
-            if len(results) >= k:
-                break
-
-        results.sort(key=lambda r: r.score, reverse=True)
-        return results
-
-    async def lexical_search(self, query: str, *, k: int = 10) -> FileSearchResult:
-        """LocalVectorStore is vector-only — lexical search returns empty result."""
-        return FileSearchResult(
+        return BatchResult(
+            results=results,
+            succeeded=succeeded,
+            failed=len(files) - succeeded,
             success=True,
-            message="Lexical search not supported by LocalVectorStore",
+            message=f"Deleted {succeeded} of {len(files)} entries",
         )
 
-    async def delete(
-        self,
-        ids: list[str],
-        *,
-        namespace: str | None = None,
-    ) -> DeleteResult:
-        """Delete vectors by their IDs."""
-        self._reject_namespace(namespace)
-
-        count = 0
-        for entry_id in ids:
-            if self._remove_by_id(entry_id):
-                count += 1
-
-        return DeleteResult(deleted_count=count)
-
-    async def fetch(
-        self,
-        ids: list[str],
-        *,
-        namespace: str | None = None,
-    ) -> list[VectorEntry | None]:
-        """Fetch vectors by their IDs."""
-        self._reject_namespace(namespace)
-
-        results: list[VectorEntry | None] = []
-        for entry_id in ids:
-            key = self._id_to_key.get(entry_id)
-            if key is None:
-                results.append(None)
-                continue
-            meta = self._key_to_meta.get(key)
-            if meta is None:
-                results.append(None)
-                continue
-            user_meta = {mk: mv for mk, mv in meta.items() if mk not in ("id", "vector")}
-            results.append(
-                VectorEntry(
-                    id=meta["id"],
-                    vector=meta.get("vector", []),
-                    metadata=user_meta,
-                )
-            )
-        return results
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def connect(self) -> None:
         """No-op for local store."""
@@ -293,16 +212,6 @@ class LocalVectorStore:
     def has(self, entry_id: str) -> bool:
         """Return whether *entry_id* is present in the store."""
         return entry_id in self._id_to_key
-
-    def content_hash(self, entry_id: str) -> str | None:
-        """Return the content hash for *entry_id*, or None if not stored."""
-        key = self._id_to_key.get(entry_id)
-        if key is None:
-            return None
-        meta = self._key_to_meta.get(key)
-        if meta is None:
-            return None
-        return meta.get("content_hash")
 
     def remove_file(self, path: str) -> None:
         """Remove *path* and all entries whose ``parent_path`` matches."""
@@ -369,9 +278,14 @@ class LocalVectorStore:
             self._key_to_meta[key] = meta
             self._id_to_key[entry_id] = key
 
-            parent = meta.get("parent_path")
-            if parent is not None:
+            # Rebuild parent tracking from ID format
+            if "#" in entry_id:
+                parent = parent_path_from_id(entry_id)
                 self._parent_to_children.setdefault(parent, set()).add(entry_id)
+            else:
+                parent = meta.get("parent_path")
+                if parent is not None:
+                    self._parent_to_children.setdefault(parent, set()).add(entry_id)
 
     # ------------------------------------------------------------------
     # Internal
@@ -382,14 +296,14 @@ class LocalVectorStore:
         key = self._id_to_key.pop(entry_id, None)
         if key is None:
             return False
-        meta = self._key_to_meta.pop(key, None)
+        self._key_to_meta.pop(key, None)
         with self._lock:
             self._index.remove(key)
 
         # Clean up parent tracking
-        if meta is not None:
-            parent = meta.get("parent_path")
-            if parent is not None and parent in self._parent_to_children:
+        if "#" in entry_id:
+            parent = parent_path_from_id(entry_id)
+            if parent in self._parent_to_children:
                 self._parent_to_children[parent].discard(entry_id)
                 if not self._parent_to_children[parent]:
                     del self._parent_to_children[parent]

@@ -14,8 +14,6 @@ from grover.providers.search.extractors import (
     extract_from_chunks,
     extract_from_file,
 )
-from grover.providers.search.types import SearchResult
-from grover.ref import Ref
 
 # ==================================================================
 # EmbeddableChunk
@@ -134,34 +132,6 @@ class TestExtractFromFile:
     def test_path_correct(self):
         result = extract_from_file("/src/lib/util.py", "x = 1")
         assert result[0].path == "/src/lib/util.py"
-
-
-# ==================================================================
-# SearchResult
-# ==================================================================
-
-
-class TestSearchResult:
-    def test_construction(self):
-        sr = SearchResult(
-            ref=Ref(path="/a.py"),
-            score=0.95,
-            content="def foo(): pass",
-            parent_path="/src/a.py",
-        )
-        assert sr.ref.path == "/a.py"
-        assert sr.score == 0.95
-        assert sr.content == "def foo(): pass"
-        assert sr.parent_path == "/src/a.py"
-
-    def test_default_parent_path(self):
-        sr = SearchResult(ref=Ref(path="/a.py"), score=0.5, content="x")
-        assert sr.parent_path is None
-
-    def test_frozen(self):
-        sr = SearchResult(ref=Ref(path="/a.py"), score=0.5, content="x")
-        with pytest.raises(FrozenInstanceError):
-            sr.score = 0.9  # type: ignore[misc]
 
 
 # ==================================================================

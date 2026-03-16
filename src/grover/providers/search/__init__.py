@@ -7,13 +7,11 @@ from grover.providers.search.extractors import (
     extract_from_file,
 )
 from grover.providers.search.local import LocalVectorStore
-from grover.providers.search.types import SearchResult
 
 __all__ = [
     "EmbeddableChunk",
     "EmbeddingProvider",
     "LocalVectorStore",
-    "SearchResult",
     "extract_from_chunks",
     "extract_from_file",
 ]

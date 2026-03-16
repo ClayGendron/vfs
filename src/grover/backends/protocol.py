@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from grover.models.database.file import FileModelBase
     from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
     from grover.providers.search.extractors import EmbeddableChunk
-    from grover.providers.search.types import SearchResult
 
 
 @runtime_checkable
@@ -320,7 +319,7 @@ class GroverFileSystem(Protocol):
         *,
         k: int = 10,
         session: AsyncSession,
-    ) -> list[SearchResult]: ...
+    ) -> FileSearchResult: ...
 
     # ------------------------------------------------------------------
     # Connections

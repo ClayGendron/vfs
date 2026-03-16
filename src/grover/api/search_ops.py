@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from grover.models.internal.evidence import LexicalEvidence
 from grover.models.internal.ref import File
 from grover.models.internal.results import FileSearchResult, FileSearchSet
 from grover.util.paths import normalize_path
@@ -242,41 +241,17 @@ class SearchOpsMixin:
                 for mount in self._ctx.registry.list_visible_mounts():
                     assert mount.filesystem is not None
                     async with self._ctx.session_for(mount) as sess:
-                        fts_results = await mount.filesystem.lexical_search(query, k=k, session=sess)
-                    mount_entries: dict[str, list[Any]] = {}
-                    for sr in fts_results:
-                        fp = mount.path + sr.ref.path
-                        ev = LexicalEvidence(
-                            operation="lexical_search",
-                            snippet=sr.content[:200] if sr.content else "",
-                        )
-                        mount_entries.setdefault(fp, []).append(ev)
-                    mount_result = FileSearchResult(
-                        success=True,
-                        message="",
-                        files=[File(path=p, evidence=evs) for p, evs in mount_entries.items()],
-                    )
-                    combined = combined | mount_result
+                        result = await mount.filesystem.lexical_search(query, k=k, session=sess)
+                    if result.success:
+                        combined = combined | result.rebase(mount.path)
                 combined.message = f"Found matches in {len(combined)} file(s)"
                 final_lex = combined
             else:
                 mount, _rel_path = self._ctx.registry.resolve(path)
                 assert mount.filesystem is not None
                 async with self._ctx.session_for(mount) as sess:
-                    fts_results = await mount.filesystem.lexical_search(query, k=k, session=sess)
-                entries: dict[str, list[Any]] = {}
-                for sr in fts_results:
-                    fp = mount.path + sr.ref.path
-                    ev = LexicalEvidence(
-                        operation="lexical_search",
-                        snippet=sr.content[:200] if sr.content else "",
-                    )
-                    entries.setdefault(fp, []).append(ev)
-                final_lex = FileSearchResult(
-                    success=True,
-                    message=f"Found matches in {len(entries)} file(s)",
-                    files=[File(path=p, evidence=evs) for p, evs in entries.items()],
-                )
+                    result = await mount.filesystem.lexical_search(query, k=k, session=sess)
+                final_lex = result.rebase(mount.path)
         except Exception as e:
             return FileSearchResult(
                 success=False,

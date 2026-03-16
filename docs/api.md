@@ -836,31 +836,30 @@ from grover import (
     VectorEntry, IndexConfig, IndexInfo,
     FilterExpression, FilterValue, eq, gt, and_, or_,
 )
-from grover.providers.search.types import SearchResult, VectorHit  # internal types
+from grover.providers.search.protocol import IndexConfig  # index configuration
 ```
 
 ### SearchProvider Protocol
 
 ```python
 from grover import SearchProvider
+from grover.providers.search.protocol import IndexConfig
 
 @runtime_checkable
 class SearchProvider(Protocol):
-    # Vector operations
-    async def upsert(self, entries: list[VectorEntry], *, namespace: str | None = None) -> UpsertResult: ...
-    async def vector_search(self, vector: list[float], *, k: int = 10, namespace: str | None = None, filter: Any = None, include_metadata: bool = True, score_threshold: float | None = None) -> VectorSearchResult: ...
-    async def delete(self, ids: list[str], *, namespace: str | None = None) -> DeleteResult: ...
-    async def fetch(self, ids: list[str], *, namespace: str | None = None) -> list[VectorEntry | None]: ...
-
-    # Lexical search (stores that don't support it return empty result)
-    async def lexical_search(self, query: str, *, k: int = 10) -> LexicalSearchResult: ...
-
-    # Lifecycle
     async def connect(self) -> None: ...
     async def close(self) -> None: ...
+    async def create_index(self, config: IndexConfig) -> None: ...
+    async def upsert(self, *, files: list[File]) -> BatchResult: ...
+    async def delete(self, *, files: list[str]) -> BatchResult: ...
+    async def vector_search(self, vector: list[float], *, k: int = 10, candidates: FileSearchSet | None = None) -> FileSearchResult: ...
 ```
 
-`SearchProvider` unifies vector and lexical search. All built-in stores (`LocalVectorStore`, `PineconeVectorStore`, `DatabricksVectorStore`) implement it. Stores that don't support lexical search return an empty `LexicalSearchResult`. The protocol is set on the filesystem as `search_provider` and passed via `add_mount(..., search_provider=...)`.
+`SearchProvider` handles vector storage and index management. All built-in stores (`LocalVectorStore`, `PineconeVectorStore`, `DatabricksVectorStore`) implement it. Methods accept domain types: `upsert` takes `File` objects (with `path` and `embedding`), `delete` takes path strings, and `vector_search` returns `FileSearchResult` directly. An optional `candidates` parameter on `vector_search` post-filters results to a known set of paths.
+
+`IndexConfig` is a frozen dataclass (`name`, `dimension`, `metric`, `cloud_config`) defined in `providers/search/protocol.py`.
+
+Lexical search is handled by the filesystem backend (`DatabaseFileSystem.lexical_search`) via DB-native full-text search (FTS5, tsquery, FREETEXT, or LIKE fallback) — it is not part of the `SearchProvider` protocol.
 
 ### EmbeddingProvider Protocol
 
@@ -892,20 +891,6 @@ provider = OpenAIEmbedding(model="text-embedding-3-small", dimensions=384)
 from grover.providers.embedding import LangChainEmbedding
 provider = LangChainEmbedding(embeddings=langchain_embeddings, dimensions=384)
 ```
-
-### Capability Protocols
-
-Vector stores can implement additional capabilities, checked at runtime via `isinstance()`:
-
-| Protocol | Methods | Implemented by |
-|----------|---------|----------------|
-| `SupportsNamespaces` | `list_namespaces()`, `delete_namespace()` | Pinecone |
-| `SupportsMetadataFilter` | `compile_filter()` | Pinecone, Databricks |
-| `SupportsIndexLifecycle` | `create_index()`, `delete_index()`, `list_indexes()` | Pinecone, Databricks |
-| `SupportsHybridSearch` | `hybrid_search()` | Pinecone, Databricks |
-| `SupportsReranking` | `reranked_search()` | Pinecone |
-| `SupportsTextSearch` | `text_search()` | (custom stores) |
-| `SupportsTextIngest` | `text_upsert()` | (custom stores) |
 
 ### Search Provider Backends
 

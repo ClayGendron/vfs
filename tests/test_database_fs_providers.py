@@ -344,10 +344,10 @@ class TestSearchWithProviders:
 
         mock_embed.embed.assert_called_once_with("hello world")
         mock_search.upsert.assert_called_once()
-        entries = mock_search.upsert.call_args[0][0]
-        assert len(entries) == 1
-        assert entries[0].id == "/a.py"
-        assert entries[0].metadata["content"] == "hello world"
+        call_kwargs = mock_search.upsert.call_args.kwargs
+        files = call_kwargs["files"]
+        assert len(files) == 1
+        assert files[0].path == "/a.py"
 
     async def test_vector_search_returns_results(self):
         mock_embed = _mock_embedding_provider()
@@ -419,20 +419,21 @@ class TestLexicalSearch:
             await fs.write("/a.py", "hello world\n", session=session)
             await fs.write("/b.py", "goodbye world\n", session=session)
 
-            results = await fs.lexical_search("hello", session=session)
+            result = await fs.lexical_search("hello", session=session)
 
-            assert len(results) == 1
-            assert results[0].ref.path == "/a.py"
-            assert results[0].score == 0.5  # LIKE fallback score
+            assert isinstance(result, FileSearchResult)
+            assert result.success
+            assert len(result.files) == 1
+            assert result.files[0].path == "/a.py"
         await engine.dispose()
 
     async def test_lexical_search_no_match(self):
-        """Lexical search returns empty list when no match."""
+        """Lexical search returns empty result when no match."""
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/a.py", "hello world\n", session=session)
-            results = await fs.lexical_search("nonexistent", session=session)
-            assert len(results) == 0
+            result = await fs.lexical_search("nonexistent", session=session)
+            assert len(result.files) == 0
         await engine.dispose()
 
     async def test_lexical_search_k_limit(self):
@@ -442,8 +443,8 @@ class TestLexicalSearch:
             for i in range(5):
                 await fs.write(f"/f{i}.py", f"common text {i}\n", session=session)
 
-            results = await fs.lexical_search("common", k=2, session=session)
-            assert len(results) == 2
+            result = await fs.lexical_search("common", k=2, session=session)
+            assert len(result.files) == 2
         await engine.dispose()
 
 

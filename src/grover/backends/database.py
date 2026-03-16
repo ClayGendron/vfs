@@ -29,9 +29,7 @@ from grover.models.internal.evidence import (
 from grover.models.internal.ref import File, FileConnection, Ref
 from grover.models.internal.results import BatchResult, FileOperationResult, FileSearchResult, FileSearchSet
 from grover.providers.chunks import DefaultChunkProvider
-from grover.providers.search.types import SearchResult, VectorEntry
 from grover.providers.versioning import DefaultVersionProvider
-from grover.ref import Ref as LegacyRef
 from grover.util.content import (
     compute_content_hash,
     guess_mime_type,
@@ -54,6 +52,8 @@ from grover.util.paths import normalize_path, split_path, validate_path
 from grover.util.patterns import compile_glob, glob_to_sql_like
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.database.chunk import FileChunkModelBase
@@ -1657,16 +1657,8 @@ class DatabaseFileSystem:
         """Embed *content* and upsert to the vector store."""
         if self.search_provider is not None and self.embedding_provider is not None:
             vector = await self._search_embed(content)
-            entry = VectorEntry(
-                id=path,
-                vector=vector,
-                metadata={
-                    "content": content,
-                    "parent_path": parent_path,
-                    "content_hash": compute_content_hash(content)[0],
-                },
-            )
-            await self.search_provider.upsert([entry])
+            file_obj = File(path=path, embedding=vector)
+            await self.search_provider.upsert(files=[file_obj])
 
     async def search_add_batch(
         self,
@@ -1682,22 +1674,8 @@ class DatabaseFileSystem:
             texts = [e.content for e in entries]
             vectors = await self._search_embed_batch(texts)
 
-            vector_entries = [
-                VectorEntry(
-                    id=entry.path,
-                    vector=vectors[i],
-                    metadata={
-                        "content": entry.content,
-                        "parent_path": entry.parent_path,
-                        "content_hash": compute_content_hash(entry.content)[0],
-                        "chunk_name": entry.chunk_name,
-                        "line_start": entry.line_start,
-                        "line_end": entry.line_end,
-                    },
-                )
-                for i, entry in enumerate(entries)
-            ]
-            await self.search_provider.upsert(vector_entries)
+            file_objs = [File(path=entry.path, embedding=vectors[i]) for i, entry in enumerate(entries)]
+            await self.search_provider.upsert(files=file_objs)
 
     async def search_remove(
         self,
@@ -1707,7 +1685,7 @@ class DatabaseFileSystem:
     ) -> None:
         """Remove a single entry by path from the vector store."""
         if self.search_provider is not None:
-            await self.search_provider.delete([path])
+            await self.search_provider.delete(files=[path])
 
     async def search_remove_file(
         self,
@@ -1721,7 +1699,7 @@ class DatabaseFileSystem:
             if local_store is not None:
                 local_store.remove_file(path)
             else:
-                await self.search_provider.delete([path])
+                await self.search_provider.delete(files=[path])
 
     async def vector_search(
         self, query: str, k: int = 10, *, candidates: FileSearchSet | None = None
@@ -1739,13 +1717,7 @@ class DatabaseFileSystem:
             )
 
         vector = await self._search_embed(query)
-        old = await self.search_provider.vector_search(vector, k=k)
-        result = self._search_to_internal(old)
-        if candidates is not None:
-            allowed = set(candidates.paths)
-            result.files = [f for f in result.files if f.path in allowed]
-            result.message = f"Found {len(result.files)} match(es) (filtered)"
-        return result
+        return await self.search_provider.vector_search(vector, k=k, candidates=candidates)
 
     async def lexical_search(
         self,
@@ -1753,24 +1725,8 @@ class DatabaseFileSystem:
         *,
         k: int = 10,
         session: AsyncSession,
-    ) -> list[SearchResult]:
-        """Lexical search: tries search_provider first, falls back to DB FTS."""
-        if self.search_provider is not None:
-            provider_result = await self.search_provider.lexical_search(query, k=k)
-            if provider_result.success and len(provider_result) > 0:
-                results: list[SearchResult] = []
-                for c in provider_result.files:
-                    for ev in c.evidence:
-                        snippet = getattr(ev, "snippet", "")
-                        results.append(
-                            SearchResult(
-                                ref=LegacyRef(path=c.path),
-                                score=1.0,
-                                content=snippet,
-                            )
-                        )
-                return results
-
+    ) -> FileSearchResult:
+        """Lexical search: DB-based full-text search."""
         return await self._db_lexical_search(query, k=k, session=session)
 
     async def _db_lexical_search(
@@ -1779,13 +1735,28 @@ class DatabaseFileSystem:
         *,
         k: int = 10,
         session: AsyncSession,
-    ) -> list[SearchResult]:
+    ) -> FileSearchResult:
         """Dialect-aware full-text search against DB content."""
         from sqlalchemy import text
 
+        from grover.models.internal.evidence import LexicalEvidence
+
         model = self.file_model
 
-        results: list[SearchResult] = []
+        def _rows_to_result(rows: Iterable) -> FileSearchResult:
+            entries: dict[str, list[LexicalEvidence]] = {}
+            for row in rows:
+                path = row[0]
+                content = row[1] or ""
+                snippet = content[:200] + ("..." if len(content) > 200 else "") if content else ""
+                ev = LexicalEvidence(operation="lexical_search", snippet=snippet)
+                entries.setdefault(path, []).append(ev)
+            files = [File(path=p, evidence=list(evs)) for p, evs in entries.items()]
+            return FileSearchResult(
+                success=True,
+                message=f"Found matches in {len(files)} file(s)",
+                files=files,
+            )
 
         if self.dialect == "sqlite":
             try:
@@ -1793,15 +1764,7 @@ class DatabaseFileSystem:
                 fts_table = f"{table_name}_fts"
                 stmt = text(f"SELECT path, content FROM {fts_table} WHERE {fts_table} MATCH :query LIMIT :k")
                 rows = await session.execute(stmt, {"query": query, "k": k})
-                results.extend(
-                    SearchResult(
-                        ref=LegacyRef(path=row[0]),
-                        score=1.0,
-                        content=row[1] or "",
-                    )
-                    for row in rows
-                )
-                return results
+                return _rows_to_result(rows)
             except Exception:
                 logger.debug("FTS5 not available, falling back to LIKE")
 
@@ -1816,15 +1779,7 @@ class DatabaseFileSystem:
                     .limit(k)
                 )
                 rows = await session.execute(stmt, {"query": query})
-                results.extend(
-                    SearchResult(
-                        ref=LegacyRef(path=row[0]),
-                        score=1.0,
-                        content=row[1] or "",
-                    )
-                    for row in rows
-                )
-                return results
+                return _rows_to_result(rows)
             except Exception:
                 logger.debug("PostgreSQL FTS not available, falling back to LIKE")
 
@@ -1839,15 +1794,7 @@ class DatabaseFileSystem:
                     .limit(k)
                 )
                 rows = await session.execute(stmt, {"query": query})
-                results.extend(
-                    SearchResult(
-                        ref=LegacyRef(path=row[0]),
-                        score=1.0,
-                        content=row[1] or "",
-                    )
-                    for row in rows
-                )
-                return results
+                return _rows_to_result(rows)
             except Exception:
                 logger.debug("MSSQL FTS not available, falling back to LIKE")
 
@@ -1863,15 +1810,7 @@ class DatabaseFileSystem:
             .limit(k)
         )
         rows = await session.execute(stmt)
-        results.extend(
-            SearchResult(
-                ref=LegacyRef(path=row[0]),
-                score=0.5,
-                content=row[1] or "",
-            )
-            for row in rows
-        )
-        return results
+        return _rows_to_result(rows)
 
     def search_has(self, path: str) -> bool:
         """Return whether *path* is present in the local vector store."""
@@ -1879,13 +1818,6 @@ class DatabaseFileSystem:
         if local is not None:
             return local.has(path)
         return False
-
-    def search_content_hash(self, path: str) -> str | None:
-        """Return the content hash for *path*, or None."""
-        local = self._search_get_local_store()
-        if local is not None:
-            return local.content_hash(path)
-        return None
 
     def search_save(self, directory: str) -> None:
         """Persist the vector store to *directory* (if supported)."""

@@ -1,4 +1,4 @@
-"""Tests for search protocols, types, and filter AST (Phase 1)."""
+"""Tests for search protocols, IndexConfig, and filter AST."""
 
 from __future__ import annotations
 
@@ -27,136 +27,11 @@ from grover.providers.search.filters import (
     not_in,
     or_,
 )
-from grover.providers.search.protocol import (
-    SupportsHybridSearch,
-    SupportsIndexLifecycle,
-    SupportsMetadataFilter,
-    SupportsNamespaces,
-    SupportsReranking,
-)
-from grover.providers.search.types import (
-    DeleteResult,
-    IndexConfig,
-    IndexInfo,
-    SearchResult,
-    SparseVector,
-    TextEntry,
-    UpsertResult,
-    VectorEntry,
-    VectorHit,
-)
-from grover.ref import Ref
+from grover.providers.search.protocol import IndexConfig, SearchProvider, parent_path_from_id
 
 # ==================================================================
-# Data types — frozen dataclasses
+# IndexConfig
 # ==================================================================
-
-
-class TestVectorEntry:
-    def test_construction(self):
-        ve = VectorEntry(id="/a.py", vector=[0.1, 0.2, 0.3])
-        assert ve.id == "/a.py"
-        assert ve.vector == [0.1, 0.2, 0.3]
-        assert ve.metadata == {}
-
-    def test_with_metadata(self):
-        ve = VectorEntry(id="/a.py", vector=[0.1], metadata={"lang": "python"})
-        assert ve.metadata == {"lang": "python"}
-
-    def test_frozen(self):
-        ve = VectorEntry(id="/a.py", vector=[0.1])
-        with pytest.raises(FrozenInstanceError):
-            ve.id = "/b.py"  # type: ignore[misc]
-
-    def test_equality(self):
-        a = VectorEntry(id="/a.py", vector=[0.1, 0.2])
-        b = VectorEntry(id="/a.py", vector=[0.1, 0.2])
-        assert a == b
-
-    def test_inequality(self):
-        a = VectorEntry(id="/a.py", vector=[0.1])
-        b = VectorEntry(id="/b.py", vector=[0.1])
-        assert a != b
-
-
-class TestTextEntry:
-    def test_construction(self):
-        te = TextEntry(id="/a.py", text="hello world")
-        assert te.id == "/a.py"
-        assert te.text == "hello world"
-        assert te.metadata == {}
-
-    def test_with_metadata(self):
-        te = TextEntry(id="/a.py", text="hello", metadata={"k": "v"})
-        assert te.metadata == {"k": "v"}
-
-    def test_frozen(self):
-        te = TextEntry(id="/a.py", text="hello")
-        with pytest.raises(FrozenInstanceError):
-            te.text = "bye"  # type: ignore[misc]
-
-
-class TestSparseVector:
-    def test_construction(self):
-        sv = SparseVector(indices=[0, 5, 10], values=[0.1, 0.5, 0.9])
-        assert sv.indices == [0, 5, 10]
-        assert sv.values == [0.1, 0.5, 0.9]
-
-    def test_frozen(self):
-        sv = SparseVector(indices=[0], values=[1.0])
-        with pytest.raises(FrozenInstanceError):
-            sv.indices = [1]  # type: ignore[misc]
-
-
-class TestVectorHit:
-    def test_construction(self):
-        vsr = VectorHit(id="/a.py", score=0.95)
-        assert vsr.id == "/a.py"
-        assert vsr.score == 0.95
-        assert vsr.metadata == {}
-        assert vsr.vector is None
-
-    def test_with_all_fields(self):
-        vsr = VectorHit(
-            id="/a.py",
-            score=0.95,
-            metadata={"lang": "python"},
-            vector=[0.1, 0.2],
-        )
-        assert vsr.metadata == {"lang": "python"}
-        assert vsr.vector == [0.1, 0.2]
-
-    def test_frozen(self):
-        vsr = VectorHit(id="/a.py", score=0.95)
-        with pytest.raises(FrozenInstanceError):
-            vsr.score = 0.5  # type: ignore[misc]
-
-
-class TestUpsertResult:
-    def test_construction(self):
-        ur = UpsertResult(upserted_count=5)
-        assert ur.upserted_count == 5
-        assert ur.errors == []
-
-    def test_with_errors(self):
-        ur = UpsertResult(upserted_count=3, errors=["failed: /a.py"])
-        assert ur.errors == ["failed: /a.py"]
-
-    def test_frozen(self):
-        ur = UpsertResult(upserted_count=5)
-        with pytest.raises(FrozenInstanceError):
-            ur.upserted_count = 10  # type: ignore[misc]
-
-
-class TestDeleteResult:
-    def test_construction(self):
-        dr = DeleteResult(deleted_count=3)
-        assert dr.deleted_count == 3
-
-    def test_frozen(self):
-        dr = DeleteResult(deleted_count=3)
-        with pytest.raises(FrozenInstanceError):
-            dr.deleted_count = 0  # type: ignore[misc]
 
 
 class TestIndexConfig:
@@ -185,53 +60,20 @@ class TestIndexConfig:
             ic.name = "other"  # type: ignore[misc]
 
 
-class TestIndexInfo:
-    def test_construction(self):
-        ii = IndexInfo(name="idx", dimension=384, metric="cosine")
-        assert ii.name == "idx"
-        assert ii.dimension == 384
-        assert ii.metric == "cosine"
-        assert ii.vector_count == 0
-        assert ii.metadata == {}
-
-    def test_with_count_and_metadata(self):
-        ii = IndexInfo(
-            name="idx",
-            dimension=384,
-            metric="cosine",
-            vector_count=1000,
-            metadata={"status": "ready"},
-        )
-        assert ii.vector_count == 1000
-        assert ii.metadata == {"status": "ready"}
-
-    def test_frozen(self):
-        ii = IndexInfo(name="idx", dimension=384, metric="cosine")
-        with pytest.raises(FrozenInstanceError):
-            ii.vector_count = 42  # type: ignore[misc]
+# ==================================================================
+# parent_path_from_id
+# ==================================================================
 
 
-class TestSearchResult:
-    def test_construction(self):
-        sr = SearchResult(ref=Ref(path="/a.py"), score=0.95, content="def foo(): pass")
-        assert sr.ref.path == "/a.py"
-        assert sr.score == 0.95
-        assert sr.content == "def foo(): pass"
-        assert sr.parent_path is None
+class TestParentPathFromId:
+    def test_chunk_id(self):
+        assert parent_path_from_id("/a.py#login") == "/a.py"
 
-    def test_with_parent_path(self):
-        sr = SearchResult(
-            ref=Ref(path="/chunk.txt"),
-            score=0.8,
-            content="content",
-            parent_path="/a.py",
-        )
-        assert sr.parent_path == "/a.py"
+    def test_plain_path(self):
+        assert parent_path_from_id("/a.py") == "/a.py"
 
-    def test_frozen(self):
-        sr = SearchResult(ref=Ref(path="/a.py"), score=0.5, content="x")
-        with pytest.raises(FrozenInstanceError):
-            sr.score = 0.9  # type: ignore[misc]
+    def test_nested_hash(self):
+        assert parent_path_from_id("/a.py#foo#bar") == "/a.py"
 
 
 # ==================================================================
@@ -508,55 +350,28 @@ class TestProtocolRuntimeChecks:
 
         assert not isinstance(NotAProvider(), EmbeddingProvider)
 
-    def test_supports_namespaces_is_runtime_checkable(self):
-        class FakeNS:
-            async def list_namespaces(self):
-                return []
-
-            async def delete_namespace(self, namespace):
+    def test_search_provider_is_runtime_checkable(self):
+        class FakeSearch:
+            async def connect(self):
                 pass
 
-        assert isinstance(FakeNS(), SupportsNamespaces)
+            async def close(self):
+                pass
 
-    def test_supports_metadata_filter_is_runtime_checkable(self):
-        class FakeMF:
-            def compile_filter(self, expr):
-                return {}
-
-        assert isinstance(FakeMF(), SupportsMetadataFilter)
-
-    def test_supports_index_lifecycle_is_runtime_checkable(self):
-        class FakeIL:
             async def create_index(self, config):
                 pass
 
-            async def delete_index(self, name):
+            async def upsert(self, *, files):
                 pass
 
-            async def list_indexes(self):
-                return []
+            async def delete(self, *, files):
+                pass
 
-        assert isinstance(FakeIL(), SupportsIndexLifecycle)
+            async def vector_search(self, vector, *, k=10, candidates=None):
+                pass
 
-    def test_supports_hybrid_search_is_runtime_checkable(self):
-        class FakeHS:
-            async def hybrid_search(self, **kwargs):
-                return []
+        assert isinstance(FakeSearch(), SearchProvider)
 
-        assert isinstance(FakeHS(), SupportsHybridSearch)
-
-    def test_supports_reranking_is_runtime_checkable(self):
-        class FakeRR:
-            async def reranked_search(self, vector, query_text, **kwargs):
-                return []
-
-        assert isinstance(FakeRR(), SupportsReranking)
-
-    def test_plain_object_fails_all_protocols(self):
-        obj = object()
-        assert not isinstance(obj, EmbeddingProvider)
-        assert not isinstance(obj, SupportsNamespaces)
-        assert not isinstance(obj, SupportsMetadataFilter)
-        assert not isinstance(obj, SupportsIndexLifecycle)
-        assert not isinstance(obj, SupportsHybridSearch)
-        assert not isinstance(obj, SupportsReranking)
+    def test_plain_object_fails_search_provider(self):
+        assert not isinstance(object(), SearchProvider)
+        assert not isinstance(object(), EmbeddingProvider)
