@@ -182,7 +182,7 @@ class MountMixin:
                 async with engine.begin() as conn:
                     schema_created = await conn.run_sync(lambda c: ensure_schema(c, dialect, schema))
                 if schema_created:
-                    logger.info('Schema created: "%s"', schema)
+                    print(f'Schema created: "{schema}"')  # noqa: T201
 
             # Gather all tables to create
             tables = [
@@ -213,11 +213,12 @@ class MountMixin:
             # Print newly created tables
             new_tables = [name for name in table_names if name not in existing_before]
             if new_tables:
-                table_list = ", ".join(new_tables)
                 if schema:
-                    logger.info('Tables created in schema "%s": %s', schema, table_list)
+                    print(f'Tables created in schema "{schema}":')  # noqa: T201
                 else:
-                    logger.info("Tables created: %s", table_list)
+                    print("Tables created:")  # noqa: T201
+                for name in new_tables:
+                    print(f"  - {name}")  # noqa: T201
 
         return Mount(
             path=path,
