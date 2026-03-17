@@ -4,6 +4,24 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.9] — 2026-03-17
+
+### Changed
+
+- **`vector` field renamed to `embedding`** — `FileModel.embedding`, `FileChunkModel.embedding`, and `FileVersionModel.embedding` replace the old `vector` field. Pydantic's `Vector` type still handles serialization under the hood.
+- **`created_at`/`updated_at` default to `None`** — File models no longer eagerly timestamp at construction time. The backend fills timestamps on write if not set. This makes DataFrame-sourced bulk writes cleaner.
+- **Mount `path` → `name`** — `add_mount("project", ...)` replaces `add_mount("/project", ...)`. Mount names are simple identifiers (no `/` allowed). `mount.path` is derived internally as `f"/{name}"`.
+
+### Added
+
+- **`tokens` field** — `FileModel` and `FileChunkModel` gain a `tokens: int = 0` field for storing token counts.
+- **`FileModelBase.create()` factory** — `FileModel.create("a.py", "code", mount="project", embedding=[0.1, ...], tokens=150)` builds a fully-populated model with computed hash, size, mime type, line count, and timestamps.
+- **`write_files()` model flow-through** — Facade preserves all user-set fields (embedding, tokens, owner_id) through to the backend instead of stripping models down to `{path, content}`.
+
+### Fixed
+
+- **Variable shadowing in `_create_engine_mount`** — A `for name in table_names` loop variable overwrote the `name` parameter, causing engine-config mounts to get the wrong name when tables were created.
+
 ## [0.0.8] — 2026-03-17
 
 ### Added
