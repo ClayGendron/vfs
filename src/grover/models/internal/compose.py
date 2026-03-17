@@ -26,8 +26,8 @@ def model_to_file(
         path=model.path,
         is_directory=model.is_directory,
         content=model.content,
-        embedding=list(model.vector) if model.vector is not None else None,
-        tokens=0,
+        embedding=list(model.embedding) if model.embedding is not None else None,
+        tokens=model.tokens,
         lines=model.lines,
         current_version=model.current_version,
         chunks=[model_to_chunk(c) for c in (chunks or [])],
@@ -43,8 +43,8 @@ def model_to_chunk(model: FileChunkModel) -> FileChunk:
         path=model.path or f"{model.file_path}#{model.id}",
         name=model.path.split("#", 1)[1] if "#" in (model.path or "") else "",
         content=model.content,
-        embedding=list(model.vector) if model.vector is not None else None,
-        tokens=0,
+        embedding=list(model.embedding) if model.embedding is not None else None,
+        tokens=model.tokens,
         line_start=model.line_start,
         line_end=model.line_end,
     )
@@ -55,7 +55,7 @@ def model_to_version(model: FileVersionModel) -> FileVersion:
     return FileVersion(
         path=model.path,
         number=model.version,
-        embedding=list(model.vector) if model.vector is not None else None,
+        embedding=list(model.embedding) if model.embedding is not None else None,
         created_at=model.created_at,
     )
 
@@ -90,7 +90,8 @@ def file_to_model(file: File) -> FileModel:
         content=file.content,
         lines=file.lines,
         current_version=file.current_version,
-        vector=Vector(file.embedding) if file.embedding is not None else None,
+        tokens=file.tokens,
+        embedding=Vector(file.embedding) if file.embedding is not None else None,
     )
 
 
@@ -105,7 +106,8 @@ def chunk_to_model(chunk: FileChunk, file_path: str) -> FileChunkModel:
         content=chunk.content,
         line_start=chunk.line_start,
         line_end=chunk.line_end,
-        vector=Vector(chunk.embedding) if chunk.embedding is not None else None,
+        tokens=chunk.tokens,
+        embedding=Vector(chunk.embedding) if chunk.embedding is not None else None,
     )
 
 

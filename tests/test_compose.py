@@ -34,12 +34,12 @@ class TestModelToFile:
         assert f.versions == []
 
     def test_with_vector(self):
-        m = FileModel(path="/a.py", vector=Vector([0.1, 0.2, 0.3]))
+        m = FileModel(path="/a.py", embedding=Vector([0.1, 0.2, 0.3]))
         f = model_to_file(m)
         assert f.embedding == [0.1, 0.2, 0.3]
 
     def test_none_vector(self):
-        m = FileModel(path="/a.py", vector=None)
+        m = FileModel(path="/a.py", embedding=None)
         f = model_to_file(m)
         assert f.embedding is None
 
@@ -102,7 +102,7 @@ class TestModelToChunk:
         m = FileChunkModel(
             path="/a.py#func",
             file_path="/a.py",
-            vector=Vector([0.5, 0.6]),
+            embedding=Vector([0.5, 0.6]),
         )
         c = model_to_chunk(m)
         assert c.embedding == [0.5, 0.6]
@@ -131,7 +131,7 @@ class TestModelToVersion:
             file_id="x",
             file_path="/a.py",
             version=1,
-            vector=Vector([0.1]),
+            embedding=Vector([0.1]),
         )
         v = model_to_version(m)
         assert v.embedding == [0.1]
@@ -179,19 +179,19 @@ class TestFileToModel:
         assert m.content == "x = 1"
         assert m.lines == 1
         assert m.current_version == 2
-        assert m.vector is None
+        assert m.embedding is None
 
     def test_with_embedding(self):
         f = File(path="/a.py", embedding=[0.1, 0.2, 0.3])
         m = file_to_model(f)
-        assert m.vector is not None
-        assert isinstance(m.vector, Vector)
-        assert list(m.vector) == [0.1, 0.2, 0.3]
+        assert m.embedding is not None
+        assert isinstance(m.embedding, Vector)
+        assert list(m.embedding) == [0.1, 0.2, 0.3]
 
     def test_none_embedding(self):
         f = File(path="/a.py", embedding=None)
         m = file_to_model(f)
-        assert m.vector is None
+        assert m.embedding is None
 
     def test_directory(self):
         f = File(path="/src", is_directory=True)
@@ -218,8 +218,8 @@ class TestChunkToModel:
     def test_with_embedding(self):
         c = FileChunk(path="/a.py#f", name="f", embedding=[0.5, 0.6])
         m = chunk_to_model(c, file_path="/a.py")
-        assert m.vector is not None
-        assert list(m.vector) == [0.5, 0.6]
+        assert m.embedding is not None
+        assert list(m.embedding) == [0.5, 0.6]
 
 
 class TestConnectionToModel:

@@ -1366,7 +1366,7 @@ class DatabaseFileSystem:
             return BatchResult(success=True, message="No files to write")
 
         # Extract and validate paths, tracking original index
-        valid_items: list[tuple[int, str, str]] = []  # (idx, path, content)
+        valid_items: list[tuple[int, str, str, FileModelBase]] = []  # (idx, path, content, model)
         for i, f in enumerate(files):
             valid, error = validate_path(f.path)
             if not valid:
@@ -1383,13 +1383,13 @@ class DatabaseFileSystem:
                 )
                 continue
 
-            valid_items.append((i, path, f.content if f.content else ""))
+            valid_items.append((i, path, f.content if f.content else "", f))
 
         # Deduplicate paths: last-write-wins for same path in batch
         seen_paths: dict[str, int] = {}  # path -> index in valid_items
-        deduped_items: list[tuple[int, str, str]] = []
+        deduped_items: list[tuple[int, str, str, FileModelBase]] = []
         for item in valid_items:
-            idx, path, content = item
+            idx, path, content, model = item
             if path in seen_paths:
                 # Supersede earlier entry
                 prev_idx = valid_items[seen_paths[path]][0]
@@ -1416,11 +1416,11 @@ class DatabaseFileSystem:
             )
 
         # ONE query: batch lookup existing records
-        paths = [path for _, path, _ in valid_items]
+        paths = [path for _, path, _, _ in valid_items]
         existing_map = await self._batch_get_file_records(session, paths, include_deleted=True)
 
         # Per-file processing
-        for idx, path, content in valid_items:
+        for idx, path, content, model in valid_items:
             try:
                 content_hash, size_bytes = compute_content_hash(content)
                 existing = existing_map.get(path)
@@ -1463,6 +1463,10 @@ class DatabaseFileSystem:
                     existing.content_hash = content_hash
                     existing.size_bytes = size_bytes
                     existing.updated_at = now
+                    if model.embedding is not None:
+                        existing.embedding = model.embedding
+                    if model.tokens:
+                        existing.tokens = model.tokens
 
                     if old_content is not None:
                         await self.version_provider.save_version(session, existing, old_content, content, created_by)
@@ -1474,18 +1478,24 @@ class DatabaseFileSystem:
                         file=File(path=path, current_version=existing.current_version),
                     )
                 else:
-                    # New file
-                    await self._ensure_parent_dirs(session, path, owner_id)
+                    # New file — trust model fields, fill in gaps
+                    await self._ensure_parent_dirs(session, path, model.owner_id or owner_id)
 
-                    _, name = split_path(path)
-                    new_file = self.file_model(
-                        path=path,
-                        parent_path=split_path(path)[0],
-                        owner_id=owner_id,
-                        content_hash=content_hash,
-                        size_bytes=size_bytes,
-                        mime_type=guess_mime_type(name),
-                    )
+                    new_file = self.file_model.model_validate(model.model_dump())
+                    new_file.path = path
+                    new_file.parent_path = split_path(path)[0]
+                    if not new_file.owner_id:
+                        new_file.owner_id = owner_id
+                    if not new_file.created_at:
+                        new_file.created_at = now
+                    if not new_file.updated_at:
+                        new_file.updated_at = now
+                    # System always recomputes hash/size from actual content
+                    new_file.content_hash = content_hash
+                    new_file.size_bytes = size_bytes
+                    if not new_file.mime_type or new_file.mime_type == "text/plain":
+                        _, name = split_path(path)
+                        new_file.mime_type = guess_mime_type(name)
                     session.add(new_file)
 
                     await self.version_provider.save_version(session, new_file, "", content, created_by)

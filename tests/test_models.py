@@ -42,7 +42,7 @@ class TestDefaultFactories:
         assert f.path == "/hello.txt"
         assert f.current_version == 1
         assert f.deleted_at is None
-        assert f.created_at is not None
+        assert f.created_at is None
         assert f.mime_type == "text/plain"
         assert f.is_directory is False
         assert f.content is None
@@ -138,7 +138,7 @@ class TestDefaultFactories:
         session.add(f)
         session.commit()
         session.refresh(f)
-        assert f.vector is None
+        assert f.embedding is None
 
     def test_file_version_file_path_field(self, session: Session):
         fv = FileVersionModel(

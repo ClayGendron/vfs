@@ -803,12 +803,7 @@ class FileOpsMixin:
                     idx_order: list[int] = []
                     for idx, f in group:
                         rel_path = normalize_path(f.path).removeprefix(mount.path) or "/"
-                        bf = type(f).model_validate(
-                            {
-                                "path": rel_path,
-                                "content": f.content if f.content else "",
-                            }
-                        )
+                        bf = f.model_copy(update={"path": rel_path})
                         backend_files.append(bf)
                         idx_order.append(idx)
 

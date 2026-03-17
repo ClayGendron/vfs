@@ -263,6 +263,7 @@ async def write_file(
     else:
         await ensure_parent_dirs(session, path, owner_id)
 
+        now = datetime.now(UTC)
         new_file = file_model(
             path=path,
             parent_path=split_path(path)[0],
@@ -270,6 +271,8 @@ async def write_file(
             content_hash=content_hash,
             size_bytes=size_bytes,
             mime_type=guess_mime_type(name),
+            created_at=now,
+            updated_at=now,
         )
         session.add(new_file)
 
@@ -620,11 +623,14 @@ async def move_file(
 
         # Create new directory
         dest_parent, dest_name = split_path(dest)
+        move_now = datetime.now(UTC)
         new_dir = file_model(
             path=dest,
             parent_path=dest_parent,
             owner_id=src_file.owner_id,
             is_directory=True,
+            created_at=move_now,
+            updated_at=move_now,
         )
         session.add(new_dir)
 
@@ -637,6 +643,8 @@ async def move_file(
                     parent_path=cp,
                     owner_id=src_file.owner_id,
                     is_directory=True,
+                    created_at=move_now,
+                    updated_at=move_now,
                 )
             else:
                 new_child = file_model(
@@ -646,6 +654,8 @@ async def move_file(
                     content_hash=compute_content_hash(child_content or "")[0],
                     size_bytes=compute_content_hash(child_content or "")[1],
                     mime_type=guess_mime_type(cn),
+                    created_at=move_now,
+                    updated_at=move_now,
                 )
             session.add(new_child)
             if child_content is not None and not orig_child.is_directory:
@@ -676,6 +686,7 @@ async def move_file(
         # Create new file at dest
         dest_parent, dest_name = split_path(dest)
         content_hash, size_bytes = compute_content_hash(content)
+        move_now = datetime.now(UTC)
         new_file = file_model(
             path=dest,
             parent_path=dest_parent,
@@ -683,6 +694,8 @@ async def move_file(
             content_hash=content_hash,
             size_bytes=size_bytes,
             mime_type=guess_mime_type(dest_name),
+            created_at=move_now,
+            updated_at=move_now,
         )
         session.add(new_file)
 

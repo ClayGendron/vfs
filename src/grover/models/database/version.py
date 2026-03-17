@@ -30,7 +30,7 @@ class FileVersionModelBase(SQLModel):
     content_hash: str = Field(default="")
     size_bytes: int = Field(default=0)
     created_by: str | None = Field(default=None)
-    vector: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
+    embedding: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]

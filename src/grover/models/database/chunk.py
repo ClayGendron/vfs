@@ -26,7 +26,8 @@ class FileChunkModelBase(SQLModel):
     content_hash: str = Field(default="")
     line_start: int = Field(default=0)
     line_end: int = Field(default=0)
-    vector: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
+    tokens: int = Field(default=0)
+    embedding: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
