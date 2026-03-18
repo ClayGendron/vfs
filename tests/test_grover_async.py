@@ -165,18 +165,6 @@ class TestGroverAsyncDirectAccess:
         assert result.success
         assert (await grover.read("/project/multi.txt")).file.content == "qux bar qux baz qux"
 
-    @pytest.mark.asyncio
-    async def test_read_with_offset_and_limit(self, grover: GroverAsync):
-        lines = "\n".join(f"line {i}" for i in range(20))
-        await grover.write("/project/lines.txt", lines)
-        result = await grover.read("/project/lines.txt", offset=5, limit=3)
-        assert result.success
-        content = result.file.content
-        assert content is not None
-        assert "line 5" in content
-        assert "line 7" in content
-        assert "line 8" not in content
-
 
 # ==================================================================
 # Multi-Mount CRUD

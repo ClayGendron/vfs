@@ -37,9 +37,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Constants for read operations
-DEFAULT_READ_LIMIT = 2000
-
 
 def file_to_info(f: FileModelBase) -> File | Directory:
     """Convert a FileModelBase model to a File or Directory."""
@@ -108,14 +105,12 @@ async def check_external_edit(
 
 async def read_file(
     path: str,
-    offset: int,
-    limit: int,
     session: AsyncSession,
     *,
     get_file_record: GetFileRecord,
     read_content: ContentReader,
 ) -> FileOperationResult:
-    """Orchestrate a file read: validate → lookup → read → paginate."""
+    """Orchestrate a file read: validate → lookup → read."""
     valid, error = validate_path(path)
     if not valid:
         return FileOperationResult(success=False, message=error)
@@ -140,40 +135,20 @@ async def read_file(
     if content is None:
         return FileOperationResult(success=False, message=f"File content not found: {path}")
 
-    return paginate_content(content, path, offset, limit)
-
-
-def paginate_content(
-    content: str,
-    path: str,
-    offset: int,
-    limit: int,
-) -> FileOperationResult:
-    """Paginate file content and return raw text."""
     lines = content.split("\n")
     total_lines = len(lines)
 
     if total_lines == 0 or (total_lines == 1 and lines[0] == ""):
         return FileOperationResult(
             success=True,
-            message=(f"File is empty. (total_lines=0, lines_read=0, truncated=False, line_offset={offset})"),
+            message=f"File is empty: {path}",
             file=File(path=path, content="", lines=0),
         )
 
-    end_line = min(len(lines), offset + limit)
-    output_lines = lines[offset:end_line]
-
-    last_read_line = offset + len(output_lines)
-    has_more = total_lines > last_read_line
-
     return FileOperationResult(
         success=True,
-        message=(
-            f"Read {len(output_lines)} lines from {path}"
-            f" (total_lines={total_lines}, lines_read={len(output_lines)},"
-            f" truncated={has_more}, line_offset={offset})"
-        ),
-        file=File(path=path, content="\n".join(output_lines), lines=total_lines),
+        message=f"Read {total_lines} lines from {path}",
+        file=File(path=path, content=content, lines=total_lines),
     )
 
 

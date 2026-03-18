@@ -277,16 +277,12 @@ class DatabaseFileSystem:
     async def read(
         self,
         path: str,
-        offset: int = 0,
-        limit: int = 2000,
         *,
         session: AsyncSession,
         user_id: str | None = None,
     ) -> GroverResult:
         op = await read_file(
             path,
-            offset,
-            limit,
             session,
             get_file_record=self._get_file_record,
             read_content=self._read_content,
@@ -298,7 +294,6 @@ class DatabaseFileSystem:
                 operation="read",
                 success=True,
                 message=op.message,
-                offset=offset,
             )
         ]
         return GroverResult(success=True, message=op.message, files=[op.file])

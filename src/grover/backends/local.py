@@ -19,7 +19,7 @@ from grover.models.internal.detail import ReadDetail
 from grover.models.internal.results import FileOperationResult, GroverResult
 from grover.providers.storage.disk import DiskStorageProvider
 from grover.util.content import get_similar_files, is_binary_file
-from grover.util.operations import paginate_content, write_file
+from grover.util.operations import write_file
 from grover.util.paths import normalize_path, to_trash_path, validate_path
 
 logger = logging.getLogger(__name__)
@@ -160,8 +160,6 @@ class LocalFileSystem(DatabaseFileSystem):
     async def read(
         self,
         path: str,
-        offset: int = 0,
-        limit: int = 2000,
         *,
         session: AsyncSession,
         user_id: str | None = None,
@@ -203,18 +201,25 @@ class LocalFileSystem(DatabaseFileSystem):
         if content is None:
             return GroverResult(success=False, message=f"Could not read file: {path}")
 
-        op = paginate_content(content, path, offset, limit)
-        if not op.success:
-            return GroverResult(success=False, message=op.message)
-        op.file.evidence = [
+        from grover.models.internal.ref import File
+
+        lines = content.split("\n")
+        total_lines = len(lines)
+        if total_lines == 0 or (total_lines == 1 and lines[0] == ""):
+            msg = f"File is empty: {path}"
+            file = File(path=path, content="", lines=0)
+        else:
+            msg = f"Read {total_lines} lines from {path}"
+            file = File(path=path, content=content, lines=total_lines)
+
+        file.evidence = [
             ReadDetail(
                 operation="read",
                 success=True,
-                message=op.message,
-                offset=offset,
+                message=msg,
             )
         ]
-        return GroverResult(success=True, message=op.message, files=[op.file])
+        return GroverResult(success=True, message=msg, files=[file])
 
     # ------------------------------------------------------------------
     # Override: delete — backup disk-only files before delete

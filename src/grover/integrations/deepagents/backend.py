@@ -57,7 +57,7 @@ def _format_ls_info_entries(entries: object) -> list[FileInfo]:
     return result
 
 
-def _format_read_result(file_path: str, result: object, offset: int) -> str:
+def _format_read_result(file_path: str, result: object) -> str:
     """Convert a read result to formatted string."""
     if not result.success:  # type: ignore[union-attr]
         return f"Error: {result.message}"  # type: ignore[union-attr]
@@ -70,7 +70,7 @@ def _format_read_result(file_path: str, result: object, offset: int) -> str:
     if empty_msg:
         return empty_msg
 
-    return format_content_with_line_numbers(content, start_line=offset + 1)
+    return format_content_with_line_numbers(content, start_line=1)
 
 
 def _format_grep_result(result: object) -> list[GrepMatch]:
@@ -263,11 +263,11 @@ class GroverBackend(BackendProtocol):
 
         g = cast("Grover", self.grover)
         try:
-            result = g.read(file_path, offset=offset, limit=limit)
+            result = g.read(file_path)
         except Exception as e:
             return f"Error reading {file_path}: {e}"
 
-        return _format_read_result(file_path, result, offset)
+        return _format_read_result(file_path, result)
 
     async def aread(
         self,
@@ -282,11 +282,11 @@ class GroverBackend(BackendProtocol):
             return f"Error: {err}"
 
         try:
-            result = await g.read(file_path, offset=offset, limit=limit)
+            result = await g.read(file_path)
         except Exception as e:
             return f"Error reading {file_path}: {e}"
 
-        return _format_read_result(file_path, result, offset)
+        return _format_read_result(file_path, result)
 
     # ------------------------------------------------------------------
     # write (create-only)

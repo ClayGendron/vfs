@@ -386,27 +386,17 @@ class TestReplaceEdgeCases:
 
 
 class TestFormatReadOutput:
-    def test_format_read_output_with_offset(self):
+    def test_format_read_output_line_numbers(self):
         result = FileOperationResult(
             success=True,
-            message="line_offset=10",
+            message="Read 3 lines from /test.txt",
             file=File(path="/test.txt", content="line1\nline2\nline3"),
         )
         output = format_read_output(result)
-        # Lines should start at offset+1 = 11
-        assert "00011|" in output
-        assert "00012|" in output
-        assert "00013|" in output
-
-    def test_format_read_output_truncated(self):
-        result = FileOperationResult(
-            success=True,
-            message="truncated=True",
-            file=File(path="/test.txt", content="line1\nline2"),
-        )
-        output = format_read_output(result)
-        assert "File has more lines" in output
-        assert "offset" in output.lower()
+        # Lines always start at 1
+        assert "00001|" in output
+        assert "00002|" in output
+        assert "00003|" in output
 
     def test_format_read_output_empty(self):
         result = FileOperationResult(success=True, message="ok", file=File(path="/test.txt", content=""))
@@ -421,7 +411,7 @@ class TestFormatReadOutput:
     def test_format_read_output_end_of_file(self):
         result = FileOperationResult(
             success=True,
-            message="total_lines=2",
+            message="Read 2 lines from /test.txt",
             file=File(path="/test.txt", content="hello\nworld"),
         )
         output = format_read_output(result)

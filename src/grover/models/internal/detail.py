@@ -170,9 +170,6 @@ class WriteDetail(Detail):
 class ReadDetail(Detail):
     """Detail from a read operation."""
 
-    lines_read: int = 0
-    offset: int = 0
-
 
 @dataclass(frozen=True, slots=True)
 class MoveDetail(Detail):

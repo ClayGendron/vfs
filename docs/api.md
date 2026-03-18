@@ -1098,7 +1098,7 @@ backend = await GroverBackend.from_database_async(engine)
 | Method | Description |
 |--------|-------------|
 | `ls_info(path)` | List directory entries as `FileInfo` dicts |
-| `read(path, offset, limit)` | Read file content in cat -n format |
+| `read(path)` | Read file content in cat -n format |
 | `write(path, content)` | Create-only write (errors if file exists) |
 | `edit(path, old, new, replace_all)` | Find-and-replace within a file |
 | `grep_raw(pattern, path, glob)` | Literal string search across files |

@@ -60,8 +60,6 @@ class GroverFileSystem(Protocol):
     async def read(
         self,
         path: str,
-        offset: int = 0,
-        limit: int = 2000,
         *,
         session: AsyncSession,
         user_id: str | None = None,

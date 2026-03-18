@@ -37,14 +37,12 @@ class FileOpsMixin:
     async def read(
         self,
         path: str,
-        offset: int = 0,
-        limit: int = 2000,
         *,
         user_id: str | None = None,
     ) -> GroverResult:
         path = normalize_path(path)
         async with self._ctx.mount_session(path) as (mount, rel_path, session):
-            result = await mount.filesystem.read(rel_path, offset, limit, session=session, user_id=user_id)
+            result = await mount.filesystem.read(rel_path, session=session, user_id=user_id)
         return result.rebase(mount.path)
 
     async def read_files(

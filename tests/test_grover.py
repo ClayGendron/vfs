@@ -130,17 +130,6 @@ class TestGroverFilesystem:
         assert result.success
         assert grover.read("/project/multi.txt").file.content == "qux bar qux baz qux"
 
-    def test_read_with_offset_and_limit(self, grover: Grover):
-        lines = "\n".join(f"line {i}" for i in range(20))
-        grover.write("/project/lines.txt", lines)
-        result = grover.read("/project/lines.txt", offset=5, limit=3)
-        assert result.success
-        content = result.file.content
-        assert content is not None
-        assert "line 5" in content
-        assert "line 7" in content
-        assert "line 8" not in content
-
 
 # ==================================================================
 # Index

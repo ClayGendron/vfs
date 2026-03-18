@@ -468,8 +468,6 @@ class UserScopedFileSystem(DatabaseFileSystem):
     async def read(
         self,
         path: str,
-        offset: int = 0,
-        limit: int = 2000,
         *,
         session: AsyncSession,
         user_id: str | None = None,
@@ -479,7 +477,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         stored = self._resolve_path(path, uid)
         if is_shared:
             await self._check_share_access(session, stored, uid, "read")
-        result = await super().read(stored, offset, limit, session=session)
+        result = await super().read(stored, session=session)
         orig = path if is_shared else None
         if result.files:
             result.file.path = self._restore_path(result.file.path, uid, orig) or ""

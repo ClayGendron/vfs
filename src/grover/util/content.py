@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -303,11 +302,7 @@ def format_read_output(result: FileOperationResult) -> str:
 
     The *result* should contain raw (unformatted) content from
     a backend's ``read()`` method.  This function adds zero-padded line numbers
-    and wraps the output in ``<file>...</file>`` tags, matching the format
-    that was previously embedded in ``_format_read_output``.
-
-    Pagination metadata (``total_lines``, ``truncated``, ``line_offset``) is
-    parsed from the structured suffix in ``result.message``.
+    and wraps the output in ``<file>...</file>`` tags.
     """
     # Support both new FileOperationResult (content on .file) and legacy ReadResult
     content: str | None
@@ -318,32 +313,12 @@ def format_read_output(result: FileOperationResult) -> str:
     if not content:
         return "<file>\n(empty file)\n</file>"
 
-    # Try structured message first, fall back to direct attributes (legacy ReadResult)
-    msg = getattr(result, "message", "")
-    offset = int(m.group(1)) if (m := re.search(r"line_offset=(\d+)", msg)) else 0
-    truncated = "truncated=True" in msg
-    total_lines = int(m.group(1)) if (m := re.search(r"total_lines=(\d+)", msg)) else 0
-
-    # Legacy ReadResult has these as direct attributes
-    if not offset:
-        offset = getattr(result, "line_offset", 0)
-    if not truncated:
-        truncated = getattr(result, "truncated", False)
-    if not total_lines:
-        total_lines = getattr(result, "total_lines", 0)
-
     lines = content.split("\n")
 
-    formatted_lines = [f"{str(i + offset + 1).zfill(5)}| {line}" for i, line in enumerate(lines)]
+    formatted_lines = [f"{str(i + 1).zfill(5)}| {line}" for i, line in enumerate(lines)]
 
     formatted = "<file>\n"
     formatted += "\n".join(formatted_lines)
-
-    if truncated:
-        last_read_line = offset + len(lines)
-        formatted += f"\n\n(File has more lines. Use 'offset' parameter to read beyond line {last_read_line})"
-    else:
-        formatted += f"\n\n(End of file - total {total_lines or len(lines)} lines)"
-
+    formatted += f"\n\n(End of file - total {len(lines)} lines)"
     formatted += "\n</file>"
     return formatted

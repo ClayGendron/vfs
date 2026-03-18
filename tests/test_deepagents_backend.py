@@ -114,15 +114,6 @@ class TestRead:
         # Verify tab-separated format
         assert "\t" in result
 
-    def test_read_with_offset_and_limit(self, backend: GroverBackend, grover: Grover):
-        lines = "\n".join(f"line {i}" for i in range(20))
-        grover.write("/project/lines.txt", lines)
-        result = backend.read("/project/lines.txt", offset=5, limit=3)
-        assert "line 5" in result
-        assert "line 7" in result
-        # line 8 should not be included (offset=5, limit=3 → lines 5,6,7)
-        assert "line 8" not in result
-
     def test_read_missing_file_returns_error_string(self, backend: GroverBackend):
         result = backend.read("/project/nonexistent.txt")
         assert isinstance(result, str)
