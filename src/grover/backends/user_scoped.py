@@ -150,6 +150,12 @@ class UserScopedFileSystem(DatabaseFileSystem):
             info.file.path = self._strip_user_prefix(info.file.path, user_id)
         return info
 
+    def _restore_grover_result(self, result: GroverResult, user_id: str) -> GroverResult:
+        """Strip user prefix from a GroverResult's file paths."""
+        for f in result.files:
+            f.path = self._strip_user_prefix(f.path, user_id)
+        return result
+
     # ------------------------------------------------------------------
     # Share logic (inlined from SharingService)
     # ------------------------------------------------------------------
@@ -435,7 +441,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             file_stored = f"{stored_path}/{name}"
             size_bytes: int | None = None
             try:
-                info = await super().get_info(file_stored, session=session)
+                info = await super().read(file_stored, session=session)
                 if info.success and info.file.content is not None:
                     size_bytes = len(info.file.content.encode("utf-8"))
             except Exception:
@@ -642,7 +648,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -650,14 +656,14 @@ class UserScopedFileSystem(DatabaseFileSystem):
             try:
                 await self._check_share_access(session, stored, uid, "read")
             except PermissionError:
-                return FileOperationResult(success=False, message="Access denied")
-        info = await super().get_info(stored, session=session)
+                return GroverResult(success=False, message="Access denied")
+        info = await super().read(stored, session=session)
         if info.success:
             if is_shared:
-                if info.file:
+                if info.files:
                     info.file.path = path
             else:
-                self._restore_file_info(info, uid)
+                self._restore_grover_result(info, uid)
         return info
 
     async def move(

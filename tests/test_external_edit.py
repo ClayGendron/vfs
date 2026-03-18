@@ -177,7 +177,7 @@ class TestSyntheticVersionProperties:
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersionModel).where(
-                    FileVersionModel.file_id == file.id,
+                    FileVersionModel.file_path == file.path,
                     FileVersionModel.version == 2,
                 )
             )
@@ -197,7 +197,7 @@ class TestSyntheticVersionProperties:
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersionModel).where(
-                    FileVersionModel.file_id == file.id,
+                    FileVersionModel.file_path == file.path,
                     FileVersionModel.version == 2,
                 )
             )
@@ -222,7 +222,7 @@ class TestSyntheticVersionProperties:
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersionModel).where(
-                    FileVersionModel.file_id == file.id,
+                    FileVersionModel.file_path == file.path,
                     FileVersionModel.version == 2,
                 )
             )

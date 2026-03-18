@@ -53,7 +53,7 @@ class TestModelToFile:
 
     def test_with_versions(self):
         m = FileModel(path="/a.py")
-        ver = FileVersionModel(file_id="x", file_path="/a.py", version=3, content="v3")
+        ver = FileVersionModel.model_validate({"file_path": "/a.py", "version": 3, "content": "v3"})
         f = model_to_file(m, versions=[ver])
         assert len(f.versions) == 1
         assert f.versions[0].number == 3
@@ -121,14 +121,13 @@ class TestModelToChunk:
 
 class TestModelToVersion:
     def test_basic(self):
-        m = FileVersionModel(file_id="x", file_path="/a.py", version=2)
+        m = FileVersionModel.model_validate({"file_path": "/a.py", "version": 2})
         v = model_to_version(m)
         assert v.path == "/a.py@2"
         assert v.number == 2
 
     def test_with_vector(self):
         m = FileVersionModel(
-            file_id="x",
             file_path="/a.py",
             version=1,
             embedding=Vector([0.1]),
@@ -138,7 +137,7 @@ class TestModelToVersion:
 
     def test_timestamps(self):
         now = datetime.now(UTC)
-        m = FileVersionModel(file_id="x", file_path="/a.py", version=1, created_at=now)
+        m = FileVersionModel(file_path="/a.py", version=1, created_at=now)
         v = model_to_version(m)
         assert v.created_at == now
 

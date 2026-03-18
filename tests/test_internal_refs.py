@@ -107,9 +107,10 @@ class TestFileChunk:
         assert c.line_start == 10
         assert c.line_end == 15
 
-    def test_inherits_ref(self):
+    def test_has_path(self):
         c = FileChunk(path="/a.py#login", name="login")
-        assert isinstance(c, Ref)
+        assert hasattr(c, "path")
+        assert c.path == "/a.py#login"
 
 
 class TestFileVersion:
@@ -125,9 +126,10 @@ class TestFileVersion:
         v = FileVersion(path="/a.py@3", number=3, created_at=now)
         assert v.created_at == now
 
-    def test_inherits_ref(self):
+    def test_has_path(self):
         v = FileVersion(path="/a.py@1", number=1)
-        assert isinstance(v, Ref)
+        assert hasattr(v, "path")
+        assert v.path == "/a.py@1"
 
 
 class TestFileConnection:

@@ -188,15 +188,17 @@ class TestStorageProviderDelegation:
 class TestStorageProviderExists:
     """exists() delegates to storage_provider when set."""
 
-    async def test_exists_delegates_to_storage(self):
-        mock_sp = AsyncMock()
-        mock_sp.exists = AsyncMock(return_value=True)
-        fs = DatabaseFileSystem(storage_provider=mock_sp)
+    async def test_exists_checks_db(self):
+        """exists always queries the DB, not the storage provider."""
+        fs, factory, engine = await _make_fs()
+        async with factory() as session:
+            result = await fs.exists("/nonexistent.py", session=session)
+            assert result.message == "not found"
 
-        result = await fs.exists("/file.py", session=AsyncMock())
-
-        assert result.message == "exists"
-        mock_sp.exists.assert_called_once_with("/file.py")
+            await fs.write("/found.py", "content", session=session)
+            result = await fs.exists("/found.py", session=session)
+            assert result.message == "exists"
+        await engine.dispose()
 
     async def test_exists_no_storage_uses_db(self):
         fs, factory, engine = await _make_fs()

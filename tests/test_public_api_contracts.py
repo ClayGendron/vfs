@@ -39,12 +39,12 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         content = self._files.get(path)
         if content is None:
-            return FileOperationResult(success=False, message=f"Not found: {path}")
+            return GroverResult(success=False, message=f"Not found: {path}")
         f = File(path=path, content=content)
-        return FileOperationResult(success=True, message="OK", file=f)
+        return GroverResult(success=True, message="OK", files=[f])
 
     async def list_dir(
         self,
@@ -83,6 +83,19 @@ class InMemoryBackend:
         self._files[path] = content
         return FileOperationResult(success=True, message="OK", file=File(path=path))
 
+    async def write_files(
+        self,
+        files: list,
+        *,
+        overwrite: bool = True,
+        session: object | None = None,
+    ) -> GroverResult:
+        result_files = []
+        for f in files:
+            self._files[f.path] = f.content or ""
+            result_files.append(File(path=f.path))
+        return GroverResult(success=True, message="OK", files=result_files)
+
     async def edit(
         self,
         path: str,
@@ -93,12 +106,12 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         content = self._files.get(path)
         if content is None:
-            return FileOperationResult(success=False, message=f"Not found: {path}")
+            return GroverResult(success=False, message=f"Not found: {path}")
         self._files[path] = content.replace(old_string, new_string, 1)
-        return FileOperationResult(success=True, message="OK", file=File(path=path))
+        return GroverResult(success=True, message="OK", files=[File(path=path)])
 
     async def delete(
         self,
@@ -107,11 +120,11 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         if path not in self._files:
-            return FileOperationResult(success=False, message=f"Not found: {path}")
+            return GroverResult(success=False, message=f"Not found: {path}")
         del self._files[path]
-        return FileOperationResult(success=True, message="OK", file=File(path=path))
+        return GroverResult(success=True, message="OK", files=[File(path=path)])
 
     async def mkdir(
         self,
@@ -211,9 +224,9 @@ async def test_async_write_edit_delete_return_result_types(tmp_path: Path) -> No
         edit_result = await g.edit("/app/file.txt", "hello", "world")
         delete_result = await g.delete("/app/file.txt", permanent=True)
 
-        assert isinstance(write_result, FileOperationResult)
-        assert isinstance(edit_result, FileOperationResult)
-        assert isinstance(delete_result, FileOperationResult)
+        assert isinstance(write_result, GroverResult)
+        assert isinstance(edit_result, GroverResult)
+        assert isinstance(delete_result, GroverResult)
         assert write_result.success
         assert edit_result.success
         assert delete_result.success
@@ -222,17 +235,15 @@ async def test_async_write_edit_delete_return_result_types(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_async_write_commit_failure_returns_failed_result(tmp_path: Path) -> None:
+async def test_async_write_commit_failure_raises(tmp_path: Path) -> None:
     g = GroverAsync()
     try:
         await g.add_mount("app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
         mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/app")
         mount.session_factory = BadCommitSession
 
-        result = await g.write("/app/file.txt", "hello")
-        assert isinstance(result, FileOperationResult)
-        assert not result.success
-        assert "commit" in result.message.lower()
+        with pytest.raises(RuntimeError, match="commit failed"):
+            await g.write("/app/file.txt", "hello")
     finally:
         await g.close()
 
@@ -250,9 +261,9 @@ def test_sync_write_edit_delete_return_result_types(tmp_path: Path) -> None:
         edit_result = g.edit("/app/file.txt", "hello", "world")
         delete_result = g.delete("/app/file.txt", permanent=True)
 
-        assert isinstance(write_result, FileOperationResult)
-        assert isinstance(edit_result, FileOperationResult)
-        assert isinstance(delete_result, FileOperationResult)
+        assert isinstance(write_result, GroverResult)
+        assert isinstance(edit_result, GroverResult)
+        assert isinstance(delete_result, GroverResult)
         assert write_result.success
         assert edit_result.success
         assert delete_result.success
@@ -260,17 +271,15 @@ def test_sync_write_edit_delete_return_result_types(tmp_path: Path) -> None:
         g.close()
 
 
-def test_sync_write_commit_failure_returns_failed_result(tmp_path: Path) -> None:
+def test_sync_write_commit_failure_raises(tmp_path: Path) -> None:
     g = Grover()
     try:
         g.add_mount("app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
         mount = next(m for m in g._async._ctx.registry.list_mounts() if m.path == "/app")
         mount.session_factory = BadCommitSession
 
-        result = g.write("/app/file.txt", "hello")
-        assert isinstance(result, FileOperationResult)
-        assert not result.success
-        assert "commit" in result.message.lower()
+        with pytest.raises(RuntimeError, match="commit failed"):
+            g.write("/app/file.txt", "hello")
     finally:
         g.close()
 

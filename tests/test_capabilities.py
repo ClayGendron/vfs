@@ -96,15 +96,14 @@ class TestSessionRollback:
         result = await grover.write("/db/test.txt", "original")
         assert result.success
 
-        # Resolve the mount and monkey-patch the backend to raise on write
+        # Resolve the mount and monkey-patch the backend to raise on write_files
         mount, _ = grover._ctx.registry.resolve("/db/test.txt")
-        original_write = mount.filesystem.write
+        original_write_files = mount.filesystem.write_files
 
-        async def _exploding_write(*args, **kwargs):
-            # Partially mutate session state, then blow up
+        async def _exploding_write_files(*args, **kwargs):
             raise RuntimeError("Simulated mid-write failure")
 
-        mount.filesystem.write = _exploding_write  # type: ignore[assignment]
+        mount.filesystem.write_files = _exploding_write_files  # type: ignore[assignment]
 
         try:
             # This should return failure (GroverAsync.write catches exceptions)
@@ -116,7 +115,7 @@ class TestSessionRollback:
             assert read.success
             assert read.file.content == "original"
         finally:
-            mount.filesystem.write = original_write  # type: ignore[assignment]
+            mount.filesystem.write_files = original_write_files  # type: ignore[assignment]
 
     async def test_failing_backend_write_returns_failure(self, tmp_path: Path) -> None:
         """GroverAsync returns failure result for backend exceptions."""
@@ -132,11 +131,11 @@ class TestSessionRollback:
             "fail", filesystem=dfs, session_config=SessionConfig(session_factory=factory, dialect="sqlite")
         )
 
-        # Monkey-patch write to raise
-        async def _exploding_write(*args, **kwargs):
+        # Monkey-patch write_files to raise (facade routes write() through write_files())
+        async def _exploding_write_files(*args, **kwargs):
             raise RuntimeError("Simulated backend failure")
 
-        dfs.write = _exploding_write  # type: ignore[assignment]
+        dfs.write_files = _exploding_write_files  # type: ignore[assignment]
 
         result = await g.write("/fail/test.txt", "content")
         assert not result.success

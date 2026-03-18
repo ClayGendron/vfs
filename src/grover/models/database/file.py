@@ -52,29 +52,34 @@ class FileModelBase(SQLModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_and_validate(cls, data: object) -> object:
-        if isinstance(data, dict) and "path" in data:
-            data["path"] = normalize_path(data["path"])
-            parent, name = split_path(data["path"])
-            data["parent_path"] = parent
+    def _normalize_and_validate(cls, data: dict[str, object]) -> dict[str, object]:
+        raw_path = data.get("path")
+        if not isinstance(raw_path, str):
+            return data
 
-            if not data.get("is_directory", False):
-                if name and not is_text_file(name):
-                    raise ValueError(f"Cannot create non-text file: {name}")
-                if name and (not data.get("mime_type") or data["mime_type"] == "text/plain"):
-                    data["mime_type"] = guess_mime_type(name)
+        norm = normalize_path(raw_path)
+        data["path"] = norm
+        parent, name = split_path(norm)
+        data["parent_path"] = parent
 
-            content = data.get("content")
-            if content is not None:
-                content_hash, size_bytes = compute_content_hash(content)
-                data["content_hash"] = content_hash
-                data["size_bytes"] = size_bytes
-                data["lines"] = content.count("\n")
+        if not data.get("is_directory", False):
+            if name and not is_text_file(name):
+                raise ValueError(f"Cannot create non-text file: {name}")
+            mime = data.get("mime_type")
+            if name and (not mime or mime == "text/plain"):
+                data["mime_type"] = guess_mime_type(name)
 
-            if not data.get("created_at"):
-                data["created_at"] = datetime.now(UTC)
-            if not data.get("updated_at"):
-                data["updated_at"] = datetime.now(UTC)
+        content = data.get("content")
+        if isinstance(content, str):
+            content_hash, size_bytes = compute_content_hash(content)
+            data["content_hash"] = content_hash
+            data["size_bytes"] = size_bytes
+            data["lines"] = content.count("\n")
+
+        if not data.get("created_at"):
+            data["created_at"] = datetime.now(UTC)
+        if not data.get("updated_at"):
+            data["updated_at"] = datetime.now(UTC)
         return data
 
     @classmethod

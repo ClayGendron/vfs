@@ -529,8 +529,8 @@ class TestLocalFSInheritsDatabaseFS:
         assert "/subdir/file.py" in paths
         await fs.close()
 
-    async def test_exists_uses_disk(self, tmp_path: Path):
-        """exists delegates to DiskStorageProvider (checks disk, not DB)."""
+    async def test_exists_checks_db_not_disk(self, tmp_path: Path):
+        """exists checks DB — a file only on disk is not found."""
         fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
@@ -538,7 +538,7 @@ class TestLocalFSInheritsDatabaseFS:
 
         async with _session(factory) as session:
             result = await fs.exists("/disk_only.py", session=session)
-        assert result.message == "exists"
+        assert result.message == "not found"
         await fs.close()
 
     async def test_no_unexpected_method_overrides(self, tmp_path: Path):

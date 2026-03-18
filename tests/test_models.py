@@ -50,13 +50,13 @@ class TestDefaultFactories:
         assert f.original_path is None
 
     def test_file_version_defaults(self, session: Session):
-        fv = FileVersionModel(file_id="abc", version=1, is_snapshot=True, content="hello")
+        fv = FileVersionModel(file_path="/abc.py", version=1, is_snapshot=True, content="hello")
         session.add(fv)
         session.commit()
         session.refresh(fv)
 
         assert fv.id
-        assert fv.file_id == "abc"
+        assert fv.file_path == "/abc.py"
         assert fv.is_snapshot is True
         assert fv.content_hash == ""
         assert fv.size_bytes == 0
@@ -64,7 +64,7 @@ class TestDefaultFactories:
 
     def test_file_version_with_new_fields(self, session: Session):
         fv = FileVersionModel(
-            file_id="abc",
+            file_path="/abc.py",
             version=2,
             is_snapshot=False,
             content="diff content",
@@ -142,7 +142,6 @@ class TestDefaultFactories:
 
     def test_file_version_file_path_field(self, session: Session):
         fv = FileVersionModel(
-            file_id="abc",
             file_path="/hello.txt",
             version=3,
             is_snapshot=True,
@@ -154,7 +153,7 @@ class TestDefaultFactories:
         assert fv.file_path == "/hello.txt"
 
     def test_file_version_path_property(self):
-        fv = FileVersionModel(file_id="abc", file_path="/hello.txt", version=3)
+        fv = FileVersionModel.model_validate({"file_path": "/hello.txt", "version": 3})
         assert fv.path == "/hello.txt@3"
 
     def test_file_connection_path_format(self, session: Session):
@@ -265,23 +264,31 @@ class TestFileShare:
 
 
 class TestFileVersionUniqueConstraint:
-    """H4: Duplicate (file_id, version) should be rejected."""
+    """H4: Duplicate (file_path, version) should be rejected."""
 
     def test_duplicate_file_version_rejected(self, session: Session):
         from sqlalchemy.exc import IntegrityError
 
-        fv1 = FileVersionModel(file_id="abc", version=1, is_snapshot=True, content="v1")
+        fv1 = FileVersionModel.model_validate(
+            {"file_path": "/abc.py", "version": 1, "is_snapshot": True, "content": "v1"}
+        )
         session.add(fv1)
         session.commit()
 
-        fv2 = FileVersionModel(file_id="abc", version=1, is_snapshot=True, content="v1dup")
+        fv2 = FileVersionModel.model_validate(
+            {"file_path": "/abc.py", "version": 1, "is_snapshot": True, "content": "v1dup"}
+        )
         session.add(fv2)
         with pytest.raises(IntegrityError):
             session.commit()
 
     def test_same_version_different_file_allowed(self, session: Session):
-        fv1 = FileVersionModel(file_id="abc", version=1, is_snapshot=True, content="v1a")
-        fv2 = FileVersionModel(file_id="xyz", version=1, is_snapshot=True, content="v1b")
+        fv1 = FileVersionModel.model_validate(
+            {"file_path": "/abc.py", "version": 1, "is_snapshot": True, "content": "v1a"}
+        )
+        fv2 = FileVersionModel.model_validate(
+            {"file_path": "/xyz.py", "version": 1, "is_snapshot": True, "content": "v1b"}
+        )
         session.add(fv1)
         session.add(fv2)
         session.commit()

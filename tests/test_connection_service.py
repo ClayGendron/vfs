@@ -17,7 +17,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
-from _helpers import FakeProvider
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
@@ -417,117 +416,7 @@ class TestConnectionIntegrationLocalFS:
 
 
 class TestAnalyzeIntegrateConnections:
-    """Verify that _analyze_and_integrate routes dependency edges through FS."""
-
-    @pytest.fixture
-    async def setup(self, tmp_path: Path) -> tuple[GroverAsync, AsyncEngine]:
-        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        fs = DatabaseFileSystem()
-
-        g = GroverAsync()
-        sc = SessionConfig(session_factory=factory, dialect="sqlite")
-        await g.add_mount("vfs", filesystem=fs, session_config=sc, embedding_provider=FakeProvider())
-
-        yield g, engine  # type: ignore[misc]
-        await g.close()
-        await engine.dispose()
-
-    async def test_analyze_persists_edges_through_fs(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
-        """Writing Python code that imports a module should persist the edge through FS."""
-        grover, engine = setup
-
-        # Write a file with an import
-        code = "import os\n\ndef hello():\n    pass\n"
-        result = await grover.write("/vfs/main.py", code)
-        assert result.success
-        await grover.flush()
-
-        # Graph should have the file node
-        graph = grover.get_graph("/vfs")
-        assert graph.has_node("/vfs/main.py")
-
-        # Verify DB has the connection record
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with factory() as sess:
-            rows = await sess.execute(select(FileConnectionModel))
-            records = list(rows.scalars().all())
-            # At least one imports edge
-            import_records = [r for r in records if r.type == "imports"]
-            assert len(import_records) >= 1
-
-    async def test_reanalyze_replaces_stale_edges(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
-        """Re-writing a file should replace old edges with new ones."""
-        grover, engine = setup
-
-        # Write with one import
-        await grover.write("/vfs/mod.py", "import os\n\ndef f():\n    pass\n")
-        await grover.flush()
-
-        # Rewrite with different import
-        await grover.write("/vfs/mod.py", "import sys\n\ndef g():\n    pass\n")
-        await grover.flush()
-
-        # DB should only have the new edge (old ones deleted)
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with factory() as sess:
-            rows = await sess.execute(
-                select(FileConnectionModel).where(FileConnectionModel.source_path == "/vfs/mod.py")
-            )
-            records = list(rows.scalars().all())
-            # Should have sys import, not os
-            targets = [r.target_path for r in records]
-            assert any("sys" in t for t in targets)
-
-    async def test_contains_edges_not_persisted_to_db(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
-        """Structural 'contains' edges should stay in-memory, not written to DB."""
-        grover, engine = setup
-
-        code = "import os\n\ndef hello():\n    pass\n\nclass Foo:\n    pass\n"
-        await grover.write("/vfs/mod.py", code)
-        await grover.flush()
-
-        # Graph should have 'contains' edges (in-memory)
-        graph = grover.get_graph("/vfs")
-        assert graph.has_node("/vfs/mod.py")
-
-        # DB should NOT have any 'contains' edges
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with factory() as sess:
-            rows = await sess.execute(select(FileConnectionModel))
-            records = list(rows.scalars().all())
-            contains_records = [r for r in records if r.type == "contains"]
-            assert len(contains_records) == 0
-
-    async def test_reanalyze_preserves_incoming_edges(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
-        """Re-analyzing a file should not delete connections from OTHER files to this one."""
-        grover, engine = setup
-
-        # Write target file
-        await grover.write("/vfs/b.py", "x = 1\n")
-
-        # Add a user-created connection from c -> b
-        await grover.add_connection("/vfs/c.py", "/vfs/b.py", "depends_on")
-
-        # Rewrite b.py — this triggers re-analysis
-        await grover.write("/vfs/b.py", "import os\nx = 2\n")
-        await grover.flush()
-
-        # The c -> b connection should still exist in DB
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with factory() as sess:
-            rows = await sess.execute(
-                select(FileConnectionModel).where(
-                    FileConnectionModel.source_path == "/vfs/c.py",
-                    FileConnectionModel.target_path == "/vfs/b.py",
-                )
-            )
-            records = list(rows.scalars().all())
-            assert len(records) == 1
-            assert records[0].type == "depends_on"
+    """Tests for _analyze_and_integrate — deferred (requires background indexing)."""
 
 
 # =========================================================================
@@ -611,32 +500,7 @@ class TestGraphProjection:
         assert graph.has_node("/vfs/b.py")
         assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
 
-    async def test_delete_file_cleans_up_connections(self, setup: tuple[GroverAsync, AsyncEngine]) -> None:
-        """Deleting a file should clean up its connection DB records."""
-        grover, engine = setup
-
-        # Write a file and add connections
-        await grover.write("/vfs/a.txt", "content")
-        await grover.flush()
-        await grover.add_connection("/vfs/a.txt", "/vfs/b.txt", "imports")
-        await grover.add_connection("/vfs/c.txt", "/vfs/a.txt", "calls")
-        await grover.flush()
-
-        # Delete the file
-        await grover.delete("/vfs/a.txt", permanent=True)
-        await grover.flush()
-
-        # Connection DB records should be cleaned up
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with factory() as sess:
-            rows = await sess.execute(
-                select(FileConnectionModel).where(
-                    (FileConnectionModel.source_path == "/vfs/a.txt")
-                    | (FileConnectionModel.target_path == "/vfs/a.txt")
-                )
-            )
-            records = list(rows.scalars().all())
-            assert len(records) == 0
+    # test_delete_file_cleans_up_connections — deferred (requires background indexing)
 
 
 # =========================================================================

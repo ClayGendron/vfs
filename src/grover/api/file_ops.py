@@ -13,6 +13,7 @@ from grover.models.internal.results import (
     BatchResult,
     FileOperationResult,
     FileSearchResult,
+    FileSearchSet,
     GroverResult,
 )
 from grover.permissions import Permission
@@ -181,8 +182,30 @@ class FileOpsMixin:
         src: str,
         dest: str,
         *,
+        follow: bool = False,
         user_id: str | None = None,
     ) -> GroverResult:
+        if follow:
+            src, dest = normalize_path(src), normalize_path(dest)
+            if error := self._ctx.check_writable(src):
+                return error
+            if error := self._ctx.check_writable(dest):
+                return error
+            async with self._ctx.mount_session(src) as (mount, src_rel, session):
+                dest_rel = dest.removeprefix(mount.path) or "/"
+                result = await mount.filesystem.move(
+                    src_rel,
+                    dest_rel,
+                    session=session,
+                    follow=True,
+                    user_id=user_id,
+                )
+            result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
+            return GroverResult(
+                success=result.success,
+                message=result.message,
+                files=[result.file],
+            )
         return await self.move_files([(src, dest)], user_id=user_id)
 
     async def move_files(
@@ -433,6 +456,7 @@ class FileOpsMixin:
         self,
         path: str = "/",
         *,
+        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
         path = normalize_path(path)
@@ -442,7 +466,11 @@ class FileOpsMixin:
 
         async with self._ctx.mount_session(path) as (mount, rel_path, session):
             result = await mount.filesystem.list_dir(rel_path, session=session, user_id=user_id)
-        return result.rebase(mount.path)
+        result = result.rebase(mount.path)
+        if candidates is not None:
+            allowed = set(candidates.paths)
+            result.files = [f for f in result.files if f.path in allowed]
+        return result
 
     def _list_root(self) -> GroverResult:
         dirs = [Directory(path=mount.path) for mount in self._ctx.registry.list_mounts()]
@@ -457,16 +485,19 @@ class FileOpsMixin:
         path: str = "/",
         *,
         max_depth: int | None = None,
+        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
         path = normalize_path(path)
 
         if path == "/":
+            # depth 0 = root (empty), depth 1 = mount roots, depth 2+ = mount contents
+            mount_dirs = [Directory(path=mount.path) for mount in self._ctx.registry.list_mounts()]
             combined = GroverResult(
                 success=True,
-                directories=[Directory(path=mount.path) for mount in self._ctx.registry.list_mounts()],
+                directories=mount_dirs if (max_depth is None or max_depth >= 1) else [],
             )
-            if max_depth is None or max_depth > 0:
+            if max_depth is None or max_depth > 1:
                 for mount in self._ctx.registry.list_mounts():
                     async with self._ctx.session_for(mount) as session:
                         mount_depth = max_depth - 1 if max_depth is not None else None
@@ -479,6 +510,9 @@ class FileOpsMixin:
                     if result.success:
                         combined = combined | result.rebase(mount.path)
             combined.message = f"{len(combined.directories)} directories, {len(combined.files)} files"
+            if candidates is not None:
+                allowed = set(candidates.paths)
+                combined.files = [f for f in combined.files if f.path in allowed]
             return combined
 
         async with self._ctx.mount_session(path) as (mount, rel_path, session):
@@ -488,7 +522,11 @@ class FileOpsMixin:
                 session=session,
                 user_id=user_id,
             )
-        return result.rebase(mount.path)
+        result = result.rebase(mount.path)
+        if candidates is not None:
+            allowed = set(candidates.paths)
+            result.files = [f for f in result.files if f.path in allowed]
+        return result
 
     async def list_versions(self, path: str, *, user_id: str | None = None) -> FileSearchResult:
         path = normalize_path(path)

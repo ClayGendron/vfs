@@ -41,7 +41,7 @@ class ShareMixin:
 
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return FileOperationResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err.message)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
@@ -86,7 +86,7 @@ class ShareMixin:
 
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return FileOperationResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err.message)
 
         try:
             mount, rel_path = self._ctx.registry.resolve(path)

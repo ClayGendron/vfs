@@ -264,6 +264,9 @@ async def write_file(
     else:
         await ensure_parent_dirs(session, path, owner_id)
 
+        # Clean up orphaned version records from previously deleted files
+        await versioning.delete_versions(session, path)
+
         now = datetime.now(UTC)
         new_file = file_model(
             path=path,

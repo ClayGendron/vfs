@@ -84,7 +84,7 @@ class TestReconcileChainErrors:
             v1_rec = (
                 await sess.execute(
                     select(FileVersionModel).where(
-                        FileVersionModel.file_id == file_rec.id,
+                        FileVersionModel.file_path == file_rec.path,
                         FileVersionModel.version == 1,
                     )
                 )

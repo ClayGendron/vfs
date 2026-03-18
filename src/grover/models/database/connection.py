@@ -42,14 +42,15 @@ class FileConnectionModelBase(SQLModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_paths(cls, data: object) -> object:
-        if isinstance(data, dict):
-            if "source_path" in data:
-                data["source_path"] = normalize_path(data["source_path"])
-            if "target_path" in data:
-                data["target_path"] = normalize_path(data["target_path"])
-            if not data.get("path") and data.get("source_path") and data.get("target_path"):
-                data["path"] = f"{data['source_path']}[{data.get('type', '')}]{data['target_path']}"
+    def _normalize_paths(cls, data: dict[str, object]) -> dict[str, object]:
+        src = data.get("source_path")
+        if isinstance(src, str):
+            data["source_path"] = normalize_path(src)
+        tgt = data.get("target_path")
+        if isinstance(tgt, str):
+            data["target_path"] = normalize_path(tgt)
+        if not data.get("path") and data.get("source_path") and data.get("target_path"):
+            data["path"] = f"{data['source_path']}[{data.get('type', '')}]{data['target_path']}"
         return data
 
     @classmethod

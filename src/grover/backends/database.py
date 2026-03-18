@@ -118,7 +118,9 @@ class DatabaseFileSystem:
         self.graph_provider = graph_provider
         self.search_provider = search_provider
         self.embedding_provider = embedding_provider
-        self.version_provider = version_provider or DefaultVersionProvider(self.file_model, self.file_version_model)
+        self.version_provider: VersionProvider = version_provider or DefaultVersionProvider(
+            self.file_model, self.file_version_model
+        )
         self.chunk_provider = chunk_provider or DefaultChunkProvider(self.file_chunk_model)
 
         # Validate search dimensions if both providers set
@@ -129,7 +131,7 @@ class DatabaseFileSystem:
 
         Called by ``_configure()`` after model attributes change.
         """
-        self.version_provider = DefaultVersionProvider(self.file_model, self.file_version_model)
+        self.version_provider: VersionProvider = DefaultVersionProvider(self.file_model, self.file_version_model)
         self.chunk_provider = DefaultChunkProvider(self.file_chunk_model)
 
     def _configure(self, config: EngineConfig | SessionConfig, dialect: str) -> None:
@@ -937,9 +939,10 @@ class DatabaseFileSystem:
         files: list[File] = []
         for f in matched:
             info = file_to_info(f)
-            is_dir = isinstance(info, Directory)
-            size = 0 if is_dir else info.size_bytes
-            mime = "" if is_dir else info.mime_type
+            if isinstance(info, Directory):
+                is_dir, size, mime = True, 0, ""
+            else:
+                is_dir, size, mime = False, info.size_bytes, info.mime_type
             files.append(
                 File(
                     path=info.path,
@@ -1278,7 +1281,7 @@ class DatabaseFileSystem:
         # If path is occupied, overwrite the occupant (git restore semantics).
         existing = await self._get_file_record(session, original, False)
         if existing and existing.id != file.id:
-            await self.version_provider.delete_versions(session, existing.id)
+            await self.version_provider.delete_versions(session, existing.path)
             await session.delete(existing)
             await session.flush()
 
@@ -1302,7 +1305,7 @@ class DatabaseFileSystem:
                 child_original = child.original_path or child.path
                 child_existing = await self._get_file_record(session, child_original, False)
                 if child_existing and child_existing.id != child.id:
-                    await self.version_provider.delete_versions(session, child_existing.id)
+                    await self.version_provider.delete_versions(session, child_existing.path)
                     await session.delete(child_existing)
                     had_occupants = True
             if had_occupants:

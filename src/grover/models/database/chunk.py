@@ -43,13 +43,14 @@ class FileChunkModelBase(SQLModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_paths(cls, data: object) -> object:
-        if isinstance(data, dict):
-            if "file_path" in data:
-                data["file_path"] = normalize_path(data["file_path"])
-            if "path" in data and "#" in data["path"]:
-                base, sep, symbol = data["path"].rpartition("#")
-                data["path"] = f"{normalize_path(base)}{sep}{symbol}"
+    def _normalize_paths(cls, data: dict[str, object]) -> dict[str, object]:
+        fp = data.get("file_path")
+        if isinstance(fp, str):
+            data["file_path"] = normalize_path(fp)
+        path = data.get("path")
+        if isinstance(path, str) and "#" in path:
+            base, sep, symbol = path.rpartition("#")
+            data["path"] = f"{normalize_path(base)}{sep}{symbol}"
         return data
 
     @classmethod

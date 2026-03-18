@@ -68,9 +68,10 @@ def _total_files(result: FileSearchResult) -> int:
 
 def _total_dirs(result: FileSearchResult) -> int:
     """Count of directory entries in a tree result."""
-    count = 0
+    # GroverResult may store directories in a separate list
+    count = len(result.directories) if hasattr(result, "directories") else 0
+    # Also count directories in files (storage_provider path puts them there)
     for f in result.files:
-        # Check TreeEvidence for is_directory (disk backend stores it there)
         tree_ev = next((e for e in f.evidence if isinstance(e, TreeEvidence)), None)
         if tree_ev is not None and tree_ev.is_directory:
             count += 1
@@ -438,8 +439,10 @@ class TestDatabaseTree:
         await _seed_db(dfs, db_session)
         result = await dfs.tree("/", session=db_session)
         assert result.success
-        paths = list(result.paths)
-        assert paths == sorted(paths)
+        file_paths = [f.path for f in result.files]
+        dir_paths = [d.path for d in result.directories]
+        assert file_paths == sorted(file_paths)
+        assert dir_paths == sorted(dir_paths)
 
 
 # =========================================================================
@@ -757,24 +760,20 @@ class TestGroverTree:
         grover, _ = grover_setup
         result = await grover.tree(max_depth=0)
         assert result.success
-        # With depth 0 at root, should only show mount roots (no children)
+        # Depth 0 = root itself — no mounts, no files
         paths = set(result.paths)
-        # Mount roots are depth 0
-        assert "/db" in paths
-        assert "/local" in paths
-        # No files inside mounts
-        assert "/db/hello.py" not in paths
+        assert len(paths) == 0
 
     async def test_root_tree_max_depth_1(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
         grover, _ = grover_setup
         result = await grover.tree(max_depth=1)
         assert result.success
         paths = set(result.paths)
-        # Mount roots (depth 0) and their children (depth 1)
+        # Depth 1 = mount roots only (no children)
         assert "/db" in paths
         assert "/local" in paths
-        assert "/db/hello.py" in paths
-        assert "/local/world.py" in paths
+        assert "/db/hello.py" not in paths
+        assert "/local/world.py" not in paths
 
 
 # =========================================================================

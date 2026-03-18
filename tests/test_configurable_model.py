@@ -93,8 +93,8 @@ class TestModelInheritance:
         assert wiki.mime_type == "text/plain"
 
     def test_custom_version_inherits_fields(self):
-        wv = WikiFileVersion(file_id="abc", version=1, content="hello")
-        assert wv.file_id == "abc"
+        wv = WikiFileVersion(file_path="/test.txt", version=1, content="hello")
+        assert wv.file_path == "/test.txt"
         assert wv.version == 1
         assert wv.content == "hello"
 

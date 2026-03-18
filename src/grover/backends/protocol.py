@@ -98,14 +98,6 @@ class GroverFileSystem(Protocol):
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
-    async def write_file(
-        self,
-        file: FileModelBase,
-        *,
-        overwrite: bool = True,
-        session: AsyncSession,
-    ) -> FileOperationResult: ...
-
     async def write_files(
         self,
         files: list[FileModelBase],

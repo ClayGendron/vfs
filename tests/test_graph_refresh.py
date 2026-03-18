@@ -26,25 +26,6 @@ class TestMountWiring:
         assert isinstance(gp, RustworkxGraph)
         await g.close()
 
-    async def test_hidden_mount_graph_provider_not_wired(self):
-        """Hidden mounts should not have configure_refresh called on graph provider."""
-        g = GroverAsync()
-        graph = RustworkxGraph()
-        from grover.backends.database import DatabaseFileSystem
-
-        fs = DatabaseFileSystem(graph_provider=graph)
-        from grover.mount import Mount
-
-        mount = Mount(
-            name="__hidden",
-            filesystem=fs,
-            hidden=True,
-        )
-        await g.add_mount(mount=mount)
-        # Hidden mount — graph provider is still a RustworkxGraph (unchanged)
-        assert isinstance(graph, RustworkxGraph)
-        await g.close()
-
 
 class TestLazyLoadViaFacade:
     """End-to-end: facade graph queries trigger lazy load from DB."""

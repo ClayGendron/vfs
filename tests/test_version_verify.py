@@ -80,7 +80,7 @@ class TestVerifyChainHealthy:
 
             # Delete all version records
             versions = (
-                (await session.execute(select(FileVersionModel).where(FileVersionModel.file_id == file_rec.id)))
+                (await session.execute(select(FileVersionModel).where(FileVersionModel.file_path == file_rec.path)))
                 .scalars()
                 .all()
             )
@@ -132,7 +132,7 @@ class TestVerifyChainCorrupted:
             v2_rec = (
                 await session.execute(
                     select(FileVersionModel).where(
-                        FileVersionModel.file_id == file_rec.id,
+                        FileVersionModel.file_path == file_rec.path,
                         FileVersionModel.version == 2,
                     )
                 )
@@ -161,7 +161,7 @@ class TestVerifyChainCorrupted:
             v1_rec = (
                 await session.execute(
                     select(FileVersionModel).where(
-                        FileVersionModel.file_id == file_rec.id,
+                        FileVersionModel.file_path == file_rec.path,
                         FileVersionModel.version == 1,
                     )
                 )
@@ -189,7 +189,7 @@ class TestVerifyChainCorrupted:
             v1_rec = (
                 await session.execute(
                     select(FileVersionModel).where(
-                        FileVersionModel.file_id == file_rec.id,
+                        FileVersionModel.file_path == file_rec.path,
                         FileVersionModel.version == 1,
                     )
                 )
@@ -218,7 +218,7 @@ class TestVerifyChainCorrupted:
             v1_rec = (
                 await session.execute(
                     select(FileVersionModel).where(
-                        FileVersionModel.file_id == file_rec.id,
+                        FileVersionModel.file_path == file_rec.path,
                         FileVersionModel.version == 1,
                     )
                 )
@@ -300,7 +300,7 @@ class TestBackendVerifyVersions:
             v1_rec = (
                 await session.execute(
                     select(FileVersionModel).where(
-                        FileVersionModel.file_id == file_rec.id,
+                        FileVersionModel.file_path == file_rec.path,
                         FileVersionModel.version == 1,
                     )
                 )

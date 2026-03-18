@@ -40,13 +40,15 @@ class FileVersionModelBase(SQLModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_paths(cls, data: object) -> object:
-        if isinstance(data, dict):
-            if "file_path" in data:
-                data["file_path"] = normalize_path(data["file_path"])
+    def _normalize_paths(cls, data: dict[str, object]) -> dict[str, object]:
+        fp = data.get("file_path")
+        if isinstance(fp, str):
+            fp = normalize_path(fp)
+            data["file_path"] = fp
             # Derive path from file_path@version if not explicitly set
-            if not data.get("path") and data.get("file_path") and data.get("version"):
-                data["path"] = f"{normalize_path(data['file_path'])}@{data['version']}"
+            ver = data.get("version")
+            if not data.get("path") and ver is not None:
+                data["path"] = f"{fp}@{ver}"
         return data
 
     @classmethod
