@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from grover.backends.database import DatabaseFileSystem
-from grover.models.internal.detail import ReadDetail
-from grover.models.internal.results import FileOperationResult, GroverResult
+from grover.models.internal.detail import ReadDetail, ReconcileDetail
+from grover.models.internal.ref import File
+from grover.models.internal.results import GroverResult
 from grover.providers.storage.disk import DiskStorageProvider
 from grover.util.content import get_similar_files, is_binary_file
 from grover.util.operations import write_file
@@ -299,10 +300,10 @@ class LocalFileSystem(DatabaseFileSystem):
         self,
         *,
         session: AsyncSession,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Walk disk, compare with DB, create/update/soft-delete as needed."""
-        created = 0
-        deleted = 0
+        created_files: list[File] = []
+        deleted_files: list[File] = []
 
         # Walk workspace files
         disk_paths: set[str] = set()
@@ -353,7 +354,12 @@ class LocalFileSystem(DatabaseFileSystem):
                         read_content=self._read_content,
                         write_content=_noop_write,
                     )
-                    created += 1
+                    created_files.append(
+                        File(
+                            path=vpath,
+                            evidence=[ReconcileDetail(operation="reconcile", action="created")],
+                        )
+                    )
 
         # Check DB records against disk
         from sqlmodel import select
@@ -369,14 +375,22 @@ class LocalFileSystem(DatabaseFileSystem):
             if file.path not in disk_paths:
                 exists = await self._disk.exists(file.path)
                 if not exists:
+                    original_path = file.path
                     file.original_path = file.path
                     file.path = to_trash_path(file.path, file.id)
                     file.deleted_at = datetime.now(UTC)
-                    deleted += 1
+                    deleted_files.append(
+                        File(
+                            path=original_path,
+                            evidence=[ReconcileDetail(operation="reconcile", action="deleted")],
+                        )
+                    )
 
         await session.flush()
 
-        return FileOperationResult(
+        all_files = created_files + deleted_files
+        return GroverResult(
             success=True,
-            message=f"Reconcile complete: {created} created, {deleted} deleted",
+            message=f"Reconcile complete: {len(created_files)} created, {len(deleted_files)} deleted",
+            files=all_files,
         )

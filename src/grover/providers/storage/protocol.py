@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from grover.models.internal.results import FileOperationResult, FileSearchResult
+    from grover.models.internal.results import FileOperationResult, FileSearchResult, GroverResult
 
 
 @runtime_checkable
@@ -45,7 +45,7 @@ class StorageProvider(Protocol):
     async def storage_list_dir(self, path: str) -> FileSearchResult: ...
 
     # Reconciliation (sync external storage with DB)
-    async def reconcile(self, **kwargs: Any) -> FileOperationResult: ...
+    async def reconcile(self, **kwargs: Any) -> GroverResult: ...
 
 
 # Backward-compat aliases

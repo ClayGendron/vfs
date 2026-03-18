@@ -14,6 +14,7 @@ from grover.models.internal.detail import (
     Detail,
     MoveDetail,
     ReadDetail,
+    ReconcileDetail,
     WriteDetail,
 )
 from grover.models.internal.evidence import (
@@ -26,6 +27,7 @@ from grover.models.internal.evidence import (
     LexicalEvidence,
     LineMatch,
     ListDirEvidence,
+    ReconcileEvidence,
     ShareEvidence,
     TrashEvidence,
     TreeEvidence,
@@ -111,6 +113,8 @@ __all__ = [
     "Mount",
     "MoveDetail",
     "ReadDetail",
+    "ReconcileDetail",
+    "ReconcileEvidence",
     "Ref",
     "SearchProvider",
     "SessionConfig",

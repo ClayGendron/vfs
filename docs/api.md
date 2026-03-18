@@ -281,12 +281,12 @@ Directory shares grant access to all descendants (prefix matching).
 ### Reconciliation
 
 ```python
-g.reconcile(mount_path=None) -> ReconcileResult
+g.reconcile(mount_path=None) -> GroverResult
 ```
 
 Synchronize the database with the actual filesystem state. Only available for backends that implement `SupportsReconcile` (currently `LocalFileSystem`).
 
-Returns a `ReconcileResult` with fields: `created`, `updated`, `deleted`, `chain_errors` (all `int`). The `chain_errors` count is the total number of version records that failed integrity verification across all reconciled files.
+Returns a `GroverResult` containing a `File` entry for each affected file. Each file carries a `ReconcileDetail` with `action="created"` (disk file added to DB) or `action="deleted"` (DB record soft-deleted because disk file is missing). Use `result.succeeded`/`result.failed` for counts.
 
 ### Graph Queries
 
@@ -503,7 +503,7 @@ from grover import (
     FileOperationResult, ReadResult, WriteResult, EditResult,
     DeleteResult, MkdirResult, MoveResult, RestoreResult,
     GetVersionContentResult, ShareResult, ConnectionResult,
-    FileInfoResult, ExistsResult, ReconcileResult,
+    FileInfoResult, ExistsResult,
     ChunkResult, ChunkListResult, ConnectionListResult,
     # Search results
     FileSearchResult, FileCandidate, ConnectionCandidate, Evidence,
@@ -549,7 +549,6 @@ This design is intentional: agents running in loops should handle failures grace
 | `ConnectionResult` | `source_path`, `target_path`, `connection_type` |
 | `FileInfoResult` | `is_directory`, `mime_type`, `size_bytes`, `created_at`, `updated_at`, `permission`, `mount_type`. `get_info()` always returns this (never `None`); check `success` for not-found. |
 | `ExistsResult` | `exists` (bool) |
-| `ReconcileResult` | `created`, `updated`, `deleted`, `chain_errors` (all int) |
 | `BatchWriteResult` | `results: list[WriteResult]`, `succeeded` (int), `failed` (int) |
 | `BatchChunkResult` | `results: list[ChunkResult]`, `succeeded` (int), `failed` (int) |
 | `ChunkResult` | `count` (int) |

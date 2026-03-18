@@ -309,7 +309,7 @@ class Grover:
     # Reconciliation wrappers (sync)
     # ------------------------------------------------------------------
 
-    def reconcile(self, mount_path: str | None = None) -> FileOperationResult:
+    def reconcile(self, mount_path: str | None = None) -> GroverResult:
         return self._run(self._async.reconcile(mount_path))
 
     # ------------------------------------------------------------------

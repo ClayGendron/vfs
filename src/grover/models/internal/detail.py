@@ -192,3 +192,10 @@ class DeleteDetail(Detail):
     """Detail from a delete operation."""
 
     permanent: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileDetail(Detail):
+    """Detail from a reconcile operation."""
+
+    action: str = ""  # "created" or "deleted"

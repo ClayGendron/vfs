@@ -280,7 +280,7 @@ SupportsReBAC (opt-in — user-scoped access control)
     share, unshare, list_shares_on_path, list_shared_with_me
 
 SupportsReconcile (opt-in — disk ↔ DB sync)
-    reconcile → ReconcileResult
+    reconcile → GroverResult
 ```
 
 ### Implementation

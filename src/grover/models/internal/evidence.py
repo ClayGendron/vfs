@@ -15,6 +15,7 @@ from grover.models.internal.detail import HybridDetail as HybridEvidence  # noqa
 from grover.models.internal.detail import LexicalDetail as LexicalEvidence  # noqa: F401
 from grover.models.internal.detail import LineMatch  # noqa: F401
 from grover.models.internal.detail import ListDirDetail as ListDirEvidence  # noqa: F401
+from grover.models.internal.detail import ReconcileDetail as ReconcileEvidence  # noqa: F401
 from grover.models.internal.detail import ShareDetail as ShareEvidence  # noqa: F401
 from grover.models.internal.detail import TrashDetail as TrashEvidence  # noqa: F401
 from grover.models.internal.detail import TreeDetail as TreeEvidence  # noqa: F401

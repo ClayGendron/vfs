@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from grover.models.internal.detail import ReconcileDetail
 from grover.models.internal.evidence import (
     GlobEvidence,
     GrepEvidence,
@@ -25,7 +26,7 @@ from grover.models.internal.evidence import (
     TreeEvidence,
 )
 from grover.models.internal.ref import File
-from grover.models.internal.results import FileOperationResult, FileSearchResult
+from grover.models.internal.results import FileOperationResult, FileSearchResult, GroverResult
 from grover.util.content import has_binary_extension, is_binary_file
 from grover.util.paths import normalize_path, validate_path
 from grover.util.patterns import compile_glob
@@ -590,7 +591,7 @@ class DiskStorageProvider:
     # SupportsStorageReconcile implementation
     # ------------------------------------------------------------------
 
-    async def reconcile(self, **kwargs: Any) -> FileOperationResult:
+    async def reconcile(self, **kwargs: Any) -> GroverResult:
         """Walk disk, compare with DB, create/update/soft-delete as needed.
 
         This method requires DB services passed via kwargs because reconcile
@@ -613,10 +614,8 @@ class DiskStorageProvider:
         file_model = kwargs["file_model"]
         read_content = kwargs["read_content"]
 
-        created = 0
-        updated = 0
-        deleted = 0
-        chain_errors = 0
+        created_files: list[File] = []
+        deleted_files: list[File] = []
 
         async def _noop_write(
             _path: str,
@@ -663,7 +662,12 @@ class DiskStorageProvider:
                         read_content=read_content,
                         write_content=_noop_write,
                     )
-                    created += 1
+                    created_files.append(
+                        File(
+                            path=vpath,
+                            evidence=[ReconcileDetail(operation="reconcile", action="created")],
+                        )
+                    )
 
         # Check DB records against disk
         from sqlmodel import select
@@ -681,16 +685,22 @@ class DiskStorageProvider:
             if file.path not in disk_paths:
                 disk_exists = await self.exists(file.path)
                 if not disk_exists:
+                    original_path = file.path
                     file.original_path = file.path
                     file.path = to_trash_path(file.path, file.id)
                     file.deleted_at = datetime.now(UTC)
-                    deleted += 1
+                    deleted_files.append(
+                        File(
+                            path=original_path,
+                            evidence=[ReconcileDetail(operation="reconcile", action="deleted")],
+                        )
+                    )
 
         await session.flush()
 
-        return FileOperationResult(
+        all_files = created_files + deleted_files
+        return GroverResult(
             success=True,
-            message=(
-                f"Reconcile: {created} created, {updated} updated, {deleted} deleted, {chain_errors} chain errors"
-            ),
+            message=f"Reconcile: {len(created_files)} created, {len(deleted_files)} deleted",
+            files=all_files,
         )

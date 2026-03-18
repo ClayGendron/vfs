@@ -10,7 +10,6 @@ from grover.models.database.file import FileModel
 from grover.models.internal.detail import WriteDetail
 from grover.models.internal.ref import Directory, File
 from grover.models.internal.results import (
-    FileOperationResult,
     FileSearchSet,
     GroverResult,
 )
@@ -523,33 +522,6 @@ class FileOpsMixin:
             result.files = [f for f in result.files if f.path in allowed]
         return result
 
-    # ------------------------------------------------------------------
-    # Reconciliation (absorbed from VersionTrashMixin)
-    # ------------------------------------------------------------------
-
-    async def reconcile(self, mount_path: str | None = None) -> FileOperationResult:
-        """Reconcile disk <-> DB for capable mounts."""
-        total = FileOperationResult()
-        mounts = self._ctx.registry.list_mounts()
-        if mount_path is not None:
-            mount_path = normalize_path(mount_path).rstrip("/")
-            mounts = [m for m in mounts if m.path == mount_path]
-
-        for mount in mounts:
-            if mount.permission == Permission.READ_ONLY:
-                continue
-            cap = self._ctx.get_capability(mount.filesystem, SupportsReconcile)
-            if cap is None:
-                continue
-            async with self._ctx.session_for(mount) as sess:
-                await cap.reconcile(session=sess)
-
-        return total
-
-    # ------------------------------------------------------------------
-    # Chunk write operations
-    # ------------------------------------------------------------------
-
     async def write_chunks(
         self,
         chunks: list[FileChunkModelBase],
@@ -611,3 +583,24 @@ class FileOpsMixin:
                 )
 
         return result
+
+    async def reconcile(self, mount_path: str | None = None) -> GroverResult:
+        """Reconcile disk <-> DB for capable mounts."""
+        total = GroverResult()
+        mounts = self._ctx.registry.list_mounts()
+        if mount_path is not None:
+            mount_path = normalize_path(mount_path).rstrip("/")
+            mounts = [m for m in mounts if m.path == mount_path]
+
+        for mount in mounts:
+            if mount.permission == Permission.READ_ONLY:
+                continue
+            cap = self._ctx.get_capability(mount.filesystem, SupportsReconcile)
+            if cap is None:
+                continue
+            async with self._ctx.session_for(mount) as sess:
+                result = await cap.reconcile(session=sess)
+            total = total | result.rebase(mount.path)
+
+        total.message = f"Reconcile: {len(total.files)} file(s) affected"
+        return total
