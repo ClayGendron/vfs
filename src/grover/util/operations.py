@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any
 from sqlmodel import select
 
 from grover.models.internal.evidence import ListDirEvidence
-from grover.models.internal.ref import File
-from grover.models.internal.results import FileOperationResult, FileSearchResult
+from grover.models.internal.ref import Directory, File
+from grover.models.internal.results import FileOperationResult, FileSearchResult, GroverResult
 
 from .content import compute_content_hash, guess_mime_type, is_text_file
 from .paths import is_trash_path, normalize_path, split_path, to_trash_path, validate_path
@@ -748,7 +748,7 @@ async def list_dir_db(
     *,
     get_file_record: GetFileRecord,
     file_model: type[FileModelBase],
-) -> FileSearchResult:
+) -> GroverResult:
     """List files and directories from database records."""
 
     path = normalize_path(path)
@@ -756,9 +756,9 @@ async def list_dir_db(
     if path != "/":
         dir_file = await get_file_record(session, path)
         if not dir_file:
-            return FileSearchResult(success=False, message=f"Directory not found: {path}")
+            return GroverResult(success=False, message=f"Directory not found: {path}")
         if not dir_file.is_directory:
-            return FileSearchResult(success=False, message=f"Not a directory: {path}")
+            return GroverResult(success=False, message=f"Not a directory: {path}")
 
     model = file_model
     if path == "/":
@@ -776,25 +776,25 @@ async def list_dir_db(
             )
         )
 
-    candidates: list[File] = []
+    files: list[File] = []
+    directories: list[Directory] = []
     for f in result.scalars().all():
-        info = file_to_info(f)
-        candidates.append(
-            File(
-                path=info.path,
-                is_directory=info.is_directory,
-                evidence=[
-                    ListDirEvidence(
-                        operation="list_dir",
-                        is_directory=info.is_directory,
-                        size_bytes=info.size_bytes,
-                    )
-                ],
-            )
-        )
+        if f.is_directory:
+            directories.append(Directory(path=f.path))
+        else:
+            files.append(File(
+                path=f.path,
+                size_bytes=f.size_bytes,
+                mime_type=f.mime_type,
+                current_version=f.current_version,
+                created_at=f.created_at,
+                updated_at=f.updated_at,
+            ))
 
-    return FileSearchResult(
+    total = len(files) + len(directories)
+    return GroverResult(
         success=True,
-        message=f"Listed {len(candidates)} items in {path}",
-        files=candidates,
+        message=f"Listed {total} items in {path}",
+        files=files,
+        directories=directories,
     )

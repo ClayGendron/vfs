@@ -27,7 +27,7 @@ from grover.models.internal.evidence import (
 from grover.models.internal.evidence import (
     LineMatch as SearchLineMatch,
 )
-from grover.models.internal.ref import File, FileConnection, Ref
+from grover.models.internal.ref import Directory, File, FileChunk, FileConnection, FileVersion, Ref
 from grover.models.internal.results import (
     BatchResult,
     FileOperationResult,
@@ -391,47 +391,42 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         created_dirs, error = await self._mkdir_impl(session, path, parents)
         if error is not None:
-            return FileOperationResult(success=False, message=error)
+            return GroverResult(success=False, message=error)
         path = normalize_path(path)
-        f = File(path=path, is_directory=True)
+        d = Directory(path=path)
         if created_dirs:
-            return FileOperationResult(
+            return GroverResult(
                 success=True,
                 message=f"Created directory: {path}",
-                file=f,
+                directories=[d],
             )
-        return FileOperationResult(
+        return GroverResult(
             success=True,
             message=f"Directory already exists: {path}",
-            file=f,
+            directories=[d],
         )
 
     async def list_dir(
         self,
         path: str = "/",
         *,
-        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileSearchResult:
+    ) -> GroverResult:
         if self.storage_provider is not None:
             old = await self.storage_provider.storage_list_dir(path)
             result = self._search_to_internal(old)
-        else:
-            result = await list_dir_db(
-                path,
-                session,
-                get_file_record=self._get_file_record,
-                file_model=self.file_model,
-            )
-        if candidates is not None and result.success:
-            allowed = set(candidates.paths)
-            result.files = [f for f in result.files if f.path in allowed]
-            result.message = f"Found {len(result.files)} item(s) (filtered)"
-        return result
+            # TODO: migrate storage_provider path to GroverResult
+            return GroverResult(success=result.success, message=result.message, files=result.files)
+        return await list_dir_db(
+            path,
+            session,
+            get_file_record=self._get_file_record,
+            file_model=self.file_model,
+        )
 
     async def exists(
         self,
@@ -439,56 +434,81 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
-        if self.storage_provider is not None:
-            found = await self.storage_provider.exists(path)
-            p = normalize_path(path)
-            return FileOperationResult(
-                success=True,
-                message="exists" if found else "not found",
-                file=File(path=p),
-            )
-        valid, _error = validate_path(path)
-        if not valid:
-            return FileOperationResult(success=True, message="not found", file=File(path=path))
+    ) -> GroverResult:
         path = normalize_path(path)
         if path == "/":
-            return FileOperationResult(success=True, message="exists", file=File(path=path))
-        file = await self._get_file_record(session, path)
-        return FileOperationResult(
-            success=True,
-            message="exists" if file is not None else "not found",
-            file=File(path=path),
-        )
+            return GroverResult(success=True, directories=[Directory(path=path)])
 
-    async def get_info(
-        self,
-        path: str,
-        *,
-        session: AsyncSession,
-        user_id: str | None = None,
-    ) -> FileOperationResult:
-        if self.storage_provider is not None:
-            return await self.storage_provider.get_info(path)
-        valid, error = validate_path(path)
-        if not valid:
-            return FileOperationResult(success=False, message=error, file=File(path=path))
-        path = normalize_path(path)
-        file = await self._get_file_record(session, path)
-        if not file:
-            return FileOperationResult(
-                success=False,
-                message=f"File not found: {path}",
-                file=File(path=path),
+        ref = Ref(path)
+
+        if ref.is_connection:
+            model = self.file_connection_model
+            record = (await session.execute(select(model).where(model.path == path))).scalar_one_or_none()
+            if record is None:
+                return GroverResult(success=False)
+            return GroverResult(
+                success=True,
+                connections=[FileConnection(
+                    path=record.path,
+                    source_path=record.source_path,
+                    target_path=record.target_path,
+                    type=record.type,
+                    weight=record.weight,
+                )],
             )
-        info = file_to_info(file)
-        f = File(
-            path=info.path,
-            is_directory=info.is_directory,
-            lines=0,
-            current_version=info.current_version,
+
+        if ref.is_chunk:
+            model = self.file_chunk_model
+            record = (await session.execute(select(model).where(model.path == path))).scalar_one_or_none()
+            if record is None:
+                return GroverResult(success=False)
+            return GroverResult(
+                success=True,
+                files=[File(
+                    path=ref.base_path,
+                    chunks=[FileChunk(
+                        path=record.path,
+                        name=ref.chunk or "",
+                        content=record.content,
+                        line_start=record.line_start,
+                        line_end=record.line_end,
+                    )],
+                )],
+            )
+
+        if ref.is_version:
+            model = self.file_version_model
+            record = (await session.execute(select(model).where(model.path == path))).scalar_one_or_none()
+            if record is None:
+                return GroverResult(success=False)
+            return GroverResult(
+                success=True,
+                files=[File(
+                    path=ref.base_path,
+                    versions=[FileVersion(
+                        path=record.path,
+                        number=record.version,
+                    )],
+                )],
+            )
+
+        # File or directory
+        file = await self._get_file_record(session, path)
+        if file is None:
+            return GroverResult(success=False)
+        if file.is_directory:
+            return GroverResult(success=True, directories=[Directory(path=path)])
+        return GroverResult(
+            success=True,
+            files=[File(
+                path=file.path,
+                size_bytes=file.size_bytes,
+                mime_type=file.mime_type,
+                current_version=file.current_version,
+                created_at=file.created_at,
+                updated_at=file.updated_at,
+            )],
         )
-        return FileOperationResult(success=True, message="OK", file=f)
 
     async def move(
         self,
@@ -816,33 +836,23 @@ class DatabaseFileSystem:
         path: str = "/",
         *,
         max_depth: int | None = None,
-        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileSearchResult:
+    ) -> GroverResult:
         if self.storage_provider is not None:
             old = await self.storage_provider.storage_tree(path, max_depth=max_depth)
             result = self._search_to_internal(old)
-            if candidates is not None:
-                allowed = set(candidates.paths)
-                result.files = [f for f in result.files if f.path in allowed]
-                result.message = f"Found {len(result.files)} item(s) (filtered)"
-            return result
+            # TODO: migrate storage_provider path to GroverResult
+            return GroverResult(success=result.success, message=result.message, files=result.files)
         path = normalize_path(path)
 
         # Verify base directory exists (unless root)
         if path != "/":
             dir_file = await self._get_file_record(session, path)
             if not dir_file:
-                return FileSearchResult(
-                    success=False,
-                    message=f"Directory not found: {path}",
-                )
+                return GroverResult(success=False, message=f"Directory not found: {path}")
             if not dir_file.is_directory:
-                return FileSearchResult(
-                    success=False,
-                    message=f"Not a directory: {path}",
-                )
+                return GroverResult(success=False, message=f"Not a directory: {path}")
 
         model = self.file_model
         base_depth = path.count("/") if path != "/" else 0
@@ -861,44 +871,30 @@ class DatabaseFileSystem:
             conditions.append(slash_count <= max_slashes)
 
         result = await session.execute(select(model).where(*conditions))
-        all_files = list(result.scalars().all())
 
         files: list[File] = []
-        total_files = 0
-        total_dirs = 0
-
-        for f in all_files:
-            info = file_to_info(f)
-            depth = info.path.count("/") - base_depth
-            files.append(
-                File(
-                    path=info.path,
-                    is_directory=info.is_directory,
-                    evidence=[
-                        TreeEvidence(
-                            operation="tree",
-                            depth=depth,
-                            is_directory=info.is_directory,
-                        )
-                    ],
-                )
-            )
+        directories: list[Directory] = []
+        for f in result.scalars().all():
             if f.is_directory:
-                total_dirs += 1
+                directories.append(Directory(path=f.path))
             else:
-                total_files += 1
+                files.append(File(
+                    path=f.path,
+                    size_bytes=f.size_bytes,
+                    mime_type=f.mime_type,
+                    current_version=f.current_version,
+                    created_at=f.created_at,
+                    updated_at=f.updated_at,
+                ))
 
         files.sort(key=lambda f: f.path)
-        tree_result = FileSearchResult(
+        directories.sort(key=lambda d: d.path)
+        return GroverResult(
             success=True,
-            message=f"{total_dirs} directories, {total_files} files",
+            message=f"{len(directories)} directories, {len(files)} files",
             files=files,
+            directories=directories,
         )
-        if candidates is not None:
-            allowed = set(candidates.paths)
-            tree_result.files = [f for f in tree_result.files if f.path in allowed]
-            tree_result.message = f"Found {len(tree_result.files)} item(s) (filtered)"
-        return tree_result
 
     # ------------------------------------------------------------------
     # Trash operations

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from grover.backends.database import DatabaseFileSystem
-from grover.models.internal.results import FileOperationResult
+from grover.models.internal.results import FileOperationResult, GroverResult
 from grover.providers.storage.disk import DiskStorageProvider
 from grover.util.content import get_similar_files, is_binary_file
 from grover.util.operations import paginate_content, write_file
@@ -264,7 +264,7 @@ class LocalFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Create directory in database and on disk."""
         result = await super().mkdir(path, parents, session=session, user_id=user_id)
 

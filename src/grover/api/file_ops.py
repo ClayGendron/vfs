@@ -9,8 +9,7 @@ from grover.backends.protocol import SupportsReconcile
 from grover.exceptions import MountNotFoundError
 from grover.models.database.file import FileModel
 from grover.models.internal.detail import WriteDetail
-from grover.models.internal.evidence import ListDirEvidence, TreeEvidence
-from grover.models.internal.ref import File
+from grover.models.internal.ref import Directory, File
 from grover.models.internal.results import (
     BatchResult,
     FileOperationResult,
@@ -36,14 +35,6 @@ class FileOpsMixin:
 
     _ctx: GroverContext
 
-    @staticmethod
-    def _split_candidates(candidates: FileSearchSet | None, mount_path: str) -> FileSearchSet | None:
-        """Strip mount prefix from candidate paths belonging to this mount."""
-        if candidates is None:
-            return None
-        paths = [p.removeprefix(mount_path) or "/" for p in candidates.paths if p.startswith(mount_path)]
-        return FileSearchSet.from_paths(paths) if paths else FileSearchSet()
-
     # ------------------------------------------------------------------
     # FS Operations (absorbed from VFS)
     # ------------------------------------------------------------------
@@ -51,14 +42,14 @@ class FileOpsMixin:
     async def read(
         self,
         path: str,
-        *,
         offset: int = 0,
         limit: int = 2000,
+        *,
         user_id: str | None = None,
     ) -> GroverResult:
         path = normalize_path(path)
-        async with self._ctx.mount_session(path) as (mount, rel_path, sess):
-            result = await mount.filesystem.read(rel_path, offset, limit, session=sess, user_id=user_id)
+        async with self._ctx.mount_session(path) as (mount, rel_path, session):
+            result = await mount.filesystem.read(rel_path, offset, limit, session=session, user_id=user_id)
         return result.rebase(mount.path)
 
     async def write(
@@ -68,18 +59,9 @@ class FileOpsMixin:
         overwrite: bool = True,
         *,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         f = FileModel(path=path, content=content)
-        result = await self.write_files([f], overwrite=overwrite, user_id=user_id)
-        if result.files:
-            file = result.files[0]
-            detail = file.details[0] if file.details else None
-            return FileOperationResult(
-                file=file,
-                success=detail.success if detail else result.success,
-                message=detail.message if detail else result.message,
-            )
-        return FileOperationResult(success=result.success, message=result.message)
+        return await self.write_files([f], overwrite=overwrite, user_id=user_id)
 
     async def write_files(self,
         files: list[FileModelBase],
@@ -130,40 +112,26 @@ class FileOpsMixin:
         replace_all: bool = False,
         user_id: str | None = None,
     ) -> GroverResult:
-        path = normalize_path(path)
-        if err := self._ctx.check_writable(path):
-            return GroverResult(success=False, message=err)
-
-        async with self._ctx.mount_session(path) as (mount, rel_path, sess):
+        if error := self._ctx.check_writable(path):
+            return error
+        async with self._ctx.mount_session(path) as (mount, rel_path, session):
             result = await mount.filesystem.edit(
                 rel_path,
                 old,
                 new,
                 replace_all,
                 "agent",
-                session=sess,
+                session=session,
                 user_id=user_id,
             )
-        result = result.rebase(mount.path)
-        if result.success:
-            self._ctx.worker.schedule(
-                path,
-                lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
-            )
-        return result
+        return result.rebase(mount.path)
 
     async def delete(self, path: str, permanent: bool = False, *, user_id: str | None = None) -> GroverResult:
-        path = normalize_path(path)
-        if err := self._ctx.check_writable(path):
-            return GroverResult(success=False, message=err)
-
-        async with self._ctx.mount_session(path) as (mount, rel_path, sess):
-            result = await mount.filesystem.delete(rel_path, permanent, session=sess, user_id=user_id)
-        result = result.rebase(mount.path)
-        if result.success:
-            self._ctx.worker.cancel(path)
-            self._ctx.worker.schedule_immediate(self._process_delete(path, user_id))  # type: ignore[attr-defined]
-        return result
+        if error := self._ctx.check_writable(path):
+            return error
+        async with self._ctx.mount_session(path) as (mount, rel_path, session):
+            result = await mount.filesystem.delete(rel_path, permanent, session=session, user_id=user_id)
+        return result.rebase(mount.path)
 
     async def mkdir(
         self,
@@ -171,104 +139,24 @@ class FileOpsMixin:
         parents: bool = True,
         *,
         user_id: str | None = None,
-    ) -> FileOperationResult:
-        path = normalize_path(path)
-        if err := self._ctx.check_writable(path):
-            return FileOperationResult(success=False, message=err)
+    ) -> GroverResult:
+        if error := self._ctx.check_writable(path):
+            return error
+        async with self._ctx.mount_session(path) as (mount, rel_path, session):
+            result = await mount.filesystem.mkdir(rel_path, parents, session=session, user_id=user_id)
+        return result.rebase(mount.path)
 
-        mount, rel_path = self._ctx.registry.resolve(path)
-        assert mount.filesystem is not None
-        async with self._ctx.session_for(mount) as sess:
-            result = await mount.filesystem.mkdir(rel_path, parents, session=sess, user_id=user_id)
-        result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
-        return result
-
-    async def list_dir(
-        self, path: str = "/", *, candidates: FileSearchSet | None = None, user_id: str | None = None
-    ) -> FileSearchResult:
+    async def exists(self, path: str, *, user_id: str | None = None) -> GroverResult:
         path = normalize_path(path)
 
         if path == "/":
-            return self._list_root()
-
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-        except MountNotFoundError:
-            return FileSearchResult(success=False, message=f"No mount found for path: {path}")
-
-        assert mount.filesystem is not None
-        mount_candidates = self._split_candidates(candidates, mount.path)
-        async with self._ctx.session_for(mount) as sess:
-            result = await mount.filesystem.list_dir(
-                rel_path, candidates=mount_candidates, session=sess, user_id=user_id
-            )
-        if result.success:
-            result = result.rebase(mount.path)
-        return result
-
-    def _list_root(self) -> FileSearchResult:
-        files = [
-            File(
-                path=mount.path,
-                evidence=[
-                    ListDirEvidence(
-                        operation="list_dir",
-                        is_directory=True,
-                    )
-                ],
-            )
-            for mount in self._ctx.registry.list_visible_mounts()
-        ]
-        return FileSearchResult(
-            success=True,
-            message=f"Found {len(files)} mount(s)",
-            files=files,
-        )
-
-    async def exists(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
-        path = normalize_path(path)
-
-        if path == "/":
-            return FileOperationResult(file=File(path=path), success=True)
+            return GroverResult(success=True, directories=[Directory(path=path)])
 
         if self._ctx.registry.has_mount(path):
-            return FileOperationResult(file=File(path=path), success=True)
+            return GroverResult(success=True, directories=[Directory(path=path)])
 
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-        except MountNotFoundError:
-            return FileOperationResult(file=File(path=path), success=False)
-
-        assert mount.filesystem is not None
-        async with self._ctx.session_for(mount) as sess:
-            return await mount.filesystem.exists(rel_path, session=sess, user_id=user_id)
-
-    async def get_info(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
-        path = normalize_path(path)
-
-        if self._ctx.registry.has_mount(path):
-            for mount in self._ctx.registry.list_mounts():
-                if mount.path == path:
-                    return FileOperationResult(
-                        file=File(path=mount.path),
-                        success=True,
-                    )
-
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-        except MountNotFoundError:
-            return FileOperationResult(
-                success=False,
-                message=f"No mount found for path: {path}",
-                file=File(path=path),
-            )
-
-        assert mount.filesystem is not None
-        async with self._ctx.session_for(mount) as sess:
-            info = await mount.filesystem.get_info(rel_path, session=sess, user_id=user_id)
-        if info.success:
-            info = self._ctx.prefix_file_info(info, mount)
-        return info
+        async with self._ctx.mount_session(path) as (mount, rel_path, session):
+            return await mount.filesystem.exists(rel_path, session=session, user_id=user_id)
 
     def get_permission_info(self, path: str) -> tuple[str, bool]:
         path = normalize_path(path)
@@ -276,205 +164,176 @@ class FileOpsMixin:
         return permission.value, False
 
     async def move(
-        self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False
-    ) -> FileOperationResult:
-        src = normalize_path(src)
-        dest = normalize_path(dest)
+        self, src: str, dest: str, *, user_id: str | None = None,
+    ) -> GroverResult:
+        return await self.move_files([(src, dest)], user_id=user_id)
 
-        if err := self._ctx.check_writable(src):
-            return FileOperationResult(success=False, message=err)
-        if err := self._ctx.check_writable(dest):
-            return FileOperationResult(success=False, message=err)
+    async def move_files(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        user_id: str | None = None,
+    ) -> GroverResult:
+        """Batch move files. All pairs must be within the same mount."""
+        if not pairs:
+            return GroverResult(success=True, message="No files to move")
 
-        try:
+        files: list[File] = []
+        for src, dest in pairs:
+            src = normalize_path(src)
+            dest = normalize_path(dest)
+
+            if error := self._ctx.check_writable(src):
+                return error
+            if error := self._ctx.check_writable(dest):
+                return error
+
+            src_mount, src_rel = self._ctx.registry.resolve(src)
+            dest_mount, dest_rel = self._ctx.registry.resolve(dest)
+            if src_mount is not dest_mount:
+                return GroverResult(success=False, message=f"Cannot move across mounts: {src} -> {dest}")
+
+            async with self._ctx.session_for(src_mount) as session:
+                result = await src_mount.filesystem.move(
+                    src_rel, dest_rel, session=session, user_id=user_id,
+                )
+            if not result.success:
+                return GroverResult(
+                    success=False,
+                    message=f"Move failed: {src} -> {dest}: {result.message}",
+                    files=files,
+                )
+            result.file.path = self._ctx.prefix_path(result.file.path, src_mount.path) or result.file.path
+            files.append(result.file)
+
+        return GroverResult(
+            success=True,
+            message=f"Moved {len(files)} file(s)",
+            files=files,
+        )
+
+    async def copy(self, src: str, dest: str, *, user_id: str | None = None) -> GroverResult:
+        return await self.copy_files([(src, dest)], user_id=user_id)
+
+    async def copy_files(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        user_id: str | None = None,
+    ) -> GroverResult:
+        """Batch copy files. Cross-mount copies use read + write."""
+        if not pairs:
+            return GroverResult(success=True, message="No files to copy")
+
+        files: list[File] = []
+        for src, dest in pairs:
+            src = normalize_path(src)
+            dest = normalize_path(dest)
+
+            if error := self._ctx.check_writable(dest):
+                return error
+
             src_mount, src_rel = self._ctx.registry.resolve(src)
             dest_mount, dest_rel = self._ctx.registry.resolve(dest)
 
-            assert src_mount.filesystem is not None
-            assert dest_mount.filesystem is not None
             if src_mount is dest_mount:
-                async with self._ctx.session_for(src_mount) as sess:
-                    result = await src_mount.filesystem.move(
-                        src_rel, dest_rel, session=sess, follow=follow, user_id=user_id
+                async with self._ctx.session_for(src_mount) as session:
+                    result = await src_mount.filesystem.copy(
+                        src_rel, dest_rel, session=session, user_id=user_id,
                     )
-                if result.success:
-                    self._ctx.worker.cancel(src)
-                    self._ctx.worker.schedule_immediate(self._process_move(src, dest, user_id))  # type: ignore[attr-defined]
-                return result
-
-            # Cross-mount move: read → write → delete (non-atomic)
-            async with self._ctx.session_for(src_mount) as src_sess:
-                read_result = await src_mount.filesystem.read(src_rel, session=src_sess, user_id=user_id)
-            if not read_result.success:
-                return FileOperationResult(
-                    success=False,
-                    message=f"Cannot read source for cross-mount move: {read_result.message}",
-                )
-            if read_result.file.content is None:
-                return FileOperationResult(success=False, message=f"Source file has no content: {src}")
-
-            async with self._ctx.session_for(dest_mount) as dest_sess:
-                write_result = await dest_mount.filesystem.write(
-                    dest_rel, read_result.file.content, session=dest_sess, user_id=user_id
-                )
-            if not write_result.success:
-                return FileOperationResult(
-                    success=False,
-                    message=(f"Cannot write to destination for cross-mount move: {write_result.message}"),
-                )
-
-            async with self._ctx.session_for(src_mount) as src_sess:
-                delete_result = await src_mount.filesystem.delete(
-                    src_rel, permanent=False, session=src_sess, user_id=user_id
-                )
-            if not delete_result.success:
-                return FileOperationResult(
-                    success=False,
-                    message=f"Copied but failed to delete source: {delete_result.message}",
-                )
-
-            self._ctx.worker.cancel(src)
-            self._ctx.worker.schedule_immediate(self._process_move(src, dest, user_id))  # type: ignore[attr-defined]
-            return FileOperationResult(
-                success=True,
-                message=f"Moved {src} -> {dest} (cross-mount)",
-            )
-        except Exception as e:
-            return FileOperationResult(success=False, message=f"Move failed: {e}")
-
-    async def copy(self, src: str, dest: str, *, user_id: str | None = None) -> FileOperationResult:
-        src = normalize_path(src)
-        dest = normalize_path(dest)
-
-        if err := self._ctx.check_writable(dest):
-            return FileOperationResult(success=False, message=err)
-
-        try:
-            src_mount, src_rel = self._ctx.registry.resolve(src)
-            dest_mount, dest_rel = self._ctx.registry.resolve(dest)
-
-            assert src_mount.filesystem is not None
-            assert dest_mount.filesystem is not None
-            if src_mount is dest_mount:
-                async with self._ctx.session_for(src_mount) as sess:
-                    result = await src_mount.filesystem.copy(src_rel, dest_rel, session=sess, user_id=user_id)
                 result.file.path = self._ctx.prefix_path(result.file.path, dest_mount.path) or result.file.path
-                if result.success:
-                    self._ctx.worker.schedule(
-                        dest,
-                        lambda p=dest, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
+                if not result.success:
+                    return GroverResult(
+                        success=False,
+                        message=f"Copy failed: {src} -> {dest}: {result.message}",
+                        files=files,
                     )
-                return result
+                files.append(result.file)
+            else:
+                # Cross-mount: read from source, write to dest
+                async with self._ctx.mount_session(src) as (_, src_rel_path, src_sess):
+                    read_result = await src_mount.filesystem.read(src_rel_path, session=src_sess, user_id=user_id)
+                if not read_result.success or read_result.content is None:
+                    return GroverResult(
+                        success=False,
+                        message=f"Cannot read source for cross-mount copy: {src}",
+                        files=files,
+                    )
+                async with self._ctx.session_for(dest_mount) as dest_sess:
+                    write_result = await dest_mount.filesystem.write(
+                        dest_rel, read_result.content, session=dest_sess, user_id=user_id,
+                    )
+                if not write_result.success:
+                    return GroverResult(
+                        success=False,
+                        message=f"Cannot write dest for cross-mount copy: {dest}",
+                        files=files,
+                    )
+                files.append(write_result.file)
 
-            # Cross-mount copy: read → write
-            async with self._ctx.session_for(src_mount) as src_sess:
-                read_result = await src_mount.filesystem.read(src_rel, session=src_sess, user_id=user_id)
-            if not read_result.success:
-                return FileOperationResult(
-                    success=False,
-                    message=f"Cannot read source for cross-mount copy: {read_result.message}",
-                )
-            if not read_result.file.content:
-                return FileOperationResult(success=False, message=f"Source file has no content: {src}")
+        return GroverResult(
+            success=True,
+            message=f"Copied {len(files)} file(s)",
+            files=files,
+        )
+    
+    async def list_dir(
+        self,
+        path: str = "/",
+        *,
+        user_id: str | None = None,
+    ) -> GroverResult:
+        path = normalize_path(path)
 
-            async with self._ctx.session_for(dest_mount) as dest_sess:
-                result = await dest_mount.filesystem.write(
-                    dest_rel, read_result.file.content, session=dest_sess, user_id=user_id
-                )
-            result.file.path = self._ctx.prefix_path(result.file.path, dest_mount.path) or result.file.path
-            if result.success:
-                self._ctx.worker.schedule(
-                    dest,
-                    lambda p=dest, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
-                )
-            return result
-        except Exception as e:
-            return FileOperationResult(success=False, message=f"Copy failed: {e}")
+        if path == "/":
+            return self._list_root()
 
-    # ------------------------------------------------------------------
-    # Tree (moved from SearchOpsMixin)
-    # ------------------------------------------------------------------
+        async with self._ctx.mount_session(path) as (mount, rel_path, session):
+            result = await mount.filesystem.list_dir(rel_path, session=session, user_id=user_id)
+        return result.rebase(mount.path)
+
+    def _list_root(self) -> GroverResult:
+        dirs = [
+            Directory(path=mount.path)
+            for mount in self._ctx.registry.list_mounts()
+        ]
+        return GroverResult(
+            success=True,
+            message=f"Found {len(dirs)} mount(s)",
+            directories=dirs,
+        )
 
     async def tree(
         self,
         path: str = "/",
         *,
         max_depth: int | None = None,
-        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
-    ) -> FileSearchResult:
+    ) -> GroverResult:
         path = normalize_path(path)
-        try:
-            if path == "/":
-                root_files = [
-                    File(
-                        path=mount.path,
-                        evidence=[
-                            TreeEvidence(
-                                operation="tree",
-                                depth=0,
-                                is_directory=True,
-                            )
-                        ],
-                    )
-                    for mount in self._ctx.registry.list_visible_mounts()
-                ]
-                combined = FileSearchResult(success=True, message="", files=root_files)
 
-                if max_depth is None or max_depth > 0:
-                    for mount in self._ctx.registry.list_visible_mounts():
-                        assert mount.filesystem is not None
-                        mount_candidates = self._split_candidates(candidates, mount.path)
-                        async with self._ctx.session_for(mount) as sess:
-                            result = await mount.filesystem.tree(
-                                "/",
-                                max_depth=max_depth,
-                                candidates=mount_candidates,
-                                session=sess,
-                                user_id=user_id,
-                            )
-                        if result.success:
-                            combined = combined | result.rebase(mount.path)
-
-                total_dirs = sum(
-                    1 for f in combined.files if any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
-                )
-                total_files_count = sum(
-                    1
-                    for f in combined.files
-                    if any(isinstance(e, TreeEvidence) and not e.is_directory for e in f.evidence)
-                )
-                combined.message = f"{total_dirs} directories, {total_files_count} files"
-                return combined
-
-            mount, rel_path = self._ctx.registry.resolve(path)
-            assert mount.filesystem is not None
-            mount_candidates = self._split_candidates(candidates, mount.path)
-            async with self._ctx.session_for(mount) as sess:
-                result = await mount.filesystem.tree(
-                    rel_path,
-                    max_depth=max_depth,
-                    candidates=mount_candidates,
-                    session=sess,
-                    user_id=user_id,
-                )
-            if result.success:
-                result = result.rebase(mount.path)
-
-            total_dirs = sum(
-                1 for f in result.files if any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
+        if path == "/":
+            combined = GroverResult(
+                success=True,
+                directories=[Directory(path=mount.path) for mount in self._ctx.registry.list_mounts()],
             )
-            total_files_count = sum(
-                1 for f in result.files if any(isinstance(e, TreeEvidence) and not e.is_directory for e in f.evidence)
-            )
-            result.message = f"{total_dirs} directories, {total_files_count} files"
-            return result
-        except Exception as e:
-            return FileSearchResult(success=False, message=f"Tree failed: {e}")
+            if max_depth is None or max_depth > 0:
+                for mount in self._ctx.registry.list_mounts():
+                    async with self._ctx.session_for(mount) as session:
+                        mount_depth = max_depth - 1 if max_depth is not None else None
+                        result = await mount.filesystem.tree(
+                            "/", max_depth=mount_depth, session=session, user_id=user_id,
+                        )
+                    if result.success:
+                        combined = combined | result.rebase(mount.path)
+            combined.message = f"{len(combined.directories)} directories, {len(combined.files)} files"
+            return combined
 
-    # ------------------------------------------------------------------
-    # Version operations (absorbed from VersionTrashMixin)
-    # ------------------------------------------------------------------
+        async with self._ctx.mount_session(path) as (mount, rel_path, session):
+            result = await mount.filesystem.tree(
+                rel_path, max_depth=max_depth, session=session, user_id=user_id,
+            )
+        return result.rebase(mount.path)
 
     async def list_versions(self, path: str, *, user_id: str | None = None) -> FileSearchResult:
         path = normalize_path(path)

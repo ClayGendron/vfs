@@ -70,10 +70,9 @@ class GroverFileSystem(Protocol):
         self,
         path: str = "/",
         *,
-        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileSearchResult: ...
+    ) -> GroverResult: ...
 
     async def exists(
         self,
@@ -81,15 +80,7 @@ class GroverFileSystem(Protocol):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult: ...
-
-    async def get_info(
-        self,
-        path: str,
-        *,
-        session: AsyncSession,
-        user_id: str | None = None,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     # ------------------------------------------------------------------
     # Write
@@ -151,7 +142,7 @@ class GroverFileSystem(Protocol):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     async def move(
         self,
@@ -211,10 +202,9 @@ class GroverFileSystem(Protocol):
         path: str = "/",
         *,
         max_depth: int | None = None,
-        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileSearchResult: ...
+    ) -> GroverResult: ...
 
     # ------------------------------------------------------------------
     # Versioning

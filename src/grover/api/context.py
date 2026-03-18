@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, TypeVar
 from grover.exceptions import MountNotFoundError
 from grover.models.internal.results import GroverResult
 from grover.permissions import Permission
+from grover.util.paths import normalize_path
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
@@ -65,18 +66,15 @@ class GroverContext:
         """Drain all pending background work."""
         await self.worker.drain(timeout=timeout)
 
-    def check_writable(self, virtual_path: str) -> str | None:
-        """Return an error message if *virtual_path* is read-only, else ``None``.
-
-        Replaces the previous raise-based pattern to avoid unnecessary
-        exception overhead in the common (writable) case.
-        """
+    def check_writable(self, virtual_path: str) -> GroverResult | None:
+        """Return a failed ``GroverResult`` if *virtual_path* is read-only, else ``None``."""
+        virtual_path = normalize_path(virtual_path)
         try:
             perm = self.registry.get_permission(virtual_path)
         except MountNotFoundError as e:
-            return str(e)
+            return GroverResult(success=False, message=str(e))
         if perm == Permission.READ_ONLY:
-            return f"Cannot write to read-only path: {virtual_path}"
+            return GroverResult(success=False, message=f"Cannot write to read-only path: {virtual_path}")
         return None
 
     @staticmethod
@@ -92,11 +90,6 @@ class GroverContext:
         if path == "/":
             return mount_path
         return mount_path + path
-
-    def prefix_file_info(self, info: FileOperationResult, mount: Mount) -> FileOperationResult:
-        prefixed_path = self.prefix_path(info.file.path, mount.path) or info.file.path
-        info.file.path = prefixed_path
-        return info
 
     # ------------------------------------------------------------------
     # Per-mount graph resolution
@@ -144,12 +137,12 @@ class GroverContext:
         self,
         items: list[T],
         path_fn: Callable[[T], str],
-    ) -> tuple[dict[str, list[T]], str | None]:
+    ) -> tuple[dict[str, list[T]], GroverResult | None]:
         """Group *items* by mount and verify all mounts are writable.
 
         *path_fn* extracts the path used to resolve each item's mount.
 
-        Returns ``(groups, None)`` on success, or ``({}, error_message)``
+        Returns ``(groups, None)`` on success, or ``({}, GroverResult)``
         if any resolved mount is read-only.
         """
         from collections import defaultdict

@@ -196,7 +196,7 @@ class Grover:
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Write *content* to *path*."""
         return self._run(self._async.write(path, content, overwrite=overwrite, user_id=user_id))
 
@@ -212,31 +212,33 @@ class Grover:
         """Replace *old* with *new* in the file at *path*."""
         return self._run(self._async.edit(path, old, new, replace_all=replace_all, user_id=user_id))
 
-    def delete(self, path: str, permanent: bool = False, *, user_id: str | None = None) -> FileOperationResult:
+    def delete(self, path: str, permanent: bool = False, *, user_id: str | None = None) -> GroverResult:
         """Delete the file at *path*."""
         return self._run(self._async.delete(path, permanent, user_id=user_id))
 
-    def list_dir(
-        self, path: str = "/", *, candidates: FileSearchSet | None = None, user_id: str | None = None
-    ) -> FileSearchResult:
+    def list_dir(self, path: str = "/", *, user_id: str | None = None) -> GroverResult:
         """List entries under *path*."""
-        return self._run(self._async.list_dir(path, candidates=candidates, user_id=user_id))
+        return self._run(self._async.list_dir(path, user_id=user_id))
 
-    def exists(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
+    def exists(self, path: str, *, user_id: str | None = None) -> GroverResult:
         """Check whether *path* exists."""
         return self._run(self._async.exists(path, user_id=user_id))
 
-    def get_info(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
-        """Return metadata for *path*."""
-        return self._run(self._async.get_info(path, user_id=user_id))
-
-    def move(self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False) -> FileOperationResult:
+    def move(self, src: str, dest: str, *, user_id: str | None = None) -> GroverResult:
         """Move a file from *src* to *dest*."""
-        return self._run(self._async.move(src, dest, user_id=user_id, follow=follow))
+        return self._run(self._async.move(src, dest, user_id=user_id))
 
-    def copy(self, src: str, dest: str, *, user_id: str | None = None) -> FileOperationResult:
+    def move_files(self, pairs: list[tuple[str, str]], *, user_id: str | None = None) -> GroverResult:
+        """Batch move files."""
+        return self._run(self._async.move_files(pairs, user_id=user_id))
+
+    def copy(self, src: str, dest: str, *, user_id: str | None = None) -> GroverResult:
         """Copy a file from *src* to *dest*."""
         return self._run(self._async.copy(src, dest, user_id=user_id))
+
+    def copy_files(self, pairs: list[tuple[str, str]], *, user_id: str | None = None) -> GroverResult:
+        """Batch copy files."""
+        return self._run(self._async.copy_files(pairs, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Search / Query wrappers (sync)
@@ -296,11 +298,10 @@ class Grover:
         path: str = "/",
         *,
         max_depth: int | None = None,
-        candidates: FileSearchSet | None = None,
         user_id: str | None = None,
-    ) -> FileSearchResult:
+    ) -> GroverResult:
         """List all entries under *path* recursively."""
-        return self._run(self._async.tree(path, max_depth=max_depth, candidates=candidates, user_id=user_id))
+        return self._run(self._async.tree(path, max_depth=max_depth, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Version / Trash / Reconciliation wrappers (sync)
