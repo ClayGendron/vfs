@@ -175,6 +175,22 @@ class ReadDetail(Detail):
 
 
 @dataclass(frozen=True, slots=True)
+class MoveDetail(Detail):
+    """Detail from a move operation."""
+
+    source_path: str = ""
+    version: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class CopyDetail(Detail):
+    """Detail from a copy operation."""
+
+    source_path: str = ""
+    version: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class DeleteDetail(Detail):
     """Detail from a delete operation."""
 

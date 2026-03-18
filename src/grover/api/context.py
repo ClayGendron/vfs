@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
     from grover.analyzers import AnalyzerRegistry
     from grover.models.internal.ref import Directory, File, FileConnection
-    from grover.models.internal.results import FileOperationResult
     from grover.mount import Mount, MountRegistry
     from grover.providers.graph.protocol import GraphProvider
     from grover.worker import BackgroundWorker
@@ -133,6 +132,23 @@ class GroverContext:
     # Dispatch helpers
     # ------------------------------------------------------------------
 
+    def group_by_mount(
+        self,
+        items: list[T],
+        path_fn: Callable[[T], str],
+    ) -> dict[str, list[T]]:
+        """Group *items* by mount path.
+
+        *path_fn* extracts the path used to resolve each item's mount.
+        """
+        from collections import defaultdict
+
+        groups: dict[str, list[T]] = defaultdict(list)
+        for item in items:
+            mount, _rel = self.registry.resolve(path_fn(item))
+            groups[mount.path].append(item)
+        return dict(groups)
+
     def group_by_mount_writable(
         self,
         items: list[T],
@@ -145,18 +161,13 @@ class GroverContext:
         Returns ``(groups, None)`` on success, or ``({}, GroverResult)``
         if any resolved mount is read-only.
         """
-        from collections import defaultdict
-
-        groups: dict[str, list[T]] = defaultdict(list)
-        for item in items:
-            mount, _rel = self.registry.resolve(path_fn(item))
-            groups[mount.path].append(item)
+        groups = self.group_by_mount(items, path_fn)
 
         for mount_path in groups:
             if err := self.check_writable(mount_path):
                 return {}, err
 
-        return dict(groups), None
+        return groups, None
 
     @asynccontextmanager
     async def mount_session(self, path: str) -> AsyncGenerator[tuple[Mount, str, AsyncSession]]:

@@ -189,6 +189,10 @@ class Grover:
         """Read file content at *path*."""
         return self._run(self._async.read(path, offset=offset, limit=limit, user_id=user_id))
 
+    def read_files(self, paths: list[str], *, user_id: str | None = None) -> GroverResult:
+        """Batch read files."""
+        return self._run(self._async.read_files(paths, user_id=user_id))
+
     def write(
         self,
         path: str,

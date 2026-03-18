@@ -6,7 +6,6 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from grover.backends.protocol import SupportsReconcile
-from grover.exceptions import MountNotFoundError
 from grover.models.database.file import FileModel
 from grover.models.internal.detail import WriteDetail
 from grover.models.internal.ref import Directory, File
@@ -14,7 +13,6 @@ from grover.models.internal.results import (
     BatchResult,
     FileOperationResult,
     FileSearchResult,
-    FileSearchSet,
     GroverResult,
 )
 from grover.permissions import Permission
@@ -35,10 +33,6 @@ class FileOpsMixin:
 
     _ctx: GroverContext
 
-    # ------------------------------------------------------------------
-    # FS Operations (absorbed from VFS)
-    # ------------------------------------------------------------------
-
     async def read(
         self,
         path: str,
@@ -51,6 +45,28 @@ class FileOpsMixin:
         async with self._ctx.mount_session(path) as (mount, rel_path, session):
             result = await mount.filesystem.read(rel_path, offset, limit, session=session, user_id=user_id)
         return result.rebase(mount.path)
+
+    async def read_files(
+        self,
+        paths: list[str],
+        *,
+        user_id: str | None = None,
+    ) -> GroverResult:
+        """Batch read files, grouped by mount. Cross-mount reads run in parallel."""
+        if not paths:
+            return GroverResult(success=True, message="No files to read")
+
+        normalized = [normalize_path(p) for p in paths]
+        groups = self._ctx.group_by_mount(normalized, lambda p: p)
+
+        async def _handler(mount: Mount, group: list[str], session: AsyncSession) -> GroverResult:
+            rel_paths = [p.removeprefix(mount.path) or "/" for p in group]
+            result = await mount.filesystem.read_files(rel_paths, session=session)
+            return result.rebase(mount.path)
+
+        result = await self._ctx.dispatch_to_mounts(groups, _handler)
+        result.message = f"Read {result.succeeded} file(s)" + (f", {result.failed} failed" if result.failed else "")
+        return result
 
     async def write(
         self,
@@ -75,7 +91,7 @@ class FileOpsMixin:
 
         groups, err = self._ctx.group_by_mount_writable(files, lambda f: f.path)
         if err:
-            return GroverResult(success=False, message=err)
+            return err
 
         async def _handler(mount: Mount, group: list[FileModelBase], session: AsyncSession) -> GroverResult:
             backend_files = [f.model_copy(update={"path": f.path.removeprefix(mount.path) or "/"}) for f in group]
@@ -156,12 +172,8 @@ class FileOpsMixin:
             return GroverResult(success=True, directories=[Directory(path=path)])
 
         async with self._ctx.mount_session(path) as (mount, rel_path, session):
-            return await mount.filesystem.exists(rel_path, session=session, user_id=user_id)
-
-    def get_permission_info(self, path: str) -> tuple[str, bool]:
-        path = normalize_path(path)
-        permission = self._ctx.registry.get_permission(path)
-        return permission.value, False
+            result = await mount.filesystem.exists(rel_path, session=session, user_id=user_id)
+        return result.rebase(mount.path)
 
     async def move(
         self, src: str, dest: str, *, user_id: str | None = None,
@@ -174,42 +186,105 @@ class FileOpsMixin:
         *,
         user_id: str | None = None,
     ) -> GroverResult:
-        """Batch move files. All pairs must be within the same mount."""
+        """Batch move files. All pairs must be within the same mount.
+
+        Directories are moved one at a time via the single ``move()`` method.
+        Files are batched into a single ``move_files()`` call on the backend.
+        """
         if not pairs:
             return GroverResult(success=True, message="No files to move")
 
-        files: list[File] = []
+        # --- Validation (fail-fast) ---
+        normalized: list[tuple[str, str]] = []
+        mount = None
         for src, dest in pairs:
-            src = normalize_path(src)
-            dest = normalize_path(dest)
-
+            src, dest = normalize_path(src), normalize_path(dest)
             if error := self._ctx.check_writable(src):
                 return error
             if error := self._ctx.check_writable(dest):
                 return error
-
-            src_mount, src_rel = self._ctx.registry.resolve(src)
-            dest_mount, dest_rel = self._ctx.registry.resolve(dest)
+            src_mount, _ = self._ctx.registry.resolve(src)
+            dest_mount, _ = self._ctx.registry.resolve(dest)
             if src_mount is not dest_mount:
                 return GroverResult(success=False, message=f"Cannot move across mounts: {src} -> {dest}")
+            if mount is None:
+                mount = src_mount
+            elif mount is not src_mount:
+                return GroverResult(success=False, message=f"All moves must be on the same mount: {src}")
+            normalized.append((src, dest))
 
-            async with self._ctx.session_for(src_mount) as session:
-                result = await src_mount.filesystem.move(
-                    src_rel, dest_rel, session=session, user_id=user_id,
-                )
+        assert mount is not None
+        assert mount.filesystem is not None
+
+        # Check no duplicate destinations
+        dests = [d for _, d in normalized]
+        if len(set(dests)) != len(dests):
+            return GroverResult(success=False, message="Duplicate destination paths in batch")
+
+        # Classify sources as files vs directories via batch read
+        src_paths = [s for s, _ in normalized]
+        async with self._ctx.session_for(mount) as session:
+            read_result = await mount.filesystem.read_files(
+                [s.removeprefix(mount.path) or "/" for s in src_paths],
+                session=session,
+            )
+
+        is_dir: dict[str, bool] = {}
+        for src, f in zip(src_paths, read_result.files, strict=True):
+            if all(d.success for d in f.details):
+                is_dir[src] = False
+            elif any("directory" in d.message.lower() for d in f.details):
+                is_dir[src] = True
+            else:
+                return GroverResult(success=False, message=f"Source not found: {src}")
+
+        # Conflict check: no source should be nested inside another source
+        dir_srcs = {s for s, is_d in is_dir.items() if is_d}
+        for src in src_paths:
+            for ds in dir_srcs:
+                if src != ds and src.startswith(ds + "/"):
+                    return GroverResult(
+                        success=False,
+                        message=f"Cannot move {src} — its parent {ds} is also being moved",
+                    )
+
+        # --- Execution ---
+        dir_pairs = [(s, d) for s, d in normalized if is_dir[s]]
+        file_pairs = [(s, d) for s, d in normalized if not is_dir[s]]
+        all_files: list[File] = []
+
+        # Directories: one at a time via existing move()
+        for src, dest in dir_pairs:
+            src_rel = src.removeprefix(mount.path) or "/"
+            dest_rel = dest.removeprefix(mount.path) or "/"
+            async with self._ctx.session_for(mount) as session:
+                result = await mount.filesystem.move(src_rel, dest_rel, session=session, user_id=user_id)
             if not result.success:
                 return GroverResult(
                     success=False,
                     message=f"Move failed: {src} -> {dest}: {result.message}",
-                    files=files,
+                    files=all_files,
                 )
-            result.file.path = self._ctx.prefix_path(result.file.path, src_mount.path) or result.file.path
-            files.append(result.file)
+            result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
+            all_files.append(result.file)
+
+        # Files: true batch
+        if file_pairs:
+            rel_pairs = [
+                (s.removeprefix(mount.path) or "/", d.removeprefix(mount.path) or "/")
+                for s, d in file_pairs
+            ]
+            async with self._ctx.session_for(mount) as session:
+                result = await mount.filesystem.move_files(rel_pairs, session=session)
+            if not result.success:
+                return GroverResult(success=False, message=result.message, files=all_files)
+            rebased = result.rebase(mount.path)
+            all_files.extend(rebased.files)
 
         return GroverResult(
             success=True,
-            message=f"Moved {len(files)} file(s)",
-            files=files,
+            message=f"Moved {len(all_files)} file(s)",
+            files=all_files,
         )
 
     async def copy(self, src: str, dest: str, *, user_id: str | None = None) -> GroverResult:
@@ -221,62 +296,138 @@ class FileOpsMixin:
         *,
         user_id: str | None = None,
     ) -> GroverResult:
-        """Batch copy files. Cross-mount copies use read + write."""
+        """Batch copy files. Cross-mount copies use read_files + write_files.
+
+        Directories are copied one at a time via the single ``copy()`` method.
+        Same-mount files use backend ``copy_files()``. Cross-mount files use
+        batch ``read_files`` from source + ``write_files`` to dest.
+        """
         if not pairs:
             return GroverResult(success=True, message="No files to copy")
 
-        files: list[File] = []
+        # --- Validation (fail-fast) ---
+        normalized: list[tuple[str, str]] = []
         for src, dest in pairs:
-            src = normalize_path(src)
-            dest = normalize_path(dest)
-
+            src, dest = normalize_path(src), normalize_path(dest)
             if error := self._ctx.check_writable(dest):
                 return error
+            normalized.append((src, dest))
 
+        dests = [d for _, d in normalized]
+        if len(set(dests)) != len(dests):
+            return GroverResult(success=False, message="Duplicate destination paths in batch")
+
+        # Group source paths by mount for batch classification
+        src_paths = [s for s, _ in normalized]
+        src_mount_groups = self._ctx.group_by_mount(src_paths, lambda p: p)
+
+        # Batch-read all sources to classify files vs directories
+        src_content: dict[str, str | None] = {}
+        is_dir: dict[str, bool] = {}
+
+        for mount_path, group_paths in src_mount_groups.items():
+            mount = self._ctx.registry.mounts[mount_path]
+            assert mount.filesystem is not None
+            rel_paths = [p.removeprefix(mount.path) or "/" for p in group_paths]
+            async with self._ctx.session_for(mount) as session:
+                read_result = await mount.filesystem.read_files(rel_paths, session=session)
+
+            for src, f in zip(group_paths, read_result.files, strict=True):
+                if all(d.success for d in f.details):
+                    is_dir[src] = False
+                    src_content[src] = f.content
+                elif any("directory" in d.message.lower() for d in f.details):
+                    is_dir[src] = True
+                else:
+                    return GroverResult(success=False, message=f"Source not found: {src}")
+
+        # Conflict check: no source should be nested inside another source
+        dir_srcs = {s for s, is_d in is_dir.items() if is_d}
+        for src in src_paths:
+            for ds in dir_srcs:
+                if src != ds and src.startswith(ds + "/"):
+                    return GroverResult(
+                        success=False,
+                        message=f"Cannot copy {src} — its parent {ds} is also being copied",
+                    )
+
+        # --- Partition ---
+        dir_pairs: list[tuple[str, str]] = []
+        same_mount_file_pairs: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        # dest_mount_path -> [(src, dest, content)]
+        cross_mount_file_pairs: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+
+        for src, dest in normalized:
+            if is_dir[src]:
+                dir_pairs.append((src, dest))
+                continue
+            src_mount, _ = self._ctx.registry.resolve(src)
+            dest_mount, _ = self._ctx.registry.resolve(dest)
+            if src_mount is dest_mount:
+                same_mount_file_pairs[src_mount.path].append((src, dest))
+            else:
+                cross_mount_file_pairs[dest_mount.path].append((src, dest, src_content[src] or ""))
+
+        all_files: list[File] = []
+
+        # Directories: one at a time
+        for src, dest in dir_pairs:
             src_mount, src_rel = self._ctx.registry.resolve(src)
             dest_mount, dest_rel = self._ctx.registry.resolve(dest)
-
+            assert src_mount.filesystem is not None
             if src_mount is dest_mount:
                 async with self._ctx.session_for(src_mount) as session:
-                    result = await src_mount.filesystem.copy(
-                        src_rel, dest_rel, session=session, user_id=user_id,
-                    )
-                result.file.path = self._ctx.prefix_path(result.file.path, dest_mount.path) or result.file.path
+                    result = await src_mount.filesystem.copy(src_rel, dest_rel, session=session, user_id=user_id)
                 if not result.success:
                     return GroverResult(
-                        success=False,
-                        message=f"Copy failed: {src} -> {dest}: {result.message}",
-                        files=files,
+                        success=False, message=f"Copy failed: {src} -> {dest}: {result.message}", files=all_files,
                     )
-                files.append(result.file)
+                result.file.path = self._ctx.prefix_path(result.file.path, dest_mount.path) or result.file.path
+                all_files.append(result.file)
             else:
-                # Cross-mount: read from source, write to dest
-                async with self._ctx.mount_session(src) as (_, src_rel_path, src_sess):
-                    read_result = await src_mount.filesystem.read(src_rel_path, session=src_sess, user_id=user_id)
-                if not read_result.success or read_result.content is None:
-                    return GroverResult(
-                        success=False,
-                        message=f"Cannot read source for cross-mount copy: {src}",
-                        files=files,
-                    )
-                async with self._ctx.session_for(dest_mount) as dest_sess:
-                    write_result = await dest_mount.filesystem.write(
-                        dest_rel, read_result.content, session=dest_sess, user_id=user_id,
-                    )
-                if not write_result.success:
-                    return GroverResult(
-                        success=False,
-                        message=f"Cannot write dest for cross-mount copy: {dest}",
-                        files=files,
-                    )
-                files.append(write_result.file)
+                return GroverResult(
+                    success=False,
+                    message=f"Cross-mount directory copy not supported: {src} -> {dest}",
+                    files=all_files,
+                )
+
+        # Same-mount files: batch per mount
+        for mount_path, file_pairs in same_mount_file_pairs.items():
+            mount = self._ctx.registry.mounts[mount_path]
+            assert mount.filesystem is not None
+            rel_pairs = [
+                (s.removeprefix(mount.path) or "/", d.removeprefix(mount.path) or "/")
+                for s, d in file_pairs
+            ]
+            async with self._ctx.session_for(mount) as session:
+                result = await mount.filesystem.copy_files(rel_pairs, session=session)
+            if not result.success:
+                return GroverResult(success=False, message=result.message, files=all_files)
+            all_files.extend(result.rebase(mount.path).files)
+
+        # Cross-mount files: batch read already done, batch write to dest
+        for dest_mount_path, triples in cross_mount_file_pairs.items():
+            dest_mount = self._ctx.registry.mounts[dest_mount_path]
+            assert dest_mount.filesystem is not None
+            dest_files = [
+                FileModel(
+                    path=dest.removeprefix(dest_mount.path) or "/",
+                    content=content,
+                )
+                for _, dest, content in triples
+            ]
+            async with self._ctx.session_for(dest_mount) as session:
+                result = await dest_mount.filesystem.write_files(dest_files, overwrite=True, session=session)
+            if not result.success:
+                return GroverResult(success=False, message=result.message, files=all_files)
+            all_files.extend(result.rebase(dest_mount.path).files)
 
         return GroverResult(
             success=True,
-            message=f"Copied {len(files)} file(s)",
-            files=files,
+            message=f"Copied {len(all_files)} file(s)",
+            files=all_files,
         )
-    
+
     async def list_dir(
         self,
         path: str = "/",
@@ -380,7 +531,7 @@ class FileOpsMixin:
     async def restore_version(self, path: str, version: int, *, user_id: str | None = None) -> FileOperationResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return FileOperationResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err.message)
 
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
@@ -414,7 +565,7 @@ class FileOpsMixin:
     async def restore_from_trash(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return FileOperationResult(success=False, message=err)
+            return FileOperationResult(success=False, message=err.message)
 
         mount, rel_path = self._ctx.registry.resolve(path)
         assert mount.filesystem is not None
@@ -526,7 +677,9 @@ class FileOpsMixin:
             # Check writable
             if err := self._ctx.check_writable(mount_path + "/dummy"):
                 for idx, c in group:
-                    results_by_idx[idx] = FileOperationResult(success=False, message=err, file=File(path=c.path))
+                    results_by_idx[idx] = FileOperationResult(
+                        success=False, message=err.message, file=File(path=c.path),
+                    )
                 continue
 
             assert mount.filesystem is not None

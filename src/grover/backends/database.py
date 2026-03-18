@@ -16,12 +16,11 @@ from grover.models.database.chunk import FileChunkModel
 from grover.models.database.connection import FileConnectionModel
 from grover.models.database.file import FileModel
 from grover.models.database.version import FileVersionModel
-from grover.models.internal.detail import DeleteDetail, ReadDetail, WriteDetail
+from grover.models.internal.detail import CopyDetail, DeleteDetail, MoveDetail, ReadDetail, WriteDetail
 from grover.models.internal.evidence import (
     GlobEvidence,
     GrepEvidence,
     TrashEvidence,
-    TreeEvidence,
     VersionEvidence,
 )
 from grover.models.internal.evidence import (
@@ -40,6 +39,7 @@ from grover.providers.versioning import DefaultVersionProvider
 from grover.providers.versioning.diff import SNAPSHOT_INTERVAL, compute_diff
 from grover.util.content import (
     compute_content_hash,
+    guess_mime_type,
     has_binary_extension,
 )
 from grover.util.dialect import upsert_file
@@ -53,7 +53,7 @@ from grover.util.operations import (
     read_file,
     write_file,
 )
-from grover.util.paths import normalize_path, split_path, validate_path
+from grover.util.paths import normalize_path, split_path, to_trash_path, validate_path
 from grover.util.patterns import compile_glob, glob_to_sql_like
 
 if TYPE_CHECKING:
@@ -297,6 +297,48 @@ class DatabaseFileSystem:
             offset=offset,
         )]
         return GroverResult(success=True, message=op.message, files=[op.file])
+
+    async def read_files(
+        self,
+        paths: list[str],
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Batch read — single query lookup, results in input order."""
+        if not paths:
+            return GroverResult(success=True, message="No files to read")
+
+        normalized = [normalize_path(p) for p in paths]
+        records = await self._batch_get_file_records(session, normalized)
+
+        result_files: list[File] = []
+        for path in normalized:
+            rec = records.get(path)
+            if rec is None or rec.is_directory:
+                msg = f"File not found: {path}" if rec is None else f"Path is a directory: {path}"
+                result_files.append(File(path=path, evidence=[
+                    ReadDetail(operation="read", success=False, message=msg),
+                ]))
+                continue
+
+            content = rec.content if self.storage_provider is None else await self._read_content(path, session)
+            if content is None:
+                result_files.append(File(path=path, evidence=[
+                    ReadDetail(operation="read", success=False, message=f"Content not found: {path}"),
+                ]))
+                continue
+
+            result_files.append(File(path=path, content=content, evidence=[
+                ReadDetail(operation="read", success=True, message=f"Read {path}"),
+            ]))
+
+        succeeded = sum(1 for f in result_files if all(d.success for d in f.details))
+        failed = len(result_files) - succeeded
+        return GroverResult(
+            success=failed == 0,
+            message=f"Read {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
+            files=result_files,
+        )
 
     async def write(
         self,
@@ -549,6 +591,193 @@ class DatabaseFileSystem:
             read_content=self._read_content,
             write_fn=self.write,
         )
+
+    async def move_files(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Batch move files (no directories). Three-phase, all-or-nothing."""
+        if not pairs:
+            return GroverResult(success=True, message="No files to move")
+
+        # --- Phase 1: Prepare (no side effects) ---
+        normalized: list[tuple[str, str]] = []
+        all_src_paths: list[str] = []
+        all_dest_paths: list[str] = []
+
+        for src, dest in pairs:
+            src, dest = normalize_path(src), normalize_path(dest)
+            if src == dest:
+                return GroverResult(success=False, message=f"Source and destination are the same: {src}")
+            normalized.append((src, dest))
+            all_src_paths.append(src)
+            all_dest_paths.append(dest)
+
+        if len(set(all_dest_paths)) != len(all_dest_paths):
+            return GroverResult(success=False, message="Duplicate destination paths in batch")
+
+        if set(all_src_paths) & set(all_dest_paths):
+            path = next(iter(set(all_src_paths) & set(all_dest_paths)))
+            return GroverResult(success=False, message=f"Source path also appears as destination: {path}")
+
+        src_records = await self._batch_get_file_records(session, all_src_paths)
+        dest_records = await self._batch_get_file_records(session, all_dest_paths, include_deleted=True)
+
+        # Validate all pairs and read source content
+        src_contents: dict[str, str] = {}
+        for src, dest in normalized:
+            src_rec = src_records.get(src)
+            if src_rec is None:
+                return GroverResult(success=False, message=f"Source not found: {src}")
+            if src_rec.is_directory:
+                return GroverResult(success=False, message=f"Source is a directory (use single move): {src}")
+            dest_rec = dest_records.get(dest)
+            if dest_rec and dest_rec.is_directory:
+                return GroverResult(success=False, message=f"Destination is a directory: {dest}")
+
+            content = await self._read_content(src, session)
+            if content is None:
+                return GroverResult(success=False, message=f"Source content not found: {src}")
+            src_contents[src] = content
+
+        # --- Phase 2: Mutate (single flush) ---
+        file_results: list[File] = []
+        version_records = []
+
+        try:
+            seen_parents: set[str] = set()
+            for _, dest in normalized:
+                parent = split_path(dest)[0]
+                if parent not in seen_parents:
+                    seen_parents.add(parent)
+                    await self._ensure_parent_dirs(session, dest)
+
+            now = datetime.now(UTC)
+
+            for src, dest in normalized:
+                src_rec = src_records[src]
+                dest_rec = dest_records.get(dest)
+                content = src_contents[src]
+                content_hash, size_bytes = compute_content_hash(content)
+
+                # Soft-delete source
+                src_rec.original_path = src_rec.path
+                src_rec.path = to_trash_path(src_rec.path, src_rec.id)
+                src_rec.deleted_at = now
+
+                if dest_rec is not None:
+                    old_dest_content = await self._read_content(dest, session) or ""
+                    dest_rec.current_version += 1
+                    dest_rec.content_hash = content_hash
+                    dest_rec.size_bytes = size_bytes
+                    dest_rec.deleted_at = None
+                    dest_rec.original_path = None
+                    dest_rec.updated_at = now
+                    await session.merge(dest_rec)
+
+                    v = dest_rec.current_version
+                    is_snap = (v % SNAPSHOT_INTERVAL == 0) or (v == 1)
+                    stored = content if is_snap or not old_dest_content else compute_diff(old_dest_content, content)
+                    version_records.append(self.file_version_model(
+                        file_path=dest, path=f"{dest}@{v}", version=v,
+                        is_snapshot=is_snap or not old_dest_content,
+                        content=stored, content_hash=content_hash, size_bytes=size_bytes,
+                    ))
+                    version = v
+                else:
+                    dest_parent, dest_name = split_path(dest)
+                    new_file = self.file_model(
+                        path=dest, parent_path=dest_parent, owner_id=src_rec.owner_id,
+                        content_hash=content_hash, size_bytes=size_bytes,
+                        mime_type=guess_mime_type(dest_name),
+                        created_at=now, updated_at=now,
+                    )
+                    session.add(new_file)
+                    version_records.append(self.file_version_model(
+                        file_path=dest, path=f"{dest}@1", version=1,
+                        is_snapshot=True, content=content,
+                        content_hash=content_hash, size_bytes=size_bytes,
+                    ))
+                    version = 1
+
+                if self.storage_provider is not None:
+                    await self.storage_provider.write_content(dest, content)
+
+                file_results.append(File(
+                    path=dest, current_version=version,
+                    evidence=[MoveDetail(
+                        operation="move", success=True,
+                        message=f"Moved {src} -> {dest}",
+                        source_path=src, version=version,
+                    )],
+                ))
+
+            if version_records:
+                session.add_all(version_records)
+            await session.flush()
+
+        except Exception as e:
+            return GroverResult(
+                success=False, message=str(e),
+                files=[File(path=d, evidence=[MoveDetail(
+                    operation="move", success=False, message=str(e), source_path=s,
+                )]) for s, d in normalized],
+            )
+
+        return GroverResult(
+            success=True,
+            message=f"Moved {len(file_results)} file(s)",
+            files=file_results,
+        )
+
+    async def copy_files(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Batch copy files (no directories). Delegates to write_files."""
+        if not pairs:
+            return GroverResult(success=True, message="No files to copy")
+
+        all_src_paths = [normalize_path(src) for src, _ in pairs]
+        src_records = await self._batch_get_file_records(session, all_src_paths)
+
+        dest_files: list[FileModelBase] = []
+        src_by_dest: dict[str, str] = {}
+
+        for src, dest in pairs:
+            src, dest = normalize_path(src), normalize_path(dest)
+            src_rec = src_records.get(src)
+            if src_rec is None:
+                return GroverResult(success=False, message=f"Source not found: {src}")
+            if src_rec.is_directory:
+                return GroverResult(success=False, message=f"Source is a directory (use single copy): {src}")
+
+            content = await self._read_content(src, session)
+            if content is None:
+                return GroverResult(success=False, message=f"Source content not found: {src}")
+
+            dest_files.append(self.file_model(path=dest, content=content))
+            src_by_dest[dest] = src
+
+        result = await self.write_files(dest_files, overwrite=True, session=session)
+
+        # Map WriteDetail -> CopyDetail
+        for f in result.files:
+            src_path = src_by_dest.get(f.path, "")
+            f.evidence = [
+                CopyDetail(
+                    operation="copy", success=d.success, message=d.message,
+                    source_path=src_path, version=d.version,
+                ) if isinstance(d, WriteDetail) else d
+                for d in f.evidence
+            ]
+
+        result.message = result.message.replace("Wrote", "Copied")
+        return result
 
     # ------------------------------------------------------------------
     # Search / Query Operations

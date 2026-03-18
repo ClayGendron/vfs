@@ -163,6 +163,27 @@ class GroverFileSystem(Protocol):
         user_id: str | None = None,
     ) -> FileOperationResult: ...
 
+    async def read_files(
+        self,
+        paths: list[str],
+        *,
+        session: AsyncSession,
+    ) -> GroverResult: ...
+
+    async def move_files(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        session: AsyncSession,
+    ) -> GroverResult: ...
+
+    async def copy_files(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        session: AsyncSession,
+    ) -> GroverResult: ...
+
     # ------------------------------------------------------------------
     # Search / Query
     # ------------------------------------------------------------------
