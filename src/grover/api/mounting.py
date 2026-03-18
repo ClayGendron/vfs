@@ -10,12 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from grover.backends.database import DatabaseFileSystem
 from grover.backends.local import LocalFileSystem
 from grover.backends.protocol import SupportsReBAC
-from grover.exceptions import MountNotFoundError
+from grover.exceptions import MountNotFoundError, StorageError
 from grover.models.database.share import FileShareModel
 from grover.mount import Mount
 from grover.permissions import Permission
 from grover.providers.graph.rustworkx import RustworkxGraph
-from grover.util.dialect import check_tables_exist, ensure_schema
+from grover.util.dialect import check_tables_exist
 
 if TYPE_CHECKING:
     from sqlalchemy import Connection
@@ -46,10 +46,7 @@ class MountMixin:
         filesystem: GroverFileSystem | None = None,
         engine_config: EngineConfig | None = None,
         session_config: SessionConfig | None = None,
-        mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
-        label: str = "",
-        hidden: bool = False,
         embedding_provider: EmbeddingProvider | None = None,
         search_provider: SearchProvider | None = None,
     ) -> None:
@@ -85,20 +82,14 @@ class MountMixin:
                 name or "",
                 engine_config,
                 filesystem,
-                mount_type,
                 permission,
-                label,
-                hidden,
             )
         elif session_config is not None:
             new_mount = self._create_session_factory_mount(
                 name or "",
                 session_config,
                 filesystem,
-                mount_type,
                 permission,
-                label,
-                hidden,
             )
         else:
             if name is None or filesystem is None:
@@ -106,59 +97,48 @@ class MountMixin:
 
             # For local backends, eagerly init DB and extract session_factory
             sf = None
-            mt = mount_type
             if isinstance(filesystem, LocalFileSystem):
                 await filesystem.open()
                 sf = filesystem.session_factory
-                if mt is None:
-                    mt = "local"
 
             new_mount = Mount(
                 name=name,
                 filesystem=filesystem,
                 session_factory=sf,
                 permission=permission,
-                label=label,
-                mount_type=mt or "vfs",
-                hidden=hidden,
             )
 
         # ------------------------------------------------------------------
         # Auto-inject providers on the filesystem
         # ------------------------------------------------------------------
         fs = new_mount.filesystem
-        if fs is not None and not new_mount.hidden:
-            # Graph provider: auto-create RustworkxGraph if not already set
-            if getattr(fs, "graph_provider", None) is None:
-                fs.graph_provider = RustworkxGraph()  # type: ignore[union-attr]
 
-            # Search providers: inject from kwargs if not already set on filesystem
-            if embedding_provider is not None and getattr(fs, "embedding_provider", None) is None:
-                fs.embedding_provider = embedding_provider  # type: ignore[union-attr]
-            if search_provider is not None and getattr(fs, "search_provider", None) is None:
-                fs.search_provider = search_provider  # type: ignore[union-attr]
-            # Validate dimensions if both providers are set
-            if hasattr(fs, "_validate_search_dimensions"):
-                fs._validate_search_dimensions()  # type: ignore[union-attr]
+        # Graph provider: auto-create RustworkxGraph if not already set
+        if getattr(fs, "graph_provider", None) is None:
+            fs.graph_provider = RustworkxGraph()  # type: ignore[union-attr]
+
+        # Search providers: inject from kwargs if not already set on filesystem
+        if embedding_provider is not None and getattr(fs, "embedding_provider", None) is None:
+            fs.embedding_provider = embedding_provider  # type: ignore[union-attr]
+        if search_provider is not None and getattr(fs, "search_provider", None) is None:
+            fs.search_provider = search_provider  # type: ignore[union-attr]
+        # Validate dimensions if both providers are set
+        if hasattr(fs, "_validate_search_dimensions"):
+            fs._validate_search_dimensions()  # type: ignore[union-attr]
 
         # Call open() on the filesystem if needed (skip LocalFileSystem — already opened above)
         if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(new_mount.filesystem, "open"):
             await new_mount.filesystem.open()
 
         self._ctx.registry.add_mount(new_mount)
-
-        if not new_mount.hidden:
-            self._ctx.initialized = True
+        self._ctx.initialized = True
 
     async def _create_engine_mount(
         self,
         name: str,
         config: EngineConfig,
         backend: GroverFileSystem | None,
-        mount_type: str | None,
         permission: Permission,
-        label: str,
-        hidden: bool,
     ) -> Mount:
         """Build a Mount from an EngineConfig — Grover owns the engine."""
         engine = config.create_engine()
@@ -172,17 +152,8 @@ class MountMixin:
         if isinstance(backend, DatabaseFileSystem):
             backend._configure(config, dialect)
 
-        # Ensure schema and base tables exist
+        # Create base tables if requested
         if config.create_tables:
-            schema = config.schema
-
-            # Create schema if needed (non-SQLite only)
-            if schema:
-                async with engine.begin() as conn:
-                    schema_created = await conn.run_sync(lambda c: ensure_schema(c, dialect, schema))
-                if schema_created:
-                    print(f'Schema created: "{schema}"')  # noqa: T201
-
             # Gather all tables to create
             tables = [
                 config.file_model.__table__,  # type: ignore[attr-defined]
@@ -197,25 +168,27 @@ class MountMixin:
 
             # Check which tables already exist
             async with engine.begin() as conn:
-                existing_before = await conn.run_sync(lambda c: check_tables_exist(c, table_names, schema))
+                existing_before = await conn.run_sync(lambda c: check_tables_exist(c, table_names))
 
-            # Create tables (with schema_translate_map if schema is set)
+            # Create tables
             def _create_tables_sync(c: Connection) -> None:
-                if schema:
-                    c = c.execution_options(schema_translate_map={None: schema})
                 for t in tables:
                     t.create(c, checkfirst=True)
 
-            async with engine.begin() as conn:
-                await conn.run_sync(_create_tables_sync)
+            try:
+                async with engine.begin() as conn:
+                    await conn.run_sync(_create_tables_sync)
+            except Exception as e:
+                raise StorageError(
+                    "Table creation failed — if using a non-default database schema, "
+                    "ensure it exists and your engine is configured to use it. "
+                    f"Original error: {e}"
+                ) from e
 
             # Print newly created tables
             new_tables = [table_name for table_name in table_names if table_name not in existing_before]
             if new_tables:
-                if schema:
-                    print(f'Tables created in schema "{schema}":')  # noqa: T201
-                else:
-                    print("Tables created:")  # noqa: T201
+                print("Tables created:")  # noqa: T201
                 for table_name in new_tables:
                     print(f"  - {table_name}")  # noqa: T201
 
@@ -224,10 +197,7 @@ class MountMixin:
             filesystem=backend,
             session_factory=sf,
             engine=engine,
-            mount_type=mount_type or "vfs",
             permission=permission,
-            label=label,
-            hidden=hidden,
         )
 
     def _create_session_factory_mount(
@@ -235,10 +205,7 @@ class MountMixin:
         name: str,
         config: SessionConfig,
         backend: GroverFileSystem | None,
-        mount_type: str | None,
         permission: Permission,
-        label: str,
-        hidden: bool,
     ) -> Mount:
         """Build a Mount from a SessionConfig — app owns the engine."""
         # Infer dialect from session factory's bind
@@ -261,10 +228,7 @@ class MountMixin:
             name=name,
             filesystem=backend,
             session_factory=config.session_factory,
-            mount_type=mount_type or "vfs",
             permission=permission,
-            label=label,
-            hidden=hidden,
         )
 
     async def unmount(self, name: str) -> None:

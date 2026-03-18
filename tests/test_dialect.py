@@ -12,53 +12,10 @@ from grover.models.database.file import FileModel
 from grover.util.dialect import (
     _upsert_mssql,
     check_tables_exist,
-    ensure_schema,
     get_dialect,
     now_expression,
     upsert_file,
 )
-
-# =========================================================================
-# ensure_schema()
-# =========================================================================
-
-
-class TestEnsureSchema:
-    def test_sqlite_noop(self):
-        result = ensure_schema(MagicMock(), "sqlite", "myschema")
-        assert result is False
-
-    def test_creates_schema_when_missing(self):
-        conn = MagicMock()
-        inspector = MagicMock()
-        inspector.get_schema_names.return_value = ["public"]
-        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
-            result = ensure_schema(conn, "postgresql", "myschema")
-        assert result is True
-        conn.execute.assert_called_once()
-        sql = str(conn.execute.call_args[0][0])
-        assert "myschema" in sql
-
-    def test_schema_already_exists(self):
-        conn = MagicMock()
-        inspector = MagicMock()
-        inspector.get_schema_names.return_value = ["public", "myschema"]
-        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
-            result = ensure_schema(conn, "postgresql", "myschema")
-        assert result is False
-        conn.execute.assert_not_called()
-
-    def test_mssql_creates_schema(self):
-        conn = MagicMock()
-        inspector = MagicMock()
-        inspector.get_schema_names.return_value = ["dbo"]
-        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
-            result = ensure_schema(conn, "mssql", "grover")
-        assert result is True
-        sql = str(conn.execute.call_args[0][0])
-        assert "CREATE SCHEMA" in sql
-        assert "grover" in sql
-
 
 # =========================================================================
 # check_tables_exist()
@@ -74,10 +31,9 @@ class TestCheckTablesExist:
             result = check_tables_exist(
                 conn,
                 ["grover_files", "grover_file_versions"],
-                schema="myschema",
             )
         assert result == {"grover_files"}
-        inspector.get_table_names.assert_called_once_with(schema="myschema")
+        inspector.get_table_names.assert_called_once_with()
 
     def test_returns_empty_when_none_exist(self):
         conn = MagicMock()
@@ -86,15 +42,6 @@ class TestCheckTablesExist:
         with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
             result = check_tables_exist(conn, ["grover_files"])
         assert result == set()
-
-    def test_no_schema(self):
-        conn = MagicMock()
-        inspector = MagicMock()
-        inspector.get_table_names.return_value = ["grover_files"]
-        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
-            result = check_tables_exist(conn, ["grover_files"])
-        inspector.get_table_names.assert_called_once_with(schema=None)
-        assert result == {"grover_files"}
 
 
 class TestGetDialect:
@@ -344,32 +291,6 @@ class TestUpsertSqlitePgBranches:
 
         await engine.dispose()
 
-    async def test_upsert_with_schema(self):
-        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with factory() as session:
-            # SQLite doesn't really support schemas, but the code path
-            # should still execute without error (schema_translate_map)
-            rowcount = await upsert_file(
-                session,
-                "sqlite",
-                values={
-                    "id": "s1",
-                    "path": "/schema.txt",
-                    "is_directory": False,
-                    "current_version": 1,
-                },
-                conflict_keys=["path"],
-                schema="main",
-            )
-            await session.commit()
-            assert rowcount >= 0
-
-        await engine.dispose()
-
     async def test_upsert_with_custom_model(self):
         from tests.test_configurable_model import WikiFile
 
@@ -426,22 +347,6 @@ class TestUpsertMssql:
         assert "WHEN NOT MATCHED" in sql_text
         assert "WHEN MATCHED THEN" in sql_text
         assert "UPDATE SET" in sql_text
-
-    async def test_mssql_upsert_with_schema(self):
-        mock_session = AsyncMock(spec=AsyncSession)
-        mock_result = MagicMock()
-        mock_result.rowcount = 1
-        mock_session.execute.return_value = mock_result
-
-        await _upsert_mssql(
-            mock_session,
-            values={"id": "m2", "path": "/m.txt", "mime_type": "text/plain"},
-            conflict_keys=["path"],
-            model=FileModel,
-            schema="dbo",
-        )
-        sql_text = str(mock_session.execute.call_args[0][0])
-        assert "[dbo].grover_files" in sql_text
 
     async def test_mssql_upsert_with_update_keys(self):
         mock_session = AsyncMock(spec=AsyncSession)

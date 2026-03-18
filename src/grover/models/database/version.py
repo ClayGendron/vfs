@@ -10,8 +10,12 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, UniqueConstraint
+from pydantic import model_validator
+from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
+
+from grover.util.content import compute_content_hash
+from grover.util.paths import normalize_path
 
 from .vector import Vector, VectorType
 
@@ -19,10 +23,8 @@ from .vector import Vector, VectorType
 class FileVersionModelBase(SQLModel):
     """Base fields for a file version record. Subclass with ``table=True`` for a concrete table."""
 
-    __table_args__ = (UniqueConstraint("file_id", "version"),)
-
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=1024, primary_key=True)
-    file_id: str = Field(max_length=1024, index=True)
+    path: str = Field(default="", max_length=1024, unique=True, index=True)
     file_path: str = Field(default="", max_length=1024, index=True)
     version: int = Field(default=1)
     is_snapshot: bool = Field(default=False)
@@ -36,10 +38,44 @@ class FileVersionModelBase(SQLModel):
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )
 
-    @property
-    def path(self) -> str:
-        """Canonical version path: ``file_path@version``."""
-        return f"{self.file_path}@{self.version}"
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_paths(cls, data: object) -> object:
+        if isinstance(data, dict):
+            if "file_path" in data:
+                data["file_path"] = normalize_path(data["file_path"])
+            # Derive path from file_path@version if not explicitly set
+            if not data.get("path") and data.get("file_path") and data.get("version"):
+                data["path"] = f"{normalize_path(data['file_path'])}@{data['version']}"
+        return data
+
+    @classmethod
+    def create(
+        cls,
+        file_path: str,
+        version: int,
+        content: str = "",
+        *,
+        is_snapshot: bool = False,
+        created_by: str | None = None,
+        embedding: list[float] | None = None,
+    ) -> FileVersionModelBase:
+        """Factory for building a fully-populated version model.
+
+        Computes content_hash and size_bytes from content.
+        Path is derived as ``file_path@version``.
+        """
+        content_hash, size_bytes = compute_content_hash(content)
+        return cls(
+            file_path=file_path,
+            version=version,
+            is_snapshot=is_snapshot,
+            content=content,
+            content_hash=content_hash,
+            size_bytes=size_bytes,
+            created_by=created_by,
+            embedding=Vector(embedding) if embedding is not None else None,
+        )
 
 
 class FileVersionModel(FileVersionModelBase, table=True):

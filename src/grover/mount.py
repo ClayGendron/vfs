@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from grover.backends import DatabaseFileSystem
 from grover.exceptions import MountNotFoundError
 from grover.permissions import Permission
 from grover.util.paths import normalize_path
@@ -21,7 +22,7 @@ class Mount:
 
     Each mount has:
     - ``name`` — simple identifier (no ``/``), e.g. ``"project"``
-    - ``filesystem`` — the storage backend (required)
+    - ``filesystem`` — the storage backend
     - ``session_factory`` — optional async session factory for DB-backed filesystems
     - ``permission`` — read-write or read-only
 
@@ -35,33 +36,23 @@ class Mount:
         self,
         name: str = "",
         filesystem: GroverFileSystem | None = None,
+        permission: Permission = Permission.READ_WRITE,
         *,
         session_factory: Callable[..., AsyncSession] | None = None,
         engine: AsyncEngine | None = None,
-        permission: Permission = Permission.READ_WRITE,
-        label: str = "",
-        mount_type: str = "vfs",
-        hidden: bool = False,
-        read_only_paths: set[str] | None = None,
     ) -> None:
         name = name.strip("/")
         if "/" in name:
             raise ValueError(f"Mount name must not contain '/': {name!r}")
         self.name: str = name
         self.path: str = f"/{name}" if name else ""
-        self.filesystem: GroverFileSystem | None = filesystem
+        self.filesystem: GroverFileSystem = filesystem or DatabaseFileSystem()
         self.session_factory: Callable[..., AsyncSession] | None = session_factory
         self.engine: AsyncEngine | None = engine
         self.permission: Permission = permission
-        self.label: str = label or self.name or "root"
-        self.mount_type: str = mount_type
-        self.hidden: bool = hidden
-        self.read_only_paths: set[str] = read_only_paths if read_only_paths is not None else set()
 
     def __repr__(self) -> str:
-        parts = [f"name={self.name!r}"]
-        if self.filesystem is not None:
-            parts.append(f"filesystem={type(self.filesystem).__name__}")
+        parts = [f"name={self.name!r}", f"filesystem={type(self.filesystem).__name__}"]
         return f"Mount({', '.join(parts)})"
 
 
@@ -73,16 +64,16 @@ class MountRegistry:
     """
 
     def __init__(self) -> None:
-        self._mounts: dict[str, Mount] = {}
+        self.mounts: dict[str, Mount] = {}
 
     def add_mount(self, config: Mount) -> None:
         """Add or replace a mount point."""
-        self._mounts[config.path] = config
+        self.mounts[config.path] = config
 
     def remove_mount(self, mount_path: str) -> None:
         """Remove a mount point."""
         mount_path = normalize_path(mount_path).rstrip("/")
-        self._mounts.pop(mount_path, None)
+        self.mounts.pop(mount_path, None)
 
     def resolve(self, virtual_path: str) -> tuple[Mount, str]:
         """Resolve a virtual path to its mount and relative path.
@@ -94,7 +85,7 @@ class MountRegistry:
         best_match: Mount | None = None
         best_len = -1
 
-        for mount_path, config in self._mounts.items():
+        for mount_path, config in self.mounts.items():
             if (virtual_path == mount_path or virtual_path.startswith(mount_path + "/")) and len(mount_path) > best_len:
                 best_match = config
                 best_len = len(mount_path)
@@ -112,35 +103,17 @@ class MountRegistry:
 
     def list_mounts(self) -> list[Mount]:
         """List all registered mounts, sorted by path."""
-        return sorted(self._mounts.values(), key=lambda m: m.path)
-
-    def list_visible_mounts(self) -> list[Mount]:
-        """List non-hidden mounts, sorted by path."""
-        return [m for m in self.list_mounts() if not m.hidden]
+        return sorted(self.mounts.values(), key=lambda m: m.path)
 
     def get_permission(self, virtual_path: str) -> Permission:
         """Get the effective permission for a virtual path."""
-        mount, relative = self.resolve(virtual_path)
-
-        if mount.permission == Permission.READ_ONLY:
-            return Permission.READ_ONLY
-
-        rel_normalized = normalize_path(relative)
-        current = rel_normalized
-        while True:
-            if current in mount.read_only_paths:
-                return Permission.READ_ONLY
-            if current == "/":
-                break
-            parent = current.rsplit("/", 1)[0] or "/"
-            current = parent
-
+        mount, _relative = self.resolve(virtual_path)
         return mount.permission
 
     def get_mount(self, mount_path: str) -> Mount | None:
         """Return the Mount at *mount_path*, or ``None``."""
         mount_path = normalize_path(mount_path).rstrip("/")
-        return self._mounts.get(mount_path)
+        return self.mounts.get(mount_path)
 
     def has_mount(self, mount_path: str) -> bool:
         """Check if a mount exists at the given path."""

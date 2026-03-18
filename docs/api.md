@@ -72,7 +72,6 @@ from grover import EngineConfig, SessionConfig, create_async_engine_factory
 |-------|------|---------|-------------|
 | `url` | `str | None` | `None` | Database URL (e.g., `"postgresql+asyncpg://..."`, `"sqlite+aiosqlite://..."`). Mutually exclusive with `engine_factory`. |
 | `engine_factory` | `Callable[[], AsyncEngine] | None` | `None` | Deferred engine factory for advanced setups. Mutually exclusive with `url`. |
-| `schema` | `str | None` | `None` | Database schema name |
 | `create_tables` | `bool` | `True` | Whether to create tables on mount |
 | `file_model` | `type | None` | `None` | Custom SQLModel file table class |
 | `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
@@ -84,7 +83,6 @@ from grover import EngineConfig, SessionConfig, create_async_engine_factory
 |-------|------|---------|-------------|
 | `session_factory` | `Callable[[], AsyncSession]` | required | Zero-arg callable that returns an `AsyncSession` |
 | `dialect` | `str | None` | `None` | Explicit dialect override. Inferred from session factory bind if not set. |
-| `schema` | `str | None` | `None` | Database schema name |
 | `file_model` | `type | None` | `None` | Custom SQLModel file table class |
 | `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
 | `file_chunk_model` | `type | None` | `None` | Custom SQLModel file chunk table class |
@@ -100,7 +98,8 @@ factory = create_async_engine_factory(
     "mssql+aioodbc://...",
     connect_args={"TrustServerCertificate": "yes"},
 )
-await g.add_mount("/data", engine_config=EngineConfig(engine_factory=factory, schema="grover"))
+await g.add_mount("/data", engine_config=EngineConfig(engine_factory=factory))
+# To use a non-default schema, configure it on the engine (e.g., via connect events or connect_args)
 
 # App-owned session
 await g.add_mount("/data", session_config=SessionConfig(session_factory=my_session_factory))

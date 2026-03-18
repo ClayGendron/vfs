@@ -32,39 +32,10 @@ def get_dialect(engine: Engine | AsyncEngine) -> str:
     return name
 
 
-def ensure_schema(conn: Connection, dialect: str, schema: str) -> bool:
-    """Create *schema* if it does not already exist.  Returns ``True`` if created.
-
-    - SQLite: no-op (returns ``False``) — SQLite has no ``CREATE SCHEMA``.
-    - PostgreSQL: ``CREATE SCHEMA IF NOT EXISTS "name"``
-    - MSSQL: conditional check + ``CREATE SCHEMA [name]``
-    - Other: attempts standard ``CREATE SCHEMA IF NOT EXISTS "name"``
-    """
-    if dialect == "sqlite":
-        return False
-
+def check_tables_exist(conn: Connection, table_names: list[str]) -> set[str]:
+    """Return the subset of *table_names* that already exist."""
     inspector = inspect(conn)
-    if schema in inspector.get_schema_names():
-        return False
-
-    if dialect == "mssql":
-        conn.execute(
-            text(f"IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = '{schema}') EXEC('CREATE SCHEMA [{schema}]')")
-        )
-    else:
-        conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
-
-    return True
-
-
-def check_tables_exist(
-    conn: Connection,
-    table_names: list[str],
-    schema: str | None = None,
-) -> set[str]:
-    """Return the subset of *table_names* that already exist in *schema*."""
-    inspector = inspect(conn)
-    existing = set(inspector.get_table_names(schema=schema))
+    existing = set(inspector.get_table_names())
     return existing & set(table_names)
 
 
@@ -74,16 +45,12 @@ async def upsert_file(
     values: dict[str, Any],
     conflict_keys: list[str],
     model: type | None = None,
-    schema: str | None = None,
     update_keys: list[str] | None = None,
 ) -> int:
     """Dialect-aware upsert into a file table. Returns rowcount.
 
     *model* is the SQLModel table class to insert into.  Defaults to
     ``File`` (the built-in ``grover_files`` table) when not provided.
-
-    *schema* optionally qualifies the table (e.g. ``"app"`` →
-    ``app.grover_files``).
 
     - SQLite/PostgreSQL: INSERT ... ON CONFLICT DO UPDATE
     - MSSQL: MERGE INTO ... WITH (HOLDLOCK)
@@ -97,7 +64,6 @@ async def upsert_file(
             values,
             conflict_keys,
             model,
-            schema,
             update_keys,
         )
     return await _upsert_sqlite_pg(
@@ -106,7 +72,6 @@ async def upsert_file(
         values,
         conflict_keys,
         model,
-        schema,
         update_keys,
     )
 
@@ -117,7 +82,6 @@ async def _upsert_sqlite_pg(
     values: dict[str, Any],
     conflict_keys: list[str],
     model: type,
-    schema: str | None = None,
     update_keys: list[str] | None = None,
 ) -> int:
     """SQLite / PostgreSQL upsert using INSERT ... ON CONFLICT DO UPDATE."""
@@ -141,9 +105,6 @@ async def _upsert_sqlite_pg(
     else:
         stmt = stmt.on_conflict_do_nothing(index_elements=conflict_keys)
 
-    if schema:
-        stmt = stmt.execution_options(schema_translate_map={None: schema})
-
     result = await session.execute(stmt)
     return result.rowcount  # type: ignore[return-value]
 
@@ -153,13 +114,10 @@ async def _upsert_mssql(
     values: dict[str, Any],
     conflict_keys: list[str],
     model: type,
-    schema: str | None = None,
     update_keys: list[str] | None = None,
 ) -> int:
     """MSSQL upsert using MERGE INTO ... WITH (HOLDLOCK)."""
     table_name: str = getattr(model, "__tablename__", "grover_files")
-    if schema:
-        table_name = f"[{schema}].{table_name}"
     on_clause = " AND ".join(f"target.{k} = :{k}" for k in conflict_keys)
     insert_cols = ", ".join(values.keys())
     insert_vals = ", ".join(f":{k}" for k in values)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -11,6 +10,7 @@ from sqlmodel import select
 
 from grover.models.internal.ref import File
 from grover.models.internal.results import FileOperationResult
+from grover.util.content import compute_content_hash
 
 from ...exceptions import ConsistencyError
 from .diff import SNAPSHOT_INTERVAL, compute_diff, reconstruct_version
@@ -62,16 +62,17 @@ class DefaultVersionProvider:
         version_num = file.current_version
         is_snap = (version_num % SNAPSHOT_INTERVAL == 0) or (version_num == 1)
 
-        content = new_content if is_snap or not old_content else compute_diff(old_content, new_content)
+        stored_content = new_content if is_snap or not old_content else compute_diff(old_content, new_content)
+        content_hash, size_bytes = compute_content_hash(new_content)
 
-        new_content_bytes = new_content.encode()
         version = self._file_version_model(
-            file_id=file.id,
+            file_path=file.path,
+            path=f"{file.path}@{version_num}",
             version=version_num,
             is_snapshot=is_snap or not old_content,
-            content=content,
-            content_hash=hashlib.sha256(new_content_bytes).hexdigest(),
-            size_bytes=len(new_content_bytes),
+            content=stored_content,
+            content_hash=content_hash,
+            size_bytes=size_bytes,
             created_by=created_by,
         )
         session.add(version)
@@ -156,7 +157,7 @@ class DefaultVersionProvider:
 
         # Verify SHA256 against the target version's stored hash
         expected_hash = chain[-1].content_hash
-        actual_hash = hashlib.sha256(content.encode()).hexdigest()
+        actual_hash = compute_content_hash(content)[0]
         if actual_hash != expected_hash:
             raise ConsistencyError(
                 f"Version {version} of file: content hash mismatch "
@@ -214,7 +215,7 @@ class DefaultVersionProvider:
             try:
                 entries = [(rec.is_snapshot, rec.content) for rec in chain]
                 content = reconstruct_version(entries)
-                actual_hash = hashlib.sha256(content.encode()).hexdigest()
+                actual_hash = compute_content_hash(content)[0]
             except Exception:
                 continue
 

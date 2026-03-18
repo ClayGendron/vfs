@@ -40,12 +40,11 @@ class EngineConfig:
             "mssql+aioodbc://...",
             connect_args={"TrustServerCertificate": "yes"},
         )
-        EngineConfig(engine_factory=factory, schema="grover")
+        EngineConfig(engine_factory=factory)
     """
 
     url: str | None = None
     engine_factory: Callable[[], AsyncEngine] | None = None
-    schema: str | None = None
     create_tables: bool = True
     file_model: type[FileModelBase] = field(default=FileModel)
     file_version_model: type[FileVersionModelBase] = field(default=FileVersionModel)
@@ -106,7 +105,6 @@ class SessionConfig:
     """
 
     session_factory: Callable[[], AsyncSession]
-    schema: str | None = None
     dialect: str | None = None
     file_model: type[FileModelBase] = field(default=FileModel)
     file_version_model: type[FileVersionModelBase] = field(default=FileVersionModel)

@@ -247,7 +247,7 @@ VFS creates a session per operation via `_session_for(mount)`. The session is in
 
 **LocalFileSystem** manages its own SQLite engine internally (lazy init with `asyncio.Lock`), but session creation is still driven by VFS.
 
-**DatabaseFileSystem** is fully stateless — it holds no engine, no session factory, and no mutable state. It receives everything it needs through the injected session. Configuration (dialect, schema, model overrides) is set internally via `_configure()` at mount time based on the `EngineConfig` or `SessionConfig` passed to `add_mount()`. This makes it safe for concurrent use in web servers.
+**DatabaseFileSystem** is fully stateless — it holds no engine, no session factory, and no mutable state. It receives everything it needs through the injected session. Configuration (dialect, model overrides) is set internally via `_configure()` at mount time based on the `EngineConfig` or `SessionConfig` passed to `add_mount()`. This makes it safe for concurrent use in web servers.
 
 ## Mount-first architecture
 

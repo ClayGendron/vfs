@@ -35,9 +35,8 @@ class TestEngineConfig:
         engine = config.create_engine()
         assert engine.dialect.name == "sqlite"
 
-    def test_schema_and_create_tables_defaults(self):
+    def test_create_tables_default(self):
         config = EngineConfig(url="sqlite+aiosqlite://")
-        assert config.schema is None
         assert config.create_tables is True
 
     def test_frozen(self):
@@ -55,7 +54,6 @@ class TestSessionConfig:
     def test_defaults(self):
         sf = lambda: None  # noqa: E731
         config = SessionConfig(session_factory=sf)  # type: ignore[arg-type]
-        assert config.schema is None
         assert config.dialect is None
 
     def test_frozen(self):
@@ -251,17 +249,29 @@ class TestSchemaTableCreationMessages:
 
         captured = capsys.readouterr().out
         assert "Tables created" not in captured
-        assert "Schema created" not in captured
         await g.close()
 
-    async def test_schema_none_no_schema_message(self, capsys):
-        """Without schema set, no 'Schema created' message is printed."""
+    async def test_create_tables_failure_raises_storage_error(self):
+        """When table creation fails, StorageError is raised with helpful message."""
+        from unittest.mock import patch
+
+        from grover.exceptions import StorageError
+
+        def _boom(c):
+            raise RuntimeError("disk full")
+
         config = EngineConfig(url="sqlite+aiosqlite://")
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("data", engine_config=config)
 
-        captured = capsys.readouterr().out
-        assert "Schema created" not in captured
+        # Patch check_tables_exist to return empty (so creation is attempted),
+        # then make the table creation run_sync call raise.
+        with (
+            patch("grover.api.mounting.check_tables_exist", return_value=set()),
+            patch("sqlalchemy.ext.asyncio.AsyncConnection.run_sync", side_effect=[set(), RuntimeError("disk full")]),
+            pytest.raises(StorageError, match="Table creation failed"),
+        ):
+            await g.add_mount("data", engine_config=config)
+
         await g.close()
 
 

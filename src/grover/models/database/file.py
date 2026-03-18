@@ -10,10 +10,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+from pydantic import model_validator
 from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 
-from grover.util.content import compute_content_hash, guess_mime_type
+from grover.util.content import compute_content_hash, guess_mime_type, is_text_file
 from grover.util.paths import normalize_path, split_path
 
 from .vector import Vector, VectorType
@@ -49,6 +50,33 @@ class FileModelBase(SQLModel):
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_and_validate(cls, data: object) -> object:
+        if isinstance(data, dict) and "path" in data:
+            data["path"] = normalize_path(data["path"])
+            parent, name = split_path(data["path"])
+            data["parent_path"] = parent
+
+            if not data.get("is_directory", False):
+                if name and not is_text_file(name):
+                    raise ValueError(f"Cannot create non-text file: {name}")
+                if name and (not data.get("mime_type") or data["mime_type"] == "text/plain"):
+                    data["mime_type"] = guess_mime_type(name)
+
+            content = data.get("content")
+            if content is not None:
+                content_hash, size_bytes = compute_content_hash(content)
+                data["content_hash"] = content_hash
+                data["size_bytes"] = size_bytes
+                data["lines"] = content.count("\n")
+
+            if not data.get("created_at"):
+                data["created_at"] = datetime.now(UTC)
+            if not data.get("updated_at"):
+                data["updated_at"] = datetime.now(UTC)
+        return data
+
     @classmethod
     def create(
         cls,
@@ -68,8 +96,6 @@ class FileModelBase(SQLModel):
         if mount:
             mount = mount.strip("/")
             path = f"/{mount}/{path.lstrip('/')}"
-        path = normalize_path(path)
-        content = content or ""
         content_hash, size_bytes = compute_content_hash(content)
         _, name = split_path(path)
         now = datetime.now(UTC)
