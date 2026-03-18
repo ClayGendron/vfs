@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.database.file import FileModelBase
-    from grover.models.internal.results import FileOperationResult
 
 
 @runtime_checkable
@@ -25,9 +24,3 @@ class VersionProvider(Protocol):
     ) -> None: ...
 
     async def delete_versions(self, session: AsyncSession, file_path: str) -> None: ...
-
-    async def list_versions(self, session: AsyncSession, file: FileModelBase) -> list: ...
-
-    async def get_version_content(self, session: AsyncSession, file: FileModelBase, version: int) -> str | None: ...
-
-    async def verify_chain(self, session: AsyncSession, file: FileModelBase) -> FileOperationResult: ...

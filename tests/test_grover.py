@@ -176,41 +176,16 @@ class TestGroverIndex:
 
 
 # ==================================================================
-# Version operations (sync)
+# Tree (sync)
 # ==================================================================
 
 
-class TestGroverVersionOps:
-    def test_read_version(self, grover: Grover):
-        """Sync read_version returns the content of a specific version."""
-        grover.write("/project/doc.txt", "version one")
-        grover.write("/project/doc.txt", "version two")
-        result = grover.read_version("/project/doc.txt", 1)
-        assert result.success is True
-        assert result.file.content == "version one"
-
-    def test_diff_versions_basic(self, grover: Grover):
-        """Sync diff_versions computes a unified diff."""
-        grover.write("/project/doc.txt", "hello\n")
-        grover.write("/project/doc.txt", "hello world\n")
-        result = grover.diff_versions("/project/doc.txt", 1, 2)
-        assert result.success is True
-        assert "v1" in result.message
-        assert "v2" in result.message
-        assert result.file.content != ""
-
-    def test_diff_versions_invalid_version(self, grover: Grover):
-        """Sync diff_versions with nonexistent version returns failure."""
-        grover.write("/project/doc.txt", "content\n")
-        result = grover.diff_versions("/project/doc.txt", 1, 999)
-        assert result.success is False
-
-    def test_tree(self, grover: Grover):
-        """tree() works on sync facade."""
-        grover.write("/project/a.py", "a\n")
-        result = grover.tree("/project")
-        assert result.success is True
-        assert len(result) >= 1
+def test_tree(grover: Grover):
+    """tree() works on sync facade."""
+    grover.write("/project/a.py", "a\n")
+    result = grover.tree("/project")
+    assert result.success is True
+    assert len(result) >= 1
 
 
 # ==================================================================

@@ -883,18 +883,6 @@ class TestTreeWithCandidates:
         assert "/local" in paths
 
 
-class TestListVersionsPathBased:
-    """Test list_versions with path-based API (single file, no candidates)."""
-
-    async def test_list_versions_single_file(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
-        grover, _ = grover_setup
-        # Write a second version to create version history
-        await grover.write("/db/hello.py", "print('updated')\n")
-        result = await grover.list_versions("/db/hello.py")
-        assert result.success
-        assert len(result) >= 2  # At least 2 versions
-
-
 class TestFileSearchResultAsCandidate:
     """Test that FileSearchResult works as candidates (Liskov substitution)."""
 

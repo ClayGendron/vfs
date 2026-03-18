@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
 from grover.backends.database import DatabaseFileSystem
-from grover.exceptions import ConsistencyError
-from grover.providers.versioning import SNAPSHOT_INTERVAL
 
 
 async def _make_fs():
@@ -98,115 +95,6 @@ class TestEdit:
 
 
 # ---------------------------------------------------------------------------
-# Diff-based Versioning
-# ---------------------------------------------------------------------------
-
-
-class TestVersioning:
-    async def test_version_content_round_trip(self):
-        """Write + 5 edits, then retrieve each intermediate version."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            content_v1 = "line1\nline2\nline3\n"
-            await fs.write("/f.py", content_v1, session=session)
-
-            contents = [content_v1]
-            for i in range(5):
-                old_line = f"line{i + 1}" if i == 0 else f"edited_{i}"
-                new_line = f"edited_{i + 1}"
-                prev = contents[-1]
-                new = prev.replace(old_line, new_line, 1)
-                await fs.edit("/f.py", old_line, new_line, session=session)
-                contents.append(new)
-
-            # Verify each version can be reconstructed
-            for version_num in range(1, len(contents) + 1):
-                vc = await fs.get_version_content("/f.py", version_num, session=session)
-                assert vc.success, f"Version {version_num} failed: {vc.message}"
-                expected = contents[version_num - 1]
-                assert vc.file.content == expected, f"v{version_num} mismatch"
-        await engine.dispose()
-
-    async def test_snapshot_interval(self):
-        """Verify snapshots are stored at the configured interval."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/f.py", "version 0\n", session=session)
-
-            for i in range(1, SNAPSHOT_INTERVAL + 1):
-                old = f"version {i - 1}"
-                new = f"version {i}"
-                await fs.edit("/f.py", old, new, session=session)
-
-            result = await fs.list_versions("/f.py", session=session)
-            assert len(result) > 0
-
-            vc1 = await fs.get_version_content("/f.py", 1, session=session)
-            assert vc1.success
-        await engine.dispose()
-
-    async def test_get_version_content_nonexistent(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            result = await fs.get_version_content("/nope.py", 1, session=session)
-            assert result.success is False
-        await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# List Versions
-# ---------------------------------------------------------------------------
-
-
-class TestListVersions:
-    async def test_list_versions(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/f.py", "v1\n", session=session)
-            await fs.edit("/f.py", "v1", "v2", session=session)
-
-            result = await fs.list_versions("/f.py", session=session)
-            assert len(result) >= 1
-        await engine.dispose()
-
-    async def test_list_versions_nonexistent(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            result = await fs.list_versions("/nope.py", session=session)
-            assert len(result) == 0
-        await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# Restore Version
-# ---------------------------------------------------------------------------
-
-
-class TestRestoreVersion:
-    async def test_restore_version(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/f.py", "original\n", session=session)
-            await fs.edit("/f.py", "original", "modified", session=session)
-
-            result = await fs.restore_version("/f.py", 1, session=session)
-            assert result.success is True
-            assert "version 1" in result.message
-
-            read = await fs.read("/f.py", session=session)
-            assert "original" in read.file.content
-        await engine.dispose()
-
-    async def test_restore_nonexistent_version(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/f.py", "content\n", session=session)
-            result = await fs.restore_version("/f.py", 999, session=session)
-            assert result.success is False
-        await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
 # Delete (soft / permanent)
 # ---------------------------------------------------------------------------
 
@@ -233,148 +121,11 @@ class TestDelete:
             assert "Permanently" in result.message
         await engine.dispose()
 
-    async def test_permanent_delete_cleans_versions(self):
-        from sqlmodel import select
-
-        from grover.models.database.version import FileVersionModel
-
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/f.py", "v1\n", session=session)
-            await fs.write("/f.py", "v2\n", session=session)
-            ver_result = await fs.list_versions("/f.py", session=session)
-            assert len(ver_result) == 2
-
-            await fs.delete("/f.py", permanent=True, session=session)
-            await session.commit()
-
-        # Verify no orphaned version records remain
-        async with factory() as session:
-            db_result = await session.execute(select(FileVersionModel))
-            assert db_result.scalars().all() == [], "Version records should be deleted"
-        await engine.dispose()
-
     async def test_delete_nonexistent(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             result = await fs.delete("/nope.py", session=session)
             assert result.success is False
-        await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# Trash Operations
-# ---------------------------------------------------------------------------
-
-
-class TestTrash:
-    async def test_list_trash(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/f.py", "content\n", session=session)
-            await fs.delete("/f.py", session=session)
-
-            trash = await fs.list_trash(session=session)
-            assert trash.success is True
-            assert len(trash) == 1
-        await engine.dispose()
-
-    async def test_restore_from_trash(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/f.py", "content\n", session=session)
-            await fs.delete("/f.py", session=session)
-
-            result = await fs.restore_from_trash("/f.py", session=session)
-            assert result.success is True
-
-            read = await fs.read("/f.py", session=session)
-            assert read.success is True
-            assert "content" in read.file.content
-        await engine.dispose()
-
-    async def test_restore_not_in_trash(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            result = await fs.restore_from_trash("/nope.py", session=session)
-            assert result.success is False
-        await engine.dispose()
-
-    async def test_empty_trash(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/a.py", "a\n", session=session)
-            await fs.write("/b.py", "b\n", session=session)
-            await fs.delete("/a.py", session=session)
-            await fs.delete("/b.py", session=session)
-
-            result = await fs.empty_trash(session=session)
-            assert result.success is True
-            assert "2 items" in result.message
-
-            trash = await fs.list_trash(session=session)
-            assert len(trash) == 0
-        await engine.dispose()
-
-    async def test_empty_trash_cleans_versions(self):
-        from sqlmodel import select
-
-        from grover.models.database.version import FileVersionModel
-
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/a.py", "v1\n", session=session)
-            await fs.write("/a.py", "v2\n", session=session)
-            await fs.delete("/a.py", session=session)
-            await fs.empty_trash(session=session)
-            await session.commit()
-
-        async with factory() as session:
-            result = await session.execute(select(FileVersionModel))
-            assert result.scalars().all() == [], "Version records should be deleted"
-        await engine.dispose()
-
-    async def test_soft_delete_directory_trashes_children(self):
-        """H3: Soft-deleting a directory should also trash all children."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.mkdir("/mydir", session=session)
-            await fs.write("/mydir/a.py", "a\n", session=session)
-            await fs.write("/mydir/b.py", "b\n", session=session)
-
-            result = await fs.delete("/mydir", session=session)
-            assert result.success is True
-
-            assert (await fs.exists("/mydir/a.py", session=session)).message == "not found"
-            assert (await fs.exists("/mydir/b.py", session=session)).message == "not found"
-
-            trash = await fs.list_trash(session=session)
-            paths = trash.paths
-            assert "/mydir" in paths
-            assert "/mydir/a.py" in paths
-            assert "/mydir/b.py" in paths
-        await engine.dispose()
-
-    async def test_restore_directory_restores_children(self):
-        """H3: Restoring a directory from trash also restores children."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.mkdir("/mydir", session=session)
-            await fs.write("/mydir/a.py", "a content\n", session=session)
-            await fs.write("/mydir/b.py", "b content\n", session=session)
-
-            await fs.delete("/mydir", session=session)
-
-            result = await fs.restore_from_trash("/mydir", session=session)
-            assert result.success is True
-
-            assert (await fs.exists("/mydir/a.py", session=session)).message == "exists"
-            assert (await fs.exists("/mydir/b.py", session=session)).message == "exists"
-
-            read_a = await fs.read("/mydir/a.py", session=session)
-            assert "a content" in read_a.file.content
-            read_b = await fs.read("/mydir/b.py", session=session)
-            assert "b content" in read_b.file.content
         await engine.dispose()
 
 
@@ -609,34 +360,6 @@ class TestExists:
 
 
 # ---------------------------------------------------------------------------
-# Hash Validation
-# ---------------------------------------------------------------------------
-
-
-class TestHashValidation:
-    async def test_version_content_hash_verified(self):
-        """Corrupt a version's content_hash in DB, get_version_content raises ConsistencyError."""
-        from sqlmodel import select
-
-        from grover.models.database.version import FileVersionModel
-
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/f.py", "original content\n", session=session)
-            await session.flush()
-
-            # Corrupt the stored content_hash for version 1
-            result = await session.execute(select(FileVersionModel).where(FileVersionModel.version == 1))
-            ver = result.scalar_one()
-            ver.content_hash = "0000000000000000000000000000000000000000000000000000000000000000"
-            await session.flush()
-
-            with pytest.raises(ConsistencyError, match="hash mismatch"):
-                await fs.get_version_content("/f.py", 1, session=session)
-        await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
 # Path Validation on exists
 # ---------------------------------------------------------------------------
 
@@ -787,36 +510,6 @@ class TestParentPath:
 
 
 # ---------------------------------------------------------------------------
-# Version Reconstruction Across Snapshots
-# ---------------------------------------------------------------------------
-
-
-class TestVersionReconstructionAcrossSnapshots:
-    async def test_25_edits_spanning_2_snapshot_intervals(self):
-        """25+ edits spanning 2 snapshot intervals, verify all versions."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            initial = "version_0\nstatic_line\n"
-            await fs.write("/f.py", initial, session=session)
-            contents = [initial]
-
-            for i in range(1, 26):
-                old_marker = f"version_{i - 1}"
-                new_marker = f"version_{i}"
-                prev = contents[-1]
-                new = prev.replace(old_marker, new_marker, 1)
-                await fs.edit("/f.py", old_marker, new_marker, session=session)
-                contents.append(new)
-
-            for version_num in range(1, len(contents) + 1):
-                vc = await fs.get_version_content("/f.py", version_num, session=session)
-                assert vc.success, f"Version {version_num} failed: {vc.message}"
-                expected = contents[version_num - 1]
-                assert vc.file.content == expected, f"v{version_num} mismatch"
-        await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
 # C2/C4/C5 Move Guards and Overwrite Tests
 # ---------------------------------------------------------------------------
 
@@ -867,44 +560,4 @@ class TestAtomicMoveOverwrite:
             read = await fs.read("/dest.py", session=session)
             assert read.file.content == "source\n"
             assert (await fs.exists("/src.py", session=session)).message == "not found"
-        await engine.dispose()
-
-    async def test_move_overwrite_preserves_dest_history(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/src.py", "source\n", session=session)
-            await fs.write("/dest.py", "old dest\n", session=session)
-            await fs.move("/src.py", "/dest.py", session=session)
-            # dest should have version history
-            ver_result = await fs.list_versions("/dest.py", session=session)
-            assert len(ver_result) >= 2
-        await engine.dispose()
-
-
-class TestRestoreOverwrite:
-    """C4: restore_from_trash overwrites occupant."""
-
-    async def test_restore_from_trash_overwrites_occupant(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/file.py", "original\n", session=session)
-            await fs.delete("/file.py", session=session)
-            # Write a new file at the same path
-            await fs.write("/file.py", "occupant\n", session=session)
-            # Restore should overwrite the occupant
-            result = await fs.restore_from_trash("/file.py", session=session)
-            assert result.success is True
-            read = await fs.read("/file.py", session=session)
-            assert read.file.content == "original\n"
-        await engine.dispose()
-
-    async def test_restore_from_trash_no_conflict(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/file.py", "content\n", session=session)
-            await fs.delete("/file.py", session=session)
-            result = await fs.restore_from_trash("/file.py", session=session)
-            assert result.success is True
-            read = await fs.read("/file.py", session=session)
-            assert read.file.content == "content\n"
         await engine.dispose()

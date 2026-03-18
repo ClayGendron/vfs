@@ -139,32 +139,6 @@ class TestDiskSync:
 
 
 # ---------------------------------------------------------------------------
-# Delete Backup
-# ---------------------------------------------------------------------------
-
-
-class TestDeleteBackup:
-    async def test_delete_backs_up_disk_only_file(self, tmp_path: Path):
-        fs, factory = await _make_local_fs(tmp_path)
-        workspace = fs.workspace_dir
-
-        # Create file directly on disk
-        (workspace / "ephemeral.py").write_text("content\n")
-
-        # Delete via FS — should create DB record first, then soft-delete
-        async with _session(factory) as session:
-            result = await fs.delete("/ephemeral.py", session=session)
-        assert result.success is True
-
-        # File should be in trash (backed up to DB)
-        async with _session(factory) as session:
-            trash = await fs.list_trash(session=session)
-        paths = trash.paths
-        assert "/ephemeral.py" in paths
-        await fs.close()
-
-
-# ---------------------------------------------------------------------------
 # Atomic Writes
 # ---------------------------------------------------------------------------
 
@@ -222,67 +196,6 @@ class TestConcurrentInit:
         async with _session(factory) as session:
             result = await fs.write("/test.py", "hello\n", session=session)
         assert result.success is True
-        await fs.close()
-
-
-# ---------------------------------------------------------------------------
-# C5: Trash restore writes content to disk
-# ---------------------------------------------------------------------------
-
-
-class TestTrashRestoreDisk:
-    async def test_restore_from_trash_writes_to_disk(self, tmp_path: Path):
-        """C5: Restoring from trash should write content back to disk."""
-        fs, factory = await _make_local_fs(tmp_path)
-        workspace = fs.workspace_dir
-
-        # Write file (creates on disk + DB)
-        async with _session(factory) as session:
-            await fs.write("/restore_me.py", "precious content\n", session=session)
-        assert (workspace / "restore_me.py").exists()
-
-        # Delete (removes from disk, soft-deletes in DB)
-        async with _session(factory) as session:
-            await fs.delete("/restore_me.py", session=session)
-        assert not (workspace / "restore_me.py").exists()
-
-        # Restore from trash
-        async with _session(factory) as session:
-            result = await fs.restore_from_trash("/restore_me.py", session=session)
-        assert result.success is True
-
-        # File should be back on disk with correct content
-        disk_path = workspace / "restore_me.py"
-        assert disk_path.exists()
-        assert disk_path.read_text() == "precious content\n"
-
-        # Should also be readable through the FS
-        async with _session(factory) as session:
-            read = await fs.read("/restore_me.py", session=session)
-        assert read.success is True
-        assert "precious content" in read.file.content
-        await fs.close()
-
-    async def test_restore_edited_file_from_trash(self, tmp_path: Path):
-        """C5: Restoring a multi-version file gets the latest version."""
-        fs, factory = await _make_local_fs(tmp_path)
-        workspace = fs.workspace_dir
-
-        async with _session(factory) as session:
-            await fs.write("/multi.py", "version 1\n", session=session)
-        async with _session(factory) as session:
-            await fs.edit("/multi.py", "version 1", "version 2", session=session)
-
-        async with _session(factory) as session:
-            await fs.delete("/multi.py", session=session)
-        assert not (workspace / "multi.py").exists()
-
-        async with _session(factory) as session:
-            result = await fs.restore_from_trash("/multi.py", session=session)
-        assert result.success is True
-
-        disk_content = (workspace / "multi.py").read_text()
-        assert "version 2" in disk_content
         await fs.close()
 
 
@@ -346,69 +259,6 @@ class TestConcurrentWrites:
         assert results[0].success is True
         assert results[1].success is True
         assert results[2].success is True
-        await fs.close()
-
-
-# ---------------------------------------------------------------------------
-# H3: Soft-delete/restore directory children on disk
-# ---------------------------------------------------------------------------
-
-
-class TestDirectoryTrashDisk:
-    async def test_soft_delete_directory_removes_children_from_disk(self, tmp_path: Path):
-        """H3: Soft-deleting a directory also trashes children."""
-        fs, factory = await _make_local_fs(tmp_path)
-        workspace = fs.workspace_dir
-
-        async with _session(factory) as session:
-            await fs.write("/mydir/child.py", "child content\n", session=session)
-        assert (workspace / "mydir" / "child.py").exists()
-
-        async with _session(factory) as session:
-            result = await fs.delete("/mydir", session=session)
-        assert result.success is True
-
-        # Child should not be readable
-        async with _session(factory) as session:
-            read = await fs.read("/mydir/child.py", session=session)
-        assert read.success is False
-
-        # Both parent and child should be in trash
-        async with _session(factory) as session:
-            trash = await fs.list_trash(session=session)
-        paths = trash.paths
-        assert "/mydir" in paths
-        assert "/mydir/child.py" in paths
-        await fs.close()
-
-    async def test_restore_directory_restores_children_to_disk(self, tmp_path: Path):
-        """H3: Restoring a directory from trash restores children's disk content."""
-        fs, factory = await _make_local_fs(tmp_path)
-        workspace = fs.workspace_dir
-
-        async with _session(factory) as session:
-            await fs.write("/mydir/child.py", "child content\n", session=session)
-        async with _session(factory) as session:
-            await fs.write("/mydir/deep/nested.py", "nested content\n", session=session)
-        async with _session(factory) as session:
-            await fs.delete("/mydir", session=session)
-
-        # Files gone from disk
-        assert not (workspace / "mydir" / "child.py").exists()
-
-        async with _session(factory) as session:
-            result = await fs.restore_from_trash("/mydir", session=session)
-        assert result.success is True
-
-        # Children should be back on disk
-        assert (workspace / "mydir" / "child.py").read_text() == "child content\n"
-        assert (workspace / "mydir" / "deep" / "nested.py").read_text() == "nested content\n"
-
-        # And readable through the FS
-        async with _session(factory) as session:
-            read = await fs.read("/mydir/child.py", session=session)
-        assert read.success is True
-        assert "child content" in read.file.content
         await fs.close()
 
 
@@ -550,7 +400,6 @@ class TestLocalFSInheritsDatabaseFS:
             "read",
             "delete",
             "mkdir",
-            "restore_from_trash",
             "reconcile",
             "_ensure_db",
         }
@@ -590,20 +439,6 @@ class TestLocalFSInheritsDatabaseFS:
             result = await fs.edit("/edit_me.py", "old", "new", session=session)
         assert result.success is True
         assert (workspace / "edit_me.py").read_text() == "new content\n"
-        await fs.close()
-
-    async def test_inherited_versions_work(self, tmp_path: Path):
-        """Version methods are inherited from DatabaseFileSystem mixins."""
-        fs, factory = await _make_local_fs(tmp_path)
-
-        async with _session(factory) as session:
-            await fs.write("/versioned.py", "v1\n", session=session)
-        async with _session(factory) as session:
-            await fs.write("/versioned.py", "v2\n", session=session)
-        async with _session(factory) as session:
-            versions = await fs.list_versions("/versioned.py", session=session)
-        assert versions.success is True
-        assert len(versions.files) == 2
         await fs.close()
 
     async def test_provider_kwargs_forwarded(self, tmp_path: Path):

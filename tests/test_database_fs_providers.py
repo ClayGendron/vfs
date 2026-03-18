@@ -483,19 +483,7 @@ class TestDimensionValidation:
 
 
 class TestInlinedMethods:
-    """Version and chunk methods work directly on DatabaseFileSystem."""
-
-    async def test_version_methods(self):
-        """Version methods work via direct delegation."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/test.py", "v1\n", session=session)
-            await fs.write("/test.py", "v2\n", session=session)
-
-            versions = await fs.list_versions("/test.py", session=session)
-            assert versions.success
-            assert len(versions.files) == 2
-        await engine.dispose()
+    """Chunk methods work directly on DatabaseFileSystem."""
 
     async def test_chunk_methods(self):
         """Chunk methods work via direct delegation."""

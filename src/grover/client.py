@@ -306,31 +306,8 @@ class Grover:
         return self._run(self._async.tree(path, max_depth=max_depth, user_id=user_id))
 
     # ------------------------------------------------------------------
-    # Version / Trash / Reconciliation wrappers (sync)
+    # Reconciliation wrappers (sync)
     # ------------------------------------------------------------------
-
-    def list_versions(self, path: str, *, user_id: str | None = None) -> FileSearchResult:
-        return self._run(self._async.list_versions(path, user_id=user_id))
-
-    def read_version(self, path: str, version: int, *, user_id: str | None = None) -> FileOperationResult:
-        return self._run(self._async.read_version(path, version, user_id=user_id))
-
-    def diff_versions(
-        self, path: str, version_a: int, version_b: int, *, user_id: str | None = None
-    ) -> FileOperationResult:
-        return self._run(self._async.diff_versions(path, version_a, version_b, user_id=user_id))
-
-    def restore_version(self, path: str, version: int, *, user_id: str | None = None) -> FileOperationResult:
-        return self._run(self._async.restore_version(path, version, user_id=user_id))
-
-    def list_trash(self, *, user_id: str | None = None) -> FileSearchResult:
-        return self._run(self._async.list_trash(user_id=user_id))
-
-    def restore_from_trash(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
-        return self._run(self._async.restore_from_trash(path, user_id=user_id))
-
-    def empty_trash(self, *, user_id: str | None = None) -> FileOperationResult:
-        return self._run(self._async.empty_trash(user_id=user_id))
 
     def reconcile(self, mount_path: str | None = None) -> FileOperationResult:
         return self._run(self._async.reconcile(mount_path))

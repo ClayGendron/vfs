@@ -81,16 +81,11 @@ async def middleware_async(grover_async: GroverAsync) -> GroverMiddleware:
 
 class TestToolRegistration:
     def test_middleware_tools_registered(self, middleware: GroverMiddleware):
-        """All 9 tools registered by default."""
-        assert len(middleware.tools) == 9
+        """All 4 tools registered by default."""
+        assert len(middleware.tools) == 4
         names = {t.name for t in middleware.tools}
         assert names == {
-            "list_versions",
-            "get_version_content",
-            "restore_version",
             "delete_file",
-            "list_trash",
-            "restore_from_trash",
             "search_semantic",
             "successors",
             "predecessors",
@@ -100,86 +95,22 @@ class TestToolRegistration:
         mw = GroverMiddleware(grover, enable_search=False)
         names = {t.name for t in mw.tools}
         assert "search_semantic" not in names
-        assert len(mw.tools) == 8
+        assert len(mw.tools) == 3
 
     def test_enable_graph_false_excludes_graph_tools(self, grover: Grover):
         mw = GroverMiddleware(grover, enable_graph=False)
         names = {t.name for t in mw.tools}
         assert "successors" not in names
         assert "predecessors" not in names
-        assert len(mw.tools) == 7
+        assert len(mw.tools) == 2
 
     def test_both_disabled(self, grover: Grover):
         mw = GroverMiddleware(grover, enable_search=False, enable_graph=False)
-        assert len(mw.tools) == 6
+        assert len(mw.tools) == 1
         names = {t.name for t in mw.tools}
         assert names == {
-            "list_versions",
-            "get_version_content",
-            "restore_version",
             "delete_file",
-            "list_trash",
-            "restore_from_trash",
         }
-
-
-# ==================================================================
-# Version tools
-# ==================================================================
-
-
-class TestListVersions:
-    def test_list_versions_returns_formatted_history(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/doc.txt", "v1 content")
-        grover.write("/project/doc.txt", "v2 content")
-        tool = next(t for t in middleware.tools if t.name == "list_versions")
-        result = tool.invoke({"path": "/project/doc.txt"})
-        assert isinstance(result, str)
-        assert "Version history" in result
-        assert "v1" in result
-        assert "v2" in result
-        assert "bytes" in result
-
-    def test_list_versions_missing_file(self, middleware: GroverMiddleware):
-        tool = next(t for t in middleware.tools if t.name == "list_versions")
-        result = tool.invoke({"path": "/project/nonexistent.txt"})
-        assert isinstance(result, str)
-        assert "Error" in result or "No versions" in result
-
-
-class TestGetVersionContent:
-    def test_get_version_content_returns_old_content(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/doc.txt", "original content")
-        grover.write("/project/doc.txt", "updated content")
-        tool = next(t for t in middleware.tools if t.name == "get_version_content")
-        result = tool.invoke({"path": "/project/doc.txt", "version": 1})
-        assert isinstance(result, str)
-        assert "original content" in result
-
-    def test_get_version_content_bad_version(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/doc.txt", "content")
-        tool = next(t for t in middleware.tools if t.name == "get_version_content")
-        result = tool.invoke({"path": "/project/doc.txt", "version": 999})
-        assert "Error" in result
-
-
-class TestRestoreVersion:
-    def test_restore_version_creates_new_version(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/doc.txt", "original")
-        grover.write("/project/doc.txt", "modified")
-        tool = next(t for t in middleware.tools if t.name == "restore_version")
-        result = tool.invoke({"path": "/project/doc.txt", "version": 1})
-        assert isinstance(result, str)
-        assert "Restored" in result
-        # Verify content was restored
-        read = grover.read("/project/doc.txt")
-        assert read.file.content == "original"
-
-    def test_restore_version_bad_version(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/doc.txt", "content")
-        tool = next(t for t in middleware.tools if t.name == "restore_version")
-        result = tool.invoke({"path": "/project/doc.txt", "version": 999})
-        assert "Error" in result
 
 
 # ==================================================================
@@ -201,39 +132,6 @@ class TestDeleteFile:
     def test_delete_file_missing_returns_error(self, middleware: GroverMiddleware):
         tool = next(t for t in middleware.tools if t.name == "delete_file")
         result = tool.invoke({"path": "/project/nope.txt"})
-        assert "Error" in result
-
-
-class TestListTrash:
-    def test_list_trash_shows_deleted_files(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/trash_me.txt", "content")
-        grover.delete("/project/trash_me.txt")
-        tool = next(t for t in middleware.tools if t.name == "list_trash")
-        result = tool.invoke({})
-        assert isinstance(result, str)
-        assert "trash_me.txt" in result
-
-    def test_list_trash_empty(self, middleware: GroverMiddleware):
-        tool = next(t for t in middleware.tools if t.name == "list_trash")
-        result = tool.invoke({})
-        assert "empty" in result.lower()
-
-
-class TestRestoreFromTrash:
-    def test_restore_from_trash_recovers_file(self, middleware: GroverMiddleware, grover: Grover):
-        grover.write("/project/restore_me.txt", "precious data")
-        grover.delete("/project/restore_me.txt")
-        tool = next(t for t in middleware.tools if t.name == "restore_from_trash")
-        result = tool.invoke({"path": "/project/restore_me.txt"})
-        assert "Restored" in result
-        # File should be readable again
-        read = grover.read("/project/restore_me.txt")
-        assert read.success
-        assert read.file.content == "precious data"
-
-    def test_restore_from_trash_not_in_trash(self, middleware: GroverMiddleware):
-        tool = next(t for t in middleware.tools if t.name == "restore_from_trash")
-        result = tool.invoke({"path": "/project/not_trashed.txt"})
         assert "Error" in result
 
 
@@ -319,12 +217,8 @@ class TestErrorHandling:
         """Every tool should return a string, even on error."""
         for tool in middleware.tools:
             # Invoke with bad/missing paths — should not raise
-            if tool.name == "list_trash":
-                result = tool.invoke({})
-            elif tool.name == "search_semantic":
+            if tool.name == "search_semantic":
                 result = tool.invoke({"query": "test"})
-            elif tool.name in ("get_version_content", "restore_version"):
-                result = tool.invoke({"path": "/project/nope.txt", "version": 1})
             else:
                 result = tool.invoke({"path": "/project/nope.txt"})
             assert isinstance(result, str), f"Tool {tool.name} returned {type(result)}"
@@ -346,23 +240,11 @@ class TestAsyncTools:
         for tool in middleware.tools:
             assert tool.coroutine is None, f"Tool {tool.name} should not have coroutine"
 
-    async def test_list_versions_ainvoke(self, middleware_async: GroverMiddleware, grover_async: GroverAsync):
-        await grover_async.write("/project/doc.txt", "v1")
-        await grover_async.write("/project/doc.txt", "v2")
-        tool = next(t for t in middleware_async.tools if t.name == "list_versions")
-        result = await tool.ainvoke({"path": "/project/doc.txt"})
-        assert "Version history" in result
-
     async def test_delete_file_ainvoke(self, middleware_async: GroverMiddleware, grover_async: GroverAsync):
         await grover_async.write("/project/temp.txt", "content")
         tool = next(t for t in middleware_async.tools if t.name == "delete_file")
         result = await tool.ainvoke({"path": "/project/temp.txt"})
         assert "Deleted" in result
-
-    async def test_list_trash_ainvoke(self, middleware_async: GroverMiddleware, grover_async: GroverAsync):
-        tool = next(t for t in middleware_async.tools if t.name == "list_trash")
-        result = await tool.ainvoke({})
-        assert "empty" in result.lower()
 
     async def test_graph_tools_invoke_with_async(self, middleware_async: GroverMiddleware, grover_async: GroverAsync):
         """Graph tools should work via async invoke with GroverAsync."""
@@ -399,21 +281,4 @@ def _make_sync_middleware(tmp_path: Path) -> tuple[GroverMiddleware, GroverAsync
 
 
 class TestSyncWrapperMiddleware:
-    def test_list_versions_sync_wrapper(self, tmp_path: Path):
-        mw, ga = _make_sync_middleware(tmp_path)
-        try:
-            asyncio.run(ga.write("/project/doc.txt", "content"))
-            tool = next(t for t in mw.tools if t.name == "list_versions")
-            result = tool.invoke({"path": "/project/doc.txt"})
-            assert "Version history" in result
-        finally:
-            asyncio.run(ga.close())
-
-    def test_list_trash_sync_wrapper(self, tmp_path: Path):
-        mw, ga = _make_sync_middleware(tmp_path)
-        try:
-            tool = next(t for t in mw.tools if t.name == "list_trash")
-            result = tool.invoke({})
-            assert "empty" in result.lower()
-        finally:
-            asyncio.run(ga.close())
+    pass

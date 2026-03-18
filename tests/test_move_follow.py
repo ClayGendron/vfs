@@ -108,39 +108,6 @@ class TestMoveFileFollow:
             assert new_file.id == old_id
 
     @pytest.mark.asyncio
-    async def test_move_follow_versions_preserved(self, dfs: DatabaseFileSystem, session_factory):
-        """follow=True preserves version history at the new path."""
-        async with session_factory() as sess:
-            await dfs.write("/versioned.py", "v1", session=sess)
-            await dfs.write("/versioned.py", "v2", session=sess)
-
-            versions_before = await dfs.list_versions("/versioned.py", session=sess)
-            assert versions_before.success
-            assert len(versions_before) == 2
-
-            result = await dfs.move("/versioned.py", "/renamed.py", session=sess, follow=True)
-            assert result.success is True
-
-            versions_after = await dfs.list_versions("/renamed.py", session=sess)
-            assert versions_after.success
-            assert len(versions_after) == 2
-
-    @pytest.mark.asyncio
-    async def test_move_no_follow_no_version_history(self, dfs: DatabaseFileSystem, session_factory):
-        """follow=False creates fresh file -- version history starts at v1."""
-        async with session_factory() as sess:
-            await dfs.write("/old.py", "v1", session=sess)
-            await dfs.write("/old.py", "v2", session=sess)
-
-            result = await dfs.move("/old.py", "/new.py", session=sess, follow=False)
-            assert result.success is True
-
-            versions = await dfs.list_versions("/new.py", session=sess)
-            assert versions.success
-            # New file starts at version 1
-            assert len(versions) == 1
-
-    @pytest.mark.asyncio
     async def test_move_follow_shares_updated(self, session_factory):
         """follow=True with sharing updates share paths (via USFS)."""
         usfs = UserScopedFileSystem(share_model=FileShareModel)

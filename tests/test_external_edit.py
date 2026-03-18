@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
 from grover.backends.database import DatabaseFileSystem
 from grover.models.database.file import FileModel
-from grover.models.database.version import FileVersionModel
 from grover.util.content import compute_content_hash
 from grover.util.operations import check_external_edit
 
@@ -47,22 +44,6 @@ async def _simulate_external_edit(
 
 
 class TestExternalEditDetection:
-    async def test_write_after_external_edit_creates_synthetic_version(self):
-        """External edit between writes inserts a synthetic version."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/app.py", "hello\n", session=session)
-            await _simulate_external_edit(session, "/app.py", "hello world\n")
-            result = await fs.write("/app.py", "goodbye\n", session=session)
-
-            assert result.success is True
-            # v1=grover, v2=external, v3=grover
-            assert result.file.current_version == 3
-
-            versions = await fs.list_versions("/app.py", session=session)
-            assert len(versions.files) == 3
-        await engine.dispose()
-
     async def test_edit_after_external_edit_creates_synthetic_version(self):
         """External edit between write and edit inserts a synthetic version."""
         fs, factory, engine = await _make_fs()
@@ -86,148 +67,6 @@ class TestExternalEditDetection:
 
             assert result.success is True
             assert result.file.current_version == 2
-
-            versions = await fs.list_versions("/app.py", session=session)
-            assert len(versions.files) == 2
-        await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# Version reconstruction
-# ---------------------------------------------------------------------------
-
-
-class TestVersionReconstruction:
-    async def test_all_versions_reconstruct_after_external_edit(self):
-        """Every version reconstructs correctly when external edit is present."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/app.py", "original\n", session=session)
-            await _simulate_external_edit(session, "/app.py", "externally modified\n")
-            await fs.write("/app.py", "final content\n", session=session)
-
-            # v1 = original
-            vc1 = await fs.get_version_content("/app.py", 1, session=session)
-            assert vc1.success is True
-            assert vc1.file.content == "original\n"
-
-            # v2 = external
-            vc2 = await fs.get_version_content("/app.py", 2, session=session)
-            assert vc2.success is True
-            assert vc2.file.content == "externally modified\n"
-
-            # v3 = final
-            vc3 = await fs.get_version_content("/app.py", 3, session=session)
-            assert vc3.success is True
-            assert vc3.file.content == "final content\n"
-        await engine.dispose()
-
-    async def test_hash_verification_passes_full_chain(self):
-        """5+ versions with external edit — all reconstruct without ConsistencyError."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/app.py", "v1\n", session=session)
-            await fs.edit("/app.py", "v1", "v2", session=session)
-            await _simulate_external_edit(session, "/app.py", "external content\n")
-            await fs.edit("/app.py", "external content", "v4", session=session)
-            await fs.edit("/app.py", "v4", "v5", session=session)
-
-            # All 5 versions should reconstruct without ConsistencyError
-            for v in range(1, 6):
-                vc = await fs.get_version_content("/app.py", v, session=session)
-                assert vc.success is True, f"Version {v} failed: {vc.message}"
-        await engine.dispose()
-
-    async def test_multiple_grover_ops_after_external_edit(self):
-        """External edit followed by multiple Grover writes all chain correctly."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/app.py", "start\n", session=session)
-            await _simulate_external_edit(session, "/app.py", "external\n")
-            await fs.write("/app.py", "write1\n", session=session)
-            await fs.edit("/app.py", "write1", "edit1", session=session)
-            await fs.write("/app.py", "write2\n", session=session)
-
-            # v1=start, v2=external, v3=write1, v4=edit1, v5=write2
-            for v in range(1, 6):
-                vc = await fs.get_version_content("/app.py", v, session=session)
-                assert vc.success is True, f"Version {v} failed: {vc.message}"
-
-            vc5 = await fs.get_version_content("/app.py", 5, session=session)
-            assert vc5.file.content == "write2\n"
-        await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# Synthetic version properties
-# ---------------------------------------------------------------------------
-
-
-class TestSyntheticVersionProperties:
-    async def test_external_version_is_snapshot(self):
-        """Synthetic external version is stored as a full snapshot."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/app.py", "original\n", session=session)
-            await _simulate_external_edit(session, "/app.py", "external\n")
-            await fs.write("/app.py", "final\n", session=session)
-
-            # Query the version 2 record directly
-            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
-            file = file_result.scalar_one()
-            ver_result = await session.execute(
-                select(FileVersionModel).where(
-                    FileVersionModel.file_path == file.path,
-                    FileVersionModel.version == 2,
-                )
-            )
-            v2 = ver_result.scalar_one()
-            assert v2.is_snapshot is True
-        await engine.dispose()
-
-    async def test_external_version_created_by_marker(self):
-        """Synthetic version has created_by='external'."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/app.py", "original\n", session=session)
-            await _simulate_external_edit(session, "/app.py", "external\n")
-            await fs.write("/app.py", "final\n", session=session)
-
-            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
-            file = file_result.scalar_one()
-            ver_result = await session.execute(
-                select(FileVersionModel).where(
-                    FileVersionModel.file_path == file.path,
-                    FileVersionModel.version == 2,
-                )
-            )
-            v2 = ver_result.scalar_one()
-            assert v2.created_by == "external"
-        await engine.dispose()
-
-    async def test_external_edit_hash_matches_external_content(self):
-        """Synthetic version's content_hash matches the external content."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            external_content = "externally modified\n"
-            await fs.write("/app.py", "original\n", session=session)
-            await _simulate_external_edit(session, "/app.py", external_content)
-            await fs.write("/app.py", "final\n", session=session)
-
-            vc2 = await fs.get_version_content("/app.py", 2, session=session)
-            assert vc2.file.content == external_content
-
-            expected_hash = hashlib.sha256(external_content.encode()).hexdigest()
-            file_result = await session.execute(select(FileModel).where(FileModel.path == "/app.py"))
-            file = file_result.scalar_one()
-            ver_result = await session.execute(
-                select(FileVersionModel).where(
-                    FileVersionModel.file_path == file.path,
-                    FileVersionModel.version == 2,
-                )
-            )
-            v2 = ver_result.scalar_one()
-            assert v2.content_hash == expected_hash
         await engine.dispose()
 
 
@@ -237,19 +76,6 @@ class TestSyntheticVersionProperties:
 
 
 class TestExternalEditEdgeCases:
-    async def test_external_edit_of_empty_content(self):
-        """External edit from empty string to non-empty is detected."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/app.py", "\n", session=session)
-            await _simulate_external_edit(session, "/app.py", "hello\n")
-            result = await fs.write("/app.py", "final\n", session=session)
-
-            assert result.file.current_version == 3
-            vc2 = await fs.get_version_content("/app.py", 2, session=session)
-            assert vc2.file.content == "hello\n"
-        await engine.dispose()
-
     async def test_no_content_hash_skips_detection(self):
         """Files with no content_hash skip external edit detection."""
         fs, factory, engine = await _make_fs()
@@ -269,31 +95,6 @@ class TestExternalEditEdgeCases:
             result = await fs.write("/app.py", "final\n", session=session)
             # Version goes from 1 → 2 (no synthetic v2 inserted)
             assert result.file.current_version == 2
-        await engine.dispose()
-
-    async def test_edit_applies_to_actual_content_after_detection(self):
-        """After external edit detection, edit applies to the actual (external) content."""
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            await fs.write("/app.py", "hello world\n", session=session)
-            await _simulate_external_edit(session, "/app.py", "hello world!!!\n")
-
-            # Edit must target the external content, not the old Grover content
-            result = await fs.edit("/app.py", "!!!", "???", session=session)
-            assert result.success is True
-
-            read = await fs.read("/app.py", session=session)
-            assert read.file.content == "hello world???\n"
-
-            # Version chain: v1=grover, v2=external, v3=edit
-            vc1 = await fs.get_version_content("/app.py", 1, session=session)
-            assert vc1.file.content == "hello world\n"
-
-            vc2 = await fs.get_version_content("/app.py", 2, session=session)
-            assert vc2.file.content == "hello world!!!\n"
-
-            vc3 = await fs.get_version_content("/app.py", 3, session=session)
-            assert vc3.file.content == "hello world???\n"
         await engine.dispose()
 
 

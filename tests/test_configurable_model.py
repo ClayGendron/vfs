@@ -146,35 +146,6 @@ class TestCustomModelFilesystem:
             assert "new content" in read.file.content
         await engine.dispose()
 
-    async def test_delete_and_trash(self):
-        fs, factory, engine = await _make_custom_fs()
-        async with factory() as session:
-            await fs.write("/page.md", "content\n", session=session)
-            result = await fs.delete("/page.md", session=session)
-            assert result.success is True
-
-            read = await fs.read("/page.md", session=session)
-            assert read.success is False
-
-            trash = await fs.list_trash(session=session)
-            assert len(trash) == 1
-        await engine.dispose()
-
-    async def test_versioning(self):
-        fs, factory, engine = await _make_custom_fs()
-        async with factory() as session:
-            await fs.write("/page.md", "v1\n", session=session)
-            await fs.edit("/page.md", "v1", "v2", session=session)
-            await fs.edit("/page.md", "v2", "v3", session=session)
-
-            ver_result = await fs.list_versions("/page.md", session=session)
-            assert len(ver_result) >= 1
-
-            vc_result = await fs.get_version_content("/page.md", 1, session=session)
-            assert vc_result.success
-            assert vc_result.file.content == "v1\n"
-        await engine.dispose()
-
     async def test_data_written_to_custom_table(self):
         """Verify data actually ends up in the wiki_files table, not grover_files."""
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)

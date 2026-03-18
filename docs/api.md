@@ -244,38 +244,6 @@ g.tree(path="/", *, max_depth=None, candidates=None) -> TreeResult
 | `count_only` | `bool` | `False` | Return count in message, no match details |
 | `files_only` | `bool` | `False` | One match per file (file listing mode) |
 
-### Versioning
-
-```python
-g.list_versions(path) -> VersionResult
-g.get_version_content(path, version) -> GetVersionContentResult
-g.restore_version(path, version) -> RestoreResult
-g.verify_versions(path) -> VerifyVersionResult
-g.verify_all_versions(mount_path=None) -> list[VerifyVersionResult]
-```
-
-| Method | Description |
-|--------|-------------|
-| `list_versions(path)` | List all versions for a single file. Returns `VersionResult` (a `FileSearchResult` subclass) with candidates — each candidate's path is `"{file_path}@{version}"` and evidence is `VersionEvidence` with `version`, `content_hash`, `size_bytes`, `created_at`, `created_by`. Versions with `created_by="external"` are synthetic snapshots auto-inserted when an external edit was detected. |
-| `get_version_content(path, version)` | Retrieve the content of a specific version. Returns `GetVersionContentResult`. |
-| `restore_version(path, version)` | Restore a file to a previous version (creates a new version with the old content). Returns `RestoreResult`. |
-| `verify_versions(path)` | Verify the version chain integrity for a single file. Reconstructs every version and checks SHA256 hashes. Returns `VerifyVersionResult` with per-version pass/fail details in `errors: list[VersionChainError]`. |
-| `verify_all_versions(mount_path=None)` | Verify version chains for all files, optionally filtered to a specific mount. Returns `list[VerifyVersionResult]`. |
-
-### Trash
-
-```python
-g.list_trash(*, user_id=None) -> TrashResult
-g.restore_from_trash(path, *, user_id=None) -> RestoreResult
-g.empty_trash(*, user_id=None) -> DeleteResult
-```
-
-| Method | Description |
-|--------|-------------|
-| `list_trash()` | List all soft-deleted files across all mounts. On user-scoped mounts, scoped to the requesting user's files only. |
-| `restore_from_trash(path)` | Restore a previously deleted file by its original path. On user-scoped mounts, only the file owner can restore. Returns `RestoreResult`. |
-| `empty_trash()` | Permanently delete trashed files. On user-scoped mounts, only deletes the requesting user's trashed files. Returns `DeleteResult`. |
-
 ### Sharing
 
 Available on mounts whose backend implements `SupportsReBAC` (e.g., `UserScopedFileSystem`). Share files or directories with other users.
@@ -409,7 +377,6 @@ relevant = g.vector_search("login flow", candidates=with_auth)
 # list_dir / tree use path + optional candidates filter
 g.list_dir("/src")                    # list /src directory
 g.tree("/tests", max_depth=2)         # tree /tests directory
-g.list_versions("/src/main.py")       # versions for a single file
 ```
 
 ### Index and Persistence

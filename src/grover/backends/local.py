@@ -292,56 +292,6 @@ class LocalFileSystem(DatabaseFileSystem):
         return result
 
     # ------------------------------------------------------------------
-    # Override: restore_from_trash — write content back to disk
-    # ------------------------------------------------------------------
-
-    async def restore_from_trash(
-        self,
-        path: str,
-        *,
-        session: AsyncSession,
-        owner_id: str | None = None,
-        user_id: str | None = None,
-    ) -> FileOperationResult:
-        """Restore a file from trash, writing content back to disk."""
-        result = await super().restore_from_trash(path, session=session, owner_id=owner_id)
-        if not result.success:
-            return result
-
-        restored_path = (result.file.path if result.file else None) or path
-        file = await self._get_file_record(session, restored_path)
-        if file:
-            if file.is_directory:
-                from sqlmodel import select
-
-                model = self.file_model
-                children_result = await session.execute(
-                    select(model).where(
-                        model.path.startswith(restored_path + "/"),
-                        model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
-                    )
-                )
-                for child in children_result.scalars().all():
-                    if not child.is_directory:
-                        vc = await self.get_version_content(
-                            child.path,
-                            child.current_version,
-                            session=session,
-                        )
-                        if vc.success and vc.file and vc.file.content is not None:
-                            await self._write_content(child.path, vc.file.content, session)
-            else:
-                vc = await self.get_version_content(
-                    restored_path,
-                    file.current_version,
-                    session=session,
-                )
-                if vc.success and vc.file and vc.file.content is not None:
-                    await self._write_content(restored_path, vc.file.content, session)
-
-        return result
-
-    # ------------------------------------------------------------------
     # Override: reconcile — disk-to-DB sync
     # ------------------------------------------------------------------
 
@@ -426,11 +376,7 @@ class LocalFileSystem(DatabaseFileSystem):
 
         await session.flush()
 
-        # Verify version chain integrity
-        verification_results = await self.verify_all_versions(session=session)
-        chain_errors = sum(1 for r in verification_results if not r.success)
-
         return FileOperationResult(
             success=True,
-            message=(f"Reconcile complete: {created} created, {deleted} deleted, {chain_errors} chain errors"),
+            message=f"Reconcile complete: {created} created, {deleted} deleted",
         )

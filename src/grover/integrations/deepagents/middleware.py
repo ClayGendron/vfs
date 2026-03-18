@@ -33,79 +33,12 @@ def _format_graph_result(result: object, label: str) -> str:
     return f"No {label} found."
 
 
-def _format_version_list(result: object, path: str) -> str:
-    """Format a VersionResult into readable text."""
-    if not result.success:  # type: ignore[union-attr]
-        return f"Error: {result.message}"  # type: ignore[union-attr]
-
-    if len(result) == 0:  # type: ignore[arg-type]
-        return f"No versions found for {path}."
-
-    from grover.models.internal.evidence import VersionEvidence
-
-    lines = [f"Version history for {path} ({len(result)} versions):"]  # type: ignore[arg-type]
-    for f in result.files:  # type: ignore[union-attr]
-        for ev in f.evidence:
-            if isinstance(ev, VersionEvidence):
-                line = f"  v{ev.version}: {ev.created_at:%Y-%m-%d %H:%M:%S}"
-                line += f" | {ev.size_bytes} bytes | hash={ev.content_hash[:12]}"
-                if ev.created_by:
-                    line += f" | by {ev.created_by}"
-                lines.append(line)
-                break
-    return "\n".join(lines)
-
-
-def _format_version_content(result: object, path: str, version: int) -> str:
-    """Format a get_version_content result."""
-    if not result.success:  # type: ignore[union-attr]
-        return f"Error: {result.message}"  # type: ignore[union-attr]
-
-    content = result.file.content if result.file else None  # type: ignore[union-attr]
-    if not content:
-        return f"Error: No content found for {path} v{version}."
-
-    return f"Content of {path} v{version}:\n{content}"
-
-
-def _format_restore_result(result: object) -> str:
-    """Format a restore_version result."""
-    if not result.success:  # type: ignore[union-attr]
-        return f"Error: {result.message}"  # type: ignore[union-attr]
-
-    file_path = result.file.path if result.file else "unknown"  # type: ignore[union-attr]
-    new_version = result.file.current_version if result.file else 0  # type: ignore[union-attr]
-    return f"Restored {file_path}. Current version is now v{new_version}."
-
-
 def _format_delete_result(result: object, path: str) -> str:
     """Format a delete result."""
     if not result.success:  # type: ignore[union-attr]
         return f"Error: {result.message}"  # type: ignore[union-attr]
 
-    return f"Deleted {path} (moved to trash). Use restore_from_trash to recover it."
-
-
-def _format_trash_list(result: object) -> str:
-    """Format a list_trash result."""
-    if not result.success:  # type: ignore[union-attr]
-        return f"Error: {result.message}"  # type: ignore[union-attr]
-
-    if len(result) == 0:  # type: ignore[arg-type]
-        return "Trash is empty."
-
-    lines = [f"Trash ({len(result)} items):"]  # type: ignore[arg-type]
-    lines.extend(f"  - {f.path}" for f in result.files)  # type: ignore[union-attr]
-    return "\n".join(lines)
-
-
-def _format_trash_restore(result: object) -> str:
-    """Format a restore_from_trash result."""
-    if not result.success:  # type: ignore[union-attr]
-        return f"Error: {result.message}"  # type: ignore[union-attr]
-
-    file_path = result.file.path if result.file else "unknown"  # type: ignore[union-attr]
-    return f"Restored {file_path} from trash."
+    return f"Deleted {path} (moved to trash)."
 
 
 def _format_search_result(result: object, query: str) -> str:
@@ -132,10 +65,10 @@ def _format_search_result(result: object, query: str) -> str:
 
 
 class GroverMiddleware(AgentMiddleware):
-    """deepagents middleware exposing Grover version, search, graph, and trash tools.
+    """deepagents middleware exposing Grover search, graph, and delete tools.
 
-    Adds tools beyond standard file operations: version history, semantic
-    search, dependency graph queries, and soft-delete trash management.
+    Adds tools beyond standard file operations: semantic search,
+    dependency graph queries, and soft-delete.
 
     Accepts either a sync :class:`~grover.Grover` or async
     :class:`~grover.GroverAsync` instance. When ``GroverAsync`` is passed,
@@ -164,12 +97,7 @@ class GroverMiddleware(AgentMiddleware):
         self.grover = grover
         self._is_async = isinstance(grover, GroverAsync)
         tool_list: list[BaseTool] = [
-            self._create_list_versions_tool(),
-            self._create_get_version_content_tool(),
-            self._create_restore_version_tool(),
             self._create_delete_file_tool(),
-            self._create_list_trash_tool(),
-            self._create_restore_from_trash_tool(),
         ]
         if enable_search:
             tool_list.append(self._create_search_semantic_tool())
@@ -183,128 +111,7 @@ class GroverMiddleware(AgentMiddleware):
         self.tools: list[BaseTool] = tool_list
 
     # ------------------------------------------------------------------
-    # Version tools
-    # ------------------------------------------------------------------
-
-    def _create_list_versions_tool(self) -> BaseTool:
-        is_async = self._is_async
-        grover_s = cast("Grover", self.grover) if not is_async else None
-        grover_a = cast("GroverAsync", self.grover) if is_async else None
-
-        def list_versions(
-            path: Annotated[str, "Absolute virtual path to the file, e.g. /project/main.py"],
-        ) -> str:
-            if grover_a is not None:
-                return asyncio.run(list_versions_async(path))
-            assert grover_s is not None
-            try:
-                result = grover_s.list_versions(path)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_version_list(result, path)
-
-        async def list_versions_async(path: str) -> str:
-            assert grover_a is not None
-            try:
-                result = await grover_a.list_versions(path)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_version_list(result, path)
-
-        kwargs: dict[str, object] = {
-            "name": "list_versions",
-            "description": (
-                "Show the version history of a file. Returns a list of versions "
-                "with timestamps, sizes, hashes, and who made each change. "
-                "Use this to understand how a file has evolved over time."
-            ),
-            "func": list_versions,
-        }
-        if is_async:
-            kwargs["coroutine"] = list_versions_async
-        return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]
-
-    def _create_get_version_content_tool(self) -> BaseTool:
-        is_async = self._is_async
-        grover_s = cast("Grover", self.grover) if not is_async else None
-        grover_a = cast("GroverAsync", self.grover) if is_async else None
-
-        def get_version_content(
-            path: Annotated[str, "Absolute virtual path to the file"],
-            version: Annotated[int, "Version number to retrieve (from list_versions output)"],
-        ) -> str:
-            if grover_a is not None:
-                return asyncio.run(get_version_content_async(path, version))
-            assert grover_s is not None
-            try:
-                result = grover_s.read_version(path, version)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_version_content(result, path, version)
-
-        async def get_version_content_async(path: str, version: int) -> str:
-            assert grover_a is not None
-            try:
-                result = await grover_a.read_version(path, version)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_version_content(result, path, version)
-
-        kwargs: dict[str, object] = {
-            "name": "get_version_content",
-            "description": (
-                "Read the content of a specific past version of a file. "
-                "Use list_versions first to see available versions, then "
-                "pass the version number here to read that version's content."
-            ),
-            "func": get_version_content,
-        }
-        if is_async:
-            kwargs["coroutine"] = get_version_content_async
-        return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]
-
-    def _create_restore_version_tool(self) -> BaseTool:
-        is_async = self._is_async
-        grover_s = cast("Grover", self.grover) if not is_async else None
-        grover_a = cast("GroverAsync", self.grover) if is_async else None
-
-        def restore_version(
-            path: Annotated[str, "Absolute virtual path to the file"],
-            version: Annotated[int, "Version number to restore to"],
-        ) -> str:
-            if grover_a is not None:
-                return asyncio.run(restore_version_async(path, version))
-            assert grover_s is not None
-            try:
-                result = grover_s.restore_version(path, version)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_restore_result(result)
-
-        async def restore_version_async(path: str, version: int) -> str:
-            assert grover_a is not None
-            try:
-                result = await grover_a.restore_version(path, version)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_restore_result(result)
-
-        kwargs: dict[str, object] = {
-            "name": "restore_version",
-            "description": (
-                "Restore a file to a previous version. This creates a new "
-                "version with the content from the specified old version — "
-                "it does not discard history. Use list_versions to find "
-                "the version number, then restore to it."
-            ),
-            "func": restore_version,
-        }
-        if is_async:
-            kwargs["coroutine"] = restore_version_async
-        return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]
-
-    # ------------------------------------------------------------------
-    # Trash tools
+    # Delete tool
     # ------------------------------------------------------------------
 
     def _create_delete_file_tool(self) -> BaseTool:
@@ -343,78 +150,6 @@ class GroverMiddleware(AgentMiddleware):
         }
         if is_async:
             kwargs["coroutine"] = delete_file_async
-        return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]
-
-    def _create_list_trash_tool(self) -> BaseTool:
-        is_async = self._is_async
-        grover_s = cast("Grover", self.grover) if not is_async else None
-        grover_a = cast("GroverAsync", self.grover) if is_async else None
-
-        def list_trash() -> str:
-            if grover_a is not None:
-                return asyncio.run(list_trash_async())
-            assert grover_s is not None
-            try:
-                result = grover_s.list_trash()
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_trash_list(result)
-
-        async def list_trash_async() -> str:
-            assert grover_a is not None
-            try:
-                result = await grover_a.list_trash()
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_trash_list(result)
-
-        kwargs: dict[str, object] = {
-            "name": "list_trash",
-            "description": (
-                "List all soft-deleted files in the trash. Shows file paths "
-                "and sizes. Use restore_from_trash to recover a specific file."
-            ),
-            "func": list_trash,
-        }
-        if is_async:
-            kwargs["coroutine"] = list_trash_async
-        return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]
-
-    def _create_restore_from_trash_tool(self) -> BaseTool:
-        is_async = self._is_async
-        grover_s = cast("Grover", self.grover) if not is_async else None
-        grover_a = cast("GroverAsync", self.grover) if is_async else None
-
-        def restore_from_trash(
-            path: Annotated[str, "Path of the trashed file to restore (from list_trash output)"],
-        ) -> str:
-            if grover_a is not None:
-                return asyncio.run(restore_from_trash_async(path))
-            assert grover_s is not None
-            try:
-                result = grover_s.restore_from_trash(path)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_trash_restore(result)
-
-        async def restore_from_trash_async(path: str) -> str:
-            assert grover_a is not None
-            try:
-                result = await grover_a.restore_from_trash(path)
-            except Exception as e:
-                return f"Error: {e}"
-            return _format_trash_restore(result)
-
-        kwargs: dict[str, object] = {
-            "name": "restore_from_trash",
-            "description": (
-                "Restore a previously deleted file from trash. Use list_trash "
-                "first to see available files, then pass the path here."
-            ),
-            "func": restore_from_trash,
-        }
-        if is_async:
-            kwargs["coroutine"] = restore_from_trash_async
         return StructuredTool.from_function(**kwargs)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------

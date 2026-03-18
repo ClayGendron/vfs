@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from sqlmodel import select
 
 from grover.models.internal.detail import WriteDetail
-from grover.models.internal.evidence import Evidence
 from grover.models.internal.ref import File, FileChunk
 from grover.models.internal.results import GroverResult
 from grover.util.content import compute_content_hash
@@ -17,6 +16,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.internal.evidence import Evidence
 
 
 class DefaultChunkProvider:

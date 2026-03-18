@@ -306,54 +306,18 @@ class TestGroverAsyncGraphQueries:
 
 
 # ==================================================================
-# Version operations (file_ops)
+# Tree (async)
 # ==================================================================
 
 
-class TestGroverAsyncVersionOps:
-    @pytest.mark.asyncio
-    async def test_read_version(self, grover: GroverAsync):
-        """read_version returns the content of a specific version."""
-        await grover.write("/project/doc.txt", "version one")
-        await grover.write("/project/doc.txt", "version two")
-        result = await grover.read_version("/project/doc.txt", 1)
-        assert result.success is True
-        assert result.file.content == "version one"
-
-    @pytest.mark.asyncio
-    async def test_diff_versions_basic(self, grover: GroverAsync):
-        """diff_versions computes a unified diff between two versions."""
-        await grover.write("/project/doc.txt", "hello\n")
-        await grover.write("/project/doc.txt", "hello world\n")
-        result = await grover.diff_versions("/project/doc.txt", 1, 2)
-        assert result.success is True
-        assert result.file.content is not None
-        assert result.file.content != ""
-        assert "-hello" in result.file.content or "+hello world" in result.file.content
-
-    @pytest.mark.asyncio
-    async def test_diff_versions_same_version(self, grover: GroverAsync):
-        """diff_versions with same version returns empty diff."""
-        await grover.write("/project/doc.txt", "content\n")
-        result = await grover.diff_versions("/project/doc.txt", 1, 1)
-        assert result.success is True
-        assert result.file.content == ""
-
-    @pytest.mark.asyncio
-    async def test_diff_versions_invalid_version(self, grover: GroverAsync):
-        """diff_versions with nonexistent version returns failure."""
-        await grover.write("/project/doc.txt", "content\n")
-        result = await grover.diff_versions("/project/doc.txt", 1, 999)
-        assert result.success is False
-
-    @pytest.mark.asyncio
-    async def test_tree_still_works(self, grover: GroverAsync):
-        """tree() still works after moving from search_ops to file_ops."""
-        await grover.write("/project/a.py", "a\n")
-        await grover.write("/project/sub/b.py", "b\n")
-        result = await grover.tree("/project")
-        assert result.success is True
-        assert len(result) >= 2
+@pytest.mark.asyncio
+async def test_tree_still_works(grover: GroverAsync):
+    """tree() still works after moving from search_ops to file_ops."""
+    await grover.write("/project/a.py", "a\n")
+    await grover.write("/project/sub/b.py", "b\n")
+    result = await grover.tree("/project")
+    assert result.success is True
+    assert len(result) >= 2
 
 
 # ==================================================================
