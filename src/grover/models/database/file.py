@@ -89,22 +89,40 @@ class FileModelBase(ValidatedSQLModel):
         path: str,
         content: str = "",
         *,
+        is_directory: bool = False,
         mount: str | None = None,
         embedding: list[float] | None = None,
         tokens: int = 0,
         owner_id: str | None = None,
     ) -> FileModelBase:
-        """Factory for building a fully-populated file model.
+        """Factory for building a fully-populated file or directory model.
 
         Computes content_hash, size_bytes, mime_type, lines, and timestamps
-        so the caller doesn't have to.
+        so the caller doesn't have to.  When ``is_directory=True``, content
+        is set to ``None`` and directory-appropriate defaults are used.
         """
         if mount:
             mount = mount.strip("/")
             path = f"/{mount}/{path.lstrip('/')}"
+        now = datetime.now(UTC)
+        if is_directory:
+            return cls(
+                path=path,
+                parent_path=split_path(path)[0],
+                is_directory=True,
+                content=None,
+                content_hash=None,
+                mime_type="",
+                lines=0,
+                size_bytes=0,
+                tokens=0,
+                embedding=None,
+                owner_id=owner_id,
+                created_at=now,
+                updated_at=now,
+            )
         content_hash, size_bytes = compute_content_hash(content)
         _, name = split_path(path)
-        now = datetime.now(UTC)
         return cls(
             path=path,
             parent_path=split_path(path)[0],

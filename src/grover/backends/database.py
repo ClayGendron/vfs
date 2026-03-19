@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import logging
 import re
-import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -1391,18 +1390,8 @@ class DatabaseFileSystem:
             if not dir_path:
                 continue
 
-            parent = "/".join(parts[: i - 1]) or "/"
-            values: dict[str, object] = {
-                "id": str(uuid.uuid4()),
-                "path": dir_path,
-                "parent_path": parent,
-                "is_directory": True,
-                "current_version": 1,
-                "created_at": datetime.now(UTC),
-                "updated_at": datetime.now(UTC),
-            }
-            if owner_id is not None:
-                values["owner_id"] = owner_id
+            dir_model = self.file_model.create(dir_path, is_directory=True, owner_id=owner_id)
+            values = dir_model.model_dump(exclude_none=True)
             await upsert_file(
                 session,
                 self.dialect,
@@ -1452,18 +1441,8 @@ class DatabaseFileSystem:
 
         created_dirs: list[str] = []
         for dir_path in dirs_to_create:
-            parent, _name = split_path(dir_path)
-            values: dict[str, object] = {
-                "id": str(uuid.uuid4()),
-                "path": dir_path,
-                "parent_path": parent,
-                "is_directory": True,
-                "current_version": 1,
-                "created_at": datetime.now(UTC),
-                "updated_at": datetime.now(UTC),
-            }
-            if owner_id is not None:
-                values["owner_id"] = owner_id
+            dir_model = self.file_model.create(dir_path, is_directory=True, owner_id=owner_id)
+            values = dir_model.model_dump(exclude_none=True)
             rowcount = await upsert_file(
                 session,
                 self.dialect,

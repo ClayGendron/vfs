@@ -109,6 +109,15 @@ async def _upsert_sqlite_pg(
     return result.rowcount  # type: ignore[return-value]
 
 
+def _get_schema_from_session(session: AsyncSession) -> str | None:
+    """Extract the default schema from the session's ``schema_translate_map``."""
+    bind = session.get_bind()
+    sync_bind = getattr(bind, "sync_engine", bind)
+    exec_opts = getattr(sync_bind, "_execution_options", {})
+    stm = exec_opts.get("schema_translate_map", {})
+    return stm.get(None)
+
+
 async def _upsert_mssql(
     session: AsyncSession,
     values: dict[str, Any],
@@ -118,6 +127,9 @@ async def _upsert_mssql(
 ) -> int:
     """MSSQL upsert using MERGE INTO ... WITH (HOLDLOCK)."""
     table_name: str = getattr(model, "__tablename__", "grover_files")
+    schema = _get_schema_from_session(session)
+    if schema:
+        table_name = f"[{schema}].{table_name}"
     on_clause = " AND ".join(f"target.{k} = :{k}" for k in conflict_keys)
     insert_cols = ", ".join(values.keys())
     insert_vals = ", ".join(f":{k}" for k in values)

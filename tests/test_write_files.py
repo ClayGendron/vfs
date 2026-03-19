@@ -356,6 +356,31 @@ class TestFileModelCreate:
         f = FileModel.create("a.py", "x\n", mount="proj", owner_id="alice")
         assert f.owner_id == "alice"
 
+    def test_create_directory(self):
+        d = FileModel.create("/src", is_directory=True)
+        assert d.path == "/src"
+        assert d.parent_path == "/"
+        assert d.is_directory is True
+        assert d.content is None
+        assert d.content_hash is None
+        assert d.mime_type == ""
+        assert d.lines == 0
+        assert d.size_bytes == 0
+        assert d.tokens == 0
+        assert d.created_at is not None
+        assert d.updated_at is not None
+
+    def test_create_directory_with_mount(self):
+        d = FileModel.create("lib", is_directory=True, mount="project")
+        assert d.path == "/project/lib"
+        assert d.parent_path == "/project"
+        assert d.is_directory is True
+
+    def test_create_directory_with_owner(self):
+        d = FileModel.create("/data", is_directory=True, owner_id="alice")
+        assert d.owner_id == "alice"
+        assert d.is_directory is True
+
 
 # ---------------------------------------------------------------------------
 # Embedding / tokens flow-through tests

@@ -176,6 +176,32 @@ class TestDefaultFactories:
 # ---------------------------------------------------------------------------
 
 
+class TestFileModelCreateDirectory:
+    def test_create_directory_round_trip(self, session: Session):
+        d = FileModel.create("/mydir", is_directory=True)
+        session.add(d)
+        session.commit()
+        session.refresh(d)
+
+        assert d.is_directory is True
+        assert d.content is None
+        assert d.mime_type == ""
+        assert d.lines == 0
+        assert d.size_bytes == 0
+        assert d.tokens == 0
+        assert d.parent_path == "/"
+        assert d.created_at is not None
+
+    def test_create_directory_with_owner(self, session: Session):
+        d = FileModel.create("/owned_dir", is_directory=True, owner_id="alice")
+        session.add(d)
+        session.commit()
+        session.refresh(d)
+
+        assert d.is_directory is True
+        assert d.owner_id == "alice"
+
+
 class TestFileBaseOwnerId:
     def test_file_base_owner_id_default_none(self, session: Session):
         f = FileModel(path="/no_owner.txt", parent_path="/")

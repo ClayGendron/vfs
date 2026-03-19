@@ -458,6 +458,43 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 
 
+class TestDirectoryFieldsComplete:
+    """Directory upserts include all NOT NULL columns."""
+
+    async def test_ensure_parent_dirs_populates_all_fields(self):
+        fs, factory, engine = await _make_fs()
+        async with factory() as session:
+            await fs.write("/a/b/c/file.py", "x\n", session=session)
+
+            for dir_path in ["/a", "/a/b", "/a/b/c"]:
+                rec = await fs._get_file_record(session, dir_path)
+                assert rec is not None, f"Missing dir: {dir_path}"
+                assert rec.is_directory is True
+                assert rec.mime_type is not None  # populated, not missing
+                assert rec.lines is not None
+                assert rec.size_bytes is not None
+                assert rec.tokens is not None
+                assert rec.created_at is not None
+                assert rec.updated_at is not None
+        await engine.dispose()
+
+    async def test_mkdir_populates_all_fields(self):
+        fs, factory, engine = await _make_fs()
+        async with factory() as session:
+            await fs.mkdir("/deep/nested/dir", session=session)
+
+            for dir_path in ["/deep", "/deep/nested", "/deep/nested/dir"]:
+                rec = await fs._get_file_record(session, dir_path)
+                assert rec is not None, f"Missing dir: {dir_path}"
+                assert rec.is_directory is True
+                assert rec.mime_type is not None
+                assert rec.lines is not None
+                assert rec.size_bytes is not None
+                assert rec.created_at is not None
+                assert rec.updated_at is not None
+        await engine.dispose()
+
+
 class TestParentPath:
     """H5: parent_path should be populated on write, mkdir, and move."""
 

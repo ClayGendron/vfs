@@ -10,6 +10,7 @@ from sqlmodel import SQLModel, select
 
 from grover.models.database.file import FileModel
 from grover.util.dialect import (
+    _get_schema_from_session,
     _upsert_mssql,
     check_tables_exist,
     get_dialect,
@@ -328,11 +329,20 @@ class TestUpsertSqlitePgBranches:
 
 
 class TestUpsertMssql:
-    async def test_mssql_upsert_generates_merge(self):
-        mock_session = AsyncMock(spec=AsyncSession)
+    @staticmethod
+    def _mssql_mock_session():
+        """Mock session with no schema_translate_map."""
+        session = AsyncMock(spec=AsyncSession)
+        mock_bind = MagicMock(spec=["_execution_options"])
+        mock_bind._execution_options = {}
+        session.get_bind.return_value = mock_bind
         mock_result = MagicMock()
         mock_result.rowcount = 1
-        mock_session.execute.return_value = mock_result
+        session.execute.return_value = mock_result
+        return session
+
+    async def test_mssql_upsert_generates_merge(self):
+        mock_session = self._mssql_mock_session()
 
         await _upsert_mssql(
             mock_session,
@@ -349,10 +359,7 @@ class TestUpsertMssql:
         assert "UPDATE SET" in sql_text
 
     async def test_mssql_upsert_with_update_keys(self):
-        mock_session = AsyncMock(spec=AsyncSession)
-        mock_result = MagicMock()
-        mock_result.rowcount = 1
-        mock_session.execute.return_value = mock_result
+        mock_session = self._mssql_mock_session()
 
         await _upsert_mssql(
             mock_session,
@@ -372,10 +379,7 @@ class TestUpsertMssql:
         assert "target.current_version" not in sql_text
 
     async def test_mssql_upsert_no_update_cols(self):
-        mock_session = AsyncMock(spec=AsyncSession)
-        mock_result = MagicMock()
-        mock_result.rowcount = 1
-        mock_session.execute.return_value = mock_result
+        mock_session = self._mssql_mock_session()
 
         # All keys are conflict_keys → no WHEN MATCHED
         await _upsert_mssql(
@@ -391,10 +395,7 @@ class TestUpsertMssql:
     async def test_mssql_upsert_custom_model(self):
         from tests.test_configurable_model import WikiFile
 
-        mock_session = AsyncMock(spec=AsyncSession)
-        mock_result = MagicMock()
-        mock_result.rowcount = 1
-        mock_session.execute.return_value = mock_result
+        mock_session = self._mssql_mock_session()
 
         await _upsert_mssql(
             mock_session,
@@ -404,3 +405,87 @@ class TestUpsertMssql:
         )
         sql_text = str(mock_session.execute.call_args[0][0])
         assert "wiki_files" in sql_text
+
+
+# =========================================================================
+# _get_schema_from_session() + schema-qualified MERGE
+# =========================================================================
+
+
+class TestGetSchemaFromSession:
+    @staticmethod
+    def _mock_session_with_bind(execution_options: dict, *, has_sync_engine: bool = False):
+        """Build a mock AsyncSession whose get_bind() returns a bind with given options.
+
+        When *has_sync_engine* is False the bind acts like a sync engine
+        (no ``sync_engine`` attribute).  When True an outer async-engine
+        wrapper is simulated.
+        """
+        mock_session = AsyncMock(spec=AsyncSession)
+        if has_sync_engine:
+            mock_async_bind = MagicMock()
+            mock_sync = MagicMock(spec=["_execution_options"])
+            mock_sync._execution_options = execution_options
+            mock_async_bind.sync_engine = mock_sync
+            mock_session.get_bind.return_value = mock_async_bind
+        else:
+            mock_bind = MagicMock(spec=["_execution_options"])
+            mock_bind._execution_options = execution_options
+            mock_session.get_bind.return_value = mock_bind
+        return mock_session
+
+    def test_no_schema_translate_map(self):
+        session = self._mock_session_with_bind({})
+        assert _get_schema_from_session(session) is None
+
+    def test_schema_translate_map_with_default(self):
+        session = self._mock_session_with_bind({"schema_translate_map": {None: "grover"}})
+        assert _get_schema_from_session(session) == "grover"
+
+    def test_schema_translate_map_without_default(self):
+        session = self._mock_session_with_bind({"schema_translate_map": {"other": "schema"}})
+        assert _get_schema_from_session(session) is None
+
+    def test_async_engine_unwraps_sync_engine(self):
+        session = self._mock_session_with_bind({"schema_translate_map": {None: "dbo"}}, has_sync_engine=True)
+        assert _get_schema_from_session(session) == "dbo"
+
+
+class TestMssqlSchemaQualifiedMerge:
+    async def test_merge_uses_schema_when_present(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_bind = MagicMock(spec=["_execution_options"])
+        mock_bind._execution_options = {"schema_translate_map": {None: "grover"}}
+        mock_session.get_bind.return_value = mock_bind
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+        mock_session.execute.return_value = mock_result
+
+        await _upsert_mssql(
+            mock_session,
+            values={"id": "s1", "path": "/s.txt", "current_version": 1},
+            conflict_keys=["path"],
+            model=FileModel,
+        )
+        sql_text = str(mock_session.execute.call_args[0][0])
+        assert "[grover].grover_files" in sql_text
+        assert "MERGE INTO [grover].grover_files" in sql_text
+
+    async def test_merge_no_schema_uses_bare_table(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_bind = MagicMock(spec=["_execution_options"])
+        mock_bind._execution_options = {}
+        mock_session.get_bind.return_value = mock_bind
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+        mock_session.execute.return_value = mock_result
+
+        await _upsert_mssql(
+            mock_session,
+            values={"id": "s2", "path": "/s.txt", "current_version": 1},
+            conflict_keys=["path"],
+            model=FileModel,
+        )
+        sql_text = str(mock_session.execute.call_args[0][0])
+        assert "MERGE INTO grover_files" in sql_text
+        assert "[" not in sql_text.split("WITH")[0]  # no brackets before WITH
