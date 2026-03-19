@@ -4,6 +4,30 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.10] — 2026-03-19
+
+### Added
+
+- **Unified `GroverResult` type** — All facade operations (`write_files`, `read`, `edit`, `delete`, `move_files`, `copy_files`, `read_files`, `write_chunks`, `reconcile`) now return `GroverResult` with typed `Detail` objects providing per-file success/failure tracking, messages, and metadata.
+- **Batch `move_files()`, `copy_files()`, `read_files()`** — New facade methods for bulk operations with per-file result tracking.
+- **`ValidatedSQLModel` base class** — Runtime Pydantic validation for SQLModel instances constructed from non-database sources (DataFrames, dicts). DB models opt in via `ValidatedSQLModel` inheritance; `model_from_mount()` on `GroverContext` resolves the correct model class per mount.
+- **`move --follow` support** — `move_files()` gains a `follow` parameter to update graph connections after moves.
+- **`list_dir` returns candidates** — Directory listing now returns typed result objects.
+- **`ReconcileDetail`** — New detail type for per-file reconcile tracking (added/updated/deleted).
+
+### Changed
+
+- **Version/trash facade methods removed** — `versions()`, `rollback()`, `trash()`, `restore()`, `empty_trash()` removed from facade, backends, and protocols. Deletions now cascade automatically through the database.
+- **`read()` simplified** — `offset` and `limit` parameters removed from `read()` across facade, backends, and utilities. Content slicing is no longer a backend concern.
+- **`write_chunks` refactored** — Follows the same thin-facade pattern as `write_files`, with chunking logic pushed into `ChunkProvider`.
+- **`Ref` internals unified** — Internal ref parsing consolidated into `models/internal/ref.py` with enhanced decomposition.
+- **Mount naming and DB model base classes simplified** — Cleaner mount initialization, streamlined dialect helpers.
+
+### Fixed
+
+- **ty 0.0.23 compatibility** — Protocol mismatches and or-pattern union errors resolved for latest type checker.
+- **`GroverResult` migration alignment** — Backend return types, batch type exports, and test expectations aligned with unified result model.
+
 ## [0.0.9] — 2026-03-17
 
 ### Changed
