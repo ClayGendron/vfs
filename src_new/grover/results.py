@@ -77,8 +77,8 @@ class Candidate(BaseModel):
     weight: float | None = None
     distance: float | None = None
 
-    # Provenance — accumulates through chain steps
-    details: list[Detail] = []
+    # Provenance — accumulates through chain steps (tuple for true immutability)
+    details: tuple[Detail, ...] = ()
 
     # Timestamps
     created_at: datetime | None = None
@@ -207,7 +207,7 @@ class GroverResult(BaseModel):
             mime_type=fs(a.mime_type, b.mime_type),
             weight=fs(a.weight, b.weight),
             distance=fs(a.distance, b.distance),
-            details=list(a.details) + list(b.details),
+            details=a.details + b.details,
             created_at=fs(a.created_at, b.created_at),
             updated_at=fs(a.updated_at, b.updated_at),
         )
@@ -362,15 +362,15 @@ class GroverResult(BaseModel):
         """Chain: grep within current candidates."""
         return self._require_grover().grep(pattern, candidates=self)
 
-    def semantic_search(self, query: str, *, k: int = 10) -> GroverResult:
+    def semantic_search(self, query: str, *, k: int = 15) -> GroverResult:
         """Chain: semantic search filtered to current candidates."""
         return self._require_grover().semantic_search(query, k=k, candidates=self)
 
-    def vector_search(self, vector: list[float], *, k: int = 10) -> GroverResult:
+    def vector_search(self, vector: list[float], *, k: int = 15) -> GroverResult:
         """Chain: vector search filtered to current candidates."""
         return self._require_grover().vector_search(vector, k=k, candidates=self)
 
-    def lexical_search(self, query: str, *, k: int = 10) -> GroverResult:
+    def lexical_search(self, query: str, *, k: int = 15) -> GroverResult:
         """Chain: lexical search filtered to current candidates."""
         return self._require_grover().lexical_search(query, k=k, candidates=self)
 

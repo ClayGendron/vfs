@@ -143,6 +143,8 @@ class GroverFileSystem(Protocol):
     async def grep(
         self,
         pattern: str,
+        case_sensitive: bool = True,
+        max_results: int | None = None,
         candidates: GroverResult | None = None,
         *,
         session: AsyncSession | None = None,

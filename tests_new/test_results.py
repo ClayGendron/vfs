@@ -133,11 +133,10 @@ class TestCandidate:
         assert "lines" in data
         assert data["lines"] == 0
 
-    def test_independent_details_lists(self):
-        """Pydantic v2 should give each instance its own details list."""
-        c1 = _c("/a.py")
-        c2 = _c("/b.py")
-        assert c1.details is not c2.details
+    def test_details_is_immutable_tuple(self):
+        """details is a tuple — truly immutable, not just frozen field assignment."""
+        c = _c("/a.py")
+        assert isinstance(c.details, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -547,7 +546,7 @@ class TestGroverResultJSON:
         detail = candidate["details"][0]
         assert "metadata" not in detail
         assert detail["operation"] == "semantic_search"
-        assert detail["operation"] == "semantic_search"
+        assert detail["score"] == 0.95
 
     def test_json_round_trip(self):
         r = GroverResult(
@@ -725,3 +724,36 @@ class TestRequiredFields:
     def test_candidate_requires_path(self):
         with pytest.raises(ValidationError):
             Candidate(id="1", kind="file")
+
+
+class TestDatetimeRoundTrip:
+    def test_candidate_datetime_json_round_trip(self):
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        c = Candidate(
+            id="1", path="/a.py", kind="file", created_at=now, updated_at=now
+        )
+        json_str = c.model_dump_json()
+        restored = Candidate.model_validate_json(json_str)
+        assert restored.created_at == now
+        assert restored.updated_at == now
+
+
+class TestDuplicatePaths:
+    def test_as_dict_last_wins_on_duplicate_paths(self):
+        """If candidates have duplicate paths, _as_dict keeps the last one."""
+        c1 = Candidate(id="1", path="/a.py", kind="file", content="first")
+        c2 = Candidate(id="2", path="/a.py", kind="file", content="second")
+        r = GroverResult(candidates=[c1, c2])
+        d = r._as_dict()
+        assert len(d) == 1
+        assert d["/a.py"].content == "second"
+
+    def test_intersection_with_duplicates_on_one_side(self):
+        c1 = Candidate(id="1", path="/a.py", kind="file", content="first")
+        c2 = Candidate(id="2", path="/a.py", kind="file", content="second")
+        a = GroverResult(candidates=[c1, c2])
+        b = GroverResult(candidates=[_c("/a.py")])
+        result = a & b
+        assert len(result) == 1
