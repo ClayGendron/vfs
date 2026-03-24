@@ -1069,15 +1069,79 @@ Or more concisely: **Knowledge as a filesystem.**
 
 **Rationale:** The path utilities in `paths.py` already provide everything `Ref` would — `parse_kind()`, `base_path()`, `parent_path()`, `decompose_connection()`, and the path constructors. A frozen dataclass wrapping a string adds a layer of indirection without enabling anything new. If a uniform handle becomes valuable (e.g., for caching parsed properties or for type-safe API boundaries), it can be added without changing the data model or protocol — it's a presentation concern, not a storage or dispatch concern.
 
-### 14.2 Initial `src_new/` scaffolding — 2026-03-23
+### 14.2 Initial scaffolding — 2026-03-23
 
 **Commit:** `3f0dd20` — *Add design docs for Grover v2 rewrite*
-
-Files in `src_new/grover/`:
 
 | File | What it implements |
 |------|-------------------|
 | `paths.py` | §3 — Path normalization, validation, kind detection, parent/base resolution, path constructors (`chunk_path`, `version_path`, `connection_path`, `api_path`), `decompose_connection` |
 | `models.py` | §4 — `ValidatedSQLModel` base, `GroverObjectBase` with all kinded columns, `GroverObject` concrete table (`grover_objects`) with auto-derived `parent_path`, `kind`, `name`, content metrics, timestamps |
 | `vector.py` | Embedding column — `Vector` type with dimension/model-name enforcement, `VectorType` SQLAlchemy decorator (JSON serialization, dimension validation on read/write) |
-| `__init__.py` | Empty |
+
+### 14.3 Composable result types + protocol — 2026-03-23
+
+**Commits:** `f04444b` through `47459d3`
+
+#### Result types (`results.py`)
+
+One result type for everything. Every Grover operation returns `GroverResult`. CRUD returns it with one candidate, queries with many, graph ops with re-ranked/expanded candidates.
+
+- **`Detail`** — flat provenance record. Fields: `operation`, `score`, `success`, `message`, `metadata: dict`. No subclasses. Frozen.
+- **`Candidate`** — read-only projection of a `GroverObject`. Required fields: `id`, `path`, `kind`. `name` is a computed property via `split_path()`. `details` is `tuple[Detail, ...]` for true immutability. `score` property returns last non-null detail score. `score_for(operation)` looks up a specific operation's score.
+- **`GroverResult`** — carries `success`, `message`, `candidates`. `_grover` back-reference (Pydantic `PrivateAttr`, excluded from JSON) enables method chaining. Set algebra (`&`, `|`, `-`). Enrichment chains (`sort`, `top`, `filter`, `kinds`). CRUD/query/graph chain stubs delegate to facade.
+
+#### Protocol (`protocol.py`)
+
+`GroverFileSystem` — the narrow waist. Every backend implements it.
+
+**Chainable CRUD** (accept `path` or `candidates`, one batched query):
+`read`, `stat`, `edit`, `ls`, `delete`
+
+**Path-only CRUD** (no chain use case today):
+`write` (with `overwrite`), `move`, `copy`, `mkdir`, `mkconn`
+
+**Search** — three explicit methods:
+`semantic_search`, `vector_search`, `lexical_search` (all with `k=15`)
+
+**Query:**
+`glob`, `grep` (with `case_sensitive`, `max_results`), `tree`
+
+**Graph** — traversal accepts `path` or `candidates`:
+`predecessors`, `successors`, `ancestors`, `descendants`, `neighborhood`
+
+**Graph** — set operations require `candidates`:
+`meeting_subgraph`, `min_meeting_subgraph`
+
+**Graph** — centrality/ranking (optional `candidates`):
+`pagerank`, `betweenness_centrality`, `closeness_centrality`, `degree_centrality`, `in_degree_centrality`, `out_degree_centrality`, `hits`
+
+All methods: `*, session: AsyncSession | None = None` keyword-only.
+
+#### Key design decisions made
+
+**No `operations` tracking on `GroverResult`.** Provenance lives on `Detail` per candidate, not as hidden state on the result. This follows the Unix principle: data is data, the pipeline is the program. `sort()` defaults to `candidate.score` (last detail score), or accepts explicit `operation=` or `key=`.
+
+**No `Ref` type.** Plain `str` paths everywhere. `paths.py` provides all parsing utilities.
+
+**No `exists` method.** `stat` covers the use case.
+
+**No `open`/`close` lifecycle on protocol.** Session lifecycle owned by facade, not backend.
+
+**`ls` not `list`.** Avoids shadowing Python's `list` builtin, which Pydantic needs to resolve `list[Candidate]` annotations.
+
+**Connection fields removed from `Candidate`.** `source_path`, `target_path`, `connection_type` are derivable from the path via `decompose_connection()`. Connection metadata goes in `Detail.metadata`. `weight` and `distance` kept as graph metrics.
+
+**`Candidate.details` is `tuple[Detail, ...]`** not `list[Detail]`. Frozen model + immutable container = true immutability.
+
+**Merge uses `_first_set` (None-coalescing, not falsy-coalescing).** `lines=0`, `content=""`, `score=0.0` are valid values that won't be replaced by the other candidate's value in set algebra.
+
+**`top(k)` raises `ValueError` for `k < 1`.** No silent empty results.
+
+#### Directory restructure
+
+Old v1 code archived to `src_old/` and `tests_old/`. New v2 code promoted to `src/` and `tests/`. `pyproject.toml` updated to exclude old dirs from lint/test/coverage.
+
+#### Tests
+
+80 tests covering: Detail/Candidate/GroverResult construction, frozen model enforcement, JSON serialization round-trips (`model_dump`, `model_dump_json`), set algebra (intersection, union, difference, detail merging, success propagation, `_grover` propagation), enrichment chains (sort by score/operation/key, top, filter, kinds), chain stubs without bound grover, merge edge cases (zero metrics, empty content, left id preservation, None fallback), `_first_set` direct tests, required field validation, datetime round-trip, duplicate path behavior.
