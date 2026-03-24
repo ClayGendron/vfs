@@ -1,6 +1,6 @@
 # Claude Code
 .claude/
-CLAUDE.md
+OLD_CLAUDE.md
 
 # JetBrains
 .idea/
@@ -215,6 +215,7 @@ __marimo__/
 
 # Test fixture repos (cloned for integration tests)
 tests/fixtures/repos/
+tests_old/fixtures/repos/
 
 # Test Notebooks
 *test.ipynb
