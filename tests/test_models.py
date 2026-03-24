@@ -10,7 +10,6 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from grover.models import GroverObject, GroverObjectBase
 from grover.vector import Vector
 
-
 # =========================================================================
 # Path normalization and validation in the model
 # =========================================================================
@@ -197,7 +196,7 @@ class TestContentMetrics:
     def test_content_with_text(self):
         obj = GroverObject(path="/a.py", content="def login():\n    pass")
         assert obj.content_hash is not None
-        assert obj.size_bytes == len("def login():\n    pass".encode())
+        assert obj.size_bytes == len(b"def login():\n    pass")
         assert obj.lines == 2
 
     def test_single_line_no_newline(self):
@@ -312,6 +311,7 @@ class TestBaseVsConcrete:
         obj = GroverObject(path="/src/auth.py", content="x")
         assert obj.kind == "file"
         assert obj.content_hash is not None
+
 
 
 # =========================================================================

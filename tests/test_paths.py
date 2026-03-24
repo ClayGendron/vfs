@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 
 from grover.paths import (
-    ConnectionParts,
+    MARKER_KINDS,
     METADATA_KIND_MAP,
     METADATA_MARKERS,
-    MARKER_KINDS,
+    ConnectionParts,
     api_path,
     base_path,
     chunk_path,
@@ -21,7 +21,6 @@ from grover.paths import (
     validate_path,
     version_path,
 )
-
 
 # =========================================================================
 # normalize_path

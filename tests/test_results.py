@@ -64,10 +64,10 @@ class TestCandidate:
     def test_construction(self):
         c = _c("/src/auth.py")
         assert c.path == "/src/auth.py"
-        assert c.kind == "file"
+        assert c.kind == "file"  # _c helper sets kind="file"
         assert c.name == "auth.py"
         assert c.content is None
-        assert c.lines == 0
+        assert c.lines is None
 
     def test_score_property_empty_details(self):
         c = _c("/a.py")
@@ -634,17 +634,17 @@ class TestFirstSet:
 
 
 class TestRequiredFields:
-    def test_candidate_requires_id(self):
-        with pytest.raises(ValidationError):
-            Candidate(path="/a.py", kind="file")
+    def test_candidate_id_is_optional(self):
+        c = Candidate(path="/a.py", kind="file")
+        assert c.id is None
 
-    def test_candidate_requires_kind(self):
-        with pytest.raises(ValidationError):
-            Candidate(id="1", path="/a.py")
+    def test_candidate_kind_is_optional(self):
+        c = Candidate(path="/a.py")
+        assert c.kind is None
 
     def test_candidate_requires_path(self):
         with pytest.raises(ValidationError):
-            Candidate(id="1", kind="file")
+            Candidate(kind="file")
 
 
 class TestDatetimeRoundTrip:
