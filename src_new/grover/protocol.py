@@ -53,6 +53,7 @@ class GroverFileSystem(Protocol):
         old: str = "",
         new: str = "",
         candidates: GroverResult | None = None,
+        replace_all: bool = False,
         *,
         session: AsyncSession | None = None,
     ) -> GroverResult: ...
@@ -69,6 +70,7 @@ class GroverFileSystem(Protocol):
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
+        permanent: bool = False,
         *,
         session: AsyncSession | None = None,
     ) -> GroverResult: ...
@@ -81,6 +83,7 @@ class GroverFileSystem(Protocol):
         self,
         path: str,
         content: str,
+        overwrite: bool = True,
         *,
         session: AsyncSession | None = None,
     ) -> GroverResult: ...
@@ -117,8 +120,16 @@ class GroverFileSystem(Protocol):
         session: AsyncSession | None = None,
     ) -> GroverResult: ...
 
+    async def tree(
+        self,
+        path: str,
+        max_depth: int | None = None,
+        *,
+        session: AsyncSession | None = None,
+    ) -> GroverResult: ...
+
     # -------------------------------------------------------------------
-    # Query
+    # Search
     # -------------------------------------------------------------------
 
     async def glob(
@@ -137,22 +148,10 @@ class GroverFileSystem(Protocol):
         session: AsyncSession | None = None,
     ) -> GroverResult: ...
 
-    async def tree(
-        self,
-        path: str,
-        max_depth: int | None = None,
-        *,
-        session: AsyncSession | None = None,
-    ) -> GroverResult: ...
-
-    # -------------------------------------------------------------------
-    # Search — three explicit methods
-    # -------------------------------------------------------------------
-
     async def semantic_search(
         self,
         query: str,
-        k: int = 10,
+        k: int = 15,
         candidates: GroverResult | None = None,
         *,
         session: AsyncSession | None = None,
@@ -161,7 +160,7 @@ class GroverFileSystem(Protocol):
     async def vector_search(
         self,
         vector: list[float],
-        k: int = 10,
+        k: int = 15,
         candidates: GroverResult | None = None,
         *,
         session: AsyncSession | None = None,
@@ -170,7 +169,7 @@ class GroverFileSystem(Protocol):
     async def lexical_search(
         self,
         query: str,
-        k: int = 10,
+        k: int = 15,
         candidates: GroverResult | None = None,
         *,
         session: AsyncSession | None = None,

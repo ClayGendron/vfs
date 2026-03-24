@@ -1,4 +1,4 @@
-"""Composable result types for Grover v2.
+"""Composable result types for Grover.
 
 Every Grover operation returns ``GroverResult``.  Results carry candidates,
 provenance details, and an optional back-reference to the ``Grover`` instance
@@ -13,9 +13,13 @@ for use in REST APIs.
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 — Pydantic needs this at runtime for field resolution
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr
+
+from grover.paths import split_path
+
+_T = TypeVar("_T")
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -35,24 +39,10 @@ class Detail(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     operation: str
-    score: float = 0.0
     success: bool = True
     message: str = ""
-
-    # Search-specific
-    snippet: str | None = None
-
-    # Grep-specific
-    line_number: int | None = None
-    line_content: str | None = None
-    context_before: list[str] | None = None
-    context_after: list[str] | None = None
-
-    # Graph-specific
-    algorithm: str | None = None
-
-    # Arbitrary extra data (for extensibility)
-    extra: dict[str, Any] | None = None
+    score: float | None = None
+    metadata: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +60,9 @@ class Candidate(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     # Identity
+    id: str
     path: str
-    kind: str = "file"
-    name: str = ""
+    kind: str
 
     # Content (populated by read)
     content: str | None = None
@@ -83,14 +73,9 @@ class Candidate(BaseModel):
     tokens: int = 0
     mime_type: str | None = None
 
-    # Connection-specific (convenience, derived from path)
-    source_path: str | None = None
-    target_path: str | None = None
-    connection_type: str | None = None
+    # Graph metrics
     weight: float | None = None
-
-    # Version-specific
-    version_number: int | None = None
+    distance: float | None = None
 
     # Provenance — accumulates through chain steps
     details: list[Detail] = []
@@ -102,7 +87,25 @@ class Candidate(BaseModel):
     @property
     def score(self) -> float:
         """Score from the most recent detail, or 0.0."""
-        return self.details[-1].score if self.details else 0.0
+        if not self.details:
+            return 0.0
+        s = self.details[-1].score
+        return s if s is not None else 0.0
+
+    def score_for(self, operation: str) -> float:
+        """Score for a specific operation, or 0.0.
+
+        Searches details in reverse (most recent first).
+        """
+        for d in reversed(self.details):
+            if d.operation == operation:
+                return d.score if d.score is not None else 0.0
+        return 0.0
+
+    @property
+    def name(self) -> str:
+        """Last segment of the path."""
+        return split_path(self.path)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -129,39 +132,6 @@ class GroverResult(BaseModel):
 
     # Back-reference for chaining — not serialized
     _grover: Any = PrivateAttr(default=None)
-
-    # -------------------------------------------------------------------
-    # Factories
-    # -------------------------------------------------------------------
-
-    @classmethod
-    def from_paths(
-        cls,
-        paths: list[str],
-        *,
-        operation: str = "unknown",
-        score: float = 0.0,
-    ) -> GroverResult:
-        """Create a result from a list of paths."""
-        candidates = [
-            Candidate(
-                path=p,
-                details=[Detail(operation=operation, score=score)],
-            )
-            for p in paths
-        ]
-        return cls(candidates=candidates)
-
-    @classmethod
-    def from_candidates(
-        cls,
-        candidates: list[Candidate],
-        *,
-        success: bool = True,
-        message: str = "",
-    ) -> GroverResult:
-        """Create a result from pre-built candidates."""
-        return cls(candidates=candidates, success=success, message=message)
 
     # -------------------------------------------------------------------
     # Data access
@@ -213,25 +183,33 @@ class GroverResult(BaseModel):
         return {c.path: c for c in self.candidates}
 
     @staticmethod
+    def _first_set(a: _T | None, b: _T | None, default: _T | None = None) -> _T | None:
+        """Return *a* if not None, else *b*, else *default*."""
+        return a if a is not None else (b if b is not None else default)
+
+    @staticmethod
     def _merge_candidate(a: Candidate, b: Candidate) -> Candidate:
-        """Merge two candidates for the same path — combine details."""
+        """Merge two candidates for the same path — combine details.
+
+        Left candidate (a) wins for all fields.  Falls back to right (b)
+        only when left is None.  Uses explicit None checks — never falsy
+        coalescing — so ``0``, ``""``, and ``0.0`` are preserved.
+        """
+        fs = GroverResult._first_set
         return Candidate(
+            id=a.id,
             path=a.path,
             kind=a.kind,
-            name=a.name or b.name,
-            content=a.content or b.content,
-            lines=a.lines or b.lines,
-            size_bytes=a.size_bytes or b.size_bytes,
-            tokens=a.tokens or b.tokens,
-            mime_type=a.mime_type or b.mime_type,
-            source_path=a.source_path or b.source_path,
-            target_path=a.target_path or b.target_path,
-            connection_type=a.connection_type or b.connection_type,
-            weight=a.weight if a.weight is not None else b.weight,
-            version_number=a.version_number if a.version_number is not None else b.version_number,
+            content=fs(a.content, b.content),
+            lines=a.lines,
+            size_bytes=a.size_bytes,
+            tokens=a.tokens,
+            mime_type=fs(a.mime_type, b.mime_type),
+            weight=fs(a.weight, b.weight),
+            distance=fs(a.distance, b.distance),
             details=list(a.details) + list(b.details),
-            created_at=a.created_at or b.created_at,
-            updated_at=a.updated_at or b.updated_at,
+            created_at=fs(a.created_at, b.created_at),
+            updated_at=fs(a.updated_at, b.updated_at),
         )
 
     def __and__(self, other: GroverResult) -> GroverResult:
@@ -239,7 +217,10 @@ class GroverResult(BaseModel):
         left = self._as_dict()
         right = other._as_dict()
         merged = [self._merge_candidate(left[p], right[p]) for p in left if p in right]
-        result = GroverResult(candidates=merged, success=self.success and other.success)
+        result = GroverResult(
+            candidates=merged,
+            success=self.success and other.success,
+        )
         result._grover = self._grover or other._grover
         return result
 
@@ -264,7 +245,10 @@ class GroverResult(BaseModel):
         """Difference — candidates in left not in right."""
         right_paths = set(other.paths)
         remaining = [c for c in self.candidates if c.path not in right_paths]
-        result = GroverResult(candidates=remaining, success=self.success)
+        result = GroverResult(
+            candidates=remaining,
+            success=self.success,
+        )
         result._grover = self._grover
         return result
 
@@ -285,16 +269,36 @@ class GroverResult(BaseModel):
     def sort(
         self,
         *,
+        operation: str | None = None,
         key: Callable[[Candidate], Any] | None = None,
         reverse: bool = True,
     ) -> GroverResult:
-        """Re-order candidates. Default: by score descending."""
-        sort_key = key or (lambda c: c.score)
+        """Re-order candidates by score.
+
+        Resolution order for sort key:
+        1. *key* callable — custom sort function
+        2. *operation* string — sort by that operation's score via ``score_for()``
+        3. Default — ``candidate.score`` (most recent non-null detail score)
+        """
+        if key:
+            sort_key = key
+        elif operation:
+
+            def sort_key(c: Candidate) -> float:
+                return c.score_for(operation)  # type: ignore[arg-type]
+        else:
+
+            def sort_key(c: Candidate) -> float:
+                return c.score
+
         return self._with_candidates(sorted(self.candidates, key=sort_key, reverse=reverse))
 
-    def top(self, k: int) -> GroverResult:
-        """Top *k* candidates by score."""
-        sorted_result = self.sort()
+    def top(self, k: int, *, operation: str | None = None) -> GroverResult:
+        """Top *k* candidates by score. *k* must be >= 1."""
+        if k < 1:
+            msg = f"k must be >= 1, got {k}"
+            raise ValueError(msg)
+        sorted_result = self.sort(operation=operation)
         return sorted_result._with_candidates(sorted_result.candidates[:k])
 
     def filter(self, fn: Callable[[Candidate], bool]) -> GroverResult:
@@ -338,7 +342,7 @@ class GroverResult(BaseModel):
 
         Named ``ls`` to avoid shadowing the ``list`` builtin, which Pydantic
         needs to resolve the ``candidates: list[Candidate]`` annotation.
-        Calls the facade's ``list()`` method under the hood.
+        Calls the facade's ``ls()`` method under the hood.
         """
         return self._require_grover().ls(candidates=self)
 

@@ -104,7 +104,6 @@ class GroverObjectBase(ValidatedSQLModel):
 
     # --- Version-specific ---------------------------------------------------
 
-    version_number: int | None = Field(default=None)
     is_snapshot: bool | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=255)
 

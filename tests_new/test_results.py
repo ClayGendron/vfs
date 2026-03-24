@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
+from pydantic import ValidationError
 
 from grover.results import Candidate, Detail, GroverResult
+
+
+def _c(path: str, kind: str = "file", **kwargs: object) -> Candidate:
+    """Shorthand for building test candidates with auto-generated id."""
+    return Candidate(id=str(uuid.uuid4()), path=path, kind=kind, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -14,39 +22,36 @@ from grover.results import Candidate, Detail, GroverResult
 
 class TestDetail:
     def test_construction(self):
-        d = Detail(operation="semantic_search", score=0.95, snippet="auth handler")
+        d = Detail(operation="semantic_search", score=0.95)
         assert d.operation == "semantic_search"
         assert d.score == 0.95
-        assert d.snippet == "auth handler"
         assert d.success is True
 
     def test_defaults(self):
         d = Detail(operation="read")
-        assert d.score == 0.0
+        assert d.score is None
         assert d.success is True
         assert d.message == ""
-        assert d.snippet is None
-        assert d.algorithm is None
-        assert d.extra is None
+        assert d.metadata is None
 
     def test_json_excludes_none(self):
-        d = Detail(operation="grep", line_number=42, line_content="def login():")
+        d = Detail(
+            operation="grep",
+            metadata={"line_number": 42, "line_content": "def login():"},
+        )
         data = d.model_dump(exclude_none=True)
-        assert "snippet" not in data
-        assert "algorithm" not in data
-        assert "extra" not in data
         assert data["operation"] == "grep"
-        assert data["line_number"] == 42
+        assert data["metadata"]["line_number"] == 42
 
     def test_json_round_trip(self):
-        d = Detail(operation="pagerank", score=0.42, algorithm="pagerank")
+        d = Detail(operation="pagerank", score=0.42)
         data = d.model_dump()
         restored = Detail.model_validate(data)
         assert restored == d
 
     def test_frozen(self):
         d = Detail(operation="read")
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             d.operation = "write"
 
 
@@ -57,20 +62,20 @@ class TestDetail:
 
 class TestCandidate:
     def test_construction(self):
-        c = Candidate(path="/src/auth.py")
+        c = _c("/src/auth.py")
         assert c.path == "/src/auth.py"
         assert c.kind == "file"
-        assert c.name == ""
+        assert c.name == "auth.py"
         assert c.content is None
         assert c.lines == 0
 
     def test_score_property_empty_details(self):
-        c = Candidate(path="/a.py")
+        c = _c("/a.py")
         assert c.score == 0.0
 
     def test_score_property_from_last_detail(self):
-        c = Candidate(
-            path="/a.py",
+        c = _c(
+            "/a.py",
             details=[
                 Detail(operation="search", score=0.9),
                 Detail(operation="pagerank", score=0.42),
@@ -79,40 +84,35 @@ class TestCandidate:
         assert c.score == 0.42
 
     def test_json_excludes_none(self):
-        c = Candidate(path="/a.py", kind="file", lines=100, size_bytes=4096)
+        c = _c("/a.py", lines=100, size_bytes=4096)
         data = c.model_dump(exclude_none=True)
         assert "content" not in data
-        assert "source_path" not in data
-        assert "version_number" not in data
+        assert "weight" not in data
         assert data["path"] == "/a.py"
         assert data["lines"] == 100
 
     def test_connection_candidate(self):
-        c = Candidate(
-            path="/a.py/.connections/imports/b.py",
+        c = _c(
+            "/a.py/.connections/imports/b.py",
             kind="connection",
-            source_path="/a.py",
-            target_path="/b.py",
-            connection_type="imports",
             weight=1.0,
+            distance=0.5,
         )
         data = c.model_dump(exclude_none=True)
-        assert data["source_path"] == "/a.py"
-        assert data["target_path"] == "/b.py"
-        assert data["connection_type"] == "imports"
+        assert data["weight"] == 1.0
+        assert data["distance"] == 0.5
+        assert c.kind == "connection"
 
     def test_version_candidate(self):
-        c = Candidate(
-            path="/a.py/.versions/3",
+        c = _c(
+            "/a.py/.versions/3",
             kind="version",
-            version_number=3,
         )
-        assert c.version_number == 3
+        assert c.name == "3"
 
     def test_json_round_trip(self):
-        c = Candidate(
-            path="/a.py",
-            kind="file",
+        c = _c(
+            "/a.py",
             lines=50,
             details=[Detail(operation="read", score=1.0)],
         )
@@ -122,22 +122,22 @@ class TestCandidate:
         assert restored.score == c.score
 
     def test_frozen(self):
-        c = Candidate(path="/a.py")
-        with pytest.raises(Exception):
+        c = _c("/a.py")
+        with pytest.raises(ValidationError):
             c.path = "/b.py"
 
     def test_zero_metrics_included_in_json(self):
         """0 is not None — zero metrics should be present in JSON."""
-        c = Candidate(path="/a.py", lines=0, size_bytes=0)
+        c = _c("/a.py", lines=0, size_bytes=0)
         data = c.model_dump(exclude_none=True)
         assert "lines" in data
         assert data["lines"] == 0
 
     def test_independent_details_lists(self):
         """Pydantic v2 should give each instance its own details list."""
-        c1 = Candidate(path="/a.py")
-        c2 = Candidate(path="/b.py")
-        assert c1.details is not c2.details or c1.details == c2.details == []
+        c1 = _c("/a.py")
+        c2 = _c("/b.py")
+        assert c1.details is not c2.details
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +160,8 @@ class TestGroverResultBasics:
     def test_with_candidates(self):
         r = GroverResult(
             candidates=[
-                Candidate(path="/a.py"),
-                Candidate(path="/b.py"),
+                _c("/a.py"),
+                _c("/b.py"),
             ]
         )
         assert len(r) == 2
@@ -172,24 +172,24 @@ class TestGroverResultBasics:
     def test_failed_result_is_falsy(self):
         r = GroverResult(
             success=False,
-            candidates=[Candidate(path="/a.py")],
+            candidates=[_c("/a.py")],
         )
         assert not r
 
     def test_contains(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(candidates=[_c("/a.py")])
         assert "/a.py" in r
         assert "/b.py" not in r
 
     def test_iteration(self):
-        candidates = [Candidate(path="/a.py"), Candidate(path="/b.py")]
+        candidates = [_c("/a.py"), _c("/b.py")]
         r = GroverResult(candidates=candidates)
         paths = [c.path for c in r]
         assert paths == ["/a.py", "/b.py"]
 
     def test_content_shorthand(self):
         r = GroverResult(
-            candidates=[Candidate(path="/a.py", content="print('hello')")]
+            candidates=[_c("/a.py", content="print('hello')")]
         )
         assert r.content == "print('hello')"
 
@@ -198,8 +198,8 @@ class TestGroverResultBasics:
         d2 = Detail(operation="pagerank", score=0.4)
         r = GroverResult(
             candidates=[
-                Candidate(path="/a.py", details=[d1, d2]),
-                Candidate(path="/b.py", details=[d1]),
+                _c("/a.py", details=[d1, d2]),
+                _c("/b.py", details=[d1]),
             ]
         )
         assert len(r.explain("/a.py")) == 2
@@ -212,21 +212,17 @@ class TestGroverResultBasics:
 # ---------------------------------------------------------------------------
 
 
-class TestGroverResultFactories:
-    def test_from_paths(self):
-        r = GroverResult.from_paths(["/a.py", "/b.py"], operation="glob")
+class TestGroverResultConstruction:
+    def test_direct_construction(self):
+        r = GroverResult(
+            candidates=[
+                _c("/a.py"),
+                _c("/b.py"),
+            ],
+            message="test",
+        )
         assert len(r) == 2
         assert r.paths == ("/a.py", "/b.py")
-        assert r.candidates[0].details[0].operation == "glob"
-
-    def test_from_paths_with_score(self):
-        r = GroverResult.from_paths(["/a.py"], operation="search", score=0.9)
-        assert r.candidates[0].score == 0.9
-
-    def test_from_candidates(self):
-        candidates = [Candidate(path="/a.py"), Candidate(path="/b.py")]
-        r = GroverResult.from_candidates(candidates, message="test")
-        assert len(r) == 2
         assert r.message == "test"
 
 
@@ -237,7 +233,12 @@ class TestGroverResultFactories:
 
 class TestGroverResultSetAlgebra:
     def _make(self, paths: list[str], operation: str = "test") -> GroverResult:
-        return GroverResult.from_paths(paths, operation=operation)
+        return GroverResult(
+            candidates=[
+                _c(p, details=[Detail(operation=operation)])
+                for p in paths
+            ]
+        )
 
     def test_intersection(self):
         a = self._make(["/a.py", "/b.py", "/c.py"], "search")
@@ -284,14 +285,14 @@ class TestGroverResultSetAlgebra:
         assert set(result.paths) == {"/a.py", "/b.py"}
 
     def test_success_propagation_and(self):
-        a = GroverResult(success=True, candidates=[Candidate(path="/a.py")])
-        b = GroverResult(success=False, candidates=[Candidate(path="/a.py")])
+        a = GroverResult(success=True, candidates=[_c("/a.py")])
+        b = GroverResult(success=False, candidates=[_c("/a.py")])
         result = a & b
         assert result.success is False
 
     def test_success_propagation_or(self):
-        a = GroverResult(success=True, candidates=[Candidate(path="/a.py")])
-        b = GroverResult(success=False, candidates=[Candidate(path="/b.py")])
+        a = GroverResult(success=True, candidates=[_c("/a.py")])
+        b = GroverResult(success=False, candidates=[_c("/b.py")])
         result = a | b
         assert result.success is False
 
@@ -329,23 +330,43 @@ class TestGroverResultSetAlgebra:
 
 
 class TestGroverResultEnrichment:
-    def test_sort_by_score(self):
+    def test_sort_by_last_operation(self):
         r = GroverResult(
             candidates=[
-                Candidate(path="/low.py", details=[Detail(operation="s", score=0.1)]),
-                Candidate(path="/high.py", details=[Detail(operation="s", score=0.9)]),
-                Candidate(path="/mid.py", details=[Detail(operation="s", score=0.5)]),
-            ]
+                _c("/low.py", details=[Detail(operation="search", score=0.1)]),
+                _c("/high.py", details=[Detail(operation="search", score=0.9)]),
+                _c("/mid.py", details=[Detail(operation="search", score=0.5)]),
+            ],
         )
         sorted_r = r.sort()
         assert [c.path for c in sorted_r] == ["/high.py", "/mid.py", "/low.py"]
 
+    def test_sort_by_explicit_operation(self):
+        r = GroverResult(
+            candidates=[
+                _c("/a.py", details=[
+                    Detail(operation="search", score=0.9),
+                    Detail(operation="pagerank", score=0.2),
+                ]),
+                _c("/b.py", details=[
+                    Detail(operation="search", score=0.1),
+                    Detail(operation="pagerank", score=0.8),
+                ]),
+            ],
+        )
+        # Default: sort by last operation (pagerank)
+        sorted_r = r.sort()
+        assert sorted_r.candidates[0].path == "/b.py"
+        # Explicit: sort by search
+        sorted_r = r.sort(operation="search")
+        assert sorted_r.candidates[0].path == "/a.py"
+
     def test_sort_ascending(self):
         r = GroverResult(
             candidates=[
-                Candidate(path="/high.py", details=[Detail(operation="s", score=0.9)]),
-                Candidate(path="/low.py", details=[Detail(operation="s", score=0.1)]),
-            ]
+                _c("/high.py", details=[Detail(operation="s", score=0.9)]),
+                _c("/low.py", details=[Detail(operation="s", score=0.1)]),
+            ],
         )
         sorted_r = r.sort(reverse=False)
         assert [c.path for c in sorted_r] == ["/low.py", "/high.py"]
@@ -353,20 +374,31 @@ class TestGroverResultEnrichment:
     def test_sort_custom_key(self):
         r = GroverResult(
             candidates=[
-                Candidate(path="/small.py", size_bytes=100),
-                Candidate(path="/big.py", size_bytes=9000),
+                _c("/small.py", size_bytes=100),
+                _c("/big.py", size_bytes=9000),
             ]
         )
         sorted_r = r.sort(key=lambda c: c.size_bytes)
         assert sorted_r.candidates[0].path == "/big.py"
 
+    def test_sort_no_args_uses_last_score(self):
+        """sort() with no args uses candidate.score (last detail's score)."""
+        r = GroverResult(
+            candidates=[
+                _c("/a.py", details=[Detail(operation="s", score=0.1)]),
+                _c("/b.py", details=[Detail(operation="s", score=0.9)]),
+            ]
+        )
+        sorted_r = r.sort()
+        assert sorted_r.candidates[0].path == "/b.py"
+
     def test_top(self):
         r = GroverResult(
             candidates=[
-                Candidate(path="/a.py", details=[Detail(operation="s", score=0.1)]),
-                Candidate(path="/b.py", details=[Detail(operation="s", score=0.9)]),
-                Candidate(path="/c.py", details=[Detail(operation="s", score=0.5)]),
-            ]
+                _c("/a.py", details=[Detail(operation="s", score=0.1)]),
+                _c("/b.py", details=[Detail(operation="s", score=0.9)]),
+                _c("/c.py", details=[Detail(operation="s", score=0.5)]),
+            ],
         )
         top2 = r.top(2)
         assert len(top2) == 2
@@ -374,16 +406,18 @@ class TestGroverResultEnrichment:
         assert top2.candidates[1].path == "/c.py"
 
     def test_top_more_than_available(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(
+            candidates=[_c("/a.py", details=[Detail(operation="s")])],
+        )
         top5 = r.top(5)
         assert len(top5) == 1
 
     def test_filter(self):
         r = GroverResult(
             candidates=[
-                Candidate(path="/a.py", kind="file", size_bytes=100),
-                Candidate(path="/b/", kind="directory"),
-                Candidate(path="/c.py", kind="file", size_bytes=0),
+                _c("/a.py", size_bytes=100),
+                _c("/b/", kind="directory"),
+                _c("/c.py", size_bytes=0),
             ]
         )
         files_with_content = r.filter(lambda c: c.kind == "file" and c.size_bytes > 0)
@@ -393,9 +427,9 @@ class TestGroverResultEnrichment:
     def test_kinds(self):
         r = GroverResult(
             candidates=[
-                Candidate(path="/a.py", kind="file"),
-                Candidate(path="/b/", kind="directory"),
-                Candidate(path="/a.py/.chunks/login", kind="chunk"),
+                _c("/a.py"),
+                _c("/b/", kind="directory"),
+                _c("/a.py/.chunks/login", kind="chunk"),
             ]
         )
         files_only = r.kinds("file")
@@ -405,7 +439,9 @@ class TestGroverResultEnrichment:
 
     def test_enrichment_preserves_grover(self):
         """Enrichment chains propagate _grover."""
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(
+            candidates=[_c("/a.py", details=[Detail(operation="s")])],
+        )
         sentinel = object()
         r._grover = sentinel
         assert r.sort()._grover is sentinel
@@ -419,25 +455,39 @@ class TestGroverResultEnrichment:
 # ---------------------------------------------------------------------------
 
 
+class TestScoreFor:
+    def test_score_for(self):
+        c = _c(
+            "/a.py",
+            details=[
+                Detail(operation="search", score=0.9),
+                Detail(operation="pagerank", score=0.4),
+            ],
+        )
+        assert c.score_for("search") == 0.9
+        assert c.score_for("pagerank") == 0.4
+        assert c.score_for("nonexistent") == 0.0
+
+
 class TestGroverResultChainStubs:
     def test_chain_without_grover_raises(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(candidates=[_c("/a.py")])
         with pytest.raises(RuntimeError, match="bound Grover instance"):
             r.read()
 
     def test_all_crud_stubs_raise_without_grover(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(candidates=[_c("/a.py")])
         for method_name in ("read", "delete", "stat", "ls"):
             with pytest.raises(RuntimeError):
                 getattr(r, method_name)()
 
     def test_edit_raises_without_grover(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(candidates=[_c("/a.py")])
         with pytest.raises(RuntimeError):
             r.edit("old", "new")
 
     def test_all_query_stubs_raise_without_grover(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(candidates=[_c("/a.py")])
         with pytest.raises(RuntimeError):
             r.glob("*.py")
         with pytest.raises(RuntimeError):
@@ -450,7 +500,7 @@ class TestGroverResultChainStubs:
             r.lexical_search("query")
 
     def test_all_graph_stubs_raise_without_grover(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(candidates=[_c("/a.py")])
         graph_methods = [
             "predecessors", "successors", "ancestors", "descendants",
             "meeting_subgraph", "min_meeting_subgraph",
@@ -463,7 +513,7 @@ class TestGroverResultChainStubs:
                 getattr(r, method_name)()
 
     def test_neighborhood_raises_without_grover(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(candidates=[_c("/a.py")])
         with pytest.raises(RuntimeError):
             r.neighborhood(depth=2)
 
@@ -475,7 +525,7 @@ class TestGroverResultChainStubs:
 
 class TestGroverResultJSON:
     def test_model_dump_excludes_grover(self):
-        r = GroverResult(candidates=[Candidate(path="/a.py")])
+        r = GroverResult(candidates=[_c("/a.py")])
         r._grover = object()
         data = r.model_dump()
         assert "_grover" not in data
@@ -483,42 +533,29 @@ class TestGroverResultJSON:
     def test_model_dump_exclude_none(self):
         r = GroverResult(
             candidates=[
-                Candidate(
-                    path="/a.py",
-                    kind="file",
-                    lines=142,
-                    details=[
-                        Detail(operation="semantic_search", score=0.95, snippet="auth handler")
-                    ],
-                )
+                _c("/a.py", lines=142, details=[
+                    Detail(operation="semantic_search", score=0.95)
+                ])
             ]
         )
         data = r.model_dump(exclude_none=True)
         candidate = data["candidates"][0]
         assert "content" not in candidate
-        assert "source_path" not in candidate
+        assert "weight" not in candidate
         assert candidate["path"] == "/a.py"
         assert candidate["lines"] == 142
         detail = candidate["details"][0]
-        assert "algorithm" not in detail
+        assert "metadata" not in detail
         assert detail["operation"] == "semantic_search"
-        assert detail["snippet"] == "auth handler"
+        assert detail["operation"] == "semantic_search"
 
     def test_json_round_trip(self):
         r = GroverResult(
             success=True,
             message="Found 2 files",
             candidates=[
-                Candidate(
-                    path="/a.py",
-                    kind="file",
-                    details=[Detail(operation="glob", score=0.0)],
-                ),
-                Candidate(
-                    path="/b.py",
-                    kind="file",
-                    details=[Detail(operation="glob", score=0.0)],
-                ),
+                _c("/a.py", details=[Detail(operation="glob", score=0.0)]),
+                _c("/b.py", details=[Detail(operation="glob", score=0.0)]),
             ],
         )
         data = r.model_dump()
@@ -533,4 +570,158 @@ class TestGroverResultJSON:
         """Pydantic v2 should give each instance its own candidates list."""
         r1 = GroverResult()
         r2 = GroverResult()
-        assert r1.candidates is not r2.candidates or r1.candidates == r2.candidates == []
+        assert r1.candidates is not r2.candidates
+
+    def test_json_string_round_trip(self):
+        """FastAPI uses model_dump_json, not model_dump."""
+        r = GroverResult(
+            candidates=[_c("/a.py", details=[Detail(operation="read")])],
+        )
+        json_str = r.model_dump_json(exclude_none=True)
+        restored = GroverResult.model_validate_json(json_str)
+        assert restored.paths == r.paths
+        assert restored.success == r.success
+
+
+# ---------------------------------------------------------------------------
+# Merge edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestMergeEdgeCases:
+    def test_merge_preserves_zero_metrics_from_left(self):
+        """lines=0 on left should NOT be replaced by right's value."""
+        a = GroverResult(candidates=[
+            Candidate(id="1", path="/a.py", kind="file", lines=0, size_bytes=0),
+        ])
+        b = GroverResult(candidates=[
+            Candidate(id="2", path="/a.py", kind="file", lines=50, size_bytes=4096),
+        ])
+        result = a & b
+        assert result.candidates[0].lines == 0
+        assert result.candidates[0].size_bytes == 0
+
+    def test_merge_preserves_empty_string_content(self):
+        """content='' (empty file) should NOT be replaced by right's content."""
+        a = GroverResult(candidates=[
+            Candidate(id="1", path="/a.py", kind="file", content=""),
+        ])
+        b = GroverResult(candidates=[
+            Candidate(id="2", path="/a.py", kind="file", content="real content"),
+        ])
+        result = a & b
+        assert result.candidates[0].content == ""
+
+    def test_merge_preserves_left_id(self):
+        """Left candidate's id wins in a merge."""
+        a = GroverResult(candidates=[
+            Candidate(id="left-id", path="/a.py", kind="file"),
+        ])
+        b = GroverResult(candidates=[
+            Candidate(id="right-id", path="/a.py", kind="file"),
+        ])
+        result = a & b
+        assert result.candidates[0].id == "left-id"
+
+    def test_merge_falls_back_to_right_for_none(self):
+        """When left has None, right's value is used."""
+        a = GroverResult(candidates=[
+            Candidate(id="1", path="/a.py", kind="file", content=None, mime_type=None),
+        ])
+        b = GroverResult(candidates=[
+            Candidate(id="2", path="/a.py", kind="file", content="hello", mime_type="text/python"),
+        ])
+        result = a & b
+        assert result.candidates[0].content == "hello"
+        assert result.candidates[0].mime_type == "text/python"
+
+
+# ---------------------------------------------------------------------------
+# Top edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestTopEdgeCases:
+    def test_top_zero_raises(self):
+        r = GroverResult(
+            candidates=[_c("/a.py", details=[Detail(operation="s", score=0.5)])],
+        )
+        with pytest.raises(ValueError, match="k must be >= 1"):
+            r.top(0)
+
+    def test_top_negative_raises(self):
+        r = GroverResult(
+            candidates=[_c("/a.py", details=[Detail(operation="s", score=0.5)])],
+        )
+        with pytest.raises(ValueError, match="k must be >= 1"):
+            r.top(-1)
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage from review
+# ---------------------------------------------------------------------------
+
+
+class TestScoreEdgeCases:
+    def test_score_property_with_none_score(self):
+        """score=None on last detail should return 0.0."""
+        c = _c("/a.py", details=[Detail(operation="read", score=None)])
+        assert c.score == 0.0
+
+    def test_score_for_with_none_score(self):
+        """score_for returns 0.0 when the matching detail has score=None."""
+        c = _c("/a.py", details=[Detail(operation="read", score=None)])
+        assert c.score_for("read") == 0.0
+
+    def test_score_for_returns_most_recent_duplicate(self):
+        """When multiple details share an operation, most recent wins."""
+        c = _c("/a.py", details=[
+            Detail(operation="search", score=0.3),
+            Detail(operation="search", score=0.9),
+        ])
+        assert c.score_for("search") == 0.9
+
+
+class TestSubSuccessPropagation:
+    def test_sub_preserves_left_success(self):
+        a = GroverResult(success=True, candidates=[_c("/a.py")])
+        b = GroverResult(success=False, candidates=[_c("/b.py")])
+        result = a - b
+        assert result.success is True
+
+
+class TestFirstSet:
+    def test_returns_a_when_not_none(self):
+        assert GroverResult._first_set("a", "b") == "a"
+
+    def test_returns_b_when_a_is_none(self):
+        assert GroverResult._first_set(None, "b") == "b"
+
+    def test_returns_default_when_both_none(self):
+        assert GroverResult._first_set(None, None, "default") == "default"
+
+    def test_returns_none_when_all_none(self):
+        assert GroverResult._first_set(None, None) is None
+
+    def test_preserves_zero(self):
+        assert GroverResult._first_set(0, 99) == 0
+
+    def test_preserves_empty_string(self):
+        assert GroverResult._first_set("", "fallback") == ""
+
+    def test_preserves_zero_float(self):
+        assert GroverResult._first_set(0.0, 1.0) == 0.0
+
+
+class TestRequiredFields:
+    def test_candidate_requires_id(self):
+        with pytest.raises(ValidationError):
+            Candidate(path="/a.py", kind="file")
+
+    def test_candidate_requires_kind(self):
+        with pytest.raises(ValidationError):
+            Candidate(id="1", path="/a.py")
+
+    def test_candidate_requires_path(self):
+        with pytest.raises(ValidationError):
+            Candidate(id="1", kind="file")
