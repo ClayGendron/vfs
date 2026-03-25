@@ -171,6 +171,7 @@ class GraphProvider(Protocol):
         self,
         candidates: GroverResult,
         *,
+        score: str = "authority",
         max_iter: int = 1000,
         tol: float = 1e-8,
         session: AsyncSession,

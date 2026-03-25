@@ -1360,6 +1360,33 @@ class TestHits:
         scores = [c.score for c in result.candidates]
         assert scores == sorted(scores, reverse=True)
 
+    async def test_score_hub(self):
+        g = _loaded_graph()
+        await g.add_edge("/hub.py", "/a.py", "imports", session=_mock_session)
+        await g.add_edge("/hub.py", "/b.py", "calls", session=_mock_session)
+
+        result = await g.hits(_result(), score="hub", session=_mock_session)
+        # Detail.score should be the hub value
+        for c in result.candidates:
+            assert c.details[0].score == c.details[0].metadata["hub"]
+        # Hub node should rank first when scoring by hub
+        assert result.candidates[0].path == "/hub.py"
+
+    async def test_score_authority(self):
+        g = _loaded_graph()
+        await g.add_edge("/hub.py", "/a.py", "imports", session=_mock_session)
+        await g.add_edge("/hub.py", "/b.py", "calls", session=_mock_session)
+
+        result = await g.hits(_result(), score="authority", session=_mock_session)
+        for c in result.candidates:
+            assert c.details[0].score == c.details[0].metadata["authority"]
+
+    async def test_score_invalid(self):
+        g = _loaded_graph()
+        result = await g.hits(_result(), score="invalid", session=_mock_session)
+        assert result.success is False
+        assert "authority" in result.errors[0]
+
     async def test_error_returns_failure(self):
         g = _loaded_graph()
         g._nodes.add("/a.py")

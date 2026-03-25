@@ -869,16 +869,29 @@ class RustworkxGraph:
         self,
         candidates: GroverResult,
         *,
+        score: str = "authority",
         max_iter: int = 1000,
         tol: float = 1e-8,
         session: AsyncSession,
     ) -> GroverResult:
-        """HITS hub and authority scores."""
+        """HITS hub and authority scores.
+
+        *score* selects which metric becomes the ``Detail.score`` and
+        controls sort order.  ``"authority"`` (default) ranks by how
+        many hubs point to a node.  ``"hub"`` ranks by how many
+        authorities a node points to.  Both values are always available
+        in ``Detail.metadata``.
+        """
+        if score not in ("authority", "hub"):
+            return GroverResult(
+                success=False,
+                errors=[f"hits score must be 'authority' or 'hub', got {score!r}"],
+            )
         try:
             await self.ensure_fresh(session)
             nodes, edges_out = self._snapshot()
             return await asyncio.to_thread(
-                self._hits_impl, nodes, edges_out, candidates, max_iter, tol,
+                self._hits_impl, nodes, edges_out, candidates, score, max_iter, tol,
             )
 
         except Exception as e:
@@ -889,6 +902,7 @@ class RustworkxGraph:
         nodes: frozenset[str],
         edges_out: dict[str, frozenset[str]],
         candidates: GroverResult,
+        score: str,
         max_iter: int,
         tol: float,
     ) -> GroverResult:
@@ -917,13 +931,14 @@ class RustworkxGraph:
             )
 
         hubs_raw, auths_raw = rustworkx.hits(graph, max_iter=max_iter, tol=tol)
-        hubs = {idx_to_path[idx]: score for idx, score in hubs_raw.items() if idx in idx_to_path}
-        auths = {idx_to_path[idx]: score for idx, score in auths_raw.items() if idx in idx_to_path}
+        hubs = {idx_to_path[idx]: s for idx, s in hubs_raw.items() if idx in idx_to_path}
+        auths = {idx_to_path[idx]: s for idx, s in auths_raw.items() if idx in idx_to_path}
         if candidate_paths:
             hubs = {p: s for p, s in hubs.items() if p in candidate_paths}
             auths = {p: s for p, s in auths.items() if p in candidate_paths}
 
-        all_paths = sorted(auths, key=auths.__getitem__, reverse=True)
+        primary = auths if score == "authority" else hubs
+        all_paths = sorted(primary, key=primary.__getitem__, reverse=True)
         return GroverResult(
             candidates=[
                 Candidate(
@@ -931,7 +946,7 @@ class RustworkxGraph:
                     details=(
                         Detail(
                             operation="hits",
-                            score=auths[p],
+                            score=primary[p],
                             metadata={
                                 "authority": auths[p],
                                 "hub": hubs[p],
