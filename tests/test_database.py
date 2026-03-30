@@ -122,11 +122,11 @@ class TestWriteAndRead:
         assert not r.success
         assert "version" in r.error_message.lower()
 
-    async def test_write_rejects_connection_path(self, db: DatabaseFileSystem):
+    async def test_write_accepts_connection_path(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._write_impl("/a.py/.connections/imports/b.py", "nope", session=s)
-        assert not r.success
-        assert "connection" in r.error_message.lower()
+        assert r.success
+        assert r.file.kind == "connection"
 
     async def test_read_nonexistent(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -686,3 +686,516 @@ class TestFetchVersionChain:
         assert version_numbers[0] >= lower_bound
         assert version_numbers[-1] == 15
         assert len(rows) <= SNAPSHOT_INTERVAL
+
+
+# ------------------------------------------------------------------
+# Part 6: ls
+# ------------------------------------------------------------------
+
+
+class TestLs:
+    async def test_ls_directory_returns_files(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/auth.py", "auth", session=s)
+            await db._write_impl("/src/utils.py", "utils", session=s)
+
+        async with db._use_session() as s:
+            r = await db._ls_impl("/src", session=s)
+        assert r.success
+        assert set(r.paths) == {"/src/auth.py", "/src/utils.py"}
+
+    async def test_ls_directory_returns_subdirs(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/data/docs/readme.txt", "hello", session=s)
+            await db._write_impl("/data/src/app.py", "code", session=s)
+
+        async with db._use_session() as s:
+            r = await db._ls_impl("/data", session=s)
+        assert r.success
+        assert set(r.paths) == {"/data/docs", "/data/src"}
+
+    async def test_ls_file_returns_metadata_children(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/auth.py", "code", session=s)
+            await db._write_impl("/auth.py/.chunks/login", "def login():", session=s)
+
+        async with db._use_session() as s:
+            r = await db._ls_impl("/auth.py", session=s)
+        assert r.success
+        paths = set(r.paths)
+        assert "/auth.py/.chunks/login" in paths
+        assert "/auth.py/.versions/1" in paths
+
+    async def test_ls_directory_hides_metadata_kinds(self, db: DatabaseFileSystem):
+        """ls on a directory should not return chunks/versions of child files."""
+        async with db._use_session() as s:
+            await db._write_impl("/src/app.py", "code", session=s)
+
+        async with db._use_session() as s:
+            r = await db._ls_impl("/src", session=s)
+        assert r.success
+        assert r.paths == ("/src/app.py",)
+        for c in r.candidates:
+            assert c.kind in ("file", "directory")
+
+    async def test_ls_root(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.txt", "a", session=s)
+            await db._write_impl("/b.txt", "b", session=s)
+
+        async with db._use_session() as s:
+            r = await db._ls_impl("/", session=s)
+        assert r.success
+        assert set(r.paths) == {"/a.txt", "/b.txt"}
+
+    async def test_ls_empty_directory(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            s.add(GroverObject(path="/empty", kind="directory"))
+
+        async with db._use_session() as s:
+            r = await db._ls_impl("/empty", session=s)
+        assert r.success
+        assert len(r.candidates) == 0
+
+    async def test_ls_nonexistent_path(self, db: DatabaseFileSystem):
+        """Single-path ls on a nonexistent path returns empty (unknown kind, not in DB)."""
+        async with db._use_session() as s:
+            r = await db._ls_impl("/nope", session=s)
+        assert r.success
+        assert len(r.candidates) == 0
+
+    async def test_ls_excludes_deleted(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.txt", "a", session=s)
+            await db._write_impl("/b.txt", "b", session=s)
+
+        async with db._use_session() as s:
+            obj = await db._get_object("/b.txt", s)
+            obj.deleted_at = datetime.now(UTC)
+
+        async with db._use_session() as s:
+            r = await db._ls_impl("/", session=s)
+        assert r.success
+        assert r.paths == ("/a.txt",)
+
+    async def test_ls_with_candidates_known_kind(self, db: DatabaseFileSystem):
+        """Candidates with kind set skip the DB kind lookup."""
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "a", session=s)
+            await db._write_impl("/lib/b.py", "b", session=s)
+
+        candidates = GroverResult(candidates=[
+            Candidate(path="/src", kind="directory"),
+            Candidate(path="/lib", kind="directory"),
+        ])
+        async with db._use_session() as s:
+            r = await db._ls_impl(candidates=candidates, session=s)
+        assert r.success
+        assert set(r.paths) == {"/src/a.py", "/lib/b.py"}
+
+    async def test_ls_with_candidates_unknown_kind(self, db: DatabaseFileSystem):
+        """Candidates with kind=None trigger a DB lookup."""
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "a", session=s)
+
+        candidates = GroverResult(candidates=[Candidate(path="/src")])
+        async with db._use_session() as s:
+            r = await db._ls_impl(candidates=candidates, session=s)
+        assert r.success
+        assert r.paths == ("/src/a.py",)
+
+    async def test_ls_with_candidates_mixed_files_and_dirs(self, db: DatabaseFileSystem):
+        """Batch ls on a mix of files and directories."""
+        async with db._use_session() as s:
+            await db._write_impl("/src/auth.py", "code", session=s)
+            await db._write_impl("/src/auth.py/.chunks/login", "chunk", session=s)
+            await db._write_impl("/lib/utils.py", "utils", session=s)
+
+        candidates = GroverResult(candidates=[
+            Candidate(path="/src", kind="directory"),
+            Candidate(path="/src/auth.py", kind="file"),
+        ])
+        async with db._use_session() as s:
+            r = await db._ls_impl(candidates=candidates, session=s)
+        assert r.success
+        paths = set(r.paths)
+        # Directory child
+        assert "/src/auth.py" in paths
+        # File metadata children
+        assert "/src/auth.py/.chunks/login" in paths
+        assert "/src/auth.py/.versions/1" in paths
+
+    async def test_ls_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = GroverFileSystem(engine=engine)
+        await root.add_mount("/code", db)
+
+        await root.write("/code/src/app.py", "code")
+        r = await root.ls("/code/src")
+        assert r.success
+        assert r.paths == ("/code/src/app.py",)
+
+    async def test_ls_rejects_both_path_and_candidates(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._ls_impl(
+                "/src",
+                candidates=GroverResult(candidates=[Candidate(path="/lib", kind="directory")]),
+                session=s,
+            )
+        assert not r.success
+
+
+# ------------------------------------------------------------------
+# Part 7: Delete
+# ------------------------------------------------------------------
+
+
+class TestDelete:
+    async def test_soft_delete_file(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/file.txt", "content", session=s)
+
+        async with db._use_session() as s:
+            r = await db._delete_impl("/file.txt", session=s)
+        assert r.success
+        assert "/file.txt" in r.paths
+
+        # Not readable
+        async with db._use_session() as s:
+            r = await db._read_impl("/file.txt", session=s)
+        assert not r.success
+
+        # Still in DB
+        async with db._use_session() as s:
+            obj = await db._get_object("/file.txt", s, include_deleted=True)
+        assert obj is not None
+        assert obj.deleted_at is not None
+
+    async def test_permanent_delete(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/file.txt", "content", session=s)
+
+        async with db._use_session() as s:
+            r = await db._delete_impl("/file.txt", permanent=True, session=s)
+        assert r.success
+
+        async with db._use_session() as s:
+            obj = await db._get_object("/file.txt", s, include_deleted=True)
+        assert obj is None
+
+    async def test_soft_delete_cascades_to_metadata(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/auth.py", "v1", session=s)
+        async with db._use_session() as s:
+            await db._write_impl("/auth.py", "v2", session=s)
+        async with db._use_session() as s:
+            await db._write_impl("/auth.py/.chunks/login", "chunk", session=s)
+
+        async with db._use_session() as s:
+            r = await db._delete_impl("/auth.py", session=s)
+        assert r.success
+        # Result includes the file + cascaded children
+        assert len(r.candidates) > 1
+
+        async with db._use_session() as s:
+            v1 = await db._get_object("/auth.py/.versions/1", s, include_deleted=True)
+            chunk = await db._get_object("/auth.py/.chunks/login", s, include_deleted=True)
+        assert v1 is not None and v1.deleted_at is not None
+        assert chunk is not None and chunk.deleted_at is not None
+
+    async def test_permanent_delete_cascades_to_metadata(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/auth.py", "code", session=s)
+            await db._write_impl("/auth.py/.chunks/fn", "chunk", session=s)
+
+        async with db._use_session() as s:
+            await db._delete_impl("/auth.py", permanent=True, session=s)
+
+        async with db._use_session() as s:
+            obj = await db._get_object("/auth.py", s, include_deleted=True)
+            chunk = await db._get_object("/auth.py/.chunks/fn", s, include_deleted=True)
+            version = await db._get_object("/auth.py/.versions/1", s, include_deleted=True)
+        assert obj is None
+        assert chunk is None
+        assert version is None
+
+    async def test_soft_delete_directory_cascades_all(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "a", session=s)
+            await db._write_impl("/src/b.py", "b", session=s)
+
+        async with db._use_session() as s:
+            await db._delete_impl("/src", session=s)
+
+        async with db._use_session() as s:
+            a = await db._get_object("/src/a.py", s, include_deleted=True)
+            b = await db._get_object("/src/b.py", s, include_deleted=True)
+        assert a is not None and a.deleted_at is not None
+        assert b is not None and b.deleted_at is not None
+
+    async def test_permanent_delete_directory_cascades_all(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "a", session=s)
+            await db._write_impl("/src/b.py", "b", session=s)
+
+        async with db._use_session() as s:
+            await db._delete_impl("/src", permanent=True, session=s)
+
+        async with db._use_session() as s:
+            a = await db._get_object("/src/a.py", s, include_deleted=True)
+            b = await db._get_object("/src/b.py", s, include_deleted=True)
+            src = await db._get_object("/src", s, include_deleted=True)
+        assert a is None
+        assert b is None
+        assert src is None
+
+    async def test_delete_nonexistent(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._delete_impl("/nope.txt", session=s)
+        assert not r.success
+        assert "Not found" in r.error_message
+
+    async def test_delete_with_candidates(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.txt", "a", session=s)
+            await db._write_impl("/b.txt", "b", session=s)
+
+        candidates = GroverResult(candidates=[
+            Candidate(path="/a.txt"),
+            Candidate(path="/b.txt"),
+        ])
+        async with db._use_session() as s:
+            r = await db._delete_impl(candidates=candidates, session=s)
+        assert r.success
+
+        async with db._use_session() as s:
+            a = await db._get_object("/a.txt", s)
+            b = await db._get_object("/b.txt", s)
+        assert a is None
+        assert b is None
+
+    async def test_delete_connection(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "a", session=s)
+        async with db._use_session() as s:
+            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+
+        conn_path = "/a.py/.connections/imports/b.py"
+        async with db._use_session() as s:
+            r = await db._delete_impl(conn_path, session=s)
+        assert r.success
+
+        async with db._use_session() as s:
+            obj = await db._get_object(conn_path, s)
+        assert obj is None
+
+    async def test_write_revives_soft_deleted_file(self, db: DatabaseFileSystem):
+        """Soft-deleted files can be overwritten (revived)."""
+        async with db._use_session() as s:
+            await db._write_impl("/revive.txt", "v1", session=s)
+        async with db._use_session() as s:
+            await db._delete_impl("/revive.txt", session=s)
+
+        async with db._use_session() as s:
+            r = await db._write_impl("/revive.txt", "v2", session=s)
+        assert r.success
+        assert r.content == "v2"
+
+    async def test_delete_rejects_both_path_and_candidates(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._delete_impl(
+                "/a.txt",
+                candidates=GroverResult(candidates=[Candidate(path="/b.txt")]),
+                session=s,
+            )
+        assert not r.success
+
+
+# ------------------------------------------------------------------
+# Part 8: mkconn
+# ------------------------------------------------------------------
+
+
+class TestMkconn:
+    async def test_mkconn_creates_connection(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/auth.py", "code", session=s)
+
+        async with db._use_session() as s:
+            r = await db._mkconn_impl("/auth.py", "/utils.py", "imports", session=s)
+        assert r.success
+        assert r.file.kind == "connection"
+        assert r.file.path == "/auth.py/.connections/imports/utils.py"
+
+    async def test_mkconn_stores_correct_fields(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/auth.py", "code", session=s)
+
+        async with db._use_session() as s:
+            await db._mkconn_impl("/src/auth.py", "/src/utils.py", "imports", session=s)
+
+        async with db._use_session() as s:
+            conn = await db._get_object(
+                "/src/auth.py/.connections/imports/src/utils.py", s,
+            )
+        assert conn is not None
+        assert conn.kind == "connection"
+        assert conn.source_path == "/src/auth.py"
+        assert conn.target_path == "/src/utils.py"
+        assert conn.connection_type == "imports"
+        assert conn.parent_path == "/src/auth.py"
+
+    async def test_mkconn_source_not_found(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._mkconn_impl("/nope.py", "/utils.py", "imports", session=s)
+        assert not r.success
+        assert "Source not found" in r.error_message
+
+    async def test_mkconn_duplicate_updates(self, db: DatabaseFileSystem):
+        """Writing the same connection again updates it (via write upsert)."""
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "a", session=s)
+        async with db._use_session() as s:
+            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+        async with db._use_session() as s:
+            r = await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+        assert r.success
+
+    async def test_mkconn_revives_soft_deleted(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "a", session=s)
+        async with db._use_session() as s:
+            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+
+        conn_path = "/a.py/.connections/imports/b.py"
+        async with db._use_session() as s:
+            await db._delete_impl(conn_path, session=s)
+
+        async with db._use_session() as s:
+            r = await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+        assert r.success
+
+        async with db._use_session() as s:
+            conn = await db._get_object(conn_path, s)
+        assert conn is not None
+        assert conn.deleted_at is None
+
+    async def test_mkconn_missing_args(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._mkconn_impl(session=s)
+        assert not r.success
+
+    async def test_mkconn_rejects_both_args_and_objects(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._mkconn_impl(
+                "/a.py", "/b.py", "imports",
+                objects=[GroverObject(path="/x.py/.connections/imports/y.py", kind="connection")],
+                session=s,
+            )
+        assert not r.success
+
+    async def test_mkconn_with_objects_batch(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "a", session=s)
+            await db._write_impl("/b.py", "b", session=s)
+
+        conns = [
+            GroverObject(
+                path="/a.py/.connections/imports/b.py",
+                kind="connection",
+                source_path="/a.py",
+                target_path="/b.py",
+                connection_type="imports",
+            ),
+            GroverObject(
+                path="/b.py/.connections/calls/a.py",
+                kind="connection",
+                source_path="/b.py",
+                target_path="/a.py",
+                connection_type="calls",
+            ),
+        ]
+        async with db._use_session() as s:
+            r = await db._mkconn_impl(objects=conns, session=s)
+        assert r.success
+        assert len(r.candidates) == 2
+
+    async def test_mkconn_objects_validates_sources(self, db: DatabaseFileSystem):
+        """Batch mkconn with objects rejects missing sources."""
+        conns = [
+            GroverObject(
+                path="/ghost.py/.connections/imports/b.py",
+                kind="connection",
+                source_path="/ghost.py",
+                target_path="/b.py",
+                connection_type="imports",
+            ),
+        ]
+        async with db._use_session() as s:
+            r = await db._mkconn_impl(objects=conns, session=s)
+        assert not r.success
+        assert "Source not found" in r.error_message
+
+    async def test_mkconn_visible_in_ls(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/auth.py", "code", session=s)
+        async with db._use_session() as s:
+            await db._mkconn_impl("/auth.py", "/utils.py", "imports", session=s)
+
+        async with db._use_session() as s:
+            r = await db._ls_impl("/auth.py", session=s)
+        assert r.success
+        assert "/auth.py/.connections/imports/utils.py" in set(r.paths)
+
+    async def test_mkconn_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = GroverFileSystem(engine=engine)
+        await root.add_mount("/code", db)
+
+        await root.write("/code/auth.py", "code")
+        r = await root.mkconn("/code/auth.py", "/code/utils.py", "imports")
+        assert r.success
+        assert r.file.path == "/code/auth.py/.connections/imports/utils.py"
+
+
+# ------------------------------------------------------------------
+# Part 9: mkdir
+# ------------------------------------------------------------------
+
+
+class TestMkdir:
+    async def test_mkdir_creates_directory(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._mkdir_impl("/data", session=s)
+        assert r.success
+        assert r.file.kind == "directory"
+
+        async with db._use_session() as s:
+            obj = await db._get_object("/data", s)
+        assert obj is not None
+        assert obj.kind == "directory"
+
+    async def test_mkdir_creates_parents(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._mkdir_impl("/a/b/c", session=s)
+        assert r.success
+
+        async with db._use_session() as s:
+            for p in ["/a", "/a/b", "/a/b/c"]:
+                obj = await db._get_object(p, s)
+                assert obj is not None, f"Missing: {p}"
+                assert obj.kind == "directory"
+
+    async def test_mkdir_existing_is_noop(self, db: DatabaseFileSystem):
+        """mkdir on an existing directory succeeds (like mkdir -p)."""
+        async with db._use_session() as s:
+            await db._mkdir_impl("/data", session=s)
+        async with db._use_session() as s:
+            r = await db._mkdir_impl("/data", session=s)
+        assert r.success
+
+    async def test_mkdir_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = GroverFileSystem(engine=engine)
+        await root.add_mount("/store", db)
+
+        r = await root.mkdir("/store/docs")
+        assert r.success
+        assert r.file.path == "/store/docs"

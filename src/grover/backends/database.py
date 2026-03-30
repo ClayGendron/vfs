@@ -14,15 +14,14 @@ from sqlalchemy import select
 
 from grover.base import GroverFileSystem
 from grover.models import GroverObject, GroverObjectBase
+from grover.paths import connection_path
 from grover.paths import parent_path as compute_parent_path
 from grover.paths import parse_kind, version_path
-from grover.results import GroverResult
+from grover.results import Candidate, GroverResult
 from grover.versioning import SNAPSHOT_INTERVAL
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-
-    from grover.results import Candidate
 
 
 class DatabaseFileSystem(GroverFileSystem):
@@ -218,33 +217,64 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _cascade_delete(
         self,
-        path: str,
+        obj: GroverObjectBase,
         session: AsyncSession,
-        *,
-        timestamp: datetime | None = None,
-    ) -> int:
-        """Soft-delete children of *path*. Returns count of affected rows."""
-        now = timestamp or datetime.now(UTC)
-        kind = parse_kind(path)
+    ) -> list[Candidate]:
+        """Soft-delete *obj* and its children. Returns deleted candidates."""
+        now = datetime.now(UTC)
 
-        if kind == "directory":
+        if obj.kind == "directory":
             stmt = select(self._model).where(
-                self._model.path.like(path + "/%"),  # type: ignore[union-attr]
+                self._model.path.like(obj.path + "/%"),  # type: ignore[union-attr]
                 self._model.deleted_at.is_(None),  # type: ignore[union-attr]
             )
         else:
             stmt = select(self._model).where(
-                self._model.parent_path == path,
+                self._model.parent_path == obj.path,
                 self._model.deleted_at.is_(None),  # type: ignore[union-attr]
             )
 
         result = await session.execute(stmt)
         children = list(result.scalars().all())
 
+        obj.deleted_at = now
         for child in children:
             child.deleted_at = now
 
-        return len(children)
+        return [
+            obj.to_candidate(operation="delete"),
+            *(child.to_candidate(operation="delete") for child in children),
+        ]
+
+    async def _cascade_delete_permanent(
+        self,
+        obj: GroverObjectBase,
+        session: AsyncSession,
+    ) -> list[Candidate]:
+        """Permanently delete *obj* and its children. Returns deleted candidates."""
+        if obj.kind == "directory":
+            stmt = select(self._model).where(
+                self._model.path.like(obj.path + "/%"),  # type: ignore[union-attr]
+            )
+        else:
+            stmt = select(self._model).where(
+                self._model.parent_path == obj.path,
+            )
+
+        result = await session.execute(stmt)
+        children = list(result.scalars().all())
+
+        # Build candidates before deleting (ORM objects become detached)
+        deleted = [
+            obj.to_candidate(operation="delete"),
+            *(child.to_candidate(operation="delete") for child in children),
+        ]
+
+        for child in children:
+            await session.delete(child)
+        await session.delete(obj)
+
+        return deleted
 
     # ------------------------------------------------------------------
     # Per-item write helpers
@@ -364,18 +394,28 @@ class DatabaseFileSystem(GroverFileSystem):
           preserve prior details from the incoming candidates, and report
           errors for any paths not found.
         """
-        if candidates is not None:
-            incoming = {c.path: c for c in candidates.candidates}
-            paths = list(incoming.keys())
+        if candidates is None:
+            if path is None:
+                return self._error("read requires a path or candidates")
+            candidates = GroverResult(candidates=[Candidate(path=path)])
+        elif path is not None:
+            return self._error("read requires a path or candidates, not both")
+
+        incoming = {c.path: c for c in candidates.candidates}
+        paths = list(incoming.keys())
+        if not paths:
+            return GroverResult(candidates=[])
+
+        out: list[Candidate] = []
+        errors: list[str] = []
+        for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
-                self._model.path.in_(paths),  # type: ignore[union-attr]
+                self._model.path.in_(batch),  # type: ignore[union-attr]
                 self._model.deleted_at.is_(None),  # type: ignore[union-attr]
             )
             result = await session.execute(stmt)
             objs = {obj.path: obj for obj in result.scalars().all()}
-            out: list[Candidate] = []
-            errors: list[str] = []
-            for p in paths:
+            for p in batch:
                 if p in objs:
                     out.append(objs[p].to_candidate(
                         operation="read",
@@ -384,21 +424,11 @@ class DatabaseFileSystem(GroverFileSystem):
                     ))
                 else:
                     errors.append(f"Not found: {p}")
-            return GroverResult(
-                candidates=out,
-                errors=errors,
-                success=len(errors) == 0,
-            )
-
-        if path is None:
-            return self._error("read requires a path or candidates")
-
-        obj = await self._get_object(path, session)
-        if obj is None:
-            return self._error(f"Not found: {path}")
 
         return GroverResult(
-            candidates=[obj.to_candidate(operation="read", include_content=True)],
+            candidates=out,
+            errors=errors,
+            success=len(errors) == 0,
         )
 
     async def _stat_impl(
@@ -463,11 +493,17 @@ class DatabaseFileSystem(GroverFileSystem):
             if path is None:
                 return self._error("Write requires a path or objects")
             objects = [self._model(path=path, content=content or "")]
+            
+        elif path is not None:
+            return self._error("Write requires a path or objects, not both")
 
         write_map: dict[str, GroverObjectBase] = {}
         errors: list[str] = []
         for obj in objects:
-            if obj.kind not in ("file", "chunk"):
+            if obj.path == "/":
+                errors.append("Cannot write to root path")
+                continue
+            if obj.kind not in ("file", "chunk", "connection", "directory"):
                 errors.append(f"Cannot write to {obj.kind} path: {obj.path}")
                 continue
             if obj.path in write_map:
@@ -484,7 +520,7 @@ class DatabaseFileSystem(GroverFileSystem):
             return self._error(errors)
 
         # ── Step 3: Resolve parent dirs (deferred) ────────────────────
-        file_paths = [p for p, obj in write_map.items() if obj.kind == "file"]
+        file_paths = [p for p, obj in write_map.items() if obj.kind in ("file", "directory")]
         parent_dirs: list[GroverObjectBase] = []
         if file_paths:
             parent_dirs, dir_errors = await self._resolve_parent_dirs(file_paths, session)
@@ -538,7 +574,16 @@ class DatabaseFileSystem(GroverFileSystem):
             existing = existing_map.get(obj_path)
 
             try:
-                if existing is not None:
+                if incoming.kind != "file":
+                    if existing is not None:
+                        if existing.deleted_at is not None:
+                            existing.deleted_at = None
+                        existing.update_content(new_content)
+                        candidate = existing.to_candidate(operation="write", include_content=True)
+                    else:
+                        session.add(incoming)
+                        candidate = incoming.to_candidate(operation="write", include_content=True)
+                elif existing is not None:
                     if existing.deleted_at is None and not overwrite:
                         errors.append(f"Already exists (overwrite=False): {obj_path}")
                         continue
@@ -569,3 +614,192 @@ class DatabaseFileSystem(GroverFileSystem):
             await session.flush()
 
         return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
+
+    async def _ls_impl(
+        self,
+        path: str | None = None,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """List direct children of a path.
+
+        Kind-aware visibility (§5.2, §5.4 of design doc):
+
+        - **Directory** → returns ``file`` and ``directory`` children only.
+          Metadata kinds (chunk, version, connection, api) are hidden,
+          matching the Unix ``ls`` convention for dot-prefixed entries.
+        - **File** → returns *all* metadata children (chunks, versions,
+          connections) since those are the only children a file has.
+
+        When called with *candidates*, the candidate's ``kind`` field is
+        used directly if populated.  Only candidates with ``kind is None``
+        trigger a DB lookup to resolve the kind, avoiding an extra
+        round-trip for results that already carry type information from
+        a prior operation (read, glob, write, etc.).
+        """
+        if candidates is None:
+            if path is None:
+                return self._error("ls requires a path or candidates")
+            candidates = GroverResult(candidates=[Candidate(path=path)])
+        elif path is not None:
+            return self._error("ls requires a path or candidates, not both")
+
+        if not candidates.candidates:
+            return GroverResult(candidates=[])
+
+        # Classify using candidate kind; query only unknowns
+        dir_paths: list[str] = []
+        file_paths: list[str] = []
+        unknown_paths: list[str] = []
+        for c in candidates.candidates:
+            if c.path == "/" or c.kind == "directory":
+                dir_paths.append(c.path)
+            elif c.kind is not None:
+                file_paths.append(c.path)
+            else:
+                unknown_paths.append(c.path)
+
+        if unknown_paths:
+            for batch in self._chunk_paths(session, unknown_paths, binds_per_item=1):
+                stmt = select(self._model).where(
+                    self._model.path.in_(batch),  # type: ignore[union-attr]
+                    self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                )
+                result = await session.execute(stmt)
+                for obj in result.scalars().all():
+                    if obj.kind == "directory":
+                        dir_paths.append(obj.path)
+                    elif obj.kind == "file":
+                        file_paths.append(obj.path)
+
+        # Single query — filter directory metadata children in Python
+        all_paths = dir_paths + file_paths
+        if not all_paths:
+            return GroverResult(candidates=[])
+
+        dir_set = set(dir_paths)
+        out: list[Candidate] = []
+        for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
+            stmt = select(self._model).where(
+                self._model.parent_path.in_(batch),  # type: ignore[union-attr]
+                self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+            )
+            result = await session.execute(stmt)
+            for child in result.scalars().all():
+                if child.parent_path in dir_set and child.kind not in ("file", "directory"):
+                    continue
+                out.append(child.to_candidate(operation="ls"))
+
+        return GroverResult(candidates=out)
+
+    async def _delete_impl(
+        self,
+        path: str | None = None,
+        candidates: GroverResult | None = None,
+        permanent: bool = False,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Delete one or more objects.
+
+        Soft-delete (default): sets ``deleted_at``, cascades to children.
+        Permanent: removes from the database entirely, including children.
+        """
+        if candidates is None:
+            if path is None:
+                return self._error("delete requires a path or candidates")
+            candidates = GroverResult(candidates=[Candidate(path=path)])
+        elif path is not None:
+            return self._error("delete requires a path or candidates, not both")
+
+        paths = [c.path for c in candidates.candidates]
+        if not paths:
+            return GroverResult(candidates=[])
+
+        objs: dict[str, GroverObjectBase] = {}
+        for batch in self._chunk_paths(session, paths, binds_per_item=1):
+            stmt = select(self._model).where(
+                self._model.path.in_(batch),  # type: ignore[union-attr]
+            )
+            if not permanent:
+                stmt = stmt.where(self._model.deleted_at.is_(None))  # type: ignore[union-attr]
+            result = await session.execute(stmt)
+            objs.update({obj.path: obj for obj in result.scalars().all()})
+
+        out: list[Candidate] = []
+        errors: list[str] = []
+        for p in paths:
+            if obj := objs.get(p):
+                try:
+                    if permanent:
+                        out.extend(await self._cascade_delete_permanent(obj, session))
+                    else:
+                        out.extend(await self._cascade_delete(obj, session))
+                except Exception as e:
+                    errors.append(f"Delete failed for {p}: {e}")
+            else:
+                errors.append(f"Not found: {p}")
+
+        await session.flush()
+        return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
+
+    async def _mkdir_impl(
+        self,
+        path: str,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Create a directory. Delegates to ``_write_impl``."""
+        return await self._write_impl(
+            objects=[self._model(path=path, kind="directory")],
+            overwrite=False,
+            session=session,
+        )
+
+    async def _mkconn_impl(
+        self,
+        source: str | None = None,
+        target: str | None = None,
+        connection_type: str | None = None,
+        objects: list[GroverObjectBase] | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Create connection edges.
+
+        Accepts either ``source``/``target``/``connection_type`` for a
+        single connection, or ``objects`` for a batch of pre-built
+        connection objects.  Validates that each source exists, then
+        delegates to ``_write_impl``.
+        """
+        if objects is None:
+            if not source or not target or not connection_type:
+                return self._error("mkconn requires source/target/connection_type or objects")
+            objects = [self._model(
+                path=connection_path(source, target, connection_type),
+                kind="connection",
+                source_path=source,
+                target_path=target,
+                connection_type=connection_type,
+            )]
+        elif source is not None or target is not None or connection_type is not None:
+            return self._error("mkconn requires source/target/connection_type or objects, not both")
+
+        # Validate all sources exist
+        source_paths = sorted({obj.source_path for obj in objects if obj.source_path})
+        if source_paths:
+            existing_sources: set[str] = set()
+            for batch in self._chunk_paths(session, source_paths, binds_per_item=1):
+                stmt = select(self._model.path).where(  # type: ignore[arg-type]
+                    self._model.path.in_(batch),  # type: ignore[union-attr]
+                    self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                )
+                result = await session.execute(stmt)
+                existing_sources.update(row[0] for row in result.all())
+
+            missing = [p for p in source_paths if p not in existing_sources]
+            if missing:
+                return self._error([f"Source not found: {p}" for p in missing])
+
+        return await self._write_impl(objects=objects, session=session)

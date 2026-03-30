@@ -610,23 +610,23 @@ class TestSoftDeleteResurrection:
 class TestTypeConfusion:
     """Objects with unexpected kind values or mismatched hashes."""
 
-    async def test_directory_kind_rejected(self, db: DatabaseFileSystem):
-        """Writing with kind=directory should be rejected — only file/chunk."""
-        # parse_kind("/somedir") returns "directory" — write should reject
+    async def test_directory_kind_accepted(self, db: DatabaseFileSystem):
+        """Writing with kind=directory is allowed (upsert, no versioning)."""
         async with db._use_session() as s:
             r = await db._write_impl("/somedir", "content", session=s)
-        assert not r.success
-        assert "directory" in r.error_message.lower()
+        assert r.success
+        assert r.file.kind == "directory"
 
     async def test_version_kind_rejected(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._write_impl("/f.txt/.versions/1", "nope", session=s)
         assert not r.success
 
-    async def test_connection_kind_rejected(self, db: DatabaseFileSystem):
+    async def test_connection_kind_accepted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._write_impl("/a.py/.connections/imports/b.py", "nope", session=s)
-        assert not r.success
+        assert r.success
+        assert r.file.kind == "connection"
 
     async def test_object_with_mismatched_content_hash(self, db: DatabaseFileSystem):
         """Object with pre-set content_hash that doesn't match content.
@@ -1663,3 +1663,261 @@ class TestExceptionRecovery:
             b = await db._get_object("/b.txt", s)
         assert a is None
         assert b is None
+
+
+# ------------------------------------------------------------------
+# Scale: Large writes + cascading deletes
+# ------------------------------------------------------------------
+
+
+class TestLargeWriteAndDelete:
+    """Stress-test write + ls + delete at scale."""
+
+    async def test_large_batch_write_then_ls(self, db: DatabaseFileSystem, scale: int):
+        """Write N files under a directory, ls returns all of them."""
+        n = scale
+        objects = [
+            GroverObject(path=f"/data/file_{i:06d}.txt", content=f"content {i}")
+            for i in range(n)
+        ]
+        r = await db.write(objects=objects)
+        assert r.success
+        assert len(r.candidates) == n
+
+        async with db._use_session() as s:
+            ls_r = await db._ls_impl("/data", session=s)
+        assert ls_r.success
+        assert len(ls_r.candidates) == n
+
+    async def test_large_batch_write_then_soft_delete_directory(self, db: DatabaseFileSystem, scale: int):
+        """Write N files, soft-delete the parent dir, verify all cascaded."""
+        n = scale
+        objects = [
+            GroverObject(path=f"/src/file_{i:06d}.py", content=f"code {i}")
+            for i in range(n)
+        ]
+        r = await db.write(objects=objects)
+        assert r.success
+
+        async with db._use_session() as s:
+            del_r = await db._delete_impl("/src", session=s)
+        assert del_r.success
+        # Parent dir + N files + N version rows + /src dir itself
+        assert len(del_r.candidates) > n
+
+        # ls should return nothing
+        async with db._use_session() as s:
+            ls_r = await db._ls_impl("/src", session=s)
+        # /src is soft-deleted so ls finds nothing (unknown kind, not in DB)
+        assert len(ls_r.candidates) == 0
+
+    async def test_large_batch_write_then_permanent_delete_directory(self, db: DatabaseFileSystem, scale: int):
+        """Write N files, permanently delete the dir, verify all gone."""
+        n = scale
+        objects = [
+            GroverObject(path=f"/tmp/file_{i:06d}.txt", content=f"temp {i}")
+            for i in range(n)
+        ]
+        r = await db.write(objects=objects)
+        assert r.success
+
+        async with db._use_session() as s:
+            del_r = await db._delete_impl("/tmp", permanent=True, session=s)
+        assert del_r.success
+
+        # Nothing left in DB
+        async with db._use_session() as s:
+            obj = await db._get_object("/tmp", s, include_deleted=True)
+        assert obj is None
+        async with db._use_session() as s:
+            spot = await db._get_object(f"/tmp/file_{n // 2:06d}.txt", s, include_deleted=True)
+        assert spot is None
+
+    async def test_large_batch_write_with_chunks_then_delete(self, db: DatabaseFileSystem, scale: int):
+        """Write N files each with a chunk, delete cascades to all metadata."""
+        n = min(scale, 500)  # chunks double the object count
+        objects = []
+        for i in range(n):
+            objects.append(GroverObject(path=f"/code/f_{i:05d}.py", content=f"code {i}"))
+            objects.append(GroverObject(path=f"/code/f_{i:05d}.py/.chunks/main", content=f"def main_{i}():"))
+        r = await db.write(objects=objects)
+        assert r.success
+        assert len(r.candidates) == n * 2
+
+        async with db._use_session() as s:
+            del_r = await db._delete_impl("/code", permanent=True, session=s)
+        assert del_r.success
+
+        # Spot-check: file, chunk, and version all gone
+        mid = n // 2
+        async with db._use_session() as s:
+            f = await db._get_object(f"/code/f_{mid:05d}.py", s, include_deleted=True)
+            c = await db._get_object(f"/code/f_{mid:05d}.py/.chunks/main", s, include_deleted=True)
+            v = await db._get_object(f"/code/f_{mid:05d}.py/.versions/1", s, include_deleted=True)
+        assert f is None
+        assert c is None
+        assert v is None
+
+    async def test_large_batch_connections_write_and_delete(self, db: DatabaseFileSystem, scale: int):
+        """Write N files with connections between consecutive pairs, then delete."""
+        n = min(scale, 500)
+        files = [
+            GroverObject(path=f"/graph/node_{i:05d}.py", content=f"node {i}")
+            for i in range(n)
+        ]
+        r = await db.write(objects=files)
+        assert r.success
+
+        conns = [
+            GroverObject(
+                path=f"/graph/node_{i:05d}.py/.connections/calls/graph/node_{i + 1:05d}.py",
+                kind="connection",
+                source_path=f"/graph/node_{i:05d}.py",
+                target_path=f"/graph/node_{i + 1:05d}.py",
+                connection_type="calls",
+            )
+            for i in range(n - 1)
+        ]
+        r2 = await db.write(objects=conns)
+        assert r2.success
+        assert len(r2.candidates) == n - 1
+
+        # Delete the whole graph
+        async with db._use_session() as s:
+            del_r = await db._delete_impl("/graph", permanent=True, session=s)
+        assert del_r.success
+
+        async with db._use_session() as s:
+            obj = await db._get_object("/graph", s, include_deleted=True)
+        assert obj is None
+
+    async def test_write_delete_write_cycle_at_scale(self, db: DatabaseFileSystem, scale: int):
+        """Write N files, soft-delete all, write N new files at same paths."""
+        n = scale
+        objects_v1 = [
+            GroverObject(path=f"/cycle/f_{i:06d}.txt", content=f"v1_{i}")
+            for i in range(n)
+        ]
+        r1 = await db.write(objects=objects_v1)
+        assert r1.success
+
+        # Soft-delete the directory
+        async with db._use_session() as s:
+            await db._delete_impl("/cycle", session=s)
+
+        # Re-write same paths
+        objects_v2 = [
+            GroverObject(path=f"/cycle/f_{i:06d}.txt", content=f"v2_{i}")
+            for i in range(n)
+        ]
+        r2 = await db.write(objects=objects_v2)
+        assert r2.success
+
+        # Spot-check: content is v2
+        mid = n // 2
+        r = await db.read(f"/cycle/f_{mid:06d}.txt")
+        assert r.content == f"v2_{mid}"
+
+    async def test_nested_dirs_bulk_delete(self, db: DatabaseFileSystem, scale: int):
+        """Write files across many nested directories, bulk delete root."""
+        n = min(scale, 500)
+        import random
+        rng = random.Random(42)
+        dirs = [f"/deep/d{i}/sub{j}" for i in range(10) for j in range(10)]
+        objects = [
+            GroverObject(path=f"{rng.choice(dirs)}/f_{i:05d}.txt", content=f"c{i}")
+            for i in range(n)
+        ]
+        r = await db.write(objects=objects)
+        assert r.success
+
+        async with db._use_session() as s:
+            del_r = await db._delete_impl("/deep", permanent=True, session=s)
+        assert del_r.success
+
+        # Everything under /deep is gone
+        async with db._use_session() as s:
+            obj = await db._get_object("/deep", s, include_deleted=True)
+        assert obj is None
+        async with db._use_session() as s:
+            ls_r = await db._ls_impl("/", session=s)
+        assert "/deep" not in set(ls_r.paths)
+
+    async def test_deeply_nested_with_metadata_then_delete(self, db: DatabaseFileSystem, scale: int):
+        """Write files across 25+ directory levels with versions, chunks,
+        and connections, then delete the root.
+
+        Each file gets: 1 version row (auto), 1 chunk, 1 connection to
+        the next file. Total objects ≈ 4× file count + directories.
+        """
+        import random
+
+        n = scale
+        rng = random.Random(99)
+        depth = 25
+
+        # Build 25-deep directory paths with branching at the top levels
+        branches = [f"/tree/b{b}" for b in range(5)]
+        dir_pool: list[str] = []
+        for branch in branches:
+            path = branch
+            for level in range(depth):
+                path = f"{path}/l{level}"
+                dir_pool.append(path)
+
+        # Distribute files across the deep dirs
+        file_objects = []
+        for i in range(n):
+            parent = rng.choice(dir_pool)
+            file_objects.append(
+                GroverObject(path=f"{parent}/f_{i:06d}.py", content=f"code {i}")
+            )
+
+        r = await db.write(objects=file_objects)
+        assert r.success, r.error_message
+        assert len(r.candidates) == n
+
+        # Add a chunk per file
+        chunk_objects = [
+            GroverObject(
+                path=f"{obj.path}/.chunks/main",
+                content=f"def main_{i}():",
+            )
+            for i, obj in enumerate(file_objects)
+        ]
+        r2 = await db.write(objects=chunk_objects)
+        assert r2.success, r2.error_message
+
+        # Add connections: each file → next file (circular)
+        conn_objects = [
+            GroverObject(
+                path=f"{file_objects[i].path}/.connections/calls/{file_objects[(i + 1) % n].path.lstrip('/')}",
+                kind="connection",
+                source_path=file_objects[i].path,
+                target_path=file_objects[(i + 1) % n].path,
+                connection_type="calls",
+            )
+            for i in range(n)
+        ]
+        r3 = await db.write(objects=conn_objects)
+        assert r3.success, r3.error_message
+
+        # Permanent delete the root — everything should cascade
+        async with db._use_session() as s:
+            del_r = await db._delete_impl("/tree", permanent=True, session=s)
+        assert del_r.success
+        # At minimum: dir + N files + N versions + N chunks + N connections
+        assert len(del_r.candidates) >= n * 4
+
+        # Nothing left
+        async with db._use_session() as s:
+            root = await db._get_object("/tree", s, include_deleted=True)
+        assert root is None
+
+        # Spot-check a deep path
+        mid = n // 2
+        async with db._use_session() as s:
+            f = await db._get_object(file_objects[mid].path, s, include_deleted=True)
+            c = await db._get_object(f"{file_objects[mid].path}/.chunks/main", s, include_deleted=True)
+        assert f is None
+        assert c is None

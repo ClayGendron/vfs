@@ -804,7 +804,7 @@ class GroverFileSystem:
 
     async def _mkdir_impl(
         self,
-        path: str = "",
+        path: str,
         *,
         session: AsyncSession,
     ) -> GroverResult:
@@ -830,9 +830,10 @@ class GroverFileSystem:
 
     async def _mkconn_impl(
         self,
-        source: str = "",
-        target: str = "",
-        connection_type: str = "",
+        source: str | None = None,
+        target: str | None = None,
+        connection_type: str | None = None,
+        objects: list[GroverObjectBase] | None = None,
         *,
         session: AsyncSession,
     ) -> GroverResult:
