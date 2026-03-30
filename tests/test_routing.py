@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from grover.base import GroverFileSystem
+from grover.models import GroverObject
 from grover.results import GroverResult
 from tests.conftest import candidate as _candidate
 from tests.conftest import dummy_session_factory
@@ -25,8 +26,14 @@ class _RoutingFS(GroverFileSystem):
     async def _read_impl(self, path=None, candidates=None, *, session):
         return await self.read_mock(path=path, candidates=candidates, session=session)
 
-    async def _write_impl(self, path="", content="", overwrite=True, *, session):
-        return await self.write_mock(path=path, content=content, overwrite=overwrite, session=session)
+    async def _write_impl(self, path=None, content=None, objects=None, overwrite=True, *, session):
+        return await self.write_mock(
+            path=path,
+            content=content,
+            objects=objects,
+            overwrite=overwrite,
+            session=session,
+        )
 
     async def _delete_impl(self, path=None, candidates=None, permanent=False, *, session):
         return await self.delete_mock(
@@ -328,6 +335,27 @@ class TestCandidateRouting:
         assert result.candidates == []
         root.glob_mock.assert_not_awaited()
         child.glob_mock.assert_not_awaited()
+
+
+class TestWriteBatchRouting:
+    async def test_write_batch_routes_one_logical_batch_per_terminal_fs(self):
+        root = _RoutingFS("root")
+        child = _RoutingFS("child")
+        child.write_mock.return_value = GroverResult(
+            candidates=[_candidate("/a.py"), _candidate("/b.py")],
+        )
+        await root.add_mount("/data", child)
+
+        objects = [
+            GroverObject(path="/data/a.py", content="a"),
+            GroverObject(path="/data/b.py", content="b"),
+        ]
+
+        result = await root.write(objects=objects)
+
+        assert result.paths == ("/data/a.py", "/data/b.py")
+        assert child.write_mock.await_count == 1
+        assert [obj.path for obj in child.write_mock.await_args.kwargs["objects"]] == ["/a.py", "/b.py"]
 
 
 # =========================================================================

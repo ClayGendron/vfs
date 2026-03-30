@@ -286,6 +286,16 @@ class GroverResult(BaseModel):
     # Enrichment chains (local, no backend call)
     # -------------------------------------------------------------------
 
+    def add_prefix(self, prefix: str) -> GroverResult:
+        """Prepend *prefix* to all candidate paths in place."""
+        if not prefix:
+            return self
+        self.candidates = [
+            c.model_copy(update={"path": prefix + c.path if c.path != "/" else prefix})
+            for c in self.candidates
+        ]
+        return self
+
     def _with_candidates(self, candidates: list[Candidate]) -> GroverResult:
         """Return a new result with the given candidates."""
         return GroverResult(

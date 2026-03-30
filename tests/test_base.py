@@ -122,28 +122,28 @@ class TestError:
         assert r.candidates == []
 
 
-class TestRebaseResult:
+class TestAddPrefix:
     def test_empty_prefix_returns_result_unchanged(self):
         r = GroverResult(candidates=[_candidate("/file.py")])
-        rebased = GroverFileSystem._rebase_result(r, "")
+        rebased = r.add_prefix("")
         assert rebased is r
 
     def test_prefix_prepends_to_candidate_paths(self):
         r = GroverResult(candidates=[_candidate("/file.py"), _candidate("/dir/a.py")])
-        rebased = GroverFileSystem._rebase_result(r, "/mount")
-        assert rebased.candidates[0].path == "/mount/file.py"
-        assert rebased.candidates[1].path == "/mount/dir/a.py"
+        r.add_prefix("/mount")
+        assert r.candidates[0].path == "/mount/file.py"
+        assert r.candidates[1].path == "/mount/dir/a.py"
 
     def test_root_path_gets_prefix_without_trailing_slash(self):
         r = GroverResult(candidates=[_candidate("/")])
-        rebased = GroverFileSystem._rebase_result(r, "/data")
-        assert rebased.candidates[0].path == "/data"
+        r.add_prefix("/data")
+        assert r.candidates[0].path == "/data"
 
     def test_preserves_success_and_errors(self):
         r = GroverResult(success=False, errors=["err"], candidates=[_candidate("/x.py")])
-        rebased = GroverFileSystem._rebase_result(r, "/m")
-        assert rebased.success is False
-        assert rebased.errors == ["err"]
+        r.add_prefix("/m")
+        assert r.success is False
+        assert r.errors == ["err"]
 
 
 class TestExcludeMountedPaths:
@@ -243,7 +243,7 @@ class TestGroupByTerminal:
             _candidate("/local.py"),
             _candidate("/data/remote.py"),
         ])
-        groups = root._group_by_terminal(candidates)
+        groups = root._group_candidates_by_terminal(candidates)
 
         assert len(groups) == 2
         fs_names = {g[0]._name for g in groups}
@@ -266,13 +266,13 @@ class TestGroupByTerminal:
             _candidate("/data/a.py"),
             _candidate("/data/b.py"),
         ])
-        groups = root._group_by_terminal(candidates)
+        groups = root._group_candidates_by_terminal(candidates)
         assert len(groups) == 1
         assert len(groups[0][2].candidates) == 2
 
     def test_empty_candidates(self):
         root = _FullRoutingFS()
-        groups = root._group_by_terminal(GroverResult())
+        groups = root._group_candidates_by_terminal(GroverResult())
         assert groups == []
 
 

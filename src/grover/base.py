@@ -27,6 +27,8 @@ from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperat
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from grover.models import GroverObjectBase
+
 
 class GroverFileSystem:
     """Async base class for all Grover filesystems."""
@@ -53,12 +55,8 @@ class GroverFileSystem:
         # AsyncGrover (no storage) skips this.
 
     # -------------------------------------------------------------------
-    # Mount management
+    # mounts and routing
     # -------------------------------------------------------------------
-
-    def _rebuild_sorted_mounts(self) -> None:
-        """Rebuild the pre-sorted mount path list (longest first)."""
-        self._sorted_mount_paths: list[str] = sorted(self._mounts.keys(), key=len, reverse=True)
 
     async def add_mount(self, path: str, filesystem: GroverFileSystem) -> None:
         """Mount a child filesystem at *path*.
@@ -96,9 +94,9 @@ class GroverFileSystem:
         del self._mounts[path]
         self._rebuild_sorted_mounts()
 
-    # -------------------------------------------------------------------
-    # Routing
-    # -------------------------------------------------------------------
+    def _rebuild_sorted_mounts(self) -> None:
+        """Rebuild the pre-sorted mount path list (longest first)."""
+        self._sorted_mount_paths: list[str] = sorted(self._mounts.keys(), key=len, reverse=True)
 
     def _match_mount(self, path: str) -> tuple[str, GroverFileSystem] | None:
         """Longest-prefix mount match for *path*."""
@@ -129,93 +127,7 @@ class GroverFileSystem:
             rel = rel[len(mount_path) :] or "/"
         return fs, rel, prefix
 
-    # -------------------------------------------------------------------
-    # Session management
-    # -------------------------------------------------------------------
-
-    @asynccontextmanager
-    async def _use_session(self) -> AsyncIterator[AsyncSession]:
-        """Create a session from this filesystem's factory.
-
-        Commits on success, rolls back on error.
-        """
-        async with self._session_factory() as session:
-            try:
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-
-    # -------------------------------------------------------------------
-    # Result helpers
-    # -------------------------------------------------------------------
-
-    @staticmethod
-    def _rebase_result(result: GroverResult, prefix: str) -> GroverResult:
-        """Restore absolute paths on candidates after a mount delegation."""
-        if not prefix:
-            return result
-        rebased = []
-        for c in result.candidates:
-            new_path = prefix + c.path if c.path != "/" else prefix
-            rebased.append(c.model_copy(update={"path": new_path}))
-        return result._with_candidates(rebased)
-
-    def _exclude_mounted_paths(self, result: GroverResult) -> GroverResult:
-        """Remove self-storage candidates that fall under a mount prefix.
-
-        Prevents shadow results when self has storage AND child mounts —
-        the mount owns those paths, not self.
-        """
-        prefixes = list(self._mounts.keys())
-        if not prefixes:
-            return result
-        filtered = [
-            c for c in result.candidates if not any(c.path == p or c.path.startswith(p + "/") for p in prefixes)
-        ]
-        return result._with_candidates(filtered)
-
-    @staticmethod
-    def _error(message: str) -> GroverResult:
-        """Create a failed result."""
-        return GroverResult(success=False, errors=[message])
-
-    @staticmethod
-    def _require_same_mount(
-        resolved: list[tuple[GroverFileSystem, str, str]],
-        label: str,
-    ) -> tuple[GroverFileSystem, str] | str:
-        """Validate all resolved paths share the same filesystem and prefix.
-
-        Returns ``(filesystem, prefix)`` on success, or an error message string.
-        """
-        fs, _, prefix = resolved[0]
-        for r_fs, _, r_prefix in resolved[1:]:
-            if r_fs is not fs or r_prefix != prefix:
-                return f"All {label} must resolve to the same mount"
-        return fs, prefix
-
-    @staticmethod
-    def _merge_results(results: list[GroverResult]) -> GroverResult:
-        """Merge multiple results — any failure = overall failure.
-
-        ``|`` already propagates ``success=False`` and concatenates
-        ``errors``, so the merged result naturally reflects  all failures
-        while preserving all successful candidates.
-        """
-        if not results:
-            return GroverResult(success=True, candidates=[])
-        merged = results[0]
-        for r in results[1:]:
-            merged = merged | r
-        return merged
-
-    # -------------------------------------------------------------------
-    # Candidate dispatch
-    # -------------------------------------------------------------------
-
-    def _group_by_terminal(
+    def _group_candidates_by_terminal(
         self,
         candidates: GroverResult,
     ) -> list[tuple[GroverFileSystem, str, GroverResult]]:
@@ -234,6 +146,36 @@ class GroverFileSystem:
             groups[key][1].append(c.model_copy(update={"path": rel}))
         return [(fs, pfx, GroverResult(candidates=cands)) for ((_id, pfx), (fs, cands)) in groups.items()]
 
+    def _group_objects_by_terminal(
+        self,
+        objects: list[GroverObjectBase],
+    ) -> list[tuple[GroverFileSystem, str, list[GroverObjectBase]]]:
+        """Group objects by terminal filesystem, rebasing paths."""
+        groups: dict[tuple[int, str], tuple[GroverFileSystem, str, list[GroverObjectBase]]] = {}
+        for obj in objects:
+            fs, _rel, prefix = self._resolve_terminal(obj.path)
+            key = (id(fs), prefix)
+            if key not in groups:
+                groups[key] = (fs, prefix, [])
+            obj.strip_prefix(prefix)
+            groups[key][2].append(obj)
+        return list(groups.values())
+
+    @staticmethod
+    def _require_same_mount(
+        resolved: list[tuple[GroverFileSystem, str, str]],
+        label: str,
+    ) -> tuple[GroverFileSystem, str] | str:
+        """Validate all resolved paths share the same filesystem and prefix.
+
+        Returns ``(filesystem, prefix)`` on success, or an error message string.
+        """
+        fs, _, prefix = resolved[0]
+        for r_fs, _, r_prefix in resolved[1:]:
+            if r_fs is not fs or r_prefix != prefix:
+                return f"All {label} must resolve to the same mount"
+        return fs, prefix
+
     async def _dispatch_candidates(
         self,
         op: str,
@@ -246,7 +188,7 @@ class GroverFileSystem:
         with rebased candidates on each concurrently, then rebases and
         merges results.
         """
-        groups = self._group_by_terminal(candidates)
+        groups = self._group_candidates_by_terminal(candidates)
         if not groups:
             return GroverResult(
                 success=candidates.success,
@@ -262,7 +204,7 @@ class GroverFileSystem:
             async with fs._use_session() as s:
                 impl = getattr(fs, f"_{op}_impl")
                 r = await impl(candidates=group_cands, session=s, **kwargs)
-            return self._rebase_result(r, prefix)
+            return r.add_prefix(prefix)
 
         results = await asyncio.gather(
             *(_run_group(fs, pfx, gc) for fs, pfx, gc in groups),
@@ -281,19 +223,23 @@ class GroverFileSystem:
         With candidates: group by filesystem, dispatch in parallel.
         With path: resolve one terminal, call impl once.
         """
-        if (path is None) == (candidates is None):
+        if path is not None and candidates is not None:
+            msg = "Exactly one of path or candidates must be provided"
+            raise ValueError(msg)
+        if path is None and candidates is None:
             msg = "Exactly one of path or candidates must be provided"
             raise ValueError(msg)
 
         if candidates is not None:
             return await self._dispatch_candidates(op, candidates, **kwargs)
 
+        assert path is not None
         fs, rel, prefix = self._resolve_terminal(path)
 
         async with fs._use_session() as s:
             result = await getattr(fs, f"_{op}_impl")(rel, session=s, **kwargs)
 
-        return self._rebase_result(result, prefix)
+        return result.add_prefix(prefix)
 
     async def _route_two_path(
         self,
@@ -342,7 +288,7 @@ class GroverFileSystem:
                     overwrite=overwrite,
                     session=s,
                 )
-            return self._rebase_result(result, dst_prefix)
+            return result.add_prefix(dst_prefix)
 
         return await self._cross_mount_transfer(
             op,
@@ -374,7 +320,7 @@ class GroverFileSystem:
                 [await src_fs._read_impl(p, session=s) for p in src_rels],
             )
         if not read_results.success:
-            return self._rebase_result(read_results, src_prefix)
+            return read_results.add_prefix(src_prefix)
 
         # Write all to destination
         async with dst_fs._use_session() as s:
@@ -390,7 +336,7 @@ class GroverFileSystem:
                 ]
             )
         if not write_results.success:
-            return self._rebase_result(write_results, dst_prefix)
+            return write_results.add_prefix(dst_prefix)
 
         # Soft-delete sources for move
         if op == "move":
@@ -400,9 +346,9 @@ class GroverFileSystem:
                 )
             if not delete_results.success:
                 # Writes succeeded but deletes failed — caller needs to know
-                return self._rebase_result(delete_results, src_prefix)
+                return delete_results.add_prefix(src_prefix)
 
-        return self._rebase_result(write_results, dst_prefix)
+        return write_results.add_prefix(dst_prefix)
 
     async def _route_fanout(
         self,
@@ -430,15 +376,92 @@ class GroverFileSystem:
         self_result = self._exclude_mounted_paths(all_results[0])
         results = [self_result]
         for mount_path, r in zip(self._mounts, all_results[1:], strict=True):
-            results.append(self._rebase_result(r, prefix=mount_path))
+            results.append(r.add_prefix(mount_path))
 
         return self._merge_results(results)
 
-    # ===================================================================
-    # Public methods — routers
-    # ===================================================================
+    async def _route_write_batch(
+        self,
+        objects: list[GroverObjectBase],
+        overwrite: bool = True,
+    ) -> GroverResult:
+        """Route a batch of object writes to terminal filesystems in parallel."""
+        if not objects:
+            return GroverResult(success=True, candidates=[])
 
-    # --- CRUD chainable (path | candidates) ---
+        groups = self._group_objects_by_terminal(objects)
+
+        async def _write_group(fs: GroverFileSystem, prefix: str, group_objs: list[GroverObjectBase]) -> GroverResult:
+            async with fs._use_session() as s:
+                result = await fs._write_impl(objects=group_objs, overwrite=overwrite, session=s)
+            return result.add_prefix(prefix)
+
+        results = await asyncio.gather(
+            *(_write_group(fs, pfx, objs) for fs, pfx, objs in groups),
+        )
+        return self._merge_results(list(results))
+
+    def _exclude_mounted_paths(self, result: GroverResult) -> GroverResult:
+        """Remove self-storage candidates that fall under a mount prefix.
+
+        Prevents shadow results when self has storage AND child mounts —
+        the mount owns those paths, not self.
+        """
+        prefixes = list(self._mounts.keys())
+        if not prefixes:
+            return result
+        filtered = [
+            c for c in result.candidates if not any(c.path == p or c.path.startswith(p + "/") for p in prefixes)
+        ]
+        return result._with_candidates(filtered)
+
+    @staticmethod
+    def _merge_results(results: list[GroverResult]) -> GroverResult:
+        """Merge multiple results — any failure = overall failure.
+
+        ``|`` already propagates ``success=False`` and concatenates
+        ``errors``, so the merged result naturally reflects  all failures
+        while preserving all successful candidates.
+        """
+        if not results:
+            return GroverResult(success=True, candidates=[])
+        merged = results[0]
+        for r in results[1:]:
+            merged = merged | r
+        return merged
+
+    # -------------------------------------------------------------------
+    # sessions
+    # -------------------------------------------------------------------
+
+    @asynccontextmanager
+    async def _use_session(self) -> AsyncIterator[AsyncSession]:
+        """Create a session from this filesystem's factory.
+
+        Commits on success, rolls back on error.
+        """
+        async with self._session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    # -------------------------------------------------------------------
+    # errors
+    # -------------------------------------------------------------------
+
+    @staticmethod
+    def _error(errors: str | list[str]) -> GroverResult:
+        """Create a failed result."""
+        return GroverResult(success=False, errors=[errors] if isinstance(errors, str) else errors)
+
+    # -------------------------------------------------------------------
+    # public methods
+    # -------------------------------------------------------------------
+
+    # crud
 
     async def read(
         self,
@@ -487,14 +510,15 @@ class GroverFileSystem:
             permanent=permanent,
         )
 
-    # --- CRUD path-only ---
-
     async def write(
         self,
-        path: str,
-        content: str,
+        path: str | None = None,
+        content: str | None = None,
+        objects: list[GroverObjectBase] | None = None,
         overwrite: bool = True,
     ) -> GroverResult:
+        if objects is not None:
+            return await self._route_write_batch(objects, overwrite=overwrite)
         return await self._route_single(
             "write",
             path,
@@ -513,27 +537,29 @@ class GroverFileSystem:
     ) -> GroverResult:
         return await self._route_single("tree", path, None, max_depth=max_depth)
 
-    # --- Two-path ops (custom routing) ---
-
     async def move(
         self,
-        src: str = "",
-        dest: str = "",
+        src: str | None = None,
+        dest: str | None = None,
         moves: list[TwoPathOperation] | None = None,
         overwrite: bool = True,
     ) -> GroverResult:
         if moves is None:
+            if not src or not dest:
+                return self._error("move requires src and dest, or moves")
             moves = [TwoPathOperation(src=src, dest=dest)]
         return await self._route_two_path("move", moves, overwrite=overwrite)
 
     async def copy(
         self,
-        src: str = "",
-        dest: str = "",
+        src: str | None = None,
+        dest: str | None = None,
         copies: list[TwoPathOperation] | None = None,
         overwrite: bool = True,
     ) -> GroverResult:
         if copies is None:
+            if not src or not dest:
+                return self._error("copy requires src and dest, or copies")
             copies = [TwoPathOperation(src=src, dest=dest)]
         return await self._route_two_path("copy", copies, overwrite=overwrite)
 
@@ -556,9 +582,9 @@ class GroverFileSystem:
                 connection_type,
                 session=s,
             )
-        return self._rebase_result(result, src_pfx)
+        return result.add_prefix(src_pfx)
 
-    # --- Search (fan-out) ---
+    # search
 
     async def glob(
         self,
@@ -621,7 +647,7 @@ class GroverFileSystem:
             k=k,
         )
 
-    # --- Graph traversal (path | candidates) ---
+    # graph
 
     async def predecessors(
         self,
@@ -660,8 +686,6 @@ class GroverFileSystem:
     ) -> GroverResult:
         return await self._route_single("neighborhood", path, candidates, depth=depth)
 
-    # --- Graph candidate-only (dispatch per filesystem) ---
-
     async def meeting_subgraph(
         self,
         candidates: GroverResult,
@@ -673,8 +697,6 @@ class GroverFileSystem:
         candidates: GroverResult,
     ) -> GroverResult:
         return await self._dispatch_candidates("min_meeting_subgraph", candidates)
-
-    # --- Graph algorithms (fan-out) ---
 
     async def pagerank(
         self,
@@ -718,11 +740,9 @@ class GroverFileSystem:
     ) -> GroverResult:
         return await self._route_fanout("hits", candidates)
 
-    # ===================================================================
-    # _*_impl stubs — subclasses override these
-    # ===================================================================
-
-    # --- CRUD ---
+    # -------------------------------------------------------------------
+    # impl stubs
+    # -------------------------------------------------------------------
 
     async def _read_impl(
         self,
@@ -773,8 +793,9 @@ class GroverFileSystem:
 
     async def _write_impl(
         self,
-        path: str = "",
-        content: str = "",
+        path: str | None = None,
+        content: str | None = None,
+        objects: list[GroverObjectBase] | None = None,
         overwrite: bool = True,
         *,
         session: AsyncSession,
@@ -826,8 +847,6 @@ class GroverFileSystem:
     ) -> GroverResult:
         raise NotImplementedError
 
-    # --- Search ---
-
     async def _glob_impl(
         self,
         pattern: str = "",
@@ -878,8 +897,6 @@ class GroverFileSystem:
     ) -> GroverResult:
         raise NotImplementedError
 
-    # --- Graph traversal ---
-
     async def _predecessors_impl(
         self,
         path: str | None = None,
@@ -926,8 +943,6 @@ class GroverFileSystem:
     ) -> GroverResult:
         raise NotImplementedError
 
-    # --- Graph candidate-only ---
-
     async def _meeting_subgraph_impl(
         self,
         candidates: GroverResult | None = None,
@@ -943,8 +958,6 @@ class GroverFileSystem:
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
-
-    # --- Graph algorithms ---
 
     async def _pagerank_impl(
         self,
