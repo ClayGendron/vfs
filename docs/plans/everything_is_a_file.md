@@ -1330,3 +1330,21 @@ For algorithms where computation dominates (betweenness, closeness), rustworkx's
 | `graph/rustworkx.py` | 99% |
 | **Total project** | **99%** (1173 stmts, 10 missed) |
 
+### 14.8 DatabaseFileSystem write implementation — 2026-03-30
+
+Implemented `backends/database.py` — the SQL-backed `_write_impl` for `grover_objects`. 6-step pipeline: validate, check chunk parents, resolve parent dirs, fetch existing, process writes, commit dirs.
+
+Added `versioning.py` — forward unified diffs with periodic snapshots (every 10 versions). `plan_file_write` on `GroverObjectBase` plans version rows and final file state. `create_version_row` constructs version objects. `_reconstruct_file_version` replays diff chains from snapshots.
+
+#### Key decisions
+
+**Two-query fast path for overwrites.** Step 4 fetches file rows (4a) then latest version hash by constructed path (4b), both via the unique `path` index. When file hash and version hash agree, `plan_file_write` skips `_reconstruct_file_version` entirely — diff computed directly from current content. Broken intermediate version rows are not detected on the fast path (accepted behavior). 100k overwrites on PostgreSQL: 678s → ~160s.
+
+**No manual batching or savepoints.** SQLAlchemy 2.0 `insertmanyvalues` auto-paginates INSERTs per dialect parameter limits. All-or-nothing failure semantics — session rolls back on flush error.
+
+**Content-before-commit ordering.** Parent dirs only commit (Step 6) if file writes succeed (Step 5). Failed writes never leave orphan directories.
+
+**`VersionWritePlan` as decision-complete plan.** `plan_file_write` returns a frozen dataclass with all version rows, final content/hash/metrics, and a `chain_verified` flag. `_update_existing` in `database.py` checks this flag and falls back to `_fetch_version_chain` + re-plan when the fast path can't verify integrity.
+
+**`--scale` test flag.** Pressure tests default to 1k rows, ramp with `--scale 100000` for ad-hoc stress testing against PostgreSQL.
+
