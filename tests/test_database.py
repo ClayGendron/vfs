@@ -11,7 +11,7 @@ from sqlalchemy import text
 from grover.backends.database import DatabaseFileSystem
 from grover.base import GroverFileSystem
 from grover.models import GroverObject
-from grover.results import Candidate, GroverResult
+from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperation
 
 
 def _stored_payload(obj: GroverObject) -> str:
@@ -280,6 +280,95 @@ class TestStat:
         async with db._use_session() as s:
             r = await db._stat_impl("/nope.txt", session=s)
         assert not r.success
+
+
+class TestEdit:
+    async def test_edit_single_file(self, db: DatabaseFileSystem):
+        await db.write("/file.py", "def hello():\n    return 'world'\n")
+        async with db._use_session() as s:
+            r = await db._edit_impl("/file.py", edits=[
+                EditOperation(old="'world'", new="'earth'"),
+            ], session=s)
+        assert r.success
+        assert "'earth'" in r.content
+
+    async def test_edit_multiple_edits(self, db: DatabaseFileSystem):
+        await db.write("/file.py", "x = 1\ny = 2\nz = 3\n")
+        async with db._use_session() as s:
+            r = await db._edit_impl("/file.py", edits=[
+                EditOperation(old="x = 1", new="x = 10"),
+                EditOperation(old="z = 3", new="z = 30"),
+            ], session=s)
+        assert r.success
+        assert r.content == "x = 10\ny = 2\nz = 30\n"
+
+    async def test_edit_replace_all(self, db: DatabaseFileSystem):
+        await db.write("/file.txt", "foo bar foo baz foo")
+        async with db._use_session() as s:
+            r = await db._edit_impl("/file.txt", edits=[
+                EditOperation(old="foo", new="qux", replace_all=True),
+            ], session=s)
+        assert r.success
+        assert r.content == "qux bar qux baz qux"
+
+    async def test_edit_string_not_found(self, db: DatabaseFileSystem):
+        await db.write("/file.txt", "hello world")
+        async with db._use_session() as s:
+            r = await db._edit_impl("/file.txt", edits=[
+                EditOperation(old="missing", new="replacement"),
+            ], session=s)
+        assert not r.success
+        assert "not found" in r.error_message.lower()
+
+    async def test_edit_nonexistent_file(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._edit_impl("/nope.txt", edits=[
+                EditOperation(old="a", new="b"),
+            ], session=s)
+        assert not r.success
+
+    async def test_edit_creates_version(self, db: DatabaseFileSystem):
+        await db.write("/ver.py", "v1 content")
+        await db.edit("/ver.py", old="v1", new="v2")
+        async with db._use_session() as s:
+            obj = await db._get_object("/ver.py", s)
+        assert obj.version_number == 2
+        assert obj.content == "v2 content"
+
+    async def test_edit_batch_via_candidates(self, db: DatabaseFileSystem):
+        await db.write("/a.py", "old_name = 1")
+        await db.write("/b.py", "old_name = 2")
+        candidates = GroverResult(candidates=[
+            Candidate(path="/a.py"),
+            Candidate(path="/b.py"),
+        ])
+        async with db._use_session() as s:
+            r = await db._edit_impl(candidates=candidates, edits=[
+                EditOperation(old="old_name", new="new_name"),
+            ], session=s)
+        assert r.success
+        assert len(r.candidates) == 2
+        r2 = await db.read("/a.py")
+        assert r2.content == "new_name = 1"
+
+    async def test_edit_fuzzy_whitespace_match(self, db: DatabaseFileSystem):
+        """Line-trimmed replacer handles indentation differences."""
+        await db.write("/indent.py", "    def foo():\n        pass\n")
+        async with db._use_session() as s:
+            r = await db._edit_impl("/indent.py", edits=[
+                EditOperation(old="def foo():\n    pass", new="def foo():\n    return 1"),
+            ], session=s)
+        assert r.success
+        assert "return 1" in r.content
+
+    async def test_edit_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = GroverFileSystem(engine=engine)
+        await root.add_mount("/code", db)
+        await root.write("/code/app.py", "timeout = 30")
+        r = await root.edit("/code/app.py", old="30", new="120")
+        assert r.success
+        r2 = await root.read("/code/app.py")
+        assert r2.content == "timeout = 120"
 
 
 class TestAutoVersioning:
@@ -1009,6 +1098,81 @@ class TestDelete:
             )
         assert not r.success
 
+    async def test_delete_root_rejected(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._delete_impl("/", session=s)
+        assert not r.success
+        assert "root" in r.error_message.lower()
+
+    async def test_non_cascade_delete_empty_dir(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._mkdir_impl("/empty", session=s)
+        async with db._use_session() as s:
+            r = await db._delete_impl("/empty", cascade=False, session=s)
+        assert r.success
+
+    async def test_non_cascade_delete_nonempty_dir_rejected(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/nonempty/file.txt", "x", session=s)
+        async with db._use_session() as s:
+            r = await db._delete_impl("/nonempty", cascade=False, session=s)
+        assert not r.success
+        assert "not empty" in r.error_message.lower()
+
+        # Directory and child must still exist
+        async with db._use_session() as s:
+            d = await db._get_object("/nonempty", s)
+            f = await db._get_object("/nonempty/file.txt", s)
+        assert d is not None
+        assert f is not None
+
+    async def test_non_cascade_delete_file_no_metadata(self, db: DatabaseFileSystem):
+        """A file with no metadata children (chunks/connections) can be
+        non-cascade deleted.  Note: it still has a version row, so this
+        tests that versions do block non-cascade delete."""
+        async with db._use_session() as s:
+            await db._write_impl("/bare.txt", "x", session=s)
+        # File has a version row — non-cascade should reject
+        async with db._use_session() as s:
+            r = await db._delete_impl("/bare.txt", cascade=False, session=s)
+        assert not r.success
+        assert "not empty" in r.error_message.lower()
+
+    async def test_non_cascade_delete_file_with_chunks_rejected(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/chunked.py", "code", session=s)
+            await db._write_impl("/chunked.py/.chunks/fn", "def fn():", session=s)
+        async with db._use_session() as s:
+            r = await db._delete_impl("/chunked.py", cascade=False, session=s)
+        assert not r.success
+        assert "not empty" in r.error_message.lower()
+
+    async def test_cascade_true_still_works(self, db: DatabaseFileSystem):
+        """Explicit cascade=True behaves the same as the default."""
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "a", session=s)
+        async with db._use_session() as s:
+            r = await db._delete_impl("/src", cascade=True, session=s)
+        assert r.success
+        assert len(r.candidates) > 1
+
+    async def test_non_cascade_batch_mixed(self, db: DatabaseFileSystem):
+        """Batch with some empty and some non-empty paths."""
+        async with db._use_session() as s:
+            await db._mkdir_impl("/ok_dir", session=s)
+            await db._write_impl("/full_dir/file.txt", "x", session=s)
+
+        candidates = GroverResult(candidates=[
+            Candidate(path="/ok_dir"),
+            Candidate(path="/full_dir"),
+        ])
+        async with db._use_session() as s:
+            r = await db._delete_impl(candidates=candidates, cascade=False, session=s)
+        # Partial: ok_dir deleted, full_dir rejected
+        assert not r.success  # errors present
+        assert "/ok_dir" in r.paths
+        assert "/full_dir" not in r.paths
+
 
 # ------------------------------------------------------------------
 # Part 8: mkconn
@@ -1199,3 +1363,201 @@ class TestMkdir:
         r = await root.mkdir("/store/docs")
         assert r.success
         assert r.file.path == "/store/docs"
+
+
+# ------------------------------------------------------------------
+# Part 10: copy
+# ------------------------------------------------------------------
+
+
+class TestCopy:
+    async def test_copy_file(self, db: DatabaseFileSystem):
+        await db.write("/orig.py", "content")
+        async with db._use_session() as s:
+            r = await db._copy_impl(
+                ops=[TwoPathOperation(src="/orig.py", dest="/copy.py")],
+                session=s,
+            )
+        assert r.success
+        assert r.file.path == "/copy.py"
+
+        # Both exist with same content
+        r1 = await db.read("/orig.py")
+        r2 = await db.read("/copy.py")
+        assert r1.content == "content"
+        assert r2.content == "content"
+
+    async def test_copy_nonexistent_source(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._copy_impl(
+                ops=[TwoPathOperation(src="/nope.py", dest="/copy.py")],
+                session=s,
+            )
+        assert not r.success
+
+    async def test_copy_overwrite_false_rejects(self, db: DatabaseFileSystem):
+        await db.write("/a.py", "a")
+        await db.write("/b.py", "b")
+        async with db._use_session() as s:
+            r = await db._copy_impl(
+                ops=[TwoPathOperation(src="/a.py", dest="/b.py")],
+                overwrite=False,
+                session=s,
+            )
+        assert not r.success
+
+    async def test_copy_batch(self, db: DatabaseFileSystem):
+        await db.write("/x.py", "x")
+        await db.write("/y.py", "y")
+        async with db._use_session() as s:
+            r = await db._copy_impl(
+                ops=[
+                    TwoPathOperation(src="/x.py", dest="/x_copy.py"),
+                    TwoPathOperation(src="/y.py", dest="/y_copy.py"),
+                ],
+                session=s,
+            )
+        assert r.success
+        assert len(r.candidates) == 2
+
+    async def test_copy_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = GroverFileSystem(engine=engine)
+        await root.add_mount("/code", db)
+        await root.write("/code/app.py", "code")
+        r = await root.copy(src="/code/app.py", dest="/code/app_bak.py")
+        assert r.success
+        r2 = await root.read("/code/app_bak.py")
+        assert r2.content == "code"
+
+
+# ------------------------------------------------------------------
+# Part 11: move
+# ------------------------------------------------------------------
+
+
+class TestMove:
+    async def test_move_file(self, db: DatabaseFileSystem):
+        await db.write("/old.py", "content")
+        async with db._use_session() as s:
+            r = await db._move_impl(
+                ops=[TwoPathOperation(src="/old.py", dest="/new.py")],
+                session=s,
+            )
+        assert r.success
+
+        # Old path gone, new path has content
+        r1 = await db.read("/old.py")
+        assert not r1.success
+        r2 = await db.read("/new.py")
+        assert r2.content == "content"
+
+    async def test_move_directory_cascades(self, db: DatabaseFileSystem):
+        await db.write("/src/a.py", "a")
+        await db.write("/src/b.py", "b")
+        async with db._use_session() as s:
+            r = await db._move_impl(
+                ops=[TwoPathOperation(src="/src", dest="/lib")],
+                session=s,
+            )
+        assert r.success
+
+        r1 = await db.read("/lib/a.py")
+        assert r1.content == "a"
+        r2 = await db.read("/lib/b.py")
+        assert r2.content == "b"
+        # Old paths gone
+        r3 = await db.read("/src/a.py")
+        assert not r3.success
+
+    async def test_move_cascades_metadata(self, db: DatabaseFileSystem):
+        """Chunks and versions follow the file."""
+        await db.write("/old.py", "v1")
+        await db.write("/old.py/.chunks/fn", "def fn():")
+        async with db._use_session() as s:
+            r = await db._move_impl(
+                ops=[TwoPathOperation(src="/old.py", dest="/new.py")],
+                session=s,
+            )
+        assert r.success
+
+        # Chunk moved
+        rc = await db.read("/new.py/.chunks/fn")
+        assert rc.content == "def fn():"
+        # Version moved
+        async with db._use_session() as s:
+            v = await db._get_object("/new.py/.versions/1", s)
+        assert v is not None
+
+    async def test_move_updates_incoming_connection_targets(self, db: DatabaseFileSystem):
+        """Connections from other files that target the moved file get updated."""
+        await db.write("/a.py", "a")
+        await db.write("/b.py", "b")
+        async with db._use_session() as s:
+            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+
+        # Move the target
+        async with db._use_session() as s:
+            await db._move_impl(
+                ops=[TwoPathOperation(src="/b.py", dest="/c.py")],
+                session=s,
+            )
+
+        # The connection from /a.py should now point to /c.py
+        async with db._use_session() as s:
+            old_conn = await db._get_object("/a.py/.connections/imports/b.py", s)
+            new_conn = await db._get_object("/a.py/.connections/imports/c.py", s)
+        assert old_conn is None
+        assert new_conn is not None
+        assert new_conn.target_path == "/c.py"
+
+    async def test_move_updates_outgoing_connection_source(self, db: DatabaseFileSystem):
+        """When source file moves, its outgoing connections update source_path."""
+        await db.write("/a.py", "a")
+        await db.write("/b.py", "b")
+        async with db._use_session() as s:
+            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+
+        # Move the source
+        async with db._use_session() as s:
+            await db._move_impl(
+                ops=[TwoPathOperation(src="/a.py", dest="/z.py")],
+                session=s,
+            )
+
+        # Connection should now live under /z.py with updated source_path
+        async with db._use_session() as s:
+            conn = await db._get_object("/z.py/.connections/imports/b.py", s)
+        assert conn is not None
+        assert conn.source_path == "/z.py"
+        assert conn.target_path == "/b.py"
+
+    async def test_move_nonexistent_source(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._move_impl(
+                ops=[TwoPathOperation(src="/nope.py", dest="/new.py")],
+                session=s,
+            )
+        assert not r.success
+
+    async def test_move_occupied_dest_rejected(self, db: DatabaseFileSystem):
+        await db.write("/a.py", "a")
+        await db.write("/b.py", "b")
+        async with db._use_session() as s:
+            r = await db._move_impl(
+                ops=[TwoPathOperation(src="/a.py", dest="/b.py")],
+                session=s,
+            )
+        assert not r.success
+        assert "occupied" in r.error_message.lower()
+        # Both files unchanged
+        assert (await db.read("/a.py")).content == "a"
+        assert (await db.read("/b.py")).content == "b"
+
+    async def test_move_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = GroverFileSystem(engine=engine)
+        await root.add_mount("/code", db)
+        await root.write("/code/old.py", "content")
+        r = await root.move(src="/code/old.py", dest="/code/new.py")
+        assert r.success
+        r2 = await root.read("/code/new.py")
+        assert r2.content == "content"

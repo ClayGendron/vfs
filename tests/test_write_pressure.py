@@ -1921,3 +1921,92 @@ class TestLargeWriteAndDelete:
             c = await db._get_object(f"{file_objects[mid].path}/.chunks/main", s, include_deleted=True)
         assert f is None
         assert c is None
+
+    async def test_multi_directory_batch_delete(self, db: DatabaseFileSystem, scale: int):
+        """Delete many separate directories in a single batch call.
+
+        This is the pattern where batched cascade queries (OR of LIKE)
+        outperform the N+1 per-item cascade.  Each directory has files
+        with versions + chunks underneath.
+        """
+        n_dirs = min(scale, 200)
+        files_per_dir = 10
+
+        # Create N directories, each with files_per_dir files + chunks
+        all_objects: list[GroverObject] = []
+        for d in range(n_dirs):
+            for f in range(files_per_dir):
+                all_objects.append(
+                    GroverObject(
+                        path=f"/batch/d{d:04d}/f{f:03d}.py",
+                        content=f"code d{d} f{f}",
+                    )
+                )
+                all_objects.append(
+                    GroverObject(
+                        path=f"/batch/d{d:04d}/f{f:03d}.py/.chunks/main",
+                        content=f"def main_{d}_{f}():",
+                    )
+                )
+
+        r = await db.write(objects=all_objects)
+        assert r.success, r.error_message
+
+        # Build candidates for all N directories
+        from grover.results import Candidate, GroverResult
+        candidates = GroverResult(candidates=[
+            Candidate(path=f"/batch/d{d:04d}") for d in range(n_dirs)
+        ])
+
+        # Delete all directories in one batch call
+        async with db._use_session() as s:
+            del_r = await db._delete_impl(candidates=candidates, permanent=True, session=s)
+        assert del_r.success
+        # Each dir has: files_per_dir files + files_per_dir chunks
+        # + files_per_dir version rows + the dir itself
+        assert len(del_r.candidates) >= n_dirs * (files_per_dir * 3 + 1)
+
+        # Spot-check
+        async with db._use_session() as s:
+            obj = await db._get_object(f"/batch/d{n_dirs // 2:04d}", s, include_deleted=True)
+        assert obj is None
+
+    async def test_multi_file_batch_delete_with_metadata(self, db: DatabaseFileSystem, scale: int):
+        """Delete many separate files in a single batch call.
+
+        Each file has a version row and a chunk — the cascade for files
+        uses parent_path IN (...) which batches well.
+        """
+        n = min(scale, 500)
+
+        all_objects: list[GroverObject] = []
+        for i in range(n):
+            all_objects.append(
+                GroverObject(path=f"/flat/f{i:05d}.py", content=f"code {i}")
+            )
+            all_objects.append(
+                GroverObject(path=f"/flat/f{i:05d}.py/.chunks/main", content=f"def main_{i}():")
+            )
+
+        r = await db.write(objects=all_objects)
+        assert r.success, r.error_message
+
+        # Delete all files (not the directory) in one batch
+        from grover.results import Candidate, GroverResult
+        candidates = GroverResult(candidates=[
+            Candidate(path=f"/flat/f{i:05d}.py") for i in range(n)
+        ])
+
+        async with db._use_session() as s:
+            del_r = await db._delete_impl(candidates=candidates, permanent=True, session=s)
+        assert del_r.success
+        # Each file: itself + 1 version + 1 chunk = 3
+        assert len(del_r.candidates) >= n * 3
+
+        # Files gone, directory still exists
+        async with db._use_session() as s:
+            flat_dir = await db._get_object("/flat", s)
+        assert flat_dir is not None
+        async with db._use_session() as s:
+            obj = await db._get_object(f"/flat/f{n // 2:05d}.py", s, include_deleted=True)
+        assert obj is None

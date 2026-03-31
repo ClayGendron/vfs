@@ -480,13 +480,15 @@ class GroverFileSystem:
     async def edit(
         self,
         path: str | None = None,
-        old: str = "",
-        new: str = "",
+        old: str | None = None,
+        new: str | None = None,
+        edits: list[EditOperation] | None = None,
         candidates: GroverResult | None = None,
         replace_all: bool = False,
-        edits: list[EditOperation] | None = None,
     ) -> GroverResult:
         if edits is None:
+            if old is None or new is None:
+                return self._error("edit requires old and new strings, or edits list")
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
         return await self._route_single("edit", path, candidates, edits=edits)
 
@@ -502,12 +504,14 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         permanent: bool = False,
+        cascade: bool = True,
     ) -> GroverResult:
         return await self._route_single(
             "delete",
             path,
             candidates,
             permanent=permanent,
+            cascade=cascade,
         )
 
     async def write(
@@ -786,6 +790,7 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         permanent: bool = False,
+        cascade: bool = True,
         *,
         session: AsyncSession,
     ) -> GroverResult:

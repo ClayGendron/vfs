@@ -443,6 +443,9 @@ class GroverObjectBase(ValidatedSQLModel):
         The model validator only runs on ``__init__``, not attribute mutation,
         so we recompute manually here.
         """
+        if self.kind == "directory":
+            msg = f"Cannot set content on a directory: {self.path}"
+            raise ValueError(msg)
         self.content = content
         self.version_diff = None
         self.content_hash, self.size_bytes, self.lines = self._content_metadata(content)
@@ -508,6 +511,15 @@ class GroverObjectBase(ValidatedSQLModel):
             raise ValueError(msg)
 
         kind = data.get("kind")
+
+        # Kind-specific content invariants
+        if kind == "directory":
+            data["content"] = None
+            content = None
+        elif kind == "file" and content is None:
+            data["content"] = ""
+            content = ""
+
         if kind == "version":
             payload_count = int(content is not None) + int(version_diff is not None)
             if payload_count > 1:
