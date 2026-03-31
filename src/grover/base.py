@@ -846,7 +846,7 @@ class GroverFileSystem:
 
     async def _tree_impl(
         self,
-        path: str = "",
+        path: str,
         max_depth: int | None = None,
         *,
         session: AsyncSession,
@@ -855,7 +855,7 @@ class GroverFileSystem:
 
     async def _glob_impl(
         self,
-        pattern: str = "",
+        pattern: str,
         candidates: GroverResult | None = None,
         *,
         session: AsyncSession,
@@ -864,7 +864,7 @@ class GroverFileSystem:
 
     async def _grep_impl(
         self,
-        pattern: str = "",
+        pattern: str,
         case_sensitive: bool = True,
         max_results: int | None = None,
         candidates: GroverResult | None = None,
@@ -875,7 +875,7 @@ class GroverFileSystem:
 
     async def _semantic_search_impl(
         self,
-        query: str = "",
+        query: str,
         k: int = 15,
         candidates: GroverResult | None = None,
         *,
@@ -895,7 +895,7 @@ class GroverFileSystem:
 
     async def _lexical_search_impl(
         self,
-        query: str = "",
+        query: str,
         k: int = 15,
         candidates: GroverResult | None = None,
         *,

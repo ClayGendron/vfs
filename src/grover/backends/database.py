@@ -1050,7 +1050,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _glob_impl(
         self,
-        pattern: str = "",
+        pattern: str,
         candidates: GroverResult | None = None,
         *,
         session: AsyncSession,
@@ -1102,7 +1102,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _grep_impl(
         self,
-        pattern: str = "",
+        pattern: str,
         case_sensitive: bool = True,
         max_results: int | None = None,
         candidates: GroverResult | None = None,
@@ -1192,7 +1192,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _tree_impl(
         self,
-        path: str = "",
+        path: str,
         max_depth: int | None = None,
         *,
         session: AsyncSession,
