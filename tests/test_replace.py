@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from grover.replace import (
-    Match,
-    ReplaceResult,
     block_anchor_replacer,
     get_context_lines,
     get_line_number,
@@ -14,7 +12,6 @@ from grover.replace import (
     replace,
     simple_replacer,
 )
-
 
 # ------------------------------------------------------------------
 # Utilities
@@ -84,7 +81,7 @@ class TestGetContextLines:
         lines = result.split("\n")
         assert len(lines) == 3  # line1 (context), line2 (match), line3 (context)
         assert ">" in lines[1]  # line2 is marked
-        assert " " == lines[0][5]  # line1 is context (space prefix)
+        assert lines[0][5] == " "  # line1 is context (space prefix)
 
     def test_context_at_start(self):
         content = "first\nsecond\nthird"

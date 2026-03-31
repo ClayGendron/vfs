@@ -7,6 +7,7 @@ determines the kind, and the kind determines the semantics.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
@@ -296,7 +297,8 @@ class DatabaseFileSystem(GroverFileSystem):
             existing.deleted_at = None
 
         if incoming.kind == "file" and existing.content is not None:
-            plan = existing.plan_file_write(
+            plan = await asyncio.to_thread(
+                existing.plan_file_write,
                 new_content,
                 latest_version_hash=latest_version_hash,
             )
@@ -307,7 +309,8 @@ class DatabaseFileSystem(GroverFileSystem):
                 version_rows = await self._fetch_version_chain(
                     existing.path, existing.version_number, session,
                 )
-                plan = existing.plan_file_write(
+                plan = await asyncio.to_thread(
+                    existing.plan_file_write,
                     new_content,
                     version_rows=version_rows,
                     latest_version_hash=latest_version_hash,
@@ -345,7 +348,7 @@ class DatabaseFileSystem(GroverFileSystem):
             rows.extend(result.scalars().all())
         return rows
 
-    def _insert_new(
+    async def _insert_new(
         self,
         incoming: GroverObjectBase,
         new_content: str,
@@ -591,7 +594,7 @@ class DatabaseFileSystem(GroverFileSystem):
                         session,
                     )
                 else:
-                    candidate = self._insert_new(incoming, new_content, session)
+                    candidate = await self._insert_new(incoming, new_content, session)
                 out.append(candidate)
             except Exception as exc:
                 if existing is not None:

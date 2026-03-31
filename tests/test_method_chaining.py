@@ -13,7 +13,6 @@ import pytest
 from grover.backends.database import DatabaseFileSystem
 from grover.results import Candidate, Detail, GroverResult
 
-
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
