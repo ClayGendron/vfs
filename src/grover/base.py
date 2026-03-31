@@ -209,7 +209,7 @@ class GroverFileSystem:
         results = await asyncio.gather(
             *(_run_group(fs, pfx, gc) for fs, pfx, gc in groups),
         )
-        return self._merge_results(list(results))
+        return self._merge_results(list(results)).inject_details(candidates)
 
     async def _route_single(
         self,

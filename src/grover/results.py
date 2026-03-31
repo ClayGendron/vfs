@@ -347,3 +347,22 @@ class GroverResult(BaseModel):
         """Filter candidates by kind."""
         kind_set = set(kinds)
         return self.filter(lambda c: c.kind in kind_set)
+
+    def inject_details(self, prior: GroverResult) -> GroverResult:
+        """Prepend prior details onto matching candidates.
+
+        Result candidates are authoritative — only paths present in *self*
+        are returned.  For overlapping paths, the prior candidate's details
+        are prepended to the result candidate's details.  New paths (not in
+        *prior*) are returned unchanged.
+        """
+        prior_details = {c.path: c.details for c in prior.candidates}
+        if not prior_details:
+            return self
+        enriched = [
+            c.model_copy(update={"details": (*prior_details[c.path], *c.details)})
+            if c.path in prior_details
+            else c
+            for c in self.candidates
+        ]
+        return self._with_candidates(enriched)

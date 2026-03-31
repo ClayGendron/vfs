@@ -1641,8 +1641,8 @@ class TestGlob:
             r = await db._glob_impl(pattern="/src/*.py", candidates=cands, session=s)
         assert set(r.paths) == {"/src/auth.py", "/src/db.py"}
 
-    async def test_glob_with_candidates_preserves_detail_chain(self, db: DatabaseFileSystem):
-        """Prior details from incoming candidates survive through glob filtering."""
+    async def test_glob_with_candidates_returns_fresh_detail(self, db: DatabaseFileSystem):
+        """Impl returns only the glob detail; routing layer merges prior details."""
         prior = Detail(operation="search", score=0.9)
         cands = GroverResult(candidates=[
             Candidate(path="/src/auth.py", kind="file", details=(prior,)),
@@ -1652,10 +1652,8 @@ class TestGlob:
             r = await db._glob_impl(pattern="/src/*.py", candidates=cands, session=s)
         assert len(r) == 1
         c = r.candidates[0]
-        assert len(c.details) == 2
-        assert c.details[0].operation == "search"
-        assert c.details[0].score == 0.9
-        assert c.details[1].operation == "glob"
+        assert len(c.details) == 1
+        assert c.details[0].operation == "glob"
 
     async def test_glob_empty_pattern_errors(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -1797,8 +1795,8 @@ class TestGrep:
             r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
         assert r.paths == ("/a.py",)
 
-    async def test_grep_with_candidates_preserves_detail_chain(self, db: DatabaseFileSystem):
-        """Prior details from incoming candidates survive through grep."""
+    async def test_grep_with_candidates_returns_fresh_detail(self, db: DatabaseFileSystem):
+        """Impl returns only the grep detail; routing layer merges prior details."""
         prior = Detail(operation="glob", score=None)
         cands = GroverResult(candidates=[
             Candidate(path="/a.py", kind="file", content="timeout = 30", details=(prior,)),
@@ -1807,10 +1805,9 @@ class TestGrep:
             r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
         assert len(r) == 1
         c = r.candidates[0]
-        assert len(c.details) == 2
-        assert c.details[0].operation == "glob"
-        assert c.details[1].operation == "grep"
-        assert c.details[1].score == 1.0
+        assert len(c.details) == 1
+        assert c.details[0].operation == "grep"
+        assert c.details[0].score == 1.0
 
     async def test_grep_with_candidates_hydrates_missing_content(self, db: DatabaseFileSystem):
         """Candidates without content get hydrated from DB."""

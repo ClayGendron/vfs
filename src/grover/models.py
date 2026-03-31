@@ -188,7 +188,6 @@ class GroverObjectBase(ValidatedSQLModel):
         include_content: bool = False,
         score: float | None = None,
         metadata: dict | None = None,
-        prior_details: tuple[Detail, ...] = (),
     ) -> Candidate:
         """Project this object to an immutable Candidate."""
         return Candidate(
@@ -202,7 +201,7 @@ class GroverObjectBase(ValidatedSQLModel):
             mime_type=self.mime_type,
             weight=self.connection_weight,
             distance=self.connection_distance,
-            details=(*prior_details, Detail(operation=operation, score=score, metadata=metadata)),
+            details=(Detail(operation=operation, score=score, metadata=metadata),),
             created_at=self.created_at,
             updated_at=self.updated_at,
         )

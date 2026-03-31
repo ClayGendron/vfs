@@ -416,7 +416,6 @@ class DatabaseFileSystem(GroverFileSystem):
                     out.append(objs[p].to_candidate(
                         operation="read",
                         include_content=True,
-                        prior_details=incoming[p].details,
                     ))
                 else:
                     errors.append(f"Not found: {p}")
@@ -1072,9 +1071,7 @@ class DatabaseFileSystem(GroverFileSystem):
         # ── With candidates: filter in-memory ─────────────────────────
         if candidates is not None:
             matched = [
-                c.model_copy(update={
-                    "details": (*c.details, Detail(operation="glob")),
-                })
+                Candidate(path=c.path, kind=c.kind, details=(Detail(operation="glob"),))
                 for c in candidates.candidates
                 if regex.match(c.path) is not None
             ]
@@ -1127,15 +1124,13 @@ class DatabaseFileSystem(GroverFileSystem):
         except re.error as exc:
             return self._error(f"Invalid regex pattern: {exc}")
 
-        # ── Build path → content map and preserve incoming details ─────
+        # ── Build path → content map ─────────────────────────────────
         content_map: dict[str, str] = {}
-        prior_details: dict[str, tuple[Detail, ...]] = {}
 
         if candidates is not None:
             # Reuse content already on candidates; hydrate only the gaps
             need_hydration: list[str] = []
             for c in candidates.candidates:
-                prior_details[c.path] = c.details
                 if c.content is not None:
                     content_map[c.path] = c.content
                 else:
@@ -1187,7 +1182,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 matched.append(Candidate(
                     path=path,
                     kind="file",
-                    details=(*prior_details.get(path, ()), grep_detail),
+                    details=(grep_detail,),
                 ))
 
                 if max_results is not None and len(matched) >= max_results:
