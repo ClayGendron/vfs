@@ -1405,3 +1405,125 @@ Added `versioning.py` — forward unified diffs with periodic snapshots (every 1
 
 **`--scale` test flag.** Pressure tests default to 1k rows, ramp with `--scale 100000` for ad-hoc stress testing against PostgreSQL.
 
+### 14.9 CLI query engine + planner — 2026-03-31
+
+Implemented the first runnable CLI query layer on top of `GroverFileSystem`. The architecture now matches the direction described earlier in this document:
+
+```text
+CLI-style query string
+    -> hand-rolled tokenizer / parser
+    -> frozen AST
+    -> ordered query plan
+    -> executor
+    -> existing eager GroverFileSystem methods
+    -> GroverResult
+    -> text renderer
+```
+
+#### What was added
+
+**New query package (`src/grover/query/`):**
+- `ast.py` — frozen AST nodes for pipelines, unions, subqueries, visibility overrides, and terminal render modes
+- `parser.py` — hand-rolled `match/case` tokenizer and parser with fail-fast syntax errors
+- `executor.py` — lowers AST nodes into explicit `GroverFileSystem` method calls and local `GroverResult` transforms
+- `render.py` — default text renderers for `read`, `ls`, `tree`, `stat`, query lists, and mutation summaries
+- `__init__.py` — public query package exports
+
+**New `GroverFileSystem` entrypoints (`base.py`):**
+- `parse_query(query)` — returns a `QueryPlan` with the AST and ordered public method calls
+- `run_query(query, initial=None)` — executes the parsed query and returns `GroverResult`
+- `cli(query, initial=None)` — executes the query and returns rendered text
+
+**Demo script:**
+- `examples/cli_query_demo.py` — seeds an in-memory `DatabaseFileSystem` and prints the query string, planned methods, and rendered output for representative pipelines and flags
+
+**Tests:**
+- `tests/test_query_cli.py` — parser, plan output, execution, rendering, unions, intersection / difference stages, piped copies, and stage-local flags
+
+#### Query language implemented
+
+The initial DSL is deliberately small and Unix-shaped:
+
+```text
+search "phrase" --k 5 | glob "/src/*.py" | read
+grep "TODO" --max-results 20 | meetinggraph --min | pagerank | top 3
+grep "import" & grep "DEBUG"
+glob "/src/*.py" | intersect (grep "auth")
+glob "/src/*.py" | except (grep "deprecated")
+```
+
+**Operators:**
+- `|` — pipeline; passes a structured `GroverResult` into the next stage as `candidates`
+- `&` — union; evaluates both branches and unions the results
+- `()` — explicit grouping
+- `intersect(...)` — set intersection stage
+- `except(...)` — set difference stage
+
+**Command families currently supported:**
+- CRUD: `read`, `stat`, `rm`, `edit`, `write`, `mkdir`, `mv`, `cp`, `mkconn`
+- Navigation / query: `ls`, `tree`, `glob`, `grep`, `search`, `lsearch`, `vsearch`
+- Graph: `pred`, `succ`, `anc`, `desc`, `nbr`, `meetinggraph`, `meetinggraph --min`
+- Ranking: `pagerank`, `betweenness`, `closeness`, `degree`, `indegree`, `outdegree`, `hits`
+- Local transforms: `sort`, `top`, `kinds`
+
+#### Key decisions
+
+**Pipeline means structured result passing, not raw byte streams.** The surface deliberately looks like Unix, but `|` is not a shell stdout/stdin pipe. It threads `GroverResult` objects through the pipeline. This keeps the UX Unix-like while preserving typed execution and detail chaining.
+
+**No stdin in v1, but the executor shape allows it later.** `run_query()` / `cli()` already accept an optional `initial` result. That is the intended insertion point for future stdin support or shell-wrapper input hydration.
+
+**Broad query operations hide metadata by default.** `glob`, `grep`, `search`, `lsearch`, `vsearch`, and `tree` default to file/directory views. Explicit opt-in is via `--all` or `--include chunks,versions,connections,api`.
+
+**Graph traversal defaults differ from broad search defaults.** For the CLI query language, graph traversal and graph ranking keep returning connection candidates by default. This is a deliberate UX choice for graph-oriented pipelines even though earlier generic design notes leaned more aggressively toward files-only output.
+
+**No permanent delete in the CLI surface.** `rm` lowers to `delete(permanent=False)`. Permanent deletion remains intentionally unavailable through the query language.
+
+**Stage-local flags are the only way to pass method args.** Examples: `search "phrase" --k 5`, `grep "TODO" --max-results 10`, `nbr /src/auth.py --depth 3`, `tree /src --include connections`. The parser rejects unknown flags and duplicate flags immediately.
+
+**Fail fast on syntax and flag errors.** Unknown verbs, unknown flags, duplicate flags, missing values, and malformed subqueries all raise `QuerySyntaxError` during parsing rather than deferring failure to execution.
+
+**Intersection and difference are spelled as filter stages, not extra infix symbols.** `&` is reserved for union. Intersection and difference are expressed as `intersect(...)` and `except(...)`, which keeps the language closer to Unix filter composition than a dense symbolic algebra.
+
+**Command names are compact and Unix-leaning.** The query string favors short aliases (`pred`, `succ`, `nbr`, `rm`, `cp`, `mv`, `meetinggraph`) rather than Python API spellings.
+
+**The shell binary name remains `grover`, but internal query strings do not repeat it.** The intended shell UX is:
+
+```bash
+grover 'search "auth" | meetinggraph --min | pagerank'
+```
+
+not:
+
+```bash
+grover search "auth" | grover meetinggraph --min | grover pagerank
+```
+
+**Piped bulk mutation semantics follow `GroverResult`.**
+- `... | read` reads every candidate
+- `... | edit "old" "new"` edits every candidate
+- `... | rm` soft-deletes every candidate
+- `... | cp /destroot` copies each candidate under `/destroot`, preserving relative paths
+- `... | mv /destroot` moves each candidate under `/destroot`, preserving relative paths
+- `... | mkconn imports /target` creates one connection per input candidate to the target
+- `write` and `mkdir` remain standalone commands for now
+
+**The parser was refactored to a command registry.** After the initial implementation proved the language shape, the parser was reorganized around declarative `CommandSpec` records: aliases, allowed flags, and AST builders live in one table. Adding new args like `--k`, `--depth`, or `--include` is now a registry change instead of another parser branch.
+
+#### Rendering defaults implemented
+
+`cli(query)` currently selects a default text renderer from the final stage:
+
+- `read` — file content view
+- `write` / `edit` / `rm` / `mv` / `cp` / `mkdir` / `mkconn` — mutation summary
+- `ls` — flat list
+- `tree` — tree view
+- `stat` — metadata block
+- query / traversal / ranking pipelines — path list with scores when the final candidates carry scores
+
+#### Current boundaries
+
+**This is an in-process query engine first, not a full shell entrypoint yet.** The implemented public surface is `GroverFileSystem.parse_query()`, `run_query()`, and `cli()`. A real console-script wrapper still needs to be added if Grover should be invocable directly from the shell.
+
+**`search` depends on a configured semantic provider.** The query engine supports `search`, but demo / out-of-the-box examples use `lsearch` because a plain in-memory `DatabaseFileSystem` does not have a semantic backend attached.
+
+**Help output is not yet generated from the registry.** The command registry now contains enough metadata to drive generated help in a future pass, but the current work stops at parsing, planning, execution, and rendering.

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from grover.models import GroverObjectBase
+    from grover.query import QueryPlan
 
 
 class GroverFileSystem:
@@ -456,6 +457,37 @@ class GroverFileSystem:
     def _error(errors: str | list[str]) -> GroverResult:
         """Create a failed result."""
         return GroverResult(success=False, errors=[errors] if isinstance(errors, str) else errors)
+
+    def parse_query(self, query: str) -> QueryPlan:
+        """Parse a CLI-style query string into an execution plan."""
+        from grover.query import parse_query
+
+        return parse_query(query)
+
+    async def run_query(
+        self,
+        query: str,
+        *,
+        initial: GroverResult | None = None,
+    ) -> GroverResult:
+        """Execute a parsed CLI-style query against this filesystem."""
+        from grover.query import execute_query
+
+        plan = self.parse_query(query)
+        return await execute_query(self, plan, initial=initial)
+
+    async def cli(
+        self,
+        query: str,
+        *,
+        initial: GroverResult | None = None,
+    ) -> str:
+        """Execute *query* and render a human-readable text response."""
+        from grover.query import execute_query, render_query_result
+
+        plan = self.parse_query(query)
+        result = await execute_query(self, plan, initial=initial)
+        return render_query_result(result, mode=plan.render_mode)
 
     # -------------------------------------------------------------------
     # public methods
