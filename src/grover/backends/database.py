@@ -10,11 +10,12 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 
 from grover.base import GroverFileSystem
+from grover.bm25 import BM25Scorer, tokenize, tokenize_query
 from grover.graph import RustworkxGraph
 from grover.models import GroverObject, GroverObjectBase
 from grover.paths import connection_path, version_path
@@ -26,6 +27,23 @@ from grover.versioning import SNAPSHOT_INTERVAL
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+    from grover.embedding import EmbeddingProvider
+    from grover.vector_store import VectorStore
+
+
+class _LexicalDoc(NamedTuple):
+    """Per-document lexical stats used for BM25 scoring."""
+
+    path: str
+    kind: str | None
+    term_freqs: dict[str, int]
+    doc_length: int
+
+
+def _escape_like(term: str) -> str:
+    """Escape special characters for a SQL LIKE pattern."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class DatabaseFileSystem(GroverFileSystem):
@@ -43,6 +61,7 @@ class DatabaseFileSystem(GroverFileSystem):
     }
     PARAMETER_BUDGET_FALLBACK: int = 900
     PARAMETER_RESERVE: int = 100
+    BM25_PRE_FILTER_LIMIT: ClassVar[int] = 1_000
 
     def __init__(
         self,
@@ -50,10 +69,14 @@ class DatabaseFileSystem(GroverFileSystem):
         engine: AsyncEngine | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         model: type[GroverObjectBase] = GroverObject,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_store: VectorStore | None = None,
     ) -> None:
         super().__init__(engine=engine, session_factory=session_factory)
         self._model = model
         self._graph = RustworkxGraph(model=model)
+        self._embedding_provider = embedding_provider
+        self._vector_store = vector_store
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -101,6 +124,216 @@ class DatabaseFileSystem(GroverFileSystem):
             return []
         chunk_size = self._query_chunk_size(session, binds_per_item=binds_per_item)
         return [paths[i : i + chunk_size] for i in range(0, len(paths), chunk_size)]
+
+    @staticmethod
+    def _tokenize_doc(
+        content: str,
+        lexical_tokens: int,
+        term_set: frozenset[str],
+    ) -> tuple[dict[str, int], int, set[str]]:
+        """Tokenize content once, returning query-term TFs and lexical stats."""
+        doc_tokens = tokenize(content)
+        doc_length = lexical_tokens or len(doc_tokens)
+
+        term_freqs: dict[str, int] = {}
+        get_freq = term_freqs.get
+        seen_tokens: set[str] = set()
+        for token in doc_tokens:
+            if token in term_set:
+                term_freqs[token] = get_freq(token, 0) + 1
+            seen_tokens.add(token)
+
+        return term_freqs, doc_length, seen_tokens
+
+    @staticmethod
+    def _estimate_average_idf(
+        candidate_vocab_doc_freqs: dict[str, int],
+        corpus_size: int,
+    ) -> float | None:
+        """Estimate average IDF for BM25 epsilon-flooring from candidate vocab."""
+        if not candidate_vocab_doc_freqs:
+            return None
+
+        average_idf = sum(BM25Scorer.idf(df, corpus_size) for df in candidate_vocab_doc_freqs.values()) / len(
+            candidate_vocab_doc_freqs,
+        )
+        return average_idf if average_idf > 0 else None
+
+    async def _fetch_lexical_docs(
+        self,
+        *,
+        unique_terms: tuple[str, ...],
+        term_set: frozenset[str],
+        candidates: GroverResult | None,
+        session: AsyncSession,
+    ) -> tuple[list[_LexicalDoc], bool, dict[str, int], dict[str, int]]:
+        """Fetch candidate docs and convert them directly into lexical stats."""
+        docs: list[_LexicalDoc] = []
+        local_doc_freqs: dict[str, int] = dict.fromkeys(unique_terms, 0)
+        candidate_vocab_doc_freqs: dict[str, int] = {}
+        prefilter_truncated = False
+
+        def append_doc(
+            path: str,
+            kind: str | None,
+            content: str | None,
+            lexical_tokens: int,
+        ) -> None:
+            if not content:
+                return
+
+            term_freqs, doc_length, seen_tokens = self._tokenize_doc(
+                content,
+                lexical_tokens,
+                term_set,
+            )
+            docs.append(
+                _LexicalDoc(
+                    path=path,
+                    kind=kind,
+                    term_freqs=term_freqs,
+                    doc_length=doc_length,
+                )
+            )
+            for term in term_freqs:
+                local_doc_freqs[term] += 1
+            for token in seen_tokens:
+                candidate_vocab_doc_freqs[token] = candidate_vocab_doc_freqs.get(token, 0) + 1
+
+        if candidates is not None:
+            need_hydration: list[str] = []
+            for candidate in candidates.candidates:
+                if candidate.kind == "version":
+                    continue
+                if candidate.content is not None:
+                    append_doc(
+                        candidate.path,
+                        candidate.kind,
+                        candidate.content,
+                        0,
+                    )
+                else:
+                    need_hydration.append(candidate.path)
+
+            if need_hydration:
+                for batch in self._chunk_paths(
+                    session,
+                    need_hydration,
+                    binds_per_item=1,
+                ):
+                    stmt = select(
+                        self._model.path,
+                        self._model.kind,
+                        self._model.content,
+                        self._model.lexical_tokens,
+                    ).where(
+                        self._model.path.in_(batch),  # type: ignore[union-attr]
+                        self._model.kind != "version",
+                        self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                        self._model.content.isnot(None),  # type: ignore[union-attr]
+                    )
+                    result = await session.execute(stmt)
+                    for obj_path, kind, content, lexical_tokens in result.all():
+                        append_doc(obj_path, kind, content, lexical_tokens or 0)
+
+            return docs, prefilter_truncated, local_doc_freqs, candidate_vocab_doc_freqs
+
+        like_filters = []
+        term_score_expr = None
+        for term in unique_terms:
+            escaped = _escape_like(term)
+            like_expr = self._model.content.ilike(  # type: ignore[union-attr]
+                f"%{escaped}%",
+                escape="\\",
+            )
+            like_filters.append(like_expr)
+            score_expr = case((like_expr, 1), else_=0)
+            term_score_expr = score_expr if term_score_expr is None else term_score_expr + score_expr
+
+        stmt = (
+            select(
+                self._model.path,
+                self._model.kind,
+                self._model.content,
+                self._model.lexical_tokens,
+            )
+            .where(
+                self._model.kind != "version",
+                self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                self._model.content.isnot(None),  # type: ignore[union-attr]
+                or_(*like_filters),
+            )
+            .order_by(
+                term_score_expr.desc(),  # type: ignore[union-attr]
+                self._model.lexical_tokens.asc(),
+            )
+            .limit(self.BM25_PRE_FILTER_LIMIT + 1)
+        )
+
+        result = await session.execute(stmt)
+        rows = result.all()
+        if len(rows) > self.BM25_PRE_FILTER_LIMIT:
+            prefilter_truncated = True
+            rows = rows[: self.BM25_PRE_FILTER_LIMIT]
+
+        for obj_path, kind, content, lexical_tokens in rows:
+            append_doc(obj_path, kind, content, lexical_tokens or 0)
+
+        return docs, prefilter_truncated, local_doc_freqs, candidate_vocab_doc_freqs
+
+    async def _fetch_corpus_stats(
+        self,
+        *,
+        unique_terms: tuple[str, ...],
+        doc_lengths: list[int],
+        local_doc_freqs: dict[str, int],
+        prefilter_truncated: bool,
+        session: AsyncSession,
+    ) -> tuple[int, float, dict[str, int]]:
+        """Fetch corpus_size, avgdl, and authoritative query-term DF counts."""
+        base_where = [
+            self._model.kind != "version",
+            self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+            self._model.content.isnot(None),  # type: ignore[union-attr]
+        ]
+
+        aggregate_columns = [
+            func.count(),
+            func.coalesce(func.sum(self._model.lexical_tokens), 0),
+        ]
+
+        if prefilter_truncated:
+            for term in unique_terms:
+                like_expr = self._model.content.ilike(  # type: ignore[union-attr]
+                    f"%{_escape_like(term)}%",
+                    escape="\\",
+                )
+                aggregate_columns.append(
+                    func.sum(case((like_expr, 1), else_=0)),
+                )
+
+        stats_stmt = select(*aggregate_columns).select_from(  # type: ignore[arg-type]
+            self._model,
+        ).where(*base_where)
+        stats_row = (await session.execute(stats_stmt)).one()
+
+        corpus_size = stats_row[0]
+        total_corpus_tokens = stats_row[1]
+        avgdl = (
+            float(total_corpus_tokens) / corpus_size
+            if corpus_size > 0 and total_corpus_tokens > 0
+            else (sum(doc_lengths) / len(doc_lengths) if doc_lengths else 1.0)
+        )
+
+        if prefilter_truncated:
+            doc_freqs = {
+                term: stats_row[idx + 2] or 0
+                for idx, term in enumerate(unique_terms)
+            }
+        else:
+            doc_freqs = local_doc_freqs
+
+        return corpus_size, avgdl, doc_freqs
 
     async def _resolve_required_parents(
         self,
@@ -167,18 +400,14 @@ class DatabaseFileSystem(GroverFileSystem):
         errors: list[str] = []
         for p, obj in existing.items():
             if obj.kind != "directory":
-                errors.append(
-                    f"Ancestor path exists as {obj.kind}, not directory: {p}"
-                )
+                errors.append(f"Ancestor path exists as {obj.kind}, not directory: {p}")
 
         if errors:
             return [], errors
 
         # Collect soft-deleted dirs for revival (not mutated yet)
         dirs: list[GroverObjectBase] = [
-            existing[p]
-            for p in sorted(existing, key=lambda p: p.count("/"))
-            if existing[p].deleted_at is not None
+            existing[p] for p in sorted(existing, key=lambda p: p.count("/")) if existing[p].deleted_at is not None
         ]
 
         # Create missing directories (shallowest first)
@@ -193,11 +422,7 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> tuple[set[str], list[str]]:
         """Reject chunk writes whose companion file is absent from DB and batch."""
-        chunk_writes = [
-            obj
-            for obj in write_map.values()
-            if obj.kind == "chunk" and obj.parent_path not in write_map
-        ]
+        chunk_writes = [obj for obj in write_map.values() if obj.kind == "chunk" and obj.parent_path not in write_map]
         if not chunk_writes:
             return set(), []
 
@@ -307,7 +532,9 @@ class DatabaseFileSystem(GroverFileSystem):
             # version rows to diagnose it. Fetch the chain and re-plan.
             if not plan.chain_verified and existing.version_number:
                 version_rows = await self._fetch_version_chain(
-                    existing.path, existing.version_number, session,
+                    existing.path,
+                    existing.version_number,
+                    session,
                 )
                 plan = await asyncio.to_thread(
                     existing.plan_file_write,
@@ -336,9 +563,7 @@ class DatabaseFileSystem(GroverFileSystem):
         ``SNAPSHOT_INTERVAL``) up to *current_version*.
         """
         lower_bound = max(1, current_version - SNAPSHOT_INTERVAL + 1)
-        version_paths = [
-            version_path(file_path, v) for v in range(lower_bound, current_version + 1)
-        ]
+        version_paths = [version_path(file_path, v) for v in range(lower_bound, current_version + 1)]
         rows: list[GroverObjectBase] = []
         for batch in self._chunk_paths(session, version_paths, binds_per_item=1):
             stmt = select(self._model).where(
@@ -416,10 +641,12 @@ class DatabaseFileSystem(GroverFileSystem):
             objs = {obj.path: obj for obj in result.scalars().all()}
             for p in batch:
                 if p in objs:
-                    out.append(objs[p].to_candidate(
-                        operation="read",
-                        include_content=True,
-                    ))
+                    out.append(
+                        objs[p].to_candidate(
+                            operation="read",
+                            include_content=True,
+                        )
+                    )
                 else:
                     errors.append(f"Not found: {p}")
 
@@ -544,11 +771,7 @@ class DatabaseFileSystem(GroverFileSystem):
         latest_version_hash: dict[str, str | None] = {}
         version_path_to_file: dict[str, str] = {}
         for obj_path, existing in existing_map.items():
-            if (
-                existing.kind == "file"
-                and existing.version_number is not None
-                and existing.version_number > 0
-            ):
+            if existing.kind == "file" and existing.version_number is not None and existing.version_number > 0:
                 vp = version_path(obj_path, existing.version_number)
                 version_path_to_file[vp] = obj_path
 
@@ -565,9 +788,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
         # ── Step 5: Process each write ─────────────────────────────────
         out: list[Candidate] = []
-        for obj_path, incoming in (
-            (p, obj) for p, obj in write_map.items() if p not in invalid_chunk_paths
-        ):
+        for obj_path, incoming in ((p, obj) for p, obj in write_map.items() if p not in invalid_chunk_paths):
             new_content = incoming.content or ""
             existing = existing_map.get(obj_path)
 
@@ -589,7 +810,9 @@ class DatabaseFileSystem(GroverFileSystem):
                         errors.append(f"Already exists (overwrite=False): {obj_path}")
                         continue
                     candidate = await self._update_existing(
-                        existing, incoming, new_content,
+                        existing,
+                        incoming,
+                        new_content,
                         latest_version_hash.get(obj_path),
                         session,
                     )
@@ -758,7 +981,9 @@ class DatabaseFileSystem(GroverFileSystem):
 
         # ── Batch-fetch children ─────────────────────────────────────
         children_map = await self._fetch_children_batched(
-            found, session, include_deleted=permanent,
+            found,
+            session,
+            include_deleted=permanent,
         )
 
         # ── Non-cascade guard ────────────────────────────────────────
@@ -830,13 +1055,15 @@ class DatabaseFileSystem(GroverFileSystem):
         if objects is None:
             if not source or not target or not connection_type:
                 return self._error("mkconn requires source/target/connection_type or objects")
-            objects = [self._model(
-                path=connection_path(source, target, connection_type),
-                kind="connection",
-                source_path=source,
-                target_path=target,
-                connection_type=connection_type,
-            )]
+            objects = [
+                self._model(
+                    path=connection_path(source, target, connection_type),
+                    kind="connection",
+                    source_path=source,
+                    target_path=target,
+                    connection_type=connection_type,
+                )
+            ]
         elif source is not None or target is not None or connection_type is not None:
             return self._error("mkconn requires source/target/connection_type or objects, not both")
 
@@ -937,7 +1164,9 @@ class DatabaseFileSystem(GroverFileSystem):
             return GroverResult(errors=errors, success=len(errors) == 0)
 
         write_result = await self._write_impl(
-            objects=to_write, overwrite=overwrite, session=session,
+            objects=to_write,
+            overwrite=overwrite,
+            session=session,
         )
         errors.extend(write_result.errors)
         return GroverResult(
@@ -977,9 +1206,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
             dest_obj = await self._get_object(op.dest, session)
             if dest_obj is not None:
-                errors.append(
-                    f"Destination path occupied: {op.dest} — move or delete it first"
-                )
+                errors.append(f"Destination path occupied: {op.dest} — move or delete it first")
                 continue
 
             # ── 2. Fetch descendants ─────────────────────────────────
@@ -1004,7 +1231,7 @@ class DatabaseFileSystem(GroverFileSystem):
             src_obj._rederive_path_fields()
 
             for desc in descendants:
-                desc.path = op.dest + desc.path[len(op.src):]
+                desc.path = op.dest + desc.path[len(op.src) :]
                 desc._rederive_path_fields()
 
             # ── 5a. Fix descendants that are connections ────────────
@@ -1012,10 +1239,12 @@ class DatabaseFileSystem(GroverFileSystem):
             # the connection path encoding are stale.  Rebuild them.
             for desc in descendants:
                 if desc.kind == "connection" and desc.source_path:
-                    desc.source_path = op.dest + desc.source_path[len(op.src):]
+                    desc.source_path = op.dest + desc.source_path[len(op.src) :]
                     if desc.target_path and desc.connection_type:
                         desc.path = connection_path(
-                            desc.source_path, desc.target_path, desc.connection_type,
+                            desc.source_path,
+                            desc.target_path,
+                            desc.connection_type,
                         )
                         desc._rederive_path_fields()
 
@@ -1034,9 +1263,11 @@ class DatabaseFileSystem(GroverFileSystem):
             )
             conn_result = await session.execute(conn_stmt)
             for conn in conn_result.scalars().all():
-                conn.target_path = op.dest + conn.target_path[len(op.src):]
+                conn.target_path = op.dest + conn.target_path[len(op.src) :]
                 conn.path = connection_path(
-                    conn.source_path, conn.target_path, conn.connection_type,
+                    conn.source_path,
+                    conn.target_path,
+                    conn.connection_type,
                 )
                 conn._rederive_path_fields()
 
@@ -1096,9 +1327,7 @@ class DatabaseFileSystem(GroverFileSystem):
         result = await session.execute(stmt)
 
         matched = [
-            obj.to_candidate(operation="glob")
-            for obj in result.scalars().all()
-            if regex.match(obj.path) is not None
+            obj.to_candidate(operation="glob") for obj in result.scalars().all() if regex.match(obj.path) is not None
         ]
         matched.sort(key=lambda c: c.path)
         return GroverResult(candidates=matched)
@@ -1182,14 +1411,146 @@ class DatabaseFileSystem(GroverFileSystem):
                         "match_count": len(line_matches),
                     },
                 )
-                matched.append(Candidate(
-                    path=path,
-                    kind="file",
-                    details=(grep_detail,),
-                ))
+                matched.append(
+                    Candidate(
+                        path=path,
+                        kind="file",
+                        details=(grep_detail,),
+                    )
+                )
 
                 if max_results is not None and len(matched) >= max_results:
                     break
+
+        return GroverResult(candidates=matched)
+
+    async def _semantic_search_impl(
+        self,
+        query: str,
+        k: int = 15,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Embed *query* text, then delegate to vector search."""
+        if self._embedding_provider is None:
+            return self._error("semantic_search requires an embedding provider")
+        if self._vector_store is None:
+            return self._error("semantic_search requires a vector store")
+        if not query or not query.strip():
+            return self._error("semantic_search requires a query")
+
+        vector = await self._embedding_provider.embed(query)
+
+        return await self._vector_search_impl(
+            vector=list(vector),
+            k=k,
+            candidates=candidates,
+            session=session,
+        )
+
+    async def _vector_search_impl(
+        self,
+        vector: list[float] | None = None,
+        k: int = 15,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Query the vector store for nearest neighbours."""
+        if self._vector_store is None:
+            return self._error("vector_search requires a vector store")
+        if vector is None:
+            return self._error("vector_search requires a vector")
+
+        paths = [c.path for c in candidates.candidates] if candidates else None
+        hits = await self._vector_store.query(vector, k=k, paths=paths)
+
+        matched = [
+            Candidate(
+                path=hit.path,
+                details=(Detail(operation="vector_search", score=hit.score),),
+            )
+            for hit in hits
+        ]
+        return GroverResult(candidates=matched)
+
+    async def _lexical_search_impl(
+        self,
+        query: str,
+        k: int = 15,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """BM25-scored keyword search across all content.
+
+        Tokenizes *query* (capped at 50 terms), computes IDF against
+        the full corpus via COUNT queries, pre-filters candidates with
+        SQL LIKE + term-count sort (capped at ``BM25_PRE_FILTER_LIMIT``),
+        then scores with ``BM25Scorer`` (Lucene IDF fix, k1=1.5, b=0.75).
+
+        Searches anything with content (files, chunks) — versions are
+        excluded (they duplicate file content).
+        """
+        if not query or not query.strip():
+            return self._error("lexical_search requires a query")
+
+        terms = tokenize_query(query)
+        if not terms:
+            return self._error("lexical_search: no searchable terms in query")
+        unique_terms = tuple(dict.fromkeys(terms))
+        term_set = frozenset(unique_terms)
+
+        docs, prefilter_truncated, local_doc_freqs, candidate_vocab_doc_freqs = await self._fetch_lexical_docs(
+            unique_terms=unique_terms,
+            term_set=term_set,
+            candidates=candidates,
+            session=session,
+        )
+        if not docs:
+            return GroverResult(candidates=[])
+
+        doc_lengths = [doc.doc_length for doc in docs]
+        term_frequency_docs = [doc.term_freqs for doc in docs]
+
+        if candidates is not None:
+            corpus_size = len(docs)
+            avgdl = sum(doc_lengths) / corpus_size if corpus_size > 0 else 1.0
+            doc_freqs = local_doc_freqs
+        else:
+            corpus_size, avgdl, doc_freqs = await self._fetch_corpus_stats(
+                unique_terms=unique_terms,
+                doc_lengths=doc_lengths,
+                local_doc_freqs=local_doc_freqs,
+                prefilter_truncated=prefilter_truncated,
+                session=session,
+            )
+
+        scorer = BM25Scorer(corpus_size=corpus_size, avg_doc_length=avgdl)
+        scorer.set_idf(
+            doc_freqs,
+            average_idf=self._estimate_average_idf(
+                candidate_vocab_doc_freqs,
+                corpus_size,
+            ),
+        )
+        scores = scorer.score_batch_term_frequencies(terms, term_frequency_docs, doc_lengths)
+
+        scored = sorted(
+            ((doc, score) for doc, score in zip(docs, scores, strict=True) if score > 0),
+            key=lambda x: x[1],
+            reverse=True,
+        )[:k]
+
+        matched = [
+            Candidate(
+                path=doc.path,
+                kind=doc.kind,
+                details=(Detail(operation="lexical_search", score=score),),
+            )
+            for doc, score in scored
+        ]
 
         return GroverResult(candidates=matched)
 
@@ -1273,7 +1634,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.predecessors(
-            self._to_candidates(path, candidates), session=session,
+            self._to_candidates(path, candidates),
+            session=session,
         )
 
     async def _successors_impl(
@@ -1284,7 +1646,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.successors(
-            self._to_candidates(path, candidates), session=session,
+            self._to_candidates(path, candidates),
+            session=session,
         )
 
     async def _ancestors_impl(
@@ -1295,7 +1658,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.ancestors(
-            self._to_candidates(path, candidates), session=session,
+            self._to_candidates(path, candidates),
+            session=session,
         )
 
     async def _descendants_impl(
@@ -1306,7 +1670,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.descendants(
-            self._to_candidates(path, candidates), session=session,
+            self._to_candidates(path, candidates),
+            session=session,
         )
 
     async def _neighborhood_impl(
@@ -1318,7 +1683,9 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.neighborhood(
-            self._to_candidates(path, candidates), depth=depth, session=session,
+            self._to_candidates(path, candidates),
+            depth=depth,
+            session=session,
         )
 
     async def _meeting_subgraph_impl(
@@ -1328,7 +1695,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.meeting_subgraph(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
 
     async def _min_meeting_subgraph_impl(
@@ -1338,7 +1706,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.min_meeting_subgraph(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
 
     async def _pagerank_impl(
@@ -1348,7 +1717,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.pagerank(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
 
     async def _betweenness_centrality_impl(
@@ -1358,7 +1728,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.betweenness_centrality(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
 
     async def _closeness_centrality_impl(
@@ -1368,7 +1739,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.closeness_centrality(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
 
     async def _degree_centrality_impl(
@@ -1378,7 +1750,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.degree_centrality(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
 
     async def _in_degree_centrality_impl(
@@ -1388,7 +1761,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.in_degree_centrality(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
 
     async def _out_degree_centrality_impl(
@@ -1398,7 +1772,8 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.out_degree_centrality(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
 
     async def _hits_impl(
@@ -1408,5 +1783,6 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> GroverResult:
         return await self._graph.hits(
-            self._to_candidates(None, candidates), session=session,
+            self._to_candidates(None, candidates),
+            session=session,
         )
