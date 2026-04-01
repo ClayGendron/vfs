@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import text
 
 from grover.backends.database import DatabaseFileSystem
 from grover.base import GroverFileSystem
-from grover.models import GroverObject
+from grover.models import GroverObject, GroverObjectBase
 from grover.results import Candidate, Detail, EditOperation, GroverResult, TwoPathOperation
+from tests.conftest import require_file, require_object, require_text, set_parameter_budget
 
 
-def _stored_payload(obj: GroverObject) -> str:
-    return obj.content if obj.is_snapshot else obj.version_diff
+def _stored_payload(obj: GroverObjectBase) -> str:
+    if obj.is_snapshot:
+        assert obj.content is not None
+        return obj.content
+    assert obj.version_diff is not None
+    return obj.version_diff
 
 # ------------------------------------------------------------------
 # Part 1: Write + Read
@@ -28,8 +34,9 @@ class TestWriteAndRead:
             w = await db._write_impl("/hello.txt", "hello world", session=s)
         assert w.success
         assert w.content == "hello world"
-        assert w.file.kind == "file"
-        assert w.file.path == "/hello.txt"
+        file = require_file(w)
+        assert file.kind == "file"
+        assert file.path == "/hello.txt"
 
         async with db._use_session() as s:
             r = await db._read_impl("/hello.txt", session=s)
@@ -67,7 +74,7 @@ class TestWriteAndRead:
             await db._write_impl("/src/auth.py", "full content", session=s)
             w = await db._write_impl("/src/auth.py/.chunks/login", "def login():", session=s)
         assert w.success
-        assert w.file.kind == "chunk"
+        assert require_file(w).kind == "chunk"
 
         async with db._use_session() as s:
             r = await db._read_impl("/src/auth.py/.chunks/login", session=s)
@@ -98,8 +105,7 @@ class TestWriteAndRead:
         assert chunk_obj is not None
 
     async def test_public_write_preserves_same_batch_semantics_when_query_chunking(self, db: DatabaseFileSystem):
-        db.DIALECT_PARAMETER_BUDGETS = {}
-        db.PARAMETER_BUDGET_FALLBACK = 1
+        set_parameter_budget(db, 1)
 
         r = await db.write(
             objects=[
@@ -126,7 +132,7 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             r = await db._write_impl("/a.py/.connections/imports/b.py", "nope", session=s)
         assert r.success
-        assert r.file.kind == "connection"
+        assert require_file(r).kind == "connection"
 
     async def test_read_nonexistent(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -152,8 +158,9 @@ class TestWriteAndRead:
     async def test_content_metrics(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             w = await db._write_impl("/file.txt", "line1\nline2\nline3", session=s)
-        assert w.file.lines == 3
-        assert w.file.size_bytes == len(b"line1\nline2\nline3")
+        file = require_file(w)
+        assert file.lines == 3
+        assert file.size_bytes == len(b"line1\nline2\nline3")
 
     async def test_write_under_existing_file_ancestor_rejected(self, db: DatabaseFileSystem):
         """Writing /a.txt/b.txt when /a.txt is a file must fail."""
@@ -222,6 +229,8 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             ghost = await db._get_object("/ghost", s, include_deleted=True)
             deep = await db._get_object("/ghost/deep", s, include_deleted=True)
+        ghost = require_object(ghost)
+        deep = require_object(deep)
         assert ghost.deleted_at is not None, "Revived dir committed despite failed write"
         assert deep.deleted_at is not None, "Revived dir committed despite failed write"
 
@@ -233,7 +242,7 @@ class TestWriteAndRead:
                 async def failing_flush(*args, **kwargs):
                     raise RuntimeError("simulated insert failure")
 
-                s.flush = failing_flush
+                cast("Any", s).flush = failing_flush
                 await db._write_impl("/brand_new/dir/file.txt", "content", session=s)
 
         async with db._use_session() as s:
@@ -271,9 +280,10 @@ class TestStat:
         async with db._use_session() as s:
             r = await db._stat_impl("/file.txt", session=s)
         assert r.success
-        assert r.file.content == "some content"
-        assert r.file.lines == 1
-        assert r.file.path == "/file.txt"
+        file = require_file(r)
+        assert file.content == "some content"
+        assert file.lines == 1
+        assert file.path == "/file.txt"
 
     async def test_stat_nonexistent(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -289,7 +299,7 @@ class TestEdit:
                 EditOperation(old="'world'", new="'earth'"),
             ], session=s)
         assert r.success
-        assert "'earth'" in r.content
+        assert "'earth'" in require_text(r.content)
 
     async def test_edit_multiple_edits(self, db: DatabaseFileSystem):
         await db.write("/file.py", "x = 1\ny = 2\nz = 3\n")
@@ -331,6 +341,7 @@ class TestEdit:
         await db.edit("/ver.py", old="v1", new="v2")
         async with db._use_session() as s:
             obj = await db._get_object("/ver.py", s)
+        obj = require_object(obj)
         assert obj.version_number == 2
         assert obj.content == "v2 content"
 
@@ -358,7 +369,7 @@ class TestEdit:
                 EditOperation(old="def foo():\n    pass", new="def foo():\n    return 1"),
             ], session=s)
         assert r.success
-        assert "return 1" in r.content
+        assert "return 1" in require_text(r.content)
 
     async def test_edit_through_public_api(self, db: DatabaseFileSystem, engine):
         root = GroverFileSystem(engine=engine)
@@ -427,15 +438,19 @@ class TestAutoVersioning:
         async with db._use_session() as s:
             v1_obj = await db._get_object("/file.txt/.versions/1", s)
             v2_obj = await db._get_object("/file.txt/.versions/2", s)
+        v1 = require_object(v1_obj)
+        v2 = require_object(v2_obj)
+        assert v1.is_snapshot is not None
+        assert v2.is_snapshot is not None
 
         # Reconstruct version 1: snapshot — just the stored content
-        reconstructed_v1 = reconstruct_version([(v1_obj.is_snapshot, _stored_payload(v1_obj))])
+        reconstructed_v1 = reconstruct_version([(v1.is_snapshot, _stored_payload(v1))])
         assert reconstructed_v1 == "line1\n"
 
         # Reconstruct version 2: start from v1 snapshot, apply v2 forward diff
         reconstructed_v2 = reconstruct_version([
-            (v1_obj.is_snapshot, _stored_payload(v1_obj)),
-            (v2_obj.is_snapshot, _stored_payload(v2_obj)),
+            (v1.is_snapshot, _stored_payload(v1)),
+            (v2.is_snapshot, _stored_payload(v2)),
         ])
         assert reconstructed_v2 == "line1\nline2\n"
 
@@ -456,6 +471,7 @@ class TestAutoVersioning:
     async def test_external_edit_creates_synthetic_snapshot(self, db: DatabaseFileSystem):
         await db.write("/app.py", "v1")
 
+        assert db._engine is not None
         async with db._engine.begin() as conn:
             await conn.execute(text(
                 "UPDATE grover_objects SET content='external' WHERE path='/app.py'"
@@ -542,12 +558,12 @@ class TestNestedMountPaths:
         # Read back through the mount — paths must be absolute with mount prefix
         r = await root.read("/data/docs/readme.txt")
         assert r.success
-        assert r.file.path == "/data/docs/readme.txt"
+        assert require_file(r).path == "/data/docs/readme.txt"
         assert r.content == "hello"
 
         r2 = await root.read("/data/src/app.py")
         assert r2.success
-        assert r2.file.path == "/data/src/app.py"
+        assert require_file(r2).path == "/data/src/app.py"
         assert r2.content == "import os"
 
     async def test_write_and_read_through_two_level_mount(self, engine):
@@ -559,11 +575,11 @@ class TestNestedMountPaths:
 
         w = await root.write("/org/team/plan.md", "# Plan")
         assert w.success
-        assert w.file.path == "/org/team/plan.md"
+        assert require_file(w).path == "/org/team/plan.md"
 
         r = await root.read("/org/team/plan.md")
         assert r.success
-        assert r.file.path == "/org/team/plan.md"
+        assert require_file(r).path == "/org/team/plan.md"
         assert r.content == "# Plan"
 
 
@@ -668,7 +684,7 @@ class TestFastPathVersioning:
 
         async with db._use_session() as s:
             f = await db._get_object("/fp.txt", s)
-        assert f.version_number == 2  # 1→2, not 1→repair→3
+        assert require_object(f).version_number == 2  # 1→2, not 1→repair→3
 
         async with db._use_session() as s:
             v2 = await db._get_object("/fp.txt/.versions/2", s)
@@ -701,7 +717,7 @@ class TestFastPathVersioning:
             f = await db._get_object("/chain.txt", s)
             v2_after = await db._get_object("/chain.txt/.versions/2", s)
         # Version advances directly, no repair snapshot inserted
-        assert f.version_number == 4
+        assert require_object(f).version_number == 4
         assert v2_after is None  # still missing
 
     async def test_missing_latest_version_triggers_slow_path(self, db: DatabaseFileSystem):
@@ -727,7 +743,7 @@ class TestFastPathVersioning:
             f = await db._get_object("/slow.txt", s)
             v3 = await db._get_object("/slow.txt/.versions/3", s)
         # Repair snapshot for v2's content + new v4 diff
-        assert f.version_number == 4
+        assert require_object(f).version_number == 4
         assert v3 is not None
         assert v3.created_by == "repair"
         assert v3.is_snapshot is True
@@ -736,6 +752,7 @@ class TestFastPathVersioning:
         """External SQL edits are detected regardless of fast path."""
         await db.write("/ext.txt", "v1")
 
+        assert db._engine is not None
         async with db._engine.begin() as conn:
             await conn.execute(text(
                 "UPDATE grover_objects SET content='hacked' WHERE path='/ext.txt'"
@@ -747,7 +764,7 @@ class TestFastPathVersioning:
         async with db._use_session() as s:
             f = await db._get_object("/ext.txt", s)
             v2 = await db._get_object("/ext.txt/.versions/2", s)
-        assert f.version_number == 3
+        assert require_object(f).version_number == 3
         assert v2 is not None
         assert v2.created_by == "external"
         assert v2.is_snapshot is True
@@ -764,7 +781,7 @@ class TestFetchVersionChain:
 
         async with db._use_session() as s:
             f = await db._get_object("/bounded.txt", s)
-            assert f.version_number == 15
+            assert require_object(f).version_number == 15
 
             rows = await db._fetch_version_chain("/bounded.txt", 15, s)
 
@@ -859,7 +876,7 @@ class TestLs:
 
         async with db._use_session() as s:
             obj = await db._get_object("/b.txt", s)
-            obj.deleted_at = datetime.now(UTC)
+            require_object(obj).deleted_at = datetime.now(UTC)
 
         async with db._use_session() as s:
             r = await db._ls_impl("/", session=s)
@@ -1186,8 +1203,9 @@ class TestMkconn:
         async with db._use_session() as s:
             r = await db._mkconn_impl("/auth.py", "/utils.py", "imports", session=s)
         assert r.success
-        assert r.file.kind == "connection"
-        assert r.file.path == "/auth.py/.connections/imports/utils.py"
+        file = require_file(r)
+        assert file.kind == "connection"
+        assert file.path == "/auth.py/.connections/imports/utils.py"
 
     async def test_mkconn_stores_correct_fields(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -1316,7 +1334,7 @@ class TestMkconn:
         await root.write("/code/auth.py", "code")
         r = await root.mkconn("/code/auth.py", "/code/utils.py", "imports")
         assert r.success
-        assert r.file.path == "/code/auth.py/.connections/imports/utils.py"
+        assert require_file(r).path == "/code/auth.py/.connections/imports/utils.py"
 
 
 # ------------------------------------------------------------------
@@ -1329,7 +1347,7 @@ class TestMkdir:
         async with db._use_session() as s:
             r = await db._mkdir_impl("/data", session=s)
         assert r.success
-        assert r.file.kind == "directory"
+        assert require_file(r).kind == "directory"
 
         async with db._use_session() as s:
             obj = await db._get_object("/data", s)
@@ -1361,7 +1379,7 @@ class TestMkdir:
 
         r = await root.mkdir("/store/docs")
         assert r.success
-        assert r.file.path == "/store/docs"
+        assert require_file(r).path == "/store/docs"
 
 
 # ------------------------------------------------------------------
@@ -1378,7 +1396,7 @@ class TestCopy:
                 session=s,
             )
         assert r.success
-        assert r.file.path == "/copy.py"
+        assert require_file(r).path == "/copy.py"
 
         # Both exist with same content
         r1 = await db.read("/orig.py")
@@ -1708,8 +1726,10 @@ class TestGrep:
             r = await db._grep_impl(pattern="timeout", session=s)
         assert r.success
         assert len(r) == 1
-        assert r.file.path == "/a.py"
-        meta = r.file.details[0].metadata
+        file = require_file(r)
+        assert file.path == "/a.py"
+        meta = file.details[0].metadata
+        assert meta is not None
         assert meta["match_count"] == 1
         assert meta["line_matches"][0]["line"] == 2
         assert "timeout" in meta["line_matches"][0]["text"]
@@ -1719,8 +1739,11 @@ class TestGrep:
             await db._write_impl("/a.py", "TODO: fix\nok\nTODO: refactor", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="TODO", session=s)
-        assert r.file.details[0].metadata["match_count"] == 2
-        assert r.file.details[0].score == 2.0
+        file = require_file(r)
+        metadata = file.details[0].metadata
+        assert metadata is not None
+        assert metadata["match_count"] == 2
+        assert file.details[0].score == 2.0
 
     async def test_grep_across_multiple_files(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -1763,8 +1786,11 @@ class TestGrep:
         async with db._use_session() as s:
             r = await db._grep_impl(pattern=r"timeout\s*=\s*\d{3}", session=s)
         assert len(r) == 1
-        assert r.file.details[0].metadata["match_count"] == 1
-        assert r.file.details[0].metadata["line_matches"][0]["line"] == 2
+        file = require_file(r)
+        metadata = file.details[0].metadata
+        assert metadata is not None
+        assert metadata["match_count"] == 1
+        assert metadata["line_matches"][0]["line"] == 2
 
     async def test_grep_invalid_regex(self, db: DatabaseFileSystem):
         async with db._use_session() as s:

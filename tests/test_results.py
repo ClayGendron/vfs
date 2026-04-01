@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -10,7 +11,7 @@ from pydantic import ValidationError
 from grover.results import Candidate, Detail, GroverResult
 
 
-def _c(path: str, kind: str = "file", **kwargs: object) -> Candidate:
+def _c(path: str, kind: str = "file", **kwargs: Any) -> Candidate:
     """Shorthand for building test candidates with auto-generated id."""
     return Candidate(id=str(uuid.uuid4()), path=path, kind=kind, **kwargs)
 
@@ -166,6 +167,7 @@ class TestGroverResultBasics:
         )
         assert len(r) == 2
         assert r.paths == ("/a.py", "/b.py")
+        assert r.file is not None
         assert r.file.path == "/a.py"
         assert r
 
@@ -667,7 +669,7 @@ class TestRequiredFields:
 
     def test_candidate_requires_path(self):
         with pytest.raises(ValidationError):
-            Candidate(kind="file")
+            Candidate.model_validate({"kind": "file"})
 
 
 class TestDatetimeRoundTrip:

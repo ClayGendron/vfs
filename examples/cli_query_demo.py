@@ -87,7 +87,8 @@ async def main() -> None:
             print(label)
             await show_query(fs, query)
     finally:
-        await fs._engine.dispose()
+        if fs._engine is not None:
+            await fs._engine.dispose()
 
 
 if __name__ == "__main__":

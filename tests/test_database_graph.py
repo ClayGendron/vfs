@@ -333,6 +333,7 @@ class TestHits:
         for c in r.candidates:
             assert c.details
             meta = c.details[-1].metadata
+            assert meta is not None
             assert "authority" in meta
             assert "hub" in meta
 

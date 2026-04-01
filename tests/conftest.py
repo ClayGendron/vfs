@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -12,7 +13,11 @@ from sqlmodel import SQLModel
 
 from grover.backends.database import DatabaseFileSystem
 from grover.base import GroverFileSystem
+from grover.models import GroverObjectBase
 from grover.results import Candidate
+
+if TYPE_CHECKING:
+    from grover.results import GroverResult
 
 # ------------------------------------------------------------------
 # --postgres CLI flag
@@ -126,3 +131,27 @@ def make_fs(name: str = "test") -> GroverFileSystem:
     fs = GroverFileSystem(session_factory=AsyncMock())
     fs._name = name
     return fs
+
+
+def require_file(result: GroverResult) -> Candidate:
+    """Return the first candidate, asserting it exists for type narrowing."""
+    assert result.file is not None
+    return result.file
+
+
+def require_object[T: GroverObjectBase](obj: T | None) -> T:
+    """Assert an object exists and return the narrowed value."""
+    assert obj is not None
+    return obj
+
+
+def require_text(text: str | None) -> str:
+    """Assert a text field is present and return the narrowed value."""
+    assert text is not None
+    return text
+
+
+def set_parameter_budget(db: DatabaseFileSystem, fallback: int) -> None:
+    """Override the budget on one test instance without touching the class type."""
+    cast("Any", db).DIALECT_PARAMETER_BUDGETS = {}
+    db.PARAMETER_BUDGET_FALLBACK = fallback

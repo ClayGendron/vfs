@@ -118,7 +118,7 @@ known-first-party = ["grover"]
 
 [tool.ty.environment]
 python-version = "3.13"
-root = ["src"]
+root = ["src", "."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

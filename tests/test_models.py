@@ -198,6 +198,10 @@ class TestContentMetrics:
         assert obj.content_hash is not None
         assert obj.size_bytes == len(b"def login():\n    pass")
         assert obj.lines == 2
+        assert obj.tokens == 0
+        assert obj.lexical_tokens == GroverObjectBase._lexical_token_count(
+            "def login():\n    pass",
+        )
 
     def test_single_line_no_newline(self):
         obj = GroverObject(path="/a.py", content="hello")
@@ -239,6 +243,8 @@ class TestContentMetrics:
         assert row.content_hash == hashlib.sha256(b"new").hexdigest()
         assert row.size_bytes == len(b"new")
         assert row.lines == 1
+        assert row.tokens == 0
+        assert row.lexical_tokens == GroverObjectBase._lexical_token_count("new")
 
     def test_version_row_preserves_explicit_metadata(self):
         obj = GroverObject(
@@ -319,7 +325,7 @@ class TestEmbedding:
         assert obj.embedding is None
 
     def test_accepts_list(self):
-        obj = GroverObject(path="/a.py", embedding=[0.1, 0.2, 0.3])
+        obj = GroverObject(path="/a.py", embedding=Vector([0.1, 0.2, 0.3]))
         assert isinstance(obj.embedding, Vector)
         assert list(obj.embedding) == [0.1, 0.2, 0.3]
 
@@ -346,6 +352,16 @@ class TestBaseVsConcrete:
         assert obj.kind == "file"
         assert obj.content_hash is not None
 
+
+class TestContentMutation:
+    def test_update_content_recomputes_lexical_tokens(self):
+        obj = GroverObject(path="/a.py", content="hello")
+        original_lexical_tokens = obj.lexical_tokens
+        obj.update_content("hello world from grover")
+        assert obj.lexical_tokens == GroverObjectBase._lexical_token_count(
+            "hello world from grover",
+        )
+        assert obj.lexical_tokens != original_lexical_tokens
 
 
 # =========================================================================
@@ -419,9 +435,7 @@ class TestDBRoundTrip:
             s.commit()
 
         with Session(engine) as s:
-            loaded = s.exec(
-                select(GroverObject).where(GroverObject.path == "/src/auth.py")
-            ).one()
+            loaded = s.exec(select(GroverObject).where(GroverObject.path == "/src/auth.py")).one()
             assert loaded.path == "/src/auth.py"
             assert loaded.kind == "file"
             assert loaded.parent_path == "/src"
@@ -429,15 +443,13 @@ class TestDBRoundTrip:
             assert loaded.content_hash == expected_hash
 
     def test_embedding_round_trip(self, engine):
-        obj = GroverObject(path="/a.py", embedding=[0.1, 0.2, 0.3])
+        obj = GroverObject(path="/a.py", embedding=Vector([0.1, 0.2, 0.3]))
         with Session(engine) as s:
             s.add(obj)
             s.commit()
 
         with Session(engine) as s:
-            loaded = s.exec(
-                select(GroverObject).where(GroverObject.path == "/a.py")
-            ).one()
+            loaded = s.exec(select(GroverObject).where(GroverObject.path == "/a.py")).one()
             assert isinstance(loaded.embedding, Vector)
             assert list(loaded.embedding) == [0.1, 0.2, 0.3]
 
@@ -448,11 +460,7 @@ class TestDBRoundTrip:
             s.commit()
 
         with Session(engine) as s:
-            loaded = s.exec(
-                select(GroverObject).where(
-                    GroverObject.path == "/a.py/.connections/imports/b.py"
-                )
-            ).one()
+            loaded = s.exec(select(GroverObject).where(GroverObject.path == "/a.py/.connections/imports/b.py")).one()
             assert loaded.kind == "connection"
             assert loaded.source_path == "/a.py"
             assert loaded.target_path == "/b.py"

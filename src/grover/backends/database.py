@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from sqlalchemy import case, func, or_, select
 
@@ -26,6 +26,8 @@ from grover.results import Candidate, Detail, EditOperation, GroverResult, TwoPa
 from grover.versioning import SNAPSHOT_INTERVAL
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
     from grover.embedding import EmbeddingProvider
@@ -44,6 +46,11 @@ class _LexicalDoc(NamedTuple):
 def _escape_like(term: str) -> str:
     """Escape special characters for a SQL LIKE pattern."""
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _unchecked_select(*entities: Any) -> Any:
+    """Call SQLAlchemy select() through Any to sidestep stub precision gaps."""
+    return cast("Any", select)(*entities)
 
 
 class DatabaseFileSystem(GroverFileSystem):
@@ -221,11 +228,14 @@ class DatabaseFileSystem(GroverFileSystem):
                     need_hydration,
                     binds_per_item=1,
                 ):
-                    stmt = select(
+                    doc_columns: tuple[Any, Any, Any, Any] = (
                         self._model.path,
                         self._model.kind,
                         self._model.content,
                         self._model.lexical_tokens,
+                    )
+                    stmt = _unchecked_select(
+                        *doc_columns,
                     ).where(
                         self._model.path.in_(batch),  # type: ignore[union-attr]
                         self._model.kind != "version",
@@ -250,13 +260,15 @@ class DatabaseFileSystem(GroverFileSystem):
             score_expr = case((like_expr, 1), else_=0)
             term_score_expr = score_expr if term_score_expr is None else term_score_expr + score_expr
 
+        doc_columns: tuple[Any, Any, Any, Any] = (
+            self._model.path,
+            self._model.kind,
+            self._model.content,
+            self._model.lexical_tokens,
+        )
+        lexical_tokens_column = cast("Any", self._model.lexical_tokens)
         stmt = (
-            select(
-                self._model.path,
-                self._model.kind,
-                self._model.content,
-                self._model.lexical_tokens,
-            )
+            _unchecked_select(*doc_columns)
             .where(
                 self._model.kind != "version",
                 self._model.deleted_at.is_(None),  # type: ignore[union-attr]
@@ -264,8 +276,8 @@ class DatabaseFileSystem(GroverFileSystem):
                 or_(*like_filters),
             )
             .order_by(
-                term_score_expr.desc(),  # type: ignore[union-attr]
-                self._model.lexical_tokens.asc(),
+                cast("Any", term_score_expr).desc(),
+                lexical_tokens_column.asc(),
             )
             .limit(self.BM25_PRE_FILTER_LIMIT + 1)
         )
@@ -291,13 +303,13 @@ class DatabaseFileSystem(GroverFileSystem):
         session: AsyncSession,
     ) -> tuple[int, float, dict[str, int]]:
         """Fetch corpus_size, avgdl, and authoritative query-term DF counts."""
-        base_where = [
+        base_where: list[Any] = [
             self._model.kind != "version",
             self._model.deleted_at.is_(None),  # type: ignore[union-attr]
             self._model.content.isnot(None),  # type: ignore[union-attr]
         ]
 
-        aggregate_columns = [
+        aggregate_columns: list[Any] = [
             func.count(),
             func.coalesce(func.sum(self._model.lexical_tokens), 0),
         ]
@@ -312,7 +324,7 @@ class DatabaseFileSystem(GroverFileSystem):
                     func.sum(case((like_expr, 1), else_=0)),
                 )
 
-        stats_stmt = select(*aggregate_columns).select_from(  # type: ignore[arg-type]
+        stats_stmt = select(*aggregate_columns).select_from(
             self._model,
         ).where(*base_where)
         stats_row = (await session.execute(stats_stmt)).one()
@@ -675,7 +687,7 @@ class DatabaseFileSystem(GroverFileSystem):
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: list[GroverObjectBase] | None = None,
+        objects: Sequence[GroverObjectBase] | None = None,
         overwrite: bool = True,
         *,
         session: AsyncSession,
@@ -1041,7 +1053,7 @@ class DatabaseFileSystem(GroverFileSystem):
         source: str | None = None,
         target: str | None = None,
         connection_type: str | None = None,
-        objects: list[GroverObjectBase] | None = None,
+        objects: Sequence[GroverObjectBase] | None = None,
         *,
         session: AsyncSession,
     ) -> GroverResult:
@@ -1112,14 +1124,19 @@ class DatabaseFileSystem(GroverFileSystem):
                 errors.append(f"No content to edit: {c.path}")
                 continue
 
+            updated_content = content
             for edit in edits:
-                r = replace(content, edit.old, edit.new, edit.replace_all)
+                r = replace(updated_content, edit.old, edit.new, edit.replace_all)
                 if not r.success:
                     errors.append(f"{c.path}: {r.error}")
                     break
-                content = r.content
+                replacement_content = r.content
+                if replacement_content is None:
+                    errors.append(f"{c.path}: replace returned no content")
+                    break
+                updated_content = replacement_content
             else:
-                to_write.append(self._model(path=c.path, content=content))
+                to_write.append(self._model(path=c.path, content=updated_content))
 
         if to_write:
             write_result = await self._write_impl(objects=to_write, session=session)
@@ -1135,7 +1152,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _copy_impl(
         self,
-        ops: list[TwoPathOperation] | None = None,
+        ops: Sequence[TwoPathOperation] | None = None,
         overwrite: bool = True,
         *,
         session: AsyncSession,
@@ -1177,7 +1194,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _move_impl(
         self,
-        ops: list[TwoPathOperation] | None = None,
+        ops: Sequence[TwoPathOperation] | None = None,
         overwrite: bool = True,
         *,
         session: AsyncSession,

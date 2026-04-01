@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -25,7 +25,7 @@ from grover.paths import normalize_path
 from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperation
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
 
     from grover.models import GroverObjectBase
     from grover.query import QueryPlan
@@ -50,6 +50,7 @@ class GroverFileSystem:
             self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
         self._mounts: dict[str, GroverFileSystem] = {}
         self._sorted_mount_paths: list[str] = []
+        self._name = self.__class__.__name__
         # TODO: load existing top-level directory paths from DB at init time
         # and store as a set. add_mount() checks against this set to prevent
         # mounting over paths that already have data (shadow prevention).
@@ -97,7 +98,10 @@ class GroverFileSystem:
 
     def _rebuild_sorted_mounts(self) -> None:
         """Rebuild the pre-sorted mount path list (longest first)."""
-        self._sorted_mount_paths: list[str] = sorted(self._mounts.keys(), key=len, reverse=True)
+        self._sorted_mount_paths = cast(
+            "list[str]",
+            sorted(self._mounts.keys(), key=len, reverse=True),
+        )
 
     def _match_mount(self, path: str) -> tuple[str, GroverFileSystem] | None:
         """Longest-prefix mount match for *path*."""
@@ -149,7 +153,7 @@ class GroverFileSystem:
 
     def _group_objects_by_terminal(
         self,
-        objects: list[GroverObjectBase],
+        objects: Sequence[GroverObjectBase],
     ) -> list[tuple[GroverFileSystem, str, list[GroverObjectBase]]]:
         """Group objects by terminal filesystem, rebasing paths."""
         groups: dict[tuple[int, str], tuple[GroverFileSystem, str, list[GroverObjectBase]]] = {}
@@ -164,7 +168,7 @@ class GroverFileSystem:
 
     @staticmethod
     def _require_same_mount(
-        resolved: list[tuple[GroverFileSystem, str, str]],
+        resolved: Sequence[tuple[GroverFileSystem, str, str]],
         label: str,
     ) -> tuple[GroverFileSystem, str] | str:
         """Validate all resolved paths share the same filesystem and prefix.
@@ -245,7 +249,7 @@ class GroverFileSystem:
     async def _route_two_path(
         self,
         op: str,
-        ops: list[TwoPathOperation],
+        ops: Sequence[TwoPathOperation],
         *,
         overwrite: bool = True,
     ) -> GroverResult:
@@ -383,7 +387,7 @@ class GroverFileSystem:
 
     async def _route_write_batch(
         self,
-        objects: list[GroverObjectBase],
+        objects: Sequence[GroverObjectBase],
         overwrite: bool = True,
     ) -> GroverResult:
         """Route a batch of object writes to terminal filesystems in parallel."""
@@ -550,7 +554,7 @@ class GroverFileSystem:
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: list[GroverObjectBase] | None = None,
+        objects: Sequence[GroverObjectBase] | None = None,
         overwrite: bool = True,
     ) -> GroverResult:
         if objects is not None:
@@ -832,7 +836,7 @@ class GroverFileSystem:
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: list[GroverObjectBase] | None = None,
+        objects: Sequence[GroverObjectBase] | None = None,
         overwrite: bool = True,
         *,
         session: AsyncSession,
@@ -849,7 +853,7 @@ class GroverFileSystem:
 
     async def _move_impl(
         self,
-        ops: list[TwoPathOperation] | None = None,
+        ops: Sequence[TwoPathOperation] | None = None,
         overwrite: bool = True,
         *,
         session: AsyncSession,
@@ -858,7 +862,7 @@ class GroverFileSystem:
 
     async def _copy_impl(
         self,
-        ops: list[TwoPathOperation] | None = None,
+        ops: Sequence[TwoPathOperation] | None = None,
         overwrite: bool = True,
         *,
         session: AsyncSession,
@@ -870,7 +874,7 @@ class GroverFileSystem:
         source: str | None = None,
         target: str | None = None,
         connection_type: str | None = None,
-        objects: list[GroverObjectBase] | None = None,
+        objects: Sequence[GroverObjectBase] | None = None,
         *,
         session: AsyncSession,
     ) -> GroverResult:

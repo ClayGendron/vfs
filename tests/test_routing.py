@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -35,11 +36,12 @@ class _RoutingFS(GroverFileSystem):
             session=session,
         )
 
-    async def _delete_impl(self, path=None, candidates=None, permanent=False, *, session):
+    async def _delete_impl(self, path=None, candidates=None, permanent=False, cascade=True, *, session):
         return await self.delete_mock(
             path=path,
             candidates=candidates,
             permanent=permanent,
+            cascade=cascade,
             session=session,
         )
 
@@ -355,7 +357,8 @@ class TestWriteBatchRouting:
 
         assert result.paths == ("/data/a.py", "/data/b.py")
         assert child.write_mock.await_count == 1
-        assert [obj.path for obj in child.write_mock.await_args.kwargs["objects"]] == ["/a.py", "/b.py"]
+        await_args = cast("Any", child.write_mock.await_args)
+        assert [obj.path for obj in await_args.kwargs["objects"]] == ["/a.py", "/b.py"]
 
 
 # =========================================================================

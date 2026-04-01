@@ -241,16 +241,19 @@ class TestReplace:
     def test_empty_old_string(self):
         r = replace("content", "", "new")
         assert not r.success
+        assert r.error is not None
         assert "empty" in r.error
 
     def test_same_old_new(self):
         r = replace("content", "content", "content")
         assert not r.success
+        assert r.error is not None
         assert "different" in r.error
 
     def test_no_match(self):
         r = replace("hello", "xyz", "abc")
         assert not r.success
+        assert r.error is not None
         assert "not found" in r.error
 
     def test_replace_all_exact(self):
@@ -264,6 +267,7 @@ class TestReplace:
         old = "def foo():\n  pass"
         r = replace(content, old, "replaced", replace_all=True)
         assert not r.success
+        assert r.error is not None
         assert "replace_all" in r.error
 
     def test_line_trimmed_fallback(self):
@@ -283,6 +287,7 @@ class TestReplace:
     def test_multiple_exact_matches_errors(self):
         r = replace("a b a", "a", "x")
         assert not r.success
+        assert r.error is not None
         assert "2 matches" in r.error
         assert r.matches is not None
         assert len(r.matches) == 2

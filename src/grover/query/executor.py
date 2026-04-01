@@ -72,6 +72,7 @@ async def _execute_node(
             results = await asyncio.gather(*(_execute_node(filesystem, operand, current) for operand in operands))
             return filesystem._merge_results(list(results))
         case _:
+            assert isinstance(node, StageNode)
             return await _execute_stage(filesystem, node, current)
 
 
@@ -224,9 +225,9 @@ async def _execute_transfer(
                 TwoPathOperation(src=candidate.path, dest=_preserve_under_root(normalized_dest, candidate.path))
                 for candidate in candidates
             ]
-            method = filesystem.move if op == "move" else filesystem.copy
-            keyword = "moves" if op == "move" else "copies"
-            return await method(**{keyword: ops, "overwrite": overwrite})
+            if op == "move":
+                return await filesystem.move(moves=ops, overwrite=overwrite)
+            return await filesystem.copy(copies=ops, overwrite=overwrite)
     raise AssertionError("Unhandled transfer state")
 
 
@@ -345,16 +346,19 @@ async def _execute_graph_traversal(
     if current is not None and paths:
         raise ValueError(f"{method_name} cannot combine piped input with explicit paths")
     if current is not None:
-        kwargs = {"candidates": current}
-    elif paths:
+        if method_name == "neighborhood":
+            return await method(candidates=current, depth=depth)
+        return await method(candidates=current)
+    if paths:
         explicit = _paths_result(paths)
-        kwargs = {"candidates": explicit} if len(paths) > 1 else {"path": explicit.candidates[0].path}
-    else:
-        raise ValueError(f"{method_name} requires explicit paths when it is not used in a pipeline")
-
-    if method_name == "neighborhood":
-        kwargs["depth"] = depth
-    return await method(**kwargs)
+        if len(paths) > 1:
+            if method_name == "neighborhood":
+                return await method(candidates=explicit, depth=depth)
+            return await method(candidates=explicit)
+        if method_name == "neighborhood":
+            return await method(path=explicit.candidates[0].path, depth=depth)
+        return await method(path=explicit.candidates[0].path)
+    raise ValueError(f"{method_name} requires explicit paths when it is not used in a pipeline")
 
 
 async def _execute_rank(

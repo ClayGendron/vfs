@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from grover.embedding import EmbeddingProvider, LangChainEmbeddingProvider
@@ -47,6 +49,19 @@ except ImportError:
     pytest.skip("langchain-core not installed", allow_module_level=True)
 
 
+def _provider(
+    embeddings: MockEmbeddings,
+    *,
+    dimensions: int | None = None,
+    model_name: str | None = None,
+) -> LangChainEmbeddingProvider:
+    return LangChainEmbeddingProvider(
+        cast("Any", embeddings),
+        dimensions=dimensions,
+        model_name=model_name,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
@@ -54,7 +69,7 @@ except ImportError:
 
 def test_protocol_conformance():
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
     assert isinstance(provider, EmbeddingProvider)
 
 
@@ -65,7 +80,7 @@ def test_protocol_conformance():
 
 async def test_embed_returns_vector():
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
     result = await provider.embed("hello world")
 
     assert isinstance(result, Vector)
@@ -76,7 +91,7 @@ async def test_embed_returns_vector():
 
 async def test_embed_vector_values():
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
     result = await provider.embed("test")
 
     expected = [0.1 * (i + 1) for i in range(MOCK_DIM)]
@@ -90,7 +105,7 @@ async def test_embed_vector_values():
 
 async def test_embed_batch_returns_vectors():
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
     results = await provider.embed_batch(["one", "two", "three"])
 
     assert len(results) == 3
@@ -103,7 +118,7 @@ async def test_embed_batch_returns_vectors():
 
 async def test_embed_batch_empty():
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
     results = await provider.embed_batch([])
 
     assert results == []
@@ -117,7 +132,7 @@ async def test_embed_batch_empty():
 async def test_lazy_dimension_probe():
     """Without explicit dimensions, embed() probes and discovers them."""
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock)
+    provider = _provider(mock)
 
     # Before any embed call, dimensions are unknown
     with pytest.raises(RuntimeError, match="Dimensions not yet known"):
@@ -134,7 +149,7 @@ async def test_lazy_dimension_probe():
 async def test_explicit_dimensions_skip_probe():
     """With explicit dimensions, no probe is needed."""
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
 
     assert provider.dimensions == MOCK_DIM
 
@@ -146,7 +161,7 @@ async def test_explicit_dimensions_skip_probe():
 
 def test_model_name_from_model_attr():
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
     assert provider.model_name == MOCK_MODEL
 
 
@@ -157,7 +172,7 @@ def test_model_name_from_model_name_attr():
         model_name = "custom-model"
 
     mock = EmbeddingsWithModelName()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
     assert provider.model_name == "custom-model"
 
 
@@ -167,13 +182,13 @@ def test_model_name_fallback_to_class_name():
         model = None
 
     mock = CustomEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM)
+    provider = _provider(mock, dimensions=MOCK_DIM)
     assert provider.model_name == "CustomEmbeddings"
 
 
 def test_explicit_model_name():
     mock = MockEmbeddings()
-    provider = LangChainEmbeddingProvider(mock, dimensions=MOCK_DIM, model_name="override")
+    provider = _provider(mock, dimensions=MOCK_DIM, model_name="override")
     assert provider.model_name == "override"
 
 

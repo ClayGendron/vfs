@@ -6,6 +6,7 @@ Covers everything in ``base.py`` not already tested by ``test_routing.py``
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -45,6 +46,9 @@ class _FullRoutingFS(GroverFileSystem):
             mock = AsyncMock(return_value=GroverResult())
             setattr(self, f"_{op}_impl", mock)
             setattr(self, f"{op}_mock", mock)
+
+    def __getattr__(self, name: str) -> AsyncMock:
+        return cast("AsyncMock", object.__getattribute__(self, name))
 
 
 # =========================================================================

@@ -9,11 +9,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 
 from grover.backends.database import DatabaseFileSystem
 from grover.models import GroverObject
+from grover.results import GroverResult
+from tests.conftest import require_file, require_object, set_parameter_budget
 
 # ------------------------------------------------------------------
 # 1. Unicode chaos
@@ -217,7 +220,7 @@ class TestContentEdgeCases:
         assert r.success
         r2 = await db.read("/big.txt")
         assert r2.content == big
-        assert r2.file.size_bytes == len(big.encode())
+        assert require_file(r2).size_bytes == len(big.encode())
 
     async def test_pure_whitespace_content(self, db: DatabaseFileSystem):
         r = await db.write("/whitespace.txt", "   \n\t\n   ")
@@ -248,7 +251,7 @@ class TestContentEdgeCases:
         content = "\n" * 100_000
         r = await db.write("/newlines.txt", content)
         assert r.success
-        assert r.file.lines == 100_001  # N newlines = N+1 lines
+        assert require_file(r).lines == 100_001  # N newlines = N+1 lines
 
 
 # ------------------------------------------------------------------
@@ -455,7 +458,7 @@ class TestConcurrentWrites:
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         # At minimum, some should succeed. None should be truly unexpected crashes.
-        successes = [r for r in results if not isinstance(r, Exception) and r.success]
+        successes = [r for r in results if isinstance(r, GroverResult) and r.success]
         assert len(successes) > 0, "At least some concurrent writes should succeed"
         # Any exceptions should be known SQLAlchemy/SQLite concurrency errors
         for r in results:
@@ -501,6 +504,7 @@ class TestConcurrentWrites:
         for r in results:
             if isinstance(r, Exception):
                 pytest.fail(f"Unexpected exception: {r}")
+            assert isinstance(r, GroverResult)
             assert r.success
 
 
@@ -514,8 +518,7 @@ class TestParameterBudgetAttacks:
 
     async def test_tiny_budget_forces_max_batching(self, db: DatabaseFileSystem):
         """Budget of 1 forces one object per flush batch."""
-        db.DIALECT_PARAMETER_BUDGETS = {}
-        db.PARAMETER_BUDGET_FALLBACK = 1
+        set_parameter_budget(db, 1)
         objects = [
             GroverObject(path=f"/tiny/f{i:04d}.txt", content=f"c{i}")
             for i in range(100)
@@ -551,7 +554,7 @@ class TestSoftDeleteResurrection:
         # Soft-delete manually (delete() is not implemented on DatabaseFileSystem)
         async with db._use_session() as s:
             obj = await db._get_object("/zombie.txt", s)
-            obj.deleted_at = datetime.now(UTC)
+            require_object(obj).deleted_at = datetime.now(UTC)
 
         # Verify deleted (read excludes soft-deleted)
         r = await db.read("/zombie.txt")
@@ -572,7 +575,7 @@ class TestSoftDeleteResurrection:
         # Soft-delete /mix_a.txt manually
         async with db._use_session() as s:
             obj = await db._get_object("/mix_a.txt", s)
-            obj.deleted_at = datetime.now(UTC)
+            require_object(obj).deleted_at = datetime.now(UTC)
 
         # Batch with revive + new
         objects = [
@@ -615,7 +618,7 @@ class TestTypeConfusion:
         async with db._use_session() as s:
             r = await db._write_impl("/somedir", "content", session=s)
         assert r.success
-        assert r.file.kind == "directory"
+        assert require_file(r).kind == "directory"
 
     async def test_version_kind_rejected(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -626,7 +629,7 @@ class TestTypeConfusion:
         async with db._use_session() as s:
             r = await db._write_impl("/a.py/.connections/imports/b.py", "nope", session=s)
         assert r.success
-        assert r.file.kind == "connection"
+        assert require_file(r).kind == "connection"
 
     async def test_object_with_mismatched_content_hash(self, db: DatabaseFileSystem):
         """Object with pre-set content_hash that doesn't match content.
@@ -679,7 +682,7 @@ class TestInterleavedOperations:
         # Soft-delete manually
         async with db._use_session() as s:
             obj = await db._get_object("/phoenix.txt", s)
-            obj.deleted_at = datetime.now(UTC)
+            require_object(obj).deleted_at = datetime.now(UTC)
 
         r = await db.read("/phoenix.txt")
         assert not r.success
@@ -721,7 +724,7 @@ class TestInterleavedOperations:
         # Soft-delete manually
         async with db._use_session() as s:
             obj = await db._get_object("/ovf.txt", s)
-            obj.deleted_at = datetime.now(UTC)
+            require_object(obj).deleted_at = datetime.now(UTC)
 
         async with db._use_session() as s:
             r = await db._write_impl("/ovf.txt", "new", overwrite=False, session=s)
@@ -841,7 +844,7 @@ class TestContentHashCorrectness:
         async with db._use_session() as s:
             obj = await db._get_object("/hash_test.txt", s)
         expected = hashlib.sha256(content.encode()).hexdigest()
-        assert obj.content_hash == expected
+        assert require_object(obj).content_hash == expected
 
     async def test_hash_updated_on_overwrite(self, db: DatabaseFileSystem):
         await db.write("/hash_ow.txt", "v1")
@@ -850,7 +853,7 @@ class TestContentHashCorrectness:
         async with db._use_session() as s:
             obj = await db._get_object("/hash_ow.txt", s)
         expected = hashlib.sha256(b"v2").hexdigest()
-        assert obj.content_hash == expected
+        assert require_object(obj).content_hash == expected
 
     async def test_hash_for_empty_content(self, db: DatabaseFileSystem):
         await db.write("/hash_empty.txt", "")
@@ -858,7 +861,7 @@ class TestContentHashCorrectness:
         async with db._use_session() as s:
             obj = await db._get_object("/hash_empty.txt", s)
         expected = hashlib.sha256(b"").hexdigest()
-        assert obj.content_hash == expected
+        assert require_object(obj).content_hash == expected
 
 
 # ------------------------------------------------------------------
@@ -871,25 +874,25 @@ class TestMetricCorrectness:
 
     async def test_lines_count_no_trailing_newline(self, db: DatabaseFileSystem):
         r = await db.write("/lines.txt", "a\nb\nc")
-        assert r.file.lines == 3
+        assert require_file(r).lines == 3
 
     async def test_lines_count_trailing_newline(self, db: DatabaseFileSystem):
         r = await db.write("/lines2.txt", "a\nb\nc\n")
-        assert r.file.lines == 4
+        assert require_file(r).lines == 4
 
     async def test_lines_empty_content(self, db: DatabaseFileSystem):
         r = await db.write("/lines_empty.txt", "")
-        assert r.file.lines == 0
+        assert require_file(r).lines == 0
 
     async def test_size_bytes_multibyte_chars(self, db: DatabaseFileSystem):
         content = "\U0001F600"  # 4 bytes in UTF-8
         r = await db.write("/multi_byte.txt", content)
-        assert r.file.size_bytes == 4
+        assert require_file(r).size_bytes == 4
 
     async def test_size_bytes_with_bom(self, db: DatabaseFileSystem):
         content = "\ufeffhello"
         r = await db.write("/bom.txt", content)
-        assert r.file.size_bytes == len(content.encode())
+        assert require_file(r).size_bytes == len(content.encode())
 
 
 # ------------------------------------------------------------------
@@ -971,8 +974,10 @@ class TestLargeBatchVersionCombo:
         async with db._use_session() as s:
             v1 = await db._get_object("/chain.txt/.versions/1", s)
             v2 = await db._get_object("/chain.txt/.versions/2", s)
-        assert v1 is not None
-        assert v2 is not None
+        v1 = require_object(v1)
+        v2 = require_object(v2)
+        assert v1.is_snapshot is not None
+        assert v2.is_snapshot is not None
 
         from grover.versioning import reconstruct_version
         reconstructed = reconstruct_version([
@@ -1043,12 +1048,12 @@ class TestExoticPaths:
         """Dotfiles should be treated as files, not directories."""
         r = await db.write("/.env", "SECRET=x")
         assert r.success
-        assert r.file.kind == "file"
+        assert require_file(r).kind == "file"
 
     async def test_dotfile_in_nested_dir(self, db: DatabaseFileSystem):
         r = await db.write("/config/.gitignore", "*.pyc")
         assert r.success
-        assert r.file.kind == "file"
+        assert require_file(r).kind == "file"
 
 
 # ------------------------------------------------------------------
@@ -1108,6 +1113,8 @@ class TestModelValidatorEdgeCases:
         before = datetime.now(UTC)
         obj = GroverObject(path="/ts.txt", content="x")
         after = datetime.now(UTC)
+        assert obj.created_at is not None
+        assert obj.updated_at is not None
         assert before <= obj.created_at <= after
         assert before <= obj.updated_at <= after
 
@@ -1277,7 +1284,7 @@ class TestSessionReEntrancy:
 
         async with db._use_session() as s:
             obj = await db._get_object("/re_ow.txt", s)
-        assert obj.content == "v2"
+        assert require_object(obj).content == "v2"
 
     async def test_write_then_read_then_write_same_session(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -1417,8 +1424,7 @@ class TestExtremeBudgets:
 
     async def test_budget_below_model_width(self, db: DatabaseFileSystem):
         """Budget smaller than one row of fields — batch_size floors to 1."""
-        db.DIALECT_PARAMETER_BUDGETS = {}
-        db.PARAMETER_BUDGET_FALLBACK = 1
+        set_parameter_budget(db, 1)
         objects = [
             GroverObject(path=f"/budget/f{i:04d}.txt", content=f"c{i}")
             for i in range(50)
@@ -1430,8 +1436,7 @@ class TestExtremeBudgets:
     async def test_budget_exactly_model_width(self, db: DatabaseFileSystem):
         """Budget equal to one row of fields — one object per flush."""
         field_count = len(GroverObject.model_fields)
-        db.DIALECT_PARAMETER_BUDGETS = {}
-        db.PARAMETER_BUDGET_FALLBACK = field_count + db.PARAMETER_RESERVE
+        set_parameter_budget(db, field_count + db.PARAMETER_RESERVE)
         objects = [
             GroverObject(path=f"/fields/f{i:04d}.txt", content=f"c{i}")
             for i in range(field_count * 2)
@@ -1478,12 +1483,12 @@ class TestTimestampManipulation:
         await db.write("/preserve_ts.txt", "v1")
         async with db._use_session() as s:
             obj1 = await db._get_object("/preserve_ts.txt", s)
-            created_original = obj1.created_at
+            created_original = require_object(obj1).created_at
 
         await db.write("/preserve_ts.txt", "v2")
         async with db._use_session() as s:
             obj2 = await db._get_object("/preserve_ts.txt", s)
-        assert obj2.created_at == created_original
+        assert require_object(obj2).created_at == created_original
 
 
 # ------------------------------------------------------------------
@@ -1574,8 +1579,7 @@ class TestChunkValidationWithTinyBudget:
         The write validates chunk parents against the full write_map
         before chunking.
         """
-        db.DIALECT_PARAMETER_BUDGETS = {}
-        db.PARAMETER_BUDGET_FALLBACK = 1
+        set_parameter_budget(db, 1)
         objects = [
             GroverObject(path="/tiny_batch.py/.chunks/fn", content="def fn(): pass"),
             GroverObject(path="/tiny_batch.py", content="module content"),
@@ -1586,8 +1590,7 @@ class TestChunkValidationWithTinyBudget:
 
     async def test_many_chunks_one_parent_tiny_budget(self, db: DatabaseFileSystem):
         """Many chunks + parent, tiny budget — splits across batches."""
-        db.DIALECT_PARAMETER_BUDGETS = {}
-        db.PARAMETER_BUDGET_FALLBACK = 1
+        set_parameter_budget(db, 1)
         objects = [
             GroverObject(path="/multi_chunk.py", content="module"),
             GroverObject(path="/multi_chunk.py/.chunks/a", content="a"),
@@ -1639,8 +1642,8 @@ class TestExceptionRecovery:
         async with db._use_session() as s:
             good = await db._get_object("/good.txt", s)
             bad = await db._get_object("/bad.txt", s)
-        assert good.content == "v2"
-        assert bad.content == "v1"
+        assert require_object(good).content == "v2"
+        assert require_object(bad).content == "v1"
 
     async def test_flush_failure_rolls_back_entire_write(self, db: DatabaseFileSystem):
         """Without savepoints, a flush failure rolls back everything."""
@@ -1654,7 +1657,7 @@ class TestExceptionRecovery:
                 async def failing_flush(*args, **kwargs):
                     raise RuntimeError("simulated flush failure")
 
-                s.flush = failing_flush
+                cast("Any", s).flush = failing_flush
                 await db._write_impl(objects=objects, session=s)
 
         # Nothing persisted

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, overload
 
 from grover.query.ast import (
     CopyCommand,
@@ -346,7 +346,27 @@ def _build_vsearch(positionals: list[str], options: dict[str, str | bool]) -> St
     )
 
 
-def _build_graph_traversal(method_name: str) -> Callable[[list[str], dict[str, str | bool]], StageNode]:
+def _build_meetinggraph(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+    return MeetingGraphCommand(
+        paths=tuple(positionals),
+        minimal="--min" in options,
+        visibility=_parse_visibility(options),
+    )
+
+
+TraversalMethod = Literal["predecessors", "successors", "ancestors", "descendants", "neighborhood"]
+RankMethod = Literal[
+    "pagerank",
+    "betweenness_centrality",
+    "closeness_centrality",
+    "degree_centrality",
+    "in_degree_centrality",
+    "out_degree_centrality",
+    "hits",
+]
+
+
+def _build_graph_traversal(method_name: TraversalMethod) -> Callable[[list[str], dict[str, str | bool]], StageNode]:
     def _builder(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
         return GraphTraversalCommand(
             method_name=method_name,
@@ -358,15 +378,7 @@ def _build_graph_traversal(method_name: str) -> Callable[[list[str], dict[str, s
     return _builder
 
 
-def _build_meetinggraph(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
-    return MeetingGraphCommand(
-        paths=tuple(positionals),
-        minimal="--min" in options,
-        visibility=_parse_visibility(options),
-    )
-
-
-def _build_rank(method_name: str) -> Callable[[list[str], dict[str, str | bool]], StageNode]:
+def _build_rank(method_name: RankMethod) -> Callable[[list[str], dict[str, str | bool]], StageNode]:
     def _builder(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
         return RankCommand(method_name, tuple(positionals), _parse_visibility(options))
 
@@ -546,6 +558,24 @@ def _parse_overwrite(options: dict[str, str | bool]) -> bool:
     if "--overwrite" in options and "--no-overwrite" in options:
         raise QuerySyntaxError("Cannot combine --overwrite and --no-overwrite")
     return "--no-overwrite" not in options
+
+
+@overload
+def _parse_int_option(
+    options: dict[str, str | bool],
+    flag: str,
+    *,
+    default: int,
+) -> int: ...
+
+
+@overload
+def _parse_int_option(
+    options: dict[str, str | bool],
+    flag: str,
+    *,
+    default: None = None,
+) -> int | None: ...
 
 
 def _parse_int_option(

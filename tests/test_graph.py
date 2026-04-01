@@ -455,7 +455,9 @@ class TestRelationshipCandidates:
         assert len(result) == 1
         assert result[0].path == "/a.py"
         assert result[0].details[0].operation == "predecessors"
-        assert result[0].details[0].metadata["paths"] == ["/b.py", "/c.py"]
+        metadata = result[0].details[0].metadata
+        assert metadata is not None
+        assert metadata["paths"] == ["/b.py", "/c.py"]
 
     def test_sorted_by_path(self):
         paths_dict = {"/c.py": ["/a.py"], "/a.py": ["/b.py"]}
@@ -1285,6 +1287,7 @@ class TestHits:
         assert result.success is True
         for c in result.candidates:
             meta = c.details[0].metadata
+            assert meta is not None
             assert "authority" in meta
             assert "hub" in meta
 
@@ -1294,7 +1297,9 @@ class TestHits:
 
         result = await g.hits(_result(), session=_mock_session)
         for c in result.candidates:
-            assert c.details[0].score == c.details[0].metadata["authority"]
+            metadata = c.details[0].metadata
+            assert metadata is not None
+            assert c.details[0].score == metadata["authority"]
 
     async def test_filters_by_candidates(self):
         g = _loaded_graph()
@@ -1314,7 +1319,9 @@ class TestHits:
         assert result.success is True
         for c in result.candidates:
             assert c.score == 0.0
-            assert c.details[0].metadata["hub"] == 0.0
+            metadata = c.details[0].metadata
+            assert metadata is not None
+            assert metadata["hub"] == 0.0
 
     async def test_edgeless_filters_to_graph_paths(self):
         """Non-graph candidates are excluded even in the edgeless early-return."""
@@ -1368,7 +1375,9 @@ class TestHits:
         result = await g.hits(_result(), score="hub", session=_mock_session)
         # Detail.score should be the hub value
         for c in result.candidates:
-            assert c.details[0].score == c.details[0].metadata["hub"]
+            metadata = c.details[0].metadata
+            assert metadata is not None
+            assert c.details[0].score == metadata["hub"]
         # Hub node should rank first when scoring by hub
         assert result.candidates[0].path == "/hub.py"
 
@@ -1379,7 +1388,9 @@ class TestHits:
 
         result = await g.hits(_result(), score="authority", session=_mock_session)
         for c in result.candidates:
-            assert c.details[0].score == c.details[0].metadata["authority"]
+            metadata = c.details[0].metadata
+            assert metadata is not None
+            assert c.details[0].score == metadata["authority"]
 
     async def test_score_invalid(self):
         g = _loaded_graph()

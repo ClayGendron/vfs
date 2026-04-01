@@ -13,6 +13,14 @@ from grover.versioning import (
     reconstruct_version,
 )
 
+
+def _version_payload(record: VersionRecord) -> str:
+    if record.is_snapshot:
+        assert record.content is not None
+        return record.content
+    assert record.version_diff is not None
+    return record.version_diff
+
 # ------------------------------------------------------------------
 # compute_diff
 # ------------------------------------------------------------------
@@ -247,6 +255,7 @@ class TestCreateVersion:
         new = "new content\nline two\nline three\n"
         r = create_version(prev, new, 3)
         assert r.is_snapshot is False
+        assert r.version_diff is not None
         assert apply_diff(prev, r.version_diff) == new
 
     def test_identical_content_produces_empty_diff(self):
@@ -268,14 +277,14 @@ class TestCreateVersion:
 
         # Reconstruct version 3 from full chain
         chain = [
-            (r.is_snapshot, r.content if r.is_snapshot else r.version_diff)
+            (r.is_snapshot, _version_payload(r))
             for r in records
         ]
         assert reconstruct_version(chain) == contents[-1]
 
         # Reconstruct version 2 from first two
         chain2 = [
-            (r.is_snapshot, r.content if r.is_snapshot else r.version_diff)
+            (r.is_snapshot, _version_payload(r))
             for r in records[:2]
         ]
         assert reconstruct_version(chain2) == contents[1]
