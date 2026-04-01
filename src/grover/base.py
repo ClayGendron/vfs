@@ -185,6 +185,8 @@ class GroverFileSystem:
         self,
         op: str,
         candidates: GroverResult,
+        *,
+        user_id: str | None = None,
         **kwargs: object,
     ) -> GroverResult:
         """Route a candidate-based operation to terminal filesystems in parallel.
@@ -208,7 +210,7 @@ class GroverFileSystem:
         ) -> GroverResult:
             async with fs._use_session() as s:
                 impl = getattr(fs, f"_{op}_impl")
-                r = await impl(candidates=group_cands, session=s, **kwargs)
+                r = await impl(candidates=group_cands, user_id=user_id, session=s, **kwargs)
             return r.add_prefix(prefix)
 
         results = await asyncio.gather(
@@ -221,6 +223,8 @@ class GroverFileSystem:
         op: str,
         path: str | None,
         candidates: GroverResult | None,
+        *,
+        user_id: str | None = None,
         **kwargs: object,
     ) -> GroverResult:
         """Route a single-path or candidate-based operation.
@@ -236,13 +240,13 @@ class GroverFileSystem:
             raise ValueError(msg)
 
         if candidates is not None:
-            return await self._dispatch_candidates(op, candidates, **kwargs)
+            return await self._dispatch_candidates(op, candidates, user_id=user_id, **kwargs)
 
         assert path is not None
         fs, rel, prefix = self._resolve_terminal(path)
 
         async with fs._use_session() as s:
-            result = await getattr(fs, f"_{op}_impl")(rel, session=s, **kwargs)
+            result = await getattr(fs, f"_{op}_impl")(rel, user_id=user_id, session=s, **kwargs)
 
         return result.add_prefix(prefix)
 
@@ -252,6 +256,7 @@ class GroverFileSystem:
         ops: Sequence[TwoPathOperation],
         *,
         overwrite: bool = True,
+        user_id: str | None = None,
     ) -> GroverResult:
         """Route a batch of two-path operations (move/copy).
 
@@ -291,6 +296,7 @@ class GroverFileSystem:
                 result = await getattr(src_fs, f"_{op}_impl")(
                     ops=batch,
                     overwrite=overwrite,
+                    user_id=user_id,
                     session=s,
                 )
             return result.add_prefix(dst_prefix)
@@ -304,6 +310,7 @@ class GroverFileSystem:
             src_prefix,
             dst_prefix,
             overwrite=overwrite,
+            user_id=user_id,
         )
 
     async def _cross_mount_transfer(
@@ -317,12 +324,13 @@ class GroverFileSystem:
         dst_prefix: str,
         *,
         overwrite: bool,
+        user_id: str | None = None,
     ) -> GroverResult:
         """Execute a cross-mount move/copy via read → write → delete."""
         # Read all sources
         async with src_fs._use_session() as s:
             read_results = self._merge_results(
-                [await src_fs._read_impl(p, session=s) for p in src_rels],
+                [await src_fs._read_impl(p, user_id=user_id, session=s) for p in src_rels],
             )
         if not read_results.success:
             return read_results.add_prefix(src_prefix)
@@ -335,6 +343,7 @@ class GroverFileSystem:
                         dst_rel,
                         content=candidate.content or "",
                         overwrite=overwrite,
+                        user_id=user_id,
                         session=s,
                     )
                     for dst_rel, candidate in zip(dst_rels, read_results.candidates, strict=True)
@@ -347,7 +356,7 @@ class GroverFileSystem:
         if op == "move":
             async with src_fs._use_session() as s:
                 delete_results = self._merge_results(
-                    [await src_fs._delete_impl(p, permanent=False, session=s) for p in src_rels],
+                    [await src_fs._delete_impl(p, permanent=False, user_id=user_id, session=s) for p in src_rels],
                 )
             if not delete_results.success:
                 # Writes succeeded but deletes failed — caller needs to know
@@ -359,6 +368,8 @@ class GroverFileSystem:
         self,
         op: str,
         candidates: GroverResult | None,
+        *,
+        user_id: str | None = None,
         **kwargs: object,
     ) -> GroverResult:
         """Route a namespace operation — dispatch candidates or fan-out.
@@ -367,15 +378,15 @@ class GroverFileSystem:
         Without: query self + every mount in parallel, merge results.
         """
         if candidates is not None:
-            return await self._dispatch_candidates(op, candidates, **kwargs)
+            return await self._dispatch_candidates(op, candidates, user_id=user_id, **kwargs)
 
         async def _query_self() -> GroverResult:
             async with self._use_session() as s:
-                return await getattr(self, f"_{op}_impl")(session=s, **kwargs)
+                return await getattr(self, f"_{op}_impl")(user_id=user_id, session=s, **kwargs)
 
         all_results = await asyncio.gather(
             _query_self(),
-            *(getattr(fs, op)(**kwargs) for fs in self._mounts.values()),
+            *(getattr(fs, op)(user_id=user_id, **kwargs) for fs in self._mounts.values()),
         )
 
         self_result = self._exclude_mounted_paths(all_results[0])
@@ -389,6 +400,8 @@ class GroverFileSystem:
         self,
         objects: Sequence[GroverObjectBase],
         overwrite: bool = True,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         """Route a batch of object writes to terminal filesystems in parallel."""
         if not objects:
@@ -398,7 +411,7 @@ class GroverFileSystem:
 
         async def _write_group(fs: GroverFileSystem, prefix: str, group_objs: list[GroverObjectBase]) -> GroverResult:
             async with fs._use_session() as s:
-                result = await fs._write_impl(objects=group_objs, overwrite=overwrite, session=s)
+                result = await fs._write_impl(objects=group_objs, overwrite=overwrite, user_id=user_id, session=s)
             return result.add_prefix(prefix)
 
         results = await asyncio.gather(
@@ -472,25 +485,27 @@ class GroverFileSystem:
         self,
         query: str,
         *,
+        user_id: str | None = None,
         initial: GroverResult | None = None,
     ) -> GroverResult:
         """Execute a parsed CLI-style query against this filesystem."""
         from grover.query import execute_query
 
         plan = self.parse_query(query)
-        return await execute_query(self, plan, initial=initial)
+        return await execute_query(self, plan, initial=initial, user_id=user_id)
 
     async def cli(
         self,
         query: str,
         *,
+        user_id: str | None = None,
         initial: GroverResult | None = None,
     ) -> str:
         """Execute *query* and render a human-readable text response."""
         from grover.query import execute_query, render_query_result
 
         plan = self.parse_query(query)
-        result = await execute_query(self, plan, initial=initial)
+        result = await execute_query(self, plan, initial=initial, user_id=user_id)
         return render_query_result(result, mode=plan.render_mode)
 
     # -------------------------------------------------------------------
@@ -503,15 +518,19 @@ class GroverFileSystem:
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("read", path, candidates)
+        return await self._route_single("read", path, candidates, user_id=user_id)
 
     async def stat(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("stat", path, candidates)
+        return await self._route_single("stat", path, candidates, user_id=user_id)
 
     async def edit(
         self,
@@ -521,19 +540,23 @@ class GroverFileSystem:
         edits: list[EditOperation] | None = None,
         candidates: GroverResult | None = None,
         replace_all: bool = False,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         if edits is None:
             if old is None or new is None:
                 return self._error("edit requires old and new strings, or edits list")
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
-        return await self._route_single("edit", path, candidates, edits=edits)
+        return await self._route_single("edit", path, candidates, edits=edits, user_id=user_id)
 
     async def ls(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("ls", path, candidates)
+        return await self._route_single("ls", path, candidates, user_id=user_id)
 
     async def delete(
         self,
@@ -541,6 +564,8 @@ class GroverFileSystem:
         candidates: GroverResult | None = None,
         permanent: bool = False,
         cascade: bool = True,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         return await self._route_single(
             "delete",
@@ -548,6 +573,7 @@ class GroverFileSystem:
             candidates,
             permanent=permanent,
             cascade=cascade,
+            user_id=user_id,
         )
 
     async def write(
@@ -556,26 +582,31 @@ class GroverFileSystem:
         content: str | None = None,
         objects: Sequence[GroverObjectBase] | None = None,
         overwrite: bool = True,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         if objects is not None:
-            return await self._route_write_batch(objects, overwrite=overwrite)
+            return await self._route_write_batch(objects, overwrite=overwrite, user_id=user_id)
         return await self._route_single(
             "write",
             path,
             None,
             content=content,
             overwrite=overwrite,
+            user_id=user_id,
         )
 
-    async def mkdir(self, path: str) -> GroverResult:
-        return await self._route_single("mkdir", path, None)
+    async def mkdir(self, path: str, *, user_id: str | None = None) -> GroverResult:
+        return await self._route_single("mkdir", path, None, user_id=user_id)
 
     async def tree(
         self,
         path: str,
         max_depth: int | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("tree", path, None, max_depth=max_depth)
+        return await self._route_single("tree", path, None, max_depth=max_depth, user_id=user_id)
 
     async def move(
         self,
@@ -583,12 +614,14 @@ class GroverFileSystem:
         dest: str | None = None,
         moves: list[TwoPathOperation] | None = None,
         overwrite: bool = True,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         if moves is None:
             if not src or not dest:
                 return self._error("move requires src and dest, or moves")
             moves = [TwoPathOperation(src=src, dest=dest)]
-        return await self._route_two_path("move", moves, overwrite=overwrite)
+        return await self._route_two_path("move", moves, overwrite=overwrite, user_id=user_id)
 
     async def copy(
         self,
@@ -596,18 +629,22 @@ class GroverFileSystem:
         dest: str | None = None,
         copies: list[TwoPathOperation] | None = None,
         overwrite: bool = True,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         if copies is None:
             if not src or not dest:
                 return self._error("copy requires src and dest, or copies")
             copies = [TwoPathOperation(src=src, dest=dest)]
-        return await self._route_two_path("copy", copies, overwrite=overwrite)
+        return await self._route_two_path("copy", copies, overwrite=overwrite, user_id=user_id)
 
     async def mkconn(
         self,
         source: str,
         target: str,
         connection_type: str,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         src_fs, src_rel, src_pfx = self._resolve_terminal(source)
         tgt_fs, tgt_rel, _ = self._resolve_terminal(target)
@@ -620,6 +657,7 @@ class GroverFileSystem:
                 src_rel,
                 tgt_rel,
                 connection_type,
+                user_id=user_id,
                 session=s,
             )
         return result.add_prefix(src_pfx)
@@ -630,8 +668,10 @@ class GroverFileSystem:
         self,
         pattern: str,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout("glob", candidates, pattern=pattern)
+        return await self._route_fanout("glob", candidates, pattern=pattern, user_id=user_id)
 
     async def grep(
         self,
@@ -639,6 +679,8 @@ class GroverFileSystem:
         case_sensitive: bool = True,
         max_results: int | None = None,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         return await self._route_fanout(
             "grep",
@@ -646,6 +688,7 @@ class GroverFileSystem:
             pattern=pattern,
             case_sensitive=case_sensitive,
             max_results=max_results,
+            user_id=user_id,
         )
 
     async def semantic_search(
@@ -653,12 +696,15 @@ class GroverFileSystem:
         query: str,
         k: int = 15,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         return await self._route_fanout(
             "semantic_search",
             candidates,
             query=query,
             k=k,
+            user_id=user_id,
         )
 
     async def vector_search(
@@ -666,12 +712,15 @@ class GroverFileSystem:
         vector: list[float],
         k: int = 15,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         return await self._route_fanout(
             "vector_search",
             candidates,
             vector=vector,
             k=k,
+            user_id=user_id,
         )
 
     async def lexical_search(
@@ -679,12 +728,15 @@ class GroverFileSystem:
         query: str,
         k: int = 15,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         return await self._route_fanout(
             "lexical_search",
             candidates,
             query=query,
             k=k,
+            user_id=user_id,
         )
 
     # graph
@@ -693,29 +745,37 @@ class GroverFileSystem:
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("predecessors", path, candidates)
+        return await self._route_single("predecessors", path, candidates, user_id=user_id)
 
     async def successors(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("successors", path, candidates)
+        return await self._route_single("successors", path, candidates, user_id=user_id)
 
     async def ancestors(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("ancestors", path, candidates)
+        return await self._route_single("ancestors", path, candidates, user_id=user_id)
 
     async def descendants(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("descendants", path, candidates)
+        return await self._route_single("descendants", path, candidates, user_id=user_id)
 
     async def neighborhood(
         self,
@@ -723,62 +783,81 @@ class GroverFileSystem:
         candidates: GroverResult | None = None,
         *,
         depth: int = 2,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_single("neighborhood", path, candidates, depth=depth)
+        return await self._route_single("neighborhood", path, candidates, depth=depth, user_id=user_id)
 
     async def meeting_subgraph(
         self,
         candidates: GroverResult,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._dispatch_candidates("meeting_subgraph", candidates)
+        return await self._dispatch_candidates("meeting_subgraph", candidates, user_id=user_id)
 
     async def min_meeting_subgraph(
         self,
         candidates: GroverResult,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._dispatch_candidates("min_meeting_subgraph", candidates)
+        return await self._dispatch_candidates("min_meeting_subgraph", candidates, user_id=user_id)
 
     async def pagerank(
         self,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout("pagerank", candidates)
+        return await self._route_fanout("pagerank", candidates, user_id=user_id)
 
     async def betweenness_centrality(
         self,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout("betweenness_centrality", candidates)
+        return await self._route_fanout("betweenness_centrality", candidates, user_id=user_id)
 
     async def closeness_centrality(
         self,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout("closeness_centrality", candidates)
+        return await self._route_fanout("closeness_centrality", candidates, user_id=user_id)
 
     async def degree_centrality(
         self,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout("degree_centrality", candidates)
+        return await self._route_fanout("degree_centrality", candidates, user_id=user_id)
 
     async def in_degree_centrality(
         self,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout("in_degree_centrality", candidates)
+        return await self._route_fanout("in_degree_centrality", candidates, user_id=user_id)
 
     async def out_degree_centrality(
         self,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout("out_degree_centrality", candidates)
+        return await self._route_fanout("out_degree_centrality", candidates, user_id=user_id)
 
     async def hits(
         self,
         candidates: GroverResult | None = None,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout("hits", candidates)
+        return await self._route_fanout("hits", candidates, user_id=user_id)
 
     # -------------------------------------------------------------------
     # impl stubs
@@ -789,6 +868,7 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -798,6 +878,7 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -808,6 +889,7 @@ class GroverFileSystem:
         candidates: GroverResult | None = None,
         edits: list[EditOperation] | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -817,6 +899,7 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -828,6 +911,7 @@ class GroverFileSystem:
         permanent: bool = False,
         cascade: bool = True,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -839,6 +923,7 @@ class GroverFileSystem:
         objects: Sequence[GroverObjectBase] | None = None,
         overwrite: bool = True,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -847,6 +932,7 @@ class GroverFileSystem:
         self,
         path: str,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -856,6 +942,7 @@ class GroverFileSystem:
         ops: Sequence[TwoPathOperation] | None = None,
         overwrite: bool = True,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -865,6 +952,7 @@ class GroverFileSystem:
         ops: Sequence[TwoPathOperation] | None = None,
         overwrite: bool = True,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -876,6 +964,7 @@ class GroverFileSystem:
         connection_type: str | None = None,
         objects: Sequence[GroverObjectBase] | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -885,6 +974,7 @@ class GroverFileSystem:
         path: str,
         max_depth: int | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -894,6 +984,7 @@ class GroverFileSystem:
         pattern: str,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -905,6 +996,7 @@ class GroverFileSystem:
         max_results: int | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -915,6 +1007,7 @@ class GroverFileSystem:
         k: int = 15,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -925,6 +1018,7 @@ class GroverFileSystem:
         k: int = 15,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -935,6 +1029,7 @@ class GroverFileSystem:
         k: int = 15,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -944,6 +1039,7 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -953,6 +1049,7 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -962,6 +1059,7 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -971,6 +1069,7 @@ class GroverFileSystem:
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -981,6 +1080,7 @@ class GroverFileSystem:
         candidates: GroverResult | None = None,
         *,
         depth: int = 2,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -989,6 +1089,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -997,6 +1098,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -1005,6 +1107,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -1013,6 +1116,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -1021,6 +1125,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -1029,6 +1134,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -1037,6 +1143,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -1045,6 +1152,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError
@@ -1053,6 +1161,7 @@ class GroverFileSystem:
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         raise NotImplementedError

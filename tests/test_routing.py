@@ -24,10 +24,10 @@ class _RoutingFS(GroverFileSystem):
         self.delete_mock = AsyncMock(return_value=GroverResult())
         self.glob_mock = AsyncMock(return_value=GroverResult())
 
-    async def _read_impl(self, path=None, candidates=None, *, session):
+    async def _read_impl(self, path=None, candidates=None, *, user_id=None, session):
         return await self.read_mock(path=path, candidates=candidates, session=session)
 
-    async def _write_impl(self, path=None, content=None, objects=None, overwrite=True, *, session):
+    async def _write_impl(self, path=None, content=None, objects=None, overwrite=True, *, user_id=None, session):
         return await self.write_mock(
             path=path,
             content=content,
@@ -36,7 +36,7 @@ class _RoutingFS(GroverFileSystem):
             session=session,
         )
 
-    async def _delete_impl(self, path=None, candidates=None, permanent=False, cascade=True, *, session):
+    async def _delete_impl(self, path=None, candidates=None, permanent=False, cascade=True, *, user_id=None, session):
         return await self.delete_mock(
             path=path,
             candidates=candidates,
@@ -45,7 +45,7 @@ class _RoutingFS(GroverFileSystem):
             session=session,
         )
 
-    async def _glob_impl(self, pattern="", candidates=None, *, session):
+    async def _glob_impl(self, pattern="", candidates=None, *, user_id=None, session):
         return await self.glob_mock(pattern=pattern, candidates=candidates, session=session)
 
 

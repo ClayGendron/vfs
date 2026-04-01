@@ -1527,3 +1527,184 @@ grover search "auth" | grover meetinggraph --min | grover pagerank
 **`search` depends on a configured semantic provider.** The query engine supports `search`, but demo / out-of-the-box examples use `lsearch` because a plain in-memory `DatabaseFileSystem` does not have a semantic backend attached.
 
 **Help output is not yet generated from the registry.** The command registry now contains enough metadata to drive generated help in a future pass, but the current work stops at parsing, planning, execution, and rendering.
+
+### 14.10 DatabaseFileSystem CRUD + query + graph buildout — 2026-03-30/31
+
+**Commits:** `e0f051f` through `b8894de`
+
+Between the `write` implementation (§14.8) and the CLI query engine (§14.9), the full DatabaseFileSystem surface was built out across 7 commits. This section covers the CRUD operations, query operations, graph wiring, and cross-cutting infrastructure that completed the backend.
+
+#### CRUD operations (`database.py`, grew to ~1800 lines)
+
+**Commit `2ba55fa` — ls, delete, mkconn, mkdir:**
+- `_ls_impl` — kind-aware: directories list files/dirs children, files list metadata children (`.chunks/`, `.versions/`, `.connections/`)
+- `_delete_impl` — soft-delete (`deleted_at` timestamp) and permanent delete with cascading via `_cascade_delete` / `_cascade_delete_permanent`. Batched cascade queries replace N+1 per-item pattern.
+- `_mkconn_impl` — connection creation with source validation, constructs `<source>/.connections/<type>/<target>` path, delegates to `_write_impl`
+- `_mkdir_impl` — directory creation delegating to `_write_impl` with `kind=directory`
+- `_write_impl` widened to accept directory and connection kinds (only files get versioning)
+
+**Commit `e5a22ea` — edit, copy, move, model validation:**
+- `_edit_impl` — read → three-level replace engine (exact / line-trimmed / block-anchor via `replace.py`) → batch write
+- `_copy_impl` — batch read sources → batch write to destinations
+- `_move_impl` — atomic same-mount rename, cascades descendants, rebuilds connection paths, updates incoming `target_path` references. Rejects occupied destinations.
+- `delete` gained `cascade=False` mode — non-cascading delete rejects non-empty objects (rmdir semantics)
+- `delete` root guard — `delete("/")` always errors
+- Model validation: directory content coerced to `None`, file content defaults to `""`, `update_content()` raises on directories
+
+**Commit `e5a22ea` also added `replace.py`** (330 lines) — fuzzy string matching with three strategies: exact match, line-trimmed (ignoring leading/trailing whitespace), and block-anchor (find surrounding context and replace within). Ported from v1.
+
+#### Query operations
+
+**Commit `e0f051f` — patterns.py + base.py routing refactor:**
+- `patterns.py` (145 lines) — glob/grep pattern matching utilities: `glob_to_sql_like()` for SQL pre-filtering, `compile_glob()` for Python regex post-filtering
+- `base.py` refactored with improved mount routing and session management
+- `_with_candidates` helper added to `results.py`
+
+**Commit `c529777` — glob, grep, tree:**
+- `_glob_impl` — SQL LIKE pre-filter via `glob_to_sql_like()`, Python regex post-filter via `compile_glob()`. Files/dirs only by default. Candidate filtering preserves detail chain.
+- `_grep_impl` — regex content search across files, line-by-line matching with `line_matches` metadata. Hydrates only candidates missing content. Supports `case_sensitive` and `max_results`.
+- `_tree_impl` — recursive directory listing with `max_depth` via SQL slash counting. Validates path exists and is a directory.
+
+#### Graph wiring
+
+**Commit `3ad8565` — graph operations + versioning tests:**
+- All 14 graph `_*_impl` methods in `DatabaseFileSystem` now delegate to the internal `RustworkxGraph` instance
+- Graph cache invalidated (`self._graph.invalidate()`) after connection mutations (`mkconn`, `delete`, `move`, `write`) for immediate consistency
+- `RustworkxGraph._load()` fixed to exclude soft-deleted connections (`WHERE deleted_at IS NULL`)
+- Versioning module got dedicated unit tests covering `compute_diff`, `apply_diff`, `reconstruct_version`, `create_version` — coverage from 88% to 100%
+
+#### Cross-cutting improvements
+
+**Commit `ef1679a` — detail preservation:**
+- Prior details from incoming candidates were lost in graph and centrality methods because each `_impl` built fresh `Candidate` objects
+- Solution: `inject_details()` on `GroverResult` prepends prior details onto overlapping result candidates in `_dispatch_candidates` — one line in the routing layer covers all public methods automatically
+- Removed `prior_details` plumbing from `_read_impl`, `_grep_impl`, `_glob_impl`, and `to_candidate`
+
+**Commit `b8894de` — signature cleanup:**
+- `path`, `pattern`, and `query` parameters on `_*_impl` methods had `= ""` defaults that masked potential bugs. Defaults removed — callers always provide values.
+
+#### Test coverage
+
+1,421 tests at end of buildout (was 534 at §14.7). 96% overall coverage. Key new test files:
+- `tests/test_database.py` — 77+ database operation tests
+- `tests/test_database_graph.py` — 514-line graph integration test suite
+- `tests/test_replace.py` — 49 tests (47% → 99% coverage for `replace.py`)
+- `tests/test_patterns.py` — 917-line pattern matching test suite
+- `tests/test_method_chaining.py` — 474-line detail preservation test suite
+- `tests/test_versioning.py` — dedicated versioning unit tests
+
+### 14.11 Async version planning — 2026-03-31
+
+**Commit:** `704e403`
+
+`plan_file_write` calls in `_update_existing` moved to `asyncio.to_thread()` so SHA256 hashing, diff computation, and version chain reconstruction no longer block the event loop. `_insert_new` made `async` for consistency with all other session-accepting methods.
+
+Small change (8 insertions, 9 deletions) but important for write-heavy workloads — version planning is CPU-bound (hashing + diffing), and prior to this change it blocked the asyncio loop during every file update.
+
+### 14.12 EmbeddingProvider, VectorStore protocols, and search implementations — 2026-03-31
+
+**Commit:** `12880bf`
+
+Introduced the embedding and vector search layer that completes the three-modality search stack described in §7.2 (pattern via glob, keyword via grep/lsearch, semantic via search/vsearch).
+
+#### EmbeddingProvider protocol (`embedding.py`, 159 lines)
+
+Async-first protocol for text-to-vector embedding. Returns `Vector` instances (from `vector.py`) with dimension and model-name tracking so embeddings carry provenance from creation through database storage.
+
+**Methods:** `embed(text) → Vector`, `embed_batch(texts) → list[Vector]`, `dimensions` property, `model_name` property.
+
+**`LangChainEmbeddingProvider`** — adapter wrapping any `langchain_core.embeddings.Embeddings` instance. Adapts `list[float]` results into properly-typed `Vector` instances. Optional dependency via `pip install grover[langchain]`.
+
+#### VectorStore protocol (`vector_store.py`, 58 lines)
+
+Async protocol for vector similarity search backends. Three operations:
+- `query(vector, *, k, paths) → list[VectorHit]` — nearest neighbor search, optionally constrained to specific paths
+- `upsert(items: list[VectorItem]) → None` — insert or update vectors
+- `delete(paths: list[str]) → None` — remove vectors by path
+
+`VectorItem` (path + vector pair for upsert) and `VectorHit` (path + score result) are frozen dataclasses.
+
+#### DatabricksVectorStore (`databricks_store.py`, 163 lines)
+
+Production implementation of `VectorStore` using Databricks Direct Vector Access indexes. All SDK calls wrapped in `asyncio.to_thread()` because the Databricks SDK is synchronous. Batched upserts (1,000 items per batch). Optional dependency via `pip install grover[databricks]`.
+
+#### DatabaseFileSystem search wiring
+
+`DatabaseFileSystem` constructor now accepts optional `embedding_provider: EmbeddingProvider` and `vector_store: VectorStore` parameters.
+
+- `_semantic_search_impl` — embed query text via `EmbeddingProvider`, then delegate to `_vector_search_impl`. Returns error result if no embedding provider or vector store configured.
+- `_vector_search_impl` — query the `VectorStore` for nearest neighbours. Constrains to candidate paths when piped. Returns `Candidate` objects with `Detail(operation="vector_search", score=...)`.
+
+#### Key decisions
+
+**Protocols, not base classes.** Both `EmbeddingProvider` and `VectorStore` are `runtime_checkable` `Protocol` classes. Implementations don't need to inherit — duck typing works. This keeps the dependency tree clean: `embedding.py` doesn't import LangChain, `vector_store.py` doesn't import Databricks.
+
+**`Vector` carries provenance.** Embedding results include dimension count and model name (from `vector.py`), so vectors stored in the database are self-describing. Dimension mismatches are caught at write time.
+
+**Graceful degradation.** `semantic_search` and `vector_search` return error results (not exceptions) when providers aren't configured. The CLI query engine already handles this — `search` works only with a configured provider, `lsearch` works out of the box.
+
+#### Tests
+
+- `tests/test_embedding.py` (187 tests) — protocol compliance, LangChain adapter, batch embedding, dimension tracking
+- `tests/test_vector_store.py` (323 tests) — protocol compliance, DatabricksVectorStore (mocked SDK), query/upsert/delete, batch splitting
+
+### 14.13 BM25 implementation and benchmarks — 2026-03-31
+
+**Commit:** `aa4606f`
+
+Added a hand-rolled BM25 scorer module and in-memory index, the engine behind `_lexical_search_impl` in DatabaseFileSystem.
+
+#### BM25Scorer (`bm25.py`, 453 lines)
+
+Pure Python, no numpy. Matches `rank-bm25` BM25Okapi scoring semantics. Designed for use with SQL-backed corpora where full-corpus IDF is computed via COUNT queries and document content is pre-filtered before scoring.
+
+**Architecture:**
+- Corpus-level statistics (`corpus_size`, `avg_doc_length`) and per-term document frequencies provided externally — typically from SQL COUNT queries — so the scorer never needs the full corpus in memory
+- Standard BM25 IDF: `log((N - n + 0.5) / (n + 0.5))` with epsilon floor for common terms (matching BM25Okapi)
+- Pre-computed constants (`_k1_plus_1`, `_length_norm_base`, `_length_norm_scale`) eliminate repeated arithmetic during scoring
+
+**Key methods:**
+- `set_idf(doc_freqs)` — pre-compute IDF from document-frequency counts, apply epsilon floor for common terms
+- `score_document(query_terms, doc_tokens)` — score a single document
+- `score_batch(query_terms, documents)` — score multiple documents (for ad hoc SQL pre-filter batches)
+- `score_batch_term_frequencies(query_terms, term_freq_docs, doc_lengths)` — score from precomputed term frequencies
+
+**Tokenizer:** `tokenize()` — lowercase split on `\W+`, drop empties. `tokenize_query()` — same with 50-term cap (`QUERY_TERM_LIMIT`).
+
+#### BM25Index
+
+Prepared index for repeated in-memory searches over a stable corpus. Pre-computes postings, document norms, and full-corpus IDF once, so each query only visits matching documents.
+
+**Key methods:**
+- `score_sparse(query_terms)` — return `{doc_idx: score}` for matching documents only (posting list intersection)
+- `score_batch(query_terms)` — dense scores aligned to document order
+- `topk(query_terms, k)` — heap-based top-k via `heapq.nlargest`
+
+#### Lexical search in DatabaseFileSystem
+
+`_lexical_search_impl` uses the `BM25Scorer` in a SQL-hybrid pipeline:
+1. Tokenize query (capped at 50 terms)
+2. Compute IDF against full corpus via SQL COUNT queries
+3. Pre-filter candidates with SQL LIKE + term-count sort (capped at `BM25_PRE_FILTER_LIMIT = 1,000`)
+4. Score pre-filtered documents with `BM25Scorer`
+5. Return top-k results as `GroverResult` with `Detail(operation="lexical_search", score=...)`
+
+Searches files and chunks — versions excluded (they duplicate file content).
+
+#### Benchmarks
+
+- `scripts/bench_bm25.py` — raw scorer throughput benchmarks
+- `scripts/bench_bm25_comparison.py` — cross-validated against `rank-bm25` BM25Okapi at scale, verifying score-exact matching
+
+#### Tests
+
+- `tests/test_bm25_comparison.py` (400 tests) — comprehensive comparison suite validating Grover's BM25 against `rank-bm25` reference implementation. Covers IDF computation, single-document scoring, batch scoring, edge cases (empty docs, unknown terms, repeated terms), and the BM25Index prepared-index path.
+- `tests/test_lexical_search.py` (366 tests) — integration tests for `_lexical_search_impl` against `DatabaseFileSystem` with seeded content
+
+#### Key decisions
+
+**Hand-rolled, not a dependency.** `rank-bm25` is a small library but adds a numpy dependency and doesn't support the SQL-hybrid workflow (external IDF, pre-filtered document sets). The hand-rolled implementation is ~450 lines of pure Python, exactly matches BM25Okapi scoring, and integrates cleanly with the SQL pre-filter pipeline.
+
+**SQL pre-filter before scoring.** Full BM25 over the entire corpus would require loading all content into Python. Instead, SQL LIKE narrows to candidate documents containing query terms, sorted by term-count heuristic, capped at 1,000 rows. The BM25 scorer then ranks within this pre-filtered set. This keeps memory bounded and query times fast for large corpora.
+
+**BM25Index for benchmarks, BM25Scorer for production.** The index pre-computes postings for repeated queries over stable data — useful for benchmarks and REPL exploration. The scorer takes external statistics — useful for the SQL-hybrid production path where IDF comes from COUNT queries and documents come from pre-filtered SQL results.

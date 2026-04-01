@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
-from grover.paths import split_path
+from grover.paths import split_path, unscope_path
 
 _T = TypeVar("_T")
 
@@ -295,6 +295,17 @@ class GroverResult(BaseModel):
             for c in self.candidates
         ]
         return self
+
+    def strip_user_scope(self, user_id: str) -> GroverResult:
+        """Strip the ``/{user_id}`` prefix from all candidate paths.
+
+        For connection paths, both the source prefix and the embedded
+        target prefix are stripped via ``unscope_path``.
+        """
+        return self._with_candidates([
+            c.model_copy(update={"path": unscope_path(c.path, user_id)})
+            for c in self.candidates
+        ])
 
     def _with_candidates(self, candidates: list[Candidate]) -> GroverResult:
         """Return a new result with the given candidates."""

@@ -78,9 +78,10 @@ class RustworkxGraph:
 
     DEFAULT_TTL: float = 3600  # 1 hour
 
-    def __init__(self, model: type[GroverObjectBase], *, ttl: float | None = None) -> None:
+    def __init__(self, model: type[GroverObjectBase], *, ttl: float | None = None, user_scoped: bool = False) -> None:
         self._model = model
         self._ttl = ttl if ttl is not None else self.DEFAULT_TTL
+        self._user_scoped = user_scoped
         self._nodes: set[str] = set()
         self._out: dict[str, set[str]] = {}  # source → targets
         self._in: dict[str, set[str]] = {}  # target → sources
@@ -185,8 +186,22 @@ class RustworkxGraph:
     # Snapshot and graph construction helpers
     # ------------------------------------------------------------------
 
-    def _snapshot(self) -> tuple[frozenset[str], dict[str, frozenset[str]]]:
-        """Return immutable copies of nodes and edges for thread-safe reads."""
+    def _snapshot(self, user_id: str | None = None) -> tuple[frozenset[str], dict[str, frozenset[str]]]:
+        """Return immutable copies of nodes and edges for thread-safe reads.
+
+        When *user_id* is provided on a user-scoped graph, only nodes
+        and edges belonging to that user (path prefix ``/{user_id}/``)
+        are included.
+        """
+        if self._user_scoped and user_id:
+            prefix = f"/{user_id}/"
+            user_nodes = frozenset(n for n in self._nodes if n.startswith(prefix))
+            user_edges = {
+                s: frozenset(t for t in ts if t in user_nodes)
+                for s, ts in self._out.items()
+                if s in user_nodes
+            }
+            return user_nodes, user_edges
         return (
             frozenset(self._nodes),
             {s: frozenset(ts) for s, ts in self._out.items()},
@@ -215,10 +230,10 @@ class RustworkxGraph:
                     graph.add_edge(src_idx, tgt_idx, None)
         return graph, path_to_idx, idx_to_path
 
-    async def graph(self, *, session: AsyncSession) -> rustworkx.PyDiGraph:
+    async def graph(self, *, user_id: str | None = None, session: AsyncSession) -> rustworkx.PyDiGraph:
         """Access the underlying rustworkx directed graph."""
         await self.ensure_fresh(session)
-        nodes, edges_out = self._snapshot()
+        nodes, edges_out = self._snapshot(user_id)
         g, _, _ = self._build_graph_from(nodes, edges_out)
         return g
 
@@ -344,21 +359,34 @@ class RustworkxGraph:
     # Light reads — async inline (no thread overhead)
     # ------------------------------------------------------------------
 
+    def _visible_nodes(self, user_id: str | None = None) -> set[str]:
+        """Return the set of nodes visible to *user_id*.
+
+        On a user-scoped graph with a *user_id*, only nodes whose path
+        starts with ``/{user_id}/`` are visible.  Otherwise all nodes.
+        """
+        if self._user_scoped and user_id:
+            prefix = f"/{user_id}/"
+            return {n for n in self._nodes if n.startswith(prefix)}
+        return self._nodes
+
     async def predecessors(
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """One-hop backward: nodes with edges pointing to any candidate."""
         try:
             await self.ensure_fresh(session)
-            query_paths = set(self._extract_paths(candidates)) & self._nodes
+            visible = self._visible_nodes(user_id)
+            query_paths = set(self._extract_paths(candidates)) & visible
             predecessor_targets: dict[str, list[str]] = {}
 
             for t in query_paths:
                 for s in self._in.get(t, set()):
-                    if s not in query_paths:
+                    if s not in query_paths and s in visible:
                         predecessor_targets.setdefault(s, []).append(t)
 
             return GroverResult(
@@ -372,17 +400,19 @@ class RustworkxGraph:
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """One-hop forward: nodes that any candidate points to."""
         try:
             await self.ensure_fresh(session)
-            query_paths = set(self._extract_paths(candidates)) & self._nodes
+            visible = self._visible_nodes(user_id)
+            query_paths = set(self._extract_paths(candidates)) & visible
             successor_sources: dict[str, list[str]] = {}
 
             for s in query_paths:
                 for t in self._out.get(s, set()):
-                    if t not in query_paths:
+                    if t not in query_paths and t in visible:
                         successor_sources.setdefault(t, []).append(s)
 
             return GroverResult(
@@ -400,15 +430,17 @@ class RustworkxGraph:
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Transitive backward: union of all ancestor sets, excluding candidates."""
         try:
             await self.ensure_fresh(session)
-            valid_paths = set(self._extract_paths(candidates)) & self._nodes
+            visible = self._visible_nodes(user_id)
+            valid_paths = set(self._extract_paths(candidates)) & visible
             if not valid_paths:
                 return GroverResult()
-            nodes, edges_out = self._snapshot()
+            nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
                 self._ancestors_impl, nodes, edges_out, valid_paths,
             )
@@ -437,15 +469,17 @@ class RustworkxGraph:
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Transitive forward: union of all descendant sets, excluding candidates."""
         try:
             await self.ensure_fresh(session)
-            valid_paths = set(self._extract_paths(candidates)) & self._nodes
+            visible = self._visible_nodes(user_id)
+            valid_paths = set(self._extract_paths(candidates)) & visible
             if not valid_paths:
                 return GroverResult()
-            nodes, edges_out = self._snapshot()
+            nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
                 self._descendants_impl, nodes, edges_out, valid_paths,
             )
@@ -475,17 +509,22 @@ class RustworkxGraph:
         candidates: GroverResult,
         *,
         depth: int = 2,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Bounded undirected BFS around candidate nodes."""
         try:
             await self.ensure_fresh(session)
-            seed_paths = set(self._extract_paths(candidates)) & self._nodes
+            visible = self._visible_nodes(user_id)
+            seed_paths = set(self._extract_paths(candidates)) & visible
             if not seed_paths:
                 return GroverResult()
 
-            _, snap_out = self._snapshot()
-            snap_in = {t: frozenset(ss) for t, ss in self._in.items()}
+            _, snap_out = self._snapshot(user_id)
+            if self._user_scoped and user_id:
+                snap_in = {t: frozenset(s for s in ss if s in visible) for t, ss in self._in.items() if t in visible}
+            else:
+                snap_in = {t: frozenset(ss) for t, ss in self._in.items()}
             snap_edge_types = self._edge_types.copy()
 
             visited: set[str] = set(seed_paths)
@@ -523,6 +562,7 @@ class RustworkxGraph:
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Find minimal subgraph connecting all candidate nodes.
@@ -532,14 +572,18 @@ class RustworkxGraph:
         """
         try:
             await self.ensure_fresh(session)
-            valid_seeds = [p for p in self._extract_paths(candidates) if p in self._nodes]
+            visible = self._visible_nodes(user_id)
+            valid_seeds = [p for p in self._extract_paths(candidates) if p in visible]
             if len(valid_seeds) <= 1:
                 detail = Detail(operation="meeting_subgraph")
                 return GroverResult(
                     candidates=[Candidate(path=p, details=(detail,)) for p in valid_seeds],
                 )
-            _, edges_out = self._snapshot()
-            edges_in = {t: frozenset(ss) for t, ss in self._in.items()}
+            _, edges_out = self._snapshot(user_id)
+            if self._user_scoped and user_id:
+                edges_in = {t: frozenset(s for s in ss if s in visible) for t, ss in self._in.items() if t in visible}
+            else:
+                edges_in = {t: frozenset(ss) for t, ss in self._in.items()}
             return await asyncio.to_thread(
                 self._meeting_subgraph_impl, edges_out, edges_in,
                 valid_seeds, self._edge_types.copy(),
@@ -656,6 +700,7 @@ class RustworkxGraph:
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Pruned meeting subgraph — drop non-candidate nodes while staying connected.
@@ -667,7 +712,7 @@ class RustworkxGraph:
         remain.
         """
         try:
-            meeting = await self.meeting_subgraph(candidates, session=session)
+            meeting = await self.meeting_subgraph(candidates, user_id=user_id, session=session)
             if not meeting.success:
                 return meeting
 
@@ -755,12 +800,13 @@ class RustworkxGraph:
         rx_fn: Any,
         candidates: GroverResult,
         session: AsyncSession,
+        user_id: str | None = None,
         **kwargs: object,
     ) -> GroverResult:
         """Generic centrality: ensure_fresh -> snapshot -> to_thread."""
         try:
             await self.ensure_fresh(session)
-            nodes, edges_out = self._snapshot()
+            nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
                 self._centrality_impl, nodes, edges_out, candidates, operation, rx_fn, kwargs,
             )
@@ -794,17 +840,19 @@ class RustworkxGraph:
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """PageRank centrality scores."""
         return await self._run_centrality(
-            "pagerank", rustworkx.pagerank, candidates, session,
+            "pagerank", rustworkx.pagerank, candidates, session, user_id=user_id,
         )
 
     async def betweenness_centrality(
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Betweenness centrality scores."""
@@ -813,6 +861,7 @@ class RustworkxGraph:
             rustworkx.digraph_betweenness_centrality,
             candidates,
             session,
+            user_id=user_id,
             normalized=True,
         )
 
@@ -820,6 +869,7 @@ class RustworkxGraph:
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Closeness centrality scores."""
@@ -828,12 +878,14 @@ class RustworkxGraph:
             rustworkx.closeness_centrality,
             candidates,
             session,
+            user_id=user_id,
         )
 
     async def degree_centrality(
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Degree centrality (in + out) scores."""
@@ -842,12 +894,14 @@ class RustworkxGraph:
             rustworkx.digraph_degree_centrality,
             candidates,
             session,
+            user_id=user_id,
         )
 
     async def in_degree_centrality(
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """In-degree centrality scores."""
@@ -856,12 +910,14 @@ class RustworkxGraph:
             rustworkx.in_degree_centrality,
             candidates,
             session,
+            user_id=user_id,
         )
 
     async def out_degree_centrality(
         self,
         candidates: GroverResult,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Out-degree centrality scores."""
@@ -870,6 +926,7 @@ class RustworkxGraph:
             rustworkx.out_degree_centrality,
             candidates,
             session,
+            user_id=user_id,
         )
 
     async def hits(
@@ -879,6 +936,7 @@ class RustworkxGraph:
         score: str = "authority",
         max_iter: int = 1000,
         tol: float = 1e-8,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """HITS hub and authority scores.
@@ -896,7 +954,7 @@ class RustworkxGraph:
             )
         try:
             await self.ensure_fresh(session)
-            nodes, edges_out = self._snapshot()
+            nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
                 self._hits_impl, nodes, edges_out, candidates, score, max_iter, tol,
             )

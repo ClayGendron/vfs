@@ -34,6 +34,7 @@ class MockVectorStore:
         *,
         k: int = 10,
         paths: list[str] | None = None,
+        user_id: str | None = None,
     ) -> list[VectorHit]:
         self.last_query_vector = vector
         self.last_query_k = k

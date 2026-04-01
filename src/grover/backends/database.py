@@ -18,7 +18,7 @@ from grover.base import GroverFileSystem
 from grover.bm25 import BM25Scorer, tokenize, tokenize_query
 from grover.graph import RustworkxGraph
 from grover.models import GroverObject, GroverObjectBase
-from grover.paths import connection_path, version_path
+from grover.paths import connection_path, scope_path, validate_user_id, version_path
 from grover.paths import parent_path as compute_parent_path
 from grover.patterns import compile_glob, glob_to_sql_like
 from grover.replace import replace
@@ -78,12 +78,72 @@ class DatabaseFileSystem(GroverFileSystem):
         model: type[GroverObjectBase] = GroverObject,
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
+        user_scoped: bool = False,
     ) -> None:
         super().__init__(engine=engine, session_factory=session_factory)
         self._model = model
-        self._graph = RustworkxGraph(model=model)
+        self._user_scoped = user_scoped
+        self._graph = RustworkxGraph(model=model, user_scoped=user_scoped)
         self._embedding_provider = embedding_provider
         self._vector_store = vector_store
+
+    # ------------------------------------------------------------------
+    # User-scoping helpers
+    # ------------------------------------------------------------------
+
+    def _scope_path(self, path: str | None, user_id: str | None) -> str | None:
+        """Scope a single path if user_scoped is enabled."""
+        if path is None or not self._user_scoped or user_id is None:
+            return path
+        return scope_path(path, user_id)
+
+    def _scope_candidates(self, candidates: GroverResult | None, user_id: str | None) -> GroverResult | None:
+        """Scope all candidate paths if user_scoped is enabled."""
+        if candidates is None or not self._user_scoped or user_id is None:
+            return candidates
+        scoped = [
+            c.model_copy(update={"path": scope_path(c.path, user_id)})
+            for c in candidates.candidates
+        ]
+        return candidates._with_candidates(scoped)
+
+    def _scope_objects(self, objects: Sequence[GroverObjectBase], user_id: str | None) -> None:
+        """Scope object paths in place if user_scoped is enabled.
+
+        For connection objects, rebuilds the connection ``path`` from
+        the scoped ``source_path`` and ``target_path`` so all three
+        fields are consistently scoped.
+        """
+        if not self._user_scoped or user_id is None:
+            return
+        for obj in objects:
+            if obj.source_path:
+                obj.source_path = scope_path(obj.source_path, user_id)
+            if obj.target_path:
+                obj.target_path = scope_path(obj.target_path, user_id)
+            # Rebuild connection path from scoped endpoints
+            if obj.kind == "connection" and obj.source_path and obj.target_path and obj.connection_type:
+                obj.path = connection_path(obj.source_path, obj.target_path, obj.connection_type)
+            else:
+                obj.path = scope_path(obj.path, user_id)
+            obj.owner_id = user_id
+            obj._rederive_path_fields()
+
+    def _unscope_result(self, result: GroverResult, user_id: str | None) -> GroverResult:
+        """Unscope all result paths if user_scoped is enabled."""
+        if not self._user_scoped or user_id is None:
+            return result
+        return result.strip_user_scope(user_id)
+
+    def _require_user_id(self, user_id: str | None) -> None:
+        """Raise if user_scoped is enabled but no user_id provided."""
+        if not self._user_scoped:
+            return
+        if user_id is None:
+            raise ValueError("user_id is required for user-scoped filesystem operations")
+        valid, err = validate_user_id(user_id)
+        if not valid:
+            raise ValueError(f"Invalid user_id: {err}")
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -172,6 +232,7 @@ class DatabaseFileSystem(GroverFileSystem):
         unique_terms: tuple[str, ...],
         term_set: frozenset[str],
         candidates: GroverResult | None,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> tuple[list[_LexicalDoc], bool, dict[str, int], dict[str, int]]:
         """Fetch candidate docs and convert them directly into lexical stats."""
@@ -242,6 +303,8 @@ class DatabaseFileSystem(GroverFileSystem):
                         self._model.deleted_at.is_(None),  # type: ignore[union-attr]
                         self._model.content.isnot(None),  # type: ignore[union-attr]
                     )
+                    if self._user_scoped and user_id:
+                        stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # type: ignore[union-attr]
                     result = await session.execute(stmt)
                     for obj_path, kind, content, lexical_tokens in result.all():
                         append_doc(obj_path, kind, content, lexical_tokens or 0)
@@ -281,6 +344,8 @@ class DatabaseFileSystem(GroverFileSystem):
             )
             .limit(self.BM25_PRE_FILTER_LIMIT + 1)
         )
+        if self._user_scoped and user_id:
+            stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # type: ignore[union-attr]
 
         result = await session.execute(stmt)
         rows = result.all()
@@ -300,6 +365,7 @@ class DatabaseFileSystem(GroverFileSystem):
         doc_lengths: list[int],
         local_doc_freqs: dict[str, int],
         prefilter_truncated: bool,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> tuple[int, float, dict[str, int]]:
         """Fetch corpus_size, avgdl, and authoritative query-term DF counts."""
@@ -308,6 +374,8 @@ class DatabaseFileSystem(GroverFileSystem):
             self._model.deleted_at.is_(None),  # type: ignore[union-attr]
             self._model.content.isnot(None),  # type: ignore[union-attr]
         ]
+        if self._user_scoped and user_id:
+            base_where.append(self._model.path.like(f"/{user_id}/%"))  # type: ignore[union-attr]
 
         aggregate_columns: list[Any] = [
             func.count(),
@@ -619,6 +687,7 @@ class DatabaseFileSystem(GroverFileSystem):
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Read content for one or more objects.
@@ -630,6 +699,9 @@ class DatabaseFileSystem(GroverFileSystem):
           preserve prior details from the incoming candidates, and report
           errors for any paths not found.
         """
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
         if candidates is None:
             if path is None:
                 return self._error("read requires a path or candidates")
@@ -662,17 +734,18 @@ class DatabaseFileSystem(GroverFileSystem):
                 else:
                     errors.append(f"Not found: {p}")
 
-        return GroverResult(
+        return self._unscope_result(GroverResult(
             candidates=out,
             errors=errors,
             success=len(errors) == 0,
-        )
+        ), user_id)
 
     async def _stat_impl(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Return metadata for one or more objects.
@@ -681,7 +754,7 @@ class DatabaseFileSystem(GroverFileSystem):
         content.  Callers that need metadata-only should strip content
         from the returned candidates.
         """
-        return await self._read_impl(path=path, candidates=candidates, session=session)
+        return await self._read_impl(path=path, candidates=candidates, user_id=user_id, session=session)
 
     async def _write_impl(
         self,
@@ -690,6 +763,7 @@ class DatabaseFileSystem(GroverFileSystem):
         objects: Sequence[GroverObjectBase] | None = None,
         overwrite: bool = True,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Write one or more file/chunk objects to the database.
@@ -725,14 +799,21 @@ class DatabaseFileSystem(GroverFileSystem):
         It is important that the session is managed properly to not overload
         the db passed its parameter threshold.
         """
+        self._require_user_id(user_id)
         # ── Step 1: Validate ──────────────────────────────────────────
         if objects is None:
             if path is None:
                 return self._error("Write requires a path or objects")
-            objects = [self._model(path=path, content=content or "")]
+            scoped_path = self._scope_path(path, user_id)
+            obj = self._model(path=scoped_path or path, content=content or "")
+            if self._user_scoped and user_id:
+                obj.owner_id = user_id
+            objects = [obj]
 
         elif path is not None:
             return self._error("Write requires a path or objects, not both")
+        else:
+            self._scope_objects(objects, user_id)
 
         write_map: dict[str, GroverObjectBase] = {}
         errors: list[str] = []
@@ -854,13 +935,14 @@ class DatabaseFileSystem(GroverFileSystem):
         if out and any(c.kind == "connection" for c in out):
             self._graph.invalidate()
 
-        return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
+        return self._unscope_result(GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id)
 
     async def _ls_impl(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """List direct children of a path.
@@ -879,6 +961,9 @@ class DatabaseFileSystem(GroverFileSystem):
         round-trip for results that already carry type information from
         a prior operation (read, glob, write, etc.).
         """
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
         if candidates is None:
             if path is None:
                 return self._error("ls requires a path or candidates")
@@ -932,7 +1017,7 @@ class DatabaseFileSystem(GroverFileSystem):
                     continue
                 out.append(child.to_candidate(operation="ls"))
 
-        return GroverResult(candidates=out)
+        return self._unscope_result(GroverResult(candidates=out), user_id)
 
     async def _delete_impl(
         self,
@@ -941,6 +1026,7 @@ class DatabaseFileSystem(GroverFileSystem):
         permanent: bool = False,
         cascade: bool = True,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Delete one or more objects.
@@ -952,6 +1038,9 @@ class DatabaseFileSystem(GroverFileSystem):
         than cascading.  This is analogous to POSIX ``rmdir`` which refuses
         to remove non-empty directories.
         """
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
         if candidates is None:
             if path is None:
                 return self._error("delete requires a path or candidates")
@@ -1033,20 +1122,25 @@ class DatabaseFileSystem(GroverFileSystem):
         # Invalidate graph — deleted objects may include connections or
         # files that are graph nodes.
         self._graph.invalidate()
-        return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
+        return self._unscope_result(GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id)
 
     async def _mkdir_impl(
         self,
         path: str,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Create a directory. Delegates to ``_write_impl``."""
-        return await self._write_impl(
+        self._require_user_id(user_id)
+        # Pass unscoped path — _write_impl handles scoping
+        result = await self._write_impl(
             objects=[self._model(path=path, kind="directory")],
             overwrite=False,
+            user_id=user_id,
             session=session,
         )
+        return result
 
     async def _mkconn_impl(
         self,
@@ -1055,6 +1149,7 @@ class DatabaseFileSystem(GroverFileSystem):
         connection_type: str | None = None,
         objects: Sequence[GroverObjectBase] | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Create connection edges.
@@ -1063,7 +1158,11 @@ class DatabaseFileSystem(GroverFileSystem):
         single connection, or ``objects`` for a batch of pre-built
         connection objects.  Validates that each source exists, then
         delegates to ``_write_impl``.
+
+        All paths are unscoped.  Scoping is applied only for the DB
+        validation query; ``_write_impl`` handles its own scope cycle.
         """
+        self._require_user_id(user_id)
         if objects is None:
             if not source or not target or not connection_type:
                 return self._error("mkconn requires source/target/connection_type or objects")
@@ -1079,11 +1178,14 @@ class DatabaseFileSystem(GroverFileSystem):
         elif source is not None or target is not None or connection_type is not None:
             return self._error("mkconn requires source/target/connection_type or objects, not both")
 
-        # Validate all sources exist
-        source_paths = sorted({obj.source_path for obj in objects if obj.source_path})
-        if source_paths:
+        # Validate all sources exist (query uses scoped paths)
+        unscoped_sources = sorted({obj.source_path for obj in objects if obj.source_path})
+        if unscoped_sources:
+            scoped_sources = [
+                self._scope_path(p, user_id) or p for p in unscoped_sources
+            ]
             existing_sources: set[str] = set()
-            for batch in self._chunk_paths(session, source_paths, binds_per_item=1):
+            for batch in self._chunk_paths(session, scoped_sources, binds_per_item=1):
                 stmt = select(self._model.path).where(  # type: ignore[arg-type]
                     self._model.path.in_(batch),  # type: ignore[union-attr]
                     self._model.deleted_at.is_(None),  # type: ignore[union-attr]
@@ -1091,11 +1193,12 @@ class DatabaseFileSystem(GroverFileSystem):
                 result = await session.execute(stmt)
                 existing_sources.update(row[0] for row in result.all())
 
-            missing = [p for p in source_paths if p not in existing_sources]
+            missing = [p for p in scoped_sources if p not in existing_sources]
             if missing:
                 return self._error([f"Source not found: {p}" for p in missing])
 
-        result = await self._write_impl(objects=objects, session=session)
+        # _write_impl scopes internally, returns unscoped
+        result = await self._write_impl(objects=objects, user_id=user_id, session=session)
         if result.success:
             self._graph.invalidate()
         return result
@@ -1106,13 +1209,21 @@ class DatabaseFileSystem(GroverFileSystem):
         candidates: GroverResult | None = None,
         edits: list[EditOperation] | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        """Apply find-and-replace edits: read → replace → write."""
+        """Apply find-and-replace edits: read → replace → write.
+
+        Paths are unscoped.  Each inner call does its own scope cycle,
+        so intermediate results (candidate paths in ``read_result``)
+        are unscoped throughout.
+        """
+        self._require_user_id(user_id)
         if not edits:
             return self._error("edit requires at least one EditOperation")
 
-        read_result = await self._read_impl(path=path, candidates=candidates, session=session)
+        # _read_impl scopes internally, returns unscoped paths
+        read_result = await self._read_impl(path=path, candidates=candidates, user_id=user_id, session=session)
         if not read_result.success:
             return read_result
 
@@ -1136,10 +1247,12 @@ class DatabaseFileSystem(GroverFileSystem):
                     break
                 updated_content = replacement_content
             else:
+                # c.path is unscoped — _write_impl will scope it
                 to_write.append(self._model(path=c.path, content=updated_content))
 
         if to_write:
-            write_result = await self._write_impl(objects=to_write, session=session)
+            # _write_impl scopes internally, returns unscoped
+            write_result = await self._write_impl(objects=to_write, user_id=user_id, session=session)
             if not write_result.success:
                 errors.extend(write_result.errors)
             return GroverResult(
@@ -1155,21 +1268,31 @@ class DatabaseFileSystem(GroverFileSystem):
         ops: Sequence[TwoPathOperation] | None = None,
         overwrite: bool = True,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        """Copy objects: read sources → write to destinations."""
+        """Copy objects: read sources → write to destinations.
+
+        Paths in *ops* are unscoped.  Each inner ``_read_impl`` /
+        ``_write_impl`` call does its own scope-in / unscope-out cycle,
+        so intermediate results use unscoped paths throughout.
+        """
+        self._require_user_id(user_id)
         if not ops:
             return self._error("copy requires at least one operation")
 
+        # Read sources — _read_impl scopes internally, returns unscoped
         src_paths = [op.src for op in ops]
         src_result = await self._read_impl(
             candidates=GroverResult(candidates=[Candidate(path=p) for p in src_paths]),
+            user_id=user_id,
             session=session,
         )
 
         src_by_path = {c.path: c for c in src_result.candidates}
         errors: list[str] = list(src_result.errors)
 
+        # Build write objects with unscoped dest paths
         to_write: list[GroverObjectBase] = []
         for op in ops:
             src = src_by_path.get(op.src)
@@ -1180,9 +1303,11 @@ class DatabaseFileSystem(GroverFileSystem):
         if not to_write:
             return GroverResult(errors=errors, success=len(errors) == 0)
 
+        # Write — _write_impl scopes internally, returns unscoped
         write_result = await self._write_impl(
             objects=to_write,
             overwrite=overwrite,
+            user_id=user_id,
             session=session,
         )
         errors.extend(write_result.errors)
@@ -1197,6 +1322,7 @@ class DatabaseFileSystem(GroverFileSystem):
         ops: Sequence[TwoPathOperation] | None = None,
         overwrite: bool = True,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Atomic same-mount rename.
@@ -1208,8 +1334,18 @@ class DatabaseFileSystem(GroverFileSystem):
         4. Re-derive parent_path / name on all affected rows
         5. Update connection source_path / target_path references
         """
+        self._require_user_id(user_id)
         if not ops:
             return self._error("move requires at least one operation")
+
+        if self._user_scoped and user_id:
+            ops = [
+                TwoPathOperation(
+                    src=self._scope_path(op.src, user_id) or op.src,
+                    dest=self._scope_path(op.dest, user_id) or op.dest,
+                )
+                for op in ops
+            ]
 
         out: list[Candidate] = []
         errors: list[str] = []
@@ -1293,7 +1429,7 @@ class DatabaseFileSystem(GroverFileSystem):
         await session.flush()
         # Moves may rename connections or rewrite target_path references.
         self._graph.invalidate()
-        return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
+        return self._unscope_result(GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id)
 
     # ------------------------------------------------------------------
     # Search / query
@@ -1304,6 +1440,7 @@ class DatabaseFileSystem(GroverFileSystem):
         pattern: str,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Glob pattern matching against the namespace.
@@ -1312,6 +1449,10 @@ class DatabaseFileSystem(GroverFileSystem):
         Python regex post-filter (authoritative).  Files and directories
         only by default (§5.4).
         """
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        if candidates is None and self._user_scoped and user_id:
+            pattern = scope_path(pattern, user_id) if pattern.startswith("/") else f"/{user_id}/{pattern}"
         if not pattern:
             return self._error("glob requires a pattern")
 
@@ -1326,7 +1467,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 for c in candidates.candidates
                 if regex.match(c.path) is not None
             ]
-            return GroverResult(candidates=matched)
+            return self._unscope_result(GroverResult(candidates=matched), user_id)
 
         # ── Without candidates: query DB ──────────────────────────────
         like_pattern = glob_to_sql_like(pattern)
@@ -1347,7 +1488,7 @@ class DatabaseFileSystem(GroverFileSystem):
             obj.to_candidate(operation="glob") for obj in result.scalars().all() if regex.match(obj.path) is not None
         ]
         matched.sort(key=lambda c: c.path)
-        return GroverResult(candidates=matched)
+        return self._unscope_result(GroverResult(candidates=matched), user_id)
 
     async def _grep_impl(
         self,
@@ -1356,6 +1497,7 @@ class DatabaseFileSystem(GroverFileSystem):
         max_results: int | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Regex content search across files.
@@ -1364,6 +1506,8 @@ class DatabaseFileSystem(GroverFileSystem):
         line.  Returns candidates with line-match details in metadata.
         Files only by default (§5.4).
         """
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
         if not pattern:
             return self._error("grep requires a pattern")
 
@@ -1402,6 +1546,8 @@ class DatabaseFileSystem(GroverFileSystem):
                 self._model.deleted_at.is_(None),  # type: ignore[union-attr]
                 self._model.content.isnot(None),  # type: ignore[union-attr]
             )
+            if self._user_scoped and user_id:
+                stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # type: ignore[union-attr]
             result = await session.execute(stmt)
             for obj in result.scalars().all():
                 if obj.content:
@@ -1439,7 +1585,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 if max_results is not None and len(matched) >= max_results:
                     break
 
-        return GroverResult(candidates=matched)
+        return self._unscope_result(GroverResult(candidates=matched), user_id)
 
     async def _semantic_search_impl(
         self,
@@ -1447,9 +1593,11 @@ class DatabaseFileSystem(GroverFileSystem):
         k: int = 15,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Embed *query* text, then delegate to vector search."""
+        self._require_user_id(user_id)
         if self._embedding_provider is None:
             return self._error("semantic_search requires an embedding provider")
         if self._vector_store is None:
@@ -1463,6 +1611,7 @@ class DatabaseFileSystem(GroverFileSystem):
             vector=list(vector),
             k=k,
             candidates=candidates,
+            user_id=user_id,
             session=session,
         )
 
@@ -1472,16 +1621,24 @@ class DatabaseFileSystem(GroverFileSystem):
         k: int = 15,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Query the vector store for nearest neighbours."""
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
         if self._vector_store is None:
             return self._error("vector_search requires a vector store")
         if vector is None:
             return self._error("vector_search requires a vector")
 
         paths = [c.path for c in candidates.candidates] if candidates else None
-        hits = await self._vector_store.query(vector, k=k, paths=paths)
+        hits = await self._vector_store.query(
+            vector,
+            k=k,
+            paths=paths,
+            user_id=user_id if self._user_scoped and user_id else None,
+        )
 
         matched = [
             Candidate(
@@ -1490,7 +1647,7 @@ class DatabaseFileSystem(GroverFileSystem):
             )
             for hit in hits
         ]
-        return GroverResult(candidates=matched)
+        return self._unscope_result(GroverResult(candidates=matched), user_id)
 
     async def _lexical_search_impl(
         self,
@@ -1498,6 +1655,7 @@ class DatabaseFileSystem(GroverFileSystem):
         k: int = 15,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """BM25-scored keyword search across all content.
@@ -1510,6 +1668,8 @@ class DatabaseFileSystem(GroverFileSystem):
         Searches anything with content (files, chunks) — versions are
         excluded (they duplicate file content).
         """
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
         if not query or not query.strip():
             return self._error("lexical_search requires a query")
 
@@ -1523,6 +1683,7 @@ class DatabaseFileSystem(GroverFileSystem):
             unique_terms=unique_terms,
             term_set=term_set,
             candidates=candidates,
+            user_id=user_id,
             session=session,
         )
         if not docs:
@@ -1541,6 +1702,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 doc_lengths=doc_lengths,
                 local_doc_freqs=local_doc_freqs,
                 prefilter_truncated=prefilter_truncated,
+                user_id=user_id,
                 session=session,
             )
 
@@ -1569,13 +1731,14 @@ class DatabaseFileSystem(GroverFileSystem):
             for doc, score in scored
         ]
 
-        return GroverResult(candidates=matched)
+        return self._unscope_result(GroverResult(candidates=matched), user_id)
 
     async def _tree_impl(
         self,
         path: str,
         max_depth: int | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Recursive directory listing.
@@ -1585,6 +1748,8 @@ class DatabaseFileSystem(GroverFileSystem):
         the traversal goes (1 = direct children only).
         Metadata kinds are excluded (§5.4).
         """
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id) or path
         # Default to root
         if not path:
             path = "/"
@@ -1624,8 +1789,8 @@ class DatabaseFileSystem(GroverFileSystem):
         result = await session.execute(stmt)
         objects = sorted(result.scalars().all(), key=lambda o: o.path)
 
-        candidates = [obj.to_candidate(operation="tree") for obj in objects]
-        return GroverResult(candidates=candidates)
+        tree_candidates = [obj.to_candidate(operation="tree") for obj in objects]
+        return self._unscope_result(GroverResult(candidates=tree_candidates), user_id)
 
     # ------------------------------------------------------------------
     # Graph — delegate to self._graph (RustworkxGraph)
@@ -1648,48 +1813,72 @@ class DatabaseFileSystem(GroverFileSystem):
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.predecessors(
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.predecessors(
             self._to_candidates(path, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _successors_impl(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.successors(
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.successors(
             self._to_candidates(path, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _ancestors_impl(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.ancestors(
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.ancestors(
             self._to_candidates(path, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _descendants_impl(
         self,
         path: str | None = None,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.descendants(
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.descendants(
             self._to_candidates(path, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _neighborhood_impl(
         self,
@@ -1697,109 +1886,160 @@ class DatabaseFileSystem(GroverFileSystem):
         candidates: GroverResult | None = None,
         *,
         depth: int = 2,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.neighborhood(
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.neighborhood(
             self._to_candidates(path, candidates),
             depth=depth,
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _meeting_subgraph_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.meeting_subgraph(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.meeting_subgraph(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _min_meeting_subgraph_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.min_meeting_subgraph(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.min_meeting_subgraph(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _pagerank_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.pagerank(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.pagerank(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _betweenness_centrality_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.betweenness_centrality(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.betweenness_centrality(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _closeness_centrality_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.closeness_centrality(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.closeness_centrality(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _degree_centrality_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.degree_centrality(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.degree_centrality(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _in_degree_centrality_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.in_degree_centrality(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.in_degree_centrality(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _out_degree_centrality_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.out_degree_centrality(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.out_degree_centrality(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)
 
     async def _hits_impl(
         self,
         candidates: GroverResult | None = None,
         *,
+        user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
-        return await self._graph.hits(
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        result = await self._graph.hits(
             self._to_candidates(None, candidates),
+            user_id=user_id,
             session=session,
         )
+        return self._unscope_result(result, user_id)

@@ -705,7 +705,7 @@ def _render_mode(node: QueryNode) -> RenderMode:
         case PipelineNode(source=source):
             return _render_mode(source)
         case UnionNode(operands=operands):
-            modes = {_render_mode(operand) for operand in operands}
+            modes: set[RenderMode] = {_render_mode(operand) for operand in operands}
             return modes.pop() if len(modes) == 1 else "query_list"
         case ReadCommand():
             return "content"

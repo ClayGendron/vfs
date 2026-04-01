@@ -77,15 +77,21 @@ class DatabricksVectorStore:
         *,
         k: int = 10,
         paths: list[str] | None = None,
+        user_id: str | None = None,
     ) -> list[VectorHit]:
         """Find the *k* nearest vectors via similarity_search."""
         idx = self._require_index()
+
+        filters: dict[str, str] = {}
+        if user_id is not None:
+            filters["owner_id"] = user_id
 
         resp: dict[str, Any] = await asyncio.to_thread(
             idx.similarity_search,
             query_vector=vector,
             columns=[self._pk_column],
             num_results=k,
+            filters=filters if filters else None,
         )
 
         manifest = resp.get("manifest", {})

@@ -443,3 +443,88 @@ def decompose_connection(path: str) -> ConnectionParts | None:
     connection_type = rest[:slash]
     target = "/" + rest[slash + 1 :]
     return ConnectionParts(source=source, target=target, connection_type=connection_type)
+
+
+# ---------------------------------------------------------------------------
+# User scoping
+# ---------------------------------------------------------------------------
+
+_UNSAFE_USER_ID_CHARS = frozenset("/\\@\0")
+
+
+def validate_user_id(user_id: str) -> tuple[bool, str]:
+    """Validate that *user_id* is safe for use as a path segment.
+
+    Rejects empty strings, strings containing ``/``, ``\\``, ``@``,
+    null bytes, the ``..`` traversal sequence, and strings longer than
+    255 characters.
+
+    Returns ``(is_valid, error_message)``.  ``error_message`` is empty
+    when valid.
+    """
+    if not user_id or not user_id.strip():
+        return False, "user_id must not be empty"
+    if len(user_id) > 255:
+        return False, "user_id too long (max 255 characters)"
+    if ".." in user_id:
+        return False, "user_id must not contain '..'"
+    for ch in user_id:
+        if ch in _UNSAFE_USER_ID_CHARS:
+            return False, f"user_id contains unsafe character: {ch!r}"
+    return True, ""
+
+
+def scope_path(path: str, user_id: str) -> str:
+    """Prepend ``/{user_id}`` to *path* for per-user storage.
+
+    Always prepends — callers must pass unscoped paths.
+
+    >>> scope_path("/docs/README.md", "123")
+    '/123/docs/README.md'
+    >>> scope_path("/", "123")
+    '/123'
+    """
+    valid, err = validate_user_id(user_id)
+    if not valid:
+        msg = f"Invalid user_id: {err}"
+        raise ValueError(msg)
+    path = normalize_path(path)
+    if path == "/":
+        return f"/{user_id}"
+    return f"/{user_id}{path}"
+
+
+def unscope_path(path: str, user_id: str) -> str:
+    """Strip the ``/{user_id}`` prefix from a storage path.
+
+    For connection paths, both the source prefix and the embedded target
+    prefix are stripped.
+
+    >>> unscope_path("/123/docs/README.md", "123")
+    '/docs/README.md'
+    >>> unscope_path("/123", "123")
+    '/'
+    """
+    prefix = f"/{user_id}"
+
+    # Connection paths: unscope both source and target portions.
+    parts = decompose_connection(path)
+    if parts is not None:
+        source = _strip_user_prefix(parts.source, prefix)
+        target = _strip_user_prefix(parts.target, prefix)
+        return connection_path(source, target, parts.connection_type)
+
+    return _strip_user_prefix(path, prefix)
+
+
+def _strip_user_prefix(path: str, prefix: str) -> str:
+    """Strip *prefix* from the start of *path*.
+
+    Raises ``ValueError`` if *path* does not start with *prefix*.
+    """
+    if path == prefix:
+        return "/"
+    if path.startswith(prefix + "/"):
+        return path[len(prefix):]
+    msg = f"Path {path!r} does not start with user prefix {prefix!r}"
+    raise ValueError(msg)

@@ -21,6 +21,7 @@ class VectorItem:
 
     path: str
     vector: list[float]
+    owner_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,10 +42,12 @@ class VectorStore(Protocol):
         *,
         k: int = 10,
         paths: list[str] | None = None,
+        user_id: str | None = None,
     ) -> list[VectorHit]:
         """Find the *k* nearest vectors.
 
         If *paths* is provided, results are constrained to those paths.
+        If *user_id* is provided, results are constrained to that user.
         Returns hits sorted by descending score.
         """
         ...

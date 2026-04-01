@@ -785,7 +785,7 @@ class TestFetchVersionChain:
 
             rows = await db._fetch_version_chain("/bounded.txt", 15, s)
 
-        version_numbers = sorted(r.version_number for r in rows)
+        version_numbers = sorted(r.version_number for r in rows if r.version_number is not None)
         lower_bound = max(1, 15 - SNAPSHOT_INTERVAL + 1)
         # Should only have versions from lower_bound to 15
         assert version_numbers[0] >= lower_bound
