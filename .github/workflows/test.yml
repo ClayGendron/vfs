@@ -45,4 +45,10 @@ jobs:
       - name: Tests
         run: >-
           uv run pytest --tb=short
-          ${{ matrix.python-version == '3.13' && '--cov --cov-report=term-missing --cov-fail-under=99' || '' }}
+          ${{ matrix.python-version == '3.13' && '--cov --cov-report=term-missing --cov-report=xml --cov-fail-under=99' || '' }}
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml

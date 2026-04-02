@@ -1,5 +1,13 @@
 # `grover`: The Agentic File System
 
+<p align="center">
+  <a href="https://pypi.org/project/grover/"><img src="https://img.shields.io/pypi/v/grover" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/grover/"><img src="https://img.shields.io/pypi/pyversions/grover" alt="Python"></a>
+  <a href="https://github.com/ClayGendron/grover/actions/workflows/test.yml"><img src="https://github.com/ClayGendron/grover/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/ClayGendron/grover/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/grover" alt="License"></a>
+  <a href="https://codecov.io/gh/ClayGendron/grover"><img src="https://codecov.io/gh/ClayGendron/grover/branch/main/graph/badge.svg" alt="Coverage"></a>
+</p>
+
 ```bash
 pip install grover
 ```
