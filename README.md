@@ -108,7 +108,7 @@ candidates = semantic & python_files
 expanded = candidates | g.neighborhood(candidates)
 
 # Re-rank by centrality
-ranked = expanded >> g.pagerank(expanded)
+ranked = g.pagerank(candidates=expanded)
 ```
 
 Or the same thing through the CLI:
