@@ -39,9 +39,7 @@ def _detail_ops(candidate: Candidate) -> list[str]:
 
 def _node_candidates(result: GroverResult) -> GroverResult:
     """Filter out connection candidates from a subgraph result."""
-    return GroverResult(candidates=[
-        c for c in result.candidates if "/.connections/" not in c.path
-    ])
+    return GroverResult(candidates=[c for c in result.candidates if "/.connections/" not in c.path])
 
 
 # ------------------------------------------------------------------
@@ -107,10 +105,12 @@ class TestInjectDetails:
 
     def test_mixed_overlap_and_new(self):
         prior = GroverResult(candidates=[Candidate(path="/a", details=(_prior(),))])
-        result = GroverResult(candidates=[
-            Candidate(path="/a", details=(Detail(operation="new"),)),
-            Candidate(path="/b", details=(Detail(operation="new"),)),
-        ])
+        result = GroverResult(
+            candidates=[
+                Candidate(path="/a", details=(Detail(operation="new"),)),
+                Candidate(path="/b", details=(Detail(operation="new"),)),
+            ]
+        )
         enriched = result.inject_details(prior)
         assert _detail_ops(enriched.candidates[0]) == ["prior_op", "new"]
         assert _detail_ops(enriched.candidates[1]) == ["new"]
@@ -193,9 +193,11 @@ class TestDeleteChaining:
 class TestLsChaining:
     async def test_children_have_no_injected_prior(self, fs: DatabaseFileSystem):
         """ls returns children — different paths, so no prior injection."""
-        cands = GroverResult(candidates=[
-            Candidate(path="/src", kind="directory", details=(_prior(),)),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(path="/src", kind="directory", details=(_prior(),)),
+            ]
+        )
         result = await fs.ls(candidates=cands)
         assert len(result) > 0
         for c in result.candidates:
@@ -254,10 +256,7 @@ class TestNeighborhoodChaining:
     async def test_discoveries_have_no_prior(self, fs: DatabaseFileSystem):
         cands = _cands_with_prior("/src/auth.py")
         result = await fs.neighborhood(candidates=cands, depth=1)
-        non_seeds = [
-            c for c in result.candidates
-            if c.path != "/src/auth.py" and "/.connections/" not in c.path
-        ]
+        non_seeds = [c for c in result.candidates if c.path != "/src/auth.py" and "/.connections/" not in c.path]
         assert len(non_seeds) > 0
         for c in non_seeds:
             assert _detail_ops(c) == ["neighborhood"]
@@ -388,16 +387,18 @@ class TestMultiStepChains:
         Seeds accumulate 3 details.  Intermediary nodes introduced
         by the subgraph get 2 details.
         """
-        seeds = GroverResult(candidates=[
-            Candidate(
-                path="/src/api.py",
-                details=(Detail(operation="search", score=0.9),),
-            ),
-            Candidate(
-                path="/src/db.py",
-                details=(Detail(operation="search", score=0.7),),
-            ),
-        ])
+        seeds = GroverResult(
+            candidates=[
+                Candidate(
+                    path="/src/api.py",
+                    details=(Detail(operation="search", score=0.9),),
+                ),
+                Candidate(
+                    path="/src/db.py",
+                    details=(Detail(operation="search", score=0.7),),
+                ),
+            ]
+        )
         seed_paths = {"/src/api.py", "/src/db.py"}
 
         # Step 2: min_meeting_subgraph
@@ -457,16 +458,18 @@ class TestMultiStepChains:
 
     async def test_score_for_retrieves_any_step(self, fs: DatabaseFileSystem):
         """After chaining, score_for() can retrieve scores from any step."""
-        cands = GroverResult(candidates=[
-            Candidate(
-                path="/src/auth.py",
-                details=(Detail(operation="search", score=0.9),),
-            ),
-            Candidate(
-                path="/src/utils.py",
-                details=(Detail(operation="search", score=0.7),),
-            ),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(
+                    path="/src/auth.py",
+                    details=(Detail(operation="search", score=0.9),),
+                ),
+                Candidate(
+                    path="/src/utils.py",
+                    details=(Detail(operation="search", score=0.7),),
+                ),
+            ]
+        )
         result = await fs.pagerank(candidates=cands)
         for c in result.candidates:
             assert c.score_for("search") > 0

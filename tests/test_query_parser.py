@@ -268,9 +268,22 @@ class TestVisibilityParsing:
 
 class TestKindNames:
     def test_all_valid_aliases(self):
-        for name in ("file", "files", "dir", "dirs", "directory", "directories",
-                     "chunk", "chunks", "version", "versions",
-                     "connection", "connections", "api", "apis"):
+        for name in (
+            "file",
+            "files",
+            "dir",
+            "dirs",
+            "directory",
+            "directories",
+            "chunk",
+            "chunks",
+            "version",
+            "versions",
+            "connection",
+            "connections",
+            "api",
+            "apis",
+        ):
             plan = parse_query(f"ls --include {name}")
             assert plan.ast is not None
 

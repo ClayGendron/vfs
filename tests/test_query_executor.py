@@ -50,13 +50,36 @@ def _fs():
     )
     empty = GroverResult(candidates=[])
     for method in (
-        "read", "stat", "delete", "write", "edit", "ls", "tree", "mkdir",
-        "move", "copy", "mkconn", "glob", "grep",
-        "semantic_search", "vector_search", "lexical_search",
-        "predecessors", "successors", "ancestors", "descendants", "neighborhood",
-        "meeting_subgraph", "min_meeting_subgraph",
-        "pagerank", "betweenness_centrality", "closeness_centrality",
-        "degree_centrality", "in_degree_centrality", "out_degree_centrality", "hits",
+        "read",
+        "stat",
+        "delete",
+        "write",
+        "edit",
+        "ls",
+        "tree",
+        "mkdir",
+        "move",
+        "copy",
+        "mkconn",
+        "glob",
+        "grep",
+        "semantic_search",
+        "vector_search",
+        "lexical_search",
+        "predecessors",
+        "successors",
+        "ancestors",
+        "descendants",
+        "neighborhood",
+        "meeting_subgraph",
+        "min_meeting_subgraph",
+        "pagerank",
+        "betweenness_centrality",
+        "closeness_centrality",
+        "degree_centrality",
+        "in_degree_centrality",
+        "out_degree_centrality",
+        "hits",
     ):
         getattr(fs, method).return_value = empty
     return fs
@@ -247,9 +270,11 @@ class TestTreeGlobGrepVisibility:
         fs = _fs()
         vis = Visibility(include_all=True, include_kinds=())
         node = TreeCommand(paths=(), max_depth=None, visibility=vis)
-        fs.ls.return_value = GroverResult(candidates=[
-            Candidate(path="/a.py", kind="file"),
-        ])
+        fs.ls.return_value = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+            ]
+        )
         await execute_query(fs, _plan(node))
         fs.ls.assert_called()
 
@@ -343,7 +368,10 @@ class TestGraphTraversal:
         fs = _fs()
         fs.neighborhood.return_value = GroverResult(candidates=[])
         node = GraphTraversalCommand(
-            method_name="neighborhood", paths=("/a.py", "/b.py"), depth=2, visibility=NO_VIS,
+            method_name="neighborhood",
+            paths=("/a.py", "/b.py"),
+            depth=2,
+            visibility=NO_VIS,
         )
         await execute_query(fs, _plan(node))
         fs.neighborhood.assert_called_once()
@@ -354,9 +382,14 @@ class TestGraphTraversal:
         fs.neighborhood.return_value = GroverResult(candidates=[])
         node = PipelineNode(
             source=ReadCommand(paths=("/a.py",)),
-            stages=(GraphTraversalCommand(
-                method_name="neighborhood", paths=(), depth=2, visibility=NO_VIS,
-            ),),
+            stages=(
+                GraphTraversalCommand(
+                    method_name="neighborhood",
+                    paths=(),
+                    depth=2,
+                    visibility=NO_VIS,
+                ),
+            ),
         )
         await execute_query(fs, _plan(node))
         call_kwargs = fs.neighborhood.call_args[1]
@@ -497,29 +530,35 @@ class TestSearchCommands:
 class TestApplyVisibility:
     def test_include_all_returns_unchanged(self):
         vis = Visibility(include_all=True, include_kinds=())
-        result = GroverResult(candidates=[
-            Candidate(path="/a.py", kind="file"),
-            Candidate(path="/a.py@1", kind="version"),
-        ])
+        result = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+                Candidate(path="/a.py@1", kind="version"),
+            ]
+        )
         filtered = _apply_visibility(result, vis, {"file"})
         assert len(filtered.candidates) == 2
 
     def test_default_kinds_filter(self):
         vis = Visibility(include_all=False, include_kinds=())
-        result = GroverResult(candidates=[
-            Candidate(path="/a.py", kind="file"),
-            Candidate(path="/a.py@1", kind="version"),
-        ])
+        result = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+                Candidate(path="/a.py@1", kind="version"),
+            ]
+        )
         filtered = _apply_visibility(result, vis, {"file"})
         assert len(filtered.candidates) == 1
         assert filtered.candidates[0].kind == "file"
 
     def test_include_kinds_extends_defaults(self):
         vis = Visibility(include_all=False, include_kinds=("version",))
-        result = GroverResult(candidates=[
-            Candidate(path="/a.py", kind="file"),
-            Candidate(path="/a.py@1", kind="version"),
-        ])
+        result = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+                Candidate(path="/a.py@1", kind="version"),
+            ]
+        )
         filtered = _apply_visibility(result, vis, {"file"})
         assert len(filtered.candidates) == 2
 
@@ -533,10 +572,12 @@ class TestUnionNode:
     async def test_union_merges_results(self):
         fs = _fs()
         fs.read.side_effect = [_result("/a.py"), _result("/b.py")]
-        node = UnionNode(operands=(
-            ReadCommand(paths=("/a.py",)),
-            ReadCommand(paths=("/b.py",)),
-        ))
+        node = UnionNode(
+            operands=(
+                ReadCommand(paths=("/a.py",)),
+                ReadCommand(paths=("/b.py",)),
+            )
+        )
         result = await execute_query(fs, _plan(node))
         assert len(result.candidates) == 2
 
@@ -587,6 +628,7 @@ class TestStatDeleteCommands:
     async def test_stat_explicit_path(self):
         fs = _fs()
         from grover.query.ast import StatCommand
+
         fs.stat.return_value = GroverResult(candidates=[Candidate(path="/a.py")])
         node = StatCommand(paths=("/a.py",))
         await execute_query(fs, _plan(node))
@@ -595,6 +637,7 @@ class TestStatDeleteCommands:
     async def test_delete_explicit_path(self):
         fs = _fs()
         from grover.query.ast import DeleteCommand
+
         fs.delete.return_value = GroverResult(candidates=[Candidate(path="/a.py")])
         node = DeleteCommand(paths=("/a.py",))
         await execute_query(fs, _plan(node))
@@ -623,10 +666,12 @@ class TestMkdirExecution:
 class TestKindsExecution:
     async def test_kinds_filters(self):
         fs = _fs()
-        fs.glob.return_value = GroverResult(candidates=[
-            Candidate(path="/a.py", kind="file"),
-            Candidate(path="/dir", kind="directory"),
-        ])
+        fs.glob.return_value = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+                Candidate(path="/dir", kind="directory"),
+            ]
+        )
         node = PipelineNode(
             source=GlobCommand(pattern="**/*", visibility=NO_VIS),
             stages=(KindsCommand(kinds=("file",)),),
@@ -689,13 +734,17 @@ class TestMkconnExplicitSource:
 class TestGrepNonFileRead:
     async def test_grep_reads_non_file_candidates_first(self):
         fs = _fs()
-        piped = GroverResult(candidates=[
-            Candidate(path="/dir", kind="directory", content=None),
-        ])
+        piped = GroverResult(
+            candidates=[
+                Candidate(path="/dir", kind="directory", content=None),
+            ]
+        )
         fs.glob.return_value = piped
-        fs.read.return_value = GroverResult(candidates=[
-            Candidate(path="/dir", kind="directory", content="readme"),
-        ])
+        fs.read.return_value = GroverResult(
+            candidates=[
+                Candidate(path="/dir", kind="directory", content="readme"),
+            ]
+        )
         fs.grep.return_value = GroverResult(candidates=[])
         node = PipelineNode(
             source=GlobCommand(pattern="*", visibility=NO_VIS),

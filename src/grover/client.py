@@ -127,10 +127,7 @@ class GroverAsync(GroverFileSystem):
             )
 
         else:
-            msg = (
-                "add_mount() requires one of: filesystem, engine, "
-                "session_factory, or engine_url"
-            )
+            msg = "add_mount() requires one of: filesystem, engine, session_factory, or engine_url"
             raise ValueError(msg)
 
         # Inject providers onto pre-built filesystems if not already set
@@ -187,8 +184,8 @@ class Grover:
 
         g = Grover()
         g.add_mount("data", engine_url="sqlite+aiosqlite:///my.db")
-        g.write("/data/hello.txt", "content")       # raises on failure
-        c = g.read("/data/hello.txt")                # returns Candidate
+        g.write("/data/hello.txt", "content")  # raises on failure
+        c = g.read("/data/hello.txt")  # returns Candidate
         print(c.content)
         g.close()
     """
@@ -280,9 +277,7 @@ class Grover:
         user_id: str | None = None,
     ) -> Candidate:
         """Write content to *path*. Raises on conflict."""
-        result = self._run(
-            self._async.write(path, content, overwrite=overwrite, user_id=user_id)
-        )
+        result = self._run(self._async.write(path, content, overwrite=overwrite, user_id=user_id))
         assert result.file is not None
         return result.file
 
@@ -296,9 +291,7 @@ class Grover:
         user_id: str | None = None,
     ) -> Candidate:
         """Replace *old* with *new* in the file at *path*."""
-        result = self._run(
-            self._async.edit(path, old, new, replace_all=replace_all, user_id=user_id)
-        )
+        result = self._run(self._async.edit(path, old, new, replace_all=replace_all, user_id=user_id))
         assert result.file is not None
         return result.file
 
@@ -311,9 +304,7 @@ class Grover:
         user_id: str | None = None,
     ) -> Candidate:
         """Delete the object at *path*."""
-        result = self._run(
-            self._async.delete(path, permanent=permanent, cascade=cascade, user_id=user_id)
-        )
+        result = self._run(self._async.delete(path, permanent=permanent, cascade=cascade, user_id=user_id))
         assert result.file is not None
         return result.file
 
@@ -338,9 +329,7 @@ class Grover:
         user_id: str | None = None,
     ) -> Candidate:
         """Create a connection from *source* to *target*."""
-        result = self._run(
-            self._async.mkconn(source, target, connection_type, user_id=user_id)
-        )
+        result = self._run(self._async.mkconn(source, target, connection_type, user_id=user_id))
         assert result.file is not None
         return result.file
 
@@ -357,9 +346,7 @@ class Grover:
         user_id: str | None = None,
     ) -> GroverResult:
         """Move *src* to *dest*."""
-        return self._run(
-            self._async.move(src, dest, overwrite=overwrite, user_id=user_id)
-        )
+        return self._run(self._async.move(src, dest, overwrite=overwrite, user_id=user_id))
 
     def copy(
         self,
@@ -370,9 +357,7 @@ class Grover:
         user_id: str | None = None,
     ) -> GroverResult:
         """Copy *src* to *dest*."""
-        return self._run(
-            self._async.copy(src, dest, overwrite=overwrite, user_id=user_id)
-        )
+        return self._run(self._async.copy(src, dest, overwrite=overwrite, user_id=user_id))
 
     def ls(self, path: str = "/", *, user_id: str | None = None) -> GroverResult:
         """List entries under *path*."""
@@ -400,9 +385,7 @@ class Grover:
         user_id: str | None = None,
     ) -> GroverResult:
         """Find files matching *pattern*."""
-        return self._run(
-            self._async.glob(pattern, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.glob(pattern, candidates=candidates, user_id=user_id))
 
     def grep(
         self,
@@ -433,9 +416,7 @@ class Grover:
         user_id: str | None = None,
     ) -> GroverResult:
         """Semantic (vector) search."""
-        return self._run(
-            self._async.semantic_search(query, k, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.semantic_search(query, k, candidates=candidates, user_id=user_id))
 
     def vector_search(
         self,
@@ -446,9 +427,7 @@ class Grover:
         user_id: str | None = None,
     ) -> GroverResult:
         """Raw vector search."""
-        return self._run(
-            self._async.vector_search(vector, k, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.vector_search(vector, k, candidates=candidates, user_id=user_id))
 
     def lexical_search(
         self,
@@ -459,9 +438,7 @@ class Grover:
         user_id: str | None = None,
     ) -> GroverResult:
         """BM25 lexical search."""
-        return self._run(
-            self._async.lexical_search(query, k, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.lexical_search(query, k, candidates=candidates, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Graph — returning GroverResult (set algebra preserved)
@@ -474,9 +451,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.predecessors(path, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.predecessors(path, candidates=candidates, user_id=user_id))
 
     def successors(
         self,
@@ -485,9 +460,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.successors(path, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.successors(path, candidates=candidates, user_id=user_id))
 
     def ancestors(
         self,
@@ -496,9 +469,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.ancestors(path, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.ancestors(path, candidates=candidates, user_id=user_id))
 
     def descendants(
         self,
@@ -507,9 +478,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.descendants(path, candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.descendants(path, candidates=candidates, user_id=user_id))
 
     def neighborhood(
         self,
@@ -519,9 +488,7 @@ class Grover:
         depth: int = 2,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.neighborhood(path, candidates=candidates, depth=depth, user_id=user_id)
-        )
+        return self._run(self._async.neighborhood(path, candidates=candidates, depth=depth, user_id=user_id))
 
     def meeting_subgraph(
         self,
@@ -529,9 +496,7 @@ class Grover:
         *,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.meeting_subgraph(candidates, user_id=user_id)
-        )
+        return self._run(self._async.meeting_subgraph(candidates, user_id=user_id))
 
     def min_meeting_subgraph(
         self,
@@ -539,9 +504,7 @@ class Grover:
         *,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.min_meeting_subgraph(candidates, user_id=user_id)
-        )
+        return self._run(self._async.min_meeting_subgraph(candidates, user_id=user_id))
 
     def pagerank(
         self,
@@ -549,9 +512,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.pagerank(candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.pagerank(candidates=candidates, user_id=user_id))
 
     def betweenness_centrality(
         self,
@@ -559,9 +520,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.betweenness_centrality(candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.betweenness_centrality(candidates=candidates, user_id=user_id))
 
     def closeness_centrality(
         self,
@@ -569,9 +528,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.closeness_centrality(candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.closeness_centrality(candidates=candidates, user_id=user_id))
 
     def degree_centrality(
         self,
@@ -579,9 +536,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.degree_centrality(candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.degree_centrality(candidates=candidates, user_id=user_id))
 
     def in_degree_centrality(
         self,
@@ -589,9 +544,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.in_degree_centrality(candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.in_degree_centrality(candidates=candidates, user_id=user_id))
 
     def out_degree_centrality(
         self,
@@ -599,9 +552,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.out_degree_centrality(candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.out_degree_centrality(candidates=candidates, user_id=user_id))
 
     def hits(
         self,
@@ -609,9 +560,7 @@ class Grover:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return self._run(
-            self._async.hits(candidates=candidates, user_id=user_id)
-        )
+        return self._run(self._async.hits(candidates=candidates, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Query
@@ -625,9 +574,7 @@ class Grover:
         initial: GroverResult | None = None,
     ) -> GroverResult:
         """Execute a CLI-style query."""
-        return self._run(
-            self._async.run_query(query, user_id=user_id, initial=initial)
-        )
+        return self._run(self._async.run_query(query, user_id=user_id, initial=initial))
 
     def cli(
         self,
@@ -637,9 +584,7 @@ class Grover:
         initial: GroverResult | None = None,
     ) -> str:
         """Execute a query and return rendered text."""
-        return self._run(
-            self._async.cli(query, user_id=user_id, initial=initial)
-        )
+        return self._run(self._async.cli(query, user_id=user_id, initial=initial))
 
     def parse_query(self, query: str) -> QueryPlan:
         """Parse a CLI-style query string into a plan (sync)."""

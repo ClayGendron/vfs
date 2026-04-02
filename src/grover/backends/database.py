@@ -101,10 +101,7 @@ class DatabaseFileSystem(GroverFileSystem):
         """Scope all candidate paths if user_scoped is enabled."""
         if candidates is None or not self._user_scoped or user_id is None:
             return candidates
-        scoped = [
-            c.model_copy(update={"path": scope_path(c.path, user_id)})
-            for c in candidates.candidates
-        ]
+        scoped = [c.model_copy(update={"path": scope_path(c.path, user_id)}) for c in candidates.candidates]
         return candidates._with_candidates(scoped)
 
     def _scope_objects(self, objects: Sequence[GroverObjectBase], user_id: str | None) -> None:
@@ -392,9 +389,13 @@ class DatabaseFileSystem(GroverFileSystem):
                     func.sum(case((like_expr, 1), else_=0)),
                 )
 
-        stats_stmt = select(*aggregate_columns).select_from(
-            self._model,
-        ).where(*base_where)
+        stats_stmt = (
+            select(*aggregate_columns)
+            .select_from(
+                self._model,
+            )
+            .where(*base_where)
+        )
         stats_row = (await session.execute(stats_stmt)).one()
 
         corpus_size = stats_row[0]
@@ -406,10 +407,7 @@ class DatabaseFileSystem(GroverFileSystem):
         )
 
         if prefilter_truncated:
-            doc_freqs = {
-                term: stats_row[idx + 2] or 0
-                for idx, term in enumerate(unique_terms)
-            }
+            doc_freqs = {term: stats_row[idx + 2] or 0 for idx, term in enumerate(unique_terms)}
         else:
             doc_freqs = local_doc_freqs
 
@@ -734,11 +732,16 @@ class DatabaseFileSystem(GroverFileSystem):
                 else:
                     errors.append(f"Not found: {p}")
 
-        return self._error(self._unscope_result(GroverResult(
-            candidates=out,
-            errors=errors,
-            success=len(errors) == 0,
-        ), user_id))
+        return self._error(
+            self._unscope_result(
+                GroverResult(
+                    candidates=out,
+                    errors=errors,
+                    success=len(errors) == 0,
+                ),
+                user_id,
+            )
+        )
 
     async def _stat_impl(
         self,
@@ -936,7 +939,8 @@ class DatabaseFileSystem(GroverFileSystem):
             self._graph.invalidate()
 
         result = self._unscope_result(
-            GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id,
+            GroverResult(candidates=out, errors=errors, success=len(errors) == 0),
+            user_id,
         )
         return self._error(result)
 
@@ -1126,7 +1130,8 @@ class DatabaseFileSystem(GroverFileSystem):
         # files that are graph nodes.
         self._graph.invalidate()
         result = self._unscope_result(
-            GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id,
+            GroverResult(candidates=out, errors=errors, success=len(errors) == 0),
+            user_id,
         )
         return self._error(result)
 
@@ -1187,9 +1192,7 @@ class DatabaseFileSystem(GroverFileSystem):
         # Validate all sources exist (query uses scoped paths)
         unscoped_sources = sorted({obj.source_path for obj in objects if obj.source_path})
         if unscoped_sources:
-            scoped_sources = [
-                self._scope_path(p, user_id) or p for p in unscoped_sources
-            ]
+            scoped_sources = [self._scope_path(p, user_id) or p for p in unscoped_sources]
             existing_sources: set[str] = set()
             for batch in self._chunk_paths(session, scoped_sources, binds_per_item=1):
                 stmt = select(self._model.path).where(  # type: ignore[arg-type]
@@ -1261,11 +1264,13 @@ class DatabaseFileSystem(GroverFileSystem):
             write_result = await self._write_impl(objects=to_write, user_id=user_id, session=session)
             if not write_result.success:
                 errors.extend(write_result.errors)
-            return self._error(GroverResult(
-                candidates=write_result.candidates,
-                errors=errors,
-                success=len(errors) == 0,
-            ))
+            return self._error(
+                GroverResult(
+                    candidates=write_result.candidates,
+                    errors=errors,
+                    success=len(errors) == 0,
+                )
+            )
 
         return self._error(GroverResult(errors=errors, success=len(errors) == 0))
 
@@ -1317,11 +1322,13 @@ class DatabaseFileSystem(GroverFileSystem):
             session=session,
         )
         errors.extend(write_result.errors)
-        return self._error(GroverResult(
-            candidates=write_result.candidates,
-            errors=errors,
-            success=len(errors) == 0,
-        ))
+        return self._error(
+            GroverResult(
+                candidates=write_result.candidates,
+                errors=errors,
+                success=len(errors) == 0,
+            )
+        )
 
     async def _move_impl(
         self,
@@ -1436,7 +1443,8 @@ class DatabaseFileSystem(GroverFileSystem):
         # Moves may rename connections or rewrite target_path references.
         self._graph.invalidate()
         result = self._unscope_result(
-            GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id,
+            GroverResult(candidates=out, errors=errors, success=len(errors) == 0),
+            user_id,
         )
         return self._error(result)
 

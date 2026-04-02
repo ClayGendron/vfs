@@ -213,9 +213,7 @@ class TestGroverAsyncProviderInjection:
         ep = MagicMock()
         vs = MagicMock()
         g = GroverAsync()
-        await g.add_mount(
-            "data", engine=engine, embedding_provider=ep, vector_store=vs
-        )
+        await g.add_mount("data", engine=engine, embedding_provider=ep, vector_store=vs)
         try:
             fs = g._mounts["/data"]
             assert isinstance(fs, DatabaseFileSystem)

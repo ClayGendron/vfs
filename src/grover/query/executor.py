@@ -100,19 +100,30 @@ async def _execute_stage(
                 raise ValueError("edit cannot combine piped input with explicit paths")
             if current is not None:
                 return await filesystem.edit(
-                    candidates=current, old=old, new=new, replace_all=replace_all, user_id=user_id,
+                    candidates=current,
+                    old=old,
+                    new=new,
+                    replace_all=replace_all,
+                    user_id=user_id,
                 )
             if not paths:
                 raise ValueError("edit requires a path when it is not used in a pipeline")
             explicit = _paths_result(paths)
             return await filesystem.edit(
-                candidates=explicit, old=old, new=new, replace_all=replace_all, user_id=user_id,
+                candidates=explicit,
+                old=old,
+                new=new,
+                replace_all=replace_all,
+                user_id=user_id,
             )
         case WriteCommand(path=path, content=content, overwrite=overwrite):
             if current is not None:
                 raise ValueError("write cannot be used in a pipeline")
             return await filesystem.write(
-                path=normalize_path(path), content=content, overwrite=overwrite, user_id=user_id,
+                path=normalize_path(path),
+                content=content,
+                overwrite=overwrite,
+                user_id=user_id,
             )
         case MkdirCommand(paths=paths):
             if current is not None:
@@ -149,7 +160,13 @@ async def _execute_stage(
             visibility=visibility,
         ):
             result = await _execute_grep(
-                filesystem, current, pattern, case_sensitive, max_results, visibility, user_id=user_id,
+                filesystem,
+                current,
+                pattern,
+                case_sensitive,
+                max_results,
+                visibility,
+                user_id=user_id,
             )
             return _apply_visibility(result, visibility, {"file", "directory"})
         case SemanticSearchCommand(query=query, k=k, visibility=visibility):
@@ -343,8 +360,7 @@ async def _execute_grep(
     if candidates is None and (visibility.include_all or visibility.include_kinds):
         candidates = await _collect_tree(filesystem, ("/",), max_depth=None, visibility=visibility, user_id=user_id)
     if candidates is not None and any(
-        _candidate_kind(candidate) != "file" and candidate.content is None
-        for candidate in candidates.candidates
+        _candidate_kind(candidate) != "file" and candidate.content is None for candidate in candidates.candidates
     ):
         candidates = await filesystem.read(candidates=candidates, user_id=user_id)
     return await filesystem.grep(

@@ -21,6 +21,7 @@ def _version_payload(record: VersionRecord) -> str:
     assert record.version_diff is not None
     return record.version_diff
 
+
 # ------------------------------------------------------------------
 # compute_diff
 # ------------------------------------------------------------------
@@ -136,13 +137,7 @@ class TestApplyDiff:
 
     def test_hunk_out_of_bounds_raises(self):
         # Craft a diff that references lines beyond the base content
-        bad_diff = (
-            "--- a\n"
-            "+++ b\n"
-            "@@ -50,1 +50,1 @@\n"
-            "-old\n"
-            "+new\n"
-        )
+        bad_diff = "--- a\n+++ b\n@@ -50,1 +50,1 @@\n-old\n+new\n"
         with pytest.raises(ValueError, match="out of bounds"):
             apply_diff("short\n", bad_diff)
 
@@ -276,15 +271,9 @@ class TestCreateVersion:
             records.append(create_version(prev, content, i + 1))
 
         # Reconstruct version 3 from full chain
-        chain = [
-            (r.is_snapshot, _version_payload(r))
-            for r in records
-        ]
+        chain = [(r.is_snapshot, _version_payload(r)) for r in records]
         assert reconstruct_version(chain) == contents[-1]
 
         # Reconstruct version 2 from first two
-        chain2 = [
-            (r.is_snapshot, _version_payload(r))
-            for r in records[:2]
-        ]
+        chain2 = [(r.is_snapshot, _version_payload(r)) for r in records[:2]]
         assert reconstruct_version(chain2) == contents[1]

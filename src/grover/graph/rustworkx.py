@@ -197,9 +197,7 @@ class RustworkxGraph:
             prefix = f"/{user_id}/"
             user_nodes = frozenset(n for n in self._nodes if n.startswith(prefix))
             user_edges = {
-                s: frozenset(t for t in ts if t in user_nodes)
-                for s, ts in self._out.items()
-                if s in user_nodes
+                s: frozenset(t for t in ts if t in user_nodes) for s, ts in self._out.items() if s in user_nodes
             }
             return user_nodes, user_edges
         return (
@@ -317,9 +315,7 @@ class RustworkxGraph:
         detail = Detail(operation=operation)
 
         # Nodes
-        candidates: list[Candidate] = [
-            Candidate(path=p, details=(detail,)) for p in sorted(node_set)
-        ]
+        candidates: list[Candidate] = [Candidate(path=p, details=(detail,)) for p in sorted(node_set)]
 
         # Edges as connection candidates
         candidates.extend(
@@ -442,7 +438,10 @@ class RustworkxGraph:
                 return GroverResult()
             nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
-                self._ancestors_impl, nodes, edges_out, valid_paths,
+                self._ancestors_impl,
+                nodes,
+                edges_out,
+                valid_paths,
             )
 
         except Exception as e:
@@ -481,7 +480,10 @@ class RustworkxGraph:
                 return GroverResult()
             nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
-                self._descendants_impl, nodes, edges_out, valid_paths,
+                self._descendants_impl,
+                nodes,
+                edges_out,
+                valid_paths,
             )
 
         except Exception as e:
@@ -547,7 +549,10 @@ class RustworkxGraph:
             visited_edges = {s: ts for s, ts in snap_out.items() if s in visited}
             return GroverResult(
                 candidates=self._subgraph_candidates(
-                    visited, visited_edges, snap_edge_types, "neighborhood",
+                    visited,
+                    visited_edges,
+                    snap_edge_types,
+                    "neighborhood",
                 ),
             )
 
@@ -585,8 +590,11 @@ class RustworkxGraph:
             else:
                 edges_in = {t: frozenset(ss) for t, ss in self._in.items()}
             return await asyncio.to_thread(
-                self._meeting_subgraph_impl, edges_out, edges_in,
-                valid_seeds, self._edge_types.copy(),
+                self._meeting_subgraph_impl,
+                edges_out,
+                edges_in,
+                valid_seeds,
+                self._edge_types.copy(),
             )
 
         except Exception as e:
@@ -649,7 +657,10 @@ class RustworkxGraph:
 
         return GroverResult(
             candidates=RustworkxGraph._subgraph_candidates(
-                kept, edges_out, edge_types, "meeting_subgraph",
+                kept,
+                edges_out,
+                edge_types,
+                "meeting_subgraph",
             ),
         )
 
@@ -668,10 +679,7 @@ class RustworkxGraph:
         for t in kept:
             preds[t] = {s for s in edges_in.get(t, ()) if s in kept}
 
-        queue = [
-            n for n in kept
-            if n not in protected and (not succs.get(n) or not preds.get(n))
-        ]
+        queue = [n for n in kept if n not in protected and (not succs.get(n) or not preds.get(n))]
         removed: set[str] = set()
         while queue:
             node = queue.pop()
@@ -680,11 +688,7 @@ class RustworkxGraph:
             removed.add(node)
             for succ in succs.get(node, ()):
                 preds[succ].discard(node)
-                if (
-                    succ not in protected
-                    and succ not in removed
-                    and (not preds[succ] or not succs[succ])
-                ):
+                if succ not in protected and succ not in removed and (not preds[succ] or not succs[succ]):
                     queue.append(succ)
             for pred_node in preds.get(node, ()):
                 succs[pred_node].discard(node)
@@ -727,13 +731,16 @@ class RustworkxGraph:
 
             # Build edge topology from stored edge types (authoritative)
             edges_out: dict[str, set[str]] = {}
-            for (s, t) in self._edge_types:
+            for s, t in self._edge_types:
                 if s in node_set and t in node_set:
                     edges_out.setdefault(s, set()).add(t)
 
             return await asyncio.to_thread(
-                self._min_meeting_impl, node_set, edges_out,
-                candidate_paths, self._edge_types.copy(),
+                self._min_meeting_impl,
+                node_set,
+                edges_out,
+                candidate_paths,
+                self._edge_types.copy(),
             )
 
         except Exception as e:
@@ -768,11 +775,7 @@ class RustworkxGraph:
         changed = True
         while changed:
             changed = False
-            art_paths = {
-                idx_to_path[i]
-                for i in rustworkx.articulation_points(graph)
-                if i in idx_to_path
-            }
+            art_paths = {idx_to_path[i] for i in rustworkx.articulation_points(graph) if i in idx_to_path}
             removable = current_nodes - candidate_paths - art_paths
             if removable:
                 node = next(iter(removable))
@@ -786,7 +789,10 @@ class RustworkxGraph:
         edges_out_frozen = {s: frozenset(ts) for s, ts in edges_out.items()}
         return GroverResult(
             candidates=RustworkxGraph._subgraph_candidates(
-                current_nodes, edges_out_frozen, edge_types, "min_meeting_subgraph",
+                current_nodes,
+                edges_out_frozen,
+                edge_types,
+                "min_meeting_subgraph",
             ),
         )
 
@@ -808,7 +814,13 @@ class RustworkxGraph:
             await self.ensure_fresh(session)
             nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
-                self._centrality_impl, nodes, edges_out, candidates, operation, rx_fn, kwargs,
+                self._centrality_impl,
+                nodes,
+                edges_out,
+                candidates,
+                operation,
+                rx_fn,
+                kwargs,
             )
 
         except Exception as e:
@@ -845,7 +857,11 @@ class RustworkxGraph:
     ) -> GroverResult:
         """PageRank centrality scores."""
         return await self._run_centrality(
-            "pagerank", rustworkx.pagerank, candidates, session, user_id=user_id,
+            "pagerank",
+            rustworkx.pagerank,
+            candidates,
+            session,
+            user_id=user_id,
         )
 
     async def betweenness_centrality(
@@ -956,7 +972,13 @@ class RustworkxGraph:
             await self.ensure_fresh(session)
             nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
-                self._hits_impl, nodes, edges_out, candidates, score, max_iter, tol,
+                self._hits_impl,
+                nodes,
+                edges_out,
+                candidates,
+                score,
+                max_iter,
+                tol,
             )
 
         except Exception as e:

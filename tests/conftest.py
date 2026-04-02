@@ -99,6 +99,7 @@ class DummySession:
 
 def dummy_session_factory():
     """Return an async-context-manager that yields a fresh DummySession."""
+
     @asynccontextmanager
     async def _factory():
         yield DummySession()

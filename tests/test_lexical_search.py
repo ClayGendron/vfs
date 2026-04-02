@@ -44,14 +44,18 @@ class TestBasicBM25:
         assert len(r) == 0
 
     async def test_multi_term_query(self, db: DatabaseFileSystem):
-        await _seed(db, {
-            "/a.py": "authentication timeout handler",
-            "/b.py": "authentication module",
-            "/c.py": "unrelated content here",
-        })
+        await _seed(
+            db,
+            {
+                "/a.py": "authentication timeout handler",
+                "/b.py": "authentication module",
+                "/c.py": "unrelated content here",
+            },
+        )
         async with db._use_session() as s:
             r = await db._lexical_search_impl(
-                "authentication timeout", session=s,
+                "authentication timeout",
+                session=s,
             )
         # a.py matches both terms, b.py matches one, c.py matches none
         assert len(r) == 2
@@ -60,10 +64,13 @@ class TestBasicBM25:
         assert r.candidates[0].score > r.candidates[1].score
 
     async def test_term_frequency_boosts_score(self, db: DatabaseFileSystem):
-        await _seed(db, {
-            "/many.py": "timeout timeout timeout timeout timeout",
-            "/once.py": "timeout happens once",
-        })
+        await _seed(
+            db,
+            {
+                "/many.py": "timeout timeout timeout timeout timeout",
+                "/once.py": "timeout happens once",
+            },
+        )
         async with db._use_session() as s:
             r = await db._lexical_search_impl("timeout", session=s)
         assert len(r) == 2
@@ -71,15 +78,17 @@ class TestBasicBM25:
         assert r.candidates[0].score > r.candidates[1].score
 
     async def test_shorter_doc_ranks_higher_with_equal_tf(
-        self, db: DatabaseFileSystem,
+        self,
+        db: DatabaseFileSystem,
     ):
         """BM25 length normalization: shorter docs score higher at equal TF."""
-        await _seed(db, {
-            "/short.py": "timeout error",
-            "/long.py": (
-                "timeout error " + "padding word " * 100
-            ),
-        })
+        await _seed(
+            db,
+            {
+                "/short.py": "timeout error",
+                "/long.py": ("timeout error " + "padding word " * 100),
+            },
+        )
         async with db._use_session() as s:
             r = await db._lexical_search_impl("timeout", session=s)
         assert len(r) == 2
@@ -115,21 +124,25 @@ class TestVersionExclusion:
 
     async def test_excludes_version_candidates(self, db: DatabaseFileSystem):
         """Version candidates passed in should be skipped."""
-        cands = GroverResult(candidates=[
-            Candidate(
-                path="/a.py/.versions/1",
-                kind="version",
-                content="authentication handler",
-            ),
-            Candidate(
-                path="/a.py",
-                kind="file",
-                content="authentication handler",
-            ),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(
+                    path="/a.py/.versions/1",
+                    kind="version",
+                    content="authentication handler",
+                ),
+                Candidate(
+                    path="/a.py",
+                    kind="file",
+                    content="authentication handler",
+                ),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._lexical_search_impl(
-                "authentication", candidates=cands, session=s,
+                "authentication",
+                candidates=cands,
+                session=s,
             )
         assert len(r) == 1
         assert require_file(r).path == "/a.py"
@@ -219,20 +232,28 @@ class TestSearchesAllContent:
 
 class TestCandidateChaining:
     async def test_with_candidates_scores_only_provided_paths(
-        self, db: DatabaseFileSystem,
+        self,
+        db: DatabaseFileSystem,
     ):
-        await _seed(db, {
-            "/a.py": "authentication handler",
-            "/b.py": "authentication module",
-            "/c.py": "authentication service",
-        })
-        cands = GroverResult(candidates=[
-            Candidate(path="/a.py", content="authentication handler"),
-            Candidate(path="/b.py", content="authentication module"),
-        ])
+        await _seed(
+            db,
+            {
+                "/a.py": "authentication handler",
+                "/b.py": "authentication module",
+                "/c.py": "authentication service",
+            },
+        )
+        cands = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", content="authentication handler"),
+                Candidate(path="/b.py", content="authentication module"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._lexical_search_impl(
-                "authentication", candidates=cands, session=s,
+                "authentication",
+                candidates=cands,
+                session=s,
             )
         result_paths = {c.path for c in r.candidates}
         assert "/a.py" in result_paths
@@ -240,31 +261,43 @@ class TestCandidateChaining:
         assert "/c.py" not in result_paths
 
     async def test_with_candidates_hydrates_missing_content(
-        self, db: DatabaseFileSystem,
+        self,
+        db: DatabaseFileSystem,
     ):
         """Candidates without content get hydrated from DB."""
         await _seed(db, {"/a.py": "authentication handler"})
-        cands = GroverResult(candidates=[
-            Candidate(path="/a.py"),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(path="/a.py"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._lexical_search_impl(
-                "authentication", candidates=cands, session=s,
+                "authentication",
+                candidates=cands,
+                session=s,
             )
         assert len(r) == 1
         assert require_file(r).path == "/a.py"
 
     async def test_with_candidates_preserves_kind(
-        self, db: DatabaseFileSystem,
+        self,
+        db: DatabaseFileSystem,
     ):
-        cands = GroverResult(candidates=[
-            Candidate(
-                path="/a.py", kind="file", content="authentication handler",
-            ),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(
+                    path="/a.py",
+                    kind="file",
+                    content="authentication handler",
+                ),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._lexical_search_impl(
-                "authentication", candidates=cands, session=s,
+                "authentication",
+                candidates=cands,
+                session=s,
             )
         assert require_file(r).kind == "file"
 
@@ -276,7 +309,8 @@ class TestCandidateChaining:
 
 class TestDetailMetadata:
     async def test_detail_operation_is_lexical_search(
-        self, db: DatabaseFileSystem,
+        self,
+        db: DatabaseFileSystem,
     ):
         await _seed(db, {"/a.py": "match me"})
         async with db._use_session() as s:
@@ -355,7 +389,9 @@ class TestSoftDeleteExclusion:
 
 class TestPublicAPI:
     async def test_lexical_search_through_public_method(
-        self, db: DatabaseFileSystem, engine,
+        self,
+        db: DatabaseFileSystem,
+        engine,
     ):
         root = DatabaseFileSystem(engine=engine)
         await root.add_mount("/code", db)

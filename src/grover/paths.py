@@ -520,6 +520,6 @@ def _strip_user_prefix(path: str, prefix: str) -> str:
     if path == prefix:
         return "/"
     if path.startswith(prefix + "/"):
-        return path[len(prefix):]
+        return path[len(prefix) :]
     msg = f"Path {path!r} does not start with user prefix {prefix!r}"
     raise ValueError(msg)

@@ -291,8 +291,7 @@ class GroverResult(BaseModel):
         if not prefix:
             return self
         self.candidates = [
-            c.model_copy(update={"path": prefix + c.path if c.path != "/" else prefix})
-            for c in self.candidates
+            c.model_copy(update={"path": prefix + c.path if c.path != "/" else prefix}) for c in self.candidates
         ]
         return self
 
@@ -302,10 +301,9 @@ class GroverResult(BaseModel):
         For connection paths, both the source prefix and the embedded
         target prefix are stripped via ``unscope_path``.
         """
-        return self._with_candidates([
-            c.model_copy(update={"path": unscope_path(c.path, user_id)})
-            for c in self.candidates
-        ])
+        return self._with_candidates(
+            [c.model_copy(update={"path": unscope_path(c.path, user_id)}) for c in self.candidates]
+        )
 
     def _with_candidates(self, candidates: list[Candidate]) -> GroverResult:
         """Return a new result with the given candidates."""
@@ -371,9 +369,7 @@ class GroverResult(BaseModel):
         if not prior_details:
             return self
         enriched = [
-            c.model_copy(update={"details": (*prior_details[c.path], *c.details)})
-            if c.path in prior_details
-            else c
+            c.model_copy(update={"details": (*prior_details[c.path], *c.details)}) if c.path in prior_details else c
             for c in self.candidates
         ]
         return self._with_candidates(enriched)

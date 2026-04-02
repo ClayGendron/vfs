@@ -164,17 +164,10 @@ def create_version(
     the normal interval rules.
     """
     is_snapshot = (
-        force_snapshot
-        or version_number == 1
-        or version_number % SNAPSHOT_INTERVAL == 0
-        or prev_content is None
+        force_snapshot or version_number == 1 or version_number % SNAPSHOT_INTERVAL == 0 or prev_content is None
     )
 
-    stored_snapshot = (
-        version_content
-        if is_snapshot
-        else None
-    )
+    stored_snapshot = version_content if is_snapshot else None
     stored_diff = None if is_snapshot else compute_diff(prev_content or "", version_content)
 
     return VersionRecord(

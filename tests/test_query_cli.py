@@ -31,10 +31,7 @@ async def query_fs(db: DatabaseFileSystem):
 
 
 def _ops(result) -> dict[str, list[str]]:
-    return {
-        candidate.path: [detail.operation for detail in candidate.details]
-        for candidate in result.candidates
-    }
+    return {candidate.path: [detail.operation for detail in candidate.details] for candidate in result.candidates}
 
 
 class TestParseQuery:

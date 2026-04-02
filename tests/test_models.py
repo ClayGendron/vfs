@@ -555,7 +555,11 @@ class TestStoredVersionPayload:
 
     def test_missing_payload_raises(self):
         obj = GroverObject(
-            path="/a.py@1", kind="version", content=None, version_diff=None, is_snapshot=False,
+            path="/a.py@1",
+            kind="version",
+            content=None,
+            version_diff=None,
+            is_snapshot=False,
         )
         with pytest.raises(ValueError, match="missing stored payload"):
             obj._stored_version_payload()
@@ -573,29 +577,44 @@ class TestReconstructFileVersion:
 
     def test_missing_snapshot_raises(self):
         row = GroverObject(
-            path="/a.py@1", kind="version", content=None,
-            version_diff="some diff", version_number=1, is_snapshot=False,
+            path="/a.py@1",
+            kind="version",
+            content=None,
+            version_diff="some diff",
+            version_number=1,
+            is_snapshot=False,
         )
         with pytest.raises(ValueError, match="Missing snapshot"):
             GroverObject._reconstruct_file_version([row], target_version=1)
 
     def test_missing_intermediate_version_raises(self):
         snapshot = GroverObject(
-            path="/a.py@1", kind="version", content="base",
-            version_number=1, is_snapshot=True,
+            path="/a.py@1",
+            kind="version",
+            content="base",
+            version_number=1,
+            is_snapshot=True,
         )
         # v2 is missing, asking for v3
         v3 = GroverObject(
-            path="/a.py@3", kind="version", content=None,
-            version_diff="diff", version_number=3, is_snapshot=False,
+            path="/a.py@3",
+            kind="version",
+            content=None,
+            version_diff="diff",
+            version_number=3,
+            is_snapshot=False,
         )
         with pytest.raises(ValueError, match="Missing version row for v2"):
             GroverObject._reconstruct_file_version([snapshot, v3], target_version=3)
 
     def test_hash_mismatch_raises(self):
         snapshot = GroverObject(
-            path="/a.py@1", kind="version", content="base content",
-            version_number=1, is_snapshot=True, content_hash="wrong_hash",
+            path="/a.py@1",
+            kind="version",
+            content="base content",
+            version_number=1,
+            is_snapshot=True,
+            content_hash="wrong_hash",
         )
         with pytest.raises(ValueError, match="Hash mismatch"):
             GroverObject._reconstruct_file_version([snapshot], target_version=1)
@@ -629,21 +648,32 @@ class TestValidatorEdgeCases:
     def test_null_bytes_in_version_diff_rejected(self):
         with pytest.raises(ValueError, match="version_diff contains null bytes"):
             GroverObject(
-                path="/a.py@1", kind="version", version_diff="has\x00null",
-                version_number=1, is_snapshot=False,
+                path="/a.py@1",
+                kind="version",
+                version_diff="has\x00null",
+                version_number=1,
+                is_snapshot=False,
             )
 
     def test_both_content_and_version_diff_rejected(self):
         with pytest.raises(ValueError, match="must not set both content and version_diff"):
             GroverObject(
-                path="/a.py@1", kind="version", content="text",
-                version_diff="diff", version_number=1, is_snapshot=False,
+                path="/a.py@1",
+                kind="version",
+                content="text",
+                version_diff="diff",
+                version_number=1,
+                is_snapshot=False,
             )
 
     def test_version_with_explicit_content_hash(self):
         h = hashlib.sha256(b"hello").hexdigest()
         obj = GroverObject(
-            path="/a.py@1", kind="version", content="hello",
-            version_number=1, is_snapshot=True, content_hash=h,
+            path="/a.py@1",
+            kind="version",
+            content="hello",
+            version_number=1,
+            is_snapshot=True,
+            content_hash=h,
         )
         assert obj.content_hash == h

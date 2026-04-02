@@ -27,16 +27,16 @@ class TestUnicodeChaos:
     """Unicode edge cases in paths and content."""
 
     async def test_emoji_path(self, db: DatabaseFileSystem):
-        r = await db.write("/docs/\U0001F600.txt", "smile")
+        r = await db.write("/docs/\U0001f600.txt", "smile")
         assert r.success
-        r2 = await db.read("/docs/\U0001F600.txt")
+        r2 = await db.read("/docs/\U0001f600.txt")
         assert r2.content == "smile"
 
     async def test_emoji_content(self, db: DatabaseFileSystem):
-        r = await db.write("/emoji.txt", "\U0001F4A9\U0001F525\U0001F680")
+        r = await db.write("/emoji.txt", "\U0001f4a9\U0001f525\U0001f680")
         assert r.success
         r2 = await db.read("/emoji.txt")
-        assert r2.content == "\U0001F4A9\U0001F525\U0001F680"
+        assert r2.content == "\U0001f4a9\U0001f525\U0001f680"
 
     async def test_null_byte_in_path_rejected(self, db: DatabaseFileSystem):
         """Null bytes in paths should be caught by validation."""
@@ -44,17 +44,17 @@ class TestUnicodeChaos:
             GroverObject(path="/file\x00evil.txt", content="x")
 
     async def test_rtl_characters_in_path(self, db: DatabaseFileSystem):
-        r = await db.write("/docs/\u202Eevil.txt", "rtl content")
+        r = await db.write("/docs/\u202eevil.txt", "rtl content")
         # RTL override is a control character (U+202E, in range 0x00-0x1F? No, it's > 0x9F)
         # Actually U+202E is 0x202E which is > 0x9F, so should be allowed
         if r.success:
-            r2 = await db.read("/docs/\u202Eevil.txt")
+            r2 = await db.read("/docs/\u202eevil.txt")
             assert r2.content == "rtl content"
 
     async def test_zero_width_joiners_in_path(self, db: DatabaseFileSystem):
-        r = await db.write("/docs/a\u200Db.txt", "zwj")
+        r = await db.write("/docs/a\u200db.txt", "zwj")
         assert r.success
-        r2 = await db.read("/docs/a\u200Db.txt")
+        r2 = await db.read("/docs/a\u200db.txt")
         assert r2.content == "zwj"
 
     async def test_combining_characters(self, db: DatabaseFileSystem):
@@ -69,7 +69,7 @@ class TestUnicodeChaos:
 
     async def test_4byte_utf8_content(self, db: DatabaseFileSystem):
         # Musical symbol (U+1D11E) and CJK
-        content = "\U0001D11E \u4e16\u754c \U0001F1FA\U0001F1F8"
+        content = "\U0001d11e \u4e16\u754c \U0001f1fa\U0001f1f8"
         r = await db.write("/unicode.txt", content)
         assert r.success
         r2 = await db.read("/unicode.txt")
@@ -141,7 +141,7 @@ class TestPathEdgeCases:
 
     async def test_path_with_special_chars(self, db: DatabaseFileSystem):
         """Quotes, semicolons, etc. in paths."""
-        r = await db.write("/files/it's a \"test\";yes.txt", "special")
+        r = await db.write('/files/it\'s a "test";yes.txt', "special")
         assert r.success
 
     async def test_deeply_nested_path(self, db: DatabaseFileSystem):
@@ -289,10 +289,7 @@ class TestBatchAdversarial:
 
     async def test_batch_larger_than_flush_threshold(self, db: DatabaseFileSystem):
         """Batch larger than the flush threshold succeeds across multiple flushes."""
-        objects = [
-            GroverObject(path=f"/batch/f{i:04d}.txt", content=f"c{i}")
-            for i in range(50)
-        ]
+        objects = [GroverObject(path=f"/batch/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 50
@@ -452,10 +449,7 @@ class TestConcurrentWrites:
         We accept that some may fail with OperationalError but none should
         produce unhandled crashes.
         """
-        tasks = [
-            db.write(f"/concurrent/f{i}.txt", f"content {i}")
-            for i in range(20)
-        ]
+        tasks = [db.write(f"/concurrent/f{i}.txt", f"content {i}") for i in range(20)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         # At minimum, some should succeed. None should be truly unexpected crashes.
         successes = [r for r in results if isinstance(r, GroverResult) and r.success]
@@ -475,10 +469,7 @@ class TestConcurrentWrites:
         session conflicts, but none should crash with unhandled exceptions.
         """
         await db.write("/contested.txt", "initial")
-        tasks = [
-            db.write("/contested.txt", f"v{i}")
-            for i in range(10)
-        ]
+        tasks = [db.write("/contested.txt", f"v{i}") for i in range(10)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         # We don't assert all succeed, but none should be unhandled exceptions
         for r in results:
@@ -492,11 +483,9 @@ class TestConcurrentWrites:
 
     async def test_concurrent_batch_writes(self, db: DatabaseFileSystem):
         """Multiple batch writes concurrently to non-overlapping paths."""
+
         async def batch_write(prefix: str, n: int):
-            objects = [
-                GroverObject(path=f"/{prefix}/f{i}.txt", content=f"c{i}")
-                for i in range(n)
-            ]
+            objects = [GroverObject(path=f"/{prefix}/f{i}.txt", content=f"c{i}") for i in range(n)]
             return await db.write(objects=objects)
 
         tasks = [batch_write(f"ns{i}", 50) for i in range(5)]
@@ -519,20 +508,14 @@ class TestParameterBudgetAttacks:
     async def test_tiny_budget_forces_max_batching(self, db: DatabaseFileSystem):
         """Budget of 1 forces one object per flush batch."""
         set_parameter_budget(db, 1)
-        objects = [
-            GroverObject(path=f"/tiny/f{i:04d}.txt", content=f"c{i}")
-            for i in range(100)
-        ]
+        objects = [GroverObject(path=f"/tiny/f{i:04d}.txt", content=f"c{i}") for i in range(100)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 100
 
     async def test_large_batch_stays_within_budget(self, db: DatabaseFileSystem):
         """200 objects with default budget — batching keeps flushes safe."""
-        objects = [
-            GroverObject(path=f"/huge/f{i:04d}.txt", content=f"c{i}")
-            for i in range(200)
-        ]
+        objects = [GroverObject(path=f"/huge/f{i:04d}.txt", content=f"c{i}") for i in range(200)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 200
@@ -695,17 +678,11 @@ class TestInterleavedOperations:
 
     async def test_batch_write_then_partial_overwrite(self, db: DatabaseFileSystem):
         """Write a batch, then overwrite only some paths."""
-        objects = [
-            GroverObject(path=f"/partial/f{i}.txt", content=f"v1_{i}")
-            for i in range(10)
-        ]
+        objects = [GroverObject(path=f"/partial/f{i}.txt", content=f"v1_{i}") for i in range(10)]
         await db.write(objects=objects)
 
         # Overwrite first 3
-        overwrite_objs = [
-            GroverObject(path=f"/partial/f{i}.txt", content=f"v2_{i}")
-            for i in range(3)
-        ]
+        overwrite_objs = [GroverObject(path=f"/partial/f{i}.txt", content=f"v2_{i}") for i in range(3)]
         r = await db.write(objects=overwrite_objs)
         assert r.success
 
@@ -885,7 +862,7 @@ class TestMetricCorrectness:
         assert require_file(r).lines == 0
 
     async def test_size_bytes_multibyte_chars(self, db: DatabaseFileSystem):
-        content = "\U0001F600"  # 4 bytes in UTF-8
+        content = "\U0001f600"  # 4 bytes in UTF-8
         r = await db.write("/multi_byte.txt", content)
         assert require_file(r).size_bytes == 4
 
@@ -942,17 +919,11 @@ class TestLargeBatchVersionCombo:
     async def test_batch_overwrite_at_scale(self, db: DatabaseFileSystem, scale: int):
         """Write N files, then overwrite all N — creates N versions."""
         n = scale
-        objs_v1 = [
-            GroverObject(path=f"/scale/f{i:06d}.txt", content=f"v1_{i}")
-            for i in range(n)
-        ]
+        objs_v1 = [GroverObject(path=f"/scale/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
         r1 = await db.write(objects=objs_v1)
         assert r1.success
 
-        objs_v2 = [
-            GroverObject(path=f"/scale/f{i:06d}.txt", content=f"v2_{i}")
-            for i in range(n)
-        ]
+        objs_v2 = [GroverObject(path=f"/scale/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
         r2 = await db.write(objects=objs_v2)
         assert r2.success
 
@@ -980,10 +951,13 @@ class TestLargeBatchVersionCombo:
         assert v2.is_snapshot is not None
 
         from grover.versioning import reconstruct_version
-        reconstructed = reconstruct_version([
-            (v1.is_snapshot, v1.content or v1.version_diff or ""),
-            (v2.is_snapshot, v2.content or v2.version_diff or ""),
-        ])
+
+        reconstructed = reconstruct_version(
+            [
+                (v1.is_snapshot, v1.content or v1.version_diff or ""),
+                (v2.is_snapshot, v2.content or v2.version_diff or ""),
+            ]
+        )
         assert reconstructed == "v2"
 
 
@@ -1129,10 +1103,7 @@ class TestBatchOrderingGuarantees:
 
     async def test_candidate_order_matches_input_order(self, db: DatabaseFileSystem):
         """Candidates should come back in the same order as input objects."""
-        objects = [
-            GroverObject(path=f"/order/f{i:03d}.txt", content=f"c{i}")
-            for i in range(20)
-        ]
+        objects = [GroverObject(path=f"/order/f{i:03d}.txt", content=f"c{i}") for i in range(20)]
         r = await db.write(objects=objects)
         assert r.success
         expected_paths = tuple(f"/order/f{i:03d}.txt" for i in range(20))
@@ -1183,15 +1154,7 @@ class TestDiffLikeContent:
 
     async def test_content_that_looks_like_a_diff(self, db: DatabaseFileSystem):
         """File content that is itself a valid unified diff."""
-        diff_content = (
-            "--- a/file.txt\n"
-            "+++ b/file.txt\n"
-            "@@ -1,3 +1,3 @@\n"
-            " line1\n"
-            "-line2\n"
-            "+line2_modified\n"
-            " line3\n"
-        )
+        diff_content = "--- a/file.txt\n+++ b/file.txt\n@@ -1,3 +1,3 @@\n line1\n-line2\n+line2_modified\n line3\n"
         await db.write("/diff.txt", diff_content)
         # Overwrite to create a version of the diff content
         r = await db.write("/diff.txt", "replaced")
@@ -1219,10 +1182,7 @@ class TestParentDirectoryEdgeCases:
 
     async def test_100_files_share_same_parent(self, db: DatabaseFileSystem):
         """All 100 files in the same directory — parent created once."""
-        objects = [
-            GroverObject(path=f"/same_dir/f{i:03d}.txt", content=f"c{i}")
-            for i in range(100)
-        ]
+        objects = [GroverObject(path=f"/same_dir/f{i:03d}.txt", content=f"c{i}") for i in range(100)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1233,10 +1193,7 @@ class TestParentDirectoryEdgeCases:
 
     async def test_files_create_unique_deep_trees(self, db: DatabaseFileSystem):
         """Each file creates a unique deep path tree."""
-        objects = [
-            GroverObject(path=f"/tree_{i}/a/b/c/d.txt", content=f"c{i}")
-            for i in range(20)
-        ]
+        objects = [GroverObject(path=f"/tree_{i}/a/b/c/d.txt", content=f"c{i}") for i in range(20)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1386,6 +1343,7 @@ class TestUnicodeNormalizationAttacks:
     async def test_nfc_vs_nfd_same_path(self, db: DatabaseFileSystem):
         """NFC and NFD forms of the same character should resolve to one path."""
         import unicodedata
+
         # \u00e9 = NFC form of e + combining acute
         nfc = "/caf\u00e9.txt"
         nfd = unicodedata.normalize("NFD", nfc)  # e + \u0301
@@ -1425,10 +1383,7 @@ class TestExtremeBudgets:
     async def test_budget_below_model_width(self, db: DatabaseFileSystem):
         """Budget smaller than one row of fields — batch_size floors to 1."""
         set_parameter_budget(db, 1)
-        objects = [
-            GroverObject(path=f"/budget/f{i:04d}.txt", content=f"c{i}")
-            for i in range(50)
-        ]
+        objects = [GroverObject(path=f"/budget/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 50
@@ -1437,10 +1392,7 @@ class TestExtremeBudgets:
         """Budget equal to one row of fields — one object per flush."""
         field_count = len(GroverObject.model_fields)
         set_parameter_budget(db, field_count + db.PARAMETER_RESERVE)
-        objects = [
-            GroverObject(path=f"/fields/f{i:04d}.txt", content=f"c{i}")
-            for i in range(field_count * 2)
-        ]
+        objects = [GroverObject(path=f"/fields/f{i:04d}.txt", content=f"c{i}") for i in range(field_count * 2)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == field_count * 2
@@ -1502,10 +1454,7 @@ class TestMassiveSingleSessionBatch:
     async def test_objects_single_impl_call(self, db: DatabaseFileSystem, scale: int):
         """N objects in one _write_impl call."""
         n = scale
-        objects = [
-            GroverObject(path=f"/mass/f{i:06d}.txt", content=f"content {i}")
-            for i in range(n)
-        ]
+        objects = [GroverObject(path=f"/mass/f{i:06d}.txt", content=f"content {i}") for i in range(n)]
         async with db._use_session() as s:
             r = await db._write_impl(objects=objects, session=s)
         assert r.success
@@ -1514,17 +1463,11 @@ class TestMassiveSingleSessionBatch:
     async def test_overwrite_objects_single_impl_call(self, db: DatabaseFileSystem, scale: int):
         """Write N, then overwrite all N in one call."""
         n = scale
-        objs_v1 = [
-            GroverObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v1_{i}")
-            for i in range(n)
-        ]
+        objs_v1 = [GroverObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
         async with db._use_session() as s:
             await db._write_impl(objects=objs_v1, session=s)
 
-        objs_v2 = [
-            GroverObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v2_{i}")
-            for i in range(n)
-        ]
+        objs_v2 = [GroverObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
         async with db._use_session() as s:
             r = await db._write_impl(objects=objs_v2, session=s)
         assert r.success
@@ -1654,6 +1597,7 @@ class TestExceptionRecovery:
 
         with pytest.raises(RuntimeError, match="simulated flush failure"):
             async with db._use_session() as s:
+
                 async def failing_flush(*args, **kwargs):
                     raise RuntimeError("simulated flush failure")
 
@@ -1679,10 +1623,7 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_ls(self, db: DatabaseFileSystem, scale: int):
         """Write N files under a directory, ls returns all of them."""
         n = scale
-        objects = [
-            GroverObject(path=f"/data/file_{i:06d}.txt", content=f"content {i}")
-            for i in range(n)
-        ]
+        objects = [GroverObject(path=f"/data/file_{i:06d}.txt", content=f"content {i}") for i in range(n)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == n
@@ -1695,10 +1636,7 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_soft_delete_directory(self, db: DatabaseFileSystem, scale: int):
         """Write N files, soft-delete the parent dir, verify all cascaded."""
         n = scale
-        objects = [
-            GroverObject(path=f"/src/file_{i:06d}.py", content=f"code {i}")
-            for i in range(n)
-        ]
+        objects = [GroverObject(path=f"/src/file_{i:06d}.py", content=f"code {i}") for i in range(n)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1717,10 +1655,7 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_permanent_delete_directory(self, db: DatabaseFileSystem, scale: int):
         """Write N files, permanently delete the dir, verify all gone."""
         n = scale
-        objects = [
-            GroverObject(path=f"/tmp/file_{i:06d}.txt", content=f"temp {i}")
-            for i in range(n)
-        ]
+        objects = [GroverObject(path=f"/tmp/file_{i:06d}.txt", content=f"temp {i}") for i in range(n)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1764,10 +1699,7 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_connections_write_and_delete(self, db: DatabaseFileSystem, scale: int):
         """Write N files with connections between consecutive pairs, then delete."""
         n = min(scale, 500)
-        files = [
-            GroverObject(path=f"/graph/node_{i:05d}.py", content=f"node {i}")
-            for i in range(n)
-        ]
+        files = [GroverObject(path=f"/graph/node_{i:05d}.py", content=f"node {i}") for i in range(n)]
         r = await db.write(objects=files)
         assert r.success
 
@@ -1797,10 +1729,7 @@ class TestLargeWriteAndDelete:
     async def test_write_delete_write_cycle_at_scale(self, db: DatabaseFileSystem, scale: int):
         """Write N files, soft-delete all, write N new files at same paths."""
         n = scale
-        objects_v1 = [
-            GroverObject(path=f"/cycle/f_{i:06d}.txt", content=f"v1_{i}")
-            for i in range(n)
-        ]
+        objects_v1 = [GroverObject(path=f"/cycle/f_{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
         r1 = await db.write(objects=objects_v1)
         assert r1.success
 
@@ -1809,10 +1738,7 @@ class TestLargeWriteAndDelete:
             await db._delete_impl("/cycle", session=s)
 
         # Re-write same paths
-        objects_v2 = [
-            GroverObject(path=f"/cycle/f_{i:06d}.txt", content=f"v2_{i}")
-            for i in range(n)
-        ]
+        objects_v2 = [GroverObject(path=f"/cycle/f_{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
         r2 = await db.write(objects=objects_v2)
         assert r2.success
 
@@ -1825,12 +1751,10 @@ class TestLargeWriteAndDelete:
         """Write files across many nested directories, bulk delete root."""
         n = min(scale, 500)
         import random
+
         rng = random.Random(42)
         dirs = [f"/deep/d{i}/sub{j}" for i in range(10) for j in range(10)]
-        objects = [
-            GroverObject(path=f"{rng.choice(dirs)}/f_{i:05d}.txt", content=f"c{i}")
-            for i in range(n)
-        ]
+        objects = [GroverObject(path=f"{rng.choice(dirs)}/f_{i:05d}.txt", content=f"c{i}") for i in range(n)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1872,9 +1796,7 @@ class TestLargeWriteAndDelete:
         file_objects = []
         for i in range(n):
             parent = rng.choice(dir_pool)
-            file_objects.append(
-                GroverObject(path=f"{parent}/f_{i:06d}.py", content=f"code {i}")
-            )
+            file_objects.append(GroverObject(path=f"{parent}/f_{i:06d}.py", content=f"code {i}"))
 
         r = await db.write(objects=file_objects)
         assert r.success, r.error_message
@@ -1957,9 +1879,8 @@ class TestLargeWriteAndDelete:
 
         # Build candidates for all N directories
         from grover.results import Candidate, GroverResult
-        candidates = GroverResult(candidates=[
-            Candidate(path=f"/batch/d{d:04d}") for d in range(n_dirs)
-        ])
+
+        candidates = GroverResult(candidates=[Candidate(path=f"/batch/d{d:04d}") for d in range(n_dirs)])
 
         # Delete all directories in one batch call
         async with db._use_session() as s:
@@ -1984,21 +1905,16 @@ class TestLargeWriteAndDelete:
 
         all_objects: list[GroverObject] = []
         for i in range(n):
-            all_objects.append(
-                GroverObject(path=f"/flat/f{i:05d}.py", content=f"code {i}")
-            )
-            all_objects.append(
-                GroverObject(path=f"/flat/f{i:05d}.py/.chunks/main", content=f"def main_{i}():")
-            )
+            all_objects.append(GroverObject(path=f"/flat/f{i:05d}.py", content=f"code {i}"))
+            all_objects.append(GroverObject(path=f"/flat/f{i:05d}.py/.chunks/main", content=f"def main_{i}():"))
 
         r = await db.write(objects=all_objects)
         assert r.success, r.error_message
 
         # Delete all files (not the directory) in one batch
         from grover.results import Candidate, GroverResult
-        candidates = GroverResult(candidates=[
-            Candidate(path=f"/flat/f{i:05d}.py") for i in range(n)
-        ])
+
+        candidates = GroverResult(candidates=[Candidate(path=f"/flat/f{i:05d}.py") for i in range(n)])
 
         async with db._use_session() as s:
             del_r = await db._delete_impl(candidates=candidates, permanent=True, session=s)

@@ -30,13 +30,36 @@ class _FullRoutingFS(GroverFileSystem):
     """GroverFileSystem with all ``_*_impl`` methods replaced by AsyncMocks."""
 
     _ALL_OPS = (
-        "read", "stat", "edit", "ls", "delete", "write", "mkdir",
-        "move", "copy", "mkconn", "tree",
-        "glob", "grep", "semantic_search", "vector_search", "lexical_search",
-        "predecessors", "successors", "ancestors", "descendants", "neighborhood",
-        "meeting_subgraph", "min_meeting_subgraph",
-        "pagerank", "betweenness_centrality", "closeness_centrality",
-        "degree_centrality", "in_degree_centrality", "out_degree_centrality", "hits",
+        "read",
+        "stat",
+        "edit",
+        "ls",
+        "delete",
+        "write",
+        "mkdir",
+        "move",
+        "copy",
+        "mkconn",
+        "tree",
+        "glob",
+        "grep",
+        "semantic_search",
+        "vector_search",
+        "lexical_search",
+        "predecessors",
+        "successors",
+        "ancestors",
+        "descendants",
+        "neighborhood",
+        "meeting_subgraph",
+        "min_meeting_subgraph",
+        "pagerank",
+        "betweenness_centrality",
+        "closeness_centrality",
+        "degree_centrality",
+        "in_degree_centrality",
+        "out_degree_centrality",
+        "hits",
     )
 
     def __init__(self, name: str = "test") -> None:
@@ -162,11 +185,13 @@ class TestExcludeMountedPaths:
         fs = _FullRoutingFS()
         child = _FullRoutingFS("child")
         await fs.add_mount("/data", child)
-        r = GroverResult(candidates=[
-            _candidate("/local.py"),
-            _candidate("/data/file.py"),
-            _candidate("/data"),
-        ])
+        r = GroverResult(
+            candidates=[
+                _candidate("/local.py"),
+                _candidate("/data/file.py"),
+                _candidate("/data"),
+            ]
+        )
         result = fs._exclude_mounted_paths(r)
         assert [c.path for c in result.candidates] == ["/local.py"]
 
@@ -244,10 +269,12 @@ class TestGroupByTerminal:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        candidates = GroverResult(candidates=[
-            _candidate("/local.py"),
-            _candidate("/data/remote.py"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                _candidate("/local.py"),
+                _candidate("/data/remote.py"),
+            ]
+        )
         groups = root._group_candidates_by_terminal(candidates)
 
         assert len(groups) == 2
@@ -267,10 +294,12 @@ class TestGroupByTerminal:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        candidates = GroverResult(candidates=[
-            _candidate("/data/a.py"),
-            _candidate("/data/b.py"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                _candidate("/data/a.py"),
+                _candidate("/data/b.py"),
+            ]
+        )
         groups = root._group_candidates_by_terminal(candidates)
         assert len(groups) == 1
         assert len(groups[0][2].candidates) == 2
@@ -314,10 +343,12 @@ class TestDispatchCandidates:
         c1.stat_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
         c2.stat_mock.return_value = GroverResult(candidates=[_candidate("/b.py")])
 
-        candidates = GroverResult(candidates=[
-            _candidate("/m1/a.py"),
-            _candidate("/m2/b.py"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                _candidate("/m1/a.py"),
+                _candidate("/m2/b.py"),
+            ]
+        )
         result = await root._dispatch_candidates("stat", candidates)
 
         paths = {c.path for c in result.candidates}
@@ -802,9 +833,15 @@ class TestPublicSearch:
 
 
 class TestPublicGraphTraversal:
-    @pytest.mark.parametrize("method", [
-        "predecessors", "successors", "ancestors", "descendants",
-    ])
+    @pytest.mark.parametrize(
+        "method",
+        [
+            "predecessors",
+            "successors",
+            "ancestors",
+            "descendants",
+        ],
+    )
     async def test_traversal_ops_route_to_impl(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
@@ -851,11 +888,18 @@ class TestPublicGraphCandidateOnly:
 
 
 class TestPublicGraphAlgorithms:
-    @pytest.mark.parametrize("method", [
-        "pagerank", "betweenness_centrality", "closeness_centrality",
-        "degree_centrality", "in_degree_centrality", "out_degree_centrality",
-        "hits",
-    ])
+    @pytest.mark.parametrize(
+        "method",
+        [
+            "pagerank",
+            "betweenness_centrality",
+            "closeness_centrality",
+            "degree_centrality",
+            "in_degree_centrality",
+            "out_degree_centrality",
+            "hits",
+        ],
+    )
     async def test_algorithm_routes_to_impl(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")

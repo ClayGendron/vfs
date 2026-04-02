@@ -116,7 +116,9 @@ class TestUnscopePath:
     def test_roundtrip_connection(self):
         src, tgt, ct = "/src/main.py", "/src/auth.py", "imports"
         scoped_conn = connection_path(
-            scope_path(src, "u1"), scope_path(tgt, "u1"), ct,
+            scope_path(src, "u1"),
+            scope_path(tgt, "u1"),
+            ct,
         )
         unscoped = unscope_path(scoped_conn, "u1")
         assert unscoped == connection_path(src, tgt, ct)
@@ -124,10 +126,12 @@ class TestUnscopePath:
 
 class TestStripUserScope:
     def test_strips_file_paths(self):
-        result = GroverResult(candidates=[
-            Candidate(path="/u1/docs/a.md"),
-            Candidate(path="/u1/docs/b.md"),
-        ])
+        result = GroverResult(
+            candidates=[
+                Candidate(path="/u1/docs/a.md"),
+                Candidate(path="/u1/docs/b.md"),
+            ]
+        )
         stripped = result.strip_user_scope("u1")
         assert [c.path for c in stripped.candidates] == ["/docs/a.md", "/docs/b.md"]
 
@@ -242,8 +246,10 @@ class TestUserScopedMkconn:
         await scoped_db.write(path="/src/auth.py", content="auth", user_id="u1")
 
         result = await scoped_db.mkconn(
-            source="/src/main.py", target="/src/auth.py",
-            connection_type="imports", user_id="u1",
+            source="/src/main.py",
+            target="/src/auth.py",
+            connection_type="imports",
+            user_id="u1",
         )
         assert result.success
         # Connection path should be unscoped in result

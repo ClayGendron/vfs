@@ -23,6 +23,7 @@ def _stored_payload(obj: GroverObjectBase) -> str:
     assert obj.version_diff is not None
     return obj.version_diff
 
+
 # ------------------------------------------------------------------
 # Part 1: Write + Read
 # ------------------------------------------------------------------
@@ -144,11 +145,13 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             await db._write_impl("/a.py", "aaa", session=s)
             await db._write_impl("/b.py", "bbb", session=s)
-        candidates = GroverResult(candidates=[
-            Candidate(path="/a.py"),
-            Candidate(path="/b.py"),
-            Candidate(path="/nope.py"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                Candidate(path="/a.py"),
+                Candidate(path="/b.py"),
+                Candidate(path="/nope.py"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._read_impl(candidates=candidates, session=s)
         assert len(r.candidates) == 2
@@ -221,7 +224,10 @@ class TestWriteAndRead:
             s.add(GroverObject(path="/ghost/deep/file.txt", content="existing"))
         async with db._use_session() as s:
             r = await db._write_impl(
-                "/ghost/deep/file.txt", "conflict", overwrite=False, session=s,
+                "/ghost/deep/file.txt",
+                "conflict",
+                overwrite=False,
+                session=s,
             )
         assert not r.success
 
@@ -295,45 +301,65 @@ class TestEdit:
     async def test_edit_single_file(self, db: DatabaseFileSystem):
         await db.write("/file.py", "def hello():\n    return 'world'\n")
         async with db._use_session() as s:
-            r = await db._edit_impl("/file.py", edits=[
-                EditOperation(old="'world'", new="'earth'"),
-            ], session=s)
+            r = await db._edit_impl(
+                "/file.py",
+                edits=[
+                    EditOperation(old="'world'", new="'earth'"),
+                ],
+                session=s,
+            )
         assert r.success
         assert "'earth'" in require_text(r.content)
 
     async def test_edit_multiple_edits(self, db: DatabaseFileSystem):
         await db.write("/file.py", "x = 1\ny = 2\nz = 3\n")
         async with db._use_session() as s:
-            r = await db._edit_impl("/file.py", edits=[
-                EditOperation(old="x = 1", new="x = 10"),
-                EditOperation(old="z = 3", new="z = 30"),
-            ], session=s)
+            r = await db._edit_impl(
+                "/file.py",
+                edits=[
+                    EditOperation(old="x = 1", new="x = 10"),
+                    EditOperation(old="z = 3", new="z = 30"),
+                ],
+                session=s,
+            )
         assert r.success
         assert r.content == "x = 10\ny = 2\nz = 30\n"
 
     async def test_edit_replace_all(self, db: DatabaseFileSystem):
         await db.write("/file.txt", "foo bar foo baz foo")
         async with db._use_session() as s:
-            r = await db._edit_impl("/file.txt", edits=[
-                EditOperation(old="foo", new="qux", replace_all=True),
-            ], session=s)
+            r = await db._edit_impl(
+                "/file.txt",
+                edits=[
+                    EditOperation(old="foo", new="qux", replace_all=True),
+                ],
+                session=s,
+            )
         assert r.success
         assert r.content == "qux bar qux baz qux"
 
     async def test_edit_string_not_found(self, db: DatabaseFileSystem):
         await db.write("/file.txt", "hello world")
         async with db._use_session() as s:
-            r = await db._edit_impl("/file.txt", edits=[
-                EditOperation(old="missing", new="replacement"),
-            ], session=s)
+            r = await db._edit_impl(
+                "/file.txt",
+                edits=[
+                    EditOperation(old="missing", new="replacement"),
+                ],
+                session=s,
+            )
         assert not r.success
         assert "not found" in r.error_message.lower()
 
     async def test_edit_nonexistent_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._edit_impl("/nope.txt", edits=[
-                EditOperation(old="a", new="b"),
-            ], session=s)
+            r = await db._edit_impl(
+                "/nope.txt",
+                edits=[
+                    EditOperation(old="a", new="b"),
+                ],
+                session=s,
+            )
         assert not r.success
 
     async def test_edit_creates_version(self, db: DatabaseFileSystem):
@@ -348,14 +374,20 @@ class TestEdit:
     async def test_edit_batch_via_candidates(self, db: DatabaseFileSystem):
         await db.write("/a.py", "old_name = 1")
         await db.write("/b.py", "old_name = 2")
-        candidates = GroverResult(candidates=[
-            Candidate(path="/a.py"),
-            Candidate(path="/b.py"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                Candidate(path="/a.py"),
+                Candidate(path="/b.py"),
+            ]
+        )
         async with db._use_session() as s:
-            r = await db._edit_impl(candidates=candidates, edits=[
-                EditOperation(old="old_name", new="new_name"),
-            ], session=s)
+            r = await db._edit_impl(
+                candidates=candidates,
+                edits=[
+                    EditOperation(old="old_name", new="new_name"),
+                ],
+                session=s,
+            )
         assert r.success
         assert len(r.candidates) == 2
         r2 = await db.read("/a.py")
@@ -365,9 +397,13 @@ class TestEdit:
         """Line-trimmed replacer handles indentation differences."""
         await db.write("/indent.py", "    def foo():\n        pass\n")
         async with db._use_session() as s:
-            r = await db._edit_impl("/indent.py", edits=[
-                EditOperation(old="def foo():\n    pass", new="def foo():\n    return 1"),
-            ], session=s)
+            r = await db._edit_impl(
+                "/indent.py",
+                edits=[
+                    EditOperation(old="def foo():\n    pass", new="def foo():\n    return 1"),
+                ],
+                session=s,
+            )
         assert r.success
         assert "return 1" in require_text(r.content)
 
@@ -448,10 +484,12 @@ class TestAutoVersioning:
         assert reconstructed_v1 == "line1\n"
 
         # Reconstruct version 2: start from v1 snapshot, apply v2 forward diff
-        reconstructed_v2 = reconstruct_version([
-            (v1.is_snapshot, _stored_payload(v1)),
-            (v2.is_snapshot, _stored_payload(v2)),
-        ])
+        reconstructed_v2 = reconstruct_version(
+            [
+                (v1.is_snapshot, _stored_payload(v1)),
+                (v2.is_snapshot, _stored_payload(v2)),
+            ]
+        )
         assert reconstructed_v2 == "line1\nline2\n"
 
     async def test_periodic_snapshot(self, db: DatabaseFileSystem):
@@ -473,9 +511,7 @@ class TestAutoVersioning:
 
         assert db._engine is not None
         async with db._engine.begin() as conn:
-            await conn.execute(text(
-                "UPDATE grover_objects SET content='external' WHERE path='/app.py'"
-            ))
+            await conn.execute(text("UPDATE grover_objects SET content='external' WHERE path='/app.py'"))
 
         r = await db.write("/app.py", "v2")
         assert r.success
@@ -588,10 +624,7 @@ class TestBatchWriteAtScale:
 
     async def test_batch_write_single_call(self, db: DatabaseFileSystem):
         n = 1_000
-        objects = [
-            GroverObject(path=f"/data/file_{i:05d}.txt", content=f"content {i}")
-            for i in range(n)
-        ]
+        objects = [GroverObject(path=f"/data/file_{i:05d}.txt", content=f"content {i}") for i in range(n)]
 
         r = await db.write(objects=objects)
 
@@ -647,17 +680,11 @@ class TestBatchWriteAtScale:
 
     async def test_batch_overwrites_creates_versions(self, db: DatabaseFileSystem):
         n = 1_000
-        objects_v1 = [
-            GroverObject(path=f"/src/f_{i:05d}.py", content=f"v1_{i}")
-            for i in range(n)
-        ]
+        objects_v1 = [GroverObject(path=f"/src/f_{i:05d}.py", content=f"v1_{i}") for i in range(n)]
         r1 = await db.write(objects=objects_v1)
         assert r1.success, r1.error_message
 
-        objects_v2 = [
-            GroverObject(path=f"/src/f_{i:05d}.py", content=f"v2_{i}")
-            for i in range(n)
-        ]
+        objects_v2 = [GroverObject(path=f"/src/f_{i:05d}.py", content=f"v2_{i}") for i in range(n)]
         r2 = await db.write(objects=objects_v2)
         assert r2.success, r2.error_message
 
@@ -754,9 +781,7 @@ class TestFastPathVersioning:
 
         assert db._engine is not None
         async with db._engine.begin() as conn:
-            await conn.execute(text(
-                "UPDATE grover_objects SET content='hacked' WHERE path='/ext.txt'"
-            ))
+            await conn.execute(text("UPDATE grover_objects SET content='hacked' WHERE path='/ext.txt'"))
 
         r = await db.write("/ext.txt", "v2")
         assert r.success
@@ -889,10 +914,12 @@ class TestLs:
             await db._write_impl("/src/a.py", "a", session=s)
             await db._write_impl("/lib/b.py", "b", session=s)
 
-        candidates = GroverResult(candidates=[
-            Candidate(path="/src", kind="directory"),
-            Candidate(path="/lib", kind="directory"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                Candidate(path="/src", kind="directory"),
+                Candidate(path="/lib", kind="directory"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._ls_impl(candidates=candidates, session=s)
         assert r.success
@@ -916,10 +943,12 @@ class TestLs:
             await db._write_impl("/src/auth.py/.chunks/login", "chunk", session=s)
             await db._write_impl("/lib/utils.py", "utils", session=s)
 
-        candidates = GroverResult(candidates=[
-            Candidate(path="/src", kind="directory"),
-            Candidate(path="/src/auth.py", kind="file"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                Candidate(path="/src", kind="directory"),
+                Candidate(path="/src/auth.py", kind="file"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._ls_impl(candidates=candidates, session=s)
         assert r.success
@@ -1064,10 +1093,12 @@ class TestDelete:
             await db._write_impl("/a.txt", "a", session=s)
             await db._write_impl("/b.txt", "b", session=s)
 
-        candidates = GroverResult(candidates=[
-            Candidate(path="/a.txt"),
-            Candidate(path="/b.txt"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                Candidate(path="/a.txt"),
+                Candidate(path="/b.txt"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._delete_impl(candidates=candidates, session=s)
         assert r.success
@@ -1178,10 +1209,12 @@ class TestDelete:
             await db._mkdir_impl("/ok_dir", session=s)
             await db._write_impl("/full_dir/file.txt", "x", session=s)
 
-        candidates = GroverResult(candidates=[
-            Candidate(path="/ok_dir"),
-            Candidate(path="/full_dir"),
-        ])
+        candidates = GroverResult(
+            candidates=[
+                Candidate(path="/ok_dir"),
+                Candidate(path="/full_dir"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._delete_impl(candidates=candidates, cascade=False, session=s)
         # Partial: ok_dir deleted, full_dir rejected
@@ -1216,7 +1249,8 @@ class TestMkconn:
 
         async with db._use_session() as s:
             conn = await db._get_object(
-                "/src/auth.py/.connections/imports/src/utils.py", s,
+                "/src/auth.py/.connections/imports/src/utils.py",
+                s,
             )
         assert conn is not None
         assert conn.kind == "connection"
@@ -1268,7 +1302,9 @@ class TestMkconn:
     async def test_mkconn_rejects_both_args_and_objects(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._mkconn_impl(
-                "/a.py", "/b.py", "imports",
+                "/a.py",
+                "/b.py",
+                "imports",
                 objects=[GroverObject(path="/x.py/.connections/imports/y.py", kind="connection")],
                 session=s,
             )
@@ -1650,11 +1686,13 @@ class TestGlob:
 
     async def test_glob_with_candidates(self, db: DatabaseFileSystem):
         """When candidates are provided, filter them in-memory."""
-        cands = GroverResult(candidates=[
-            Candidate(path="/src/auth.py", kind="file"),
-            Candidate(path="/src/db.py", kind="file"),
-            Candidate(path="/docs/readme.md", kind="file"),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(path="/src/auth.py", kind="file"),
+                Candidate(path="/src/db.py", kind="file"),
+                Candidate(path="/docs/readme.md", kind="file"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/src/*.py", candidates=cands, session=s)
         assert set(r.paths) == {"/src/auth.py", "/src/db.py"}
@@ -1662,10 +1700,12 @@ class TestGlob:
     async def test_glob_with_candidates_returns_fresh_detail(self, db: DatabaseFileSystem):
         """Impl returns only the glob detail; routing layer merges prior details."""
         prior = Detail(operation="search", score=0.9)
-        cands = GroverResult(candidates=[
-            Candidate(path="/src/auth.py", kind="file", details=(prior,)),
-            Candidate(path="/docs/readme.md", kind="file", details=(prior,)),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(path="/src/auth.py", kind="file", details=(prior,)),
+                Candidate(path="/docs/readme.md", kind="file", details=(prior,)),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/src/*.py", candidates=cands, session=s)
         assert len(r) == 1
@@ -1813,10 +1853,12 @@ class TestGrep:
 
     async def test_grep_with_candidates_uses_existing_content(self, db: DatabaseFileSystem):
         """When candidates already carry content, no DB hydration needed."""
-        cands = GroverResult(candidates=[
-            Candidate(path="/a.py", kind="file", content="timeout = 30"),
-            Candidate(path="/b.py", kind="file", content="no match"),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", kind="file", content="timeout = 30"),
+                Candidate(path="/b.py", kind="file", content="no match"),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
         assert r.paths == ("/a.py",)
@@ -1824,9 +1866,11 @@ class TestGrep:
     async def test_grep_with_candidates_returns_fresh_detail(self, db: DatabaseFileSystem):
         """Impl returns only the grep detail; routing layer merges prior details."""
         prior = Detail(operation="glob", score=None)
-        cands = GroverResult(candidates=[
-            Candidate(path="/a.py", kind="file", content="timeout = 30", details=(prior,)),
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", kind="file", content="timeout = 30", details=(prior,)),
+            ]
+        )
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
         assert len(r) == 1
@@ -1839,9 +1883,11 @@ class TestGrep:
         """Candidates without content get hydrated from DB."""
         async with db._use_session() as s:
             await db._write_impl("/a.py", "timeout = 30", session=s)
-        cands = GroverResult(candidates=[
-            Candidate(path="/a.py", kind="file"),  # content=None
-        ])
+        cands = GroverResult(
+            candidates=[
+                Candidate(path="/a.py", kind="file"),  # content=None
+            ]
+        )
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
         assert r.paths == ("/a.py",)

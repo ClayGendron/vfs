@@ -471,7 +471,10 @@ class TestSubgraphCandidates:
         edges_out = {"/a.py": frozenset(["/b.py"])}
         edge_types = {("/a.py", "/b.py"): "imports"}
         result = RustworkxGraph._subgraph_candidates(
-            node_set, edges_out, edge_types, "neighborhood",
+            node_set,
+            edges_out,
+            edge_types,
+            "neighborhood",
         )
         # 2 node candidates + 1 connection candidate
         assert len(result) == 3
@@ -485,7 +488,10 @@ class TestSubgraphCandidates:
         edges_out = {"/a.py": frozenset(["/b.py"])}  # /b.py not in node_set
         edge_types = {("/a.py", "/b.py"): "imports"}
         result = RustworkxGraph._subgraph_candidates(
-            node_set, edges_out, edge_types, "subgraph",
+            node_set,
+            edges_out,
+            edge_types,
+            "subgraph",
         )
         assert len(result) == 1  # only the node, no edge
 
@@ -883,7 +889,8 @@ class TestMeetingSubgraph:
         await g.add_node("/a.py", session=_mock_session)
 
         result = await g.meeting_subgraph(
-            _result("/a.py", "/missing.py"), session=_mock_session,
+            _result("/a.py", "/missing.py"),
+            session=_mock_session,
         )
         # Only the valid seed is returned
         assert len(result.candidates) == 1
@@ -916,7 +923,8 @@ class TestMinMeetingSubgraph:
 
         meeting = await g.meeting_subgraph(_result("/a.py", "/d.py"), session=_mock_session)
         min_meeting = await g.min_meeting_subgraph(
-            _result("/a.py", "/d.py"), session=_mock_session,
+            _result("/a.py", "/d.py"),
+            session=_mock_session,
         )
 
         meeting_nodes = {c.path for c in meeting.candidates if not decompose_connection(c.path)}
@@ -931,7 +939,8 @@ class TestMinMeetingSubgraph:
         from grover.paths import decompose_connection
 
         result = await g.min_meeting_subgraph(
-            _result("/a.py", "/c.py"), session=_mock_session,
+            _result("/a.py", "/c.py"),
+            session=_mock_session,
         )
         node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
         assert "/a.py" in node_paths
@@ -948,7 +957,8 @@ class TestMinMeetingSubgraph:
         from grover.paths import decompose_connection
 
         result = await g.min_meeting_subgraph(
-            _result("/a.py", "/c.py"), session=_mock_session,
+            _result("/a.py", "/c.py"),
+            session=_mock_session,
         )
         node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
         assert "/a.py" in node_paths
@@ -982,12 +992,14 @@ class TestMinMeetingSubgraph:
 
         # Force meeting to include both X and Y by using 3 seeds
         meeting = await g.meeting_subgraph(
-            _result("/a.py", "/b.py", "/x.py"), session=_mock_session,
+            _result("/a.py", "/b.py", "/x.py"),
+            session=_mock_session,
         )
         meeting_nodes = {c.path for c in meeting.candidates if not decompose_connection(c.path)}
 
         result = await g.min_meeting_subgraph(
-            _result("/a.py", "/b.py", "/x.py"), session=_mock_session,
+            _result("/a.py", "/b.py", "/x.py"),
+            session=_mock_session,
         )
         min_nodes = {c.path for c in result.candidates if not decompose_connection(c.path)}
         assert {"/a.py", "/b.py", "/x.py"} <= min_nodes
@@ -1001,7 +1013,8 @@ class TestMinMeetingSubgraph:
         g._nodes.add("/b.py")
         g._out = None  # type: ignore[assignment]
         result = await g.min_meeting_subgraph(
-            _result("/a.py", "/b.py"), session=_mock_session,
+            _result("/a.py", "/b.py"),
+            session=_mock_session,
         )
         assert result.success is False
 
@@ -1344,7 +1357,10 @@ class TestHits:
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.hits(
-            _result(), max_iter=50, tol=1e-4, session=_mock_session,
+            _result(),
+            max_iter=50,
+            tol=1e-4,
+            session=_mock_session,
         )
         assert result.success is True
         assert len(result.candidates) == 2
@@ -1422,7 +1438,10 @@ class TestNeighborhoodUserScoped:
         await g.add_edge("/bob/c.py", "/alice/b.py", "calls", session=_mock_session)
 
         result = await g.neighborhood(
-            _result("/alice/a.py"), depth=2, user_id="alice", session=_mock_session,
+            _result("/alice/a.py"),
+            depth=2,
+            user_id="alice",
+            session=_mock_session,
         )
         paths = {c.path for c in result.candidates}
         assert "/alice/b.py" in paths
@@ -1439,7 +1458,9 @@ class TestMeetingSubgraphUserScoped:
         await g.add_edge("/alice/mid.py", "/alice/b.py", "calls", session=_mock_session)
 
         result = await g.meeting_subgraph(
-            _result("/alice/a.py", "/alice/b.py"), user_id="alice", session=_mock_session,
+            _result("/alice/a.py", "/alice/b.py"),
+            user_id="alice",
+            session=_mock_session,
         )
         assert result.success is True
         paths = {c.path for c in result.candidates}
@@ -1458,7 +1479,8 @@ class TestMinMeetingSubgraphPruning:
         await g.add_edge("/a.py", "/b.py", "uses", session=_mock_session)
 
         result = await g.min_meeting_subgraph(
-            _result("/a.py", "/b.py"), session=_mock_session,
+            _result("/a.py", "/b.py"),
+            session=_mock_session,
         )
         assert result.success is True
         paths = {c.path for c in result.candidates}
@@ -1477,10 +1499,13 @@ class TestMinMeetingSubgraphPruning:
 
         # Patch _min_meeting_impl to raise, simulating an internal error
         with patch.object(
-            RustworkxGraph, "_min_meeting_impl", side_effect=RuntimeError("boom"),
+            RustworkxGraph,
+            "_min_meeting_impl",
+            side_effect=RuntimeError("boom"),
         ):
             result = await g.min_meeting_subgraph(
-                _result("/a.py", "/b.py"), session=_mock_session,
+                _result("/a.py", "/b.py"),
+                session=_mock_session,
             )
         assert result.success is False
         assert "min_meeting_subgraph failed" in result.errors[0]

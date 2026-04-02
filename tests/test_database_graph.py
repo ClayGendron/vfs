@@ -91,7 +91,8 @@ class TestPredecessors:
     async def test_predecessors_by_candidates(self, graph_db: DatabaseFileSystem):
         async with graph_db._use_session() as s:
             r = await graph_db._predecessors_impl(
-                candidates=cands("/src/db.py"), session=s,
+                candidates=cands("/src/db.py"),
+                session=s,
             )
         assert r.success
         # auth.py calls db.py, utils.py imports db.py
@@ -120,7 +121,8 @@ class TestSuccessors:
     async def test_successors_by_candidates(self, graph_db: DatabaseFileSystem):
         async with graph_db._use_session() as s:
             r = await graph_db._successors_impl(
-                candidates=cands("/src/api.py"), session=s,
+                candidates=cands("/src/api.py"),
+                session=s,
             )
         assert r.success
         assert paths(r) == {"/src/auth.py", "/src/utils.py"}
@@ -176,7 +178,9 @@ class TestNeighborhood:
     async def test_neighborhood_depth_1(self, graph_db: DatabaseFileSystem):
         async with graph_db._use_session() as s:
             r = await graph_db._neighborhood_impl(
-                "/src/auth.py", depth=1, session=s,
+                "/src/auth.py",
+                depth=1,
+                session=s,
             )
         assert r.success
         p = paths(r)
@@ -189,7 +193,9 @@ class TestNeighborhood:
     async def test_neighborhood_depth_2(self, graph_db: DatabaseFileSystem):
         async with graph_db._use_session() as s:
             r = await graph_db._neighborhood_impl(
-                "/src/utils.py", depth=2, session=s,
+                "/src/utils.py",
+                depth=2,
+                session=s,
             )
         assert r.success
         p = paths(r)
@@ -203,7 +209,9 @@ class TestNeighborhood:
     async def test_neighborhood_isolated_node(self, graph_db: DatabaseFileSystem):
         async with graph_db._use_session() as s:
             r = await graph_db._neighborhood_impl(
-                "/src/config.py", depth=2, session=s,
+                "/src/config.py",
+                depth=2,
+                session=s,
             )
         assert r.success
         # config.py has no edges — not even a graph node
@@ -366,7 +374,10 @@ class TestGraphConsistency:
         """Adding a connection should be visible to subsequent graph queries."""
         async with graph_db._use_session() as s:
             await graph_db._mkconn_impl(
-                "/src/config.py", "/src/db.py", "imports", session=s,
+                "/src/config.py",
+                "/src/db.py",
+                "imports",
+                session=s,
             )
 
         async with graph_db._use_session() as s:

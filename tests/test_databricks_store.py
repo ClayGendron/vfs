@@ -39,7 +39,10 @@ class TestDatabricksConnect:
         from grover.databricks_store import DatabricksVectorStore
 
         store = DatabricksVectorStore(
-            index_name="idx", endpoint_name="ep", host="https://host", token="tok123",
+            index_name="idx",
+            endpoint_name="ep",
+            host="https://host",
+            token="tok123",
         )
 
         mock_client_cls = MagicMock()

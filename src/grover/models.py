@@ -38,6 +38,7 @@ from grover.versioning import reconstruct_version
 # Base class — adds Pydantic validation back to SQLModel table models
 # ---------------------------------------------------------------------------
 
+
 class ValidatedSQLModel(SQLModel):
     """SQLModel base that runs Pydantic validation on explicit ``__init__``.
 

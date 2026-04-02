@@ -241,9 +241,7 @@ class TestBasePath:
             ("*.py", "src", "/src/foo.py", True),
         ],
     )
-    def test_base_path(
-        self, pattern: str, base_path: str, path: str, expected: bool
-    ):
+    def test_base_path(self, pattern: str, base_path: str, path: str, expected: bool):
         assert match_glob(path, pattern, base_path=base_path) is expected
 
     def test_compile_glob_with_base_path(self):
@@ -327,9 +325,7 @@ class TestGlobToSqlLike:
             ("**/*.py", "/src", "/src/%%.py"),
         ],
     )
-    def test_like_with_base_path(
-        self, pattern: str, base_path: str, expected_like: str
-    ):
+    def test_like_with_base_path(self, pattern: str, base_path: str, expected_like: str):
         assert glob_to_sql_like(pattern, base_path=base_path) == expected_like
 
 
@@ -411,9 +407,7 @@ class TestLikeMatchGlobConsistency:
         if like is not None:
             # Convert LIKE to regex for testing
             like_regex = _like_to_regex(like)
-            assert like_regex.match(path) is not None, (
-                f"LIKE '{like}' rejected '{path}' but match_glob accepted it"
-            )
+            assert like_regex.match(path) is not None, f"LIKE '{like}' rejected '{path}' but match_glob accepted it"
 
     @pytest.mark.parametrize(
         "pattern, path",

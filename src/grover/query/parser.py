@@ -725,13 +725,7 @@ def _render_mode(node: QueryNode) -> RenderMode:
             | MkconnCommand()
         ):
             return "action"
-        case (
-            GlobCommand()
-            | GrepCommand()
-            | SemanticSearchCommand()
-            | LexicalSearchCommand()
-            | VectorSearchCommand()
-        ):
+        case GlobCommand() | GrepCommand() | SemanticSearchCommand() | LexicalSearchCommand() | VectorSearchCommand():
             return "query_list"
         case (
             GraphTraversalCommand()
