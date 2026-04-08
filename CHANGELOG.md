@@ -4,6 +4,19 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.13] — 2026-04-07
+
+### Added
+
+- **`GroverObjectBase.clone()`** — Fast (~1.7µs) method to create a detached copy of a model instance with independent SQLAlchemy state. Uses shallow copy + fresh `InstanceState` so clones can be safely added to any session.
+
+### Fixed
+
+- **`write(objects=...)` no longer mutates input objects** — `_group_objects_by_terminal` now clones objects before stripping mount prefixes, preserving the caller's original list.
+- **`add_prefix` path normalization** — Prefixes are now normalized via `normalize_path()` before concatenation, ensuring paths always have a leading `/` regardless of prefix format.
+- **`strip_prefix` safety** — Now validates the prefix matches the start of the path and raises `ValueError` on mismatch instead of blindly slicing. Prefixes are normalized before comparison.
+- **`_rederive_path_fields` normalization** — Calls `normalize_path()` as a safety net, guaranteeing all post-mutation paths are valid before reaching the database.
+
 ## [0.0.12] — 2026-04-03
 
 ### Changed
