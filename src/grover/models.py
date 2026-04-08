@@ -170,7 +170,8 @@ class GroverObjectBase(ValidatedSQLModel):
         """Create a detached copy with independent SQLAlchemy state."""
         c = _copy_mod.copy(self)
         c.__dict__["_sa_instance_state"] = InstanceState(
-            c, type(self)._sa_class_manager,  # ty: ignore[unresolved-attribute]
+            c,
+            type(self)._sa_class_manager,  # ty: ignore[unresolved-attribute]
         )
         return c
 
