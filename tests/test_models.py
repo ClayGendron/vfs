@@ -415,6 +415,67 @@ class TestAddStripPrefix:
         assert obj.kind == "chunk"
         assert obj.parent_path == "/mod.py"
 
+    # -- add_prefix normalization ------------------------------------------
+
+    def test_add_prefix_without_leading_slash(self):
+        obj = GroverObject(path="/test.py", content="x")
+        obj.add_prefix("snhu")
+        assert obj.path == "/snhu/test.py"
+
+    def test_add_prefix_with_trailing_slash(self):
+        obj = GroverObject(path="/test.py", content="x")
+        obj.add_prefix("/snhu/")
+        assert obj.path == "/snhu/test.py"
+
+    @pytest.mark.parametrize("prefix", ["snhu", "/snhu", "snhu/", "/snhu/"])
+    def test_path_always_has_leading_slash_after_add_prefix(self, prefix):
+        obj = GroverObject(path="/file.py", content="x")
+        obj.add_prefix(prefix)
+        assert obj.path.startswith("/")
+        assert obj.path == "/snhu/file.py"
+
+    # -- strip_prefix safety -----------------------------------------------
+
+    def test_strip_prefix_mismatch_raises(self):
+        obj = GroverObject(path="/other/file.py", content="x")
+        with pytest.raises(ValueError, match="does not start with prefix"):
+            obj.strip_prefix("/data")
+
+    def test_strip_prefix_partial_segment_raises(self):
+        obj = GroverObject(path="/database/file.py", content="x")
+        with pytest.raises(ValueError, match="does not start with prefix"):
+            obj.strip_prefix("/data")
+
+    def test_strip_prefix_normalizes_prefix(self):
+        obj = GroverObject(path="/snhu/test.py", content="x")
+        obj.strip_prefix("snhu")
+        assert obj.path == "/test.py"
+
+    def test_path_always_has_leading_slash_after_strip_prefix(self):
+        obj = GroverObject(path="/mount/deep/file.py", content="x")
+        obj.strip_prefix("/mount")
+        assert obj.path.startswith("/")
+        assert obj.path == "/deep/file.py"
+
+    # -- _rederive_path_fields normalization --------------------------------
+
+    def test_rederive_normalizes_path(self):
+        obj = GroverObject(path="/a.py", content="x")
+        obj.path = "bad/path"  # bypass validator
+        obj._rederive_path_fields()
+        assert obj.path == "/bad/path"
+        assert obj.name == "path"
+        assert obj.parent_path == "/bad"
+
+    # -- roundtrip with unnormalized prefix --------------------------------
+
+    def test_roundtrip_unnormalized_prefix(self):
+        obj = GroverObject(path="/deep/file.py", content="x")
+        obj.add_prefix("mount")
+        assert obj.path == "/mount/deep/file.py"
+        obj.strip_prefix("mount")
+        assert obj.path == "/deep/file.py"
+
 
 # DB round-trip
 # =========================================================================

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from grover.base import GroverFileSystem
+from grover.models import GroverObject
 from grover.results import EditOperation, GroverResult, TwoPathOperation
 from tests.conftest import (
     candidate as _candidate,
@@ -308,6 +309,37 @@ class TestGroupByTerminal:
         root = _FullRoutingFS()
         groups = root._group_candidates_by_terminal(GroverResult())
         assert groups == []
+
+
+class TestGroupObjectsByTerminal:
+    async def test_does_not_mutate_caller_objects(self):
+        root = _FullRoutingFS("root")
+        child = _FullRoutingFS("child")
+        await root.add_mount("/data", child)
+
+        objs = [
+            GroverObject(path="/data/file.py", content="code"),
+            GroverObject(path="/local.py", content="local"),
+        ]
+        original_paths = [obj.path for obj in objs]
+
+        root._group_objects_by_terminal(objs)
+
+        assert [obj.path for obj in objs] == original_paths
+
+    async def test_rebases_copies(self):
+        root = _FullRoutingFS("root")
+        child = _FullRoutingFS("child")
+        await root.add_mount("/data", child)
+
+        objs = [GroverObject(path="/data/file.py", content="code")]
+        groups = root._group_objects_by_terminal(objs)
+
+        assert len(groups) == 1
+        fs, prefix, grouped_objs = groups[0]
+        assert fs._name == "child"
+        assert prefix == "/data"
+        assert grouped_objs[0].path == "/file.py"
 
 
 class TestDispatchCandidates:

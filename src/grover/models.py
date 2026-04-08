@@ -7,6 +7,7 @@ which nullable fields are relevant and how operations dispatch.
 
 from __future__ import annotations
 
+import copy as _copy_mod
 import hashlib
 import uuid
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from datetime import UTC, datetime
 
 from pydantic import model_validator
 from sqlalchemy import DateTime
+from sqlalchemy.orm import InstanceState
 from sqlmodel import Field, SQLModel
 from sqlmodel._compat import finish_init
 
@@ -162,25 +164,44 @@ class GroverObjectBase(ValidatedSQLModel):
         sa_type=DateTime(timezone=True),  # ty: ignore[invalid-argument-type]
     )
 
-    # --- Path manipulation ----------------------------------------------------
+    # --- Copy / Path manipulation ---------------------------------------------
+
+    def clone(self) -> GroverObjectBase:
+        """Create a detached copy with independent SQLAlchemy state."""
+        c = _copy_mod.copy(self)
+        c.__dict__["_sa_instance_state"] = InstanceState(
+            c, type(self)._sa_class_manager,  # ty: ignore[unresolved-attribute]
+        )
+        return c
 
     def _rederive_path_fields(self) -> None:
-        """Re-derive ``name`` and ``parent_path`` from the current ``path``."""
+        """Normalize path and re-derive ``name`` and ``parent_path``."""
+        self.path = normalize_path(self.path)
         self.name = split_path(self.path)[1]
         self.parent_path = compute_parent_path(self.path)
 
     def add_prefix(self, prefix: str) -> GroverObjectBase:
         """Prepend *prefix* to path in place, re-deriving name and parent."""
-        if prefix:
-            self.path = prefix + self.path if self.path != "/" else prefix
-            self._rederive_path_fields()
+        if not prefix:
+            return self
+        prefix = normalize_path(prefix)
+        self.path = prefix + self.path if self.path != "/" else prefix
+        self._rederive_path_fields()
         return self
 
     def strip_prefix(self, prefix: str) -> GroverObjectBase:
         """Strip *prefix* from path in place, re-deriving name and parent."""
-        if prefix:
-            self.path = self.path[len(prefix) :] or "/"
-            self._rederive_path_fields()
+        if not prefix:
+            return self
+        prefix = normalize_path(prefix)
+        if self.path == prefix:
+            self.path = "/"
+        elif self.path.startswith(prefix + "/"):
+            self.path = self.path[len(prefix) :]
+        else:
+            msg = f"Path {self.path!r} does not start with prefix {prefix!r}"
+            raise ValueError(msg)
+        self._rederive_path_fields()
         return self
 
     def to_candidate(

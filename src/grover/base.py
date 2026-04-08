@@ -177,8 +177,9 @@ class GroverFileSystem:
             key = (id(fs), prefix)
             if key not in groups:
                 groups[key] = (fs, prefix, [])
-            obj.strip_prefix(prefix)
-            groups[key][2].append(obj)
+            rebased = obj.clone()
+            rebased.strip_prefix(prefix)
+            groups[key][2].append(rebased)
         return list(groups.values())
 
     @staticmethod
