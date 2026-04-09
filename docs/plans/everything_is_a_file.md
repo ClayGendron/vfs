@@ -24,7 +24,7 @@ The Unix architecture established a three-level I/O model that is still widely m
 
 Plan 9 from Bell Labs (1992) took this further. The network became a filesystem (`/net/tcp/clone`). The window system became a filesystem (`/dev/draw`). Process control became a filesystem (`/proc/42/ctl`). The entire protocol had **14 message types**: walk, open, read, write, stat, create, remove, clunk, and a handful of others. That was sufficient to model every resource in a distributed operating system.
 
-Rob Pike et al. (*"The Use of Name Spaces in Plan 9"*, 5th ACM SIGOPS European Workshop, 1992) articulated why this works: "The integration of devices into the hierarchical file system was the best idea in UNIX... Plan 9 pushes the concepts much further and shows that file systems, when used inventively, have plenty of scope for productive research." Plan 9's key innovations — per-process mutable namespaces via `bind()`/`mount()`, union directories (multiple trees overlaid at one point), and the 9P wire protocol — demonstrated that a small set of file operations is sufficient to model every resource in a distributed system. Grover's mount architecture (§9), cross-mount search (§9.5), and single-tool CLI (§6.2) are direct descendants of these ideas.
+Rob Pike et al. (*"The Use of Name Spaces in Plan 9"*, 5th ACM SIGOPS European Workshop, 1992) articulated why this works: "The integration of devices into the hierarchical file system was the best idea in UNIX... Plan 9 pushes the concepts much further and shows that file systems, when used inventively, have plenty of scope for productive research." Plan 9's key innovations — per-process mutable namespaces via `bind()`/`mount()`, union directories (multiple trees overlaid at one point), and the 9P wire protocol — demonstrated that a small set of file operations is sufficient to model every resource in a distributed system. Grover's mount architecture (§10), cross-mount search (§10.5), and single-tool CLI (§6.2) are direct descendants of these ideas.
 
 The key insight is not that files are the right abstraction for everything. It's that **a small, universal interface eliminates the need for special-purpose APIs**. When everything speaks the same protocol, tools compose. When everything lives in a single namespace, discovery is navigation. When operations are uniform, agents don't need instructions — they already know how to use a filesystem.
 
@@ -567,9 +567,58 @@ fused = keyword | semantic | structural  # union, then rank by overlap
 
 The key insight from Sourcegraph's production system: keyword search finds exact references, semantic search finds conceptually related content, and graph retrieval finds structural dependencies. Each retriever is complementary. Together they cover what any single retriever misses.
 
-## 8. The Analyzer Plugin Model
+## 8. LLM Wiki Design
 
-### 8.1 Analyzers as Content Processors
+Andrej Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) describes a knowledge pattern Grover is uniquely positioned to implement. It is worth treating as a first-class design target — the constraints it imposes pull on exactly the primitives Grover already offers, and committing to it as a use case sharpens the rest of the design.
+
+### 8.1 The Pattern
+
+Most LLM-and-documents systems are RAG: a corpus is embedded once and retrieved on every query, with the LLM rediscovering structure from scratch each time. Nothing accumulates. Karpathy's alternative is to have the LLM **incrementally build and maintain a persistent, interlinked markdown wiki** that sits between the user and the raw sources. New sources don't get indexed for later retrieval — they get *integrated*: summarized, cross-referenced, used to update existing pages, flagged where they contradict prior claims. The wiki is a compounding artifact. Synthesis already reflects everything that's been read. The wiki keeps getting richer with every source ingested and every question asked.
+
+There are three layers. **Raw sources** are immutable — articles, papers, transcripts, screenshots. The LLM reads from them but never modifies them. **The wiki** is LLM-written: summaries, entity pages, comparisons, exploratory answers. The LLM owns this layer entirely. **The schema** is a single doc (`CLAUDE.md`, `AGENTS.md`) that tells the LLM how the wiki is structured and what workflows to follow. Three operations move the system: **ingest** (a new source becomes new and updated pages), **query** (answers are synthesized, and good ones are filed back as new pages), and **lint** (a periodic health check for orphans, stale claims, missing cross-references, and contradictions).
+
+The maintenance burden — the part humans abandon wikis over — falls to the LLM. The human's job is curating sources, asking questions, and judging the synthesis.
+
+### 8.2 The Mapping
+
+The pattern's three layers map onto a single Grover mount with directory-level permissions:
+
+| Pattern layer | Grover instantiation |
+|---|---|
+| Raw sources (immutable) | `/wiki/raw/*` — read-only via `read_only_paths` on the mount |
+| Wiki (LLM-written) | `/wiki/synthesis/*` — LLM-writable, file-by-file |
+| Schema | `/wiki/.schema/CLAUDE.md` — read alongside the agent loop |
+| Index, log | `/wiki/index.md`, `/wiki/log.md` |
+
+This is one mount, one filesystem, one graph — not three. The **read-only / writable split is enforced at the filesystem boundary**, not by convention: the LLM literally cannot modify raw sources no matter how aggressively it ingests. Synthesis pages are first-class files that participate in the same graph, search, version, and chunk machinery as everything else in Grover. Answers from agent conversations get filed back into `/wiki/synthesis/` as new pages with `.connections` to the raw sources they cite and to prior syntheses they build on. The synthesis layer compounds because every interaction adds to it; the raw layer stays trustworthy because no interaction can touch it.
+
+Karpathy's "good answers should be filed back as new pages" insight becomes mechanical once writing into the wiki is just `g.write("/wiki/synthesis/<page>.md", ...)`. The hard part of the LLM Wiki pattern at scale — keeping the synthesis layer organized as it grows — becomes a question of graph hygiene rather than directory hygiene.
+
+### 8.3 Wikilinks as Authoring, Edges as Substrate
+
+Karpathy's pattern depends on `[[wikilinks]]` rendered by Obsidian. They are *content syntax* — text inside a markdown file that the renderer interprets at view time. Grover's `.connections` are *first-class persistent edges* — records in `grover_file_connections`, separate from document content, projected into the in-memory graph, queryable through `pagerank` / `neighborhood` / `meeting_subgraph` without parsing any markdown. They are different abstractions for the same idea: a link from one page to another.
+
+The right reconciliation is to keep wikilinks as the **authoring surface** and `.connections` as the **queryable substrate**, joined by a markdown analyzer. Markdown becomes one more entry in the analyzer registry alongside Python, JavaScript, and Go. On `write` and `edit`, the analyzer scans page content for `[[Page Name]]` and standard `[Title](path.md)` links, resolves each to a target path inside the mount, and emits edge records. The background worker does the rest — edges land in the database, project into the in-memory graph after the session commits, and stale edges get cleaned up automatically when wikilinks are removed.
+
+The result is that humans authoring in Obsidian and the LLM authoring through Grover can both use the same `[[…]]` syntax, and the queryable edge graph materializes for free. The agent doesn't need to be taught to maintain a separate graph — the graph is what it gets when it writes a page with links.
+
+### 8.4 Lint as Graph Algebra
+
+Karpathy's lint pass is the part of the pattern that breaks down at scale in a hand-rolled markdown setup. It requires the LLM to crawl across hundreds of files looking for structural problems, which is exactly the kind of bookkeeping the pattern is supposed to eliminate.
+
+In Grover, almost all of it falls out of graph queries instead. **Orphans** are nodes in `/wiki/synthesis/` with zero incoming edges. **Hubs** are nodes with high `pagerank` or degree centrality — useful for "what are the load-bearing concepts in this knowledge base?" **Missing cross-references** are pairs of nodes whose semantic-search nearest neighbors are not connected in the graph. **Stale claims** are synthesis pages whose cited raw sources have new versions since the synthesis was last written, using existing version timestamps. Only **contradictions** genuinely need an LLM pass — and even then, the candidate set is much smaller because the graph has already grouped co-citing pages.
+
+The lint pass becomes a small composition of operations Grover already supports, run on demand. The LLM gets called only for the one check that needs it; everything else is pure graph algebra. This is the lint Karpathy describes, but with the cost shifted from per-page LLM calls to a single in-process query.
+
+### 8.5 What This Implies for Grover
+
+The LLM Wiki pattern is a useful design forcing function because most of what it needs already exists. The remaining gaps are small and well-shaped: a markdown analyzer to bridge wikilinks and `.connections`, a default schema template that turns the pattern into a one-command adoption story, and conventions for `index.md` and `log.md` that the schema can document. None of this requires new architecture. It requires committing to the pattern as a first-class use case and shaping the API around it.
+
+The deeper implication is that Grover's "everything is a file" design — originally motivated by enterprise search and code understanding — generalizes naturally to *knowledge curation as a filesystem operation*. The same primitives that let an agent navigate a codebase let it maintain a personal research wiki, a team knowledge base, or a synthesis layer over an organization's raw documents. The LLM Wiki pattern is the test case that proves the design.
+
+## 9. The Analyzer Plugin Model
+
+### 9.1 Analyzers as Content Processors
 
 Analyzers take file content in and produce chunks and connections out. They are the bridge between raw content and the knowledge graph. The current code analyzers (Python AST, JavaScript/TypeScript, Go via tree-sitter) become one family among many:
 
@@ -600,7 +649,7 @@ class AnalysisResult:
 
 The `BackgroundWorker` calls the appropriate analyzer after a `write()`, then calls `write()` again for each chunk and `mkconn()` for each connection. The VFS doesn't care what kind of content triggered the analysis.
 
-### 8.2 Connection Types as a Vocabulary
+### 9.2 Connection Types as a Vocabulary
 
 Connection types are free-form strings, but a shared vocabulary emerges across analyzers:
 
@@ -622,9 +671,9 @@ Connection types are free-form strings, but a shared vocabulary emerges across a
 
 The connection type appears in the path: `/src/auth.py/.connections/imports/src/utils.py`. Glob patterns can query by type: `glob("/**/.connections/authored-by/**")` finds all authorship edges.
 
-## 9. Mounts and Integration
+## 10. Mounts and Integration
 
-### 9.1 Mount Architecture
+### 10.1 Mount Architecture
 
 Following Plan 9's insight that **mounts are dependency injection**, different data sources are mounted at different points in the namespace:
 
@@ -640,7 +689,7 @@ g.add_mount("/documents", backend="database", connection_string="...")
 
 Each mount provides the same `GroverFileSystem` interface. The facade routes operations to the correct backend by path prefix.
 
-### 9.2 Integration Model: Write Your Own Sync, Grover Handles the Rest
+### 10.2 Integration Model: Write Your Own Sync, Grover Handles the Rest
 
 Grover does not try to be an API gateway or a universal connector. Instead, it provides a **flexible write API** that any sync pipeline can target. The people building enterprise knowledge bases are already writing ETL pipelines — adding "write the output to Grover" is the easy part:
 
@@ -693,7 +742,7 @@ This means the integration surface is just the standard filesystem operations:
 
 No special ingest API. No bulk import format. No connector framework to learn. Just `write`, `mkconn`, and `delete` — the same operations an agent uses interactively.
 
-### 9.3 The `.api/` Directory: Data Plane and Control Plane
+### 10.3 The `.api/` Directory: Data Plane and Control Plane
 
 For external systems, the namespace splits into two planes within the same tree — **synced data** (searchable, in the graph) and **live API** (real-time pass-through):
 
@@ -826,7 +875,7 @@ This means `.api/` directories can represent any external interface:
 
 Each is just a path. `read` returns the schema. `write` triggers the action. The filesystem is the universal API surface.
 
-### 9.4 Integration Responsibility
+### 10.4 Integration Responsibility
 
 | Grover's job | User's sync pipeline / backend plugin's job |
 |---|---|
@@ -838,7 +887,7 @@ Each is just a path. `read` returns the schema. `write` triggers the action. The
 | Compose results across mounts | Handle service-specific error recovery |
 | Provide uniform read/search/graph interface | Provide `.api/` schemas and API translation |
 
-### 9.5 Mount-Scoped Connections and Path Isolation
+### 10.5 Mount-Scoped Connections and Path Isolation
 
 Connections are scoped to a single mount. `mkconn` rejects source and target paths that resolve to different filesystems. Each mount has its own `RustworkxGraph` instance backed by its own database — files with identical relative paths in different mounts never collide because they live in completely separate graph and storage instances.
 
@@ -882,7 +931,7 @@ The embedded target in a connection path (e.g., `one.py` in `/alpha/two.py/.conn
 
 Enterprise knowledge navigation does not require cross-mount connections. Fanout operations — `glob`, `grep`, `search`, `semantic_search` — already broadcast across all mounts and return unified results. An agent searching for "authentication timeout" gets results from `/jira/`, `/slack/`, and `/src/` in a single query. The agent can then follow connections within each mount to explore related entities. The namespace is global; the graphs are per-mount.
 
-### 9.6 End-to-End Agent Workflow
+### 10.6 End-to-End Agent Workflow
 
 A single agent with a single Grover tool — searching synced data, traversing the graph, and taking actions via `.api/`:
 
@@ -923,9 +972,9 @@ grover desc /src/auth.py
 
 One tool. One namespace. The agent reads and searches the data plane (synced, fast, offline-capable) and takes actions through the control plane (`.api/`, live, real-time). Same verbs everywhere: `read`, `write`, `grep`, `search`, `pred`, `mkconn`.
 
-## 10. Competitive Positioning
+## 11. Competitive Positioning
 
-### 10.1 The Landscape
+### 11.1 The Landscape
 
 No existing system combines all of Grover's capabilities:
 
@@ -943,7 +992,7 @@ No existing system combines all of Grover's capabilities:
 | Write-back to services | No | No | No | Partial | Partial | No | No | **Yes** |
 | Pluggable analyzers | No | Proprietary | No | Proprietary | No | No | No | **Yes** |
 
-### 10.2 The Unique Position
+### 11.2 The Unique Position
 
 **AgentFS** (Turso) is the closest — a SQLite-backed VFS for AI agents. But it has no graph, no semantic search, no analyzers, no versioning. It's a filesystem. Grover is a **knowledge filesystem** — the filesystem is the interface, but the value is in the graph, search, and analysis layers that operate on the content.
 
@@ -953,15 +1002,15 @@ No existing system combines all of Grover's capabilities:
 
 **Neo4j** has the graph but not the filesystem, not the search, not the versioning. And its query language (Cypher) requires specialized knowledge — it's the opposite of a universal interface.
 
-### 10.3 The One-Line Pitch
+### 11.3 The One-Line Pitch
 
 *"A virtual filesystem for knowledge — mount any data source, and everything about it appears as navigable paths that any agent can explore with `read`, `write`, `ls`, and `grep`."*
 
 Or more concisely: **Knowledge as a filesystem.**
 
-## 11. Architecture Summary
+## 12. Architecture Summary
 
-### 11.0 Design Principles
+### 12.0 Design Principles
 
 1. **Virtual overlay namespace** — paths are logical, not physical. The namespace is the interface; storage is an implementation detail.
 2. **Kinded object model** — every entity has a path, a kind, and a parent. The kind determines operation semantics.
@@ -970,7 +1019,7 @@ Or more concisely: **Knowledge as a filesystem.**
 5. **Small universal API** — `read`, `write`, `delete`, `list`, `stat`, `glob`, `grep`, `search`, `mkconn` + graph traversal. That's the whole interface.
 6. **CLI/MCP as the primary agent surface** — one tool, progressive discovery, Unix pipes for composition.
 
-### 11.1 What Stays
+### 12.1 What Stays
 
 - **Ref** — the immutable path wrapper (simplified: no sigil parsing, just segment matching)
 - **GroverResult / FileSearchResult** — the composable result types with set algebra
@@ -984,7 +1033,7 @@ Or more concisely: **Knowledge as a filesystem.**
 - **GroverAsync + Grover sync wrapper** — the facade with mixins
 - **SupportsReBAC / SupportsReconcile** — opt-in capability protocols
 
-### 11.2 What Changes
+### 12.2 What Changes
 
 | Current | Proposed |
 |---|---|
@@ -998,7 +1047,7 @@ Or more concisely: **Knowledge as a filesystem.**
 | Code-only analyzers | Pluggable analyzer families (code, documents, communications, tickets) |
 | Python API only | CLI + MCP single-tool + Python API |
 
-### 11.3 What's New
+### 12.3 What's New
 
 - **CLI** — filesystem commands that compose via Unix pipes
 - **MCP single-tool interface** — one tool, progressive discovery via `--help`
@@ -1010,15 +1059,15 @@ Or more concisely: **Knowledge as a filesystem.**
 - **`.api/` directories** — data plane (synced, searchable) and control plane (live API pass-through) coexist in the same namespace. `ls .api/` for discovery, `read .api/ticket` for schema, `write .api/ticket` for action
 - **Optional backend plugins** — for deeper integration (`.api/` endpoints, write-back), third parties implement `GroverFileSystem`
 
-## 12. Key Design Decisions
+## 13. Key Design Decisions
 
-### 12.1 Paths are logical, not physical (virtual overlay)
+### 13.1 Paths are logical, not physical (virtual overlay)
 
 **Decision:** The namespace is a virtual overlay. Paths are logical addresses, not filesystem locations. File content may live on disk (local mounts) or in the database (DB mounts). Metadata nodes (`.chunks/`, `.versions/`, `.connections/`, `.api/`) always live in the database, never as physical files on disk.
 
 **Rationale:** Grover's current `LocalFileSystem` stores real files on disk. A real file cannot literally have `/.chunks/` children on the physical filesystem. The solution is explicit: the namespace is virtual, and the backend determines where bytes live. For local mounts, `read("/src/auth.py")` reads from disk; `read("/src/auth.py/.chunks/login")` reads from SQLite. Both look identical to the agent. This is the same model as Linux's VFS layer — one namespace, multiple underlying storage systems.
 
-### 12.2 `parent_path` is stored metadata, not derived from path
+### 13.2 `parent_path` is stored metadata, not derived from path
 
 **Decision:** `parent_path` is computed at write time using marker-aware parsing (`/.chunks/`, `/.versions/`, `/.connections/`, `/.api/`) and stored as an indexed column. It is not derived by splitting on `/` and dropping the last segment.
 
@@ -1026,37 +1075,37 @@ Or more concisely: **Knowledge as a filesystem.**
 
 This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, Getting Dot-Dot Right."* In Unix, symbolic links turn the namespace from a tree into a directed graph, making `..` ambiguous (physical parent vs. the directory you "came from"). Plan 9 solved this by tracking a `Cname` (canonical name) on each open channel — the absolute pathname used to reach the file. When `..` is evaluated, the kernel lexically strips the last component from the Cname, then validates the result. Grover's metadata paths create an analogous problem: `/.connections/imports/src/utils.py` contains `/` characters that make naive parent derivation ambiguous. Grover's solution — marker-aware parsing stored at write time — is the same insight as Plan 9's Cname: the system records *how you got there* rather than trying to derive it from the path string after the fact.
 
-### 12.3 Files-first visibility defaults
+### 13.3 Files-first visibility defaults
 
 **Decision:** All query operations (`ls`, `glob`, `grep`, `search`, `tree`) default to returning files and directories only. Metadata nodes (chunks, versions, connections) require explicit opt-in (`-a`, `--chunks`, `--kinds`). `.api/` nodes are never in search results. Direct reads of any path always work regardless of defaults.
 
 **Rationale:** Without this, an agent doing `grep "timeout"` would get every chunk (function, class, section) that matches — potentially hundreds of results for a handful of relevant files. The default must be useful without configuration. Files are the primary abstraction; metadata is supporting detail. This mirrors Unix: `ls` hides dotfiles by default, `find` skips hidden directories by default. The agent can always opt in when it needs metadata depth.
 
-### 12.4 Dot-prefix for metadata directories (unchanged from prior)
+### 13.4 Dot-prefix for metadata directories (unchanged from prior)
 
 **Decision:** Use `.chunks`, `.versions`, `.connections` (dot-prefixed).
 
 **Rationale:** Plan 9 does not use dot-prefix hidden files — it uses dedicated directories and kernel device prefixes. But Grover is not Plan 9. The dot-prefix convention is deeply embedded in Unix culture (`.git`, `.ssh`, `.config`) and in LLM training data. It provides a natural "show/hide" toggle (`ls` vs `ls -a`). It prevents collision with user content. It signals "this is metadata" to anyone who understands Unix conventions.
 
-### 12.5 Connections live under the source file
+### 13.5 Connections live under the source file
 
 **Decision:** `/src/auth.py/.connections/imports/src/utils.py` — connections are children of the source.
 
 **Rationale:** An edge has to live somewhere in a tree namespace. The source file is the natural owner because: (1) analyzers produce connections by analyzing the source file's content, (2) `delete("/src/auth.py")` should cascade to its outgoing connections, (3) `ls -a /src/auth.py/.connections/` answers "what does this file depend on?" which is the most common question. Incoming connections are found via `predecessors()` graph traversal, not namespace navigation.
 
-### 12.6 Versions are read-only
+### 13.6 Versions are read-only
 
 **Decision:** `write("/src/auth.py/.versions/3")` returns an error. Versions are created as a side effect of `write("/src/auth.py")`.
 
 **Rationale:** Versions are like `/proc/42/status` — generated by the system, not written by the user. They are an audit trail of what the file looked like at a point in time. Allowing writes to versions would create confusion about what "the current content" is and undermine the versioning guarantee.
 
-### 12.7 `kind` column vs. path inference
+### 13.7 `kind` column vs. path inference
 
 **Decision:** Store `kind` as an explicit column, not derived from path format.
 
 **Rationale:** An explicit kind column enables efficient queries (`WHERE kind = 'connection'` for graph loading), is self-documenting, and survives potential future path format changes. The model validator ensures path format and kind agree.
 
-### 12.8 Nullable kind-specific columns vs. JSON metadata
+### 13.8 Nullable kind-specific columns vs. JSON metadata
 
 **Decision:** Keep kind-specific fields as real columns (source_path, target_path, line_start, etc.), not JSON.
 
@@ -1064,55 +1113,55 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 
 **Path-as-key vs. inode-as-key trade-off.** The schema uses `path TEXT UNIQUE` as the primary lookup key — not the `id` column. This is the same choice made by libsqlfs and other database-backed filesystems. The trade-off is well-understood: path-as-key makes read/stat/exists O(1) on the unique index and requires no joins, but `move()` on a directory with N descendants requires updating N rows (every child's `path` and `parent_path`). An inode-based scheme (id-as-primary-key with a separate path→id mapping table) would make rename O(1) but require joins for every path lookup. For Grover's workload — read-heavy, write-moderate, rename-rare — path-as-key is the right choice. If bulk renames become a bottleneck, the mitigation is batched `UPDATE ... WHERE path LIKE prefix%` within a single transaction, which is already the implementation in `_move_impl`.
 
-### 12.9 Sync pipelines as the primary integration model
+### 13.9 Sync pipelines as the primary integration model
 
 **Decision:** External data enters Grover through user-written sync pipelines that call `write()` / `mkconn()` / `delete()`. Backend plugins with write-back are optional, not required.
 
 **Rationale:** Every enterprise has different data sources, different schemas, different sync requirements. Building a connector framework (like Glean or Airbyte) is a massive scope expansion that delays the core value. Instead, Grover's standard filesystem operations ARE the integration API. Users already write ETL pipelines — targeting Grover is just `g.write(path, content)` at the end. This keeps Grover focused on what it's good at (namespace, graph, search, versioning) and lets users own the data ingestion, which they need to customize anyway. Backend plugins remain available for teams that want deeper integration (write-back, live schema discovery), but they're a convenience layer, not a prerequisite.
 
-### 12.10 `.api/` directories for live API interaction
+### 13.10 `.api/` directories for live API interaction
 
 **Decision:** External service APIs are exposed as `.api/` directories within the mount namespace. `ls` discovers endpoints, `read` returns schemas, `write` triggers actions. Synced data and live API coexist in the same tree.
 
 **Rationale:** This is Plan 9's data/control separation applied to external services. Plan 9's `/net/tcp/` has `clone` (control — open to create connections) alongside numbered directories (data — existing connections). The same namespace, different semantics. For Grover, `.api/` paths are the control plane — they don't store content, aren't searchable, and aren't in the graph. They're pass-through to the live API. The synced files alongside them are the data plane — local, searchable, in the graph. This separation means: (1) schema discovery is just `read` on a path, not a special `--help` mechanism, (2) agents discover APIs the same way they discover files — by navigating, (3) the `.api/` directory is optional — mounts without it are pure data plane, (4) `.api/` paths can represent any external interface (REST APIs, deployment scripts, SQL endpoints), and (5) the cost is ~0 tokens upfront because schemas are loaded on demand via `read`.
 
-### 12.11 Shares as a separate table
+### 13.11 Shares as a separate table
 
 **Decision:** `grover_shares` remains its own table, not merged into `grover_objects`.
 
 **Rationale:** Shares are ACLs — they describe access control, not entities in the namespace. A share on `/documents/report.pdf` grants access to that path and its children. The share itself is not addressable at a path, not searchable, not versioned. It's metadata about the namespace, not part of it. This matches Unix: file permissions are stored in the inode, not as entries in the directory.
 
-### 12.12 Trailing slash normalization
+### 13.12 Trailing slash normalization
 
 **Decision:** Trailing slashes are stripped during path normalization. `read("/src/auth.py/")` and `read("/src/auth.py")` are identical. No POSIX-style "trailing slash forces directory resolution" semantics.
 
 **Rationale:** POSIX mandates that a trailing slash forces the preceding component to resolve as a directory — `stat("/tmp/link/")` follows a symlink and fails with `ENOTDIR` if the target is a regular file, while `stat("/tmp/link")` succeeds. This subtlety has caused real bugs (the behavior difference between `unlink("/tmp/link")` and `unlink("/tmp/link/")` is a classic POSIX gotcha). Grover has no symlinks and dispatches by `kind`, not by path syntax. Preserving trailing slash semantics would add complexity without enabling anything — the `kind` column already distinguishes files from directories. Normalizing away trailing slashes eliminates an entire class of ambiguity.
 
-### 12.13 Rename atomicity
+### 13.13 Rename atomicity
 
 **Decision:** `move()` is atomic within a single mount (one SQL transaction). Cross-mount `move()` is a three-step transfer (read → write → delete) that is not atomic to concurrent readers.
 
 **Rationale:** POSIX guarantees that `rename()` is atomic for concurrent observers — at no point does the file appear to not exist. Within a single mount, Grover achieves this because all path updates happen in one SQL transaction (either all rows update or none do). Cross-mount moves cannot be atomic because they involve two independent backends. This mirrors the POSIX constraint that `rename()` cannot cross filesystem boundaries (`EXDEV`). The ext4 delayed-allocation incident of 2008 — where the implicit `write(tmp); rename(tmp, real)` atomicity guarantee was violated, causing data loss for essentially all applications that relied on it — demonstrates that atomicity guarantees must be explicit and documented, not implied. Grover's guarantee: same-mount `move()` is atomic; cross-mount `move()` is best-effort with read-before-delete ordering (content is never lost, but may briefly exist at both paths).
 
-### 12.14 No hard links
+### 13.14 No hard links
 
 **Decision:** Every object has exactly one path and exactly one parent. No hard links.
 
 **Rationale:** Hard links would allow a single object to appear at multiple paths, turning the namespace from a tree into a DAG. This would break: (1) `parent_path` uniqueness — an object with two parents has no single `parent_path`, (2) cascading deletes — deleting one parent path shouldn't delete the object if another link exists, requiring reference counting, (3) the `kind` invariant — the kind is path-derived and must agree with the stored kind, and (4) any algorithm that assumes an acyclic namespace (tree queries, permission inheritance, `ls -R`). Unix itself forbids hard links to directories for exactly this reason — they create cycles that break `find`, `du`, `rm -r`, and `fsck`. Connections serve the use case that hard links might otherwise address: "this object is related to that path." Connections are explicit, typed, directional, and live under the source — they don't compromise namespace invariants.
 
-### 12.15 Durability guarantees
+### 13.15 Durability guarantees
 
 **Decision:** After `write()` returns successfully, the data is durable (survives process crash). The specific guarantee depends on the backend.
 
-**Rationale:** Research on crash consistency (MIT's FSCQ, the ALICE tool) found that "every single piece of software tested except SQLite in one mode had at least one crash bug." Grover builds on SQLite (for local/embedded use) and PostgreSQL (for server deployments) — both provide well-understood durability guarantees when used correctly. For SQLite in WAL mode with `PRAGMA synchronous=FULL` (the default), a committed transaction survives power loss. For PostgreSQL, `synchronous_commit=on` (the default) provides the same guarantee. Grover's "content-before-commit" write ordering (§12.1, FS Write Ordering invariant) ensures that a crash during `write()` never creates phantom metadata (DB says file exists, content is missing). The worst case on crash is an orphan file on disk that is invisible to the system — inert and harmless. This ordering was validated independently: the ext4 delayed-allocation incident of 2008 demonstrated that commit-before-content causes real data loss at scale.
+**Rationale:** Research on crash consistency (MIT's FSCQ, the ALICE tool) found that "every single piece of software tested except SQLite in one mode had at least one crash bug." Grover builds on SQLite (for local/embedded use) and PostgreSQL (for server deployments) — both provide well-understood durability guarantees when used correctly. For SQLite in WAL mode with `PRAGMA synchronous=FULL` (the default), a committed transaction survives power loss. For PostgreSQL, `synchronous_commit=on` (the default) provides the same guarantee. Grover's "content-before-commit" write ordering (§13.1, FS Write Ordering invariant) ensures that a crash during `write()` never creates phantom metadata (DB says file exists, content is missing). The worst case on crash is an orphan file on disk that is invisible to the system — inert and harmless. This ordering was validated independently: the ext4 delayed-allocation incident of 2008 demonstrated that commit-before-content causes real data loss at scale.
 
-### 12.16 No mount propagation
+### 13.16 No mount propagation
 
 **Decision:** Mounts are private. Adding or removing a mount in one context has no effect on other contexts. No shared/slave/private/unbindable propagation model.
 
 **Rationale:** Linux introduced mount propagation (shared subtrees) in 2.6.15 to handle how mount events flow between mount namespaces. The four propagation types (shared, slave, private, unbindable), their peer group mechanics, and their interactions form a complex state machine that even kernel developers find subtle — LWN.net devoted a multi-part series to explaining the semantics. systemd's decision to default everything to shared propagation has far-reaching consequences for container isolation. Grover deliberately avoids this complexity. Each `GroverFileSystem` instance has its own mount registry (`MountRegistry`). `add_mount()` and `remove_mount()` affect only that instance. This follows Plan 9's simpler model — per-process namespaces where `bind()` and `mount()` affect only the calling process — rather than Linux's shared subtree model. The trade-off is that coordinating mount state across multiple Grover instances requires explicit application-level logic, but this is the right default for a library where each agent or service typically has its own `Grover()` instance.
 
-## 13. References
+## 14. References
 
 ### Academic Papers
 - *"From 'Everything is a File' to 'Files Are All You Need'"* (arXiv:2601.11672) — filesystem abstraction as universal agent interface
@@ -1144,6 +1193,7 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 - LangChain, *"How Agents Can Use Filesystems for Context Engineering"*
 - Block, *"Block's Playbook for Designing MCP Servers"* — design from workflows, not endpoints
 - Apideck, *"Your MCP Server Is Eating Your Context Window"* — CLI alternative to MCP tools
+- Andrej Karpathy, [*"LLM Wiki"*](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — pattern for an LLM-maintained, persistent markdown knowledge base: immutable raw sources + LLM-written wiki + schema doc, with ingest/query/lint operations. Target pattern for `grover` to implement — read-only `/raw` mounts, writable `/synthesis`, `.connections` as cross-references, and a future markdown analyzer that auto-generates connections from `[[wikilinks]]` on write/edit.
 
 ### Systems
 - Plan 9 from Bell Labs — 9P protocol, per-process namespaces, synthetic filesystems
@@ -1156,15 +1206,15 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 - libsqlfs — SQLite-backed FUSE filesystem (path-as-key schema, prior art for database-backed VFS)
 - fsspec — Python filesystem spec with `AbstractFileSystem`, protocol registry, URL chaining (complementary: uniform interface across backends at the I/O level)
 
-## 14. Decisions & Progress
+## 15. Decisions & Progress
 
-### 14.1 `Ref` deferred
+### 15.1 `Ref` deferred
 
 **Decision:** `Ref` (§4.2) will not be implemented in the initial build. Operations accept and return plain `str` paths. `Ref` can be introduced later as an ergonomic wrapper if needed.
 
 **Rationale:** The path utilities in `paths.py` already provide everything `Ref` would — `parse_kind()`, `base_path()`, `parent_path()`, `decompose_connection()`, and the path constructors. A frozen dataclass wrapping a string adds a layer of indirection without enabling anything new. If a uniform handle becomes valuable (e.g., for caching parsed properties or for type-safe API boundaries), it can be added without changing the data model or protocol — it's a presentation concern, not a storage or dispatch concern.
 
-### 14.2 Initial scaffolding — 2026-03-23
+### 15.2 Initial scaffolding — 2026-03-23
 
 **Commit:** `3f0dd20` — *Add design docs for Grover v2 rewrite*
 
@@ -1174,7 +1224,7 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 | `models.py` | §4 — `ValidatedSQLModel` base, `GroverObjectBase` with all kinded columns, `GroverObject` concrete table (`grover_objects`) with auto-derived `parent_path`, `kind`, `name`, content metrics, timestamps |
 | `vector.py` | Embedding column — `Vector` type with dimension/model-name enforcement, `VectorType` SQLAlchemy decorator (JSON serialization, dimension validation on read/write) |
 
-### 14.3 Composable result types + protocol — 2026-03-23
+### 15.3 Composable result types + protocol — 2026-03-23
 
 **Commits:** `f04444b` through `47459d3`
 
@@ -1241,7 +1291,7 @@ Old v1 code archived to `src_old/` and `tests_old/`. New v2 code promoted to `sr
 
 80 tests covering: Detail/Candidate/GroverResult construction, frozen model enforcement, JSON serialization round-trips (`model_dump`, `model_dump_json`), set algebra (intersection, union, difference, detail merging, success propagation, `_grover` propagation), enrichment chains (sort by score/operation/key, top, filter, kinds), chain stubs without bound grover, merge edge cases (zero metrics, empty content, left id preservation, None fallback), `_first_set` direct tests, required field validation, datetime round-trip, duplicate path behavior.
 
-### 14.4 Concrete base class with mount routing — 2026-03-23
+### 15.4 Concrete base class with mount routing — 2026-03-23
 
 **Commits:** `670a2b3` through `9db89e3`
 
@@ -1275,11 +1325,11 @@ Public methods are **routers** — they resolve the terminal filesystem via long
 
 **`Candidate` model relaxed.** Only `path` is required. `id`, `kind`, `lines`, `size_bytes`, `tokens` are all optional (defaulting to `None`). This lets graph and routing code construct lightweight candidates without needing database metadata. Fields are hydrated from the database when needed.
 
-### 14.5 Graph subpackage — 2026-03-23/24
+### 15.5 Graph subpackage — 2026-03-23/24
 
 **Commits:** `6766923`, `b0fab6c`
 
-Created `src/grover/graph/` subpackage implementing the in-memory knowledge graph (§11.1 "RustworkxGraph").
+Created `src/grover/graph/` subpackage implementing the in-memory knowledge graph (§12.1 "RustworkxGraph").
 
 #### `graph/protocol.py` — GraphProvider
 
@@ -1322,7 +1372,7 @@ Sole implementation of `GraphProvider`. Stores topology as adjacency dicts (`_ou
 
 **Base class wiring not yet done.** The `_*_impl` stubs in `base.py` for graph operations still raise `NotImplementedError`. Step 10 of the migration plan (adding `self._graph` attribute and delegation) is pending.
 
-### 14.6 Test coverage — 2026-03-24
+### 15.6 Test coverage — 2026-03-24
 
 **Commit:** `6fc1ff2`
 
@@ -1350,7 +1400,7 @@ Raised test coverage from **68% to 99%** (921 statements, 8 missed). Tests went 
 
 **8 uncovered lines** (all defensive/internal): SQLModel ORM lifecycle guards (models.py 47, 49, 150), unreachable-after-normalization guards (paths.py 170, 225; base.py 81-82), rare UnionFind rank branch (rustworkx.py 58).
 
-### 14.7 Complete graph algorithms — 2026-03-25
+### 15.7 Complete graph algorithms — 2026-03-25
 
 **Commits:** `dfa9c5a`, `61f0f3f`
 
@@ -1425,7 +1475,7 @@ For algorithms where computation dominates (betweenness, closeness), rustworkx's
 | `graph/rustworkx.py` | 99% |
 | **Total project** | **99%** (1173 stmts, 10 missed) |
 
-### 14.8 DatabaseFileSystem write implementation — 2026-03-30
+### 15.8 DatabaseFileSystem write implementation — 2026-03-30
 
 Implemented `backends/database.py` — the SQL-backed `_write_impl` for `grover_objects`. 6-step pipeline: validate, check chunk parents, resolve parent dirs, fetch existing, process writes, commit dirs.
 
@@ -1443,7 +1493,7 @@ Added `versioning.py` — forward unified diffs with periodic snapshots (every 1
 
 **`--scale` test flag.** Pressure tests default to 1k rows, ramp with `--scale 100000` for ad-hoc stress testing against PostgreSQL.
 
-### 14.9 CLI query engine + planner — 2026-03-31
+### 15.9 CLI query engine + planner — 2026-03-31
 
 Implemented the first runnable CLI query layer on top of `GroverFileSystem`. The architecture now matches the direction described earlier in this document:
 
@@ -1566,11 +1616,11 @@ grover search "auth" | grover meetinggraph --min | grover pagerank
 
 **Help output is not yet generated from the registry.** The command registry now contains enough metadata to drive generated help in a future pass, but the current work stops at parsing, planning, execution, and rendering.
 
-### 14.10 DatabaseFileSystem CRUD + query + graph buildout — 2026-03-30/31
+### 15.10 DatabaseFileSystem CRUD + query + graph buildout — 2026-03-30/31
 
 **Commits:** `e0f051f` through `b8894de`
 
-Between the `write` implementation (§14.8) and the CLI query engine (§14.9), the full DatabaseFileSystem surface was built out across 7 commits. This section covers the CRUD operations, query operations, graph wiring, and cross-cutting infrastructure that completed the backend.
+Between the `write` implementation (§15.8) and the CLI query engine (§15.9), the full DatabaseFileSystem surface was built out across 7 commits. This section covers the CRUD operations, query operations, graph wiring, and cross-cutting infrastructure that completed the backend.
 
 #### CRUD operations (`database.py`, grew to ~1800 lines)
 
@@ -1623,7 +1673,7 @@ Between the `write` implementation (§14.8) and the CLI query engine (§14.9), t
 
 #### Test coverage
 
-1,421 tests at end of buildout (was 534 at §14.7). 96% overall coverage. Key new test files:
+1,421 tests at end of buildout (was 534 at §15.7). 96% overall coverage. Key new test files:
 - `tests/test_database.py` — 77+ database operation tests
 - `tests/test_database_graph.py` — 514-line graph integration test suite
 - `tests/test_replace.py` — 49 tests (47% → 99% coverage for `replace.py`)
@@ -1631,7 +1681,7 @@ Between the `write` implementation (§14.8) and the CLI query engine (§14.9), t
 - `tests/test_method_chaining.py` — 474-line detail preservation test suite
 - `tests/test_versioning.py` — dedicated versioning unit tests
 
-### 14.11 Async version planning — 2026-03-31
+### 15.11 Async version planning — 2026-03-31
 
 **Commit:** `704e403`
 
@@ -1639,7 +1689,7 @@ Between the `write` implementation (§14.8) and the CLI query engine (§14.9), t
 
 Small change (8 insertions, 9 deletions) but important for write-heavy workloads — version planning is CPU-bound (hashing + diffing), and prior to this change it blocked the asyncio loop during every file update.
 
-### 14.12 EmbeddingProvider, VectorStore protocols, and search implementations — 2026-03-31
+### 15.12 EmbeddingProvider, VectorStore protocols, and search implementations — 2026-03-31
 
 **Commit:** `12880bf`
 
@@ -1686,7 +1736,7 @@ Production implementation of `VectorStore` using Databricks Direct Vector Access
 - `tests/test_embedding.py` (187 tests) — protocol compliance, LangChain adapter, batch embedding, dimension tracking
 - `tests/test_vector_store.py` (323 tests) — protocol compliance, DatabricksVectorStore (mocked SDK), query/upsert/delete, batch splitting
 
-### 14.13 BM25 implementation and benchmarks — 2026-03-31
+### 15.13 BM25 implementation and benchmarks — 2026-03-31
 
 **Commit:** `aa4606f`
 
@@ -1747,7 +1797,7 @@ Searches files and chunks — versions excluded (they duplicate file content).
 
 **BM25Index for benchmarks, BM25Scorer for production.** The index pre-computes postings for repeated queries over stable data — useful for benchmarks and REPL exploration. The scorer takes external statistics — useful for the SQL-hybrid production path where IDF comes from COUNT queries and documents come from pre-filtered SQL results.
 
-### 14.14 User-scoped filesystem support — 2026-04-01
+### 15.14 User-scoped filesystem support — 2026-04-01
 
 **Commit:** `5996428`
 
@@ -1862,7 +1912,7 @@ Both `_fetch_lexical_docs()` and `_fetch_corpus_stats()` add `WHERE path LIKE '/
 
 1463 total tests (was 1421), all passing. ruff and ty clean.
 
-### 14.13 LIKE wildcard escaping in path-based SQL queries — 2026-04-01
+### 15.13 LIKE wildcard escaping in path-based SQL queries — 2026-04-01
 
 **Decision:** All SQL `LIKE` clauses that interpolate stored path values must use `_escape_like()` and pass `escape="\\"`. Paths may legally contain `%` and `_` characters (they pass `validate_path()`), but these are LIKE wildcards in SQL. Without escaping, a path like `/data/100%/` produces `WHERE path LIKE '/data/100%/%'`, which matches unintended rows.
 
@@ -1891,11 +1941,11 @@ The codebase already had the correct tools — `_escape_like()` (line 46) and co
 
 1468 total tests (was 1463), all passing. ruff and ty clean.
 
-### 14.15 GroverAsync and Grover facade layer — 2026-04-01
+### 15.15 GroverAsync and Grover facade layer — 2026-04-01
 
 **Commits:** (this session)
 
-Added the two-tier facade layer described in §11.1: `GroverAsync` for async app servers and `Grover` for sync data pipelines. Both sit on top of `GroverFileSystem` as storageless routers (`storage=False`) that delegate to mounted backends.
+Added the two-tier facade layer described in §12.1: `GroverAsync` for async app servers and `Grover` for sync data pipelines. Both sit on top of `GroverFileSystem` as storageless routers (`storage=False`) that delegate to mounted backends.
 
 #### `storage` flag on GroverFileSystem (`base.py`)
 
@@ -1987,7 +2037,7 @@ Since `raise_on_error=True` cascades to all mounted filesystems, errors raise in
 
 1556 total tests (was 1468), all passing. 92% overall coverage. ruff and ty clean.
 
-### 14.16 Test coverage to 99% and CI enforcement — 2026-04-01
+### 15.16 Test coverage to 99% and CI enforcement — 2026-04-01
 
 Systematic coverage audit and gap closure, raising overall coverage from 91% to 99.11% (1779 tests, all passing).
 
