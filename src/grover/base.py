@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from grover.exceptions import _classify_error
 from grover.paths import normalize_path
+from grover.permissions import Permission, check_writable, validate_permission
 from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperation
 
 if TYPE_CHECKING:
@@ -42,9 +43,11 @@ class GroverFileSystem:
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         storage: bool = True,
         raise_on_error: bool = False,
+        permissions: Permission = "read_write",
     ) -> None:
         self._storage = storage
         self._raise_on_error = raise_on_error
+        self._permissions: Permission = validate_permission(permissions)
         self._engine = engine
         if session_factory is not None:
             self._session_factory: async_sessionmaker[AsyncSession] | None = session_factory
@@ -219,6 +222,11 @@ class GroverFileSystem:
                 candidates=[],
             )
 
+        for fs, prefix, _gc in groups:
+            err = check_writable(fs, op, prefix or "/")
+            if err is not None:
+                return err
+
         async def _run_group(
             fs: GroverFileSystem,
             prefix: str,
@@ -264,6 +272,10 @@ class GroverFileSystem:
         if fs is self and not self._storage:
             return self._error(f"No mount found for path: {path}")
 
+        err = check_writable(fs, op, path)
+        if err is not None:
+            return err
+
         async with fs._use_session() as s:
             result = await getattr(fs, f"_{op}_impl")(rel, user_id=user_id, session=s, **kwargs)
 
@@ -305,6 +317,18 @@ class GroverFileSystem:
             return self._error(dst_check)
         dst_fs, dst_prefix = dst_check
         _, src_prefix = src_check
+
+        # Destination always mutates.  For ``move``, the source also
+        # mutates (the original is deleted after the destination is
+        # written), so check it too.  ``copy`` only reads the source,
+        # so a read-only source is allowed.
+        dst_err = check_writable(dst_fs, op, ops[0].dest)
+        if dst_err is not None:
+            return dst_err
+        if op == "move":
+            src_err = check_writable(src_fs, "delete", ops[0].src)
+            if src_err is not None:
+                return src_err
 
         src_rels = [r[1] for r in src_resolved]
         dst_rels = [r[1] for r in dst_resolved]
@@ -437,6 +461,11 @@ class GroverFileSystem:
             return GroverResult(success=True, candidates=[])
 
         groups = self._group_objects_by_terminal(objects)
+
+        for fs, prefix, _objs in groups:
+            err = check_writable(fs, "write", prefix or "/")
+            if err is not None:
+                return err
 
         async def _write_group(fs: GroverFileSystem, prefix: str, group_objs: list[GroverObjectBase]) -> GroverResult:
             async with fs._use_session() as s:
@@ -699,6 +728,9 @@ class GroverFileSystem:
             return self._error(
                 f"Cross-mount connections not supported: {source} and {target} resolve to different filesystems",
             )
+        err = check_writable(src_fs, "mkconn", source)
+        if err is not None:
+            return err
         async with src_fs._use_session() as s:
             result = await src_fs._mkconn_impl(
                 src_rel,

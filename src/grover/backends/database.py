@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
     from grover.embedding import EmbeddingProvider
+    from grover.permissions import Permission
     from grover.vector_store import VectorStore
 
 
@@ -79,8 +80,13 @@ class DatabaseFileSystem(GroverFileSystem):
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
         user_scoped: bool = False,
+        permissions: Permission = "read_write",
     ) -> None:
-        super().__init__(engine=engine, session_factory=session_factory)
+        super().__init__(
+            engine=engine,
+            session_factory=session_factory,
+            permissions=permissions,
+        )
         self._model = model
         self._user_scoped = user_scoped
         self._graph = RustworkxGraph(model=model, user_scoped=user_scoped)
