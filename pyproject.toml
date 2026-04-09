@@ -132,7 +132,17 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/grover"]
-omit = ["tests/*", "src_old/*", "tests_old/*"]
+omit = [
+    "tests/*",
+    "src_old/*",
+    "tests_old/*",
+    # Integration-only backend: exercised by tests/test_mssql_backend.py
+    # under --mssql against a real SQL Server instance (see docker/mssql/).
+    # Layer-1 unit tests for its helpers still run in CI but aren't
+    # counted — covering the CONTAINSTABLE / REGEXP_LIKE / LIKE pushdown
+    # bodies would require wiring an MSSQL service container into CI.
+    "src/grover/backends/mssql.py",
+]
 
 [tool.coverage.report]
 fail_under = 99
