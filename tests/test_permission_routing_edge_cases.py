@@ -6,14 +6,10 @@ in :mod:`grover.base` and the storage paths in
 :mod:`grover.backends.database` — parent-directory creation vs revival,
 empty batches, user scoping, the self-storage routing path, mount
 remove/re-add, and the rule against rebinding ``_permission_map``.
-Two tests are pinned ``xfail(strict=True)`` to lock in accepted-design
-trade-offs (parent-dir creation gets a free pass; user-scoped rules
-live in unscoped logical coordinates).
 """
 
 from __future__ import annotations
 
-import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, select
@@ -57,22 +53,18 @@ async def _raw_deleted_at(fs: DatabaseFileSystem, path: str):
         return obj.deleted_at if obj is not None else "missing"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ACCEPTED DESIGN: _resolve_parent_dirs creates brand-new ancestor "
-        "directory rows without consulting the permission map.  This is "
-        "intentional — a writable carve-out (e.g. /wh/a/b/c) inside a "
-        "read-only mount needs reachable ancestors, and forcing the user "
-        "to seed them manually would make the carve-out useless.  Note "
-        "that REVIVAL of soft-deleted ancestors IS checked (see "
-        "test_parent_dir_revival_does_not_undelete_read_only_ancestors): "
-        "creation gets a free pass, revival does not.  This test is "
-        "pinned strict-xfail so any future change in policy must update "
-        "it deliberately."
-    ),
-)
-async def test_parent_dir_creation_respects_read_only_ancestors():
+async def test_writable_carve_out_creates_unrestricted_ancestors():
+    """Brand-new ancestor directories are created on demand even when
+    they fall under a read-only rule.
+
+    A writable carve-out (e.g. ``/wh/a/b/c``) inside a read-only mount
+    needs reachable ancestors — ``ls``, ``tree``, and parent traversal
+    all walk through them.  Forcing the user to pre-seed those parents
+    would make the carve-out useless, so ``_resolve_parent_dirs`` skips
+    the permission check for *creation*.  Revival of soft-deleted
+    ancestors IS checked — see
+    :func:`test_parent_dir_revival_does_not_undelete_read_only_ancestors`.
+    """
     engine = await _sqlite_engine()
     fs = DatabaseFileSystem(
         engine=engine,
@@ -86,9 +78,12 @@ async def test_parent_dir_creation_respects_read_only_ancestors():
     try:
         r = await router.write("/mnt/wh/a/b/c/x.md", "ok")
         assert r.success, r.error_message
+        # Ancestors are created on demand even though they fall under
+        # the read-only default — the carve-out would be unreachable
+        # otherwise.
         for ancestor in ("/wh", "/wh/a", "/wh/a/b"):
-            assert not await _raw_has_path(fs, ancestor), (
-                f"BYPASS: row at read-only ancestor {ancestor}"
+            assert await _raw_has_path(fs, ancestor), (
+                f"Expected ancestor row at {ancestor} (created on demand)"
             )
     finally:
         await router.close()
@@ -173,20 +168,18 @@ async def test_user_scoped_pre_scoped_path_no_double_write():
         await router.close()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ACCEPTED FOOTGUN (documented in permissions.py): rules live in "
-        "unscoped logical coordinates.  Embedding a user_id in a rule "
-        "path (e.g. '/alice/synthesis') makes the rule fire for any user "
-        "who can construct that path under their OWN scope.  No data "
-        "leak — bob's data still lands in /bob/... — but the rule does "
-        "not actually scope to alice.  Use the share / ReBAC layer for "
-        "per-user policy.  This test pins the behavior so any future "
-        "policy change updates the docstring + test together."
-    ),
-)
-async def test_user_scoped_rule_in_physical_coordinates_blocks_other_users():
+async def test_user_scoped_rule_with_user_id_in_path_is_global_not_per_user():
+    """Permission rules live in unscoped logical coordinates.
+
+    An admin who embeds a user_id in a rule path (e.g.
+    ``/alice/synthesis``) gets a *global* rule, not a per-user one —
+    any caller can match it by typing the same path under their own
+    scope.  Bob's data still lands in his own scope (``/bob/...``) so
+    there is no cross-user data leak, but the rule does not actually
+    scope to alice.  Per-user policy belongs in the share / ReBAC
+    layer, not :class:`PermissionMap`.  See the "User scoping" section
+    of :mod:`grover.permissions`.
+    """
     engine = await _sqlite_engine()
     fs = DatabaseFileSystem(
         engine=engine,
@@ -196,13 +189,17 @@ async def test_user_scoped_rule_in_physical_coordinates_blocks_other_users():
     router = GroverAsync()
     await router.add_mount("wiki", fs)
     try:
+        # Bob matches the rule because the check sees the unscoped path
+        # /alice/synthesis/x.md before _scope_path runs.
         r = await router.write(
             "/wiki/alice/synthesis/x.md", "bob-wrote-this", user_id="bob"
         )
-        assert not r.success, (
-            "BYPASS: bob wrote through /alice/synthesis rule"
-        )
-        assert not await _raw_has_path(fs, "/bob/alice/synthesis/x.md")
+        assert r.success, r.error_message
+        # Bob's data lands in HIS own scope — no cross-user leak.
+        assert await _raw_has_path(fs, "/bob/alice/synthesis/x.md")
+        # Alice's actual scope is untouched.
+        assert not await _raw_has_path(fs, "/alice/alice/synthesis/x.md")
+        assert not await _raw_has_path(fs, "/alice/synthesis/x.md")
     finally:
         await router.close()
 
