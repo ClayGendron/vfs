@@ -98,7 +98,7 @@ class TestConstruction:
         engine = await _sqlite_engine()
         try:
             fs = DatabaseFileSystem(engine=engine)
-            assert fs._permissions == "read_write"
+            assert fs._permission_map.default == "read_write"
         finally:
             await engine.dispose()
 
@@ -106,7 +106,7 @@ class TestConstruction:
         engine = await _sqlite_engine()
         try:
             fs = DatabaseFileSystem(engine=engine, permissions="read_write")
-            assert fs._permissions == "read_write"
+            assert fs._permission_map.default == "read_write"
         finally:
             await engine.dispose()
 
@@ -114,7 +114,7 @@ class TestConstruction:
         engine = await _sqlite_engine()
         try:
             fs = DatabaseFileSystem(engine=engine, permissions="read")
-            assert fs._permissions == "read"
+            assert fs._permission_map.default == "read"
         finally:
             await engine.dispose()
 
@@ -128,11 +128,11 @@ class TestConstruction:
 
     def test_base_class_default(self):
         fs = GroverFileSystem(storage=False)
-        assert fs._permissions == "read_write"
+        assert fs._permission_map.default == "read_write"
 
     def test_base_class_read(self):
         fs = GroverFileSystem(storage=False, permissions="read")
-        assert fs._permissions == "read"
+        assert fs._permission_map.default == "read"
 
 
 # ==================================================================
@@ -171,7 +171,7 @@ class TestCheckWritable:
         result = check_writable(fs, "write", "/a")
         assert result is not None
         assert not result.success
-        assert "Cannot write to read-only mount" in result.error_message
+        assert "Cannot write to read-only path" in result.error_message
         assert "/a" in result.error_message
 
 
@@ -186,7 +186,7 @@ class TestReadOnlyBlocksMutations:
         try:
             result = await router.write("/ro/new.md", "nope")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -195,7 +195,7 @@ class TestReadOnlyBlocksMutations:
         try:
             result = await router.edit("/ro/doc.md", "hello", "bye")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -204,7 +204,7 @@ class TestReadOnlyBlocksMutations:
         try:
             result = await router.delete("/ro/doc.md")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -213,7 +213,7 @@ class TestReadOnlyBlocksMutations:
         try:
             result = await router.delete("/ro/doc.md", permanent=True)
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -222,7 +222,7 @@ class TestReadOnlyBlocksMutations:
         try:
             result = await router.mkdir("/ro/sub")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -233,7 +233,7 @@ class TestReadOnlyBlocksMutations:
             await _seed(ro, "/b.md", "b")
             result = await router.mkconn("/ro/a.md", "/ro/b.md", "references")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -242,7 +242,7 @@ class TestReadOnlyBlocksMutations:
         try:
             result = await router.move("/ro/doc.md", "/ro/doc2.md")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -251,7 +251,7 @@ class TestReadOnlyBlocksMutations:
         try:
             result = await router.copy("/ro/doc.md", "/ro/doc2.md")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -261,7 +261,7 @@ class TestReadOnlyBlocksMutations:
             objs = [GroverObject(path="/ro/batch.md", content="x")]
             result = await router.write(objects=objs)
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -348,7 +348,7 @@ class TestCrossMount:
         try:
             result = await router.copy("/rw/doc.md", "/ro/new.md")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -358,7 +358,7 @@ class TestCrossMount:
         try:
             result = await router.move("/ro/doc.md", "/rw/doc.md")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
             # Source must still be intact
             read = await router.read("/ro/doc.md")
             assert read.success
@@ -370,7 +370,7 @@ class TestCrossMount:
         try:
             result = await router.move("/rw/doc.md", "/ro/new.md")
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
         finally:
             await router.close()
 
@@ -392,7 +392,7 @@ class TestCandidateDispatch:
 
             result = await router.delete(candidates=listing)
             assert not result.success
-            assert "Cannot write to read-only mount" in result.error_message
+            assert "Cannot write to read-only path" in result.error_message
 
             # Read-only side untouched
             read = await router.read("/ro/doc.md")
@@ -418,7 +418,7 @@ class TestSyncRaises:
             ro = g._run(_setup())
             g.add_mount("ro", ro)
 
-            with pytest.raises(WriteConflictError, match="Cannot write to read-only mount"):
+            with pytest.raises(WriteConflictError, match="Cannot write to read-only path"):
                 g.write("/ro/new.md", "nope")
         finally:
             g.close()
@@ -434,7 +434,7 @@ class TestSyncRaises:
             ro = g._run(_setup())
             g.add_mount("ro", ro)
 
-            with pytest.raises(WriteConflictError, match="Cannot write to read-only mount"):
+            with pytest.raises(WriteConflictError, match="Cannot write to read-only path"):
                 g.mkdir("/ro/sub")
         finally:
             g.close()
@@ -494,7 +494,7 @@ class TestSharedEngineIsNotIsolated:
                 # The read-only mount correctly rejects a direct write.
                 blocked = await router.write("/ro/doc.md", "blocked")
                 assert not blocked.success
-                assert "Cannot write to read-only mount" in blocked.error_message
+                assert "Cannot write to read-only path" in blocked.error_message
 
                 # But the writable sibling on the SAME engine can mutate
                 # the underlying row.  Both mounts are reading the same

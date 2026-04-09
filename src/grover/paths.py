@@ -159,6 +159,14 @@ def normalize_path(path: str) -> str:
 
     Ensures leading ``/``, resolves ``..`` and ``.``, removes double slashes
     and trailing slashes (except root).
+
+    Also collapses POSIX's preserved leading ``//`` to a single ``/``.
+    POSIX §4.12 lets implementations give exactly two leading slashes
+    distinct meaning, and ``posixpath.normpath`` honors that — but Grover
+    treats ``//path`` and ``/path`` as the same logical location, so we
+    flatten the result.  This closes a permission-bypass vector where
+    ``//`` could route around a directory-prefix rule that matched the
+    single-slash form.
     """
     if not path:
         return "/"
@@ -166,6 +174,11 @@ def normalize_path(path: str) -> str:
     if not path.startswith("/"):
         path = "/" + path
     path = posixpath.normpath(path)
+    # POSIX preserves exactly two leading slashes (`//x` stays as `//x`,
+    # but `///x` collapses to `/x`).  Grover does not honor that
+    # distinction — flatten to a single leading slash.
+    if path.startswith("//"):
+        path = path[1:]
     return path
 
 

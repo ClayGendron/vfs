@@ -1,5 +1,6 @@
 __version__ = "0.0.13"
 
+from grover import permissions
 from grover.client import Grover, GroverAsync
 from grover.exceptions import (
     GraphError,
@@ -9,6 +10,7 @@ from grover.exceptions import (
     ValidationError,
     WriteConflictError,
 )
+from grover.permissions import PermissionMap
 
 __all__ = [
     "GraphError",
@@ -17,6 +19,8 @@ __all__ = [
     "GroverError",
     "MountError",
     "NotFoundError",
+    "PermissionMap",
     "ValidationError",
     "WriteConflictError",
+    "permissions",
 ]

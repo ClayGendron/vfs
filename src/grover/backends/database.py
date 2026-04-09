@@ -21,6 +21,7 @@ from grover.models import GroverObject, GroverObjectBase
 from grover.paths import connection_path, scope_path, validate_user_id, version_path
 from grover.paths import parent_path as compute_parent_path
 from grover.patterns import compile_glob, glob_to_sql_like
+from grover.permissions import check_writable
 from grover.replace import replace
 from grover.results import Candidate, Detail, EditOperation, GroverResult, TwoPathOperation
 from grover.versioning import SNAPSHOT_INTERVAL
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
     from grover.embedding import EmbeddingProvider
-    from grover.permissions import Permission
+    from grover.permissions import Permission, PermissionMap
     from grover.vector_store import VectorStore
 
 
@@ -80,7 +81,7 @@ class DatabaseFileSystem(GroverFileSystem):
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
         user_scoped: bool = False,
-        permissions: Permission = "read_write",
+        permissions: Permission | PermissionMap = "read_write",
     ) -> None:
         super().__init__(
             engine=engine,
@@ -854,6 +855,20 @@ class DatabaseFileSystem(GroverFileSystem):
             if dir_errors:
                 errors.extend(dir_errors)
                 return self._error(errors)
+            # Brand-new ancestor directories are created without a
+            # permission check — a writable carve-out (e.g. /a/b/c) inside
+            # a read-only mount needs reachable ancestors, so we let them
+            # be created on demand.  But REVIVAL of a previously
+            # soft-deleted ancestor in a read-only region must be blocked:
+            # the user explicitly deleted that path, then made it
+            # read-only, so silently un-deleting it as a side-effect of a
+            # nested write would violate both intentions.
+            for d in parent_dirs:
+                if d.deleted_at is None:
+                    continue  # creation — accepted
+                err = check_writable(self, "write", d.path)
+                if err is not None:
+                    return err
 
         # ── Step 4a: Fetch existing objects ──────────────────────────
         all_paths = list(write_map.keys())
@@ -1110,6 +1125,22 @@ class DatabaseFileSystem(GroverFileSystem):
             found = {p: o for p, o in found.items() if p not in blocked}
             if not found:
                 return self._error(GroverResult(errors=errors, success=len(errors) == 0))
+
+        # ── Per-child permission check (cascade fail-fast) ───────────
+        # The router's chokepoint only saw the top-level paths.  When a
+        # delete cascades into children, each child must independently
+        # satisfy the permission map — otherwise a delete on a writable
+        # parent would silently swallow children protected by a stricter
+        # nested rule (e.g. PermissionMap default=read_write with
+        # ("/a/b", "read") would let `delete("/a")` cascade through
+        # `/a/b/protected.md`).
+        for parent_path, children in children_map.items():
+            if parent_path not in found:
+                continue
+            for child in children:
+                err = check_writable(self, "delete", child.path)
+                if err is not None:
+                    return err
 
         # ── Apply deletes ────────────────────────────────────────────
         now = datetime.now(UTC)
@@ -1577,38 +1608,51 @@ class DatabaseFileSystem(GroverFileSystem):
                     content_map[obj.path] = obj.content
 
         # ── Search content line by line ───────────────────────────────
-        matched: list[Candidate] = []
+        matched = self._collect_line_matches(content_map, regex, max_results)
+        return self._unscope_result(GroverResult(candidates=matched), user_id)
 
+    @staticmethod
+    def _collect_line_matches(
+        content_map: dict[str, str],
+        regex: re.Pattern[str],
+        max_results: int | None,
+    ) -> list[Candidate]:
+        """Build per-line grep candidates from a ``{path: content}`` mapping.
+
+        Iterates ``content_map`` in sorted-path order, splits each value
+        on newlines, and records line numbers + text for any line whose
+        ``regex.search`` matches.  Stops at *max_results* matched files
+        when set.  Shared by ``DatabaseFileSystem._grep_impl`` and any
+        subclass that pre-narrows the candidate set in SQL before
+        running per-line scanning client-side.
+        """
+        matched: list[Candidate] = []
         for path in sorted(content_map):
             content = content_map[path]
-            lines = content.split("\n")
             line_matches: list[dict[str, object]] = []
-
-            for line_num, line_text in enumerate(lines, 1):
+            for line_num, line_text in enumerate(content.split("\n"), 1):
                 if regex.search(line_text):
                     line_matches.append({"line": line_num, "text": line_text})
-
             if line_matches:
-                grep_detail = Detail(
-                    operation="grep",
-                    score=float(len(line_matches)),
-                    metadata={
-                        "line_matches": line_matches,
-                        "match_count": len(line_matches),
-                    },
-                )
                 matched.append(
                     Candidate(
                         path=path,
                         kind="file",
-                        details=(grep_detail,),
+                        details=(
+                            Detail(
+                                operation="grep",
+                                score=float(len(line_matches)),
+                                metadata={
+                                    "line_matches": line_matches,
+                                    "match_count": len(line_matches),
+                                },
+                            ),
+                        ),
                     )
                 )
-
                 if max_results is not None and len(matched) >= max_results:
                     break
-
-        return self._unscope_result(GroverResult(candidates=matched), user_id)
+        return matched
 
     async def _semantic_search_impl(
         self,
