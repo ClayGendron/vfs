@@ -132,9 +132,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         """
         table = self._model.__tablename__
         async with self._use_session() as session:
-            object_id = (
-                await session.execute(text(f"SELECT OBJECT_ID(N'{table}') AS oid"))
-            ).scalar()
+            object_id = (await session.execute(text(f"SELECT OBJECT_ID(N'{table}') AS oid"))).scalar()
             if object_id is None:
                 raise RuntimeError(
                     f"MSSQLFileSystem requires table '{table}' to exist in the "
@@ -144,17 +142,12 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
             content_column_exists = (
                 await session.execute(
-                    text(
-                        "SELECT 1 FROM sys.columns "
-                        "WHERE object_id = :oid AND name = 'content'"
-                    ),
+                    text("SELECT 1 FROM sys.columns WHERE object_id = :oid AND name = 'content'"),
                     {"oid": object_id},
                 )
             ).scalar()
             if content_column_exists is None:
-                raise RuntimeError(
-                    f"MSSQLFileSystem requires a 'content' column on '{table}'."
-                )
+                raise RuntimeError(f"MSSQLFileSystem requires a 'content' column on '{table}'.")
 
             fulltext_index_exists = (
                 await session.execute(
@@ -256,9 +249,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
                     Candidate(
                         path=row.path,
                         kind=row.kind,
-                        details=(
-                            Detail(operation="lexical_search", score=float(row.score)),
-                        ),
+                        details=(Detail(operation="lexical_search", score=float(row.score)),),
                     )
                     for row in rows
                 ]
@@ -542,8 +533,5 @@ class MSSQLFileSystem(DatabaseFileSystem):
             params["like_pattern"] = like_pattern
 
         rows = (await session.execute(sql, params)).all()
-        matched = [
-            Candidate(path=row.path, kind=row.kind, details=(Detail(operation="glob"),))
-            for row in rows
-        ]
+        matched = [Candidate(path=row.path, kind=row.kind, details=(Detail(operation="glob"),)) for row in rows]
         return self._unscope_result(GroverResult(candidates=matched), user_id)

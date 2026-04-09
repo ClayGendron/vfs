@@ -217,15 +217,9 @@ async def _wait_for_fts_ready(
     catalog = "grover_test_ftcat"
     while True:
         async with db._use_session() as s:
-            item_row = (
-                await s.execute(
-                    text(f"SELECT FULLTEXTCATALOGPROPERTY('{catalog}', 'ItemCount')")
-                )
-            ).first()
+            item_row = (await s.execute(text(f"SELECT FULLTEXTCATALOGPROPERTY('{catalog}', 'ItemCount')"))).first()
             status_row = (
-                await s.execute(
-                    text(f"SELECT FULLTEXTCATALOGPROPERTY('{catalog}', 'PopulateStatus')")
-                )
+                await s.execute(text(f"SELECT FULLTEXTCATALOGPROPERTY('{catalog}', 'PopulateStatus')"))
             ).first()
         item_count = int(item_row[0] or 0) if item_row is not None else 0
         populate_status = int(status_row[0] or 0) if status_row is not None else 0
@@ -316,9 +310,7 @@ class TestLexicalSearchPushdown:
                 "/c.py": "auth logout",
             },
         )
-        candidates = GroverResult(
-            candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")]
-        )
+        candidates = GroverResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
         async with db._use_session() as s:
             r = await db._lexical_search_impl("auth", candidates=candidates, session=s)
         assert set(r.paths) == {"/a.py", "/c.py"}
@@ -398,9 +390,7 @@ class TestGrepPushdown:
                 "/c.py": "needle c",
             },
         )
-        candidates = GroverResult(
-            candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")]
-        )
+        candidates = GroverResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
         async with db._use_session() as s:
             r = await db._grep_impl("needle", candidates=candidates, session=s)
         assert set(r.paths) == {"/a.py", "/c.py"}
