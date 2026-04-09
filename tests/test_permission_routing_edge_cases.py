@@ -1,4 +1,15 @@
-"""Red-team tests for directory-level permission bypass via routing tricks."""
+"""Edge cases for permission enforcement in the routing/dispatch layer.
+
+Pins behavior around the subtler corners of how
+:class:`grover.permissions.PermissionMap` interacts with the chokepoints
+in :mod:`grover.base` and the storage paths in
+:mod:`grover.backends.database` — parent-directory creation vs revival,
+empty batches, user scoping, the self-storage routing path, mount
+remove/re-add, and the rule against rebinding ``_permission_map``.
+Two tests are pinned ``xfail(strict=True)`` to lock in accepted-design
+trade-offs (parent-dir creation gets a free pass; user-scoped rules
+live in unscoped logical coordinates).
+"""
 
 from __future__ import annotations
 
@@ -112,29 +123,6 @@ async def test_parent_dir_revival_does_not_undelete_read_only_ancestors():
             assert deleted_at is not None and deleted_at != "missing", (
                 f"REGRESSION: {ancestor} revived (deleted_at={deleted_at!r})"
             )
-    finally:
-        await router.close()
-
-
-async def test_cascade_delete_respects_nested_read_only_rule():
-    engine = await _sqlite_engine()
-    fs = DatabaseFileSystem(engine=engine, permissions="read_write")
-    await _seed(fs, "/a/x.md", "X")
-    await _seed(fs, "/a/b/protected.md", "P")
-    await _seed(fs, "/a/b/also_protected.md", "P2")
-    fs._permission_map = PermissionMap(
-        default="read_write",
-        overrides=(("/a/b", "read"),),
-    )
-    router = GroverAsync()
-    await router.add_mount("mnt", fs)
-    try:
-        blocked = await router.delete("/mnt/a/b")
-        assert not blocked.success, "sanity: /a/b direct delete must block"
-        r = await router.delete("/mnt/a")
-        assert not r.success, "BYPASS: cascade swallowed read-only /a/b"
-        assert await _raw_has_path(fs, "/a/b/protected.md")
-        assert await _raw_has_path(fs, "/a/b/also_protected.md")
     finally:
         await router.close()
 

@@ -1,7 +1,12 @@
-"""Red-team probes against grover.permissions path handling.
+"""Edge cases for permission path handling.
 
-Tests marked xfail(strict=True) document live bypasses; plain asserts
-pin correct behaviours so regressions are caught.
+Pins behavior across the path-normalization surface that
+:class:`grover.permissions.PermissionMap` and
+:func:`grover.paths.normalize_path` interact with: leading double
+slashes, dot segments, whitespace, unicode, control characters,
+percent encoding, and case sensitivity.  Each test exists because the
+underlying behavior was at least once a real or near-bypass; flipping
+any of them on accident should be loud.
 """
 
 from __future__ import annotations
