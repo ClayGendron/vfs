@@ -2093,3 +2093,112 @@ Removed unreachable defensive guards that duplicated guarantees from `normalize_
 | **TOTAL** | **91%** | **99.11%** |
 
 1779 total tests (was 1556), all passing. 99.11% coverage. ruff clean.
+
+### 15.17 Mount-level read/read_write permissions — 2026-04-09
+
+**Commit:** `59a5765` — *Add mount-level read/read_write permissions*
+
+Added the first slice of permission enforcement. `DatabaseFileSystem` now accepts `permissions="read"` or `permissions="read_write"` (default); a read-only mount rejects every mutation at the routing layer before it reaches storage. This unlocks the LLM Wiki pattern's immutable-raw-sources use case (§8.2) and lets a single `Grover` instance expose a mix of writable and read-only data sources.
+
+Directory-level and file-level permissions are explicitly deferred to a future iteration on top of the same chokepoint.
+
+#### New module (`permissions.py`)
+
+- `Permission = Literal["read", "read_write"]` type alias
+- `MUTATING_OPS` frozenset — `write`, `edit`, `delete`, `mkdir`, `mkconn`, `move`, `copy`
+- `validate_permission(value)` — exhaustive branch-based validation (returns narrowed literals from explicit `if` branches so the type checker needs no cast or ignore)
+- `check_writable(fs, op, path)` — returns a classified error result if *op* would mutate a read-only mount, otherwise `None`. Uses the error prefix `"Cannot write to read-only mount"` so the existing `_classify_error` substring rule maps it to `WriteConflictError` without a new exception class
+
+#### Enforcement (`base.py`)
+
+`GroverFileSystem.__init__` accepts `permissions: Permission = "read_write"`, validates at construction time, and stores it on `self._permissions`. Every mutation funnels through exactly one of five chokepoints, each of which calls `check_writable(fs, op, path)` on the resolved terminal filesystem before any session is opened:
+
+- **`_route_single`** — after `_resolve_terminal`, covers `write` (single-path form), `edit`, `delete`, `mkdir`
+- **`_route_write_batch`** — walks the grouped-by-terminal objects and fails fast before any group is dispatched
+- **`_route_two_path`** — checks `dst_fs` always; for `move`, also checks `src_fs` (because move deletes the source after writing the destination). The check runs **before** the same-mount vs cross-mount branch, so both paths share the same enforcement point and cross-mount transfers are covered for free
+- **`_dispatch_candidates`** — walks the grouped-by-terminal candidates and fails fast before any group runs, covering candidate-based `edit`/`delete`
+- **`mkconn`** — after the cross-mount guard, checks the source filesystem (same as the target, per the existing `mkconn` constraint)
+
+**Copy from a read-only source to a writable destination is allowed by design.** Reads are not mutations, so `copy("/ro/src", "/rw/dst")` succeeds; only the destination is checked for `copy`. Mixed-mount batches (heterogeneous `moves=[...]` / `copies=[...]` or `write(objects=[...])` spanning read-only and writable terminals) fail fast on the first read-only group — no partial writes.
+
+`DatabaseFileSystem.__init__` forwards the kwarg via `super().__init__(...)`. `add_mount` does **not** need a new parameter — the permission travels with the filesystem instance.
+
+#### Per-instance model and the shared-engine limitation
+
+**Permissions live on a `DatabaseFileSystem` instance, not on the engine or table it points at.** An adversarial sub-agent pass found that two DFS instances sharing the same SQL engine are independent from the permission system's point of view: a writable sibling can mutate the bytes a read-only instance reads from. The sequence is:
+
+```python
+shared = await make_engine()
+ro = DatabaseFileSystem(engine=shared, permissions="read")
+rw = DatabaseFileSystem(engine=shared, permissions="read_write")
+# Mount both. Writes through `rw` land in the bytes `ro` reads from.
+```
+
+Three options were considered: (A) document and don't enforce, (B) a module-level `WeakValueDictionary[AsyncEngine, Permission]` registry, (C) an `add_mount`-time walk that refuses conflicting permissions on shared engines.
+
+**Decision: Option A.** The SQL engine is analogous to a Unix block device — a process with direct access to the underlying storage can always write bytes; pretending otherwise creates false security. Engine sharing is a legitimate optimization when all readers agree on the same access level, and the `add_mount` API already encourages one engine per mount in typical usage. Hard isolation, when actually needed, is achieved by using separate engines or separate tables — not by making the permission flag lie.
+
+The limitation is documented in the `permissions.py` module docstring (with the Unix block-device analogy) and pinned by `TestSharedEngineIsNotIsolated` in `tests/test_permissions.py` as executable specification. The guidance is explicit: **mounts must not share an engine or table they write to.**
+
+#### Key decisions
+
+**Permission lives on the base class, not the backend.** The kwarg and validation are on `GroverFileSystem.__init__`, so every subclass inherits it for free. Enforcement is entirely in the router — backends' `_*_impl` methods never see a permission-rejected call.
+
+**`MUTATING_OPS` is a frozenset, not a decorator or per-method flag.** One source of truth. The five chokepoints check `op in MUTATING_OPS` to decide whether to run the check. Adding a new mutation op in the future is a one-line addition to the frozenset.
+
+**Reject before any session opens.** The check happens in the router after terminal resolution but before any `_use_session()` block. No DB transaction is ever opened on behalf of a rejected mutation.
+
+**No new exception class.** `_classify_error` already routes `"Cannot write"` → `WriteConflictError`. Adding a dedicated `PermissionError` would mean a new matcher rule for essentially the same semantics. The trade-off is that the error-classification contract is load-bearing on a substring match — flagged as a brittleness in the red-team report, not exploited today because the message comes from one code path (`check_writable`) that always uses the canonical prefix.
+
+**Exhaustive branch validation over `cast`.** `validate_permission` returns literal strings from explicit `if` branches rather than `cast("Permission", value)` or `# type: ignore[return-value]`. This needs no type-checker escape hatch at all, and if `Permission` is ever extended with a third literal, ty catches the missing branch automatically. Genuine best-practice for narrow literal unions.
+
+**Copy from read-only is allowed, move is not.** The asymmetry is principled: reads never mutate, so `copy("/ro/x", "/rw/y")` touches no bytes on the read-only side; but `move` deletes the source after writing the destination, which would mutate `/ro`. `_route_two_path` checks the destination for both ops and the source only for move.
+
+**Add-mount propagation unchanged.** `add_mount` already propagates `raise_on_error` from parent to child (`base.py:91`), so when a `Grover` sync wrapper sets `raise_on_error=True` on its internal `GroverAsync`, every mounted filesystem raises `WriteConflictError` on permission rejection without additional plumbing.
+
+#### Red-team findings
+
+A sub-agent attempted to bypass the permission model through every vector we could enumerate. The full report is summarized here for future reference.
+
+**Confirmed blocked** (verified by reading back the read-only storage after each attempt):
+- All public API mutations through `GroverAsync` and the sync `Grover` facade
+- Same-mount and cross-mount `move` / `copy` in every direction
+- Batch object writes, mixed-mount batches (fail fast, no partial writes)
+- Candidate-based dispatch (`delete(candidates=...)`, `edit(candidates=...)`) with `/ro`-only and mixed candidates
+- CLI query-language mutations (`g.cli('write /ro/... "x"')`, `rm`, `mkdir`, `mv`, `cp`)
+- Path normalization tricks: `/ro//x`, `/ro/x/`, `/rw/../ro/x`, `/ro/./x`, RTL unicode paths
+- Nested mounts (ro-inside-rw and rw-inside-ro both honor the terminal filesystem's `_permissions`)
+- Double-mounting the same ro instance at two router paths
+- Cross-mount `mkconn` (rejected as "Cross-mount connections not supported" before the writability check, but no mutation lands either way)
+- Monkey-patching `ro._permissions` to `"read_write"` and back — the check reads the live attribute every call, no stale cache
+
+**Real bypass found (and documented):** shared-engine sibling mount — see the per-instance model section above.
+
+**Integrity findings, noted for future work** (not fixed as part of this change):
+
+1. **Forged connection objects in batch write.** `write(objects=[GroverObject(path="/rw/...", kind="connection", source_path="/ro/a.md", target_path="/ro/b.md")])` succeeds. The connection row lands in the writable backend but references paths inside a different mount. Not a permission bypass (the read-only mount's storage is untouched) but a data-integrity hole in `_write_impl` — it should reject `kind="connection"` objects whose `source_path`/`target_path` are not inside the same terminal mount as `path`.
+
+2. **`//ro/new.md`** (two leading slashes). POSIX preserves exactly-two leading slashes, so `posixpath.normpath` does not collapse them. `_match_mount` then misses `/ro` entirely and returns `"No mount found"`. Safe today (the mutation is rejected, just for the wrong reason and with the wrong error class), but would become a real bypass if mount matching is ever relaxed to accept `//x` as `/x`.
+
+3. **`_classify_error` substring brittleness.** The `WriteConflictError` classification depends on the literal substring `"Cannot write"`. Alternate phrasings (`"could not write"`, `"permission denied"`, `"Read-only mount"`) would fall through to generic `GroverError`. Not exploitable today, but the sync facade's exception-type contract is load-bearing on a substring match.
+
+#### Test coverage
+
+39 new tests in `tests/test_permissions.py`:
+
+- **Construction and validation** — default is `"read_write"`, explicit `"read"` and `"read_write"` store correctly, invalid values (`"readonly"`, `""`, `"write"`) raise `ValueError` at construction, base-class default and explicit constructor paths
+- **`check_writable` unit tests** — `MUTATING_OPS` membership, returns `None` for writable mounts, returns `None` for read ops on read-only mounts, returns classified error for mutations on read-only mounts
+- **Per-op rejection on a read-only mount** — `write`, `edit`, soft + permanent `delete`, `mkdir`, `mkconn`, same-mount `move` / `copy`, batch `write(objects=[...])`
+- **Reads succeed on a read-only mount** — `read`, `stat`, `ls`, `tree`, `glob`, `grep`
+- **Cross-mount semantics** — `copy("/ro", "/rw")` succeeds (the designed asymmetry), `copy("/rw", "/ro")` fails, `move` both directions fail
+- **Candidate-based dispatch** — `delete(candidates=...)` with candidates spanning both mounts fails fast; `/rw` side verified untouched
+- **Sync facade propagation** — `Grover` with a read-only mount raises `WriteConflictError` on `write`, `mkdir`; reads do not raise
+- **Shared-engine pin** — `TestSharedEngineIsNotIsolated.test_sibling_with_shared_engine_can_write_through` reproduces the documented limitation as executable specification
+
+1806 total tests (was 1767), all passing. 99.81% total coverage (was 99.11%). `permissions.py` at 100%, `base.py` at 100%. ruff clean, ty clean.
+
+#### Future work tracked here
+
+- **Directory-level permissions** — `read_only_paths` on a mount, per-path prefix matching inside `check_writable`. The chokepoint is already in place; the helper just needs to grow a path-match step alongside the `_permissions` check. This is what §8.2 actually describes for the LLM Wiki pattern.
+- **Per-file ACLs and ReBAC** — the `grover_shares` table (§13.11) and `SupportsReBAC` protocol.
+- **Close the three integrity findings** above — forged connection objects, double-leading-slash normalization, and error-classification brittleness.
