@@ -53,11 +53,11 @@ openai = ["openai>=1.0"]
 pinecone = ["pinecone[asyncio]>=5.0"]
 databricks = ["databricks-vectorsearch>=0.40"]
 postgres = ["asyncpg>=0.29"]
-mssql = ["aioodbc>=0.5"]
+mssql = ["aioodbc>=0.5", "pyodbc>=5.0"]
 deepagents = ["deepagents>=0.4"]
 langchain = ["langchain-core>=0.3"]
 langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
-all = ["grover[search,openai,pinecone,databricks,treesitter,postgres,deepagents,langchain,langgraph]"]
+all = ["grover[search,openai,pinecone,databricks,treesitter,postgres,mssql,deepagents,langchain,langgraph]"]
 
 [dependency-groups]
 dev = [

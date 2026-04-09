@@ -1,0 +1,33 @@
+services:
+  mssql:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: grover-mssql-2025:local
+    container_name: grover-mssql-2025
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Developer"
+      MSSQL_SA_PASSWORD: "Strong!Passw0rd"
+    ports:
+      - "1433:1433"
+    volumes:
+      - grover-mssql-data:/var/opt/mssql
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa
+          -P "$$MSSQL_SA_PASSWORD" -C -N -l 2
+          -Q "SELECT 1 FROM sys.databases WHERE name = 'grover_test'"
+          | grep -q '1 rows'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    stop_grace_period: 30s
+
+volumes:
+  grover-mssql-data:
+    name: grover-mssql-data

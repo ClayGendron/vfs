@@ -977,6 +977,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "aioodbc" },
     { name = "asyncpg" },
     { name = "databricks-vectorsearch" },
     { name = "deepagents" },
@@ -984,6 +985,7 @@ all = [
     { name = "langgraph" },
     { name = "openai" },
     { name = "pinecone", extra = ["asyncio"] },
+    { name = "pyodbc" },
     { name = "tree-sitter" },
     { name = "tree-sitter-go" },
     { name = "tree-sitter-javascript" },
@@ -1005,6 +1007,7 @@ langgraph = [
 ]
 mssql = [
     { name = "aioodbc" },
+    { name = "pyodbc" },
 ]
 openai = [
     { name = "openai" },
@@ -1044,13 +1047,14 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.29" },
     { name = "databricks-vectorsearch", marker = "extra == 'databricks'", specifier = ">=0.40" },
     { name = "deepagents", marker = "extra == 'deepagents'", specifier = ">=0.4" },
-    { name = "grover", extras = ["search", "openai", "pinecone", "databricks", "treesitter", "postgres", "deepagents", "langchain", "langgraph"], marker = "extra == 'all'" },
+    { name = "grover", extras = ["search", "openai", "pinecone", "databricks", "treesitter", "postgres", "mssql", "deepagents", "langchain", "langgraph"], marker = "extra == 'all'" },
     { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.3" },
     { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=0.3" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
     { name = "pinecone", extras = ["asyncio"], marker = "extra == 'pinecone'", specifier = ">=5.0" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyodbc", marker = "extra == 'mssql'", specifier = ">=5.0" },
     { name = "rustworkx", specifier = ">=0.17" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "sqlmodel", specifier = ">=0.0.31" },

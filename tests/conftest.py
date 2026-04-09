@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
@@ -12,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
 from grover.backends.database import DatabaseFileSystem
+from grover.backends.mssql import MSSQLFileSystem
 from grover.base import GroverFileSystem
 from grover.models import GroverObjectBase
 from grover.results import Candidate
@@ -20,11 +22,16 @@ if TYPE_CHECKING:
     from grover.results import GroverResult
 
 # ------------------------------------------------------------------
-# --postgres CLI flag
+# --postgres / --mssql CLI flags
 # ------------------------------------------------------------------
 
 _PG_DB = "grover_test"
 _PG_URL = f"postgresql+asyncpg://localhost/{_PG_DB}"
+
+_MSSQL_DEFAULT_URL = (
+    "mssql+aioodbc://sa:Strong!Passw0rd@localhost:1433/grover_test"
+    "?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -33,6 +40,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         default=False,
         help="Run database tests against a local PostgreSQL instance instead of SQLite.",
+    )
+    parser.addoption(
+        "--mssql",
+        action="store_true",
+        default=False,
+        help=(
+            "Run database tests against a local SQL Server / Azure SQL instance "
+            "instead of SQLite. Override the connection URL with GROVER_MSSQL_URL."
+        ),
     )
     parser.addoption(
         "--scale",
@@ -47,12 +63,85 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # ------------------------------------------------------------------
 
 
+async def _provision_mssql_fulltext(eng) -> None:
+    """Test-only: provision the full-text index that ``MSSQLFileSystem`` requires.
+
+    Production code never creates these — they're a deployment concern.
+    Tests need them to exercise the CONTAINSTABLE / REGEXP_LIKE paths,
+    so the fixture provisions them after ``create_all``.
+
+    Idempotent and uses AUTOCOMMIT — full-text DDL on SQL Server cannot
+    run inside a user transaction.
+
+    Full-text key index: we use the table's primary key (on ``id``, a
+    36-char UUID string = 72 bytes) rather than the unique index on
+    ``path`` (NVARCHAR(4096) = 8192 bytes declared max). SQL Server's
+    Full-Text Search rejects any key index whose column's declared max
+    size exceeds 900 bytes, and that limit is on the schema definition,
+    not the actual row data. The ``id`` PK satisfies all five FTS key
+    requirements (unique, non-null, single-column, deterministic, ≤900
+    bytes) out of the box, and ``MSSQLFileSystem`` joins ``CONTAINSTABLE``
+    results back to the table on ``o.id = ct.[KEY]`` to match.
+    """
+    from sqlalchemy import text
+
+    from grover.models import GroverObject
+
+    table = GroverObject.__tablename__
+    catalog = "grover_test_ftcat"
+
+    async with eng.connect() as conn:
+        conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        pk_row = (
+            await conn.execute(
+                text(f"""
+                SELECT name FROM sys.indexes
+                WHERE object_id = OBJECT_ID(N'{table}')
+                  AND is_primary_key = 1
+                """)
+            )
+        ).first()
+        if pk_row is None:
+            msg = f"No primary key index found on {table}; cannot provision FTS"
+            raise RuntimeError(msg)
+        key_index = pk_row[0]
+
+        await conn.execute(
+            text(f"""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.fulltext_catalogs WHERE name = '{catalog}'
+            )
+            CREATE FULLTEXT CATALOG {catalog}
+            """)
+        )
+        await conn.execute(
+            text(f"""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.fulltext_indexes
+                WHERE object_id = OBJECT_ID(N'{table}')
+            )
+            CREATE FULLTEXT INDEX ON {table}(content LANGUAGE 1033)
+            KEY INDEX {key_index}
+            ON {catalog}
+            WITH CHANGE_TRACKING AUTO
+            """)
+        )
+
+
 @pytest.fixture
 async def engine(request: pytest.FixtureRequest):
     use_pg = request.config.getoption("--postgres")
+    use_mssql = request.config.getoption("--mssql")
+    if use_pg and use_mssql:
+        msg = "--postgres and --mssql are mutually exclusive"
+        raise pytest.UsageError(msg)
+
     if use_pg:
         subprocess.run(["createdb", _PG_DB], check=False)
         eng = create_async_engine(_PG_URL)
+    elif use_mssql:
+        url = os.environ.get("GROVER_MSSQL_URL", _MSSQL_DEFAULT_URL)
+        eng = create_async_engine(url)
     else:
         eng = create_async_engine(
             "sqlite+aiosqlite://",
@@ -63,6 +152,10 @@ async def engine(request: pytest.FixtureRequest):
     async with eng.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
         await conn.run_sync(SQLModel.metadata.create_all)
+
+    if use_mssql:
+        await _provision_mssql_fulltext(eng)
+
     yield eng
     async with eng.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
@@ -73,7 +166,9 @@ async def engine(request: pytest.FixtureRequest):
 
 
 @pytest.fixture
-async def db(engine):
+async def db(request: pytest.FixtureRequest, engine):
+    if request.config.getoption("--mssql"):
+        return MSSQLFileSystem(engine=engine)
     return DatabaseFileSystem(engine=engine)
 
 
