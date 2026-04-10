@@ -4,6 +4,18 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.16] — 2026-04-10
+
+### Added
+
+- **Ripgrep-compatible filter surface on `grep` and `glob`** — Structural filters (`ext`, positional `paths`, `globs`, output modes `files`/`lines`/`count`, context windows `-A`/`-B`/`-C`, `case_mode`, `max_count`) now push into SQL through a composable clause builder instead of forcing every search through a full-content scan. `DatabaseFileSystem` still issues a single query per grep/glob call; `MSSQLFileSystem` picks between four SQL templates (CONTAINSTABLE/Direct × lines/files) and skips content transfer entirely for `-l` (files-only) mode.
+- **Indexed `ext` column on `grover_objects`** — Derived from `path` and indexed so `-t py` on a million-row corpus becomes an index seek rather than a table scan. Maintained automatically on write.
+- **`docs/ai_agent_glob_grep_patterns.md`** — Reference for agents on rg-equivalent query patterns against Grover.
+
+### Changed
+
+- **`grep` / `glob` kwargs aligned with ripgrep** — `case_sensitive` → `case_mode` (`smart`/`insensitive`/`sensitive`), `max_results` → `max_count`. This is a breaking change for callers of the old kwargs.
+
 ## [0.0.15] — 2026-04-10
 
 ### Fixed
