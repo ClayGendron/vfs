@@ -4,6 +4,14 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.14] — 2026-04-09
+
+### Added
+
+- **`MSSQLFileSystem` (alpha)** — SQL Server / Azure SQL backend with full-text search and native regex pushdown. Subclass of `DatabaseFileSystem` that overrides `_lexical_search_impl`, `_grep_impl`, and `_glob_impl` to push work into SQL Server 2025+ via `CONTAINSTABLE` and `REGEXP_LIKE`. CRUD, versions, chunks, connections, graph, and vector search are inherited unchanged. Includes `verify_fulltext_schema()` startup check, a dialect parameter budget of 2000, and a Docker dev environment (SQL Server 2025 + Full-Text Search + ODBC Driver 18) with `mssql_up.sh` / `mssql_down.sh` / `mssql_test.sh` helpers. Install via `grover[mssql]` (requires `aioodbc>=0.5` and `pyodbc>=5.0`). Operators must provision the Full-Text catalog and index outside the application. Integration tests gated on `pytest --mssql`; helpers run unconditionally in CI. `src/grover/backends/mssql.py` is excluded from the coverage gate until a SQL Server 2025 service container is wired into CI.
+- **Mount-level permissions** — `read` / `read_write` flag on `add_mount()` for coarse-grained access control. Read-only mounts reject all write operations at the facade boundary.
+- **Directory-level permissions via `PermissionMap`** — fine-grained per-directory permission rules layered on top of mount permissions. Routing checks both mount and directory permissions before dispatching to the backend.
+
 ## [0.0.13] — 2026-04-07
 
 ### Added
