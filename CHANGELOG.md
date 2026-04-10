@@ -4,6 +4,27 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.18] — 2026-04-10
+
+### Changed
+
+- **DB read paths now hydrate `Candidate.content`** — `ls`, `glob`, `delete`, `move`, `tree`, and `lexical_search` always populate `content` on the candidates they emit. The underlying `select(self._model)` was already pulling the column over the wire; the `include_content=False` default on `to_candidate` was discarding it during projection. Removed the parameter entirely so every read-path projection returns content, eliminating the redundant follow-up `read(...)` round trip when a downstream stage needs the content.
+- **MSSQL `_grep_impl`, `_glob_impl`, and `_lexical_search_impl` delegate to the base class when `candidates` is supplied** — Once the candidate set has been transferred to Python (and now carries content), there is nothing left for SQL Server to do. The base class runs the regex via `_collect_line_matches` and BM25 via `BM25Scorer` over the in-memory content with zero round trips. Full-tree pushdowns (`CONTAINSTABLE`, `REGEXP_LIKE`) are unchanged for the no-candidates path.
+- **MSSQL `_glob_impl` no-candidates branch** — `SELECT path, kind, content` instead of `SELECT path, kind`, so glob results carry content directly out of the pushdown.
+- **MSSQL `_lexical_search_impl` no-candidates branch** — Follows the `CONTAINSTABLE` pushdown with one small batched `SELECT path, content WHERE path IN (top_k)` so the top-k results return hydrated. `k` is bounded (default 15), so the second round trip is tiny.
+- **Base `_lexical_search_impl`** — Threads content through `_LexicalDoc` into the result candidates (previously dropped during result construction).
+- **Base `_glob_impl` upstream-candidates branch** — Preserves prior content and metrics via `Candidate.model_copy(...)` instead of constructing a fresh `Candidate` that drops them.
+- **`_read_impl`** — Skips the `SELECT` for already-hydrated candidates and only fetches the gaps. Makes `read(candidates=...)` cheap when content is already on the candidates from a prior stage.
+
+### Removed
+
+- **`include_content` parameter on `GroverObjectBase.to_candidate`** — Always populates content now. The 5 callers that explicitly passed `include_content=True` (`_write_impl`, `_read_impl`, bulk write) drop the redundant kwarg.
+- **MSSQL `_grep_with_candidate_chunks` helper** — Dead after the candidates path delegates to the base class.
+
+### Fixed
+
+- **`glob | grep` on MSSQL drops from three round trips to one** — Previously the executor pre-hydrated content via `read(...)`, then MSSQL `_grep_impl` ignored the hydrated content and re-queried with `REGEXP_LIKE` against the same paths. Now glob returns hydrated content directly and grep runs the regex in Python on the in-memory candidates.
+
 ## [0.0.17] — 2026-04-10
 
 ### Fixed
