@@ -837,3 +837,66 @@ class TestGlobPushdown:
         async with db._use_session() as s:
             r = await db._glob_impl("**/*.txt", session=s)
         assert r.paths == tuple(sorted(r.paths))
+
+    async def test_glob_extension_pattern_matches_files_only(self, request, db: MSSQLFileSystem):
+        """`**/*.py` should index-seek on ext and return only files."""
+        _mssql_required(request)
+        await _seed(
+            db,
+            {
+                "/src/foo.py": "x",
+                "/src/bar.ts": "y",
+                "/tests/baz.py": "z",
+            },
+        )
+        async with db._use_session() as s:
+            r = await db._glob_impl("**/*.py", session=s)
+        assert set(r.paths) == {"/src/foo.py", "/tests/baz.py"}
+
+    async def test_glob_prefix_and_extension_narrows(self, request, db: MSSQLFileSystem):
+        """`src/**/*.py` should push both the prefix and the ext."""
+        _mssql_required(request)
+        await _seed(
+            db,
+            {
+                "/src/a.py": "x",
+                "/src/sub/b.py": "y",
+                "/lib/c.py": "z",
+            },
+        )
+        async with db._use_session() as s:
+            r = await db._glob_impl("src/**/*.py", session=s)
+        assert set(r.paths) == {"/src/a.py", "/src/sub/b.py"}
+
+    async def test_glob_user_ext_intersects_with_decomposed_ext(self, request, db: MSSQLFileSystem):
+        """Caller ext is authoritative: empty intersection → empty result."""
+        _mssql_required(request)
+        await _seed(db, {"/src/a.py": "x", "/src/b.py": "y"})
+        async with db._use_session() as s:
+            r = await db._glob_impl("**/*.py", ext=("js",), session=s)
+        assert r.paths == ()
+
+    async def test_glob_user_paths_not_broadened_by_glob_prefix(self, request, db: MSSQLFileSystem):
+        """Caller-supplied paths are not broadened by the glob's prefix."""
+        _mssql_required(request)
+        await _seed(db, {"/src/a.py": "x", "/docs/b.py": "y"})
+        async with db._use_session() as s:
+            r = await db._glob_impl("src/**/*.py", paths=("/docs",), session=s)
+        assert r.paths == ()
+
+    async def test_glob_prefix_only_keeps_semantics_against_self(self, request, db: MSSQLFileSystem):
+        """`tests/**` must match children but not `/tests` itself."""
+        _mssql_required(request)
+        await _seed(db, {"/tests/a.py": "x"})
+        async with db._use_session() as s:
+            r = await db._glob_impl("tests/**", session=s)
+        assert "/tests/a.py" in r.paths
+        assert "/tests" not in r.paths
+
+    async def test_glob_bounded_depth_not_over_matched(self, request, db: MSSQLFileSystem):
+        """`src/*.py` must not match `src/sub/b.py` — residual regex gates depth."""
+        _mssql_required(request)
+        await _seed(db, {"/src/a.py": "x", "/src/sub/b.py": "y"})
+        async with db._use_session() as s:
+            r = await db._glob_impl("src/*.py", session=s)
+        assert set(r.paths) == {"/src/a.py"}

@@ -38,7 +38,7 @@ from grover.backends.database import (
 )
 from grover.bm25 import tokenize_query
 from grover.paths import scope_path
-from grover.patterns import compile_glob, glob_to_sql_like
+from grover.patterns import compile_glob, decompose_glob, glob_to_sql_like
 from grover.results import Candidate, Detail, GroverResult
 
 if TYPE_CHECKING:
@@ -689,6 +689,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         """
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
+        unscoped_pattern = pattern
         if candidates is None and self._user_scoped and user_id:
             pattern = scope_path(pattern, user_id) if pattern.startswith("/") else f"/{user_id}/{pattern}"
         if not pattern:
@@ -709,21 +710,50 @@ class MSSQLFileSystem(DatabaseFileSystem):
                 matched = matched[:max_count]
             return self._unscope_result(GroverResult(candidates=matched), user_id)
 
+        # Decompose the *unscoped* pattern: merged_paths flows through
+        # _build_grep_structural_sql which re-scopes via
+        # _scope_filter_prefix, so passing a pre-scoped prefix would
+        # double-scope.
+        decomposition = decompose_glob(unscoped_pattern)
+
+        # Merge the glob's implicit ext with the caller's explicit ext.
+        # Caller-supplied ext is authoritative: if the intersection is
+        # empty, short-circuit to an empty result.
+        merged_ext: tuple[str, ...]
+        if ext and decomposition.ext:
+            merged_ext = tuple(e for e in ext if e in decomposition.ext)
+            if not merged_ext:
+                return self._unscope_result(GroverResult(candidates=[]), user_id)
+        elif decomposition.ext:
+            merged_ext = decomposition.ext
+        else:
+            merged_ext = ext
+
+        # Merge the glob's prefix into paths only when the caller left
+        # paths empty — caller-supplied paths are authoritative.
+        merged_paths: tuple[str, ...]
+        if paths:
+            merged_paths = paths
+        elif decomposition.prefix is not None:
+            merged_paths = (decomposition.prefix,)
+        else:
+            merged_paths = ()
+
         table = self._resolve_table()
         like_pattern = glob_to_sql_like(pattern)
         like_clause = "AND path LIKE :like_pattern ESCAPE '\\'" if like_pattern is not None else ""
 
         filter_clause, filter_params = self._build_grep_structural_sql(
-            ext=ext,
+            ext=merged_ext,
             ext_not=(),
-            paths=paths,
+            paths=merged_paths,
             globs=(),
             globs_not=(),
             user_id=user_id,
             alias="",
         )
 
-        params: dict[str, object] = {"glob_regex": regex.pattern, **filter_params}
+        params: dict[str, object] = {**filter_params}
         top_clause = ""
         if max_count is not None:
             top_clause = "TOP (:max_count) "
@@ -731,13 +761,28 @@ class MSSQLFileSystem(DatabaseFileSystem):
         if like_pattern is not None:
             params["like_pattern"] = like_pattern
 
+        if decomposition.residual_regex is not None:
+            # Use the scoped regex so it matches the scoped path column;
+            # decomposition.residual_regex is compiled from the unscoped
+            # pattern and only indicates whether a residual is *needed*.
+            params["glob_regex"] = regex.pattern
+            regex_clause = "AND REGEXP_LIKE(path, :glob_regex, 'c')"
+            kind_clause = "kind IN ('file', 'directory')"
+        else:
+            regex_clause = ""
+            # ext IS NULL on directory rows, so ext IN (…) already excludes
+            # directories — narrow kind explicitly to make the plan seek
+            # ix_grover_objects_ext_kind rather than rely on a NULL side
+            # effect.
+            kind_clause = "kind = 'file'" if decomposition.files_only else "kind IN ('file', 'directory')"
+
         sql = text(f"""
             SELECT {top_clause}path, kind
             FROM {table}
-            WHERE kind IN ('file', 'directory')
+            WHERE {kind_clause}
               AND deleted_at IS NULL
               {like_clause}
-              AND REGEXP_LIKE(path, :glob_regex, 'c')
+              {regex_clause}
               {filter_clause}
             ORDER BY path
         """)

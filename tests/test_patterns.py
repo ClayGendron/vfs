@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from grover.patterns import compile_glob, glob_to_sql_like, match_glob
+from grover.patterns import compile_glob, decompose_glob, glob_to_sql_like, match_glob
 
 # =========================================================================
 # Single star (*) — matches any characters except /
@@ -914,6 +914,69 @@ def _like_to_regex(like: str) -> re.Pattern[str]:
 # ===========================================================================
 # compile_glob / match_glob — invalid regex fallback
 # ===========================================================================
+
+
+class TestDecomposeGlob:
+    """Conservative structural decomposition used by MSSQL glob pushdown."""
+
+    @pytest.mark.parametrize(
+        "pattern, prefix, ext, files_only, residual_none",
+        [
+            ("**/*.py", None, ("py",), True, True),
+            ("src/**/*.py", "/src", ("py",), True, True),
+            ("src/**", "/src", (), False, False),
+            ("tests/**", "/tests", (), False, False),
+            ("/*.py", None, (), False, False),
+            ("src/*.py", "/src", (), False, False),
+            ("**/test_*.py", None, (), False, False),
+            ("**/*.{py,js}", None, (), False, False),
+            ("src/[ab]/*.py", "/src", (), False, False),
+            ("**/*.PY", None, ("py",), True, True),
+            ("**/*", None, (), False, False),
+        ],
+    )
+    def test_decompose(
+        self,
+        pattern: str,
+        prefix: str | None,
+        ext: tuple[str, ...],
+        files_only: bool,
+        residual_none: bool,
+    ):
+        d = decompose_glob(pattern)
+        assert d.prefix == prefix
+        assert d.ext == ext
+        assert d.files_only is files_only
+        assert (d.residual_regex is None) is residual_none
+
+    def test_absolute_prefix_preserved(self):
+        d = decompose_glob("/src/lib/**/*.py")
+        assert d.prefix == "/src/lib"
+        assert d.ext == ("py",)
+        assert d.files_only is True
+        assert d.residual_regex is None
+
+    def test_base_path_applied(self):
+        d = decompose_glob("**/*.py", base_path="/workspace")
+        assert d.prefix == "/workspace"
+        assert d.ext == ("py",)
+        assert d.files_only is True
+        assert d.residual_regex is None
+
+    def test_literal_only_pattern(self):
+        d = decompose_glob("foo.py")
+        assert d.prefix == "/foo.py"
+        assert d.ext == ()
+        assert d.files_only is False
+        # Residual regex still needed to narrow from over-matching prefix.
+        assert d.residual_regex is not None
+
+    def test_over_long_ext_not_recovered(self):
+        long = "a" * 33
+        d = decompose_glob(f"**/*.{long}")
+        assert d.ext == ()
+        assert d.files_only is False
+        assert d.residual_regex is not None
 
 
 class TestInvalidGlobPattern:
