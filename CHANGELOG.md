@@ -4,6 +4,17 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.15] — 2026-04-10
+
+### Fixed
+
+- **`MSSQLFileSystem` schema resolution for raw `text()` SQL** — Raw `text()` queries in `verify_fulltext_schema`, `_lexical_search_impl`, `_grep_impl`, `_grep_with_candidate_chunks`, and `_glob_impl` used `self._model.__tablename__` directly, bypassing SQLAlchemy's `schema_translate_map` (which only applies when compiling `Table` references). Mounts pointing at a non-default schema hit `Invalid object name 'grover_objects'` on every search call. Fixed by adding a `schema` kwarg to `GroverFileSystem` that stores `self._schema` and applies `schema_translate_map={None: schema}` to every session via `_use_session()` so ORM queries continue to resolve correctly, plus a `_resolve_table()` helper on `MSSQLFileSystem` that qualifies the bare `__tablename__` with `self._schema` for raw SQL. Works uniformly across `engine=` and `session_factory=` construction and supports multiple filesystems sharing one factory with different schemas (per-session connection options). Closes #3.
+- **`verify_fulltext_schema` DDL hint key column** — The suggested `CREATE UNIQUE NONCLUSTERED INDEX` referenced `(path)`, but `path` is `max_length=4096` and exceeds SQL Server's 900-byte index key limit, so the DDL would always fail. The Full-Text `KEY INDEX` now targets `(id)`, the 36-character UUID primary key.
+
+### Added
+
+- **`schema` kwarg on `GroverFileSystem`** — Optional, forwarded through `DatabaseFileSystem.__init__` and `MSSQLFileSystem.__init__`. When set, `_use_session()` applies `schema_translate_map={None: schema}` per session so ORM queries resolve unqualified tables, and `MSSQLFileSystem` raw queries qualify the table name with it.
+
 ## [0.0.14] — 2026-04-09
 
 ### Added
