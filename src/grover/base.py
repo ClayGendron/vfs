@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, cast
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from grover.exceptions import _classify_error
-from grover.paths import connection_path, normalize_path
+from grover.paths import connection_path, extract_extension, normalize_path
+from grover.patterns import compile_glob
 from grover.permissions import (
     Permission,
     PermissionMap,
@@ -30,8 +31,15 @@ from grover.permissions import (
     coerce_permissions,
 )
 from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperation
+from grover.routing import (
+    GlobMountPlan,
+    GrepMountPlan,
+    rewrite_glob_for_mount,
+    rewrite_path_for_mount,
+)
 
 if TYPE_CHECKING:
+    import re
     from collections.abc import AsyncIterator, Sequence
 
     from grover.models import GroverObjectBase
@@ -208,7 +216,36 @@ class GroverFileSystem:
                 return f"All {label} must resolve to the same mount"
         return fs, prefix
 
-    async def _dispatch_candidates(
+    @staticmethod
+    def _matches_path_filters(path: str, filters: tuple[str, ...]) -> bool:
+        """Return True if *path* passes the literal-prefix path filters."""
+        if not filters:
+            return True
+        for raw in filters:
+            prefix = normalize_path(raw).rstrip("/") or "/"
+            if prefix == "/" or path == prefix or path.startswith(prefix + "/"):
+                return True
+        return False
+
+    @staticmethod
+    def _matches_ext_filters(
+        path: str,
+        *,
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+    ) -> bool:
+        """Return True if *path* passes ext / ext_not filters."""
+        path_ext = extract_extension(path)
+        if ext and path_ext not in ext:
+            return False
+        return not ext_not or path_ext not in ext_not
+
+    @staticmethod
+    def _compile_path_globs(globs: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+        """Compile valid path globs, skipping malformed ones like the backend does."""
+        return tuple(regex for glob in globs if (regex := compile_glob(glob)) is not None)
+
+    async def _dispatch_grouped_candidates(
         self,
         op: str,
         candidates: GroverResult,
@@ -216,12 +253,7 @@ class GroverFileSystem:
         user_id: str | None = None,
         **kwargs: object,
     ) -> GroverResult:
-        """Route a candidate-based operation to terminal filesystems in parallel.
-
-        Groups candidates by terminal filesystem, calls ``_{op}_impl``
-        with rebased candidates on each concurrently, then rebases and
-        merges results.
-        """
+        """Route pre-grouped candidate operations to terminal filesystems."""
         groups = self._group_candidates_by_terminal(candidates)
         if not groups:
             return GroverResult(
@@ -250,6 +282,158 @@ class GroverFileSystem:
             *(_run_group(fs, pfx, gc) for fs, pfx, gc in groups),
         )
         return self._merge_results(list(results)).inject_details(candidates)
+
+    async def _dispatch_glob_candidates(
+        self,
+        candidates: GroverResult,
+        *,
+        pattern: str,
+        paths: tuple[str, ...],
+        ext: tuple[str, ...],
+        max_count: int | None,
+        user_id: str | None,
+    ) -> GroverResult:
+        """Filter absolute-path glob candidates before grouping by terminal."""
+        regex = compile_glob(pattern)
+        if regex is None:
+            return self._error(f"Invalid glob pattern: {pattern}")
+
+        filtered = candidates._with_candidates(
+            [
+                c
+                for c in candidates.candidates
+                if regex.match(c.path) is not None
+                and self._matches_path_filters(c.path, paths)
+                and self._matches_ext_filters(c.path, ext=ext)
+            ]
+        )
+        result = await self._dispatch_grouped_candidates(
+            "glob",
+            filtered,
+            user_id=user_id,
+            pattern="**",
+            paths=(),
+            ext=(),
+            max_count=None,
+        )
+        if max_count is not None:
+            result = result._with_candidates(result.candidates[:max_count])
+        return result
+
+    async def _dispatch_grep_candidates(
+        self,
+        candidates: GroverResult,
+        *,
+        pattern: str,
+        paths: tuple[str, ...],
+        ext: tuple[str, ...],
+        ext_not: tuple[str, ...],
+        globs: tuple[str, ...],
+        globs_not: tuple[str, ...],
+        case_mode: CaseMode,
+        fixed_strings: bool,
+        word_regexp: bool,
+        invert_match: bool,
+        before_context: int,
+        after_context: int,
+        output_mode: GrepOutputMode,
+        max_count: int | None,
+        user_id: str | None,
+    ) -> GroverResult:
+        """Filter absolute-path grep candidates before grouping by terminal."""
+        include_regexes = self._compile_path_globs(globs)
+        exclude_regexes = self._compile_path_globs(globs_not)
+        filtered = candidates._with_candidates(
+            [
+                c
+                for c in candidates.candidates
+                if self._matches_path_filters(c.path, paths)
+                and self._matches_ext_filters(c.path, ext=ext, ext_not=ext_not)
+                and (not include_regexes or any(regex.match(c.path) is not None for regex in include_regexes))
+                and not any(regex.match(c.path) is not None for regex in exclude_regexes)
+            ]
+        )
+        return await self._dispatch_grouped_candidates(
+            "grep",
+            filtered,
+            user_id=user_id,
+            pattern=pattern,
+            paths=(),
+            ext=(),
+            ext_not=(),
+            globs=(),
+            globs_not=(),
+            case_mode=case_mode,
+            fixed_strings=fixed_strings,
+            word_regexp=word_regexp,
+            invert_match=invert_match,
+            before_context=before_context,
+            after_context=after_context,
+            output_mode=output_mode,
+            max_count=max_count,
+        )
+
+    async def _dispatch_candidates(
+        self,
+        op: str,
+        candidates: GroverResult,
+        *,
+        user_id: str | None = None,
+        **kwargs: object,
+    ) -> GroverResult:
+        """Route a candidate-based operation to terminal filesystems in parallel.
+
+        Groups candidates by terminal filesystem, calls ``_{op}_impl``
+        with rebased candidates on each concurrently, then rebases and
+        merges results.
+        """
+        if op == "glob":
+            pattern = cast("str", kwargs["pattern"])
+            paths = cast("tuple[str, ...]", kwargs.get("paths", ()))
+            ext = cast("tuple[str, ...]", kwargs.get("ext", ()))
+            max_count = cast("int | None", kwargs.get("max_count"))
+            return await self._dispatch_glob_candidates(
+                candidates,
+                pattern=pattern,
+                paths=paths,
+                ext=ext,
+                max_count=max_count,
+                user_id=user_id,
+            )
+        if op == "grep":
+            pattern = cast("str", kwargs["pattern"])
+            paths = cast("tuple[str, ...]", kwargs.get("paths", ()))
+            ext = cast("tuple[str, ...]", kwargs.get("ext", ()))
+            ext_not = cast("tuple[str, ...]", kwargs.get("ext_not", ()))
+            globs = cast("tuple[str, ...]", kwargs.get("globs", ()))
+            globs_not = cast("tuple[str, ...]", kwargs.get("globs_not", ()))
+            case_mode = cast("CaseMode", kwargs.get("case_mode", "sensitive"))
+            fixed_strings = cast("bool", kwargs.get("fixed_strings", False))
+            word_regexp = cast("bool", kwargs.get("word_regexp", False))
+            invert_match = cast("bool", kwargs.get("invert_match", False))
+            before_context = cast("int", kwargs.get("before_context", 0))
+            after_context = cast("int", kwargs.get("after_context", 0))
+            output_mode = cast("GrepOutputMode", kwargs.get("output_mode", "lines"))
+            max_count = cast("int | None", kwargs.get("max_count"))
+            return await self._dispatch_grep_candidates(
+                candidates,
+                pattern=pattern,
+                paths=paths,
+                ext=ext,
+                ext_not=ext_not,
+                globs=globs,
+                globs_not=globs_not,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                invert_match=invert_match,
+                before_context=before_context,
+                after_context=after_context,
+                output_mode=output_mode,
+                max_count=max_count,
+                user_id=user_id,
+            )
+        return await self._dispatch_grouped_candidates(op, candidates, user_id=user_id, **kwargs)
 
     async def _route_single(
         self,
@@ -418,6 +602,343 @@ class GroverFileSystem:
                 return delete_results.add_prefix(src_prefix)
 
         return write_results.add_prefix(dst_prefix)
+
+    async def _route_glob_fanout(
+        self,
+        *,
+        pattern: str,
+        paths: tuple[str, ...],
+        ext: tuple[str, ...],
+        max_count: int | None,
+        candidates: GroverResult | None,
+        user_id: str | None,
+    ) -> GroverResult:
+        """Glob fanout with mount-prefix-aware rewriting.
+
+        Absolute patterns that can be rewritten exactly are dispatched
+        mount-locally. Patterns that need a safe superset query
+        (currently ``**``-leading) are post-filtered at the router after
+        results are rebased, so correctness does not depend on the
+        rewrite. When router-side post-filtering is active, ``max_count``
+        is applied only after merge to avoid truncating candidates
+        before the authoritative filter runs.
+        """
+        if candidates is not None:
+            return await self._dispatch_candidates(
+                "glob",
+                candidates,
+                user_id=user_id,
+                pattern=pattern,
+                paths=paths,
+                ext=ext,
+                max_count=max_count,
+            )
+
+        pattern_regex = compile_glob(pattern)
+        if pattern_regex is None:
+            return self._error(f"Invalid glob pattern: {pattern}")
+
+        mount_plans: list[GlobMountPlan] = []
+        any_router_post_filter = False
+        for mount_path, fs in self._mounts.items():
+            rewritten_pattern, needs_post_filter = rewrite_glob_for_mount(pattern, mount_path)
+            if rewritten_pattern is None:
+                continue
+
+            if paths:
+                rewritten_paths = tuple(
+                    rp for rp in (rewrite_path_for_mount(path, mount_path) for path in paths) if rp is not None
+                )
+                if not rewritten_paths:
+                    continue
+                if "/" in rewritten_paths:
+                    rewritten_paths = ()
+            else:
+                rewritten_paths = ()
+
+            mount_plans.append(
+                GlobMountPlan(
+                    mount_path=mount_path,
+                    filesystem=fs,
+                    rewritten_pattern=rewritten_pattern,
+                    rewritten_paths=rewritten_paths,
+                    needs_post_filter=needs_post_filter,
+                )
+            )
+            any_router_post_filter = any_router_post_filter or needs_post_filter
+
+        self_max_count = None if any_router_post_filter else max_count
+
+        async def _query_self() -> GroverResult:
+            if not self._storage:
+                return GroverResult(success=True, candidates=[])
+            async with self._use_session() as s:
+                return await self._glob_impl(
+                    pattern=pattern,
+                    paths=paths,
+                    ext=ext,
+                    max_count=self_max_count,
+                    user_id=user_id,
+                    session=s,
+                )
+
+        async def _query_mount(
+            fs: GroverFileSystem,
+            *,
+            rewritten_pattern: str,
+            rewritten_paths: tuple[str, ...],
+            needs_post_filter: bool,
+        ) -> GroverResult:
+            return await fs.glob(
+                pattern=rewritten_pattern,
+                paths=rewritten_paths,
+                ext=ext,
+                max_count=None if needs_post_filter else max_count,
+                user_id=user_id,
+            )
+
+        self_result, *mount_results = await asyncio.gather(
+            _query_self(),
+            *(
+                _query_mount(
+                    plan.filesystem,
+                    rewritten_pattern=plan.rewritten_pattern,
+                    rewritten_paths=plan.rewritten_paths,
+                    needs_post_filter=plan.needs_post_filter,
+                )
+                for plan in mount_plans
+            ),
+        )
+
+        results = [self._exclude_mounted_paths(self_result)]
+        for plan, result in zip(
+            mount_plans,
+            mount_results,
+            strict=True,
+        ):
+            rebased = result.add_prefix(plan.mount_path)
+            if plan.needs_post_filter:
+                rebased = rebased._with_candidates(
+                    [c for c in rebased.candidates if pattern_regex.match(c.path) is not None],
+                )
+            results.append(rebased)
+
+        merged = self._merge_results(results)
+        if any_router_post_filter and max_count is not None:
+            merged = merged._with_candidates(merged.candidates[:max_count])
+        return merged
+
+    async def _route_grep_fanout(
+        self,
+        *,
+        pattern: str,
+        paths: tuple[str, ...],
+        ext: tuple[str, ...],
+        ext_not: tuple[str, ...],
+        globs: tuple[str, ...],
+        globs_not: tuple[str, ...],
+        case_mode: CaseMode,
+        fixed_strings: bool,
+        word_regexp: bool,
+        invert_match: bool,
+        before_context: int,
+        after_context: int,
+        output_mode: GrepOutputMode,
+        max_count: int | None,
+        candidates: GroverResult | None,
+        user_id: str | None,
+    ) -> GroverResult:
+        """Grep fanout with mount-prefix-aware structural filter rewriting.
+
+        ``pattern`` is the content regex and is forwarded unchanged.
+        Literal ``paths`` are rewritten exactly per mount. Positive and
+        negative glob filters are pushed down when exact rewrite is
+        possible; otherwise the router queries a safe superset and
+        re-applies the original absolute glob filters after rebasing.
+        """
+        if candidates is not None:
+            return await self._dispatch_candidates(
+                "grep",
+                candidates,
+                user_id=user_id,
+                pattern=pattern,
+                paths=paths,
+                ext=ext,
+                ext_not=ext_not,
+                globs=globs,
+                globs_not=globs_not,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                invert_match=invert_match,
+                before_context=before_context,
+                after_context=after_context,
+                output_mode=output_mode,
+                max_count=max_count,
+            )
+
+        mount_plans: list[GrepMountPlan] = []
+        any_router_post_filter = False
+
+        for mount_path, fs in self._mounts.items():
+            if paths:
+                rewritten_paths = tuple(
+                    rp for rp in (rewrite_path_for_mount(path, mount_path) for path in paths) if rp is not None
+                )
+                if not rewritten_paths:
+                    continue
+                if "/" in rewritten_paths:
+                    rewritten_paths = ()
+            else:
+                rewritten_paths = ()
+
+            positive_intersections: list[str] = []
+            positive_pushdowns: list[str] = []
+            positive_needs_router_filter = False
+            for glob in globs:
+                rewritten_glob, needs_post_filter = rewrite_glob_for_mount(glob, mount_path)
+                if rewritten_glob is None:
+                    continue
+                positive_intersections.append(glob)
+                if needs_post_filter:
+                    positive_needs_router_filter = True
+                else:
+                    positive_pushdowns.append(rewritten_glob)
+            if globs and not positive_intersections:
+                continue
+
+            post_include_regexes: list[re.Pattern[str]] = []
+            if positive_needs_router_filter:
+                for glob in positive_intersections:
+                    regex = compile_glob(glob)
+                    if regex is None:
+                        return self._error(f"Invalid glob pattern: {glob}")
+                    post_include_regexes.append(regex)
+                mount_globs = ()
+            else:
+                mount_globs = tuple(positive_pushdowns)
+
+            mount_globs_not_list: list[str] = []
+            post_exclude_regexes: list[re.Pattern[str]] = []
+            for glob in globs_not:
+                rewritten_glob, needs_post_filter = rewrite_glob_for_mount(glob, mount_path)
+                if rewritten_glob is None:
+                    continue
+                if needs_post_filter:
+                    regex = compile_glob(glob)
+                    if regex is None:
+                        return self._error(f"Invalid glob pattern: {glob}")
+                    post_exclude_regexes.append(regex)
+                else:
+                    mount_globs_not_list.append(rewritten_glob)
+
+            needs_router_filter = bool(post_include_regexes or post_exclude_regexes)
+            any_router_post_filter = any_router_post_filter or needs_router_filter
+            mount_plans.append(
+                GrepMountPlan(
+                    mount_path=mount_path,
+                    filesystem=fs,
+                    rewritten_paths=rewritten_paths,
+                    mount_globs=mount_globs,
+                    mount_globs_not=tuple(mount_globs_not_list),
+                    post_include_regexes=tuple(post_include_regexes),
+                    post_exclude_regexes=tuple(post_exclude_regexes),
+                    needs_router_filter=needs_router_filter,
+                )
+            )
+
+        self_max_count = None if any_router_post_filter else max_count
+
+        async def _query_self() -> GroverResult:
+            if not self._storage:
+                return GroverResult(success=True, candidates=[])
+            async with self._use_session() as s:
+                return await self._grep_impl(
+                    pattern=pattern,
+                    paths=paths,
+                    ext=ext,
+                    ext_not=ext_not,
+                    globs=globs,
+                    globs_not=globs_not,
+                    case_mode=case_mode,
+                    fixed_strings=fixed_strings,
+                    word_regexp=word_regexp,
+                    invert_match=invert_match,
+                    before_context=before_context,
+                    after_context=after_context,
+                    output_mode=output_mode,
+                    max_count=self_max_count,
+                    user_id=user_id,
+                    session=s,
+                )
+
+        async def _query_mount(
+            fs: GroverFileSystem,
+            *,
+            rewritten_paths: tuple[str, ...],
+            mount_globs: tuple[str, ...],
+            mount_globs_not: tuple[str, ...],
+            needs_router_filter: bool,
+        ) -> GroverResult:
+            return await fs.grep(
+                pattern=pattern,
+                paths=rewritten_paths,
+                ext=ext,
+                ext_not=ext_not,
+                globs=mount_globs,
+                globs_not=mount_globs_not,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                invert_match=invert_match,
+                before_context=before_context,
+                after_context=after_context,
+                output_mode=output_mode,
+                max_count=None if needs_router_filter else max_count,
+                user_id=user_id,
+            )
+
+        self_result, *mount_results = await asyncio.gather(
+            _query_self(),
+            *(
+                _query_mount(
+                    plan.filesystem,
+                    rewritten_paths=plan.rewritten_paths,
+                    mount_globs=plan.mount_globs,
+                    mount_globs_not=plan.mount_globs_not,
+                    needs_router_filter=plan.needs_router_filter,
+                )
+                for plan in mount_plans
+            ),
+        )
+
+        results = [self._exclude_mounted_paths(self_result)]
+        for plan, result in zip(
+            mount_plans,
+            mount_results,
+            strict=True,
+        ):
+            rebased = result.add_prefix(plan.mount_path)
+            if plan.needs_router_filter:
+                rebased = rebased._with_candidates(
+                    [
+                        c
+                        for c in rebased.candidates
+                        if (
+                            (
+                                not plan.post_include_regexes
+                                or any(rx.match(c.path) is not None for rx in plan.post_include_regexes)
+                            )
+                            and not any(rx.match(c.path) is not None for rx in plan.post_exclude_regexes)
+                        )
+                    ],
+                )
+            results.append(rebased)
+
+        merged = self._merge_results(results)
+        if any_router_post_filter and max_count is not None:
+            merged = merged._with_candidates(merged.candidates[:max_count])
+        return merged
 
     async def _route_fanout(
         self,
@@ -781,13 +1302,12 @@ class GroverFileSystem:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout(
-            "glob",
-            candidates,
+        return await self._route_glob_fanout(
             pattern=pattern,
             paths=paths,
             ext=ext,
             max_count=max_count,
+            candidates=candidates,
             user_id=user_id,
         )
 
@@ -811,9 +1331,7 @@ class GroverFileSystem:
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
-        return await self._route_fanout(
-            "grep",
-            candidates,
+        return await self._route_grep_fanout(
             pattern=pattern,
             paths=paths,
             ext=ext,
@@ -828,6 +1346,7 @@ class GroverFileSystem:
             after_context=after_context,
             output_mode=output_mode,
             max_count=max_count,
+            candidates=candidates,
             user_id=user_id,
         )
 
