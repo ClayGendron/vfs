@@ -218,10 +218,7 @@ def coerce_permissions(value: Permission | PermissionMap | str) -> PermissionMap
         return value
     if isinstance(value, str):
         return PermissionMap(default=validate_permission(value))
-    msg = (
-        "permissions must be 'read', 'read_write', or a PermissionMap, "
-        f"got {type(value).__name__}"
-    )
+    msg = f"permissions must be 'read', 'read_write', or a PermissionMap, got {type(value).__name__}"
     raise TypeError(msg)
 
 
@@ -293,8 +290,7 @@ def check_writable(
     if resolved.rule_prefix is None:
         return fs._error(f"Cannot write to read-only path '{full}' (mount default)")
     return fs._error(
-        f"Cannot write to read-only path '{full}' "
-        f"(read-only by mount rule '{resolved.rule_prefix}')",
+        f"Cannot write to read-only path '{full}' (read-only by mount rule '{resolved.rule_prefix}')",
     )
 
 

@@ -82,9 +82,7 @@ async def test_writable_carve_out_creates_unrestricted_ancestors():
         # the read-only default — the carve-out would be unreachable
         # otherwise.
         for ancestor in ("/wh", "/wh/a", "/wh/a/b"):
-            assert await _raw_has_path(fs, ancestor), (
-                f"Expected ancestor row at {ancestor} (created on demand)"
-            )
+            assert await _raw_has_path(fs, ancestor), f"Expected ancestor row at {ancestor} (created on demand)"
     finally:
         await router.close()
 
@@ -158,9 +156,7 @@ async def test_user_scoped_pre_scoped_path_no_double_write():
     router = GroverAsync()
     await router.add_mount("wiki", fs)
     try:
-        r = await router.write(
-            "/wiki/alice/synthesis/x.md", "x", user_id="alice"
-        )
+        r = await router.write("/wiki/alice/synthesis/x.md", "x", user_id="alice")
         assert not r.success
         assert "Cannot write" in r.error_message
         assert not await _raw_has_path(fs, "/alice/alice/synthesis/x.md")
@@ -191,9 +187,7 @@ async def test_user_scoped_rule_with_user_id_in_path_is_global_not_per_user():
     try:
         # Bob matches the rule because the check sees the unscoped path
         # /alice/synthesis/x.md before _scope_path runs.
-        r = await router.write(
-            "/wiki/alice/synthesis/x.md", "bob-wrote-this", user_id="bob"
-        )
+        r = await router.write("/wiki/alice/synthesis/x.md", "bob-wrote-this", user_id="bob")
         assert r.success, r.error_message
         # Bob's data lands in HIS own scope — no cross-user leak.
         assert await _raw_has_path(fs, "/bob/alice/synthesis/x.md")
