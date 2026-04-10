@@ -1798,18 +1798,18 @@ class TestGrep:
         async with db._use_session() as s:
             await db._write_impl("/a.py", "Error occurred", session=s)
         async with db._use_session() as s:
-            r = await db._grep_impl(pattern="error", case_sensitive=True, session=s)
+            r = await db._grep_impl(pattern="error", case_mode="sensitive", session=s)
         assert len(r) == 0
         async with db._use_session() as s:
-            r = await db._grep_impl(pattern="error", case_sensitive=False, session=s)
+            r = await db._grep_impl(pattern="error", case_mode="insensitive", session=s)
         assert len(r) == 1
 
-    async def test_grep_max_results(self, db: DatabaseFileSystem):
+    async def test_grep_max_count(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             for i in range(10):
                 await db._write_impl(f"/file{i:02d}.py", "match me", session=s)
         async with db._use_session() as s:
-            r = await db._grep_impl(pattern="match", max_results=3, session=s)
+            r = await db._grep_impl(pattern="match", max_count=3, session=s)
         assert len(r) == 3
 
     async def test_grep_no_match(self, db: DatabaseFileSystem):
@@ -1906,6 +1906,287 @@ class TestGrep:
         await root.write("/code/auth.py", "timeout = 30")
         r = await root.grep("timeout")
         assert "/code/auth.py" in r.paths
+
+
+class TestGrepRipgrepFilters:
+    """Phase 5 — rg-style structural filters pushed into SQL.
+
+    Exercises the filter surface added to ``_grep_impl``: ``ext`` /
+    ``ext_not`` narrowing via the indexed column, ``paths`` positional
+    prefixes, ``globs`` / ``globs_not`` via LIKE + authoritative
+    post-filter, output modes, context windows, and the regex
+    modifiers (``fixed_strings``, ``word_regexp``, ``invert_match``).
+    """
+
+    async def _seed_corpus(self, db: DatabaseFileSystem) -> None:
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "def grep():\n    pass", session=s)
+            await db._write_impl("/src/b.py", "class Grep:\n    pass", session=s)
+            await db._write_impl("/src/sub/c.py", "grep = None", session=s)
+            await db._write_impl("/src/README.md", "# grep docs", session=s)
+            await db._write_impl("/lib/d.py", "def helper():\n    pass", session=s)
+            await db._write_impl("/lib/e.js", "function grep() {}", session=s)
+            await db._write_impl("/test_grep.py", "def test_grep():\n    pass", session=s)
+
+    # ── ext / ext_not ────────────────────────────────────────────────
+
+    async def test_grep_ext_single(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", ext=("py",), session=s)
+        assert set(r.paths) == {"/src/a.py", "/src/sub/c.py", "/test_grep.py"}
+
+    async def test_grep_ext_multiple(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", ext=("py", "md"), session=s)
+        assert "/lib/e.js" not in r.paths
+        assert "/src/README.md" in r.paths
+        assert "/src/a.py" in r.paths
+
+    async def test_grep_ext_not(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", ext_not=("py",), session=s)
+        assert "/src/a.py" not in r.paths
+        assert "/lib/e.js" in r.paths
+
+    # ── positional paths ─────────────────────────────────────────────
+
+    async def test_grep_positional_path_prefix(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", paths=("/src",), session=s)
+        assert all(p.startswith("/src/") for p in r.paths)
+        assert "/lib/e.js" not in r.paths
+
+    async def test_grep_positional_path_exact_file(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", paths=("/test_grep.py",), session=s)
+        assert r.paths == ("/test_grep.py",)
+
+    async def test_grep_positional_multiple_paths_ored(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", paths=("/src/sub", "/lib"), session=s)
+        assert set(r.paths) == {"/src/sub/c.py", "/lib/e.js"}
+
+    async def test_grep_relative_path_normalised(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", paths=("src",), session=s)
+        assert all(p.startswith("/src/") for p in r.paths)
+
+    # ── globs ───────────────────────────────────────────────────────
+
+    async def test_grep_glob_positive(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", globs=("**/test_*.py",), session=s)
+        assert r.paths == ("/test_grep.py",)
+
+    async def test_grep_glob_negative(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(
+                pattern="grep",
+                ext=("py",),
+                globs_not=("**/test_*.py",),
+                session=s,
+            )
+        assert "/test_grep.py" not in r.paths
+        assert "/src/a.py" in r.paths
+
+    async def test_grep_glob_postfilter_excludes_like_overmatch(
+        self,
+        db: DatabaseFileSystem,
+    ) -> None:
+        """``**/test_*.py`` LIKE-expands to ``%test_%.py`` which over-matches.
+
+        The authoritative ``compile_glob`` post-filter must drop paths
+        like ``/foo/bartest_baz.py`` that LIKE accepted but the glob
+        regex rejects.
+        """
+        async with db._use_session() as s:
+            await db._write_impl("/test_ok.py", "grep", session=s)
+            await db._write_impl("/src/foo_test_bar.py", "grep", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", globs=("**/test_*.py",), session=s)
+        assert r.paths == ("/test_ok.py",)
+
+    # ── output modes ─────────────────────────────────────────────────
+
+    async def test_grep_output_mode_files(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", ext=("py",), output_mode="files", session=s)
+        assert "/src/a.py" in r.paths
+        c = next(c for c in r.candidates if c.path == "/src/a.py")
+        meta = c.details[0].metadata
+        assert meta is not None
+        assert "line_matches" not in meta
+        assert meta["match_count"] == 1
+
+    async def test_grep_output_mode_count(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "TODO\nok\nTODO\nTODO", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="TODO", output_mode="count", session=s)
+        c = next(c for c in r.candidates if c.path == "/a.py")
+        meta = c.details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 3
+        assert "line_matches" not in meta
+
+    # ── context windows ─────────────────────────────────────────────
+
+    async def test_grep_after_context(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "l1\nl2 MATCH\nl3\nl4\nl5", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="MATCH", after_context=2, session=s)
+        c = r.candidates[0]
+        meta = c.details[0].metadata
+        assert meta is not None
+        entries = meta["line_matches"]
+        assert [e["line"] for e in entries] == [2, 3, 4]
+        assert entries[0].get("context") is None
+        assert entries[1]["context"] is True
+        assert entries[2]["context"] is True
+
+    async def test_grep_before_context(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "l1\nl2\nl3\nl4 MATCH\nl5", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="MATCH", before_context=2, session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        entries = meta["line_matches"]
+        assert [e["line"] for e in entries] == [2, 3, 4]
+        assert entries[-1].get("context") is None
+
+    async def test_grep_context_windows_merge(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl(
+                "/a.py",
+                "l1\nHIT\nl3\nHIT\nl5\nl6\nl7",
+                session=s,
+            )
+        async with db._use_session() as s:
+            r = await db._grep_impl(
+                pattern="HIT",
+                before_context=1,
+                after_context=1,
+                session=s,
+            )
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        entries = meta["line_matches"]
+        assert [e["line"] for e in entries] == [1, 2, 3, 4, 5]
+        assert meta["match_count"] == 2
+
+    # ── regex modifiers ─────────────────────────────────────────────
+
+    async def test_grep_fixed_strings_treats_regex_chars_as_literal(
+        self,
+        db: DatabaseFileSystem,
+    ) -> None:
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "value = foo.bar\nother = fooxbar", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="foo.bar", fixed_strings=True, session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 1
+        assert meta["line_matches"][0]["line"] == 1
+
+    async def test_grep_word_regexp(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "grep\ngrepper\nregrep\n", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="grep", word_regexp=True, session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 1
+
+    async def test_grep_invert_match(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "alpha\nbeta\ngamma", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="beta", invert_match=True, session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 2
+        lines = {e["line"] for e in meta["line_matches"]}
+        assert lines == {1, 3}
+
+    async def test_grep_smart_case_lowercase_pattern_matches_upper(
+        self,
+        db: DatabaseFileSystem,
+    ) -> None:
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "FOO\nfoo", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="foo", case_mode="smart", session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 2
+
+    async def test_grep_smart_case_uppercase_pattern_is_sensitive(
+        self,
+        db: DatabaseFileSystem,
+    ) -> None:
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "FOO\nfoo", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="FOO", case_mode="smart", session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 1
+
+    # ── combined filters ─────────────────────────────────────────────
+
+    async def test_grep_filters_combine_and(self, db: DatabaseFileSystem):
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(
+                pattern="grep",
+                paths=("/src",),
+                ext=("py",),
+                globs_not=("**/b.py",),
+                session=s,
+            )
+        assert set(r.paths) == {"/src/a.py", "/src/sub/c.py"}
+
+
+class TestGlobRipgrepFilters:
+    """Phase 5 — ``ext`` and positional ``paths`` on ``_glob_impl``."""
+
+    async def test_glob_ext_filter(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "x", session=s)
+            await db._write_impl("/src/b.js", "x", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="**/*", ext=("py",), session=s)
+        assert "/src/a.py" in r.paths
+        assert "/src/b.js" not in r.paths
+
+    async def test_glob_positional_path_prefix(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "x", session=s)
+            await db._write_impl("/lib/b.py", "x", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="**/*.py", paths=("/src",), session=s)
+        assert r.paths == ("/src/a.py",)
+
+    async def test_glob_max_count_caps_results(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            for i in range(5):
+                await db._write_impl(f"/f{i}.py", "x", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/*.py", max_count=2, session=s)
+        assert len(r) == 2
 
 
 # ------------------------------------------------------------------

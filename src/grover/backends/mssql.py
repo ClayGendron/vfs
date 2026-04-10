@@ -30,7 +30,12 @@ from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import text
 
-from grover.backends.database import DatabaseFileSystem
+from grover.backends.database import (
+    DatabaseFileSystem,
+    _compile_grep_regex,
+    _escape_like,
+    _regex_flags_for_mode,
+)
 from grover.bm25 import tokenize_query
 from grover.paths import scope_path
 from grover.patterns import compile_glob, glob_to_sql_like
@@ -38,6 +43,8 @@ from grover.results import Candidate, Detail, GroverResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from grover.query.ast import CaseMode, GrepOutputMode
 
 
 # ---------------------------------------------------------------------------
@@ -325,13 +332,114 @@ class MSSQLFileSystem(DatabaseFileSystem):
     # Grep — REGEXP_LIKE pushdown with optional CONTAINS pre-filter
     # ------------------------------------------------------------------
 
+    def _build_grep_structural_sql(
+        self,
+        *,
+        ext: tuple[str, ...],
+        ext_not: tuple[str, ...],
+        paths: tuple[str, ...],
+        globs: tuple[str, ...],
+        globs_not: tuple[str, ...],
+        user_id: str | None,
+        alias: str = "o",
+    ) -> tuple[str, dict[str, object]]:
+        """Compose the rg-structural filter clauses for grep/glob SQL.
+
+        Returns ``(clause_sql, params)`` where *clause_sql* is a string
+        ready to be appended after an existing ``WHERE …`` (each clause
+        is pre-joined with ``AND`` and the whole string starts with a
+        leading ``AND `` when non-empty).  All column references use the
+        supplied *alias*.
+
+        Positive ``globs`` push an authoritative ``REGEXP_LIKE(path, …)``
+        alongside the sargable ``LIKE`` pre-filter so the engine can
+        seek on a literal prefix and still reject LIKE over-matches
+        server-side.  ``globs_not`` uses ``NOT REGEXP_LIKE`` only —
+        there is no sargable form for negation.
+        """
+        clauses: list[str] = []
+        params: dict[str, object] = {}
+        col = f"{alias}.path" if alias else "path"
+        ext_col = f"{alias}.ext" if alias else "ext"
+
+        if self._user_scoped and user_id:
+            clauses.append(f"{col} LIKE :user_scope ESCAPE '\\'")
+            params["user_scope"] = f"/{user_id}/%"
+
+        if ext:
+            in_list = ", ".join(f":gext{i}" for i in range(len(ext)))
+            clauses.append(f"{ext_col} IN ({in_list})")
+            for i, e in enumerate(ext):
+                params[f"gext{i}"] = e
+
+        if ext_not:
+            in_list = ", ".join(f":gextn{i}" for i in range(len(ext_not)))
+            clauses.append(f"{ext_col} NOT IN ({in_list})")
+            for i, e in enumerate(ext_not):
+                params[f"gextn{i}"] = e
+
+        if paths:
+            path_or: list[str] = []
+            for i, raw in enumerate(paths):
+                prefix = self._scope_filter_prefix(raw, user_id).rstrip("/") or "/"
+                path_or.append(
+                    f"{col} = :gpeq{i} OR {col} LIKE :gppre{i} ESCAPE '\\'"
+                )
+                params[f"gpeq{i}"] = prefix
+                params[f"gppre{i}"] = _escape_like(prefix) + "/%"
+            clauses.append("(" + " OR ".join(path_or) + ")")
+
+        if globs:
+            glob_or: list[str] = []
+            for i, raw in enumerate(globs):
+                scoped = self._scope_filter_prefix(raw, user_id)
+                regex = compile_glob(scoped)
+                if regex is None:
+                    continue
+                like = glob_to_sql_like(scoped)
+                if like is not None:
+                    glob_or.append(
+                        f"({col} LIKE :ggl{i} ESCAPE '\\' "
+                        f"AND REGEXP_LIKE({col}, :ggr{i}, 'c'))"
+                    )
+                    params[f"ggl{i}"] = like
+                else:
+                    glob_or.append(f"REGEXP_LIKE({col}, :ggr{i}, 'c')")
+                params[f"ggr{i}"] = regex.pattern
+            if glob_or:
+                clauses.append("(" + " OR ".join(glob_or) + ")")
+
+        if globs_not:
+            for i, raw in enumerate(globs_not):
+                scoped = self._scope_filter_prefix(raw, user_id)
+                regex = compile_glob(scoped)
+                if regex is None:
+                    continue
+                clauses.append(f"NOT REGEXP_LIKE({col}, :ggnr{i}, 'c')")
+                params[f"ggnr{i}"] = regex.pattern
+
+        if not clauses:
+            return "", params
+        return " AND " + " AND ".join(clauses), params
+
     async def _grep_impl(
         self,
         pattern: str,
-        case_sensitive: bool = True,
-        max_results: int | None = None,
-        candidates: GroverResult | None = None,
         *,
+        paths: tuple[str, ...] = (),
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
+        case_mode: CaseMode = "sensitive",
+        fixed_strings: bool = False,
+        word_regexp: bool = False,
+        invert_match: bool = False,
+        before_context: int = 0,
+        after_context: int = 0,
+        output_mode: GrepOutputMode = "lines",
+        max_count: int | None = None,
+        candidates: GroverResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
@@ -339,25 +447,29 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         Operates on files only; chunks and versions are excluded.
 
-        Two pushdown paths:
+        Four SQL templates, picked by ``output_mode`` and whether a
+        Full-Text literal pre-filter is extractable:
 
-        1. **Literal pre-filter** (preferred when extractable): build a
-           Full-Text ``CONTAINS`` expression from literal alphanumeric
-           runs in the regex (via :func:`_extract_literal_terms`),
-           ``JOIN`` ``CONTAINSTABLE`` to the table, then add
-           ``REGEXP_LIKE`` to the WHERE so only the narrow candidate set
-           is regex-scanned.
+        1. **CONTAINSTABLE + lines** — when literal terms can be mined
+           from the regex and the caller wants per-line detail.
+        2. **CONTAINSTABLE + files** — same pre-filter, but ``-l`` /
+           ``--files-with-matches``: ``SELECT`` the path only, no
+           content transfer.
+        3. **Direct + lines** — pure character-class / alternation
+           patterns with no literal runs; ``REGEXP_LIKE`` drives the
+           scan under ``MAXDOP 1``.
+        4. **Direct + files** — same direct path, path-only projection.
 
-        2. **Direct REGEXP_LIKE**: when no literals can be safely
-           extracted (pure character-class / alternation patterns),
-           run ``REGEXP_LIKE`` against the table with ``MAXDOP 1``
-           (matches the configuration that gave Brent Ozar 1.86M
-           rows/sec post-RTM).
+        Structural filters (``ext``, ``paths``, ``globs`` / ``globs_not``)
+        compose onto all four via :meth:`_build_grep_structural_sql`.
+        ``ext`` seeks the ``ix_grover_objects_ext_kind`` composite
+        index, so ``-t py`` on a 1M-row corpus narrows before the
+        regex engine runs.
 
-        Per-line metadata is built client-side via the inherited
-        :meth:`_collect_line_matches` helper, but only on the already-
-        narrow result set — content for matched files is fetched in the
-        same query.
+        ``invert_match`` (``-v``) disables both pushdowns — the match
+        predicate inverts per line, so the server cannot pre-filter on
+        "content contains pattern".  Content for the structural-filter
+        result set is streamed back and scanned client-side.
 
         ``REGEXP_LIKE`` has a 2 MB LOB ceiling — only the first ~1M
         characters of an ``nvarchar(max)`` value are scanned.  For
@@ -368,24 +480,34 @@ class MSSQLFileSystem(DatabaseFileSystem):
         if not pattern:
             return self._error("grep requires a pattern")
 
-        flags = 0 if case_sensitive else re.IGNORECASE
         try:
-            regex = re.compile(pattern, flags)
+            regex = _compile_grep_regex(
+                pattern,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+            )
         except re.error as exc:
             return self._error(f"Invalid regex pattern: {exc}")
 
-        # Always include 'm' (multi-line) so ^ and $ match at line
-        # boundaries — this matches the base class's per-line Python
-        # grep and grep(1) conventions.  Without 'm', SQL Server's
-        # REGEXP_LIKE treats ^/$ as start/end-of-string only.
-        sql_flags = "cm" if case_sensitive else "im"
+        effective_pattern = regex.pattern
+        flags = _regex_flags_for_mode(case_mode, pattern)
+        # Always include 'm' (multi-line) so ^/$ match at line
+        # boundaries — matches per-line Python grep and grep(1)
+        # conventions.  Without 'm', REGEXP_LIKE treats ^/$ as
+        # start/end-of-string only.
+        sql_flags = "im" if flags & re.IGNORECASE else "cm"
         table = self._resolve_table()
-        params: dict[str, object] = {"pattern": pattern, "flags": sql_flags}
 
-        user_scope_clause = ""
-        if self._user_scoped and user_id:
-            user_scope_clause = " AND o.path LIKE :user_scope ESCAPE '\\'"
-            params["user_scope"] = f"/{user_id}/%"
+        filter_clause, filter_params = self._build_grep_structural_sql(
+            ext=ext,
+            ext_not=ext_not,
+            paths=paths,
+            globs=globs,
+            globs_not=globs_not,
+            user_id=user_id,
+            alias="o",
+        )
 
         if candidates is not None:
             candidate_paths = [c.path for c in candidates.candidates if c.kind in (None, "file")]
@@ -393,63 +515,109 @@ class MSSQLFileSystem(DatabaseFileSystem):
                 return self._unscope_result(GroverResult(candidates=[]), user_id)
             content_map = await self._grep_with_candidate_chunks(
                 session=session,
-                regex_pattern=pattern,
+                effective_pattern=effective_pattern,
                 sql_flags=sql_flags,
-                user_scope_clause=user_scope_clause,
-                user_scope_value=params.get("user_scope"),
+                filter_clause=filter_clause,
+                filter_params=filter_params,
                 candidate_paths=candidate_paths,
-                max_results=max_results,
+                max_count=max_count,
+                invert_match=invert_match,
             )
+            matched = self._collect_line_matches(
+                content_map,
+                regex,
+                max_count,
+                output_mode=output_mode,
+                before_context=before_context,
+                after_context=after_context,
+                invert_match=invert_match,
+            )
+            return self._unscope_result(GroverResult(candidates=matched), user_id)
+
+        params: dict[str, object] = dict(filter_params)
+        top_clause = ""
+        if max_count is not None:
+            top_clause = "TOP (:max_count) "
+            params["max_count"] = max_count
+
+        # Path-only projection is only safe when the regex predicate is
+        # in SQL and guarantees a match — i.e. not inverted and caller
+        # only wants -l.  Everything else fetches content for the
+        # client-side line scan.
+        files_only = output_mode == "files" and not invert_match
+        select_cols = "o.path" if files_only else "o.path, o.content"
+        content_not_null = "" if files_only else "AND o.content IS NOT NULL"
+
+        regex_clause = ""
+        if not invert_match:
+            regex_clause = "AND REGEXP_LIKE(o.content, :pattern, CAST(:flags AS VARCHAR(4)))"
+            params["pattern"] = effective_pattern
+            params["flags"] = sql_flags
+
+        literal_terms = _extract_literal_terms(effective_pattern) if not invert_match else []
+        if literal_terms:
+            contains_expr = " AND ".join(_quote_contains_term(t) for t in literal_terms)
+            params["expr"] = contains_expr
+            sql = text(f"""
+                SELECT {top_clause}{select_cols}
+                FROM CONTAINSTABLE({table}, content, :expr) AS ct
+                INNER JOIN {table} AS o ON o.id = ct.[KEY]
+                WHERE o.kind = 'file'
+                  AND o.deleted_at IS NULL
+                  {content_not_null}
+                  {regex_clause}
+                  {filter_clause}
+                ORDER BY ct.[RANK] DESC
+            """)
         else:
-            literal_terms = _extract_literal_terms(pattern)
-            top_clause = ""
-            if max_results is not None:
-                top_clause = "TOP (:max_results) "
-                params["max_results"] = max_results
+            sql = text(f"""
+                SELECT {top_clause}{select_cols}
+                FROM {table} AS o
+                WHERE o.kind = 'file'
+                  AND o.deleted_at IS NULL
+                  {content_not_null}
+                  {regex_clause}
+                  {filter_clause}
+                ORDER BY o.path
+                OPTION (MAXDOP 1)
+            """)
 
-            if literal_terms:
-                contains_expr = " AND ".join(_quote_contains_term(t) for t in literal_terms)
-                params["expr"] = contains_expr
-                sql = text(f"""
-                    SELECT {top_clause}o.path, o.content
-                    FROM CONTAINSTABLE({table}, content, :expr) AS ct
-                    INNER JOIN {table} AS o ON o.id = ct.[KEY]
-                    WHERE o.kind = 'file'
-                      AND o.deleted_at IS NULL
-                      AND o.content IS NOT NULL
-                      AND REGEXP_LIKE(o.content, :pattern, CAST(:flags AS VARCHAR(4)))
-                      {user_scope_clause}
-                    ORDER BY o.path
-                """)
-            else:
-                sql = text(f"""
-                    SELECT {top_clause}o.path, o.content
-                    FROM {table} AS o
-                    WHERE o.kind = 'file'
-                      AND o.deleted_at IS NULL
-                      AND o.content IS NOT NULL
-                      AND REGEXP_LIKE(o.content, :pattern, CAST(:flags AS VARCHAR(4)))
-                      {user_scope_clause}
-                    ORDER BY o.path
-                    OPTION (MAXDOP 1)
-                """)
+        rows = (await session.execute(sql, params)).all()
 
-            rows = (await session.execute(sql, params)).all()
-            content_map = {row.path: row.content for row in rows if row.content}
+        if files_only:
+            matched = [
+                Candidate(
+                    path=row.path,
+                    kind="file",
+                    details=(Detail(operation="grep", metadata={}),),
+                )
+                for row in rows
+            ]
+            return self._unscope_result(GroverResult(candidates=matched), user_id)
 
-        matched = self._collect_line_matches(content_map, regex, max_results)
+        content_map = {row.path: row.content for row in rows if row.content}
+        matched = self._collect_line_matches(
+            content_map,
+            regex,
+            max_count,
+            output_mode=output_mode,
+            before_context=before_context,
+            after_context=after_context,
+            invert_match=invert_match,
+        )
         return self._unscope_result(GroverResult(candidates=matched), user_id)
 
     async def _grep_with_candidate_chunks(
         self,
         *,
         session: AsyncSession,
-        regex_pattern: str,
+        effective_pattern: str,
         sql_flags: str,
-        user_scope_clause: str,
-        user_scope_value: object | None,
+        filter_clause: str,
+        filter_params: dict[str, object],
         candidate_paths: list[str],
-        max_results: int | None,
+        max_count: int | None,
+        invert_match: bool,
     ) -> dict[str, str]:
         """Run ``REGEXP_LIKE`` per chunk for an explicit candidate path list.
 
@@ -457,16 +625,24 @@ class MSSQLFileSystem(DatabaseFileSystem):
         parameter budget and runs the regex pushdown on each.  Returns
         a ``{path: content}`` map for the matched rows.  No CONTAINS
         pre-filter — the candidate list is already narrow.
+
+        Under ``invert_match`` the regex predicate is dropped from the
+        WHERE and all structural-filter matches stream back for the
+        client-side line scan.
         """
         table = self._resolve_table()
         content_map: dict[str, str] = {}
+
+        regex_clause = ""
         for batch in self._chunk_paths(session, candidate_paths, binds_per_item=1):
             in_clause = ", ".join(f":p{i}" for i in range(len(batch)))
-            params: dict[str, object] = {"pattern": regex_pattern, "flags": sql_flags}
+            params: dict[str, object] = dict(filter_params)
+            if not invert_match:
+                params["pattern"] = effective_pattern
+                params["flags"] = sql_flags
+                regex_clause = "AND REGEXP_LIKE(o.content, :pattern, CAST(:flags AS VARCHAR(4)))"
             for i, p in enumerate(batch):
                 params[f"p{i}"] = p
-            if user_scope_value is not None:
-                params["user_scope"] = user_scope_value
             sql = text(f"""
                 SELECT o.path, o.content
                 FROM {table} AS o
@@ -474,15 +650,15 @@ class MSSQLFileSystem(DatabaseFileSystem):
                   AND o.deleted_at IS NULL
                   AND o.content IS NOT NULL
                   AND o.path IN ({in_clause})
-                  AND REGEXP_LIKE(o.content, :pattern, CAST(:flags AS VARCHAR(4)))
-                  {user_scope_clause}
+                  {regex_clause}
+                  {filter_clause}
                 ORDER BY o.path
             """)
             rows = (await session.execute(sql, params)).all()
             for row in rows:
                 if row.content:
                     content_map[row.path] = row.content
-            if max_results is not None and len(content_map) >= max_results:
+            if max_count is not None and len(content_map) >= max_count:
                 break
         return content_map
 
@@ -493,30 +669,28 @@ class MSSQLFileSystem(DatabaseFileSystem):
     async def _glob_impl(
         self,
         pattern: str,
-        candidates: GroverResult | None = None,
         *,
+        paths: tuple[str, ...] = (),
+        ext: tuple[str, ...] = (),
+        max_count: int | None = None,
+        candidates: GroverResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Glob match with the authoritative regex pushed into SQL.
 
-        The base class already pushes ``LIKE`` to SQL, but then re-checks
-        every returned row in Python with ``compile_glob(pattern).match``.
-        That's a network round-trip and a Python loop for every row that
-        ``LIKE`` over-matched (e.g. ``**/test_*.py`` LIKEs to
-        ``%test_%.py``, which over-matches ``foo_test_bar.py``).
-
-        This override keeps the SARGable ``LIKE`` pre-filter (so a
-        leading literal prefix can still drive an index seek) and adds
+        Keeps the SARGable ``LIKE`` pre-filter (so a leading literal
+        prefix can drive an index seek) and adds
         ``REGEXP_LIKE(path, :glob_regex, 'c')`` as the authoritative
-        gate, eliminating the Python post-filter and moving the sort
-        into SQL via ``ORDER BY path``.
+        gate — no Python post-filter, sort moves into SQL via
+        ``ORDER BY path``.
 
-        ``compile_glob`` produces plain POSIX-style regexes from
-        ``fnmatch.translate``-equivalent rules — no Python-only syntax
-        — so the regex source string can be passed directly to
-        ``REGEXP_LIKE``.  The 2 MB LOB ceiling does not apply to the
-        ``path`` column.
+        Extends the base-class signature with rg-style ``ext`` and
+        positional ``paths`` pushdowns composed via
+        :meth:`_build_grep_structural_sql`.  ``compile_glob`` produces
+        plain POSIX-style regexes so the regex source passes straight
+        into ``REGEXP_LIKE``.  The 2 MB LOB ceiling does not apply to
+        the ``path`` column.
         """
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
@@ -536,24 +710,42 @@ class MSSQLFileSystem(DatabaseFileSystem):
                 for c in candidates.candidates
                 if regex.match(c.path) is not None
             ]
+            if max_count is not None:
+                matched = matched[:max_count]
             return self._unscope_result(GroverResult(candidates=matched), user_id)
 
         table = self._resolve_table()
         like_pattern = glob_to_sql_like(pattern)
         like_clause = "AND path LIKE :like_pattern ESCAPE '\\'" if like_pattern is not None else ""
 
+        filter_clause, filter_params = self._build_grep_structural_sql(
+            ext=ext,
+            ext_not=(),
+            paths=paths,
+            globs=(),
+            globs_not=(),
+            user_id=user_id,
+            alias="",
+        )
+
+        params: dict[str, object] = {"glob_regex": regex.pattern, **filter_params}
+        top_clause = ""
+        if max_count is not None:
+            top_clause = "TOP (:max_count) "
+            params["max_count"] = max_count
+        if like_pattern is not None:
+            params["like_pattern"] = like_pattern
+
         sql = text(f"""
-            SELECT path, kind
+            SELECT {top_clause}path, kind
             FROM {table}
             WHERE kind IN ('file', 'directory')
               AND deleted_at IS NULL
               {like_clause}
               AND REGEXP_LIKE(path, :glob_regex, 'c')
+              {filter_clause}
             ORDER BY path
         """)
-        params: dict[str, object] = {"glob_regex": regex.pattern}
-        if like_pattern is not None:
-            params["like_pattern"] = like_pattern
 
         rows = (await session.execute(sql, params)).all()
         matched = [Candidate(path=row.path, kind=row.kind, details=(Detail(operation="glob"),)) for row in rows]

@@ -956,10 +956,22 @@ class TestPublicSearch:
     async def test_grep_passes_kwargs(self):
         fs = _FullRoutingFS()
         fs.grep_mock.return_value = GroverResult()
-        await fs.grep("test", case_sensitive=False, max_results=5)
+        await fs.grep(
+            "test",
+            case_mode="insensitive",
+            max_count=5,
+            ext=("py",),
+            paths=("src/",),
+            before_context=2,
+            output_mode="files",
+        )
         call_kwargs = fs.grep_mock.call_args
-        assert call_kwargs.kwargs.get("case_sensitive") is False
-        assert call_kwargs.kwargs.get("max_results") == 5
+        assert call_kwargs.kwargs.get("case_mode") == "insensitive"
+        assert call_kwargs.kwargs.get("max_count") == 5
+        assert call_kwargs.kwargs.get("ext") == ("py",)
+        assert call_kwargs.kwargs.get("paths") == ("src/",)
+        assert call_kwargs.kwargs.get("before_context") == 2
+        assert call_kwargs.kwargs.get("output_mode") == "files"
 
     @pytest.mark.parametrize(
         ("method", "args"),

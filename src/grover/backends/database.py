@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from grover.embedding import EmbeddingProvider
     from grover.permissions import Permission, PermissionMap
+    from grover.query.ast import CaseMode, GrepOutputMode
     from grover.vector_store import VectorStore
 
 
@@ -48,6 +49,78 @@ class _LexicalDoc(NamedTuple):
 def _escape_like(term: str) -> str:
     """Escape special characters for a SQL LIKE pattern."""
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _regex_flags_for_mode(case_mode: CaseMode, pattern: str) -> int:
+    """Map an rg-style case mode to Python ``re`` flags.
+
+    ``smart`` matches rg's smart-case: case-insensitive iff the pattern
+    contains no uppercase characters.
+    """
+    if case_mode == "insensitive":
+        return re.IGNORECASE
+    if case_mode == "smart":
+        return re.IGNORECASE if pattern == pattern.lower() else 0
+    return 0
+
+
+def _compile_grep_regex(
+    pattern: str,
+    *,
+    case_mode: CaseMode,
+    fixed_strings: bool,
+    word_regexp: bool,
+) -> re.Pattern[str]:
+    """Build the effective grep regex from rg-style modifiers.
+
+    Applies, in order: ``-F`` (escape), ``-w`` (word boundary wrap),
+    and case-mode flag resolution.  Smart-case is evaluated against the
+    user's raw pattern, not the post-escape form, so ``-F "Foo"`` stays
+    case-sensitive under smart-case just like rg.
+    """
+    effective = re.escape(pattern) if fixed_strings else pattern
+    if word_regexp:
+        effective = rf"\b(?:{effective})\b"
+    flags = _regex_flags_for_mode(case_mode, pattern)
+    return re.compile(effective, flags)
+
+
+def _build_line_matches_with_context(
+    lines: list[str],
+    match_indices: list[int],
+    before: int,
+    after: int,
+) -> list[dict[str, object]]:
+    """Emit line_matches entries covering matches plus rg-style context.
+
+    Overlapping or adjacent context windows are merged so a single span
+    contributes exactly one entry per line.  Context lines are marked
+    with ``"context": True`` in the returned dicts; match lines are not.
+    With ``before == after == 0`` the output degrades to a flat list of
+    match-only entries preserving the original shape.
+    """
+    if not match_indices:
+        return []
+    total = len(lines)
+    windows: list[list[int]] = []  # each: [start, end] inclusive
+    for mi in match_indices:
+        start = max(0, mi - before)
+        end = min(total - 1, mi + after)
+        if windows and start <= windows[-1][1] + 1:
+            if end > windows[-1][1]:
+                windows[-1][1] = end
+        else:
+            windows.append([start, end])
+
+    match_set = set(match_indices)
+    result: list[dict[str, object]] = []
+    for start, end in windows:
+        for idx in range(start, end + 1):
+            entry: dict[str, object] = {"line": idx + 1, "text": lines[idx]}
+            if idx not in match_set:
+                entry["context"] = True
+            result.append(entry)
+    return result
 
 
 def _unchecked_select(*entities: Any) -> Any:
@@ -1491,11 +1564,79 @@ class DatabaseFileSystem(GroverFileSystem):
     # Search / query
     # ------------------------------------------------------------------
 
+    def _scope_filter_prefix(self, prefix: str, user_id: str | None) -> str:
+        """Apply user-scoping to a path/glob prefix supplied by the caller.
+
+        Scopes absolute prefixes via :func:`scope_path`; prepends
+        ``/user_id`` to relative prefixes.  When not user-scoped, just
+        normalises to absolute form.
+        """
+        if self._user_scoped and user_id:
+            if prefix.startswith("/"):
+                return scope_path(prefix, user_id)
+            return f"/{user_id}/{prefix.lstrip('/')}"
+        return prefix if prefix.startswith("/") else "/" + prefix.lstrip("/")
+
+    def _apply_structural_filters(
+        self,
+        stmt: Any,
+        *,
+        ext: tuple[str, ...],
+        ext_not: tuple[str, ...],
+        paths: tuple[str, ...],
+        globs: tuple[str, ...],
+        globs_not: tuple[str, ...],
+        user_id: str | None,
+    ) -> Any:
+        """Push ext / path-prefix / glob filters into a select statement.
+
+        All filters are AND'd together; within ``paths`` and ``globs``
+        the clauses are OR'd (any of the supplied prefixes may match).
+        ``globs_not`` is pre-filtered here via ``NOT LIKE``; the caller
+        still post-filters with :func:`compile_glob` for correctness on
+        patterns LIKE cannot represent precisely.
+        """
+        if ext:
+            stmt = stmt.where(self._model.ext.in_(list(ext)))  # ty: ignore[unresolved-attribute]
+        if ext_not:
+            stmt = stmt.where(self._model.ext.notin_(list(ext_not)))  # ty: ignore[unresolved-attribute]
+
+        if paths:
+            clauses = []
+            for raw in paths:
+                prefix = self._scope_filter_prefix(raw, user_id).rstrip("/") or "/"
+                escaped = _escape_like(prefix)
+                clauses.append(self._model.path == prefix)
+                clauses.append(self._model.path.like(escaped + "/%", escape="\\"))  # ty: ignore[unresolved-attribute]
+            stmt = stmt.where(or_(*clauses))
+
+        if globs:
+            clauses = []
+            for raw in globs:
+                scoped = self._scope_filter_prefix(raw, user_id)
+                like = glob_to_sql_like(scoped)
+                if like is not None:
+                    clauses.append(self._model.path.like(like, escape="\\"))  # ty: ignore[unresolved-attribute]
+            if clauses:
+                stmt = stmt.where(or_(*clauses))
+
+        if globs_not:
+            for raw in globs_not:
+                scoped = self._scope_filter_prefix(raw, user_id)
+                like = glob_to_sql_like(scoped)
+                if like is not None:
+                    stmt = stmt.where(~self._model.path.like(like, escape="\\"))  # ty: ignore[unresolved-attribute]
+
+        return stmt
+
     async def _glob_impl(
         self,
         pattern: str,
-        candidates: GroverResult | None = None,
         *,
+        paths: tuple[str, ...] = (),
+        ext: tuple[str, ...] = (),
+        max_count: int | None = None,
+        candidates: GroverResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
@@ -1523,6 +1664,8 @@ class DatabaseFileSystem(GroverFileSystem):
                 for c in candidates.candidates
                 if regex.match(c.path) is not None
             ]
+            if max_count is not None:
+                matched = matched[:max_count]
             return self._unscope_result(GroverResult(candidates=matched), user_id)
 
         # ── Without candidates: query DB ──────────────────────────────
@@ -1538,38 +1681,66 @@ class DatabaseFileSystem(GroverFileSystem):
                 self._model.path.like(like_pattern, escape="\\"),  # ty: ignore[unresolved-attribute]
             )
 
+        stmt = self._apply_structural_filters(
+            stmt,
+            ext=ext,
+            ext_not=(),
+            paths=paths,
+            globs=(),
+            globs_not=(),
+            user_id=user_id,
+        )
+
         result = await session.execute(stmt)
 
         matched = [
             obj.to_candidate(operation="glob") for obj in result.scalars().all() if regex.match(obj.path) is not None
         ]
         matched.sort(key=lambda c: c.path)
+        if max_count is not None:
+            matched = matched[:max_count]
         return self._unscope_result(GroverResult(candidates=matched), user_id)
 
     async def _grep_impl(
         self,
         pattern: str,
-        case_sensitive: bool = True,
-        max_results: int | None = None,
-        candidates: GroverResult | None = None,
         *,
+        paths: tuple[str, ...] = (),
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
+        case_mode: CaseMode = "sensitive",
+        fixed_strings: bool = False,
+        word_regexp: bool = False,
+        invert_match: bool = False,
+        before_context: int = 0,
+        after_context: int = 0,
+        output_mode: GrepOutputMode = "lines",
+        max_count: int | None = None,
+        candidates: GroverResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> GroverResult:
         """Regex content search across files.
 
-        Compiles *pattern* as a regex and searches file content line by
-        line.  Returns candidates with line-match details in metadata.
-        Files only by default (§5.4).
+        Pushes structural filters (``ext``, ``paths``, ``globs``) into
+        SQL and compiles *pattern* into a Python regex (wrapped for
+        ``fixed_strings`` / ``word_regexp``) that scans per line on the
+        narrowed candidate set.  Files only by default (§5.4).
         """
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         if not pattern:
             return self._error("grep requires a pattern")
 
-        flags = 0 if case_sensitive else re.IGNORECASE
         try:
-            regex = re.compile(pattern, flags)
+            regex = _compile_grep_regex(
+                pattern,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+            )
         except re.error as exc:
             return self._error(f"Invalid regex pattern: {exc}")
 
@@ -1592,6 +1763,15 @@ class DatabaseFileSystem(GroverFileSystem):
                         self._model.kind == "file",
                         self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                     )
+                    stmt = self._apply_structural_filters(
+                        stmt,
+                        ext=ext,
+                        ext_not=ext_not,
+                        paths=paths,
+                        globs=globs,
+                        globs_not=globs_not,
+                        user_id=user_id,
+                    )
                     result = await session.execute(stmt)
                     for obj in result.scalars().all():
                         if obj.content:
@@ -1604,56 +1784,112 @@ class DatabaseFileSystem(GroverFileSystem):
             )
             if self._user_scoped and user_id:
                 stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # ty: ignore[unresolved-attribute]
+            stmt = self._apply_structural_filters(
+                stmt,
+                ext=ext,
+                ext_not=ext_not,
+                paths=paths,
+                globs=globs,
+                globs_not=globs_not,
+                user_id=user_id,
+            )
             result = await session.execute(stmt)
             for obj in result.scalars().all():
                 if obj.content:
                     content_map[obj.path] = obj.content
 
-        # ── Search content line by line ───────────────────────────────
-        matched = self._collect_line_matches(content_map, regex, max_results)
+        # ── Authoritative glob post-filter ───────────────────────────
+        # LIKE is a pre-filter; compile_glob is the source of truth.
+        if globs or globs_not:
+            pos_regexes = [
+                r for r in (compile_glob(self._scope_filter_prefix(g, user_id)) for g in globs) if r is not None
+            ]
+            neg_regexes = [
+                r for r in (compile_glob(self._scope_filter_prefix(g, user_id)) for g in globs_not) if r is not None
+            ]
+            filtered: dict[str, str] = {}
+            for p, c in content_map.items():
+                if pos_regexes and not any(r.match(p) for r in pos_regexes):
+                    continue
+                if neg_regexes and any(r.match(p) for r in neg_regexes):
+                    continue
+                filtered[p] = c
+            content_map = filtered
+
+        matched = self._collect_line_matches(
+            content_map,
+            regex,
+            max_count,
+            output_mode=output_mode,
+            before_context=before_context,
+            after_context=after_context,
+            invert_match=invert_match,
+        )
         return self._unscope_result(GroverResult(candidates=matched), user_id)
 
     @staticmethod
     def _collect_line_matches(
         content_map: dict[str, str],
         regex: re.Pattern[str],
-        max_results: int | None,
+        max_count: int | None = None,
+        *,
+        output_mode: GrepOutputMode = "lines",
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
     ) -> list[Candidate]:
-        """Build per-line grep candidates from a ``{path: content}`` mapping.
+        """Build grep candidates from a ``{path: content}`` mapping.
 
-        Iterates ``content_map`` in sorted-path order, splits each value
-        on newlines, and records line numbers + text for any line whose
-        ``regex.search`` matches.  Stops at *max_results* matched files
-        when set.  Shared by ``DatabaseFileSystem._grep_impl`` and any
-        subclass that pre-narrows the candidate set in SQL before
-        running per-line scanning client-side.
+        Iterates ``content_map`` in sorted-path order and runs
+        ``regex.search`` per line.  ``output_mode`` controls the shape of
+        the returned detail metadata:
+
+        * ``"lines"`` — attach per-line matches with merged context
+          windows driven by ``before_context`` / ``after_context``.
+          Context lines carry ``"context": True`` in the metadata entry.
+        * ``"files"`` / ``"count"`` — no line-level detail, just a
+          per-file match count.
+
+        ``invert_match`` flips the per-line predicate (``-v``).  Stops at
+        *max_count* matched files when set.
         """
         matched: list[Candidate] = []
         for path in sorted(content_map):
             content = content_map[path]
-            line_matches: list[dict[str, object]] = []
-            for line_num, line_text in enumerate(content.split("\n"), 1):
-                if regex.search(line_text):
-                    line_matches.append({"line": line_num, "text": line_text})
-            if line_matches:
-                matched.append(
-                    Candidate(
-                        path=path,
-                        kind="file",
-                        details=(
-                            Detail(
-                                operation="grep",
-                                score=float(len(line_matches)),
-                                metadata={
-                                    "line_matches": line_matches,
-                                    "match_count": len(line_matches),
-                                },
-                            ),
-                        ),
-                    )
+            lines = content.split("\n")
+            match_indices: list[int] = []
+            for idx, line_text in enumerate(lines):
+                hit = regex.search(line_text) is not None
+                if hit != invert_match:
+                    match_indices.append(idx)
+            if not match_indices:
+                continue
+
+            match_count = len(match_indices)
+            metadata: dict[str, object] = {"match_count": match_count}
+            if output_mode == "lines":
+                metadata["line_matches"] = _build_line_matches_with_context(
+                    lines,
+                    match_indices,
+                    before_context,
+                    after_context,
                 )
-                if max_results is not None and len(matched) >= max_results:
-                    break
+
+            matched.append(
+                Candidate(
+                    path=path,
+                    kind="file",
+                    details=(
+                        Detail(
+                            operation="grep",
+                            score=float(match_count),
+                            metadata=metadata,
+                        ),
+                    ),
+                )
+            )
+            if max_count is not None and len(matched) >= max_count:
+                break
         return matched
 
     async def _semantic_search_impl(

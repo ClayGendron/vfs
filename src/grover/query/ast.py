@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     from grover.paths import ObjectKind
 
 RenderMode = Literal["action", "content", "ls", "query_list", "stat", "tree"]
+CaseMode = Literal["sensitive", "insensitive", "smart"]
+GrepOutputMode = Literal["lines", "files", "count"]
 
 
 @dataclass(frozen=True)
@@ -110,14 +112,39 @@ class MkconnCommand(StageNode):
 @dataclass(frozen=True)
 class GlobCommand(StageNode):
     pattern: str
+    paths: tuple[str, ...] = ()
+    ext: tuple[str, ...] = ()
+    max_count: int | None = None
     visibility: Visibility = Visibility()
 
 
 @dataclass(frozen=True)
 class GrepCommand(StageNode):
+    """ripgrep-compatible grep query.
+
+    Fields map directly to rg flags.  The parser and CLI frontend are
+    responsible for translating rg-style CLI syntax (``-t python`` → the
+    ``("py", "pyi")`` alias expansion) into the concrete tuples stored
+    here.  The facade and backends only ever see already-resolved values.
+
+    Defaults match ripgrep's defaults: ``case_mode="sensitive"``,
+    ``output_mode="lines"``, no type/path/glob filters, no context.
+    """
+
     pattern: str
-    case_sensitive: bool = True
-    max_results: int | None = None
+    paths: tuple[str, ...] = ()
+    ext: tuple[str, ...] = ()              # -t / --type (resolved aliases)
+    ext_not: tuple[str, ...] = ()          # -T / --type-not
+    globs: tuple[str, ...] = ()            # -g / --glob (positive)
+    globs_not: tuple[str, ...] = ()        # -g '!...' (negated)
+    case_mode: CaseMode = "sensitive"      # -i / -s / -S
+    fixed_strings: bool = False            # -F
+    word_regexp: bool = False              # -w
+    invert_match: bool = False             # -v
+    before_context: int = 0                # -B
+    after_context: int = 0                 # -A
+    output_mode: GrepOutputMode = "lines"  # default / -l / -c
+    max_count: int | None = None           # -m
     visibility: Visibility = Visibility()
 
 

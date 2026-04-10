@@ -224,6 +224,32 @@ class TestUserScopedGrep:
         assert "/a.py" in paths
         assert "/b.py" not in paths
 
+    async def test_grep_relative_positional_path_scoped(self, scoped_db):
+        """rg-style relative positional paths are scoped under the user.
+
+        ``paths=("src",)`` (no leading slash) must resolve to
+        ``/u1/src/%`` on a user-scoped filesystem.  Cross-user isolation
+        is already covered by ``test_grep_scoped``; this test pins the
+        narrowing behaviour of the relative-prefix branch in
+        ``_scope_filter_prefix``.
+        """
+        await scoped_db.write(path="/src/a.py", content="hit here", user_id="u1")
+        await scoped_db.write(path="/lib/b.py", content="hit here", user_id="u1")
+
+        result = await scoped_db.grep(pattern="hit", paths=("src",), user_id="u1")
+        paths = [c.path for c in result.candidates]
+        assert paths == ["/src/a.py"]
+
+    async def test_glob_relative_positional_path_scoped(self, scoped_db):
+        """Same coverage hole for ``_glob_impl``: relative positional
+        ``paths`` must prepend ``/user_id`` before the LIKE filter."""
+        await scoped_db.write(path="/src/a.py", content="x", user_id="u1")
+        await scoped_db.write(path="/lib/b.py", content="y", user_id="u1")
+
+        result = await scoped_db.glob(pattern="**/*.py", paths=("src",), user_id="u1")
+        paths = [c.path for c in result.candidates]
+        assert paths == ["/src/a.py"]
+
 
 class TestUserScopedDelete:
     async def test_delete_only_affects_user(self, scoped_db):

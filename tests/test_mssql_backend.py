@@ -161,7 +161,7 @@ class TestCollectLineMatchesIntegration:
             "/a.py": "foo bar\nbaz qux\nfoo again",
             "/b.py": "no match here",
         }
-        matched = DatabaseFileSystem._collect_line_matches(content_map, regex, max_results=None)
+        matched = DatabaseFileSystem._collect_line_matches(content_map, regex, max_count=None)
         assert len(matched) == 1
         assert matched[0].path == "/a.py"
         assert matched[0].kind == "file"
@@ -175,12 +175,12 @@ class TestCollectLineMatchesIntegration:
             {"line": 3, "text": "foo again"},
         ]
 
-    def test_max_results_caps(self):
+    def test_max_count_caps(self):
         from grover.backends.database import DatabaseFileSystem
 
         regex = re.compile(r"hit")
         content_map = {f"/f{i}.txt": "hit it" for i in range(5)}
-        matched = DatabaseFileSystem._collect_line_matches(content_map, regex, max_results=2)
+        matched = DatabaseFileSystem._collect_line_matches(content_map, regex, max_count=2)
         assert len(matched) == 2
 
 
@@ -247,6 +247,152 @@ class TestGlobInMemoryCandidates:
         assert sorted(result.paths) == ["/src/foo.py", "/tests/foo.py"]
         for c in result.candidates:
             assert c.details[0].operation == "glob"
+
+
+class TestBuildGrepStructuralSql:
+    """Unit-test the clause composer — no DB connection required.
+
+    The helper is pure SQL-string construction, so we can exercise it
+    by ``__new__``-ing a filesystem and calling it directly.  Assertions
+    focus on: presence of expected fragments, parameter binding names,
+    and composition with an empty alias for the glob code path.
+    """
+
+    @staticmethod
+    def _fs(*, user_scoped: bool = False) -> MSSQLFileSystem:
+        fs = MSSQLFileSystem.__new__(MSSQLFileSystem)
+        fs._user_scoped = user_scoped
+        fs._raise_on_error = False
+        return fs
+
+    def test_empty_returns_empty_clause(self):
+        fs = self._fs()
+        sql, params = fs._build_grep_structural_sql(
+            ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None
+        )
+        assert sql == ""
+        assert params == {}
+
+    def test_ext_pushdown_uses_in_list(self):
+        fs = self._fs()
+        sql, params = fs._build_grep_structural_sql(
+            ext=("py", "pyi"), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None
+        )
+        assert "o.ext IN (:gext0, :gext1)" in sql
+        assert params == {"gext0": "py", "gext1": "pyi"}
+
+    def test_ext_not_pushdown(self):
+        fs = self._fs()
+        sql, params = fs._build_grep_structural_sql(
+            ext=(), ext_not=("md",), paths=(), globs=(), globs_not=(), user_id=None
+        )
+        assert "o.ext NOT IN (:gextn0)" in sql
+        assert params == {"gextn0": "md"}
+
+    def test_positional_paths_eq_or_prefix(self):
+        fs = self._fs()
+        sql, params = fs._build_grep_structural_sql(
+            ext=(),
+            ext_not=(),
+            paths=("/src", "lib"),
+            globs=(),
+            globs_not=(),
+            user_id=None,
+        )
+        assert "o.path = :gpeq0" in sql
+        assert "o.path LIKE :gppre0 ESCAPE '\\'" in sql
+        assert params["gpeq0"] == "/src"
+        assert params["gppre0"] == "/src/%"
+        # Relative "lib" normalises to absolute "/lib"
+        assert params["gpeq1"] == "/lib"
+        assert params["gppre1"] == "/lib/%"
+
+    def test_glob_positive_has_like_and_regex(self):
+        fs = self._fs()
+        sql, params = fs._build_grep_structural_sql(
+            ext=(),
+            ext_not=(),
+            paths=(),
+            globs=("**/test_*.py",),
+            globs_not=(),
+            user_id=None,
+        )
+        assert "o.path LIKE :ggl0 ESCAPE '\\'" in sql
+        assert "REGEXP_LIKE(o.path, :ggr0, 'c')" in sql
+        assert "ggl0" in params
+        assert "ggr0" in params
+
+    def test_glob_negative_is_not_regexp_like(self):
+        fs = self._fs()
+        sql, params = fs._build_grep_structural_sql(
+            ext=(),
+            ext_not=(),
+            paths=(),
+            globs=(),
+            globs_not=("**/vendor/**",),
+            user_id=None,
+        )
+        assert "NOT REGEXP_LIKE(o.path, :ggnr0, 'c')" in sql
+        assert "ggnr0" in params
+
+    def test_user_scope_appends_like_clause(self):
+        fs = self._fs(user_scoped=True)
+        sql, params = fs._build_grep_structural_sql(
+            ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id="alice"
+        )
+        assert "o.path LIKE :user_scope ESCAPE '\\'" in sql
+        assert params["user_scope"] == "/alice/%"
+
+    def test_user_scope_scopes_positional_paths(self):
+        fs = self._fs(user_scoped=True)
+        _sql, params = fs._build_grep_structural_sql(
+            ext=(),
+            ext_not=(),
+            paths=("/src",),
+            globs=(),
+            globs_not=(),
+            user_id="alice",
+        )
+        assert params["gpeq0"] == "/alice/src"
+        assert params["gppre0"] == "/alice/src/%"
+
+    def test_empty_alias_drops_table_prefix(self):
+        """``_glob_impl`` passes ``alias=""`` since its SQL has no table alias."""
+        fs = self._fs()
+        sql, params = fs._build_grep_structural_sql(
+            ext=("py",),
+            ext_not=(),
+            paths=("/src",),
+            globs=(),
+            globs_not=(),
+            user_id=None,
+            alias="",
+        )
+        assert "ext IN (:gext0)" in sql
+        assert "o.ext" not in sql
+        assert "path = :gpeq0" in sql
+        assert "o.path" not in sql
+        assert params["gext0"] == "py"
+        assert params["gpeq0"] == "/src"
+
+    def test_clauses_joined_with_leading_and(self):
+        fs = self._fs()
+        sql, _ = fs._build_grep_structural_sql(
+            ext=("py",), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None
+        )
+        assert sql.startswith(" AND ")
+
+    def test_all_filters_compose_with_and(self):
+        fs = self._fs()
+        sql, _ = fs._build_grep_structural_sql(
+            ext=("py",),
+            ext_not=("pyc",),
+            paths=("/src",),
+            globs=("**/*.py",),
+            globs_not=("**/test_*.py",),
+            user_id=None,
+        )
+        assert sql.count(" AND ") >= 5
 
 
 # ---------------------------------------------------------------------------
@@ -428,14 +574,14 @@ class TestGrepPushdown:
         _mssql_required(request)
         await _seed(db, {"/a.py": "LOGIN happens here"})
         async with db._use_session() as s:
-            r = await db._grep_impl("login", case_sensitive=False, session=s)
+            r = await db._grep_impl("login", case_mode="insensitive", session=s)
         assert "/a.py" in r.paths
 
-    async def test_max_results_caps(self, request, db: MSSQLFileSystem):
+    async def test_max_count_caps(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {f"/f{i}.txt": "needle" for i in range(10)})
         async with db._use_session() as s:
-            r = await db._grep_impl("needle", max_results=3, session=s)
+            r = await db._grep_impl("needle", max_count=3, session=s)
         assert len(r) <= 3
 
     async def test_excludes_chunks(self, request, db: MSSQLFileSystem):
@@ -462,6 +608,180 @@ class TestGrepPushdown:
         assert set(r.paths) == {"/a.py", "/c.py"}
 
 
+class TestGrepRipgrepFiltersMssql:
+    """Integration tests for the rg-style structural filter pushdown.
+
+    Exercises the four SQL templates (CONTAINSTABLE/Direct x lines/files)
+    plus ``ext`` / positional ``paths`` / ``globs`` filters, context
+    windows, the ``fixed_strings`` / ``word_regexp`` / ``invert_match``
+    modifiers, and smart-case behaviour — all against real SQL Server.
+
+    Corpus note: SQL Server Full-Text word-breaks content into tokens,
+    so ``CONTAINS "grep"`` matches the word "grep" but not "grepper".
+    The seed uses standalone "grep" tokens where cross-file matches
+    are asserted, to stay independent of FTS tokenization quirks.
+    """
+
+    async def _seed_corpus(self, db: MSSQLFileSystem) -> None:
+        await _seed(
+            db,
+            {
+                "/src/a.py": "def grep():\n    pass\n",
+                "/src/b.py": "class Grep:\n    pass\n",
+                "/src/sub/c.py": "grep = None\n",
+                "/src/README.md": "# grep docs\n",
+                "/lib/d.py": "def helper():\n    pass\n",
+                "/lib/e.js": "function grep() {}\n",
+                "/test_grep.py": "def test_grep():\n    pass\n",
+            },
+        )
+
+    async def test_ext_filter_narrows_to_python(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl("grep", ext=("py",), session=s)
+        assert "/lib/e.js" not in r.paths
+        assert "/src/README.md" not in r.paths
+        assert "/src/a.py" in r.paths
+
+    async def test_ext_multi_accepts_py_and_md(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl("grep", ext=("py", "md"), session=s)
+        assert "/src/README.md" in r.paths
+        assert "/src/a.py" in r.paths
+        assert "/lib/e.js" not in r.paths
+
+    async def test_ext_not_excludes_python(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl("grep", ext_not=("py",), session=s)
+        assert "/src/a.py" not in r.paths
+        assert "/lib/e.js" in r.paths
+
+    async def test_positional_path_prefix(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl("grep", paths=("/src",), session=s)
+        assert all(p.startswith("/src/") for p in r.paths)
+        assert "/lib/e.js" not in r.paths
+
+    async def test_multiple_positional_paths_ored(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl("grep", paths=("/src/sub", "/lib"), session=s)
+        assert set(r.paths) == {"/src/sub/c.py", "/lib/e.js"}
+
+    async def test_positive_glob_filter(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl("grep", globs=("**/test_*.py",), session=s)
+        assert r.paths == ("/test_grep.py",)
+
+    async def test_negative_glob_excludes_matches(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(
+                "grep",
+                ext=("py",),
+                globs_not=("**/test_*.py",),
+                session=s,
+            )
+        assert "/test_grep.py" not in r.paths
+        assert "/src/a.py" in r.paths
+
+    async def test_output_mode_files_path_only(self, request, db: MSSQLFileSystem):
+        """``output_mode='files'`` uses the path-only SELECT — metadata
+        carries no line_matches because content was never fetched."""
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(
+                "grep", ext=("py",), output_mode="files", session=s
+            )
+        assert "/src/a.py" in r.paths
+        detail = r.candidates[0].details[0]
+        meta = detail.metadata
+        assert meta is not None
+        assert "line_matches" not in meta
+
+    async def test_output_mode_count_returns_counts(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {"/a.py": "TODO\nok\nTODO\nTODO"})
+        async with db._use_session() as s:
+            r = await db._grep_impl("TODO", output_mode="count", session=s)
+        detail = r.candidates[0].details[0]
+        meta = detail.metadata
+        assert meta is not None
+        assert meta["match_count"] == 3
+        assert "line_matches" not in meta
+
+    async def test_context_window_after(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {"/a.py": "l1\nl2 MATCH\nl3\nl4\nl5"})
+        async with db._use_session() as s:
+            r = await db._grep_impl("MATCH", after_context=2, session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert [e["line"] for e in meta["line_matches"]] == [2, 3, 4]
+
+    async def test_fixed_strings_treats_regex_as_literal(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {"/a.py": "foo.bar\nfooxbar"})
+        async with db._use_session() as s:
+            r = await db._grep_impl("foo.bar", fixed_strings=True, session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 1
+
+    async def test_word_regexp_boundaries(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {"/a.py": "grep\ngrepper\nregrep"})
+        async with db._use_session() as s:
+            r = await db._grep_impl("grep", word_regexp=True, session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 1
+
+    async def test_invert_match_returns_non_matching_lines(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {"/a.py": "alpha\nbeta\ngamma"})
+        async with db._use_session() as s:
+            r = await db._grep_impl("beta", invert_match=True, session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 2
+
+    async def test_smart_case_lowercase_matches_upper(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {"/a.py": "FOO\nfoo"})
+        async with db._use_session() as s:
+            r = await db._grep_impl("foo", case_mode="smart", session=s)
+        meta = r.candidates[0].details[0].metadata
+        assert meta is not None
+        assert meta["match_count"] == 2
+
+    async def test_combined_filters_and_together(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await self._seed_corpus(db)
+        async with db._use_session() as s:
+            r = await db._grep_impl(
+                "grep",
+                paths=("/src",),
+                ext=("py",),
+                globs_not=("**/b.py",),
+                session=s,
+            )
+        assert set(r.paths) == {"/src/a.py", "/src/sub/c.py"}
+
+
 class TestGlobPushdown:
     async def test_extension_glob(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
@@ -476,6 +796,29 @@ class TestGlobPushdown:
         async with db._use_session() as s:
             r = await db._glob_impl("**/*.py", session=s)
         assert set(r.paths) == {"/src/foo.py", "/tests/baz.py"}
+
+    async def test_glob_ext_filter_narrows(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {"/src/a.py": "x", "/src/b.ts": "y"})
+        async with db._use_session() as s:
+            r = await db._glob_impl("**/*", ext=("py",), session=s)
+        assert "/src/a.py" in r.paths
+        assert "/src/b.ts" not in r.paths
+
+    async def test_glob_positional_path_prefix(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {"/src/a.py": "x", "/lib/b.py": "y"})
+        async with db._use_session() as s:
+            r = await db._glob_impl("**/*.py", paths=("/src",), session=s)
+        assert "/src/a.py" in r.paths
+        assert "/lib/b.py" not in r.paths
+
+    async def test_glob_max_count_caps(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed(db, {f"/f{i}.py": "x" for i in range(5)})
+        async with db._use_session() as s:
+            r = await db._glob_impl("/*.py", max_count=2, session=s)
+        assert len(r) == 2
 
     async def test_regex_pushdown_excludes_partial_match(self, request, db: MSSQLFileSystem):
         """LIKE-coarse matches that don't satisfy the glob are filtered server-side."""

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import model_validator
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, Index
 from sqlalchemy.orm import InstanceState
 from sqlmodel import Field, SQLModel
 from sqlmodel._compat import finish_init
@@ -22,6 +22,7 @@ from sqlmodel._compat import finish_init
 from grover.bm25 import tokenize as lexical_tokenize
 from grover.paths import (
     decompose_connection,
+    extract_extension,
     normalize_path,
     parse_kind,
     split_path,
@@ -113,6 +114,7 @@ class GroverObjectBase(ValidatedSQLModel):
     version_diff: str | None = Field(default=None)
     content_hash: str | None = Field(default=None, max_length=64)
     mime_type: str | None = Field(default=None, max_length=255)
+    ext: str | None = Field(default=None, max_length=32, index=True)
 
     # --- Metrics ------------------------------------------------------------
 
@@ -176,10 +178,11 @@ class GroverObjectBase(ValidatedSQLModel):
         return c
 
     def _rederive_path_fields(self) -> None:
-        """Normalize path and re-derive ``name`` and ``parent_path``."""
+        """Normalize path and re-derive ``name``, ``parent_path``, and ``ext``."""
         self.path = normalize_path(self.path)
         self.name = split_path(self.path)[1]
         self.parent_path = compute_parent_path(self.path)
+        self.ext = extract_extension(self.path) if self.kind == "file" else None
 
     def add_prefix(self, prefix: str) -> GroverObjectBase:
         """Prepend *prefix* to path in place, re-deriving name and parent."""
@@ -528,6 +531,14 @@ class GroverObjectBase(ValidatedSQLModel):
         if not data.get("kind"):
             data["kind"] = inferred_kind
 
+        # Derive extension from path for fast type-scoped queries (files only).
+        # Chunks, versions, connections, apis, and directories leave ext NULL
+        # so the (ext, kind) index only covers file rows.  ``ValidatedSQLModel``
+        # re-runs the validator with all field defaults populated, so presence
+        # of "ext" in *data* is not a reliable signal — check for None instead.
+        if data.get("ext") is None and data.get("kind") == "file":
+            data["ext"] = extract_extension(path)
+
         # For connections, extract source/target/type from path
         if data.get("kind") == "connection":
             parts = decompose_connection(path)
@@ -592,3 +603,4 @@ class GroverObject(GroverObjectBase, table=True):
     """Default concrete table — ``grover_objects``."""
 
     __tablename__ = "grover_objects"
+    __table_args__ = (Index("ix_grover_objects_ext_kind", "ext", "kind"),)

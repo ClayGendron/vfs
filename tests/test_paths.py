@@ -14,6 +14,7 @@ from grover.paths import (
     chunk_path,
     connection_path,
     decompose_connection,
+    extract_extension,
     normalize_path,
     parent_path,
     parse_kind,
@@ -484,3 +485,55 @@ class TestConstants:
     def test_apis_in_markers(self):
         assert "/.apis/" in METADATA_MARKERS
         assert "/.api/" not in METADATA_MARKERS
+
+
+# =========================================================================
+# extract_extension
+# =========================================================================
+
+
+class TestExtractExtension:
+    def test_simple_extension(self):
+        assert extract_extension("/src/auth.py") == "py"
+
+    def test_multi_dot_returns_last(self):
+        assert extract_extension("/src/foo.test.py") == "py"
+
+    def test_lowercased(self):
+        assert extract_extension("/src/Foo.PY") == "py"
+
+    def test_no_extension_returns_none(self):
+        assert extract_extension("/Makefile") is None
+
+    def test_dotfile_returns_none(self):
+        assert extract_extension("/.env") is None
+
+    def test_dotfile_with_extension(self):
+        assert extract_extension("/.eslintrc.json") == "json"
+
+    def test_empty_path(self):
+        assert extract_extension("") is None
+
+    def test_root(self):
+        assert extract_extension("/") is None
+
+    def test_directory(self):
+        assert extract_extension("/src") is None
+
+    def test_trailing_dot(self):
+        assert extract_extension("/src/foo.") is None
+
+    def test_over_long_extension_rejected(self):
+        # Extensions longer than 32 chars return None to keep the index clean.
+        long_ext = "x" * 33
+        assert extract_extension(f"/src/foo.{long_ext}") is None
+
+    def test_max_length_extension_accepted(self):
+        ext = "x" * 32
+        assert extract_extension(f"/src/foo.{ext}") == ext
+
+    def test_numeric_extension(self):
+        assert extract_extension("/archive/old.123") == "123"
+
+    def test_path_normalized_first(self):
+        assert extract_extension("/src//auth.py") == "py"

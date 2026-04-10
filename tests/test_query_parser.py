@@ -308,7 +308,7 @@ class TestFlagSplitting:
 
     def test_flag_requiring_value_at_end(self):
         with pytest.raises(QuerySyntaxError, match="requires a value"):
-            parse_query("grep pattern --max-results")
+            parse_query("grep pattern --max-count")
 
     def test_flag_followed_by_another_flag(self):
         with pytest.raises(QuerySyntaxError, match="requires a value"):
@@ -476,3 +476,293 @@ class TestRenderModePipelineNoStages:
 
         node = PipelineNode(source=ReadCommand(paths=("/a.py",)), stages=())
         assert _render_mode(node) == "content"
+
+
+# ===========================================================================
+# ripgrep-compatible grep flags
+# ===========================================================================
+
+
+def _grep(query: str):
+    """Helper: parse a bare grep command and return the GrepCommand node."""
+    from grover.query.ast import GrepCommand
+
+    plan = parse_query(query)
+    assert isinstance(plan.ast, GrepCommand)
+    return plan.ast
+
+
+def _glob(query: str):
+    from grover.query.ast import GlobCommand
+
+    plan = parse_query(query)
+    assert isinstance(plan.ast, GlobCommand)
+    return plan.ast
+
+
+class TestGrepPositionals:
+    def test_pattern_only(self):
+        cmd = _grep("grep foo")
+        assert cmd.pattern == "foo"
+        assert cmd.paths == ()
+
+    def test_pattern_with_one_path(self):
+        cmd = _grep("grep foo src/")
+        assert cmd.pattern == "foo"
+        assert cmd.paths == ("src/",)
+
+    def test_pattern_with_multiple_paths(self):
+        cmd = _grep("grep foo src/ lib/ tests/")
+        assert cmd.paths == ("src/", "lib/", "tests/")
+
+
+class TestGrepTypeFlags:
+    def test_short_type(self):
+        cmd = _grep("grep foo -t py")
+        assert cmd.ext == ("py", "pyi")
+
+    def test_long_type(self):
+        cmd = _grep("grep foo --type python")
+        assert cmd.ext == ("py", "pyi")
+
+    def test_repeated_type(self):
+        cmd = _grep("grep foo -t py -t js")
+        # python → (py, pyi); js → (js, mjs, cjs)
+        assert cmd.ext == ("py", "pyi", "js", "mjs", "cjs")
+
+    def test_type_not(self):
+        cmd = _grep("grep foo -T md")
+        assert cmd.ext_not == ("md", "markdown", "mdown", "mkdn")
+
+    def test_type_and_type_not(self):
+        cmd = _grep("grep foo -t py -T test")
+        assert cmd.ext == ("py", "pyi")
+        # "test" is not a known alias — passes through as literal
+        assert cmd.ext_not == ("test",)
+
+    def test_unknown_type_passes_through(self):
+        cmd = _grep("grep foo -t mjs")
+        assert cmd.ext == ("mjs",)
+
+
+class TestGrepGlobFlags:
+    def test_single_glob(self):
+        cmd = _grep("grep foo -g '*.py'")
+        assert cmd.globs == ("*.py",)
+        assert cmd.globs_not == ()
+
+    def test_negated_glob(self):
+        cmd = _grep("grep foo -g '!test_*.py'")
+        assert cmd.globs == ()
+        assert cmd.globs_not == ("test_*.py",)
+
+    def test_positive_and_negated_globs(self):
+        cmd = _grep("grep foo -g '*.py' -g '!vendor/**'")
+        assert cmd.globs == ("*.py",)
+        assert cmd.globs_not == ("vendor/**",)
+
+    def test_long_glob_flag(self):
+        cmd = _grep("grep foo --glob '*.rs'")
+        assert cmd.globs == ("*.rs",)
+
+    def test_empty_glob_rejected(self):
+        with pytest.raises(QuerySyntaxError, match="glob pattern cannot be empty"):
+            parse_query("grep foo -g ''")
+
+
+class TestGrepCaseModes:
+    def test_default_sensitive(self):
+        cmd = _grep("grep foo")
+        assert cmd.case_mode == "sensitive"
+
+    def test_ignore_case_short(self):
+        cmd = _grep("grep foo -i")
+        assert cmd.case_mode == "insensitive"
+
+    def test_ignore_case_long(self):
+        cmd = _grep("grep foo --ignore-case")
+        assert cmd.case_mode == "insensitive"
+
+    def test_smart_case(self):
+        cmd = _grep("grep foo -S")
+        assert cmd.case_mode == "smart"
+
+    def test_explicit_case_sensitive(self):
+        cmd = _grep("grep foo -s")
+        assert cmd.case_mode == "sensitive"
+
+    def test_mutually_exclusive_i_and_s(self):
+        with pytest.raises(QuerySyntaxError, match="cannot combine"):
+            parse_query("grep foo -i -s")
+
+    def test_mutually_exclusive_i_and_smart(self):
+        with pytest.raises(QuerySyntaxError, match="cannot combine"):
+            parse_query("grep foo -i -S")
+
+
+class TestGrepOutputModes:
+    def test_default_lines(self):
+        cmd = _grep("grep foo")
+        assert cmd.output_mode == "lines"
+
+    def test_files_with_matches_short(self):
+        cmd = _grep("grep foo -l")
+        assert cmd.output_mode == "files"
+
+    def test_files_with_matches_long(self):
+        cmd = _grep("grep foo --files-with-matches")
+        assert cmd.output_mode == "files"
+
+    def test_files_alias(self):
+        cmd = _grep("grep foo --files")
+        assert cmd.output_mode == "files"
+
+    def test_count_short(self):
+        cmd = _grep("grep foo -c")
+        assert cmd.output_mode == "count"
+
+    def test_files_and_count_rejected(self):
+        with pytest.raises(QuerySyntaxError, match="mutually exclusive"):
+            parse_query("grep foo -l -c")
+
+
+class TestGrepContextFlags:
+    def test_context_c(self):
+        cmd = _grep("grep foo -C 3")
+        assert cmd.before_context == 3
+        assert cmd.after_context == 3
+
+    def test_context_long(self):
+        cmd = _grep("grep foo --context 5")
+        assert cmd.before_context == 5
+        assert cmd.after_context == 5
+
+    def test_before_only(self):
+        cmd = _grep("grep foo -B 2")
+        assert cmd.before_context == 2
+        assert cmd.after_context == 0
+
+    def test_after_only(self):
+        cmd = _grep("grep foo -A 4")
+        assert cmd.before_context == 0
+        assert cmd.after_context == 4
+
+    def test_before_after_override_context(self):
+        cmd = _grep("grep foo -C 3 -B 1 -A 5")
+        assert cmd.before_context == 1
+        assert cmd.after_context == 5
+
+
+class TestGrepPatternFlags:
+    def test_fixed_strings(self):
+        cmd = _grep("grep foo -F")
+        assert cmd.fixed_strings is True
+
+    def test_word_regexp(self):
+        cmd = _grep("grep foo -w")
+        assert cmd.word_regexp is True
+
+    def test_invert_match(self):
+        cmd = _grep("grep foo -v")
+        assert cmd.invert_match is True
+
+
+class TestGrepLimits:
+    def test_max_count_short(self):
+        cmd = _grep("grep foo -m 50")
+        assert cmd.max_count == 50
+
+    def test_max_count_long(self):
+        cmd = _grep("grep foo --max-count 100")
+        assert cmd.max_count == 100
+
+    def test_max_results_removed(self):
+        with pytest.raises(QuerySyntaxError, match="Unknown flag"):
+            parse_query("grep foo --max-results 20")
+
+
+class TestGrepNoOpCompat:
+    """rg compat flags that Grover accepts but does not act on."""
+
+    def test_hidden(self):
+        cmd = _grep("grep foo --hidden")
+        assert cmd.pattern == "foo"
+
+    def test_no_ignore(self):
+        cmd = _grep("grep foo --no-ignore")
+        assert cmd.pattern == "foo"
+
+    def test_follow(self):
+        cmd = _grep("grep foo --follow")
+        assert cmd.pattern == "foo"
+
+
+class TestGrepCombined:
+    def test_kitchen_sink(self):
+        cmd = _grep(
+            "grep 'login' src/ lib/ -t py -t js -g '*.test.*' -g '!vendor/**' "
+            "-i -F -w -C 3 -m 50 -l"
+        )
+        assert cmd.pattern == "login"
+        assert cmd.paths == ("src/", "lib/")
+        assert cmd.ext == ("py", "pyi", "js", "mjs", "cjs")
+        assert cmd.globs == ("*.test.*",)
+        assert cmd.globs_not == ("vendor/**",)
+        assert cmd.case_mode == "insensitive"
+        assert cmd.fixed_strings is True
+        assert cmd.word_regexp is True
+        assert cmd.before_context == 3
+        assert cmd.after_context == 3
+        assert cmd.max_count == 50
+        assert cmd.output_mode == "files"
+
+
+# ===========================================================================
+# ripgrep-compatible glob command
+# ===========================================================================
+
+
+class TestGlobPositionals:
+    def test_pattern_only(self):
+        cmd = _glob("glob '*.py'")
+        assert cmd.pattern == "*.py"
+        assert cmd.paths == ()
+
+    def test_pattern_with_paths(self):
+        cmd = _glob("glob '**/*.py' src/ tests/")
+        assert cmd.pattern == "**/*.py"
+        assert cmd.paths == ("src/", "tests/")
+
+
+class TestGlobFlags:
+    def test_type_filter(self):
+        cmd = _glob("glob '**' -t py")
+        assert cmd.ext == ("py", "pyi")
+
+    def test_max_count(self):
+        cmd = _glob("glob '**/*.py' -m 100")
+        assert cmd.max_count == 100
+
+
+# ===========================================================================
+# Flag parser internals — short flags, repeats, unknown flags
+# ===========================================================================
+
+
+class TestFlagParsing:
+    def test_short_flag_not_in_spec_treated_as_positional(self):
+        # `-3` is not a flag for grep — passes through as a positional path.
+        cmd = _grep("grep foo -3")
+        assert cmd.paths == ("-3",)
+
+    def test_unknown_long_flag_rejected(self):
+        with pytest.raises(QuerySyntaxError, match="Unknown flag"):
+            parse_query("grep foo --nonsense")
+
+    def test_repeat_non_repeatable_flag_rejected(self):
+        with pytest.raises(QuerySyntaxError, match="Duplicate flag"):
+            parse_query("grep foo -i -i")
+
+    def test_flag_requires_value(self):
+        with pytest.raises(QuerySyntaxError, match="requires a value"):
+            parse_query("grep foo -t")

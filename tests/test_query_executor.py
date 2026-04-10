@@ -301,12 +301,163 @@ class TestTreeGlobGrepVisibility:
     async def test_grep_with_visibility(self):
         fs = _fs()
         vis = Visibility(include_all=True, include_kinds=())
-        node = GrepCommand(pattern="test", case_sensitive=True, max_results=None, visibility=vis)
+        node = GrepCommand(pattern="test", visibility=vis)
         fs.ls.return_value = GroverResult(candidates=[Candidate(path="/a.py", kind="file")])
         fs.read.return_value = GroverResult(candidates=[Candidate(path="/a.py", kind="file", content="test")])
         fs.grep.return_value = GroverResult(candidates=[])
         await execute_query(fs, _plan(node))
         fs.ls.assert_called()
+
+
+# ===========================================================================
+# Phase 7 — ripgrep filter forwarding through the executor
+# ===========================================================================
+
+
+class TestGrepRipgrepFieldForwarding:
+    """Every new rg field on ``GrepCommand`` must reach ``filesystem.grep``.
+
+    The executor destructures the command and splats the fields into
+    ``filesystem.grep(**kwargs)``; if any field is dropped along the way
+    the CLI frontend silently degrades.  Assert forwarding with a mock
+    filesystem and inspect the captured kwargs.
+    """
+
+    async def test_all_new_fields_forward_to_facade(self):
+        fs = _fs()
+        fs.grep.return_value = GroverResult(candidates=[])
+        node = GrepCommand(
+            pattern="TODO",
+            paths=("/src", "/lib"),
+            ext=("py", "pyi"),
+            ext_not=("pyc",),
+            globs=("**/*.py",),
+            globs_not=("**/test_*.py",),
+            case_mode="insensitive",
+            fixed_strings=True,
+            word_regexp=True,
+            invert_match=True,
+            before_context=2,
+            after_context=3,
+            output_mode="count",
+            max_count=42,
+            visibility=NO_VIS,
+        )
+        await execute_query(fs, _plan(node))
+        fs.grep.assert_called_once()
+        kwargs = fs.grep.call_args.kwargs
+        assert kwargs["pattern"] == "TODO"
+        assert kwargs["paths"] == ("/src", "/lib")
+        assert kwargs["ext"] == ("py", "pyi")
+        assert kwargs["ext_not"] == ("pyc",)
+        assert kwargs["globs"] == ("**/*.py",)
+        assert kwargs["globs_not"] == ("**/test_*.py",)
+        assert kwargs["case_mode"] == "insensitive"
+        assert kwargs["fixed_strings"] is True
+        assert kwargs["word_regexp"] is True
+        assert kwargs["invert_match"] is True
+        assert kwargs["before_context"] == 2
+        assert kwargs["after_context"] == 3
+        assert kwargs["output_mode"] == "count"
+        assert kwargs["max_count"] == 42
+
+    async def test_grep_defaults_forward_unchanged(self):
+        """A bare ``GrepCommand(pattern=...)`` should hit the facade with
+        every new kwarg at its rg-equivalent default — no silent drop."""
+        fs = _fs()
+        fs.grep.return_value = GroverResult(candidates=[])
+        await execute_query(fs, _plan(GrepCommand(pattern="foo", visibility=NO_VIS)))
+        kwargs = fs.grep.call_args.kwargs
+        assert kwargs["paths"] == ()
+        assert kwargs["ext"] == ()
+        assert kwargs["ext_not"] == ()
+        assert kwargs["globs"] == ()
+        assert kwargs["globs_not"] == ()
+        assert kwargs["case_mode"] == "sensitive"
+        assert kwargs["fixed_strings"] is False
+        assert kwargs["word_regexp"] is False
+        assert kwargs["invert_match"] is False
+        assert kwargs["before_context"] == 0
+        assert kwargs["after_context"] == 0
+        assert kwargs["output_mode"] == "lines"
+        assert kwargs["max_count"] is None
+
+
+class TestGlobRipgrepFieldForwarding:
+    async def test_glob_new_fields_forward(self):
+        fs = _fs()
+        fs.glob.return_value = GroverResult(candidates=[])
+        node = GlobCommand(
+            pattern="**/*.py",
+            paths=("/src",),
+            ext=("py",),
+            max_count=10,
+            visibility=NO_VIS,
+        )
+        await execute_query(fs, _plan(node))
+        kwargs = fs.glob.call_args.kwargs
+        assert kwargs["pattern"] == "**/*.py"
+        assert kwargs["paths"] == ("/src",)
+        assert kwargs["ext"] == ("py",)
+        assert kwargs["max_count"] == 10
+
+
+class TestParserExecutorRoundTrip:
+    """End-to-end: rg-style query string → parser → executor → facade.
+
+    Verifies that ``parse_query`` + ``execute_query`` form an
+    integrated pipeline and that type aliases resolve at the parser
+    boundary so the facade only ever sees concrete extensions.
+    """
+
+    async def test_rg_style_query_reaches_facade_with_resolved_aliases(self):
+        from grover.query.parser import parse_query
+
+        fs = _fs()
+        fs.grep.return_value = GroverResult(candidates=[])
+        plan = parse_query("grep 'def grep' /src -t python -i -C 2 -l")
+        await execute_query(fs, plan)
+        kwargs = fs.grep.call_args.kwargs
+        assert kwargs["pattern"] == "def grep"
+        assert kwargs["paths"] == ("/src",)
+        # -t python expands to ("py", "pyi") — facade sees concrete extensions
+        assert kwargs["ext"] == ("py", "pyi")
+        assert kwargs["case_mode"] == "insensitive"
+        assert kwargs["before_context"] == 2
+        assert kwargs["after_context"] == 2
+        assert kwargs["output_mode"] == "files"
+
+    async def test_repeated_type_flags_concat_and_resolve(self):
+        from grover.query.parser import parse_query
+
+        fs = _fs()
+        fs.grep.return_value = GroverResult(candidates=[])
+        plan = parse_query("grep foo -t python -t js")
+        await execute_query(fs, plan)
+        kwargs = fs.grep.call_args.kwargs
+        # python → (py, pyi); js → (js, mjs, cjs); flattened and de-duped
+        assert kwargs["ext"] == ("py", "pyi", "js", "mjs", "cjs")
+
+    async def test_unknown_type_falls_through_as_literal_extension(self):
+        from grover.query.parser import parse_query
+
+        fs = _fs()
+        fs.grep.return_value = GroverResult(candidates=[])
+        plan = parse_query("grep foo -t weirdext")
+        await execute_query(fs, plan)
+        assert fs.grep.call_args.kwargs["ext"] == ("weirdext",)
+
+    async def test_rg_style_glob_query_reaches_facade(self):
+        from grover.query.parser import parse_query
+
+        fs = _fs()
+        fs.glob.return_value = GroverResult(candidates=[])
+        plan = parse_query("glob '**/*.py' /src -t python")
+        await execute_query(fs, plan)
+        kwargs = fs.glob.call_args.kwargs
+        assert kwargs["pattern"] == "**/*.py"
+        assert kwargs["paths"] == ("/src",)
+        assert kwargs["ext"] == ("py", "pyi")
 
 
 # ===========================================================================
@@ -748,7 +899,7 @@ class TestGrepNonFileRead:
         fs.grep.return_value = GroverResult(candidates=[])
         node = PipelineNode(
             source=GlobCommand(pattern="*", visibility=NO_VIS),
-            stages=(GrepCommand(pattern="test", case_sensitive=True, max_results=None, visibility=NO_VIS),),
+            stages=(GrepCommand(pattern="test", visibility=NO_VIS),),
         )
         await execute_query(fs, _plan(node))
         fs.read.assert_called_once()

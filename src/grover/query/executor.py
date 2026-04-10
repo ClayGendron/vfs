@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from grover.paths import normalize_path, parse_kind
 from grover.query.ast import (
+    CaseMode,
     CopyCommand,
     DeleteCommand,
     EditCommand,
@@ -15,6 +16,7 @@ from grover.query.ast import (
     GlobCommand,
     GraphTraversalCommand,
     GrepCommand,
+    GrepOutputMode,
     IntersectStage,
     KindsCommand,
     LexicalSearchCommand,
@@ -150,22 +152,59 @@ async def _execute_stage(
         case TreeCommand(paths=paths, max_depth=max_depth, visibility=visibility):
             roots = tuple(normalize_path(path) for path in paths) if paths else ()
             return await _execute_tree(filesystem, current, roots, max_depth, visibility, user_id=user_id)
-        case GlobCommand(pattern=pattern, visibility=visibility):
-            result = await _execute_glob(filesystem, current, pattern, visibility, user_id=user_id)
+        case GlobCommand(
+            pattern=pattern,
+            paths=glob_paths,
+            ext=glob_ext,
+            max_count=glob_max_count,
+            visibility=visibility,
+        ):
+            result = await _execute_glob(
+                filesystem,
+                current,
+                pattern,
+                glob_paths,
+                glob_ext,
+                glob_max_count,
+                visibility,
+                user_id=user_id,
+            )
             return _apply_visibility(result, visibility, {"file", "directory"})
         case GrepCommand(
             pattern=pattern,
-            case_sensitive=case_sensitive,
-            max_results=max_results,
+            paths=grep_paths,
+            ext=grep_ext,
+            ext_not=grep_ext_not,
+            globs=grep_globs,
+            globs_not=grep_globs_not,
+            case_mode=case_mode,
+            fixed_strings=fixed_strings,
+            word_regexp=word_regexp,
+            invert_match=invert_match,
+            before_context=before_context,
+            after_context=after_context,
+            output_mode=output_mode,
+            max_count=max_count,
             visibility=visibility,
         ):
             result = await _execute_grep(
                 filesystem,
                 current,
-                pattern,
-                case_sensitive,
-                max_results,
-                visibility,
+                pattern=pattern,
+                paths=grep_paths,
+                ext=grep_ext,
+                ext_not=grep_ext_not,
+                globs=grep_globs,
+                globs_not=grep_globs_not,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                invert_match=invert_match,
+                before_context=before_context,
+                after_context=after_context,
+                output_mode=output_mode,
+                max_count=max_count,
+                visibility=visibility,
                 user_id=user_id,
             )
             return _apply_visibility(result, visibility, {"file", "directory"})
@@ -334,26 +373,45 @@ async def _execute_glob(
     filesystem: GroverFileSystem,
     current: GroverResult | None,
     pattern: str,
+    paths: tuple[str, ...],
+    ext: tuple[str, ...],
+    max_count: int | None,
     visibility: Visibility,
     *,
     user_id: str | None = None,
 ) -> GroverResult:
-    if current is not None:
-        return await filesystem.glob(pattern=pattern, candidates=current, user_id=user_id)
-    if visibility.include_all or visibility.include_kinds:
-        universe = await _collect_tree(filesystem, ("/",), max_depth=None, visibility=visibility, user_id=user_id)
-        return await filesystem.glob(pattern=pattern, candidates=universe, user_id=user_id)
-    return await filesystem.glob(pattern=pattern, user_id=user_id)
+    candidates = current
+    if candidates is None and (visibility.include_all or visibility.include_kinds):
+        candidates = await _collect_tree(filesystem, ("/",), max_depth=None, visibility=visibility, user_id=user_id)
+    return await filesystem.glob(
+        pattern=pattern,
+        paths=paths,
+        ext=ext,
+        max_count=max_count,
+        candidates=candidates,
+        user_id=user_id,
+    )
 
 
 async def _execute_grep(
     filesystem: GroverFileSystem,
     current: GroverResult | None,
-    pattern: str,
-    case_sensitive: bool,
-    max_results: int | None,
-    visibility: Visibility,
     *,
+    pattern: str,
+    paths: tuple[str, ...],
+    ext: tuple[str, ...],
+    ext_not: tuple[str, ...],
+    globs: tuple[str, ...],
+    globs_not: tuple[str, ...],
+    case_mode: CaseMode,
+    fixed_strings: bool,
+    word_regexp: bool,
+    invert_match: bool,
+    before_context: int,
+    after_context: int,
+    output_mode: GrepOutputMode,
+    max_count: int | None,
+    visibility: Visibility,
     user_id: str | None = None,
 ) -> GroverResult:
     candidates = current
@@ -365,8 +423,19 @@ async def _execute_grep(
         candidates = await filesystem.read(candidates=candidates, user_id=user_id)
     return await filesystem.grep(
         pattern=pattern,
-        case_sensitive=case_sensitive,
-        max_results=max_results,
+        paths=paths,
+        ext=ext,
+        ext_not=ext_not,
+        globs=globs,
+        globs_not=globs_not,
+        case_mode=case_mode,
+        fixed_strings=fixed_strings,
+        word_regexp=word_regexp,
+        invert_match=invert_match,
+        before_context=before_context,
+        after_context=after_context,
+        output_mode=output_mode,
+        max_count=max_count,
         candidates=candidates,
         user_id=user_id,
     )

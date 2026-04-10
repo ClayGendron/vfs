@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, overload
 
 from grover.query.ast import (
+    CaseMode,
     CopyCommand,
     DeleteCommand,
     EditCommand,
@@ -13,6 +14,7 @@ from grover.query.ast import (
     GlobCommand,
     GraphTraversalCommand,
     GrepCommand,
+    GrepOutputMode,
     IntersectStage,
     KindsCommand,
     LexicalSearchCommand,
@@ -38,6 +40,7 @@ from grover.query.ast import (
     Visibility,
     WriteCommand,
 )
+from grover.query.types import resolve_type_aliases
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,14 +63,26 @@ class Token:
     position: int
 
 
+FlagValue = str | bool | tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class CommandSpec:
-    """Declarative parser spec for one CLI command family."""
+    """Declarative parser spec for one CLI command family.
+
+    ``flags`` maps flag names to their arity (0 = boolean, 1 = takes a
+    value).  ``repeatable`` marks flags that may appear more than once —
+    their values are collected into a tuple instead of rejected as
+    duplicates.  Short flags (``-t``) live alongside long flags
+    (``--type``) in the same dict; aliases pointing at the same logical
+    option should all be listed in ``repeatable`` together if any is.
+    """
 
     canonical_name: str
     aliases: tuple[str, ...]
     flags: dict[str, int]
-    builder: Callable[[list[str], dict[str, str | bool]], StageNode]
+    builder: Callable[[list[str], dict[str, FlagValue]], StageNode]
+    repeatable: frozenset[str] = frozenset()
 
 
 def tokenize(query: str) -> tuple[Token, ...]:
@@ -217,19 +232,19 @@ def parse_query(query: str) -> QueryPlan:
     )
 
 
-def _build_read(positionals: list[str], _options: dict[str, str | bool]) -> StageNode:
+def _build_read(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
     return ReadCommand(paths=tuple(positionals))
 
 
-def _build_stat(positionals: list[str], _options: dict[str, str | bool]) -> StageNode:
+def _build_stat(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
     return StatCommand(paths=tuple(positionals))
 
 
-def _build_ls(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_ls(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     return LsCommand(paths=tuple(positionals), visibility=_parse_visibility(options))
 
 
-def _build_tree(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_tree(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     if len(positionals) > 1:
         raise QuerySyntaxError("tree accepts at most one explicit path")
     return TreeCommand(
@@ -239,11 +254,11 @@ def _build_tree(positionals: list[str], options: dict[str, str | bool]) -> Stage
     )
 
 
-def _build_delete(positionals: list[str], _options: dict[str, str | bool]) -> StageNode:
+def _build_delete(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
     return DeleteCommand(paths=tuple(positionals))
 
 
-def _build_edit(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_edit(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     if len(positionals) < 2:
         raise QuerySyntaxError("edit requires old and new strings, with an optional path prefix")
     return EditCommand(
@@ -254,20 +269,20 @@ def _build_edit(positionals: list[str], options: dict[str, str | bool]) -> Stage
     )
 
 
-def _build_write(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_write(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     overwrite = _parse_overwrite(options)
     if len(positionals) != 2:
         raise QuerySyntaxError("write requires a path and content string")
     return WriteCommand(path=positionals[0], content=positionals[1], overwrite=overwrite)
 
 
-def _build_mkdir(positionals: list[str], _options: dict[str, str | bool]) -> StageNode:
+def _build_mkdir(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
     if not positionals:
         raise QuerySyntaxError("mkdir requires at least one path")
     return MkdirCommand(paths=tuple(positionals))
 
 
-def _build_move(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_move(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     overwrite = _parse_overwrite(options)
     if len(positionals) == 1:
         return MoveCommand(dest=positionals[0], overwrite=overwrite)
@@ -276,7 +291,7 @@ def _build_move(positionals: list[str], options: dict[str, str | bool]) -> Stage
     raise QuerySyntaxError("mv requires 'src dest' or, in a pipeline, just 'dest-root'")
 
 
-def _build_copy(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_copy(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     overwrite = _parse_overwrite(options)
     if len(positionals) == 1:
         return CopyCommand(dest=positionals[0], overwrite=overwrite)
@@ -285,7 +300,7 @@ def _build_copy(positionals: list[str], options: dict[str, str | bool]) -> Stage
     raise QuerySyntaxError("cp requires 'src dest' or, in a pipeline, just 'dest-root'")
 
 
-def _build_mkconn(positionals: list[str], _options: dict[str, str | bool]) -> StageNode:
+def _build_mkconn(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
     if len(positionals) == 2:
         return MkconnCommand(connection_type=positionals[0], target=positionals[1])
     if len(positionals) == 3:
@@ -297,26 +312,41 @@ def _build_mkconn(positionals: list[str], _options: dict[str, str | bool]) -> St
     raise QuerySyntaxError("mkconn requires 'source type target' or, in a pipeline, 'type target'")
 
 
-def _build_glob(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
-    if len(positionals) != 1:
-        raise QuerySyntaxError("glob requires exactly one pattern")
-    return GlobCommand(pattern=positionals[0], visibility=_parse_visibility(options))
-
-
-def _build_grep(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
-    if len(positionals) != 1:
-        raise QuerySyntaxError("grep requires exactly one pattern")
-    if "--ignore-case" in options and "--case-sensitive" in options:
-        raise QuerySyntaxError("grep cannot combine --ignore-case and --case-sensitive")
-    return GrepCommand(
+def _build_glob(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
+    if not positionals:
+        raise QuerySyntaxError("glob requires a pattern")
+    return GlobCommand(
         pattern=positionals[0],
-        case_sensitive="--ignore-case" not in options,
-        max_results=_parse_int_option(options, "--max-results"),
+        paths=tuple(positionals[1:]),
+        ext=_parse_type_option(options),
+        max_count=_parse_int_aliased(options, "--max-count", "-m"),
         visibility=_parse_visibility(options),
     )
 
 
-def _build_search(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_grep(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
+    if not positionals:
+        raise QuerySyntaxError("grep requires a pattern")
+    return GrepCommand(
+        pattern=positionals[0],
+        paths=tuple(positionals[1:]),
+        ext=_parse_type_option(options),
+        ext_not=_parse_type_not_option(options),
+        globs=_parse_glob_option(options, negated=False),
+        globs_not=_parse_glob_option(options, negated=True),
+        case_mode=_parse_case_mode(options),
+        fixed_strings=_flag_set(options, "--fixed-strings", "-F"),
+        word_regexp=_flag_set(options, "--word-regexp", "-w"),
+        invert_match=_flag_set(options, "--invert-match", "-v"),
+        before_context=_parse_context_option(options, "--before-context", "-B"),
+        after_context=_parse_context_option(options, "--after-context", "-A"),
+        output_mode=_parse_grep_output_mode(options),
+        max_count=_parse_int_aliased(options, "--max-count", "-m"),
+        visibility=_parse_visibility(options),
+    )
+
+
+def _build_search(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     if len(positionals) != 1:
         raise QuerySyntaxError("search requires exactly one query string")
     return SemanticSearchCommand(
@@ -326,7 +356,7 @@ def _build_search(positionals: list[str], options: dict[str, str | bool]) -> Sta
     )
 
 
-def _build_lsearch(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_lsearch(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     if len(positionals) != 1:
         raise QuerySyntaxError("lsearch requires exactly one query string")
     return LexicalSearchCommand(
@@ -336,7 +366,7 @@ def _build_lsearch(positionals: list[str], options: dict[str, str | bool]) -> St
     )
 
 
-def _build_vsearch(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_vsearch(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     if not positionals:
         raise QuerySyntaxError("vsearch requires one or more numeric vector values")
     return VectorSearchCommand(
@@ -346,7 +376,7 @@ def _build_vsearch(positionals: list[str], options: dict[str, str | bool]) -> St
     )
 
 
-def _build_meetinggraph(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_meetinggraph(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     return MeetingGraphCommand(
         paths=tuple(positionals),
         minimal="--min" in options,
@@ -366,8 +396,8 @@ RankMethod = Literal[
 ]
 
 
-def _build_graph_traversal(method_name: TraversalMethod) -> Callable[[list[str], dict[str, str | bool]], StageNode]:
-    def _builder(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_graph_traversal(method_name: TraversalMethod) -> Callable[[list[str], dict[str, FlagValue]], StageNode]:
+    def _builder(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
         return GraphTraversalCommand(
             method_name=method_name,
             paths=tuple(positionals),
@@ -378,14 +408,14 @@ def _build_graph_traversal(method_name: TraversalMethod) -> Callable[[list[str],
     return _builder
 
 
-def _build_rank(method_name: RankMethod) -> Callable[[list[str], dict[str, str | bool]], StageNode]:
-    def _builder(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_rank(method_name: RankMethod) -> Callable[[list[str], dict[str, FlagValue]], StageNode]:
+    def _builder(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
         return RankCommand(method_name, tuple(positionals), _parse_visibility(options))
 
     return _builder
 
 
-def _build_sort(positionals: list[str], options: dict[str, str | bool]) -> StageNode:
+def _build_sort(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
     operation = None
     if len(positionals) > 1:
         raise QuerySyntaxError("sort accepts at most one positional operation name")
@@ -398,13 +428,13 @@ def _build_sort(positionals: list[str], options: dict[str, str | bool]) -> Stage
     return SortCommand(operation=operation, reverse="--asc" not in options)
 
 
-def _build_top(positionals: list[str], _options: dict[str, str | bool]) -> StageNode:
+def _build_top(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
     if len(positionals) != 1:
         raise QuerySyntaxError("top requires exactly one integer")
     return TopCommand(k=_parse_int(positionals[0], "top"))
 
 
-def _build_kinds(positionals: list[str], _options: dict[str, str | bool]) -> StageNode:
+def _build_kinds(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
     if not positionals:
         raise QuerySyntaxError("kinds requires at least one kind")
     return KindsCommand(kinds=tuple(_parse_kind_name(kind) for kind in positionals))
@@ -422,12 +452,76 @@ _COMMAND_SPECS = (
     CommandSpec("move", ("mv", "move"), {"--overwrite": 0, "--no-overwrite": 0}, _build_move),
     CommandSpec("copy", ("cp", "copy"), {"--overwrite": 0, "--no-overwrite": 0}, _build_copy),
     CommandSpec("mkconn", ("mkconn",), {}, _build_mkconn),
-    CommandSpec("glob", ("glob",), {"--all": 0, "--include": 1}, _build_glob),
+    CommandSpec(
+        "glob",
+        ("glob",),
+        {
+            "--all": 0,
+            "--include": 1,
+            "--type": 1,
+            "-t": 1,
+            "--max-count": 1,
+            "-m": 1,
+        },
+        _build_glob,
+        repeatable=frozenset({"--type", "-t"}),
+    ),
     CommandSpec(
         "grep",
         ("grep",),
-        {"--all": 0, "--include": 1, "--ignore-case": 0, "--case-sensitive": 0, "--max-results": 1},
+        {
+            # Visibility (Grover native)
+            "--all": 0,
+            "--include": 1,
+            # Case
+            "--ignore-case": 0,
+            "-i": 0,
+            "--case-sensitive": 0,
+            "-s": 0,
+            "--smart-case": 0,
+            "-S": 0,
+            # Pattern interpretation
+            "--fixed-strings": 0,
+            "-F": 0,
+            "--word-regexp": 0,
+            "-w": 0,
+            "--invert-match": 0,
+            "-v": 0,
+            # File selection
+            "--type": 1,
+            "-t": 1,
+            "--type-not": 1,
+            "-T": 1,
+            "--glob": 1,
+            "-g": 1,
+            # Output mode
+            "--files-with-matches": 0,
+            "-l": 0,
+            "--count": 0,
+            "-c": 0,
+            "--files": 0,
+            # Context
+            "--context": 1,
+            "-C": 1,
+            "--before-context": 1,
+            "-B": 1,
+            "--after-context": 1,
+            "-A": 1,
+            # Limits
+            "--max-count": 1,
+            "-m": 1,
+            # rg-compat no-ops (accepted, currently ignored)
+            "--hidden": 0,
+            "--no-ignore": 0,
+            "--no-ignore-vcs": 0,
+            "--no-ignore-parent": 0,
+            "--no-ignore-global": 0,
+            "--follow": 0,
+            "--binary": 0,
+            "--text": 0,
+        },
         _build_grep,
+        repeatable=frozenset({"--type", "-t", "--type-not", "-T", "--glob", "-g"}),
     ),
     CommandSpec("search", ("search",), {"--all": 0, "--include": 1, "--k": 1}, _build_search),
     CommandSpec("lsearch", ("lsearch",), {"--all": 0, "--include": 1, "--k": 1}, _build_lsearch),
@@ -507,22 +601,40 @@ def _build_command(name: str, args: list[str]) -> StageNode:
     spec = _COMMAND_REGISTRY.get(name)
     if spec is None:
         raise QuerySyntaxError(f"Unknown command: {name}")
-    positionals, options = _split_flags(args, spec.flags)
+    positionals, options = _split_flags(args, spec.flags, spec.repeatable)
     return spec.builder(positionals, options)
 
 
-def _split_flags(args: list[str], spec: dict[str, int]) -> tuple[list[str], dict[str, str | bool]]:
+def _is_flag(token: str, spec: dict[str, int]) -> bool:
+    """Return True if *token* should be treated as a flag.
+
+    Long flags (``--foo``) are always flag-shaped — an unknown ``--``
+    token is an error.  Short flags (``-t``) are only recognized when
+    they match the spec; a stray ``-`` or ``-1`` passes through as a
+    positional so negative numbers and literal dashes still work.
+    """
+    if token.startswith("--"):
+        return True
+    return token.startswith("-") and len(token) > 1 and token in spec
+
+
+def _split_flags(
+    args: list[str],
+    spec: dict[str, int],
+    repeatable: frozenset[str],
+) -> tuple[list[str], dict[str, FlagValue]]:
     positionals: list[str] = []
-    options: dict[str, str | bool] = {}
+    options: dict[str, FlagValue] = {}
     index = 0
     while index < len(args):
         current = args[index]
-        if current.startswith("--"):
+        if _is_flag(current, spec):
             if current not in spec:
                 raise QuerySyntaxError(f"Unknown flag: {current}")
-            if current in options:
-                raise QuerySyntaxError(f"Duplicate flag: {current}")
             arity = spec[current]
+            is_repeatable = current in repeatable
+            if current in options and not is_repeatable:
+                raise QuerySyntaxError(f"Duplicate flag: {current}")
             if arity == 0:
                 options[current] = True
                 index += 1
@@ -530,9 +642,15 @@ def _split_flags(args: list[str], spec: dict[str, int]) -> tuple[list[str], dict
             if index + 1 >= len(args):
                 raise QuerySyntaxError(f"Flag {current} requires a value")
             value = args[index + 1]
-            if value.startswith("--") and value in spec:
+            if _is_flag(value, spec):
                 raise QuerySyntaxError(f"Flag {current} requires a value")
-            options[current] = value
+            if is_repeatable:
+                existing = options.get(current, ())
+                if not isinstance(existing, tuple):
+                    existing = ()
+                options[current] = (*existing, value)
+            else:
+                options[current] = value
             index += 2
             continue
         positionals.append(current)
@@ -540,7 +658,7 @@ def _split_flags(args: list[str], spec: dict[str, int]) -> tuple[list[str], dict
     return positionals, options
 
 
-def _parse_visibility(options: dict[str, str | bool]) -> Visibility:
+def _parse_visibility(options: dict[str, FlagValue]) -> Visibility:
     if "--all" in options and "--include" in options:
         raise QuerySyntaxError("Cannot combine --all and --include")
     include_all = "--all" in options
@@ -554,15 +672,111 @@ def _parse_visibility(options: dict[str, str | bool]) -> Visibility:
     return Visibility(include_all=include_all, include_kinds=include_kinds)
 
 
-def _parse_overwrite(options: dict[str, str | bool]) -> bool:
+def _parse_overwrite(options: dict[str, FlagValue]) -> bool:
     if "--overwrite" in options and "--no-overwrite" in options:
         raise QuerySyntaxError("Cannot combine --overwrite and --no-overwrite")
     return "--no-overwrite" not in options
 
 
+# ---------------------------------------------------------------------------
+# ripgrep-compatible grep/glob option helpers
+# ---------------------------------------------------------------------------
+
+
+def _flag_set(options: dict[str, FlagValue], *aliases: str) -> bool:
+    """Return True if any of the flag aliases is present and truthy."""
+    return any(alias in options for alias in aliases)
+
+
+def _collect_values(options: dict[str, FlagValue], *aliases: str) -> tuple[str, ...]:
+    """Collect repeatable flag values across all aliases in order."""
+    result: list[str] = []
+    for alias in aliases:
+        value = options.get(alias)
+        if value is None or value is False or value is True:
+            continue
+        if isinstance(value, tuple):
+            result.extend(value)
+        else:
+            result.append(str(value))
+    return tuple(result)
+
+
+def _parse_type_option(options: dict[str, FlagValue]) -> tuple[str, ...]:
+    raw = _collect_values(options, "--type", "-t")
+    return resolve_type_aliases(raw)
+
+
+def _parse_type_not_option(options: dict[str, FlagValue]) -> tuple[str, ...]:
+    raw = _collect_values(options, "--type-not", "-T")
+    return resolve_type_aliases(raw)
+
+
+def _parse_glob_option(options: dict[str, FlagValue], *, negated: bool) -> tuple[str, ...]:
+    raw = _collect_values(options, "--glob", "-g")
+    result: list[str] = []
+    for pattern in raw:
+        is_negated = pattern.startswith("!")
+        stripped = pattern[1:] if is_negated else pattern
+        if not stripped:
+            raise QuerySyntaxError("--glob pattern cannot be empty")
+        if is_negated == negated:
+            result.append(stripped)
+    return tuple(result)
+
+
+def _parse_case_mode(options: dict[str, FlagValue]) -> CaseMode:
+    insensitive = _flag_set(options, "--ignore-case", "-i")
+    sensitive = _flag_set(options, "--case-sensitive", "-s")
+    smart = _flag_set(options, "--smart-case", "-S")
+    if int(insensitive) + int(sensitive) + int(smart) > 1:
+        raise QuerySyntaxError(
+            "grep cannot combine case flags — pick at most one of -i/-s/-S",
+        )
+    if insensitive:
+        return "insensitive"
+    if smart:
+        return "smart"
+    return "sensitive"
+
+
+def _parse_grep_output_mode(options: dict[str, FlagValue]) -> GrepOutputMode:
+    files = _flag_set(options, "--files-with-matches", "-l") or _flag_set(options, "--files")
+    count = _flag_set(options, "--count", "-c")
+    if files and count:
+        raise QuerySyntaxError("grep output flags are mutually exclusive: pick at most one of -l/-c")
+    if files:
+        return "files"
+    if count:
+        return "count"
+    return "lines"
+
+
+def _parse_context_option(options: dict[str, FlagValue], *aliases: str) -> int:
+    """Parse a context-window flag (-A/-B) with fallback to -C/--context.
+
+    rg semantics: ``-C N`` sets both ``-A`` and ``-B`` unless overridden.
+    """
+    for alias in aliases:
+        if alias in options:
+            return _parse_int(str(options[alias]), alias)
+    if "--context" in options:
+        return _parse_int(str(options["--context"]), "--context")
+    if "-C" in options:
+        return _parse_int(str(options["-C"]), "-C")
+    return 0
+
+
+def _parse_int_aliased(options: dict[str, FlagValue], *aliases: str) -> int | None:
+    for alias in aliases:
+        if alias in options:
+            return _parse_int(str(options[alias]), alias)
+    return None
+
+
 @overload
 def _parse_int_option(
-    options: dict[str, str | bool],
+    options: dict[str, FlagValue],
     flag: str,
     *,
     default: int,
@@ -571,7 +785,7 @@ def _parse_int_option(
 
 @overload
 def _parse_int_option(
-    options: dict[str, str | bool],
+    options: dict[str, FlagValue],
     flag: str,
     *,
     default: None = None,
@@ -579,7 +793,7 @@ def _parse_int_option(
 
 
 def _parse_int_option(
-    options: dict[str, str | bool],
+    options: dict[str, FlagValue],
     flag: str,
     *,
     default: int | None = None,

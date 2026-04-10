@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from grover.models import GroverObjectBase
     from grover.query import QueryPlan
+    from grover.query.ast import CaseMode, GrepOutputMode
     from grover.results import EditOperation, GroverResult, TwoPathOperation
 
 _T = TypeVar("_T")
@@ -258,18 +259,41 @@ class Grover:
         self,
         pattern: str,
         *,
+        paths: tuple[str, ...] = (),
+        ext: tuple[str, ...] = (),
+        max_count: int | None = None,
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
         """Find files matching *pattern*."""
-        return self._run(self._async.glob(pattern, candidates=candidates, user_id=user_id))
+        return self._run(
+            self._async.glob(
+                pattern,
+                paths=paths,
+                ext=ext,
+                max_count=max_count,
+                candidates=candidates,
+                user_id=user_id,
+            )
+        )
 
     def grep(
         self,
         pattern: str,
         *,
-        case_sensitive: bool = True,
-        max_results: int | None = None,
+        paths: tuple[str, ...] = (),
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
+        case_mode: CaseMode = "sensitive",
+        fixed_strings: bool = False,
+        word_regexp: bool = False,
+        invert_match: bool = False,
+        before_context: int = 0,
+        after_context: int = 0,
+        output_mode: GrepOutputMode = "lines",
+        max_count: int | None = None,
         candidates: GroverResult | None = None,
         user_id: str | None = None,
     ) -> GroverResult:
@@ -277,8 +301,19 @@ class Grover:
         return self._run(
             self._async.grep(
                 pattern,
-                case_sensitive=case_sensitive,
-                max_results=max_results,
+                paths=paths,
+                ext=ext,
+                ext_not=ext_not,
+                globs=globs,
+                globs_not=globs_not,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                invert_match=invert_match,
+                before_context=before_context,
+                after_context=after_context,
+                output_mode=output_mode,
+                max_count=max_count,
                 candidates=candidates,
                 user_id=user_id,
             )

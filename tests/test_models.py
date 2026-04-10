@@ -89,6 +89,80 @@ class TestKindInference:
 
 
 # =========================================================================
+# Extension derivation — files only
+# =========================================================================
+
+
+class TestExtensionDerivation:
+    def test_file_ext_populated(self):
+        obj = GroverObject(path="/src/auth.py")
+        assert obj.ext == "py"
+
+    def test_file_ext_lowercased(self):
+        obj = GroverObject(path="/src/Foo.PY")
+        assert obj.ext == "py"
+
+    def test_extensionless_file_has_null_ext(self):
+        obj = GroverObject(path="/Makefile")
+        assert obj.kind == "file"
+        assert obj.ext is None
+
+    def test_dotfile_has_null_ext(self):
+        obj = GroverObject(path="/.env")
+        assert obj.kind == "file"
+        assert obj.ext is None
+
+    def test_dotfile_with_extension(self):
+        obj = GroverObject(path="/.eslintrc.json")
+        assert obj.ext == "json"
+
+    def test_directory_has_null_ext(self):
+        obj = GroverObject(path="/src")
+        assert obj.kind == "directory"
+        assert obj.ext is None
+
+    def test_chunk_has_null_ext_even_if_name_has_dot(self):
+        obj = GroverObject(path="/src/auth.py/.chunks/login")
+        assert obj.kind == "chunk"
+        assert obj.ext is None
+
+    def test_version_has_null_ext(self):
+        obj = GroverObject(path="/src/auth.py/.versions/3")
+        assert obj.kind == "version"
+        assert obj.ext is None
+
+    def test_connection_has_null_ext_despite_py_suffix(self):
+        """Connection paths end in a target like `/b.py` but are not files —
+        the index must not pollute with non-file rows."""
+        obj = GroverObject(path="/a.py/.connections/imports/b.py")
+        assert obj.kind == "connection"
+        assert obj.ext is None
+
+    def test_api_has_null_ext(self):
+        obj = GroverObject(path="/jira/.apis/ticket")
+        assert obj.kind == "api"
+        assert obj.ext is None
+
+    def test_explicit_ext_preserved(self):
+        obj = GroverObject(path="/src/auth.py", ext="python")
+        assert obj.ext == "python"
+
+    def test_rederive_updates_ext_on_move(self):
+        obj = GroverObject(path="/src/auth.py")
+        assert obj.ext == "py"
+        obj.path = "/src/auth.ts"
+        obj._rederive_path_fields()
+        assert obj.ext == "ts"
+
+    def test_rederive_clears_ext_on_move_to_extensionless(self):
+        obj = GroverObject(path="/src/auth.py")
+        assert obj.ext == "py"
+        obj.path = "/src/Makefile"
+        obj._rederive_path_fields()
+        assert obj.ext is None
+
+
+# =========================================================================
 # Parent path derivation
 # =========================================================================
 

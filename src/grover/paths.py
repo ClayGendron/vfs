@@ -283,6 +283,39 @@ def parse_kind(path: str) -> ObjectKind:
     return "directory"
 
 
+def extract_extension(path: str) -> str | None:
+    """Return the lowercased trailing file extension, or ``None``.
+
+    >>> extract_extension("/src/auth.py")
+    'py'
+    >>> extract_extension("/src/foo.test.py")
+    'py'
+    >>> extract_extension("/Makefile")
+    >>> extract_extension("/.env")
+    >>> extract_extension("/.eslintrc.json")
+    'json'
+    >>> extract_extension("/src/Foo.PY")
+    'py'
+
+    Rules:
+
+    1. A leading dot in the name (dotfile) is not counted as an extension.
+    2. Only the final ``.xyz`` segment is returned (no dot).
+    3. Extensions are lowercased for case-insensitive matching.
+    4. Empty or over-long extensions (>32 chars) return ``None``.
+    """
+    _, name = split_path(path)
+    if not name:
+        return None
+    dot = name.rfind(".")
+    if dot <= 0:
+        return None
+    ext = name[dot + 1 :].lower()
+    if not ext or len(ext) > 32:
+        return None
+    return ext
+
+
 # ---------------------------------------------------------------------------
 # Parent and base path resolution
 # ---------------------------------------------------------------------------
