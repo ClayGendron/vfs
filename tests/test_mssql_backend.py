@@ -102,6 +102,42 @@ class TestExtractLiteralTerms:
         assert _extract_literal_terms(r"def \w+\(.*\):") == ["def"]
 
 
+class TestResolveTable:
+    """``_resolve_table`` qualifies the bare ``__tablename__`` with
+    the configured schema for raw ``text()`` SQL.  The ORM's
+    ``schema_translate_map`` rewrites compiled ``Table`` references but
+    not opaque string SQL, so this helper is how MSSQL raw queries
+    match the schema the ORM would hit.
+    """
+
+    def _fs(self, schema: str | None) -> MSSQLFileSystem:
+        from grover.models import GroverObject
+
+        fs = MSSQLFileSystem.__new__(MSSQLFileSystem)
+        fs._schema = schema
+        fs._model = GroverObject
+        return fs
+
+    def test_qualifies_with_schema(self):
+        fs = self._fs("grover")
+        assert fs._resolve_table() == "grover.grover_objects"
+
+    def test_bare_name_when_schema_none(self):
+        fs = self._fs(None)
+        assert fs._resolve_table() == "grover_objects"
+
+    def test_bare_name_when_schema_empty_string(self):
+        # Empty string is falsy — fall through to bare table name.
+        fs = self._fs("")
+        assert fs._resolve_table() == "grover_objects"
+
+    def test_independent_instances_have_independent_schemas(self):
+        fs_a = self._fs("tenant_a")
+        fs_b = self._fs("tenant_b")
+        assert fs_a._resolve_table() == "tenant_a.grover_objects"
+        assert fs_b._resolve_table() == "tenant_b.grover_objects"
+
+
 class TestQuoteContainsTerm:
     def test_plain_term(self):
         assert _quote_contains_term("login") == '"login"'
@@ -151,6 +187,36 @@ class TestCollectLineMatchesIntegration:
 # ---------------------------------------------------------------------------
 # Glob in-memory candidate path (no DB needed)
 # ---------------------------------------------------------------------------
+
+
+class TestSchemaConstructorPassthrough:
+    """The ``schema`` kwarg must flow all the way from
+    ``MSSQLFileSystem.__init__`` → ``DatabaseFileSystem.__init__`` →
+    ``GroverFileSystem.__init__`` so ``self._schema`` is set on a fully
+    constructed instance, not just when manually patched in.
+    """
+
+    def test_schema_kwarg_reaches_base_class(self):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def factory():
+            yield None  # never actually used — constructor-only test
+
+        fs = MSSQLFileSystem(session_factory=factory, schema="grover")
+        assert fs._schema == "grover"
+        assert fs._resolve_table() == "grover.grover_objects"
+
+    def test_schema_defaults_to_none(self):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def factory():
+            yield None
+
+        fs = MSSQLFileSystem(session_factory=factory)
+        assert fs._schema is None
+        assert fs._resolve_table() == "grover_objects"
 
 
 class TestGlobInMemoryCandidates:

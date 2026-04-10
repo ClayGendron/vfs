@@ -49,11 +49,13 @@ class GroverFileSystem:
         storage: bool = True,
         raise_on_error: bool = False,
         permissions: Permission | PermissionMap = "read_write",
+        schema: str | None = None,
     ) -> None:
         self._storage = storage
         self._raise_on_error = raise_on_error
         self._permission_map: PermissionMap = coerce_permissions(permissions)
         self._engine = engine
+        self._schema = schema
         if session_factory is not None:
             self._session_factory: async_sessionmaker[AsyncSession] | None = session_factory
         elif engine is not None:
@@ -524,13 +526,23 @@ class GroverFileSystem:
     async def _use_session(self) -> AsyncIterator[AsyncSession]:
         """Create a session from this filesystem's factory.
 
-        Commits on success, rolls back on error.
+        Commits on success, rolls back on error.  If ``self._schema``
+        is set, applies ``schema_translate_map={None: self._schema}``
+        to the session's connection so ORM queries resolve unqualified
+        table references to that schema.  Backends emitting raw
+        ``text()`` SQL must also read ``self._schema`` themselves —
+        ``schema_translate_map`` only rewrites compiled ``Table``
+        references, not opaque string SQL.
         """
         if self._session_factory is None:
             msg = f"{self._name} has no session factory (storage=False)"
             raise RuntimeError(msg)
         async with self._session_factory() as session:
             try:
+                if self._schema is not None:
+                    await session.connection(
+                        execution_options={"schema_translate_map": {None: self._schema}},
+                    )
                 yield session
                 await session.commit()
             except Exception:

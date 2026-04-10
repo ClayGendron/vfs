@@ -113,6 +113,28 @@ class MSSQLFileSystem(DatabaseFileSystem):
     FULLTEXT_TOP_N: ClassVar[int] = 1_000  # CONTAINSTABLE top_n_by_rank cap
 
     # ------------------------------------------------------------------
+    # Schema resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_table(self) -> str:
+        """Return the schema-qualified table name for raw ``text()`` SQL.
+
+        Raw ``text()`` SQL bypasses SQLAlchemy's schema rewriting — the
+        ORM only applies ``schema_translate_map`` when compiling
+        ``Table`` references, not to opaque string SQL.  This helper
+        qualifies the bare ``__tablename__`` with ``self._schema`` (set
+        on ``GroverFileSystem`` at init time) so raw queries resolve to
+        the same table the ORM would hit for this filesystem.
+
+        Returns the bare ``__tablename__`` when no schema is configured,
+        letting the connection's default schema take over — this
+        matches the pre-schema behaviour and keeps existing mounts
+        working.
+        """
+        table = str(self._model.__tablename__)
+        return f"{self._schema}.{table}" if self._schema else table
+
+    # ------------------------------------------------------------------
     # Schema verification
     # ------------------------------------------------------------------
 
@@ -130,14 +152,15 @@ class MSSQLFileSystem(DatabaseFileSystem):
         2. A ``content`` column exists on the table.
         3. A full-text index exists on that ``content`` column.
         """
-        table = self._model.__tablename__
+        table = self._resolve_table()
+        bare_table = self._model.__tablename__
         async with self._use_session() as session:
             object_id = (await session.execute(text(f"SELECT OBJECT_ID(N'{table}') AS oid"))).scalar()
             if object_id is None:
                 raise RuntimeError(
-                    f"MSSQLFileSystem requires table '{table}' to exist in the "
-                    f"connection's default schema. Run SQLModel.metadata.create_all "
-                    f"first or grant access to the existing table."
+                    f"MSSQLFileSystem requires table '{table}' to exist. Run "
+                    f"SQLModel.metadata.create_all first or grant access to the "
+                    f"existing table."
                 )
 
             content_column_exists = (
@@ -167,10 +190,10 @@ class MSSQLFileSystem(DatabaseFileSystem):
                     f"'{table}.content'. Provision one outside the application, "
                     f"for example:\n"
                     f"  CREATE FULLTEXT CATALOG grover_ftcat;\n"
-                    f"  CREATE UNIQUE NONCLUSTERED INDEX ux_{table}_path "
-                    f"ON {table}(path);\n"
+                    f"  CREATE UNIQUE NONCLUSTERED INDEX ux_{bare_table}_id "
+                    f"ON {table}(id);\n"
                     f"  CREATE FULLTEXT INDEX ON {table}(content LANGUAGE 1033)\n"
-                    f"  KEY INDEX ux_{table}_path\n"
+                    f"  KEY INDEX ux_{bare_table}_id\n"
                     f"  ON grover_ftcat WITH CHANGE_TRACKING AUTO;"
                 )
 
@@ -224,7 +247,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         unique_terms = list(dict.fromkeys(terms))
         contains_expr = " OR ".join(_quote_contains_term(t) for t in unique_terms)
 
-        table = self._model.__tablename__
+        table = self._resolve_table()
         top_n = max(k * 4, self.FULLTEXT_TOP_N)
         user_scope_clause = ""
         params_base: dict[str, object] = {"expr": contains_expr, "top_n": top_n}
@@ -356,7 +379,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         # grep and grep(1) conventions.  Without 'm', SQL Server's
         # REGEXP_LIKE treats ^/$ as start/end-of-string only.
         sql_flags = "cm" if case_sensitive else "im"
-        table = self._model.__tablename__
+        table = self._resolve_table()
         params: dict[str, object] = {"pattern": pattern, "flags": sql_flags}
 
         user_scope_clause = ""
@@ -435,7 +458,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         a ``{path: content}`` map for the matched rows.  No CONTAINS
         pre-filter — the candidate list is already narrow.
         """
-        table = self._model.__tablename__
+        table = self._resolve_table()
         content_map: dict[str, str] = {}
         for batch in self._chunk_paths(session, candidate_paths, binds_per_item=1):
             in_clause = ", ".join(f":p{i}" for i in range(len(batch)))
@@ -515,7 +538,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             ]
             return self._unscope_result(GroverResult(candidates=matched), user_id)
 
-        table = self._model.__tablename__
+        table = self._resolve_table()
         like_pattern = glob_to_sql_like(pattern)
         like_clause = "AND path LIKE :like_pattern ESCAPE '\\'" if like_pattern is not None else ""
 

@@ -136,6 +136,132 @@ class TestSessionManagement:
         assert sessions[0].committed is False
         assert sessions[0].rolled_back is True
 
+    async def test_use_session_applies_schema_translate_map(self):
+        """When ``schema`` is set, the session's connection is configured
+        with ``schema_translate_map={None: schema}`` so ORM queries
+        rewrite unqualified tables."""
+        connection_calls: list[dict[str, object]] = []
+
+        class _RecordingSession:
+            def __init__(self) -> None:
+                self.committed = False
+                self.rolled_back = False
+
+            async def connection(self, *, execution_options: dict[str, object]) -> None:
+                connection_calls.append(execution_options)
+
+            async def commit(self) -> None:
+                self.committed = True
+
+            async def rollback(self) -> None:
+                self.rolled_back = True
+
+        from contextlib import asynccontextmanager
+
+        sessions: list[_RecordingSession] = []
+
+        @asynccontextmanager
+        async def factory():
+            s = _RecordingSession()
+            sessions.append(s)
+            yield s
+
+        fs = _FullRoutingFS()
+        fs._session_factory = factory
+        fs._schema = "grover"
+
+        async with fs._use_session():
+            pass
+
+        assert connection_calls == [{"schema_translate_map": {None: "grover"}}]
+        assert sessions[0].committed is True
+
+    async def test_use_session_skips_schema_translate_map_when_none(self):
+        """No schema → session.connection() is never called — preserves
+        zero-overhead behaviour for existing filesystems."""
+
+        class _RecordingSession:
+            def __init__(self) -> None:
+                self.committed = False
+                self.rolled_back = False
+                self.connection_calls = 0
+
+            async def connection(self, **_: object) -> None:
+                self.connection_calls += 1
+
+            async def commit(self) -> None:
+                self.committed = True
+
+            async def rollback(self) -> None:
+                self.rolled_back = True
+
+        from contextlib import asynccontextmanager
+
+        sessions: list[_RecordingSession] = []
+
+        @asynccontextmanager
+        async def factory():
+            s = _RecordingSession()
+            sessions.append(s)
+            yield s
+
+        fs = _FullRoutingFS()
+        fs._session_factory = factory
+        fs._schema = None
+
+        async with fs._use_session():
+            pass
+
+        assert sessions[0].connection_calls == 0
+        assert sessions[0].committed is True
+
+    async def test_use_session_applies_schema_per_session(self):
+        """Two filesystems sharing one factory get their own schema
+        translation per session — a shared factory is safe for
+        multi-schema multi-mount setups."""
+
+        class _RecordingSession:
+            def __init__(self) -> None:
+                self.committed = False
+                self.rolled_back = False
+                self.options: dict[str, object] | None = None
+
+            async def connection(self, *, execution_options: dict[str, object]) -> None:
+                self.options = execution_options
+
+            async def commit(self) -> None:
+                self.committed = True
+
+            async def rollback(self) -> None:
+                self.rolled_back = True
+
+        from contextlib import asynccontextmanager
+
+        created: list[_RecordingSession] = []
+
+        @asynccontextmanager
+        async def shared_factory():
+            s = _RecordingSession()
+            created.append(s)
+            yield s
+
+        fs_a = _FullRoutingFS()
+        fs_a._session_factory = shared_factory
+        fs_a._schema = "tenant_a"
+
+        fs_b = _FullRoutingFS()
+        fs_b._session_factory = shared_factory
+        fs_b._schema = "tenant_b"
+
+        async with fs_a._use_session():
+            pass
+        async with fs_b._use_session():
+            pass
+
+        assert len(created) == 2
+        assert created[0].options == {"schema_translate_map": {None: "tenant_a"}}
+        assert created[1].options == {"schema_translate_map": {None: "tenant_b"}}
+
 
 # =========================================================================
 # Result helpers

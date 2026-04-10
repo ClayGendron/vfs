@@ -82,11 +82,13 @@ class DatabaseFileSystem(GroverFileSystem):
         vector_store: VectorStore | None = None,
         user_scoped: bool = False,
         permissions: Permission | PermissionMap = "read_write",
+        schema: str | None = None,
     ) -> None:
         super().__init__(
             engine=engine,
             session_factory=session_factory,
             permissions=permissions,
+            schema=schema,
         )
         self._model = model
         self._user_scoped = user_scoped
