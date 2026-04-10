@@ -212,7 +212,6 @@ class GroverObjectBase(ValidatedSQLModel):
         self,
         *,
         operation: str,
-        include_content: bool = False,
         score: float | None = None,
         metadata: dict | None = None,
     ) -> Candidate:
@@ -221,7 +220,7 @@ class GroverObjectBase(ValidatedSQLModel):
             id=self.id,
             path=self.path,
             kind=self.kind,
-            content=self.content if include_content else None,
+            content=self.content,
             lines=self.lines,
             size_bytes=self.size_bytes,
             tokens=self.tokens,

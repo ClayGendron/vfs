@@ -237,14 +237,23 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         Operates on files only; chunks and versions are excluded.
 
-        When *candidates* is passed, the path list is intersected via
-        ``o.path IN (…)``.  If the candidate set exceeds the dialect
-        parameter budget (2000 binds on MSSQL), the query is chunked
-        via the inherited ``_chunk_paths`` and the per-chunk results
-        are merged before the final top-*k* cut.
+        When *candidates* is passed, MSSQL has nothing to add — the
+        candidate set is already in Python and (after the hydration
+        changes) carries content, so the base class runs BM25 in Python
+        without any round trip.
         """
+        # Candidates path: delegate to base class so already-hydrated
+        # content drives BM25 in Python with zero SQL.
+        if candidates is not None:
+            return await super()._lexical_search_impl(
+                query,
+                k=k,
+                candidates=candidates,
+                user_id=user_id,
+                session=session,
+            )
+
         self._require_user_id(user_id)
-        candidates = self._scope_candidates(candidates, user_id)
         if not query or not query.strip():
             return self._error("lexical_search requires a query")
 
@@ -262,68 +271,44 @@ class MSSQLFileSystem(DatabaseFileSystem):
             user_scope_clause = " AND o.path LIKE :user_scope ESCAPE '\\'"
             params_base["user_scope"] = f"/{user_id}/%"
 
-        if candidates is None:
-            sql = text(f"""
-                SELECT TOP (:k) o.path, o.kind, ct.[RANK] AS score
-                FROM CONTAINSTABLE({table}, content, :expr, :top_n) AS ct
-                INNER JOIN {table} AS o ON o.id = ct.[KEY]
-                WHERE o.kind = 'file'
-                  AND o.deleted_at IS NULL
-                  {user_scope_clause}
-                ORDER BY ct.[RANK] DESC
+        sql = text(f"""
+            SELECT TOP (:k) o.path, o.kind, ct.[RANK] AS score
+            FROM CONTAINSTABLE({table}, content, :expr, :top_n) AS ct
+            INNER JOIN {table} AS o ON o.id = ct.[KEY]
+            WHERE o.kind = 'file'
+              AND o.deleted_at IS NULL
+              {user_scope_clause}
+            ORDER BY ct.[RANK] DESC
+        """)
+        params = {**params_base, "k": k}
+        rows = (await session.execute(sql, params)).all()
+
+        # Hydrate content for the (small) top-k result set so downstream
+        # stages don't have to re-query.  k is bounded (default 15), so
+        # this is a single small batched read.
+        scored_paths = [(row.path, row.kind, float(row.score)) for row in rows]
+        content_by_path: dict[str, str | None] = {}
+        if scored_paths:
+            top_paths = [path for path, _kind, _score in scored_paths]
+            content_sql = text(f"""
+                SELECT path, content
+                FROM {table}
+                WHERE path IN ({", ".join(f":p{i}" for i in range(len(top_paths)))})
+                  AND deleted_at IS NULL
             """)
-            params = {**params_base, "k": k}
-            rows = (await session.execute(sql, params)).all()
-            result = GroverResult(
-                candidates=[
-                    Candidate(
-                        path=row.path,
-                        kind=row.kind,
-                        details=(Detail(operation="lexical_search", score=float(row.score)),),
-                    )
-                    for row in rows
-                ]
-            )
-            return self._unscope_result(result, user_id)
+            content_params: dict[str, object] = {f"p{i}": p for i, p in enumerate(top_paths)}
+            content_rows = (await session.execute(content_sql, content_params)).all()
+            content_by_path = {r.path: r.content for r in content_rows}
 
-        # Candidates path: intersect via IN-list, chunk if needed.
-        candidate_paths = [c.path for c in candidates.candidates]
-        if not candidate_paths:
-            return self._unscope_result(GroverResult(candidates=[]), user_id)
-
-        merged: dict[str, tuple[str | None, float]] = {}
-        for batch in self._chunk_paths(session, candidate_paths, binds_per_item=1):
-            in_clause = ", ".join(f":p{i}" for i in range(len(batch)))
-            sql = text(f"""
-                SELECT TOP (:k) o.path, o.kind, ct.[RANK] AS score
-                FROM CONTAINSTABLE({table}, content, :expr, :top_n) AS ct
-                INNER JOIN {table} AS o ON o.id = ct.[KEY]
-                WHERE o.kind = 'file'
-                  AND o.deleted_at IS NULL
-                  AND o.path IN ({in_clause})
-                  {user_scope_clause}
-                ORDER BY ct.[RANK] DESC
-            """)
-            params = {**params_base, "k": k}
-            for i, p in enumerate(batch):
-                params[f"p{i}"] = p
-            rows = (await session.execute(sql, params)).all()
-            for row in rows:
-                # Keep the highest-ranked occurrence per path
-                prev = merged.get(row.path)
-                score = float(row.score)
-                if prev is None or score > prev[1]:
-                    merged[row.path] = (row.kind, score)
-
-        ordered = sorted(merged.items(), key=lambda kv: kv[1][1], reverse=True)[:k]
         result = GroverResult(
             candidates=[
                 Candidate(
                     path=path,
                     kind=kind,
+                    content=content_by_path.get(path),
                     details=(Detail(operation="lexical_search", score=score),),
                 )
-                for path, (kind, score) in ordered
+                for path, kind, score in scored_paths
             ]
         )
         return self._unscope_result(result, user_id)
@@ -470,8 +455,31 @@ class MSSQLFileSystem(DatabaseFileSystem):
         characters of an ``nvarchar(max)`` value are scanned.  For
         typical source code and docs this never matters.
         """
+        # When candidates are supplied they already carry content (after
+        # the hydration changes), so MSSQL has nothing to add — the base
+        # class runs the regex in Python without a round trip.
+        if candidates is not None:
+            return await super()._grep_impl(
+                pattern,
+                paths=paths,
+                ext=ext,
+                ext_not=ext_not,
+                globs=globs,
+                globs_not=globs_not,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                invert_match=invert_match,
+                before_context=before_context,
+                after_context=after_context,
+                output_mode=output_mode,
+                max_count=max_count,
+                candidates=candidates,
+                user_id=user_id,
+                session=session,
+            )
+
         self._require_user_id(user_id)
-        candidates = self._scope_candidates(candidates, user_id)
         if not pattern:
             return self._error("grep requires a pattern")
 
@@ -503,31 +511,6 @@ class MSSQLFileSystem(DatabaseFileSystem):
             user_id=user_id,
             alias="o",
         )
-
-        if candidates is not None:
-            candidate_paths = [c.path for c in candidates.candidates if c.kind in (None, "file")]
-            if not candidate_paths:
-                return self._unscope_result(GroverResult(candidates=[]), user_id)
-            content_map = await self._grep_with_candidate_chunks(
-                session=session,
-                effective_pattern=effective_pattern,
-                sql_flags=sql_flags,
-                filter_clause=filter_clause,
-                filter_params=filter_params,
-                candidate_paths=candidate_paths,
-                max_count=max_count,
-                invert_match=invert_match,
-            )
-            matched = self._collect_line_matches(
-                content_map,
-                regex,
-                max_count,
-                output_mode=output_mode,
-                before_context=before_context,
-                after_context=after_context,
-                invert_match=invert_match,
-            )
-            return self._unscope_result(GroverResult(candidates=matched), user_id)
 
         params: dict[str, object] = dict(filter_params)
         top_clause = ""
@@ -602,61 +585,6 @@ class MSSQLFileSystem(DatabaseFileSystem):
         )
         return self._unscope_result(GroverResult(candidates=matched), user_id)
 
-    async def _grep_with_candidate_chunks(
-        self,
-        *,
-        session: AsyncSession,
-        effective_pattern: str,
-        sql_flags: str,
-        filter_clause: str,
-        filter_params: dict[str, object],
-        candidate_paths: list[str],
-        max_count: int | None,
-        invert_match: bool,
-    ) -> dict[str, str]:
-        """Run ``REGEXP_LIKE`` per chunk for an explicit candidate path list.
-
-        Splits *candidate_paths* into batches respecting the dialect
-        parameter budget and runs the regex pushdown on each.  Returns
-        a ``{path: content}`` map for the matched rows.  No CONTAINS
-        pre-filter — the candidate list is already narrow.
-
-        Under ``invert_match`` the regex predicate is dropped from the
-        WHERE and all structural-filter matches stream back for the
-        client-side line scan.
-        """
-        table = self._resolve_table()
-        content_map: dict[str, str] = {}
-
-        regex_clause = ""
-        for batch in self._chunk_paths(session, candidate_paths, binds_per_item=1):
-            in_clause = ", ".join(f":p{i}" for i in range(len(batch)))
-            params: dict[str, object] = dict(filter_params)
-            if not invert_match:
-                params["pattern"] = effective_pattern
-                params["flags"] = sql_flags
-                regex_clause = "AND REGEXP_LIKE(o.content, :pattern, CAST(:flags AS VARCHAR(4)))"
-            for i, p in enumerate(batch):
-                params[f"p{i}"] = p
-            sql = text(f"""
-                SELECT o.path, o.content
-                FROM {table} AS o
-                WHERE o.kind = 'file'
-                  AND o.deleted_at IS NULL
-                  AND o.content IS NOT NULL
-                  AND o.path IN ({in_clause})
-                  {regex_clause}
-                  {filter_clause}
-                ORDER BY o.path
-            """)
-            rows = (await session.execute(sql, params)).all()
-            for row in rows:
-                if row.content:
-                    content_map[row.path] = row.content
-            if max_count is not None and len(content_map) >= max_count:
-                break
-        return content_map
-
     # ------------------------------------------------------------------
     # Glob — REGEXP_LIKE pushdown on path
     # ------------------------------------------------------------------
@@ -687,10 +615,23 @@ class MSSQLFileSystem(DatabaseFileSystem):
         into ``REGEXP_LIKE``.  The 2 MB LOB ceiling does not apply to
         the ``path`` column.
         """
+        # When candidates are supplied they already carry content (after
+        # the hydration changes), so MSSQL has nothing to add — the base
+        # class filters in Python without a round trip.
+        if candidates is not None:
+            return await super()._glob_impl(
+                pattern,
+                paths=paths,
+                ext=ext,
+                max_count=max_count,
+                candidates=candidates,
+                user_id=user_id,
+                session=session,
+            )
+
         self._require_user_id(user_id)
-        candidates = self._scope_candidates(candidates, user_id)
         unscoped_pattern = pattern
-        if candidates is None and self._user_scoped and user_id:
+        if self._user_scoped and user_id:
             pattern = scope_path(pattern, user_id) if pattern.startswith("/") else f"/{user_id}/{pattern}"
         if not pattern:
             return self._error("glob requires a pattern")
@@ -698,17 +639,6 @@ class MSSQLFileSystem(DatabaseFileSystem):
         regex = compile_glob(pattern)
         if regex is None:
             return self._error(f"Invalid glob pattern: {pattern}")
-
-        # In-memory candidate path: identical to base class.
-        if candidates is not None:
-            matched = [
-                Candidate(path=c.path, kind=c.kind, details=(Detail(operation="glob"),))
-                for c in candidates.candidates
-                if regex.match(c.path) is not None
-            ]
-            if max_count is not None:
-                matched = matched[:max_count]
-            return self._unscope_result(GroverResult(candidates=matched), user_id)
 
         # Decompose the *unscoped* pattern: merged_paths flows through
         # _build_grep_structural_sql which re-scopes via
@@ -777,7 +707,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             kind_clause = "kind = 'file'" if decomposition.files_only else "kind IN ('file', 'directory')"
 
         sql = text(f"""
-            SELECT {top_clause}path, kind
+            SELECT {top_clause}path, kind, content
             FROM {table}
             WHERE {kind_clause}
               AND deleted_at IS NULL
@@ -788,5 +718,13 @@ class MSSQLFileSystem(DatabaseFileSystem):
         """)
 
         rows = (await session.execute(sql, params)).all()
-        matched = [Candidate(path=row.path, kind=row.kind, details=(Detail(operation="glob"),)) for row in rows]
+        matched = [
+            Candidate(
+                path=row.path,
+                kind=row.kind,
+                content=row.content,
+                details=(Detail(operation="glob"),),
+            )
+            for row in rows
+        ]
         return self._unscope_result(GroverResult(candidates=matched), user_id)

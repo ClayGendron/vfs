@@ -44,6 +44,7 @@ class _LexicalDoc(NamedTuple):
     kind: str | None
     term_freqs: dict[str, int]
     doc_length: int
+    content: str
 
 
 def _escape_like(term: str) -> str:
@@ -340,6 +341,7 @@ class DatabaseFileSystem(GroverFileSystem):
                     kind=kind,
                     term_freqs=term_freqs,
                     doc_length=doc_length,
+                    content=content,
                 )
             )
             for term in term_freqs:
@@ -709,7 +711,7 @@ class DatabaseFileSystem(GroverFileSystem):
         else:
             existing.update_content(new_content)  # pragma: no cover — defensive: files always have content
 
-        return existing.to_candidate(operation="write", include_content=True)
+        return existing.to_candidate(operation="write")
 
     async def _fetch_version_chain(
         self,
@@ -756,7 +758,7 @@ class DatabaseFileSystem(GroverFileSystem):
             incoming.update_content(new_content)
             session.add(version_obj)
         session.add(incoming)
-        return incoming.to_candidate(operation="write", include_content=True)
+        return incoming.to_candidate(operation="write")
 
     # ------------------------------------------------------------------
     # CRUD
@@ -790,13 +792,36 @@ class DatabaseFileSystem(GroverFileSystem):
             return self._error("read requires a path or candidates, not both")
 
         incoming = {c.path: c for c in candidates.candidates}
-        paths = list(incoming.keys())
-        if not paths:
+        if not incoming:
             return GroverResult(candidates=[])
 
+        # Pre-hydrated candidates pass straight through; only fetch the gaps.
         out: list[Candidate] = []
         errors: list[str] = []
-        for batch in self._chunk_paths(session, paths, binds_per_item=1):
+        gap_paths: list[str] = []
+        for p, c in incoming.items():
+            if c.content is not None:
+                out.append(
+                    Candidate(
+                        id=c.id,
+                        path=c.path,
+                        kind=c.kind,
+                        content=c.content,
+                        lines=c.lines,
+                        size_bytes=c.size_bytes,
+                        tokens=c.tokens,
+                        mime_type=c.mime_type,
+                        weight=c.weight,
+                        distance=c.distance,
+                        details=(Detail(operation="read"),),
+                        created_at=c.created_at,
+                        updated_at=c.updated_at,
+                    )
+                )
+            else:
+                gap_paths.append(p)
+
+        for batch in self._chunk_paths(session, gap_paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
@@ -805,12 +830,7 @@ class DatabaseFileSystem(GroverFileSystem):
             objs = {obj.path: obj for obj in result.scalars().all()}
             for p in batch:
                 if p in objs:
-                    out.append(
-                        objs[p].to_candidate(
-                            operation="read",
-                            include_content=True,
-                        )
-                    )
+                    out.append(objs[p].to_candidate(operation="read"))
                 else:
                     errors.append(f"Not found: {p}")
 
@@ -993,10 +1013,10 @@ class DatabaseFileSystem(GroverFileSystem):
                             existing.update_content(new_content)
                         else:
                             existing.updated_at = datetime.now(UTC)
-                        candidate = existing.to_candidate(operation="write", include_content=True)
+                        candidate = existing.to_candidate(operation="write")
                     else:
                         session.add(incoming)
-                        candidate = incoming.to_candidate(operation="write", include_content=True)
+                        candidate = incoming.to_candidate(operation="write")
                 elif existing is not None:
                     if existing.deleted_at is None and not overwrite:
                         errors.append(f"Already exists (overwrite=False): {obj_path}")
@@ -1660,7 +1680,7 @@ class DatabaseFileSystem(GroverFileSystem):
         # ── With candidates: filter in-memory ─────────────────────────
         if candidates is not None:
             matched = [
-                Candidate(path=c.path, kind=c.kind, details=(Detail(operation="glob"),))
+                c.model_copy(update={"details": (Detail(operation="glob"),)})
                 for c in candidates.candidates
                 if regex.match(c.path) is not None
             ]
@@ -2031,6 +2051,7 @@ class DatabaseFileSystem(GroverFileSystem):
             Candidate(
                 path=doc.path,
                 kind=doc.kind,
+                content=doc.content,
                 details=(Detail(operation="lexical_search", score=score),),
             )
             for doc, score in scored

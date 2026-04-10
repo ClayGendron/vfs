@@ -43,8 +43,8 @@ class DatabaseFileSystem(GroverFileSystem):
 1. **`_get_object(path, session, include_deleted=False)`** → `GroverObjectBase | None`
    - `SELECT ... WHERE path = :path AND deleted_at IS NULL`
 
-2. **`_to_candidate(obj, operation, include_content=False, score=None)`** → `Candidate`
-   - Projects `GroverObjectBase` → `Candidate` with a `Detail` for provenance
+2. **`_to_candidate(obj, operation, score=None)`** → `Candidate`
+   - Projects `GroverObjectBase` → `Candidate` with a `Detail` for provenance. Always includes content; downstream stages reuse it without re-querying.
 
 3. **`_ensure_parent_dirs(path, session)`** → `None`
    - Walk up from `parent_path(path)` to `/`, batch-insert missing directory objects
@@ -72,7 +72,7 @@ All CRUD path/candidates impls handle this via their signature: `(self, path=Non
 
 | Method | Kind-awareness | Notes |
 |--------|---------------|-------|
-| `_read_impl` | All kinds: return content (file/chunk/version), metadata (connection/dir) | `include_content=True` |
+| `_read_impl` | All kinds: return content (file/chunk/version), metadata (connection/dir) | Skips re-fetch for already-hydrated candidates |
 | `_stat_impl` | Delegates to `_read_impl`, strips content from returned candidates | Thin wrapper, no separate DB query |
 | `_write_impl` | Files and chunks (paths with `.chunks/` allowed). Auto-version on file overwrite | Calls `_ensure_parent_dirs`, `_create_version` for files |
 | `_edit_impl` | Files/chunks only. Apply `EditOperation` list, auto-version | String replace with `replace_all` flag |
