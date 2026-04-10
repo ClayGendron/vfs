@@ -37,7 +37,9 @@ async def main() -> None:
     await g.mkdir("/project/docs")
 
     # Write source files
-    await g.write("/project/src/app.py", """\
+    await g.write(
+        "/project/src/app.py",
+        """\
 from flask import Flask
 
 app = Flask(__name__)
@@ -48,9 +50,12 @@ def index():
 
 if __name__ == "__main__":
     app.run(debug=True)
-""")
+""",
+    )
 
-    await g.write("/project/src/models/user.py", """\
+    await g.write(
+        "/project/src/models/user.py",
+        """\
 from dataclasses import dataclass
 
 @dataclass
@@ -61,9 +66,12 @@ class User:
 
     def display_name(self) -> str:
         return self.name or self.email
-""")
+""",
+    )
 
-    await g.write("/project/src/models/project.py", """\
+    await g.write(
+        "/project/src/models/project.py",
+        """\
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -77,9 +85,12 @@ class Project:
     @property
     def slug(self) -> str:
         return self.name.lower().replace(" ", "-")
-""")
+""",
+    )
 
-    await g.write("/project/src/routes/api.py", """\
+    await g.write(
+        "/project/src/routes/api.py",
+        """\
 from flask import Blueprint, jsonify, request
 
 api = Blueprint("api", __name__)
@@ -95,9 +106,12 @@ def get_user(user_id: str):
 @api.route("/projects", methods=["GET"])
 def list_projects():
     return jsonify([])
-""")
+""",
+    )
 
-    await g.write("/project/src/routes/auth.py", """\
+    await g.write(
+        "/project/src/routes/auth.py",
+        """\
 from flask import Blueprint, request, redirect
 
 auth = Blueprint("auth", __name__)
@@ -112,9 +126,12 @@ def login():
 @auth.route("/logout")
 def logout():
     return redirect("/login")
-""")
+""",
+    )
 
-    await g.write("/project/tests/test_app.py", """\
+    await g.write(
+        "/project/tests/test_app.py",
+        """\
 import pytest
 
 def test_index(client):
@@ -129,9 +146,12 @@ def test_list_users(client):
 def test_get_user(client):
     response = client.get("/api/users/abc123")
     assert response.status_code == 200
-""")
+""",
+    )
 
-    await g.write("/project/tests/test_models.py", """\
+    await g.write(
+        "/project/tests/test_models.py",
+        """\
 from src.models.user import User
 from src.models.project import Project
 
@@ -147,9 +167,12 @@ def test_project_slug():
     from datetime import datetime
     p = Project(id="1", name="My Project", owner_id="1", created_at=datetime.now())
     assert p.slug == "my-project"
-""")
+""",
+    )
 
-    await g.write("/project/docs/readme.md", """\
+    await g.write(
+        "/project/docs/readme.md",
+        """\
 # My Project
 
 A demo Flask application with user and project models.
@@ -164,9 +187,12 @@ A demo Flask application with user and project models.
 - GET /api/users — list all users
 - GET /api/users/:id — get a user
 - GET /api/projects — list all projects
-""")
+""",
+    )
 
-    await g.write("/project/pyproject.toml", """\
+    await g.write(
+        "/project/pyproject.toml",
+        """\
 [project]
 name = "myproject"
 version = "0.1.0"
@@ -175,7 +201,8 @@ dependencies = ["flask>=3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest", "coverage"]
-""")
+""",
+    )
 
     # Read back a file
     result = await g.read("/project/src/app.py")
@@ -184,7 +211,7 @@ dev = ["pytest", "coverage"]
     # Edit a file
     result = await g.edit(
         "/project/src/app.py",
-        'app.run(debug=True)',
+        "app.run(debug=True)",
         'app.run(host="0.0.0.0", port=8080, debug=True)',
     )
     print(f"edit: {result.message}")

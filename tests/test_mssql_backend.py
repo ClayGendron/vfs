@@ -267,9 +267,7 @@ class TestBuildGrepStructuralSql:
 
     def test_empty_returns_empty_clause(self):
         fs = self._fs()
-        sql, params = fs._build_grep_structural_sql(
-            ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None
-        )
+        sql, params = fs._build_grep_structural_sql(ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None)
         assert sql == ""
         assert params == {}
 
@@ -377,9 +375,7 @@ class TestBuildGrepStructuralSql:
 
     def test_clauses_joined_with_leading_and(self):
         fs = self._fs()
-        sql, _ = fs._build_grep_structural_sql(
-            ext=("py",), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None
-        )
+        sql, _ = fs._build_grep_structural_sql(ext=("py",), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None)
         assert sql.startswith(" AND ")
 
     def test_all_filters_compose_with_and(self):
@@ -703,9 +699,7 @@ class TestGrepRipgrepFiltersMssql:
         _mssql_required(request)
         await self._seed_corpus(db)
         async with db._use_session() as s:
-            r = await db._grep_impl(
-                "grep", ext=("py",), output_mode="files", session=s
-            )
+            r = await db._grep_impl("grep", ext=("py",), output_mode="files", session=s)
         assert "/src/a.py" in r.paths
         detail = r.candidates[0].details[0]
         meta = detail.metadata

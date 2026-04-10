@@ -382,9 +382,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             path_or: list[str] = []
             for i, raw in enumerate(paths):
                 prefix = self._scope_filter_prefix(raw, user_id).rstrip("/") or "/"
-                path_or.append(
-                    f"{col} = :gpeq{i} OR {col} LIKE :gppre{i} ESCAPE '\\'"
-                )
+                path_or.append(f"{col} = :gpeq{i} OR {col} LIKE :gppre{i} ESCAPE '\\'")
                 params[f"gpeq{i}"] = prefix
                 params[f"gppre{i}"] = _escape_like(prefix) + "/%"
             clauses.append("(" + " OR ".join(path_or) + ")")
@@ -398,10 +396,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
                     continue
                 like = glob_to_sql_like(scoped)
                 if like is not None:
-                    glob_or.append(
-                        f"({col} LIKE :ggl{i} ESCAPE '\\' "
-                        f"AND REGEXP_LIKE({col}, :ggr{i}, 'c'))"
-                    )
+                    glob_or.append(f"({col} LIKE :ggl{i} ESCAPE '\\' AND REGEXP_LIKE({col}, :ggr{i}, 'c'))")
                     params[f"ggl{i}"] = like
                 else:
                     glob_or.append(f"REGEXP_LIKE({col}, :ggr{i}, 'c')")

@@ -71,15 +71,16 @@ def get_memory_mb() -> float:
     usage = resource.getrusage(resource.RUSAGE_SELF)
     # ru_maxrss is in bytes on macOS, KB on Linux
     import platform
+
     if platform.system() == "Darwin":
         return usage.ru_maxrss / (1024 * 1024)
     return usage.ru_maxrss / 1024
 
 
 def bench(n: int) -> dict:
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Benchmarking {n:,} documents")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Generate corpus
     t0 = time.perf_counter()
@@ -110,7 +111,7 @@ def bench(n: int) -> dict:
         # Top 5 scores
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:5]
         top_score = scores[top_indices[0]]
-        print(f"  Query '{q}': {elapsed*1000:.2f}ms  (top score: {top_score:.3f})")
+        print(f"  Query '{q}': {elapsed * 1000:.2f}ms  (top score: {top_score:.3f})")
 
     avg_query = sum(query_times) / len(query_times)
     min_query = min(query_times)
@@ -118,10 +119,10 @@ def bench(n: int) -> dict:
     p50 = sorted(query_times)[len(query_times) // 2]
 
     print(f"\n  Query stats:")
-    print(f"    avg:  {avg_query*1000:.2f}ms")
-    print(f"    min:  {min_query*1000:.2f}ms")
-    print(f"    max:  {max_query*1000:.2f}ms")
-    print(f"    p50:  {p50*1000:.2f}ms")
+    print(f"    avg:  {avg_query * 1000:.2f}ms")
+    print(f"    min:  {min_query * 1000:.2f}ms")
+    print(f"    max:  {max_query * 1000:.2f}ms")
+    print(f"    p50:  {p50 * 1000:.2f}ms")
     print(f"  Peak RSS: {get_memory_mb():.1f} MB")
 
     return {
@@ -139,9 +140,9 @@ if __name__ == "__main__":
     for n in [1_000, 10_000, 100_000]:
         results.append(bench(n))
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  Summary")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  {'Docs':>10} {'Index':>10} {'Avg Query':>12} {'Min Query':>12} {'Max Query':>12} {'RSS':>10}")
     for r in results:
         print(

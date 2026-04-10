@@ -59,9 +59,7 @@ class TestTypeAliasesTable:
                 # The table is case-sensitive on the key side (lowercase is
                 # enforced at lookup), but values should also be lowercase
                 # to avoid surprises in the index query.
-                assert ext == ext.lower() or name == "r", (
-                    f"{name}: extension {ext!r} should be lowercase"
-                )
+                assert ext == ext.lower() or name == "r", f"{name}: extension {ext!r} should be lowercase"
 
     def test_common_languages_present(self):
         for alias in ("python", "js", "ts", "go", "rust", "java", "md", "yaml", "sql"):

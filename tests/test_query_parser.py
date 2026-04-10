@@ -699,10 +699,7 @@ class TestGrepNoOpCompat:
 
 class TestGrepCombined:
     def test_kitchen_sink(self):
-        cmd = _grep(
-            "grep 'login' src/ lib/ -t py -t js -g '*.test.*' -g '!vendor/**' "
-            "-i -F -w -C 3 -m 50 -l"
-        )
+        cmd = _grep("grep 'login' src/ lib/ -t py -t js -g '*.test.*' -g '!vendor/**' -i -F -w -C 3 -m 50 -l")
         assert cmd.pattern == "login"
         assert cmd.paths == ("src/", "lib/")
         assert cmd.ext == ("py", "pyi", "js", "mjs", "cjs")

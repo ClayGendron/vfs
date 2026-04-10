@@ -34,13 +34,35 @@ DOC_EXTENSIONS = {".md", ".txt", ".rst", ".toml", ".yaml", ".yml", ".json", ".cf
 
 # Directories and patterns to skip
 SKIP_DIRS = {
-    ".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache",
-    ".ruff_cache", "node_modules", ".idea", ".claude", "docs",
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+    ".idea",
+    ".claude",
+    "docs",
 }
 SKIP_SUFFIXES = {
-    ".pyc", ".pyo", ".so", ".db", ".sqlite", ".sqlite3",
-    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2",
-    ".ttf", ".eot", ".DS_Store", ".ipynb",
+    ".pyc",
+    ".pyo",
+    ".so",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".DS_Store",
+    ".ipynb",
 }
 MAX_FILE_SIZE = 512 * 1024  # 512 KB
 
@@ -97,9 +119,9 @@ def _create_pg_database() -> None:
     import subprocess
 
     result = subprocess.run(
-        ["psql", "-d", "postgres", "-tc",
-         f"SELECT 1 FROM pg_database WHERE datname = '{PG_DB}'"],
-        capture_output=True, text=True,
+        ["psql", "-d", "postgres", "-tc", f"SELECT 1 FROM pg_database WHERE datname = '{PG_DB}'"],
+        capture_output=True,
+        text=True,
     )
     if "1" not in result.stdout:
         print(f"  Creating PostgreSQL database '{PG_DB}'...")
@@ -149,22 +171,29 @@ def main() -> None:
 
     # Create the real engines (will be used on Grover's event loop)
     sqlite_engine = create_async_engine(
-        f"sqlite+aiosqlite:///{SQLITE_PATH}", echo=False,
+        f"sqlite+aiosqlite:///{SQLITE_PATH}",
+        echo=False,
     )
     pg_engine = create_async_engine(PG_URL, echo=False)
 
     sqlite_factory = async_sessionmaker(
-        sqlite_engine, class_=AsyncSession, expire_on_commit=False,
+        sqlite_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
     )
     pg_factory = async_sessionmaker(
-        pg_engine, class_=AsyncSession, expire_on_commit=False,
+        pg_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
     )
 
     sqlite_db = DatabaseFileSystem(
-        session_factory=sqlite_factory, dialect="sqlite",
+        session_factory=sqlite_factory,
+        dialect="sqlite",
     )
     pg_db = DatabaseFileSystem(
-        session_factory=pg_factory, dialect="postgresql",
+        session_factory=pg_factory,
+        dialect="postgresql",
     )
 
     # ------------------------------------------------------------------
@@ -277,12 +306,9 @@ def main() -> None:
                 print(f"    ... ({len(entries) - 15} more)")
 
         # Cross-mount exists checks
-        print(f"\n  exists('/code/src/grover/grover.py'): "
-              f"{g.exists('/code/src/grover/grover.py')}")
-        print(f"  exists('/docs/README.md'): "
-              f"{g.exists('/docs/README.md')}")
-        print(f"  exists('/code/README.md'): "
-              f"{g.exists('/code/README.md')}  (should be False — README is in /docs)")
+        print(f"\n  exists('/code/src/grover/grover.py'): {g.exists('/code/src/grover/grover.py')}")
+        print(f"  exists('/docs/README.md'): {g.exists('/docs/README.md')}")
+        print(f"  exists('/code/README.md'): {g.exists('/code/README.md')}  (should be False — README is in /docs)")
 
         # --------------------------------------------------------------
         # Phase 4: Cross-mount graph + search

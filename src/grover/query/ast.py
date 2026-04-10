@@ -133,18 +133,18 @@ class GrepCommand(StageNode):
 
     pattern: str
     paths: tuple[str, ...] = ()
-    ext: tuple[str, ...] = ()              # -t / --type (resolved aliases)
-    ext_not: tuple[str, ...] = ()          # -T / --type-not
-    globs: tuple[str, ...] = ()            # -g / --glob (positive)
-    globs_not: tuple[str, ...] = ()        # -g '!...' (negated)
-    case_mode: CaseMode = "sensitive"      # -i / -s / -S
-    fixed_strings: bool = False            # -F
-    word_regexp: bool = False              # -w
-    invert_match: bool = False             # -v
-    before_context: int = 0                # -B
-    after_context: int = 0                 # -A
+    ext: tuple[str, ...] = ()  # -t / --type (resolved aliases)
+    ext_not: tuple[str, ...] = ()  # -T / --type-not
+    globs: tuple[str, ...] = ()  # -g / --glob (positive)
+    globs_not: tuple[str, ...] = ()  # -g '!...' (negated)
+    case_mode: CaseMode = "sensitive"  # -i / -s / -S
+    fixed_strings: bool = False  # -F
+    word_regexp: bool = False  # -w
+    invert_match: bool = False  # -v
+    before_context: int = 0  # -B
+    after_context: int = 0  # -A
     output_mode: GrepOutputMode = "lines"  # default / -l / -c
-    max_count: int | None = None           # -m
+    max_count: int | None = None  # -m
     visibility: Visibility = Visibility()
 
 
