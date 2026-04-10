@@ -4,6 +4,20 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.17] — 2026-04-10
+
+### Fixed
+
+- **`glob` and `grep` mount-prefix routing** — Absolute patterns and literal `paths` filters are now stripped of the mount prefix before dispatch to each mount. Previously the non-candidate fanout in `_route_fanout` forwarded the full pattern to every mount, but mounts store paths mount-relative — so `glob('/data/**/*.py')` and `grep` with `paths=('/data/src',)` silently returned empty while `read` on the same path worked. New dedicated `_route_glob_fanout` / `_route_grep_fanout` use exact-rewrite when provable (literal-prefix or single-segment glob consumption against the mount name) and fall back to a `/**` superset query plus router-side authoritative re-filter when the pattern's leading segment is `**`. `globs_not` is never silently dropped — exclusions that cannot be exactly pushed are enforced at the router after rebase. `max_count` is deferred to the router whenever any mount uses the post-filter fallback so it cannot truncate pre-filter candidates. Wildcard mount selectors (`/*/`, `/d?ta/`, `/d[ae]ta/`) and multi-hop chains (`GroverAsync → router → router → leaf`) work correctly. The candidate-input path (`glob`/`grep` with `candidates=`) had the same mismatch and is fixed by filtering at the router with the original absolute pattern before grouping by terminal.
+
+### Added
+
+- **`grover.routing` module** — Pure helpers (`rewrite_glob_for_mount`, `rewrite_path_for_mount`, `first_segment`, `glob_segment_matches`) and plan dataclasses (`GlobMountPlan`, `GrepMountPlan`) backing the new fanout strategy.
+
+### Changed
+
+- **`MSSQLFileSystem` glob pushdown** — `_glob_impl` now structurally decomposes glob patterns via the new `decompose_glob()` helper into a literal path prefix and a trailing `**/*.<ext>` tail, then pushes both into SQL: the prefix becomes a sargable `LIKE` predicate and the ext narrows the `(ext, kind)` composite index seek. When the pattern is fully expressible as `prefix + **/*.<ext>` the authoritative `REGEXP_LIKE` residual is dropped entirely and `kind` is narrowed to `'file'` so the planner picks `ix_grover_objects_ext_kind` instead of relying on `ext IS NULL` for directory exclusion. Caller-supplied `ext` and `paths` remain authoritative (intersected with the decomposed values) so explicit narrowing is never broadened by the optimization. Patterns the decomposer doesn't recognize fall through to the existing regex path with no behavior change.
+
 ## [0.0.16] — 2026-04-10
 
 ### Added
