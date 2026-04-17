@@ -4,6 +4,12 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.20] — 2026-04-17
+
+### Changed
+
+- **PyPI package renamed from `grover` to `vfs-py`** — install with `pip install vfs-py`. Python imports are unchanged (`import grover`). Versions 0.0.18 and earlier remain available on PyPI under the `grover` name; new releases publish to `vfs-py`.
+
 ## [0.0.18] — 2026-04-10
 
 ### Changed

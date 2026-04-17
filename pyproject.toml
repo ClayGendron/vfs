@@ -6,8 +6,8 @@ build-backend = "hatchling.build"
 packages = ["src/grover"]
 
 [project]
-name = "grover"
-version = "0.0.18"
+name = "vfs-py"
+version = "0.0.20"
 description = "The agentic filesystem. Safe file operations, knowledge graphs, and semantic search — unified for AI agents."
 readme = "README.md"
 license = "Apache-2.0"
@@ -57,7 +57,7 @@ mssql = ["aioodbc>=0.5", "pyodbc>=5.0"]
 deepagents = ["deepagents>=0.4"]
 langchain = ["langchain-core>=0.3"]
 langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
-all = ["grover[search,openai,pinecone,databricks,treesitter,postgres,mssql,deepagents,langchain,langgraph]"]
+all = ["vfs-py[search,openai,pinecone,databricks,treesitter,postgres,mssql,deepagents,langchain,langgraph]"]
 
 [dependency-groups]
 dev = [
