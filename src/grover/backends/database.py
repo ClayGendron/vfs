@@ -236,7 +236,7 @@ class DatabaseFileSystem(GroverFileSystem):
         include_deleted: bool = False,
     ) -> GroverObjectBase | None:
         """Fetch a single object by exact path."""
-        stmt = select(self._model).where(self._model.path == path)
+        stmt = select(self._model).where(self._model.path == path)  # ty: ignore[invalid-argument-type]
         if not include_deleted:
             stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
         result = await session.execute(stmt)
@@ -510,7 +510,7 @@ class DatabaseFileSystem(GroverFileSystem):
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
-                self._model.kind == required_kind,
+                self._model.kind == required_kind,  # ty: ignore[invalid-argument-type]
             )
             if not include_deleted:
                 stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
@@ -1518,7 +1518,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 descendants = list(result.scalars().all())
             else:
                 stmt = select(self._model).where(
-                    self._model.parent_path == op.src,
+                    self._model.parent_path == op.src,  # ty: ignore[invalid-argument-type]
                     self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
@@ -1552,7 +1552,7 @@ class DatabaseFileSystem(GroverFileSystem):
             # only need to find *incoming* connections from other files
             # whose target_path points into the moved subtree.
             conn_stmt = select(self._model).where(
-                self._model.kind == "connection",
+                self._model.kind == "connection",  # ty: ignore[invalid-argument-type]
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 or_(
                     self._model.target_path == op.src,  # ty: ignore[invalid-argument-type]
@@ -1561,11 +1561,11 @@ class DatabaseFileSystem(GroverFileSystem):
             )
             conn_result = await session.execute(conn_stmt)
             for conn in conn_result.scalars().all():
-                conn.target_path = op.dest + conn.target_path[len(op.src) :]
+                conn.target_path = op.dest + conn.target_path[len(op.src) :]  # ty: ignore[not-subscriptable]
                 conn.path = connection_path(
-                    conn.source_path,
+                    conn.source_path,  # ty: ignore[invalid-argument-type]
                     conn.target_path,
-                    conn.connection_type,
+                    conn.connection_type,  # ty: ignore[invalid-argument-type]
                 )
                 conn._rederive_path_fields()
 
@@ -1780,7 +1780,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 for batch in self._chunk_paths(session, need_hydration, binds_per_item=1):
                     stmt = select(self._model).where(
                         self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
-                        self._model.kind == "file",
+                        self._model.kind == "file",  # ty: ignore[invalid-argument-type]
                         self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                     )
                     stmt = self._apply_structural_filters(
@@ -1798,7 +1798,7 @@ class DatabaseFileSystem(GroverFileSystem):
                             content_map[obj.path] = obj.content
         else:
             stmt = select(self._model).where(
-                self._model.kind == "file",
+                self._model.kind == "file",  # ty: ignore[invalid-argument-type]
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 self._model.content.isnot(None),  # ty: ignore[unresolved-attribute]
             )
@@ -2098,7 +2098,7 @@ class DatabaseFileSystem(GroverFileSystem):
         )
 
         if path == "/":
-            stmt = stmt.where(self._model.path != "/")
+            stmt = stmt.where(self._model.path != "/")  # ty: ignore[invalid-argument-type]
         else:
             stmt = stmt.where(
                 self._model.path.like(path + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
