@@ -1,9 +1,9 @@
 """Tests for directory-level permissions on a mount.
 
 Mirrors :mod:`tests.test_permissions` but exercises the
-:class:`grover.permissions.PermissionMap` value type and the
+:class:`vfs.permissions.PermissionMap` value type and the
 per-path resolution flow through the five chokepoints in
-:mod:`grover.base`.
+:mod:`vfs.base`.
 """
 
 from __future__ import annotations
@@ -13,20 +13,20 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
-from grover import permissions as permissions_ns
-from grover.backends.database import DatabaseFileSystem
-from grover.base import GroverFileSystem
-from grover.client import Grover, GroverAsync
-from grover.exceptions import WriteConflictError
-from grover.models import GroverObject
-from grover.permissions import (
+from vfs import permissions as permissions_ns
+from vfs.backends.database import DatabaseFileSystem
+from vfs.base import VirtualFileSystem
+from vfs.client import VFSClient, VFSClientAsync
+from vfs.exceptions import WriteConflictError
+from vfs.models import VFSObject
+from vfs.permissions import (
     PermissionMap,
     check_writable,
     coerce_permissions,
     read_only,
     read_write,
 )
-from grover.results import TwoPathOperation
+from vfs.results import TwoPathOperation
 
 # ------------------------------------------------------------------
 # Helpers
@@ -205,7 +205,7 @@ class TestFactoryHelpers:
             read_write(read=["/"])
 
     def test_namespace_export(self):
-        """`from grover import permissions` exposes the factories."""
+        """`from vfs import permissions` exposes the factories."""
         assert callable(permissions_ns.read_only)
         assert callable(permissions_ns.read_write)
         pm = permissions_ns.read_only(write=["/x"])
@@ -247,14 +247,14 @@ class TestCoercePermissions:
 
 class TestCheckWritable:
     def test_mutation_on_default_read_includes_mount_default(self):
-        fs = GroverFileSystem(storage=False, permissions="read")
+        fs = VirtualFileSystem(storage=False, permissions="read")
         result = check_writable(fs, "write", "/raw/x.md", mount_prefix="/wiki")
         assert result is not None
         assert "Cannot write to read-only path '/wiki/raw/x.md'" in result.error_message
         assert "(mount default)" in result.error_message
 
     def test_mutation_on_rule_match_includes_rule_prefix(self):
-        fs = GroverFileSystem(
+        fs = VirtualFileSystem(
             storage=False,
             permissions=read_only(write=["/synthesis"]),
         )
@@ -264,14 +264,14 @@ class TestCheckWritable:
         assert "(mount default)" in result.error_message
 
     def test_mutation_inside_writable_hole_passes(self):
-        fs = GroverFileSystem(
+        fs = VirtualFileSystem(
             storage=False,
             permissions=read_only(write=["/synthesis"]),
         )
         assert check_writable(fs, "write", "/synthesis/x.md", mount_prefix="/wiki") is None
 
     def test_frozen_island_rule_prefix_in_message(self):
-        fs = GroverFileSystem(
+        fs = VirtualFileSystem(
             storage=False,
             permissions=read_write(read=["/.frozen"]),
         )
@@ -281,13 +281,13 @@ class TestCheckWritable:
         assert "read-only by mount rule '/.frozen'" in result.error_message
 
     def test_read_op_passes_on_read_default(self):
-        fs = GroverFileSystem(storage=False, permissions="read")
+        fs = VirtualFileSystem(storage=False, permissions="read")
         assert check_writable(fs, "read", "/x", mount_prefix="/m") is None
         assert check_writable(fs, "stat", "/x", mount_prefix="/m") is None
         assert check_writable(fs, "ls", "/x", mount_prefix="/m") is None
 
     def test_no_mount_prefix(self):
-        fs = GroverFileSystem(storage=False, permissions="read")
+        fs = VirtualFileSystem(storage=False, permissions="read")
         result = check_writable(fs, "write", "/x")
         assert result is not None
         assert "Cannot write to read-only path '/x'" in result.error_message
@@ -298,7 +298,7 @@ class TestCheckWritable:
 # ==================================================================
 
 
-async def _make_wiki_router() -> tuple[GroverAsync, DatabaseFileSystem]:
+async def _make_wiki_router() -> tuple[VirtualFileSystem, DatabaseFileSystem]:
     """Build a router with one read-only mount that has /synthesis writable."""
     engine = await _sqlite_engine()
     wiki = DatabaseFileSystem(
@@ -309,7 +309,7 @@ async def _make_wiki_router() -> tuple[GroverAsync, DatabaseFileSystem]:
     await _seed(wiki, "/raw/rfc.pdf", "binary")
     await _seed(wiki, "/synthesis/page.md", "draft")
     await _seed(wiki, "/index.md", "# Index")
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("wiki", wiki)
     return router, wiki
 
@@ -443,7 +443,7 @@ class TestWritableHoleBlocks:
             engine=engine,
             permissions=read_only(write=["/synthesis"]),
         )
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("wiki", wiki)
         try:
             r = await router.write("/wiki/synthesis-archive/x.md", "nope")
@@ -458,7 +458,7 @@ class TestWritableHoleBlocks:
 # ==================================================================
 
 
-async def _make_workspace_router() -> tuple[GroverAsync, DatabaseFileSystem]:
+async def _make_workspace_router() -> tuple[VirtualFileSystem, DatabaseFileSystem]:
     engine = await _sqlite_engine()
     workspace = DatabaseFileSystem(
         engine=engine,
@@ -467,7 +467,7 @@ async def _make_workspace_router() -> tuple[GroverAsync, DatabaseFileSystem]:
     await _seed(workspace, "/src/main.py", "code")
     await _seed(workspace, "/.frozen/locked.toml", "config")
     await _seed(workspace, "/vendor/lib.so", "binary")
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("workspace", workspace)
     return router, workspace
 
@@ -557,7 +557,7 @@ class TestCascadeDeleteRespectsNestedRules:
             default="read_write",
             overrides=(("/a/b", "read"),),
         )
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("ws", fs)
         try:
             r = await router.delete("/ws/a")
@@ -580,7 +580,7 @@ class TestCascadeDeleteRespectsNestedRules:
         fs = DatabaseFileSystem(engine=engine, permissions="read_write")
         await _seed(fs, "/a/x.md", "x")
         await _seed(fs, "/a/b/y.md", "y")
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("ws", fs)
         try:
             r = await router.delete("/ws/a")
@@ -608,7 +608,7 @@ class TestMkconnChecksConnectionWritePath:
         )
         await _seed(fs, "/page.md", "page")
         await _seed(fs, "/other.md", "other")
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("wiki", fs)
         try:
             r = await router.mkconn(
@@ -636,7 +636,7 @@ class TestMkconnChecksConnectionWritePath:
         )
         await _seed(fs, "/page.md", "page")
         await _seed(fs, "/other.md", "other")
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("wiki", fs)
         try:
             # The frozen connection type is rejected.
@@ -668,7 +668,7 @@ class TestBatchFailFast:
         await _seed(ws, "/src/a.py", "a")
         await _seed(ws, "/src/b.py", "b")
         await _seed(ws, "/.frozen/c.toml", "c")
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("ws", ws)
         try:
             listing = await router.glob("/**/*")
@@ -696,12 +696,12 @@ class TestBatchFailFast:
             engine=engine,
             permissions=read_write(read=["/.frozen"]),
         )
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("ws", ws)
         try:
             objs = [
-                GroverObject(path="/ws/src/new.py", content="ok"),
-                GroverObject(path="/ws/.frozen/blocked.toml", content="nope"),
+                VFSObject(path="/ws/src/new.py", content="ok"),
+                VFSObject(path="/ws/.frozen/blocked.toml", content="nope"),
             ]
             r = await router.write(objects=objs)
             assert not r.success
@@ -730,7 +730,7 @@ class TestCrossMountPerPath:
         )
         await _seed(src, "/a.md", "alpha")
         await _seed(src, "/b.md", "beta")
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("src", src)
         await router.add_mount("dst", dst)
         try:
@@ -757,7 +757,7 @@ class TestCrossMountPerPath:
         )
         await _seed(src, "/a.md", "alpha")
         await _seed(src, "/b.md", "beta")
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("src", src)
         await router.add_mount("dst", dst)
         try:
@@ -782,7 +782,7 @@ class TestCrossMountPerPath:
         )
         dst = DatabaseFileSystem(engine=dst_engine, permissions="read_write")
         await _seed(src, "/.frozen/x.md", "frozen")
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("src", src)
         await router.add_mount("dst", dst)
         try:
@@ -810,7 +810,7 @@ class TestMetadataInheritance:
             permissions=read_only(write=["/synthesis"]),
         )
         await _seed(wiki, "/raw/rfc.pdf", "binary")
-        router = GroverAsync()
+        router = VFSClientAsync()
         await router.add_mount("wiki", wiki)
         try:
             # Writes targeted at the .chunks namespace under a read-only file
@@ -830,7 +830,7 @@ class TestMetadataInheritance:
 
 class TestSyncRaisesWithRules:
     def test_write_outside_hole_raises(self):
-        g = Grover()
+        g = VFSClient()
         try:
 
             async def _setup():
@@ -848,7 +848,7 @@ class TestSyncRaisesWithRules:
             g.close()
 
     def test_write_inside_hole_succeeds(self):
-        g = Grover()
+        g = VFSClient()
         try:
 
             async def _setup():

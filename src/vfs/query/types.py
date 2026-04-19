@@ -4,7 +4,7 @@ Maps language / file-type names (``python``, ``js``, ``rust``) to the set
 of concrete file extensions that should match.  The canonical list is
 sourced from ``rg --type-list`` and kept intentionally close to ripgrep's
 defaults so that agents that already know ``rg -t python`` get the same
-semantics from ``grover grep -t python``.
+semantics from ``vfs grep -t python``.
 
 Resolution happens at the parser / CLI boundary — by the time values
 reach the facade or the backend, they are concrete, lowercase extension
@@ -120,7 +120,7 @@ def resolve_type_aliases(names: tuple[str, ...]) -> tuple[str, ...]:
 
     Unknown alias names are treated as literal extensions so that
     ``-t mjs`` works without an entry in the table and new extensions
-    don't require updating Grover.  Duplicates are preserved in order
+    don't require updating VFS.  Duplicates are preserved in order
     of first appearance.
     """
     seen: set[str] = set()

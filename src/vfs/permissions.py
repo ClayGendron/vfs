@@ -1,8 +1,8 @@
-"""Permission enforcement for Grover filesystems.
+"""Permission enforcement for VFS filesystems.
 
-A Grover filesystem has a :class:`PermissionMap`: one default permission
+A VFS filesystem has a :class:`PermissionMap`: one default permission
 plus zero or more directory-prefix overrides.  Every mutating operation
-funnels through one of five chokepoints in :mod:`grover.base`
+funnels through one of five chokepoints in :mod:`vfs.base`
 (``_route_single``, ``_route_write_batch``, ``_route_two_path``,
 ``_dispatch_candidates``, ``mkconn``) and each chokepoint calls
 :func:`check_writable` on the resolved terminal filesystem with the
@@ -33,8 +33,8 @@ uses for routing — one mental model covers both.
 
 The rejection message starts with the literal substring ``"Cannot
 write"``, which the existing ``_classify_error`` mapping in
-:mod:`grover.exceptions` already routes to
-:class:`~grover.exceptions.WriteConflictError`.  No new exception class
+:mod:`vfs.exceptions` already routes to
+:class:`~vfs.exceptions.WriteConflictError`.  No new exception class
 is required.
 
 Helpers
@@ -104,7 +104,7 @@ to alice.  If you need per-user policy, use the share / ReBAC layer
 
 This trade-off mirrors Unix: file permissions are enforced by the
 filesystem layer, but a process that has direct access to the
-underlying block device can still write bytes.  Grover treats the SQL
+underlying block device can still write bytes.  VFS treats the SQL
 engine as that block device.  If you need hard isolation between a
 read-only view and a writable view of the same data, use separate
 engines (or separate tables within one engine) — not two
@@ -116,13 +116,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
-from grover.paths import normalize_path
+from vfs.paths import normalize_path
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from grover.base import GroverFileSystem
-    from grover.results import GroverResult
+    from vfs.base import VirtualFileSystem
+    from vfs.results import VFSResult
 
 
 Permission = Literal["read", "read_write"]
@@ -255,12 +255,12 @@ def read_write(*, read: Iterable[str] = ()) -> PermissionMap:
 
 
 def check_writable(
-    fs: GroverFileSystem,
+    fs: VirtualFileSystem,
     op: str,
     rel: str,
     *,
     mount_prefix: str = "",
-) -> GroverResult | None:
+) -> VFSResult | None:
     """Return a classified error result if *op* mutates a read-only path.
 
     *rel* is the filesystem-relative path; *mount_prefix* is the
@@ -271,13 +271,13 @@ def check_writable(
 
     Returns ``None`` when the operation is allowed (either because it
     is not a mutation or because the resolved permission is
-    ``"read_write"``).  Returns a failure :class:`GroverResult` — via
+    ``"read_write"``).  Returns a failure :class:`VFSResult` — via
     ``fs._error(...)`` — when the operation would mutate a read-only
     path.
 
     The returned result's error message starts with the substring
     ``"Cannot write"``, which the existing ``_classify_error`` mapping
-    routes to :class:`~grover.exceptions.WriteConflictError`.  When the
+    routes to :class:`~vfs.exceptions.WriteConflictError`.  When the
     filesystem has ``raise_on_error=True``, ``fs._error(...)`` raises
     the classified exception directly instead of returning a result.
     """

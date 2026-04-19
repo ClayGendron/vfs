@@ -1,4 +1,4 @@
-"""Tests for grover.models — GroverObjectBase and GroverObject."""
+"""Tests for vfs.models — VFSObjectBase and VFSObject."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import hashlib
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from grover.models import GroverObject, GroverObjectBase
-from grover.vector import Vector
+from vfs.models import VFSObject, VFSObjectBase
+from vfs.vector import Vector
 
 # =========================================================================
 # Path normalization and validation in the model
@@ -17,31 +17,31 @@ from grover.vector import Vector
 
 class TestPathHandling:
     def test_normalizes_path(self):
-        obj = GroverObject(path="src/auth.py")
+        obj = VFSObject(path="src/auth.py")
         assert obj.path == "/src/auth.py"
 
     def test_resolves_double_slashes(self):
-        obj = GroverObject(path="/src//auth.py")
+        obj = VFSObject(path="/src//auth.py")
         assert obj.path == "/src/auth.py"
 
     def test_resolves_dot_dot(self):
-        obj = GroverObject(path="/src/../auth.py")
+        obj = VFSObject(path="/src/../auth.py")
         assert obj.path == "/auth.py"
 
     def test_null_byte_rejected(self):
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path="/foo\x00bar")
+            VFSObject(path="/foo\x00bar")
 
     def test_control_char_rejected(self):
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path="/foo\x01bar")
+            VFSObject(path="/foo\x01bar")
 
     def test_del_rejected(self):
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path="/foo\x7fbar")
+            VFSObject(path="/foo\x7fbar")
 
     def test_empty_path_is_root(self):
-        obj = GroverObject(path="")
+        obj = VFSObject(path="")
         assert obj.path == "/"
 
 
@@ -52,39 +52,39 @@ class TestPathHandling:
 
 class TestKindInference:
     def test_file_from_extension(self):
-        obj = GroverObject(path="/src/auth.py")
+        obj = VFSObject(path="/src/auth.py")
         assert obj.kind == "file"
 
     def test_directory(self):
-        obj = GroverObject(path="/src")
+        obj = VFSObject(path="/src")
         assert obj.kind == "directory"
 
     def test_chunk(self):
-        obj = GroverObject(path="/src/auth.py/.chunks/login")
+        obj = VFSObject(path="/src/auth.py/.chunks/login")
         assert obj.kind == "chunk"
 
     def test_version(self):
-        obj = GroverObject(path="/src/auth.py/.versions/3")
+        obj = VFSObject(path="/src/auth.py/.versions/3")
         assert obj.kind == "version"
 
     def test_connection(self):
-        obj = GroverObject(path="/a.py/.connections/imports/b.py")
+        obj = VFSObject(path="/a.py/.connections/imports/b.py")
         assert obj.kind == "connection"
 
     def test_api(self):
-        obj = GroverObject(path="/jira/.apis/ticket")
+        obj = VFSObject(path="/jira/.apis/ticket")
         assert obj.kind == "api"
 
     def test_dotfile(self):
-        obj = GroverObject(path="/.bashrc")
+        obj = VFSObject(path="/.bashrc")
         assert obj.kind == "file"
 
     def test_extensionless_file(self):
-        obj = GroverObject(path="/Makefile")
+        obj = VFSObject(path="/Makefile")
         assert obj.kind == "file"
 
     def test_explicit_kind_preserved(self):
-        obj = GroverObject(path="/myapp", kind="file")
+        obj = VFSObject(path="/myapp", kind="file")
         assert obj.kind == "file"
 
 
@@ -95,67 +95,67 @@ class TestKindInference:
 
 class TestExtensionDerivation:
     def test_file_ext_populated(self):
-        obj = GroverObject(path="/src/auth.py")
+        obj = VFSObject(path="/src/auth.py")
         assert obj.ext == "py"
 
     def test_file_ext_lowercased(self):
-        obj = GroverObject(path="/src/Foo.PY")
+        obj = VFSObject(path="/src/Foo.PY")
         assert obj.ext == "py"
 
     def test_extensionless_file_has_null_ext(self):
-        obj = GroverObject(path="/Makefile")
+        obj = VFSObject(path="/Makefile")
         assert obj.kind == "file"
         assert obj.ext is None
 
     def test_dotfile_has_null_ext(self):
-        obj = GroverObject(path="/.env")
+        obj = VFSObject(path="/.env")
         assert obj.kind == "file"
         assert obj.ext is None
 
     def test_dotfile_with_extension(self):
-        obj = GroverObject(path="/.eslintrc.json")
+        obj = VFSObject(path="/.eslintrc.json")
         assert obj.ext == "json"
 
     def test_directory_has_null_ext(self):
-        obj = GroverObject(path="/src")
+        obj = VFSObject(path="/src")
         assert obj.kind == "directory"
         assert obj.ext is None
 
     def test_chunk_has_null_ext_even_if_name_has_dot(self):
-        obj = GroverObject(path="/src/auth.py/.chunks/login")
+        obj = VFSObject(path="/src/auth.py/.chunks/login")
         assert obj.kind == "chunk"
         assert obj.ext is None
 
     def test_version_has_null_ext(self):
-        obj = GroverObject(path="/src/auth.py/.versions/3")
+        obj = VFSObject(path="/src/auth.py/.versions/3")
         assert obj.kind == "version"
         assert obj.ext is None
 
     def test_connection_has_null_ext_despite_py_suffix(self):
         """Connection paths end in a target like `/b.py` but are not files —
         the index must not pollute with non-file rows."""
-        obj = GroverObject(path="/a.py/.connections/imports/b.py")
+        obj = VFSObject(path="/a.py/.connections/imports/b.py")
         assert obj.kind == "connection"
         assert obj.ext is None
 
     def test_api_has_null_ext(self):
-        obj = GroverObject(path="/jira/.apis/ticket")
+        obj = VFSObject(path="/jira/.apis/ticket")
         assert obj.kind == "api"
         assert obj.ext is None
 
     def test_explicit_ext_preserved(self):
-        obj = GroverObject(path="/src/auth.py", ext="python")
+        obj = VFSObject(path="/src/auth.py", ext="python")
         assert obj.ext == "python"
 
     def test_rederive_updates_ext_on_move(self):
-        obj = GroverObject(path="/src/auth.py")
+        obj = VFSObject(path="/src/auth.py")
         assert obj.ext == "py"
         obj.path = "/src/auth.ts"
         obj._rederive_path_fields()
         assert obj.ext == "ts"
 
     def test_rederive_clears_ext_on_move_to_extensionless(self):
-        obj = GroverObject(path="/src/auth.py")
+        obj = VFSObject(path="/src/auth.py")
         assert obj.ext == "py"
         obj.path = "/src/Makefile"
         obj._rederive_path_fields()
@@ -169,61 +169,61 @@ class TestExtensionDerivation:
 
 class TestName:
     def test_file(self):
-        obj = GroverObject(path="/src/auth.py")
+        obj = VFSObject(path="/src/auth.py")
         assert obj.name == "auth.py"
 
     def test_directory(self):
-        obj = GroverObject(path="/src")
+        obj = VFSObject(path="/src")
         assert obj.name == "src"
 
     def test_root(self):
-        obj = GroverObject(path="/")
+        obj = VFSObject(path="/")
         assert obj.name == ""
 
     def test_chunk(self):
-        obj = GroverObject(path="/src/auth.py/.chunks/login")
+        obj = VFSObject(path="/src/auth.py/.chunks/login")
         assert obj.name == "login"
 
     def test_version(self):
-        obj = GroverObject(path="/src/auth.py/.versions/3")
+        obj = VFSObject(path="/src/auth.py/.versions/3")
         assert obj.name == "3"
 
     def test_connection(self):
-        obj = GroverObject(path="/a.py/.connections/imports/src/utils.py")
+        obj = VFSObject(path="/a.py/.connections/imports/src/utils.py")
         assert obj.name == "utils.py"
 
     def test_api(self):
-        obj = GroverObject(path="/jira/.apis/ticket")
+        obj = VFSObject(path="/jira/.apis/ticket")
         assert obj.name == "ticket"
 
     def test_explicit_name_preserved(self):
-        obj = GroverObject(path="/src/auth.py", name="custom")
+        obj = VFSObject(path="/src/auth.py", name="custom")
         assert obj.name == "custom"
 
 
 class TestParentPath:
     def test_file(self):
-        obj = GroverObject(path="/src/auth.py")
+        obj = VFSObject(path="/src/auth.py")
         assert obj.parent_path == "/src"
 
     def test_root_child(self):
-        obj = GroverObject(path="/src")
+        obj = VFSObject(path="/src")
         assert obj.parent_path == "/"
 
     def test_root(self):
-        obj = GroverObject(path="/")
+        obj = VFSObject(path="/")
         assert obj.parent_path == "/"
 
     def test_chunk_parent_is_owning_file(self):
-        obj = GroverObject(path="/src/auth.py/.chunks/login")
+        obj = VFSObject(path="/src/auth.py/.chunks/login")
         assert obj.parent_path == "/src/auth.py"
 
     def test_connection_parent_is_owning_file(self):
-        obj = GroverObject(path="/a.py/.connections/imports/b.py")
+        obj = VFSObject(path="/a.py/.connections/imports/b.py")
         assert obj.parent_path == "/a.py"
 
     def test_explicit_parent_preserved(self):
-        obj = GroverObject(path="/src/auth.py", parent_path="/custom")
+        obj = VFSObject(path="/src/auth.py", parent_path="/custom")
         assert obj.parent_path == "/custom"
 
 
@@ -234,17 +234,17 @@ class TestParentPath:
 
 class TestConnectionDecomposition:
     def test_fields_extracted(self):
-        obj = GroverObject(path="/src/auth.py/.connections/imports/src/utils.py")
+        obj = VFSObject(path="/src/auth.py/.connections/imports/src/utils.py")
         assert obj.source_path == "/src/auth.py"
         assert obj.target_path == "/src/utils.py"
         assert obj.connection_type == "imports"
 
     def test_deep_target(self):
-        obj = GroverObject(path="/a.py/.connections/calls/deep/nested/path.py")
+        obj = VFSObject(path="/a.py/.connections/calls/deep/nested/path.py")
         assert obj.target_path == "/deep/nested/path.py"
 
     def test_explicit_connection_fields_preserved(self):
-        obj = GroverObject(
+        obj = VFSObject(
             path="/a.py/.connections/imports/b.py",
             source_path="/custom",
             target_path="/custom-target",
@@ -255,7 +255,7 @@ class TestConnectionDecomposition:
         assert obj.connection_type == "custom-type"
 
     def test_non_connection_path_no_decomposition(self):
-        obj = GroverObject(path="/src/auth.py")
+        obj = VFSObject(path="/src/auth.py")
         assert obj.source_path is None
         assert obj.target_path is None
         assert obj.connection_type is None
@@ -268,42 +268,42 @@ class TestConnectionDecomposition:
 
 class TestContentMetrics:
     def test_content_with_text(self):
-        obj = GroverObject(path="/a.py", content="def login():\n    pass")
+        obj = VFSObject(path="/a.py", content="def login():\n    pass")
         assert obj.content_hash is not None
         assert obj.size_bytes == len(b"def login():\n    pass")
         assert obj.lines == 2
         assert obj.tokens == 0
-        assert obj.lexical_tokens == GroverObjectBase._lexical_token_count(
+        assert obj.lexical_tokens == VFSObjectBase._lexical_token_count(
             "def login():\n    pass",
         )
 
     def test_single_line_no_newline(self):
-        obj = GroverObject(path="/a.py", content="hello")
+        obj = VFSObject(path="/a.py", content="hello")
         assert obj.lines == 1
 
     def test_trailing_newline(self):
-        obj = GroverObject(path="/a.py", content="a\nb\n")
+        obj = VFSObject(path="/a.py", content="a\nb\n")
         assert obj.lines == 3
 
     def test_empty_string_content(self):
-        obj = GroverObject(path="/empty.txt", content="")
+        obj = VFSObject(path="/empty.txt", content="")
         assert obj.content_hash == hashlib.sha256(b"").hexdigest()
         assert obj.size_bytes == 0
         assert obj.lines == 0
 
     def test_none_content(self):
-        obj = GroverObject(path="/dir")
+        obj = VFSObject(path="/dir")
         assert obj.content is None
         assert obj.content_hash is None
         assert obj.size_bytes == 0
         assert obj.lines == 0
 
     def test_hash_recomputed_even_if_explicit(self):
-        obj = GroverObject(path="/a.py", content="hello", content_hash="bogus")
+        obj = VFSObject(path="/a.py", content="hello", content_hash="bogus")
         assert obj.content_hash == hashlib.sha256(b"hello").hexdigest()
 
     def test_version_row_factory_uses_reconstructed_metadata(self):
-        row = GroverObjectBase.create_version_row(
+        row = VFSObjectBase.create_version_row(
             file_path="/a.py",
             version_number=2,
             version_content="new",
@@ -318,10 +318,10 @@ class TestContentMetrics:
         assert row.size_bytes == len(b"new")
         assert row.lines == 1
         assert row.tokens == 0
-        assert row.lexical_tokens == GroverObjectBase._lexical_token_count("new")
+        assert row.lexical_tokens == VFSObjectBase._lexical_token_count("new")
 
     def test_version_row_preserves_explicit_metadata(self):
-        obj = GroverObject(
+        obj = VFSObject(
             path="/a.py/.versions/2",
             kind="version",
             content=None,
@@ -346,12 +346,12 @@ class TestContentMetrics:
 
 class TestTimestamps:
     def test_auto_set(self):
-        obj = GroverObject(path="/a.py")
+        obj = VFSObject(path="/a.py")
         assert obj.created_at is not None
         assert obj.updated_at is not None
 
     def test_created_at_equals_updated_at(self):
-        obj = GroverObject(path="/a.py")
+        obj = VFSObject(path="/a.py")
         # Both set from the same `now` in the validator
         assert obj.created_at == obj.updated_at
 
@@ -359,11 +359,11 @@ class TestTimestamps:
         from datetime import UTC, datetime
 
         ts = datetime(2020, 1, 1, tzinfo=UTC)
-        obj = GroverObject(path="/a.py", created_at=ts)
+        obj = VFSObject(path="/a.py", created_at=ts)
         assert obj.created_at == ts
 
     def test_deleted_at_defaults_to_none(self):
-        obj = GroverObject(path="/a.py")
+        obj = VFSObject(path="/a.py")
         assert obj.deleted_at is None
 
 
@@ -374,17 +374,17 @@ class TestTimestamps:
 
 class TestId:
     def test_auto_generated(self):
-        obj = GroverObject(path="/a.py")
+        obj = VFSObject(path="/a.py")
         assert obj.id is not None
         assert len(obj.id) == 36  # UUID format
 
     def test_unique_across_instances(self):
-        a = GroverObject(path="/a.py")
-        b = GroverObject(path="/b.py")
+        a = VFSObject(path="/a.py")
+        b = VFSObject(path="/b.py")
         assert a.id != b.id
 
     def test_explicit_id_preserved(self):
-        obj = GroverObject(path="/a.py", id="custom-id")
+        obj = VFSObject(path="/a.py", id="custom-id")
         assert obj.id == "custom-id"
 
 
@@ -395,17 +395,17 @@ class TestId:
 
 class TestEmbedding:
     def test_defaults_to_none(self):
-        obj = GroverObject(path="/a.py")
+        obj = VFSObject(path="/a.py")
         assert obj.embedding is None
 
     def test_accepts_list(self):
-        obj = GroverObject(path="/a.py", embedding=Vector([0.1, 0.2, 0.3]))
+        obj = VFSObject(path="/a.py", embedding=Vector([0.1, 0.2, 0.3]))
         assert isinstance(obj.embedding, Vector)
         assert list(obj.embedding) == [0.1, 0.2, 0.3]
 
     def test_accepts_vector(self):
         vec = Vector([1.0, 2.0])
-        obj = GroverObject(path="/a.py", embedding=vec)
+        obj = VFSObject(path="/a.py", embedding=vec)
         assert obj.embedding is vec
 
 
@@ -416,24 +416,24 @@ class TestEmbedding:
 
 class TestBaseVsConcrete:
     def test_base_is_not_a_table(self):
-        assert not GroverObjectBase.model_config.get("table", False)
+        assert not VFSObjectBase.model_config.get("table", False)
 
     def test_concrete_is_a_table(self):
-        assert GroverObject.__tablename__ == "grover_objects"
+        assert VFSObject.__tablename__ == "vfs_objects"
 
     def test_concrete_inherits_validation(self):
-        obj = GroverObject(path="/src/auth.py", content="x")
+        obj = VFSObject(path="/src/auth.py", content="x")
         assert obj.kind == "file"
         assert obj.content_hash is not None
 
 
 class TestContentMutation:
     def test_update_content_recomputes_lexical_tokens(self):
-        obj = GroverObject(path="/a.py", content="hello")
+        obj = VFSObject(path="/a.py", content="hello")
         original_lexical_tokens = obj.lexical_tokens
-        obj.update_content("hello world from grover")
-        assert obj.lexical_tokens == GroverObjectBase._lexical_token_count(
-            "hello world from grover",
+        obj.update_content("hello world from vfs")
+        assert obj.lexical_tokens == VFSObjectBase._lexical_token_count(
+            "hello world from vfs",
         )
         assert obj.lexical_tokens != original_lexical_tokens
 
@@ -445,45 +445,45 @@ class TestContentMutation:
 
 class TestAddStripPrefix:
     def test_strip_prefix_rederives_fields(self):
-        obj = GroverObject(path="/data/sub/file.py", content="code")
+        obj = VFSObject(path="/data/sub/file.py", content="code")
         obj.strip_prefix("/data/sub")
         assert obj.path == "/file.py"
         assert obj.name == "file.py"
         assert obj.parent_path == "/"
 
     def test_add_prefix_rederives_fields(self):
-        obj = GroverObject(path="/file.py", content="code")
+        obj = VFSObject(path="/file.py", content="code")
         obj.add_prefix("/data/sub")
         assert obj.path == "/data/sub/file.py"
         assert obj.name == "file.py"
         assert obj.parent_path == "/data/sub"
 
     def test_roundtrip(self):
-        obj = GroverObject(path="/mount/deep/file.py", content="x")
+        obj = VFSObject(path="/mount/deep/file.py", content="x")
         obj.strip_prefix("/mount")
         assert obj.path == "/deep/file.py"
         obj.add_prefix("/mount")
         assert obj.path == "/mount/deep/file.py"
 
     def test_empty_prefix_is_noop(self):
-        obj = GroverObject(path="/file.py", content="x")
+        obj = VFSObject(path="/file.py", content="x")
         obj.add_prefix("")
         assert obj.path == "/file.py"
         obj.strip_prefix("")
         assert obj.path == "/file.py"
 
     def test_strip_to_root(self):
-        obj = GroverObject(path="/data", content="x")
+        obj = VFSObject(path="/data", content="x")
         obj.strip_prefix("/data")
         assert obj.path == "/"
 
     def test_returns_self(self):
-        obj = GroverObject(path="/a.py", content="x")
+        obj = VFSObject(path="/a.py", content="x")
         assert obj.add_prefix("/m") is obj
         assert obj.strip_prefix("/m") is obj
 
     def test_chunk_kind_preserved(self):
-        obj = GroverObject(path="/src/mod.py/.chunks/fn", content="def fn(): pass")
+        obj = VFSObject(path="/src/mod.py/.chunks/fn", content="def fn(): pass")
         obj.strip_prefix("/src")
         assert obj.path == "/mod.py/.chunks/fn"
         assert obj.kind == "chunk"
@@ -492,18 +492,18 @@ class TestAddStripPrefix:
     # -- add_prefix normalization ------------------------------------------
 
     def test_add_prefix_without_leading_slash(self):
-        obj = GroverObject(path="/test.py", content="x")
+        obj = VFSObject(path="/test.py", content="x")
         obj.add_prefix("snhu")
         assert obj.path == "/snhu/test.py"
 
     def test_add_prefix_with_trailing_slash(self):
-        obj = GroverObject(path="/test.py", content="x")
+        obj = VFSObject(path="/test.py", content="x")
         obj.add_prefix("/snhu/")
         assert obj.path == "/snhu/test.py"
 
     @pytest.mark.parametrize("prefix", ["snhu", "/snhu", "snhu/", "/snhu/"])
     def test_path_always_has_leading_slash_after_add_prefix(self, prefix):
-        obj = GroverObject(path="/file.py", content="x")
+        obj = VFSObject(path="/file.py", content="x")
         obj.add_prefix(prefix)
         assert obj.path.startswith("/")
         assert obj.path == "/snhu/file.py"
@@ -511,22 +511,22 @@ class TestAddStripPrefix:
     # -- strip_prefix safety -----------------------------------------------
 
     def test_strip_prefix_mismatch_raises(self):
-        obj = GroverObject(path="/other/file.py", content="x")
+        obj = VFSObject(path="/other/file.py", content="x")
         with pytest.raises(ValueError, match="does not start with prefix"):
             obj.strip_prefix("/data")
 
     def test_strip_prefix_partial_segment_raises(self):
-        obj = GroverObject(path="/database/file.py", content="x")
+        obj = VFSObject(path="/database/file.py", content="x")
         with pytest.raises(ValueError, match="does not start with prefix"):
             obj.strip_prefix("/data")
 
     def test_strip_prefix_normalizes_prefix(self):
-        obj = GroverObject(path="/snhu/test.py", content="x")
+        obj = VFSObject(path="/snhu/test.py", content="x")
         obj.strip_prefix("snhu")
         assert obj.path == "/test.py"
 
     def test_path_always_has_leading_slash_after_strip_prefix(self):
-        obj = GroverObject(path="/mount/deep/file.py", content="x")
+        obj = VFSObject(path="/mount/deep/file.py", content="x")
         obj.strip_prefix("/mount")
         assert obj.path.startswith("/")
         assert obj.path == "/deep/file.py"
@@ -534,7 +534,7 @@ class TestAddStripPrefix:
     # -- _rederive_path_fields normalization --------------------------------
 
     def test_rederive_normalizes_path(self):
-        obj = GroverObject(path="/a.py", content="x")
+        obj = VFSObject(path="/a.py", content="x")
         obj.path = "bad/path"  # bypass validator
         obj._rederive_path_fields()
         assert obj.path == "/bad/path"
@@ -544,7 +544,7 @@ class TestAddStripPrefix:
     # -- roundtrip with unnormalized prefix --------------------------------
 
     def test_roundtrip_unnormalized_prefix(self):
-        obj = GroverObject(path="/deep/file.py", content="x")
+        obj = VFSObject(path="/deep/file.py", content="x")
         obj.add_prefix("mount")
         assert obj.path == "/mount/deep/file.py"
         obj.strip_prefix("mount")
@@ -563,14 +563,14 @@ class TestDBRoundTrip:
         return e
 
     def test_insert_and_load(self, engine):
-        obj = GroverObject(path="/src/auth.py", content="def login(): pass")
+        obj = VFSObject(path="/src/auth.py", content="def login(): pass")
         expected_hash = obj.content_hash
         with Session(engine) as s:
             s.add(obj)
             s.commit()
 
         with Session(engine) as s:
-            loaded = s.exec(select(GroverObject).where(GroverObject.path == "/src/auth.py")).one()
+            loaded = s.exec(select(VFSObject).where(VFSObject.path == "/src/auth.py")).one()
             assert loaded.path == "/src/auth.py"
             assert loaded.kind == "file"
             assert loaded.parent_path == "/src"
@@ -578,24 +578,24 @@ class TestDBRoundTrip:
             assert loaded.content_hash == expected_hash
 
     def test_embedding_round_trip(self, engine):
-        obj = GroverObject(path="/a.py", embedding=Vector([0.1, 0.2, 0.3]))
+        obj = VFSObject(path="/a.py", embedding=Vector([0.1, 0.2, 0.3]))
         with Session(engine) as s:
             s.add(obj)
             s.commit()
 
         with Session(engine) as s:
-            loaded = s.exec(select(GroverObject).where(GroverObject.path == "/a.py")).one()
+            loaded = s.exec(select(VFSObject).where(VFSObject.path == "/a.py")).one()
             assert isinstance(loaded.embedding, Vector)
             assert list(loaded.embedding) == [0.1, 0.2, 0.3]
 
     def test_connection_round_trip(self, engine):
-        obj = GroverObject(path="/a.py/.connections/imports/b.py")
+        obj = VFSObject(path="/a.py/.connections/imports/b.py")
         with Session(engine) as s:
             s.add(obj)
             s.commit()
 
         with Session(engine) as s:
-            loaded = s.exec(select(GroverObject).where(GroverObject.path == "/a.py/.connections/imports/b.py")).one()
+            loaded = s.exec(select(VFSObject).where(VFSObject.path == "/a.py/.connections/imports/b.py")).one()
             assert loaded.kind == "connection"
             assert loaded.source_path == "/a.py"
             assert loaded.target_path == "/b.py"
@@ -608,12 +608,12 @@ class TestDBRoundTrip:
 
 
 class TestPlanFileWrite:
-    """Unit tests for GroverObjectBase.plan_file_write fast/slow path."""
+    """Unit tests for VFSObjectBase.plan_file_write fast/slow path."""
 
     @staticmethod
-    def _make_file(content: str, version_number: int) -> GroverObject:
+    def _make_file(content: str, version_number: int) -> VFSObject:
         """Build a file object with consistent hash/version state."""
-        obj = GroverObject(path="/test.txt", content=content)
+        obj = VFSObject(path="/test.txt", content=content)
         obj.version_number = version_number
         return obj
 
@@ -684,12 +684,12 @@ class TestPlanFileWrite:
 
 class TestStoredVersionPayload:
     def test_non_version_raises(self):
-        obj = GroverObject(path="/a.py", kind="file", content="x")
+        obj = VFSObject(path="/a.py", kind="file", content="x")
         with pytest.raises(ValueError, match="non-version object"):
             obj._stored_version_payload()
 
     def test_missing_payload_raises(self):
-        obj = GroverObject(
+        obj = VFSObject(
             path="/a.py@1",
             kind="version",
             content=None,
@@ -708,10 +708,10 @@ class TestStoredVersionPayload:
 class TestReconstructFileVersion:
     def test_missing_target_version_raises(self):
         with pytest.raises(ValueError, match="Missing version row for v2"):
-            GroverObject._reconstruct_file_version([], target_version=2)
+            VFSObject._reconstruct_file_version([], target_version=2)
 
     def test_missing_snapshot_raises(self):
-        row = GroverObject(
+        row = VFSObject(
             path="/a.py@1",
             kind="version",
             content=None,
@@ -720,10 +720,10 @@ class TestReconstructFileVersion:
             is_snapshot=False,
         )
         with pytest.raises(ValueError, match="Missing snapshot"):
-            GroverObject._reconstruct_file_version([row], target_version=1)
+            VFSObject._reconstruct_file_version([row], target_version=1)
 
     def test_missing_intermediate_version_raises(self):
-        snapshot = GroverObject(
+        snapshot = VFSObject(
             path="/a.py@1",
             kind="version",
             content="base",
@@ -731,7 +731,7 @@ class TestReconstructFileVersion:
             is_snapshot=True,
         )
         # v2 is missing, asking for v3
-        v3 = GroverObject(
+        v3 = VFSObject(
             path="/a.py@3",
             kind="version",
             content=None,
@@ -740,10 +740,10 @@ class TestReconstructFileVersion:
             is_snapshot=False,
         )
         with pytest.raises(ValueError, match="Missing version row for v2"):
-            GroverObject._reconstruct_file_version([snapshot, v3], target_version=3)
+            VFSObject._reconstruct_file_version([snapshot, v3], target_version=3)
 
     def test_hash_mismatch_raises(self):
-        snapshot = GroverObject(
+        snapshot = VFSObject(
             path="/a.py@1",
             kind="version",
             content="base content",
@@ -752,7 +752,7 @@ class TestReconstructFileVersion:
             content_hash="wrong_hash",
         )
         with pytest.raises(ValueError, match="Hash mismatch"):
-            GroverObject._reconstruct_file_version([snapshot], target_version=1)
+            VFSObject._reconstruct_file_version([snapshot], target_version=1)
 
 
 # ==================================================================
@@ -762,14 +762,14 @@ class TestReconstructFileVersion:
 
 class TestPlanFileWriteEdgeCases:
     def test_directory_raises(self):
-        obj = GroverObject(path="/mydir", kind="directory")
+        obj = VFSObject(path="/mydir", kind="directory")
         with pytest.raises(ValueError, match="Version planning only applies to files"):
             obj.plan_file_write("content")
 
 
 class TestUpdateContentEdgeCases:
     def test_directory_raises(self):
-        obj = GroverObject(path="/mydir", kind="directory")
+        obj = VFSObject(path="/mydir", kind="directory")
         with pytest.raises(ValueError, match="Cannot set content on a directory"):
             obj.update_content("x")
 
@@ -782,7 +782,7 @@ class TestUpdateContentEdgeCases:
 class TestValidatorEdgeCases:
     def test_null_bytes_in_version_diff_rejected(self):
         with pytest.raises(ValueError, match="version_diff contains null bytes"):
-            GroverObject(
+            VFSObject(
                 path="/a.py@1",
                 kind="version",
                 version_diff="has\x00null",
@@ -792,7 +792,7 @@ class TestValidatorEdgeCases:
 
     def test_both_content_and_version_diff_rejected(self):
         with pytest.raises(ValueError, match="must not set both content and version_diff"):
-            GroverObject(
+            VFSObject(
                 path="/a.py@1",
                 kind="version",
                 content="text",
@@ -803,7 +803,7 @@ class TestValidatorEdgeCases:
 
     def test_version_with_explicit_content_hash(self):
         h = hashlib.sha256(b"hello").hexdigest()
-        obj = GroverObject(
+        obj = VFSObject(
             path="/a.py@1",
             kind="version",
             content="hello",
@@ -827,7 +827,7 @@ class TestNonStringPath:
         field validation rejects the non-string path.
         """
         with pytest.raises((ValueError, Exception)):
-            GroverObject.model_validate({"path": 42, "content": "stuff"})
+            VFSObject.model_validate({"path": 42, "content": "stuff"})
 
 
 # ==================================================================
@@ -839,7 +839,7 @@ class TestContentNullBytes:
     def test_null_bytes_in_content_rejected(self):
         """Lines 523-524: content containing null bytes raises ValueError."""
         with pytest.raises(ValueError, match="Content contains null bytes"):
-            GroverObject(path="/a.py", content="has\x00null")
+            VFSObject(path="/a.py", content="has\x00null")
 
 
 # ==================================================================
@@ -850,7 +850,7 @@ class TestContentNullBytes:
 class TestReconstructVersionHashNone:
     def test_hash_none_skips_verification(self):
         """Line 314: when content_hash is None, hash check is skipped."""
-        snapshot = GroverObject(
+        snapshot = VFSObject(
             path="/a.py@1",
             kind="version",
             version_number=1,
@@ -859,7 +859,7 @@ class TestReconstructVersionHashNone:
         )
         # Force content_hash to None after construction
         object.__setattr__(snapshot, "content_hash", None)
-        result = GroverObject._reconstruct_file_version([snapshot], target_version=1)
+        result = VFSObject._reconstruct_file_version([snapshot], target_version=1)
         assert result == "hello world"
 
 
@@ -882,7 +882,7 @@ class TestFinishInitFalse:
         try:
             # With finish_init=False, the validated init returns early.
             # This simulates what happens during ORM loads.
-            obj = GroverObject()
+            obj = VFSObject()
             # Object exists but path was not set (no validation ran)
             assert obj is not None
         finally:

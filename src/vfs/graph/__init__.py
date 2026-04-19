@@ -1,6 +1,6 @@
 """Graph subpackage — protocol and implementations."""
 
-from grover.graph.protocol import GraphProvider
-from grover.graph.rustworkx import RustworkxGraph, UnionFind
+from vfs.graph.protocol import GraphProvider
+from vfs.graph.rustworkx import RustworkxGraph, UnionFind
 
 __all__ = ["GraphProvider", "RustworkxGraph", "UnionFind"]

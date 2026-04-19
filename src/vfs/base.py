@@ -1,4 +1,4 @@
-"""GroverFileSystem — concrete async base class with mount routing.
+"""VirtualFileSystem — concrete async base class with mount routing.
 
 The base class owns mount routing, session management, and path rebasing.
 The filesystem object itself owns ``/`` — mounting at ``"/"`` is illegal.
@@ -8,9 +8,9 @@ longest-prefix mount matching, delegate to ``_*_impl`` methods for actual
 storage work, then rebase paths before returning.
 
 Subclasses override ``_*_impl`` for their storage backend:
-- ``DatabaseFileSystem`` — SQL via ``GroverObject``
+- ``DatabaseFileSystem`` — SQL via ``VFSObject``
 - ``LocalFileSystem`` — disk bytes + SQL metadata
-- ``GroverAsync`` — no storage, mount-only router (``storage=False``)
+- ``VFSClientAsync`` — no storage, mount-only async router (``storage=False``)
 """
 
 from __future__ import annotations
@@ -21,17 +21,17 @@ from typing import TYPE_CHECKING, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from grover.exceptions import _classify_error
-from grover.paths import connection_path, extract_extension, normalize_path
-from grover.patterns import compile_glob
-from grover.permissions import (
+from vfs.exceptions import _classify_error
+from vfs.paths import connection_path, extract_extension, normalize_path
+from vfs.patterns import compile_glob
+from vfs.permissions import (
     Permission,
     PermissionMap,
     check_writable,
     coerce_permissions,
 )
-from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperation
-from grover.routing import (
+from vfs.results import Candidate, EditOperation, TwoPathOperation, VFSResult
+from vfs.routing import (
     GlobMountPlan,
     GrepMountPlan,
     rewrite_glob_for_mount,
@@ -42,13 +42,13 @@ if TYPE_CHECKING:
     import re
     from collections.abc import AsyncIterator, Sequence
 
-    from grover.models import GroverObjectBase
-    from grover.query import QueryPlan
-    from grover.query.ast import CaseMode, GrepOutputMode
+    from vfs.models import VFSObjectBase
+    from vfs.query import QueryPlan
+    from vfs.query.ast import CaseMode, GrepOutputMode
 
 
-class GroverFileSystem:
-    """Async base class for all Grover filesystems."""
+class VirtualFileSystem:
+    """Async base class for all VFS filesystems."""
 
     def __init__(
         self,
@@ -70,11 +70,11 @@ class GroverFileSystem:
         elif engine is not None:
             self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
         elif storage:
-            msg = "GroverFileSystem requires either engine or session_factory when storage=True"
+            msg = "VirtualFileSystem requires either engine or session_factory when storage=True"
             raise ValueError(msg)
         else:
             self._session_factory = None
-        self._mounts: dict[str, GroverFileSystem] = {}
+        self._mounts: dict[str, VirtualFileSystem] = {}
         self._sorted_mount_paths: list[str] = []
         self._name = self.__class__.__name__
 
@@ -98,7 +98,7 @@ class GroverFileSystem:
             raise ValueError(msg)
         return f"/{stripped}"
 
-    async def add_mount(self, path: str, filesystem: GroverFileSystem) -> None:
+    async def add_mount(self, path: str, filesystem: VirtualFileSystem) -> None:
         """Mount a child filesystem at *path*.
 
         Accepts ``"data"`` or ``"/data"``.  Rejects nested paths.
@@ -137,14 +137,14 @@ class GroverFileSystem:
             sorted(self._mounts.keys(), key=len, reverse=True),
         )
 
-    def _match_mount(self, path: str) -> tuple[str, GroverFileSystem] | None:
+    def _match_mount(self, path: str) -> tuple[str, VirtualFileSystem] | None:
         """Longest-prefix mount match for *path*."""
         for mount_path in self._sorted_mount_paths:
             if path == mount_path or path.startswith(mount_path + "/"):
                 return mount_path, self._mounts[mount_path]
         return None
 
-    def _resolve_terminal(self, path: str) -> tuple[GroverFileSystem, str, str]:
+    def _resolve_terminal(self, path: str) -> tuple[VirtualFileSystem, str, str]:
         """Walk mount chain to find the terminal filesystem.
 
         Returns ``(terminal_fs, relative_path, prefix)`` where:
@@ -168,29 +168,29 @@ class GroverFileSystem:
 
     def _group_candidates_by_terminal(
         self,
-        candidates: GroverResult,
-    ) -> list[tuple[GroverFileSystem, str, GroverResult]]:
+        candidates: VFSResult,
+    ) -> list[tuple[VirtualFileSystem, str, VFSResult]]:
         """Group candidates by terminal filesystem, rebasing paths.
 
         Returns ``[(filesystem, prefix, rebased_candidates)]`` where each
-        ``GroverResult`` contains candidates with paths relative to that
+        ``VFSResult`` contains candidates with paths relative to that
         terminal filesystem.
         """
-        groups: dict[tuple[int, str], tuple[GroverFileSystem, list[Candidate]]] = {}
+        groups: dict[tuple[int, str], tuple[VirtualFileSystem, list[Candidate]]] = {}
         for c in candidates.candidates:
             fs, rel, prefix = self._resolve_terminal(c.path)
             key = (id(fs), prefix)
             if key not in groups:
                 groups[key] = (fs, [])
             groups[key][1].append(c.model_copy(update={"path": rel}))
-        return [(fs, pfx, GroverResult(candidates=cands)) for ((_id, pfx), (fs, cands)) in groups.items()]
+        return [(fs, pfx, VFSResult(candidates=cands)) for ((_id, pfx), (fs, cands)) in groups.items()]
 
     def _group_objects_by_terminal(
         self,
-        objects: Sequence[GroverObjectBase],
-    ) -> list[tuple[GroverFileSystem, str, list[GroverObjectBase]]]:
+        objects: Sequence[VFSObjectBase],
+    ) -> list[tuple[VirtualFileSystem, str, list[VFSObjectBase]]]:
         """Group objects by terminal filesystem, rebasing paths."""
-        groups: dict[tuple[int, str], tuple[GroverFileSystem, str, list[GroverObjectBase]]] = {}
+        groups: dict[tuple[int, str], tuple[VirtualFileSystem, str, list[VFSObjectBase]]] = {}
         for obj in objects:
             fs, _rel, prefix = self._resolve_terminal(obj.path)
             key = (id(fs), prefix)
@@ -203,9 +203,9 @@ class GroverFileSystem:
 
     @staticmethod
     def _require_same_mount(
-        resolved: Sequence[tuple[GroverFileSystem, str, str]],
+        resolved: Sequence[tuple[VirtualFileSystem, str, str]],
         label: str,
-    ) -> tuple[GroverFileSystem, str] | str:
+    ) -> tuple[VirtualFileSystem, str] | str:
         """Validate all resolved paths share the same filesystem and prefix.
 
         Returns ``(filesystem, prefix)`` on success, or an error message string.
@@ -248,15 +248,15 @@ class GroverFileSystem:
     async def _dispatch_grouped_candidates(
         self,
         op: str,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         user_id: str | None = None,
         **kwargs: object,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Route pre-grouped candidate operations to terminal filesystems."""
         groups = self._group_candidates_by_terminal(candidates)
         if not groups:
-            return GroverResult(
+            return VFSResult(
                 success=candidates.success,
                 errors=list(candidates.errors),
                 candidates=[],
@@ -269,10 +269,10 @@ class GroverFileSystem:
                     return err
 
         async def _run_group(
-            fs: GroverFileSystem,
+            fs: VirtualFileSystem,
             prefix: str,
-            group_cands: GroverResult,
-        ) -> GroverResult:
+            group_cands: VFSResult,
+        ) -> VFSResult:
             async with fs._use_session() as s:
                 impl = getattr(fs, f"_{op}_impl")
                 r = await impl(candidates=group_cands, user_id=user_id, session=s, **kwargs)
@@ -285,14 +285,14 @@ class GroverFileSystem:
 
     async def _dispatch_glob_candidates(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         pattern: str,
         paths: tuple[str, ...],
         ext: tuple[str, ...],
         max_count: int | None,
         user_id: str | None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Filter absolute-path glob candidates before grouping by terminal."""
         regex = compile_glob(pattern)
         if regex is None:
@@ -322,7 +322,7 @@ class GroverFileSystem:
 
     async def _dispatch_grep_candidates(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         pattern: str,
         paths: tuple[str, ...],
@@ -339,7 +339,7 @@ class GroverFileSystem:
         output_mode: GrepOutputMode,
         max_count: int | None,
         user_id: str | None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Filter absolute-path grep candidates before grouping by terminal."""
         include_regexes = self._compile_path_globs(globs)
         exclude_regexes = self._compile_path_globs(globs_not)
@@ -376,11 +376,11 @@ class GroverFileSystem:
     async def _dispatch_candidates(
         self,
         op: str,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         user_id: str | None = None,
         **kwargs: object,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Route a candidate-based operation to terminal filesystems in parallel.
 
         Groups candidates by terminal filesystem, calls ``_{op}_impl``
@@ -439,11 +439,11 @@ class GroverFileSystem:
         self,
         op: str,
         path: str | None,
-        candidates: GroverResult | None,
+        candidates: VFSResult | None,
         *,
         user_id: str | None = None,
         **kwargs: object,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Route a single-path or candidate-based operation.
 
         With candidates: group by filesystem, dispatch in parallel.
@@ -481,7 +481,7 @@ class GroverFileSystem:
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Route a batch of two-path operations (move/copy).
 
         All sources must resolve to the same mount, and all destinations
@@ -495,7 +495,7 @@ class GroverFileSystem:
         deletes. A crash between phases may leave data on both filesystems.
         """
         if not ops:
-            return GroverResult(success=True, candidates=[])
+            return VFSResult(success=True, candidates=[])
 
         src_resolved = [self._resolve_terminal(o.src) for o in ops]
         dst_resolved = [self._resolve_terminal(o.dest) for o in ops]
@@ -555,8 +555,8 @@ class GroverFileSystem:
     async def _cross_mount_transfer(
         self,
         op: str,
-        src_fs: GroverFileSystem,
-        dst_fs: GroverFileSystem,
+        src_fs: VirtualFileSystem,
+        dst_fs: VirtualFileSystem,
         src_rels: list[str],
         dst_rels: list[str],
         src_prefix: str,
@@ -564,7 +564,7 @@ class GroverFileSystem:
         *,
         overwrite: bool,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Execute a cross-mount move/copy via read → write → delete."""
         # Read all sources
         async with src_fs._use_session() as s:
@@ -610,9 +610,9 @@ class GroverFileSystem:
         paths: tuple[str, ...],
         ext: tuple[str, ...],
         max_count: int | None,
-        candidates: GroverResult | None,
+        candidates: VFSResult | None,
         user_id: str | None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Glob fanout with mount-prefix-aware rewriting.
 
         Absolute patterns that can be rewritten exactly are dispatched
@@ -669,9 +669,9 @@ class GroverFileSystem:
 
         self_max_count = None if any_router_post_filter else max_count
 
-        async def _query_self() -> GroverResult:
+        async def _query_self() -> VFSResult:
             if not self._storage:
-                return GroverResult(success=True, candidates=[])
+                return VFSResult(success=True, candidates=[])
             async with self._use_session() as s:
                 return await self._glob_impl(
                     pattern=pattern,
@@ -683,12 +683,12 @@ class GroverFileSystem:
                 )
 
         async def _query_mount(
-            fs: GroverFileSystem,
+            fs: VirtualFileSystem,
             *,
             rewritten_pattern: str,
             rewritten_paths: tuple[str, ...],
             needs_post_filter: bool,
-        ) -> GroverResult:
+        ) -> VFSResult:
             return await fs.glob(
                 pattern=rewritten_pattern,
                 paths=rewritten_paths,
@@ -745,9 +745,9 @@ class GroverFileSystem:
         after_context: int,
         output_mode: GrepOutputMode,
         max_count: int | None,
-        candidates: GroverResult | None,
+        candidates: VFSResult | None,
         user_id: str | None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Grep fanout with mount-prefix-aware structural filter rewriting.
 
         ``pattern`` is the content regex and is forwarded unchanged.
@@ -849,9 +849,9 @@ class GroverFileSystem:
 
         self_max_count = None if any_router_post_filter else max_count
 
-        async def _query_self() -> GroverResult:
+        async def _query_self() -> VFSResult:
             if not self._storage:
-                return GroverResult(success=True, candidates=[])
+                return VFSResult(success=True, candidates=[])
             async with self._use_session() as s:
                 return await self._grep_impl(
                     pattern=pattern,
@@ -873,13 +873,13 @@ class GroverFileSystem:
                 )
 
         async def _query_mount(
-            fs: GroverFileSystem,
+            fs: VirtualFileSystem,
             *,
             rewritten_paths: tuple[str, ...],
             mount_globs: tuple[str, ...],
             mount_globs_not: tuple[str, ...],
             needs_router_filter: bool,
-        ) -> GroverResult:
+        ) -> VFSResult:
             return await fs.grep(
                 pattern=pattern,
                 paths=rewritten_paths,
@@ -943,11 +943,11 @@ class GroverFileSystem:
     async def _route_fanout(
         self,
         op: str,
-        candidates: GroverResult | None,
+        candidates: VFSResult | None,
         *,
         user_id: str | None = None,
         **kwargs: object,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Route a namespace operation — dispatch candidates or fan-out.
 
         With candidates: group by filesystem, dispatch in parallel.
@@ -959,14 +959,14 @@ class GroverFileSystem:
 
         if not self._storage:
             if not self._mounts:
-                return GroverResult(success=True, candidates=[])
+                return VFSResult(success=True, candidates=[])
             mount_results = await asyncio.gather(
                 *(getattr(fs, op)(user_id=user_id, **kwargs) for fs in self._mounts.values()),
             )
             rebased = [r.add_prefix(mp) for mp, r in zip(self._mounts, mount_results, strict=True)]
             return self._merge_results(rebased)
 
-        async def _query_self() -> GroverResult:
+        async def _query_self() -> VFSResult:
             async with self._use_session() as s:
                 return await getattr(self, f"_{op}_impl")(user_id=user_id, session=s, **kwargs)
 
@@ -984,14 +984,14 @@ class GroverFileSystem:
 
     async def _route_write_batch(
         self,
-        objects: Sequence[GroverObjectBase],
+        objects: Sequence[VFSObjectBase],
         overwrite: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Route a batch of object writes to terminal filesystems in parallel."""
         if not objects:
-            return GroverResult(success=True, candidates=[])
+            return VFSResult(success=True, candidates=[])
 
         groups = self._group_objects_by_terminal(objects)
 
@@ -1001,7 +1001,7 @@ class GroverFileSystem:
                 if err is not None:
                     return err
 
-        async def _write_group(fs: GroverFileSystem, prefix: str, group_objs: list[GroverObjectBase]) -> GroverResult:
+        async def _write_group(fs: VirtualFileSystem, prefix: str, group_objs: list[VFSObjectBase]) -> VFSResult:
             async with fs._use_session() as s:
                 result = await fs._write_impl(objects=group_objs, overwrite=overwrite, user_id=user_id, session=s)
             return result.add_prefix(prefix)
@@ -1011,7 +1011,7 @@ class GroverFileSystem:
         )
         return self._merge_results(list(results))
 
-    def _exclude_mounted_paths(self, result: GroverResult) -> GroverResult:
+    def _exclude_mounted_paths(self, result: VFSResult) -> VFSResult:
         """Remove self-storage candidates that fall under a mount prefix.
 
         Prevents shadow results when self has storage AND child mounts —
@@ -1026,7 +1026,7 @@ class GroverFileSystem:
         return result._with_candidates(filtered)
 
     @staticmethod
-    def _merge_results(results: list[GroverResult]) -> GroverResult:
+    def _merge_results(results: list[VFSResult]) -> VFSResult:
         """Merge multiple results — any failure = overall failure.
 
         ``|`` already propagates ``success=False`` and concatenates
@@ -1034,7 +1034,7 @@ class GroverFileSystem:
         while preserving all successful candidates.
         """
         if not results:
-            return GroverResult(success=True, candidates=[])
+            return VFSResult(success=True, candidates=[])
         merged = results[0]
         for r in results[1:]:
             merged = merged | r
@@ -1075,21 +1075,21 @@ class GroverFileSystem:
     # errors
     # -------------------------------------------------------------------
 
-    def _error(self, errors: str | list[str] | GroverResult) -> GroverResult:
+    def _error(self, errors: str | list[str] | VFSResult) -> VFSResult:
         """Create or check a failed result, raising if ``raise_on_error`` is set.
 
         Accepts either:
-        - A string or list of strings → creates ``GroverResult(success=False)``
-        - An existing ``GroverResult`` → returns it as-is if successful,
+        - A string or list of strings → creates ``VFSResult(success=False)``
+        - An existing ``VFSResult`` → returns it as-is if successful,
           raises if ``raise_on_error`` is set and ``success`` is ``False``
         """
-        if isinstance(errors, GroverResult):
+        if isinstance(errors, VFSResult):
             if errors.success or not self._raise_on_error:
                 return errors
             result = errors
         else:
             error_list = [errors] if isinstance(errors, str) else errors
-            result = GroverResult(success=False, errors=error_list)
+            result = VFSResult(success=False, errors=error_list)
             if not self._raise_on_error:
                 return result
 
@@ -1097,7 +1097,7 @@ class GroverFileSystem:
 
     def parse_query(self, query: str) -> QueryPlan:
         """Parse a CLI-style query string into an execution plan."""
-        from grover.query import parse_query
+        from vfs.query import parse_query
 
         return parse_query(query)
 
@@ -1106,10 +1106,10 @@ class GroverFileSystem:
         query: str,
         *,
         user_id: str | None = None,
-        initial: GroverResult | None = None,
-    ) -> GroverResult:
+        initial: VFSResult | None = None,
+    ) -> VFSResult:
         """Execute a parsed CLI-style query against this filesystem."""
-        from grover.query import execute_query
+        from vfs.query import execute_query
 
         plan = self.parse_query(query)
         return await execute_query(self, plan, initial=initial, user_id=user_id)
@@ -1119,10 +1119,10 @@ class GroverFileSystem:
         query: str,
         *,
         user_id: str | None = None,
-        initial: GroverResult | None = None,
+        initial: VFSResult | None = None,
     ) -> str:
         """Execute *query* and render a human-readable text response."""
-        from grover.query import execute_query, render_query_result
+        from vfs.query import execute_query, render_query_result
 
         plan = self.parse_query(query)
         result = await execute_query(self, plan, initial=initial, user_id=user_id)
@@ -1137,19 +1137,19 @@ class GroverFileSystem:
     async def read(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("read", path, candidates, user_id=user_id)
 
     async def stat(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("stat", path, candidates, user_id=user_id)
 
     async def edit(
@@ -1158,11 +1158,11 @@ class GroverFileSystem:
         old: str | None = None,
         new: str | None = None,
         edits: list[EditOperation] | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         replace_all: bool = False,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         if edits is None:
             if old is None or new is None:
                 return self._error("edit requires old and new strings, or edits list")
@@ -1172,21 +1172,21 @@ class GroverFileSystem:
     async def ls(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("ls", path, candidates, user_id=user_id)
 
     async def delete(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         permanent: bool = False,
         cascade: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single(
             "delete",
             path,
@@ -1200,11 +1200,11 @@ class GroverFileSystem:
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: Sequence[GroverObjectBase] | None = None,
+        objects: Sequence[VFSObjectBase] | None = None,
         overwrite: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         if objects is not None:
             return await self._route_write_batch(objects, overwrite=overwrite, user_id=user_id)
         return await self._route_single(
@@ -1216,7 +1216,7 @@ class GroverFileSystem:
             user_id=user_id,
         )
 
-    async def mkdir(self, path: str, *, user_id: str | None = None) -> GroverResult:
+    async def mkdir(self, path: str, *, user_id: str | None = None) -> VFSResult:
         return await self._route_single("mkdir", path, None, user_id=user_id)
 
     async def tree(
@@ -1225,7 +1225,7 @@ class GroverFileSystem:
         max_depth: int | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("tree", path, None, max_depth=max_depth, user_id=user_id)
 
     async def move(
@@ -1236,7 +1236,7 @@ class GroverFileSystem:
         overwrite: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         if moves is None:
             if not src or not dest:
                 return self._error("move requires src and dest, or moves")
@@ -1251,7 +1251,7 @@ class GroverFileSystem:
         overwrite: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         if copies is None:
             if not src or not dest:
                 return self._error("copy requires src and dest, or copies")
@@ -1265,7 +1265,7 @@ class GroverFileSystem:
         connection_type: str,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         src_fs, src_rel, src_pfx = self._resolve_terminal(source)
         tgt_fs, tgt_rel, _ = self._resolve_terminal(target)
         if src_fs is not tgt_fs:
@@ -1299,9 +1299,9 @@ class GroverFileSystem:
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_glob_fanout(
             pattern=pattern,
             paths=paths,
@@ -1328,9 +1328,9 @@ class GroverFileSystem:
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_grep_fanout(
             pattern=pattern,
             paths=paths,
@@ -1354,10 +1354,10 @@ class GroverFileSystem:
         self,
         query: str,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout(
             "semantic_search",
             candidates,
@@ -1370,10 +1370,10 @@ class GroverFileSystem:
         self,
         vector: list[float],
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout(
             "vector_search",
             candidates,
@@ -1386,10 +1386,10 @@ class GroverFileSystem:
         self,
         query: str,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout(
             "lexical_search",
             candidates,
@@ -1403,119 +1403,119 @@ class GroverFileSystem:
     async def predecessors(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("predecessors", path, candidates, user_id=user_id)
 
     async def successors(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("successors", path, candidates, user_id=user_id)
 
     async def ancestors(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("ancestors", path, candidates, user_id=user_id)
 
     async def descendants(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("descendants", path, candidates, user_id=user_id)
 
     async def neighborhood(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         depth: int = 2,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_single("neighborhood", path, candidates, depth=depth, user_id=user_id)
 
     async def meeting_subgraph(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._dispatch_candidates("meeting_subgraph", candidates, user_id=user_id)
 
     async def min_meeting_subgraph(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._dispatch_candidates("min_meeting_subgraph", candidates, user_id=user_id)
 
     async def pagerank(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout("pagerank", candidates, user_id=user_id)
 
     async def betweenness_centrality(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout("betweenness_centrality", candidates, user_id=user_id)
 
     async def closeness_centrality(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout("closeness_centrality", candidates, user_id=user_id)
 
     async def degree_centrality(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout("degree_centrality", candidates, user_id=user_id)
 
     async def in_degree_centrality(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout("in_degree_centrality", candidates, user_id=user_id)
 
     async def out_degree_centrality(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout("out_degree_centrality", candidates, user_id=user_id)
 
     async def hits(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return await self._route_fanout("hits", candidates, user_id=user_id)
 
     # -------------------------------------------------------------------
@@ -1525,66 +1525,66 @@ class GroverFileSystem:
     async def _read_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _stat_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _edit_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         edits: list[EditOperation] | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _ls_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _delete_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         permanent: bool = False,
         cascade: bool = True,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _write_impl(
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: Sequence[GroverObjectBase] | None = None,
+        objects: Sequence[VFSObjectBase] | None = None,
         overwrite: bool = True,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _mkdir_impl(
@@ -1593,7 +1593,7 @@ class GroverFileSystem:
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _move_impl(
@@ -1603,7 +1603,7 @@ class GroverFileSystem:
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _copy_impl(
@@ -1613,7 +1613,7 @@ class GroverFileSystem:
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _mkconn_impl(
@@ -1621,11 +1621,11 @@ class GroverFileSystem:
         source: str | None = None,
         target: str | None = None,
         connection_type: str | None = None,
-        objects: Sequence[GroverObjectBase] | None = None,
+        objects: Sequence[VFSObjectBase] | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _tree_impl(
@@ -1635,7 +1635,7 @@ class GroverFileSystem:
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _glob_impl(
@@ -1645,10 +1645,10 @@ class GroverFileSystem:
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _grep_impl(
@@ -1668,173 +1668,173 @@ class GroverFileSystem:
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _semantic_search_impl(
         self,
         query: str,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _vector_search_impl(
         self,
         vector: list[float] | None = None,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _lexical_search_impl(
         self,
         query: str,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _predecessors_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _successors_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _ancestors_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _descendants_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _neighborhood_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         depth: int = 2,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _meeting_subgraph_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _min_meeting_subgraph_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _pagerank_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _betweenness_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _closeness_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _degree_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _in_degree_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _out_degree_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError
 
     async def _hits_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         raise NotImplementedError

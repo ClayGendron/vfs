@@ -13,10 +13,10 @@ from typing import Any, cast
 
 import pytest
 
-from grover.backends.database import DatabaseFileSystem
-from grover.models import GroverObject
-from grover.results import GroverResult
 from tests.conftest import require_file, require_object, set_parameter_budget
+from vfs.backends.database import DatabaseFileSystem
+from vfs.models import VFSObject
+from vfs.results import VFSResult
 
 # ------------------------------------------------------------------
 # 1. Unicode chaos
@@ -41,7 +41,7 @@ class TestUnicodeChaos:
     async def test_null_byte_in_path_rejected(self, db: DatabaseFileSystem):
         """Null bytes in paths should be caught by validation."""
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path="/file\x00evil.txt", content="x")
+            VFSObject(path="/file\x00evil.txt", content="x")
 
     async def test_rtl_characters_in_path(self, db: DatabaseFileSystem):
         r = await db.write("/docs/\u202eevil.txt", "rtl content")
@@ -78,17 +78,17 @@ class TestUnicodeChaos:
     async def test_control_char_in_path_rejected(self, db: DatabaseFileSystem):
         """Control characters (0x01-0x1F) should be rejected."""
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path="/file\x01.txt", content="x")
+            VFSObject(path="/file\x01.txt", content="x")
 
     async def test_del_char_in_path_rejected(self, db: DatabaseFileSystem):
         """DEL (0x7F) should be rejected."""
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path="/file\x7f.txt", content="x")
+            VFSObject(path="/file\x7f.txt", content="x")
 
     async def test_c1_control_in_path_rejected(self, db: DatabaseFileSystem):
         """C1 control chars (0x80-0x9F) should be rejected."""
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path="/file\x80.txt", content="x")
+            VFSObject(path="/file\x80.txt", content="x")
 
 
 # ------------------------------------------------------------------
@@ -103,7 +103,7 @@ class TestPathEdgeCases:
         """Paths > 4096 chars should be rejected by validate_path."""
         long_path = "/" + "a" * 4096 + ".txt"
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path=long_path, content="x")
+            VFSObject(path=long_path, content="x")
 
     async def test_path_at_exact_limit(self, db: DatabaseFileSystem):
         """A long path should be accepted if it and its version suffix fit.
@@ -169,7 +169,7 @@ class TestPathEdgeCases:
         """Segments > 255 chars should be rejected."""
         long_name = "a" * 256 + ".txt"
         with pytest.raises((ValueError, Exception)):
-            GroverObject(path=f"/{long_name}", content="x")
+            VFSObject(path=f"/{long_name}", content="x")
 
     async def test_root_path_write(self, db: DatabaseFileSystem):
         """Writing to '/' should fail — it's a directory."""
@@ -224,7 +224,7 @@ class TestContentEdgeCases:
 
     async def test_content_with_sql_injection(self, db: DatabaseFileSystem):
         """SQL injection in content — parameterized queries should handle it."""
-        evil = "'; DROP TABLE grover_objects; --"
+        evil = "'; DROP TABLE vfs_objects; --"
         r = await db.write("/evil.txt", evil)
         assert r.success
         r2 = await db.read("/evil.txt")
@@ -232,7 +232,7 @@ class TestContentEdgeCases:
 
     async def test_content_with_sql_injection_in_path(self, db: DatabaseFileSystem):
         """SQL injection in path."""
-        r = await db.write("/'; DROP TABLE grover_objects; --.txt", "payload")
+        r = await db.write("/'; DROP TABLE vfs_objects; --.txt", "payload")
         assert r.success
 
     async def test_content_with_many_newlines(self, db: DatabaseFileSystem):
@@ -256,7 +256,7 @@ class TestBatchAdversarial:
         async with db._use_session() as s:
             r = await db._write_impl(
                 objects=[
-                    GroverObject(path="/fine.txt", content="fine"),
+                    VFSObject(path="/fine.txt", content="fine"),
                 ],
                 session=s,
             )
@@ -269,7 +269,7 @@ class TestBatchAdversarial:
 
     async def test_batch_all_duplicate_paths(self, db: DatabaseFileSystem):
         """Every object has the same path — should fail on duplicate detection."""
-        objects = [GroverObject(path="/dup.txt", content=f"v{i}") for i in range(5)]
+        objects = [VFSObject(path="/dup.txt", content=f"v{i}") for i in range(5)]
         async with db._use_session() as s:
             r = await db._write_impl(objects=objects, session=s)
         assert not r.success
@@ -277,13 +277,13 @@ class TestBatchAdversarial:
 
     async def test_batch_larger_than_flush_threshold(self, db: DatabaseFileSystem):
         """Batch larger than the flush threshold succeeds across multiple flushes."""
-        objects = [GroverObject(path=f"/batch/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
+        objects = [VFSObject(path=f"/batch/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 50
 
     async def test_batch_of_one(self, db: DatabaseFileSystem):
-        objects = [GroverObject(path="/single.txt", content="alone")]
+        objects = [VFSObject(path="/single.txt", content="alone")]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 1
@@ -376,8 +376,8 @@ class TestChunkEdgeCases:
     async def test_chunk_parent_in_same_batch_after_chunk(self, db: DatabaseFileSystem):
         """Chunk appears BEFORE its parent file in the objects list."""
         objects = [
-            GroverObject(path="/src/module.py/.chunks/func", content="def func(): pass"),
-            GroverObject(path="/src/module.py", content="full module"),
+            VFSObject(path="/src/module.py/.chunks/func", content="def func(): pass"),
+            VFSObject(path="/src/module.py", content="full module"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -412,10 +412,10 @@ class TestChunkEdgeCases:
     async def test_multiple_chunks_same_parent(self, db: DatabaseFileSystem):
         """Multiple chunks for the same parent in one batch."""
         objects = [
-            GroverObject(path="/multi.py", content="multi"),
-            GroverObject(path="/multi.py/.chunks/a", content="chunk a"),
-            GroverObject(path="/multi.py/.chunks/b", content="chunk b"),
-            GroverObject(path="/multi.py/.chunks/c", content="chunk c"),
+            VFSObject(path="/multi.py", content="multi"),
+            VFSObject(path="/multi.py/.chunks/a", content="chunk a"),
+            VFSObject(path="/multi.py/.chunks/b", content="chunk b"),
+            VFSObject(path="/multi.py/.chunks/c", content="chunk c"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -440,7 +440,7 @@ class TestConcurrentWrites:
         tasks = [db.write(f"/concurrent/f{i}.txt", f"content {i}") for i in range(20)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         # At minimum, some should succeed. None should be truly unexpected crashes.
-        successes = [r for r in results if isinstance(r, GroverResult) and r.success]
+        successes = [r for r in results if isinstance(r, VFSResult) and r.success]
         assert len(successes) > 0, "At least some concurrent writes should succeed"
         # Any exceptions should be known SQLAlchemy/SQLite concurrency errors
         for r in results:
@@ -473,7 +473,7 @@ class TestConcurrentWrites:
         """Multiple batch writes concurrently to non-overlapping paths."""
 
         async def batch_write(prefix: str, n: int):
-            objects = [GroverObject(path=f"/{prefix}/f{i}.txt", content=f"c{i}") for i in range(n)]
+            objects = [VFSObject(path=f"/{prefix}/f{i}.txt", content=f"c{i}") for i in range(n)]
             return await db.write(objects=objects)
 
         tasks = [batch_write(f"ns{i}", 50) for i in range(5)]
@@ -481,7 +481,7 @@ class TestConcurrentWrites:
         for r in results:
             if isinstance(r, Exception):
                 pytest.fail(f"Unexpected exception: {r}")
-            assert isinstance(r, GroverResult)
+            assert isinstance(r, VFSResult)
             assert r.success
 
 
@@ -496,14 +496,14 @@ class TestParameterBudgetAttacks:
     async def test_tiny_budget_forces_max_batching(self, db: DatabaseFileSystem):
         """Budget of 1 forces one object per flush batch."""
         set_parameter_budget(db, 1)
-        objects = [GroverObject(path=f"/tiny/f{i:04d}.txt", content=f"c{i}") for i in range(100)]
+        objects = [VFSObject(path=f"/tiny/f{i:04d}.txt", content=f"c{i}") for i in range(100)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 100
 
     async def test_large_batch_stays_within_budget(self, db: DatabaseFileSystem):
         """200 objects with default budget — batching keeps flushes safe."""
-        objects = [GroverObject(path=f"/huge/f{i:04d}.txt", content=f"c{i}") for i in range(200)]
+        objects = [VFSObject(path=f"/huge/f{i:04d}.txt", content=f"c{i}") for i in range(200)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 200
@@ -550,8 +550,8 @@ class TestSoftDeleteResurrection:
 
         # Batch with revive + new
         objects = [
-            GroverObject(path="/mix_a.txt", content="a_revived"),
-            GroverObject(path="/mix_c.txt", content="c_new"),
+            VFSObject(path="/mix_a.txt", content="a_revived"),
+            VFSObject(path="/mix_c.txt", content="c_new"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -565,7 +565,7 @@ class TestSoftDeleteResurrection:
         """Writing to a path whose ancestors are soft-deleted should revive them."""
         now = datetime.now(UTC)
         async with db._use_session() as s:
-            s.add(GroverObject(path="/dead_parent", kind="directory", deleted_at=now))
+            s.add(VFSObject(path="/dead_parent", kind="directory", deleted_at=now))
 
         r = await db.write("/dead_parent/child.txt", "alive")
         assert r.success
@@ -608,7 +608,7 @@ class TestTypeConfusion:
         The model validator recomputes content_hash from content, so the
         manual hash should be overridden.
         """
-        obj = GroverObject(path="/mismatch.txt", content="real content", content_hash="fakehash")
+        obj = VFSObject(path="/mismatch.txt", content="real content", content_hash="fakehash")
         # Validator should have overridden
         expected_hash = hashlib.sha256(b"real content").hexdigest()
         assert obj.content_hash == expected_hash
@@ -618,8 +618,8 @@ class TestTypeConfusion:
         async with db._use_session() as s:
             r = await db._write_impl(
                 objects=[
-                    GroverObject(path="/v1.txt/.versions/1", content="v"),
-                    GroverObject(path="/v2.txt/.versions/2", content="v"),
+                    VFSObject(path="/v1.txt/.versions/1", content="v"),
+                    VFSObject(path="/v2.txt/.versions/2", content="v"),
                 ],
                 session=s,
             )
@@ -666,11 +666,11 @@ class TestInterleavedOperations:
 
     async def test_batch_write_then_partial_overwrite(self, db: DatabaseFileSystem):
         """Write a batch, then overwrite only some paths."""
-        objects = [GroverObject(path=f"/partial/f{i}.txt", content=f"v1_{i}") for i in range(10)]
+        objects = [VFSObject(path=f"/partial/f{i}.txt", content=f"v1_{i}") for i in range(10)]
         await db.write(objects=objects)
 
         # Overwrite first 3
-        overwrite_objs = [GroverObject(path=f"/partial/f{i}.txt", content=f"v2_{i}") for i in range(3)]
+        overwrite_objs = [VFSObject(path=f"/partial/f{i}.txt", content=f"v2_{i}") for i in range(3)]
         r = await db.write(objects=overwrite_objs)
         assert r.success
 
@@ -733,7 +733,7 @@ class TestEmptyDegenerate:
         """Double slashes should be normalized.
 
         NOTE: The public write() path normalizes via _resolve_terminal, but
-        _write_impl constructs a GroverObject from the normalized path.
+        _write_impl constructs a VFSObject from the normalized path.
         The ValidatedSQLModel double-validation may reject paths that the
         model_validator would normally normalize. This test documents the
         current behavior.
@@ -779,8 +779,8 @@ class TestOverwriteFalse:
         await db.write("/batch_ow_a.txt", "a")
 
         objects = [
-            GroverObject(path="/batch_ow_a.txt", content="a_new"),
-            GroverObject(path="/batch_ow_b.txt", content="b_new"),
+            VFSObject(path="/batch_ow_a.txt", content="a_new"),
+            VFSObject(path="/batch_ow_b.txt", content="b_new"),
         ]
         async with db._use_session() as s:
             r = await db._write_impl(objects=objects, overwrite=False, session=s)
@@ -907,11 +907,11 @@ class TestLargeBatchVersionCombo:
     async def test_batch_overwrite_at_scale(self, db: DatabaseFileSystem, scale: int):
         """Write N files, then overwrite all N — creates N versions."""
         n = scale
-        objs_v1 = [GroverObject(path=f"/scale/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
+        objs_v1 = [VFSObject(path=f"/scale/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
         r1 = await db.write(objects=objs_v1)
         assert r1.success
 
-        objs_v2 = [GroverObject(path=f"/scale/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
+        objs_v2 = [VFSObject(path=f"/scale/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
         r2 = await db.write(objects=objs_v2)
         assert r2.success
 
@@ -938,7 +938,7 @@ class TestLargeBatchVersionCombo:
         assert v1.is_snapshot is not None
         assert v2.is_snapshot is not None
 
-        from grover.versioning import reconstruct_version
+        from vfs.versioning import reconstruct_version
 
         reconstructed = reconstruct_version(
             [
@@ -1048,32 +1048,32 @@ class TestCreateDeleteCycles:
 
 
 class TestModelValidatorEdgeCases:
-    """Test GroverObject model_validator _normalize_and_derive."""
+    """Test VFSObject model_validator _normalize_and_derive."""
 
     def test_object_with_no_path(self):
         """Object with no path — validator should handle gracefully."""
         # The validator checks if path is str, returns data unchanged if not
-        obj = GroverObject(path="/valid.txt", content="ok")
+        obj = VFSObject(path="/valid.txt", content="ok")
         assert obj.kind == "file"
 
     def test_object_kind_inferred_from_path(self):
         """kind should be auto-inferred from path."""
-        obj = GroverObject(path="/dir/file.py", content="code")
+        obj = VFSObject(path="/dir/file.py", content="code")
         assert obj.kind == "file"
         assert obj.parent_path == "/dir"
         assert obj.name == "file.py"
 
     def test_object_name_derived(self):
-        obj = GroverObject(path="/a/b/c.txt", content="x")
+        obj = VFSObject(path="/a/b/c.txt", content="x")
         assert obj.name == "c.txt"
 
     def test_object_parent_path_derived(self):
-        obj = GroverObject(path="/a/b/c.txt", content="x")
+        obj = VFSObject(path="/a/b/c.txt", content="x")
         assert obj.parent_path == "/a/b"
 
     def test_object_timestamps_auto_set(self):
         before = datetime.now(UTC)
-        obj = GroverObject(path="/ts.txt", content="x")
+        obj = VFSObject(path="/ts.txt", content="x")
         after = datetime.now(UTC)
         assert obj.created_at is not None
         assert obj.updated_at is not None
@@ -1091,7 +1091,7 @@ class TestBatchOrderingGuarantees:
 
     async def test_candidate_order_matches_input_order(self, db: DatabaseFileSystem):
         """Candidates should come back in the same order as input objects."""
-        objects = [GroverObject(path=f"/order/f{i:03d}.txt", content=f"c{i}") for i in range(20)]
+        objects = [VFSObject(path=f"/order/f{i:03d}.txt", content=f"c{i}") for i in range(20)]
         r = await db.write(objects=objects)
         assert r.success
         expected_paths = tuple(f"/order/f{i:03d}.txt" for i in range(20))
@@ -1100,10 +1100,10 @@ class TestBatchOrderingGuarantees:
     async def test_batch_with_chunks_interleaved(self, db: DatabaseFileSystem):
         """Files and their chunks interleaved in a single batch."""
         objects = [
-            GroverObject(path="/mix.py", content="module"),
-            GroverObject(path="/other.py", content="other"),
-            GroverObject(path="/mix.py/.chunks/fn_a", content="fn a"),
-            GroverObject(path="/other.py/.chunks/fn_b", content="fn b"),
+            VFSObject(path="/mix.py", content="module"),
+            VFSObject(path="/other.py", content="other"),
+            VFSObject(path="/mix.py/.chunks/fn_a", content="fn a"),
+            VFSObject(path="/other.py/.chunks/fn_b", content="fn b"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -1170,7 +1170,7 @@ class TestParentDirectoryEdgeCases:
 
     async def test_100_files_share_same_parent(self, db: DatabaseFileSystem):
         """All 100 files in the same directory — parent created once."""
-        objects = [GroverObject(path=f"/same_dir/f{i:03d}.txt", content=f"c{i}") for i in range(100)]
+        objects = [VFSObject(path=f"/same_dir/f{i:03d}.txt", content=f"c{i}") for i in range(100)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1181,7 +1181,7 @@ class TestParentDirectoryEdgeCases:
 
     async def test_files_create_unique_deep_trees(self, db: DatabaseFileSystem):
         """Each file creates a unique deep path tree."""
-        objects = [GroverObject(path=f"/tree_{i}/a/b/c/d.txt", content=f"c{i}") for i in range(20)]
+        objects = [VFSObject(path=f"/tree_{i}/a/b/c/d.txt", content=f"c{i}") for i in range(20)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1263,7 +1263,7 @@ class TestCorruptedVersionChains:
         # Manually insert a corrupt version record with None version_number
         # at a path that doesn't collide with any real version
         async with db._use_session() as s:
-            corrupt_v = GroverObject(
+            corrupt_v = VFSObject(
                 path="/corrupt_chain.txt/.versions/999",
                 content="corrupt",
                 version_number=None,
@@ -1302,13 +1302,13 @@ class TestIdempotency:
     async def test_batch_write_idempotent(self, db: DatabaseFileSystem):
         """Writing the same batch twice should update timestamps only."""
         objects = [
-            GroverObject(path="/idem_batch/f.txt", content="same"),
+            VFSObject(path="/idem_batch/f.txt", content="same"),
         ]
         r1 = await db.write(objects=objects)
         assert r1.success
 
         objects2 = [
-            GroverObject(path="/idem_batch/f.txt", content="same"),
+            VFSObject(path="/idem_batch/f.txt", content="same"),
         ]
         r2 = await db.write(objects=objects2)
         assert r2.success
@@ -1371,16 +1371,16 @@ class TestExtremeBudgets:
     async def test_budget_below_model_width(self, db: DatabaseFileSystem):
         """Budget smaller than one row of fields — batch_size floors to 1."""
         set_parameter_budget(db, 1)
-        objects = [GroverObject(path=f"/budget/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
+        objects = [VFSObject(path=f"/budget/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == 50
 
     async def test_budget_exactly_model_width(self, db: DatabaseFileSystem):
         """Budget equal to one row of fields — one object per flush."""
-        field_count = len(GroverObject.model_fields)
+        field_count = len(VFSObject.model_fields)
         set_parameter_budget(db, field_count + db.PARAMETER_RESERVE)
-        objects = [GroverObject(path=f"/fields/f{i:04d}.txt", content=f"c{i}") for i in range(field_count * 2)]
+        objects = [VFSObject(path=f"/fields/f{i:04d}.txt", content=f"c{i}") for i in range(field_count * 2)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == field_count * 2
@@ -1397,7 +1397,7 @@ class TestTimestampManipulation:
     async def test_object_with_future_timestamps(self, db: DatabaseFileSystem):
         """Object with timestamps far in the future."""
         future = datetime(2099, 12, 31, tzinfo=UTC)
-        obj = GroverObject(
+        obj = VFSObject(
             path="/future.txt",
             content="from the future",
             created_at=future,
@@ -1409,7 +1409,7 @@ class TestTimestampManipulation:
     async def test_object_with_epoch_timestamps(self, db: DatabaseFileSystem):
         """Object with Unix epoch timestamps."""
         epoch = datetime(1970, 1, 1, tzinfo=UTC)
-        obj = GroverObject(
+        obj = VFSObject(
             path="/epoch.txt",
             content="old",
             created_at=epoch,
@@ -1442,7 +1442,7 @@ class TestMassiveSingleSessionBatch:
     async def test_objects_single_impl_call(self, db: DatabaseFileSystem, scale: int):
         """N objects in one _write_impl call."""
         n = scale
-        objects = [GroverObject(path=f"/mass/f{i:06d}.txt", content=f"content {i}") for i in range(n)]
+        objects = [VFSObject(path=f"/mass/f{i:06d}.txt", content=f"content {i}") for i in range(n)]
         async with db._use_session() as s:
             r = await db._write_impl(objects=objects, session=s)
         assert r.success
@@ -1451,11 +1451,11 @@ class TestMassiveSingleSessionBatch:
     async def test_overwrite_objects_single_impl_call(self, db: DatabaseFileSystem, scale: int):
         """Write N, then overwrite all N in one call."""
         n = scale
-        objs_v1 = [GroverObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
+        objs_v1 = [VFSObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
         async with db._use_session() as s:
             await db._write_impl(objects=objs_v1, session=s)
 
-        objs_v2 = [GroverObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
+        objs_v2 = [VFSObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
         async with db._use_session() as s:
             r = await db._write_impl(objects=objs_v2, session=s)
         assert r.success
@@ -1512,8 +1512,8 @@ class TestChunkValidationWithTinyBudget:
         """
         set_parameter_budget(db, 1)
         objects = [
-            GroverObject(path="/tiny_batch.py/.chunks/fn", content="def fn(): pass"),
-            GroverObject(path="/tiny_batch.py", content="module content"),
+            VFSObject(path="/tiny_batch.py/.chunks/fn", content="def fn(): pass"),
+            VFSObject(path="/tiny_batch.py", content="module content"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -1523,11 +1523,11 @@ class TestChunkValidationWithTinyBudget:
         """Many chunks + parent, tiny budget — splits across batches."""
         set_parameter_budget(db, 1)
         objects = [
-            GroverObject(path="/multi_chunk.py", content="module"),
-            GroverObject(path="/multi_chunk.py/.chunks/a", content="a"),
-            GroverObject(path="/multi_chunk.py/.chunks/b", content="b"),
-            GroverObject(path="/multi_chunk.py/.chunks/c", content="c"),
-            GroverObject(path="/multi_chunk.py/.chunks/d", content="d"),
+            VFSObject(path="/multi_chunk.py", content="module"),
+            VFSObject(path="/multi_chunk.py/.chunks/a", content="a"),
+            VFSObject(path="/multi_chunk.py/.chunks/b", content="b"),
+            VFSObject(path="/multi_chunk.py/.chunks/c", content="c"),
+            VFSObject(path="/multi_chunk.py/.chunks/d", content="d"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -1549,19 +1549,19 @@ class TestExceptionRecovery:
         await db.write("/good.txt", "v1")
         await db.write("/bad.txt", "v1")
 
-        from grover.models import GroverObjectBase
+        from vfs.models import VFSObjectBase
 
-        original_plan = GroverObjectBase.plan_file_write
+        original_plan = VFSObjectBase.plan_file_write
 
         def failing_plan(self, new_content, version_rows=None, *, latest_version_hash=None):
             if self.path == "/bad.txt":
                 raise RuntimeError("simulated version chain corruption")
             return original_plan(self, new_content, version_rows, latest_version_hash=latest_version_hash)
 
-        with patch.object(GroverObjectBase, "plan_file_write", failing_plan):
+        with patch.object(VFSObjectBase, "plan_file_write", failing_plan):
             objects = [
-                GroverObject(path="/good.txt", content="v2"),
-                GroverObject(path="/bad.txt", content="v2"),
+                VFSObject(path="/good.txt", content="v2"),
+                VFSObject(path="/bad.txt", content="v2"),
             ]
             async with db._use_session() as s:
                 r = await db._write_impl(objects=objects, session=s)
@@ -1579,8 +1579,8 @@ class TestExceptionRecovery:
     async def test_flush_failure_rolls_back_entire_write(self, db: DatabaseFileSystem):
         """Without savepoints, a flush failure rolls back everything."""
         objects = [
-            GroverObject(path="/a.txt", content="a"),
-            GroverObject(path="/b.txt", content="b"),
+            VFSObject(path="/a.txt", content="a"),
+            VFSObject(path="/b.txt", content="b"),
         ]
 
         with pytest.raises(RuntimeError, match="simulated flush failure"):
@@ -1611,7 +1611,7 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_ls(self, db: DatabaseFileSystem, scale: int):
         """Write N files under a directory, ls returns all of them."""
         n = scale
-        objects = [GroverObject(path=f"/data/file_{i:06d}.txt", content=f"content {i}") for i in range(n)]
+        objects = [VFSObject(path=f"/data/file_{i:06d}.txt", content=f"content {i}") for i in range(n)]
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == n
@@ -1624,7 +1624,7 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_soft_delete_directory(self, db: DatabaseFileSystem, scale: int):
         """Write N files, soft-delete the parent dir, verify all cascaded."""
         n = scale
-        objects = [GroverObject(path=f"/src/file_{i:06d}.py", content=f"code {i}") for i in range(n)]
+        objects = [VFSObject(path=f"/src/file_{i:06d}.py", content=f"code {i}") for i in range(n)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1643,7 +1643,7 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_permanent_delete_directory(self, db: DatabaseFileSystem, scale: int):
         """Write N files, permanently delete the dir, verify all gone."""
         n = scale
-        objects = [GroverObject(path=f"/tmp/file_{i:06d}.txt", content=f"temp {i}") for i in range(n)]
+        objects = [VFSObject(path=f"/tmp/file_{i:06d}.txt", content=f"temp {i}") for i in range(n)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1664,8 +1664,8 @@ class TestLargeWriteAndDelete:
         n = min(scale, 500)  # chunks double the object count
         objects = []
         for i in range(n):
-            objects.append(GroverObject(path=f"/code/f_{i:05d}.py", content=f"code {i}"))
-            objects.append(GroverObject(path=f"/code/f_{i:05d}.py/.chunks/main", content=f"def main_{i}():"))
+            objects.append(VFSObject(path=f"/code/f_{i:05d}.py", content=f"code {i}"))
+            objects.append(VFSObject(path=f"/code/f_{i:05d}.py/.chunks/main", content=f"def main_{i}():"))
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.candidates) == n * 2
@@ -1687,12 +1687,12 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_connections_write_and_delete(self, db: DatabaseFileSystem, scale: int):
         """Write N files with connections between consecutive pairs, then delete."""
         n = min(scale, 500)
-        files = [GroverObject(path=f"/graph/node_{i:05d}.py", content=f"node {i}") for i in range(n)]
+        files = [VFSObject(path=f"/graph/node_{i:05d}.py", content=f"node {i}") for i in range(n)]
         r = await db.write(objects=files)
         assert r.success
 
         conns = [
-            GroverObject(
+            VFSObject(
                 path=f"/graph/node_{i:05d}.py/.connections/calls/graph/node_{i + 1:05d}.py",
                 kind="connection",
                 source_path=f"/graph/node_{i:05d}.py",
@@ -1717,7 +1717,7 @@ class TestLargeWriteAndDelete:
     async def test_write_delete_write_cycle_at_scale(self, db: DatabaseFileSystem, scale: int):
         """Write N files, soft-delete all, write N new files at same paths."""
         n = scale
-        objects_v1 = [GroverObject(path=f"/cycle/f_{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
+        objects_v1 = [VFSObject(path=f"/cycle/f_{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
         r1 = await db.write(objects=objects_v1)
         assert r1.success
 
@@ -1726,7 +1726,7 @@ class TestLargeWriteAndDelete:
             await db._delete_impl("/cycle", session=s)
 
         # Re-write same paths
-        objects_v2 = [GroverObject(path=f"/cycle/f_{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
+        objects_v2 = [VFSObject(path=f"/cycle/f_{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
         r2 = await db.write(objects=objects_v2)
         assert r2.success
 
@@ -1742,7 +1742,7 @@ class TestLargeWriteAndDelete:
 
         rng = random.Random(42)
         dirs = [f"/deep/d{i}/sub{j}" for i in range(10) for j in range(10)]
-        objects = [GroverObject(path=f"{rng.choice(dirs)}/f_{i:05d}.txt", content=f"c{i}") for i in range(n)]
+        objects = [VFSObject(path=f"{rng.choice(dirs)}/f_{i:05d}.txt", content=f"c{i}") for i in range(n)]
         r = await db.write(objects=objects)
         assert r.success
 
@@ -1784,7 +1784,7 @@ class TestLargeWriteAndDelete:
         file_objects = []
         for i in range(n):
             parent = rng.choice(dir_pool)
-            file_objects.append(GroverObject(path=f"{parent}/f_{i:06d}.py", content=f"code {i}"))
+            file_objects.append(VFSObject(path=f"{parent}/f_{i:06d}.py", content=f"code {i}"))
 
         r = await db.write(objects=file_objects)
         assert r.success, r.error_message
@@ -1792,7 +1792,7 @@ class TestLargeWriteAndDelete:
 
         # Add a chunk per file
         chunk_objects = [
-            GroverObject(
+            VFSObject(
                 path=f"{obj.path}/.chunks/main",
                 content=f"def main_{i}():",
             )
@@ -1803,7 +1803,7 @@ class TestLargeWriteAndDelete:
 
         # Add connections: each file → next file (circular)
         conn_objects = [
-            GroverObject(
+            VFSObject(
                 path=f"{file_objects[i].path}/.connections/calls/{file_objects[(i + 1) % n].path.lstrip('/')}",
                 kind="connection",
                 source_path=file_objects[i].path,
@@ -1846,17 +1846,17 @@ class TestLargeWriteAndDelete:
         files_per_dir = 10
 
         # Create N directories, each with files_per_dir files + chunks
-        all_objects: list[GroverObject] = []
+        all_objects: list[VFSObject] = []
         for d in range(n_dirs):
             for f in range(files_per_dir):
                 all_objects.append(
-                    GroverObject(
+                    VFSObject(
                         path=f"/batch/d{d:04d}/f{f:03d}.py",
                         content=f"code d{d} f{f}",
                     )
                 )
                 all_objects.append(
-                    GroverObject(
+                    VFSObject(
                         path=f"/batch/d{d:04d}/f{f:03d}.py/.chunks/main",
                         content=f"def main_{d}_{f}():",
                     )
@@ -1866,9 +1866,9 @@ class TestLargeWriteAndDelete:
         assert r.success, r.error_message
 
         # Build candidates for all N directories
-        from grover.results import Candidate, GroverResult
+        from vfs.results import Candidate, VFSResult
 
-        candidates = GroverResult(candidates=[Candidate(path=f"/batch/d{d:04d}") for d in range(n_dirs)])
+        candidates = VFSResult(candidates=[Candidate(path=f"/batch/d{d:04d}") for d in range(n_dirs)])
 
         # Delete all directories in one batch call
         async with db._use_session() as s:
@@ -1891,18 +1891,18 @@ class TestLargeWriteAndDelete:
         """
         n = min(scale, 500)
 
-        all_objects: list[GroverObject] = []
+        all_objects: list[VFSObject] = []
         for i in range(n):
-            all_objects.append(GroverObject(path=f"/flat/f{i:05d}.py", content=f"code {i}"))
-            all_objects.append(GroverObject(path=f"/flat/f{i:05d}.py/.chunks/main", content=f"def main_{i}():"))
+            all_objects.append(VFSObject(path=f"/flat/f{i:05d}.py", content=f"code {i}"))
+            all_objects.append(VFSObject(path=f"/flat/f{i:05d}.py/.chunks/main", content=f"def main_{i}():"))
 
         r = await db.write(objects=all_objects)
         assert r.success, r.error_message
 
         # Delete all files (not the directory) in one batch
-        from grover.results import Candidate, GroverResult
+        from vfs.results import Candidate, VFSResult
 
-        candidates = GroverResult(candidates=[Candidate(path=f"/flat/f{i:05d}.py") for i in range(n)])
+        candidates = VFSResult(candidates=[Candidate(path=f"/flat/f{i:05d}.py") for i in range(n)])
 
         async with db._use_session() as s:
             del_r = await db._delete_impl(candidates=candidates, permanent=True, session=s)

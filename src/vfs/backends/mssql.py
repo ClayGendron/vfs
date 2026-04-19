@@ -30,21 +30,21 @@ from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import text
 
-from grover.backends.database import (
+from vfs.backends.database import (
     DatabaseFileSystem,
     _compile_grep_regex,
     _escape_like,
     _regex_flags_for_mode,
 )
-from grover.bm25 import tokenize_query
-from grover.paths import scope_path
-from grover.patterns import compile_glob, decompose_glob, glob_to_sql_like
-from grover.results import Candidate, Detail, GroverResult
+from vfs.bm25 import tokenize_query
+from vfs.paths import scope_path
+from vfs.patterns import compile_glob, decompose_glob, glob_to_sql_like
+from vfs.results import Candidate, Detail, VFSResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.query.ast import CaseMode, GrepOutputMode
+    from vfs.query.ast import CaseMode, GrepOutputMode
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
     search entry points are overridden.
 
     The class assumes the connection's default schema already contains
-    the ``GroverObject`` table and a full-text index on its ``content``
+    the ``VFSObject`` table and a full-text index on its ``content``
     column.  Use :meth:`verify_fulltext_schema` at startup to confirm.
 
     Lexical search and grep operate on **files only** — versions and
@@ -130,7 +130,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         ORM only applies ``schema_translate_map`` when compiling
         ``Table`` references, not to opaque string SQL.  This helper
         qualifies the bare ``__tablename__`` with ``self._schema`` (set
-        on ``GroverFileSystem`` at init time) so raw queries resolve to
+        on ``VirtualFileSystem`` at init time) so raw queries resolve to
         the same table the ORM would hit for this filesystem.
 
         Returns the bare ``__tablename__`` when no schema is configured,
@@ -154,7 +154,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         Requirements:
 
-        1. The ``GroverObject`` table is resolvable in the connection's
+        1. The ``VFSObject`` table is resolvable in the connection's
            default schema (i.e. ``OBJECT_ID(N'<tablename>')`` is non-null).
         2. A ``content`` column exists on the table.
         3. A full-text index exists on that ``content`` column.
@@ -196,12 +196,12 @@ class MSSQLFileSystem(DatabaseFileSystem):
                     f"MSSQLFileSystem requires a SQL Server Full-Text index on "
                     f"'{table}.content'. Provision one outside the application, "
                     f"for example:\n"
-                    f"  CREATE FULLTEXT CATALOG grover_ftcat;\n"
+                    f"  CREATE FULLTEXT CATALOG vfs_ftcat;\n"
                     f"  CREATE UNIQUE NONCLUSTERED INDEX ux_{bare_table}_id "
                     f"ON {table}(id);\n"
                     f"  CREATE FULLTEXT INDEX ON {table}(content LANGUAGE 1033)\n"
                     f"  KEY INDEX ux_{bare_table}_id\n"
-                    f"  ON grover_ftcat WITH CHANGE_TRACKING AUTO;"
+                    f"  ON vfs_ftcat WITH CHANGE_TRACKING AUTO;"
                 )
 
     # ------------------------------------------------------------------
@@ -212,11 +212,11 @@ class MSSQLFileSystem(DatabaseFileSystem):
         self,
         query: str,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """BM25-style lexical search via SQL Server Full-Text ``CONTAINSTABLE``.
 
         Replaces the base class's SQL-LIKE pre-filter + Python BM25 with
@@ -300,7 +300,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             content_rows = (await session.execute(content_sql, content_params)).all()
             content_by_path = {r.path: r.content for r in content_rows}
 
-        result = GroverResult(
+        result = VFSResult(
             candidates=[
                 Candidate(
                     path=path,
@@ -419,10 +419,10 @@ class MSSQLFileSystem(DatabaseFileSystem):
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Regex content search pushed into SQL via ``REGEXP_LIKE``.
 
         Operates on files only; chunks and versions are excluded.
@@ -442,7 +442,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         Structural filters (``ext``, ``paths``, ``globs`` / ``globs_not``)
         compose onto all four via :meth:`_build_grep_structural_sql`.
-        ``ext`` seeks the ``ix_grover_objects_ext_kind`` composite
+        ``ext`` seeks the ``ix_vfs_objects_ext_kind`` composite
         index, so ``-t py`` on a 1M-row corpus narrows before the
         regex engine runs.
 
@@ -571,7 +571,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
                 )
                 for row in rows
             ]
-            return self._unscope_result(GroverResult(candidates=matched), user_id)
+            return self._unscope_result(VFSResult(candidates=matched), user_id)
 
         content_map = {row.path: row.content for row in rows if row.content}
         matched = self._collect_line_matches(
@@ -583,7 +583,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             after_context=after_context,
             invert_match=invert_match,
         )
-        return self._unscope_result(GroverResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(candidates=matched), user_id)
 
     # ------------------------------------------------------------------
     # Glob — REGEXP_LIKE pushdown on path
@@ -596,10 +596,10 @@ class MSSQLFileSystem(DatabaseFileSystem):
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Glob match with the authoritative regex pushed into SQL.
 
         Keeps the SARGable ``LIKE`` pre-filter (so a leading literal
@@ -653,7 +653,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         if ext and decomposition.ext:
             merged_ext = tuple(e for e in ext if e in decomposition.ext)
             if not merged_ext:
-                return self._unscope_result(GroverResult(candidates=[]), user_id)
+                return self._unscope_result(VFSResult(candidates=[]), user_id)
         elif decomposition.ext:
             merged_ext = decomposition.ext
         else:
@@ -702,7 +702,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             regex_clause = ""
             # ext IS NULL on directory rows, so ext IN (…) already excludes
             # directories — narrow kind explicitly to make the plan seek
-            # ix_grover_objects_ext_kind rather than rely on a NULL side
+            # ix_vfs_objects_ext_kind rather than rely on a NULL side
             # effect.
             kind_clause = "kind = 'file'" if decomposition.files_only else "kind IN ('file', 'directory')"
 
@@ -727,4 +727,4 @@ class MSSQLFileSystem(DatabaseFileSystem):
             )
             for row in rows
         ]
-        return self._unscope_result(GroverResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(candidates=matched), user_id)

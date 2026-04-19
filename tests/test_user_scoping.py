@@ -9,16 +9,16 @@ from __future__ import annotations
 import pytest
 from sqlmodel import select
 
-from grover.backends.database import DatabaseFileSystem
-from grover.models import GroverObject
-from grover.paths import (
+from vfs.backends.database import DatabaseFileSystem
+from vfs.models import VFSObject
+from vfs.paths import (
     connection_path,
     decompose_connection,
     scope_path,
     unscope_path,
     validate_user_id,
 )
-from grover.results import Candidate, GroverResult
+from vfs.results import Candidate, VFSResult
 
 # ---------------------------------------------------------------------------
 # Path utility tests
@@ -126,7 +126,7 @@ class TestUnscopePath:
 
 class TestStripUserScope:
     def test_strips_file_paths(self):
-        result = GroverResult(
+        result = VFSResult(
             candidates=[
                 Candidate(path="/u1/docs/a.md"),
                 Candidate(path="/u1/docs/b.md"),
@@ -137,7 +137,7 @@ class TestStripUserScope:
 
     def test_strips_connection_paths(self):
         conn = connection_path("/u1/a.py", "/u1/b.py", "imports")
-        result = GroverResult(candidates=[Candidate(path=conn)])
+        result = VFSResult(candidates=[Candidate(path=conn)])
         stripped = result.strip_user_scope("u1")
         expected = connection_path("/a.py", "/b.py", "imports")
         assert stripped.candidates[0].path == expected
@@ -178,7 +178,7 @@ class TestUserScopedWrite:
         await scoped_db.write(path="/doc.txt", content="test", user_id="u1")
         # Read raw from DB to check owner_id
         async with scoped_db._session_factory() as session:
-            stmt = select(GroverObject).where(GroverObject.path == "/u1/doc.txt")
+            stmt = select(VFSObject).where(VFSObject.path == "/u1/doc.txt")
             result = await session.execute(stmt)
             obj = result.scalar_one()
             assert obj.owner_id == "u1"

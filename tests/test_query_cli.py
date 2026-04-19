@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from grover.backends.database import DatabaseFileSystem
-from grover.query import QuerySyntaxError
+from vfs.backends.database import DatabaseFileSystem
+from vfs.query import QuerySyntaxError
 
 
 @pytest.fixture

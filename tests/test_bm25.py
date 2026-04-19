@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from grover.bm25 import (
+from vfs.bm25 import (
     QUERY_TERM_LIMIT,
     BM25Index,
     BM25Scorer,

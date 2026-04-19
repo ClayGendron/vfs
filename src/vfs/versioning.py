@@ -1,4 +1,4 @@
-"""Version provider — pluggable versioning for GroverFileSystem.
+"""Version provider — pluggable versioning for VirtualFileSystem.
 
 The default implementation uses forward unified diffs with periodic full
 snapshots (every ``SNAPSHOT_INTERVAL`` versions).  Subclass

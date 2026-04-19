@@ -1,6 +1,6 @@
-"""Composable result types for Grover.
+"""Composable result types for VFS.
 
-Every Grover operation returns ``GroverResult``.  Results carry candidates
+Every VFS operation returns ``VFSResult``.  Results carry candidates
 and provenance details.  Local enrichment methods (``sort``, ``top``,
 ``filter``, ``kinds``) and set algebra (``&``, ``|``, ``-``) operate
 in-memory on resolved data:
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
-from grover.paths import split_path, unscope_path
+from vfs.paths import split_path, unscope_path
 
 _T = TypeVar("_T")
 
@@ -82,7 +82,7 @@ class Detail(BaseModel):
 
 
 class Candidate(BaseModel):
-    """Read-only projection of a ``GroverObject``.
+    """Read-only projection of a ``VFSObject``.
 
     Scores live on ``Detail`` only — the ``score`` property derives the
     current score from the most recent detail.
@@ -140,12 +140,12 @@ class Candidate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# GroverResult — the single composable result type
+# VFSResult — the single composable result type
 # ---------------------------------------------------------------------------
 
 
-class GroverResult(BaseModel):
-    """Unified result from every Grover operation.
+class VFSResult(BaseModel):
+    """Unified result from every VFS operation.
 
     Supports:
     - **Data inspection:** ``.paths``, ``.content``, ``.file``, ``.explain()``
@@ -228,7 +228,7 @@ class GroverResult(BaseModel):
         only when left is None.  Uses explicit None checks — never falsy
         coalescing — so ``0``, ``""``, and ``0.0`` are preserved.
         """
-        fs = GroverResult._first_set
+        fs = VFSResult._first_set
         return Candidate(
             id=fs(a.id, b.id),
             path=a.path,
@@ -245,18 +245,18 @@ class GroverResult(BaseModel):
             updated_at=fs(a.updated_at, b.updated_at),
         )
 
-    def __and__(self, other: GroverResult) -> GroverResult:
+    def __and__(self, other: VFSResult) -> VFSResult:
         """Intersection — candidates in both, details merged."""
         left = self._as_dict()
         right = other._as_dict()
         merged = [self._merge_candidate(left[p], right[p]) for p in left if p in right]
-        return GroverResult(
+        return VFSResult(
             candidates=merged,
             success=self.success and other.success,
             errors=self.errors + other.errors,
         )
 
-    def __or__(self, other: GroverResult) -> GroverResult:
+    def __or__(self, other: VFSResult) -> VFSResult:
         """Union — candidates from either, details merged where overlap."""
         left = self._as_dict()
         right = other._as_dict()
@@ -266,17 +266,17 @@ class GroverResult(BaseModel):
         for p, c in right.items():
             if p not in merged:
                 merged[p] = c
-        return GroverResult(
+        return VFSResult(
             candidates=list(merged.values()),
             success=self.success and other.success,
             errors=self.errors + other.errors,
         )
 
-    def __sub__(self, other: GroverResult) -> GroverResult:
+    def __sub__(self, other: VFSResult) -> VFSResult:
         """Difference — candidates in left not in right."""
         right_paths = set(other.paths)
         remaining = [c for c in self.candidates if c.path not in right_paths]
-        return GroverResult(
+        return VFSResult(
             candidates=remaining,
             success=self.success,
             errors=self.errors,
@@ -286,7 +286,7 @@ class GroverResult(BaseModel):
     # Enrichment chains (local, no backend call)
     # -------------------------------------------------------------------
 
-    def add_prefix(self, prefix: str) -> GroverResult:
+    def add_prefix(self, prefix: str) -> VFSResult:
         """Prepend *prefix* to all candidate paths in place."""
         if not prefix:
             return self
@@ -295,7 +295,7 @@ class GroverResult(BaseModel):
         ]
         return self
 
-    def strip_user_scope(self, user_id: str) -> GroverResult:
+    def strip_user_scope(self, user_id: str) -> VFSResult:
         """Strip the ``/{user_id}`` prefix from all candidate paths.
 
         For connection paths, both the source prefix and the embedded
@@ -305,9 +305,9 @@ class GroverResult(BaseModel):
             [c.model_copy(update={"path": unscope_path(c.path, user_id)}) for c in self.candidates]
         )
 
-    def _with_candidates(self, candidates: list[Candidate]) -> GroverResult:
+    def _with_candidates(self, candidates: list[Candidate]) -> VFSResult:
         """Return a new result with the given candidates."""
-        return GroverResult(
+        return VFSResult(
             candidates=candidates,
             success=self.success,
             errors=self.errors,
@@ -319,7 +319,7 @@ class GroverResult(BaseModel):
         operation: str | None = None,
         key: Callable[[Candidate], Any] | None = None,
         reverse: bool = True,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Re-order candidates by score.
 
         Resolution order for sort key:
@@ -340,7 +340,7 @@ class GroverResult(BaseModel):
 
         return self._with_candidates(sorted(self.candidates, key=sort_key, reverse=reverse))
 
-    def top(self, k: int, *, operation: str | None = None) -> GroverResult:
+    def top(self, k: int, *, operation: str | None = None) -> VFSResult:
         """Top *k* candidates by score. *k* must be >= 1."""
         if k < 1:
             msg = f"k must be >= 1, got {k}"
@@ -348,16 +348,16 @@ class GroverResult(BaseModel):
         sorted_result = self.sort(operation=operation)
         return sorted_result._with_candidates(sorted_result.candidates[:k])
 
-    def filter(self, fn: Callable[[Candidate], bool]) -> GroverResult:
+    def filter(self, fn: Callable[[Candidate], bool]) -> VFSResult:
         """Keep candidates where *fn(candidate)* is truthy."""
         return self._with_candidates([c for c in self.candidates if fn(c)])
 
-    def kinds(self, *kinds: str) -> GroverResult:
+    def kinds(self, *kinds: str) -> VFSResult:
         """Filter candidates by kind."""
         kind_set = set(kinds)
         return self.filter(lambda c: c.kind in kind_set)
 
-    def inject_details(self, prior: GroverResult) -> GroverResult:
+    def inject_details(self, prior: VFSResult) -> VFSResult:
         """Prepend prior details onto matching candidates.
 
         Result candidates are authoritative — only paths present in *self*

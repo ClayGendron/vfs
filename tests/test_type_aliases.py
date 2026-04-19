@@ -1,8 +1,8 @@
-"""Tests for grover.query.types — ripgrep-style type alias resolution."""
+"""Tests for vfs.query.types — ripgrep-style type alias resolution."""
 
 from __future__ import annotations
 
-from grover.query.types import TYPE_ALIASES, resolve_type_aliases
+from vfs.query.types import TYPE_ALIASES, resolve_type_aliases
 
 
 class TestResolveTypeAliases:

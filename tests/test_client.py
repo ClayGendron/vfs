@@ -1,4 +1,4 @@
-"""Tests for GroverAsync facade and GroverFileSystem storage flag."""
+"""Tests for VFSClientAsync facade and VirtualFileSystem storage flag."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
-from grover.backends.database import DatabaseFileSystem
-from grover.base import GroverFileSystem
-from grover.client import GroverAsync
+from vfs.backends.database import DatabaseFileSystem
+from vfs.base import VirtualFileSystem
+from vfs.client import VFSClientAsync
 
 # ------------------------------------------------------------------
 # Helpers
@@ -35,56 +35,56 @@ async def _make_db():
 
 
 # ==================================================================
-# GroverFileSystem storage flag
+# VirtualFileSystem storage flag
 # ==================================================================
 
 
 class TestStorageFlag:
-    """Tests for the storage parameter on GroverFileSystem."""
+    """Tests for the storage parameter on VirtualFileSystem."""
 
     def test_storage_true_requires_engine_or_session(self):
         with pytest.raises(ValueError, match="storage=True"):
-            GroverFileSystem(storage=True)
+            VirtualFileSystem(storage=True)
 
     def test_storage_true_default_requires_engine_or_session(self):
         with pytest.raises(ValueError, match="storage=True"):
-            GroverFileSystem()
+            VirtualFileSystem()
 
     async def test_storage_true_with_engine_works(self):
         engine = await _sqlite_engine()
         try:
-            fs = GroverFileSystem(engine=engine)
+            fs = VirtualFileSystem(engine=engine)
             assert fs._storage is True
             assert fs._session_factory is not None
         finally:
             await engine.dispose()
 
     def test_storage_false_without_engine_works(self):
-        fs = GroverFileSystem(storage=False)
+        fs = VirtualFileSystem(storage=False)
         assert fs._storage is False
         assert fs._session_factory is None
         assert fs._engine is None
 
     async def test_use_session_raises_when_storageless(self):
-        fs = GroverFileSystem(storage=False)
+        fs = VirtualFileSystem(storage=False)
         with pytest.raises(RuntimeError, match="storage=False"):
             async with fs._use_session():
                 pass
 
     async def test_route_single_unmounted_path_returns_error(self):
-        fs = GroverFileSystem(storage=False)
+        fs = VirtualFileSystem(storage=False)
         result = await fs.read("/nothing/here.txt")
         assert not result.success
         assert "No mount found" in result.error_message
 
     async def test_route_fanout_no_mounts_returns_empty(self):
-        fs = GroverFileSystem(storage=False)
+        fs = VirtualFileSystem(storage=False)
         result = await fs.glob("*.py")
         assert result.success
         assert len(result.candidates) == 0
 
     async def test_route_fanout_fans_out_to_mounts(self):
-        router = GroverFileSystem(storage=False)
+        router = VirtualFileSystem(storage=False)
         engine = await _sqlite_engine()
         try:
             child = DatabaseFileSystem(engine=engine)
@@ -101,28 +101,28 @@ class TestStorageFlag:
 
 
 # ==================================================================
-# GroverAsync
+# VFSClientAsync
 # ==================================================================
 
 
-class TestGroverAsyncConstruction:
-    """Tests for GroverAsync construction."""
+class TestVFSClientAsyncConstruction:
+    """Tests for VFSClientAsync construction."""
 
     def test_creates_without_engine(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         assert g._storage is False
         assert g._session_factory is None
 
-    def test_inherits_grover_filesystem(self):
-        g = GroverAsync()
-        assert isinstance(g, GroverFileSystem)
+    def test_inherits_virtual_filesystem(self):
+        g = VFSClientAsync()
+        assert isinstance(g, VirtualFileSystem)
 
 
-class TestGroverAsyncAddMount:
-    """Tests for GroverAsync.add_mount."""
+class TestVFSClientAsyncAddMount:
+    """Tests for VFSClientAsync.add_mount."""
 
     async def test_add_mount_with_filesystem(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         fs = await _make_db()
         await g.add_mount("data", fs)
         try:
@@ -136,7 +136,7 @@ class TestGroverAsyncAddMount:
             await g.close()
 
     async def test_add_mount_with_leading_slash(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         fs = await _make_db()
         await g.add_mount("/data", fs)
         try:
@@ -148,7 +148,7 @@ class TestGroverAsyncAddMount:
 
     async def test_add_mount_with_engine(self):
         engine = await _sqlite_engine()
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("data", DatabaseFileSystem(engine=engine))
         try:
             w = await g.write("/data/test.txt", "content")
@@ -164,7 +164,7 @@ class TestGroverAsyncAddMount:
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
         sf = async_sessionmaker(engine, expire_on_commit=False)
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("data", DatabaseFileSystem(session_factory=sf))
         try:
             w = await g.write("/data/test.txt", "via sf")
@@ -177,7 +177,7 @@ class TestGroverAsyncAddMount:
 
     async def test_add_mount_user_scoped(self):
         engine = await _sqlite_engine()
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("data", DatabaseFileSystem(engine=engine, user_scoped=True))
         try:
             w = await g.write("/data/hello.txt", "user content", user_id="alice")
@@ -193,7 +193,7 @@ class TestGroverAsyncAddMount:
             await g.close()
 
 
-class TestGroverAsyncProviderInjection:
+class TestVFSClientAsyncProviderInjection:
     """Tests for embedding/vector store provider injection on DatabaseFileSystem."""
 
     async def test_providers_set_on_construction(self):
@@ -203,7 +203,7 @@ class TestGroverAsyncProviderInjection:
         ep = MagicMock()
         vs = MagicMock()
         fs = DatabaseFileSystem(engine=engine, embedding_provider=ep, vector_store=vs)
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("data", fs)
         try:
             assert fs._embedding_provider is ep
@@ -219,17 +219,17 @@ class TestGroverAsyncProviderInjection:
         await engine.dispose()
 
 
-class TestGroverAsyncRouting:
-    """Tests for operation routing through GroverAsync."""
+class TestVFSClientAsyncRouting:
+    """Tests for operation routing through VFSClientAsync."""
 
     async def test_read_unmounted_path_returns_error(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         result = await g.read("/nothing/file.txt")
         assert not result.success
         assert "No mount found" in result.error_message
 
     async def test_multi_mount_routing(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("alpha", await _make_db())
         await g.add_mount("beta", await _make_db())
         try:
@@ -249,7 +249,7 @@ class TestGroverAsyncRouting:
             await g.close()
 
     async def test_glob_fans_out_across_mounts(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("one", await _make_db())
         await g.add_mount("two", await _make_db())
         try:
@@ -265,7 +265,7 @@ class TestGroverAsyncRouting:
             await g.close()
 
     async def test_grep_fans_out_across_mounts(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("a", await _make_db())
         await g.add_mount("b", await _make_db())
         try:
@@ -281,17 +281,17 @@ class TestGroverAsyncRouting:
             await g.close()
 
     async def test_fanout_no_mounts_returns_empty(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         result = await g.glob("**")
         assert result.success
         assert len(result.candidates) == 0
 
 
-class TestGroverAsyncQueryEngine:
-    """Tests for run_query and cli through GroverAsync."""
+class TestVFSClientAsyncQueryEngine:
+    """Tests for run_query and cli through VFSClientAsync."""
 
     async def test_run_query(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("data", await _make_db())
         try:
             await g.write("/data/hello.py", "print('hi')")
@@ -302,7 +302,7 @@ class TestGroverAsyncQueryEngine:
             await g.close()
 
     async def test_cli(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("data", await _make_db())
         try:
             await g.write("/data/hello.py", "print('hi')")
@@ -313,18 +313,18 @@ class TestGroverAsyncQueryEngine:
             await g.close()
 
 
-class TestGroverAsyncLifecycle:
+class TestVFSClientAsyncLifecycle:
     """Tests for remove_mount and close."""
 
     async def test_remove_mount(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("data", await _make_db())
         assert "/data" in g._mounts
         await g.remove_mount("data")
         assert "/data" not in g._mounts
 
     async def test_remove_mount_disposes_engine(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         fs = await _make_db()
         await g.add_mount("data", fs)
         assert "/data" in g._mounts
@@ -333,7 +333,7 @@ class TestGroverAsyncLifecycle:
         assert "/data" not in g._mounts
 
     async def test_close_clears_mounts(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.add_mount("a", await _make_db())
         await g.add_mount("b", await _make_db())
         assert len(g._mounts) == 2
@@ -341,6 +341,6 @@ class TestGroverAsyncLifecycle:
         assert len(g._mounts) == 0
 
     async def test_close_without_mounts(self):
-        g = GroverAsync()
+        g = VFSClientAsync()
         await g.close()
         assert len(g._mounts) == 0

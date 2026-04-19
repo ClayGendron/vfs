@@ -6,7 +6,7 @@ serializes vectors as JSON text and enforces dimensions on both read and write.
 
 Usage::
 
-    from grover.vector import Vector, VectorType
+    from vfs.vector import Vector, VectorType
 
     # As a model field (any dimension):
     vector: Vector | None = Field(default=None, sa_type=VectorType())

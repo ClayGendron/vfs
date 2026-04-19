@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.results import GroverResult
+    from vfs.results import VFSResult
 
 
 @runtime_checkable
@@ -25,7 +25,7 @@ class GraphProvider(Protocol):
     All async query methods require a ``session`` parameter so the
     provider can self-refresh from the database when stale.
 
-    Query methods accept ``GroverResult`` as their candidates argument
+    Query methods accept ``VFSResult`` as their candidates argument
     for composability — the output of one graph operation can feed
     directly into another.
     """
@@ -69,39 +69,39 @@ class GraphProvider(Protocol):
 
     async def predecessors(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def successors(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def ancestors(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def descendants(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def neighborhood(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         depth: int = 2,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     # ------------------------------------------------------------------
     # Subgraph
@@ -109,17 +109,17 @@ class GraphProvider(Protocol):
 
     async def meeting_subgraph(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def min_meeting_subgraph(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     # ------------------------------------------------------------------
     # Centrality algorithms
@@ -127,52 +127,52 @@ class GraphProvider(Protocol):
 
     async def pagerank(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def betweenness_centrality(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def closeness_centrality(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def degree_centrality(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def in_degree_centrality(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def out_degree_centrality(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...
 
     async def hits(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         score: str = "authority",
         max_iter: int = 1000,
         tol: float = 1e-8,
         session: AsyncSession,
-    ) -> GroverResult: ...
+    ) -> VFSResult: ...

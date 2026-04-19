@@ -9,14 +9,14 @@ from typing import Any, cast
 import pytest
 from sqlalchemy import text
 
-from grover.backends.database import DatabaseFileSystem
-from grover.base import GroverFileSystem
-from grover.models import GroverObject, GroverObjectBase
-from grover.results import Candidate, Detail, EditOperation, GroverResult, TwoPathOperation
 from tests.conftest import require_file, require_object, require_text, set_parameter_budget
+from vfs.backends.database import DatabaseFileSystem
+from vfs.base import VirtualFileSystem
+from vfs.models import VFSObject, VFSObjectBase
+from vfs.results import Candidate, Detail, EditOperation, TwoPathOperation, VFSResult
 
 
-def _stored_payload(obj: GroverObjectBase) -> str:
+def _stored_payload(obj: VFSObjectBase) -> str:
     if obj.is_snapshot:
         assert obj.content is not None
         return obj.content
@@ -91,8 +91,8 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             r = await db._write_impl(
                 objects=[
-                    GroverObject(path="/src/auth.py", content="full content"),
-                    GroverObject(path="/src/auth.py/.chunks/login", content="def login():"),
+                    VFSObject(path="/src/auth.py", content="full content"),
+                    VFSObject(path="/src/auth.py/.chunks/login", content="def login():"),
                 ],
                 session=s,
             )
@@ -110,8 +110,8 @@ class TestWriteAndRead:
 
         r = await db.write(
             objects=[
-                GroverObject(path="/src/auth.py/.chunks/login", content="def login():"),
-                GroverObject(path="/src/auth.py", content="full content"),
+                VFSObject(path="/src/auth.py/.chunks/login", content="def login():"),
+                VFSObject(path="/src/auth.py", content="full content"),
             ]
         )
         assert r.success
@@ -145,7 +145,7 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             await db._write_impl("/a.py", "aaa", session=s)
             await db._write_impl("/b.py", "bbb", session=s)
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 Candidate(path="/a.py"),
                 Candidate(path="/b.py"),
@@ -186,8 +186,8 @@ class TestWriteAndRead:
             await db._write_impl("/blocker.py", "file", session=s)
 
         objects = [
-            GroverObject(path="/blocker.py/sub/child.txt", content="bad"),
-            GroverObject(path="/safe/other.txt", content="good"),
+            VFSObject(path="/blocker.py/sub/child.txt", content="bad"),
+            VFSObject(path="/safe/other.txt", content="good"),
         ]
         async with db._use_session() as s:
             r = await db._write_impl(objects=objects, session=s)
@@ -197,8 +197,8 @@ class TestWriteAndRead:
     async def test_write_revives_soft_deleted_ancestor_dirs(self, db: DatabaseFileSystem):
         deleted_at = datetime.now(UTC)
         async with db._use_session() as s:
-            s.add(GroverObject(path="/archive", kind="directory", deleted_at=deleted_at))
-            s.add(GroverObject(path="/archive/nested", kind="directory", deleted_at=deleted_at))
+            s.add(VFSObject(path="/archive", kind="directory", deleted_at=deleted_at))
+            s.add(VFSObject(path="/archive/nested", kind="directory", deleted_at=deleted_at))
 
         async with db._use_session() as s:
             r = await db._write_impl("/archive/nested/report.txt", "report", session=s)
@@ -216,12 +216,12 @@ class TestWriteAndRead:
         """P1 regression: if all writes fail, revived dirs must stay deleted."""
         deleted_at = datetime.now(UTC)
         async with db._use_session() as s:
-            s.add(GroverObject(path="/ghost", kind="directory", deleted_at=deleted_at))
-            s.add(GroverObject(path="/ghost/deep", kind="directory", deleted_at=deleted_at))
+            s.add(VFSObject(path="/ghost", kind="directory", deleted_at=deleted_at))
+            s.add(VFSObject(path="/ghost/deep", kind="directory", deleted_at=deleted_at))
 
         # Every write fails (overwrite=False on existing file)
         async with db._use_session() as s:
-            s.add(GroverObject(path="/ghost/deep/file.txt", content="existing"))
+            s.add(VFSObject(path="/ghost/deep/file.txt", content="existing"))
         async with db._use_session() as s:
             r = await db._write_impl(
                 "/ghost/deep/file.txt",
@@ -260,7 +260,7 @@ class TestWriteAndRead:
     async def test_write_overwrite_false_revives_soft_deleted_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             s.add(
-                GroverObject(
+                VFSObject(
                     path="/revive.txt",
                     content="old",
                     deleted_at=datetime.now(UTC),
@@ -374,7 +374,7 @@ class TestEdit:
     async def test_edit_batch_via_candidates(self, db: DatabaseFileSystem):
         await db.write("/a.py", "old_name = 1")
         await db.write("/b.py", "old_name = 2")
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 Candidate(path="/a.py"),
                 Candidate(path="/b.py"),
@@ -408,7 +408,7 @@ class TestEdit:
         assert "return 1" in require_text(r.content)
 
     async def test_edit_through_public_api(self, db: DatabaseFileSystem, engine):
-        root = GroverFileSystem(engine=engine)
+        root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
         await root.write("/code/app.py", "timeout = 30")
         r = await root.edit("/code/app.py", old="30", new="120")
@@ -459,7 +459,7 @@ class TestAutoVersioning:
 
     async def test_version_reconstruction(self, db: DatabaseFileSystem):
         """Verify we can reconstruct any version from forward diffs."""
-        from grover.versioning import reconstruct_version
+        from vfs.versioning import reconstruct_version
 
         async with db._use_session() as s:
             await db._write_impl("/file.txt", "line1\n", session=s)
@@ -511,7 +511,7 @@ class TestAutoVersioning:
 
         assert db._engine is not None
         async with db._engine.begin() as conn:
-            await conn.execute(text("UPDATE grover_objects SET content='external' WHERE path='/app.py'"))
+            await conn.execute(text("UPDATE vfs_objects SET content='external' WHERE path='/app.py'"))
 
         r = await db.write("/app.py", "v2")
         assert r.success
@@ -577,15 +577,15 @@ class TestNestedMountPaths:
     """Write through a mount, read back — paths must be absolute."""
 
     async def test_write_and_read_through_nested_mount(self, engine):
-        root = GroverFileSystem(engine=engine)
+        root = VirtualFileSystem(engine=engine)
         child = DatabaseFileSystem(engine=engine)
         await root.add_mount("/data", child)
 
         # Write through the mount
         w = await root.write(
             objects=[
-                GroverObject(path="/data/docs/readme.txt", content="hello"),
-                GroverObject(path="/data/src/app.py", content="import os"),
+                VFSObject(path="/data/docs/readme.txt", content="hello"),
+                VFSObject(path="/data/src/app.py", content="import os"),
             ],
         )
         assert w.success
@@ -603,8 +603,8 @@ class TestNestedMountPaths:
         assert r2.content == "import os"
 
     async def test_write_and_read_through_two_level_mount(self, engine):
-        root = GroverFileSystem(engine=engine)
-        mid = GroverFileSystem(engine=engine)
+        root = VirtualFileSystem(engine=engine)
+        mid = VirtualFileSystem(engine=engine)
         leaf = DatabaseFileSystem(engine=engine)
         await root.add_mount("/org", mid)
         await mid.add_mount("/team", leaf)
@@ -624,7 +624,7 @@ class TestBatchWriteAtScale:
 
     async def test_batch_write_single_call(self, db: DatabaseFileSystem):
         n = 1_000
-        objects = [GroverObject(path=f"/data/file_{i:05d}.txt", content=f"content {i}") for i in range(n)]
+        objects = [VFSObject(path=f"/data/file_{i:05d}.txt", content=f"content {i}") for i in range(n)]
 
         r = await db.write(objects=objects)
 
@@ -654,7 +654,7 @@ class TestBatchWriteAtScale:
         dirs = [f"/d{i}/sub{j}" for i in range(10) for j in range(10)]
         n = 1_000
         objects = [
-            GroverObject(
+            VFSObject(
                 path=f"{rng.choice(dirs)}/file_{i:05d}.txt",
                 content=f"content {i}",
             )
@@ -680,11 +680,11 @@ class TestBatchWriteAtScale:
 
     async def test_batch_overwrites_creates_versions(self, db: DatabaseFileSystem):
         n = 1_000
-        objects_v1 = [GroverObject(path=f"/src/f_{i:05d}.py", content=f"v1_{i}") for i in range(n)]
+        objects_v1 = [VFSObject(path=f"/src/f_{i:05d}.py", content=f"v1_{i}") for i in range(n)]
         r1 = await db.write(objects=objects_v1)
         assert r1.success, r1.error_message
 
-        objects_v2 = [GroverObject(path=f"/src/f_{i:05d}.py", content=f"v2_{i}") for i in range(n)]
+        objects_v2 = [VFSObject(path=f"/src/f_{i:05d}.py", content=f"v2_{i}") for i in range(n)]
         r2 = await db.write(objects=objects_v2)
         assert r2.success, r2.error_message
 
@@ -781,7 +781,7 @@ class TestFastPathVersioning:
 
         assert db._engine is not None
         async with db._engine.begin() as conn:
-            await conn.execute(text("UPDATE grover_objects SET content='hacked' WHERE path='/ext.txt'"))
+            await conn.execute(text("UPDATE vfs_objects SET content='hacked' WHERE path='/ext.txt'"))
 
         r = await db.write("/ext.txt", "v2")
         assert r.success
@@ -798,7 +798,7 @@ class TestFastPathVersioning:
 class TestFetchVersionChain:
     async def test_returns_bounded_rows(self, db: DatabaseFileSystem):
         """_fetch_version_chain returns only rows within SNAPSHOT_INTERVAL."""
-        from grover.versioning import SNAPSHOT_INTERVAL
+        from vfs.versioning import SNAPSHOT_INTERVAL
 
         # Create 15 versions
         for i in range(1, 16):
@@ -880,7 +880,7 @@ class TestLs:
 
     async def test_ls_empty_directory(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            s.add(GroverObject(path="/empty", kind="directory"))
+            s.add(VFSObject(path="/empty", kind="directory"))
 
         async with db._use_session() as s:
             r = await db._ls_impl("/empty", session=s)
@@ -914,7 +914,7 @@ class TestLs:
             await db._write_impl("/src/a.py", "a", session=s)
             await db._write_impl("/lib/b.py", "b", session=s)
 
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 Candidate(path="/src", kind="directory"),
                 Candidate(path="/lib", kind="directory"),
@@ -930,7 +930,7 @@ class TestLs:
         async with db._use_session() as s:
             await db._write_impl("/src/a.py", "a", session=s)
 
-        candidates = GroverResult(candidates=[Candidate(path="/src")])
+        candidates = VFSResult(candidates=[Candidate(path="/src")])
         async with db._use_session() as s:
             r = await db._ls_impl(candidates=candidates, session=s)
         assert r.success
@@ -943,7 +943,7 @@ class TestLs:
             await db._write_impl("/src/auth.py/.chunks/login", "chunk", session=s)
             await db._write_impl("/lib/utils.py", "utils", session=s)
 
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 Candidate(path="/src", kind="directory"),
                 Candidate(path="/src/auth.py", kind="file"),
@@ -960,7 +960,7 @@ class TestLs:
         assert "/src/auth.py/.versions/1" in paths
 
     async def test_ls_through_public_api(self, db: DatabaseFileSystem, engine):
-        root = GroverFileSystem(engine=engine)
+        root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
 
         await root.write("/code/src/app.py", "code")
@@ -972,7 +972,7 @@ class TestLs:
         async with db._use_session() as s:
             r = await db._ls_impl(
                 "/src",
-                candidates=GroverResult(candidates=[Candidate(path="/lib", kind="directory")]),
+                candidates=VFSResult(candidates=[Candidate(path="/lib", kind="directory")]),
                 session=s,
             )
         assert not r.success
@@ -1093,7 +1093,7 @@ class TestDelete:
             await db._write_impl("/a.txt", "a", session=s)
             await db._write_impl("/b.txt", "b", session=s)
 
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 Candidate(path="/a.txt"),
                 Candidate(path="/b.txt"),
@@ -1140,7 +1140,7 @@ class TestDelete:
         async with db._use_session() as s:
             r = await db._delete_impl(
                 "/a.txt",
-                candidates=GroverResult(candidates=[Candidate(path="/b.txt")]),
+                candidates=VFSResult(candidates=[Candidate(path="/b.txt")]),
                 session=s,
             )
         assert not r.success
@@ -1209,7 +1209,7 @@ class TestDelete:
             await db._mkdir_impl("/ok_dir", session=s)
             await db._write_impl("/full_dir/file.txt", "x", session=s)
 
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 Candidate(path="/ok_dir"),
                 Candidate(path="/full_dir"),
@@ -1305,7 +1305,7 @@ class TestMkconn:
                 "/a.py",
                 "/b.py",
                 "imports",
-                objects=[GroverObject(path="/x.py/.connections/imports/y.py", kind="connection")],
+                objects=[VFSObject(path="/x.py/.connections/imports/y.py", kind="connection")],
                 session=s,
             )
         assert not r.success
@@ -1316,14 +1316,14 @@ class TestMkconn:
             await db._write_impl("/b.py", "b", session=s)
 
         conns = [
-            GroverObject(
+            VFSObject(
                 path="/a.py/.connections/imports/b.py",
                 kind="connection",
                 source_path="/a.py",
                 target_path="/b.py",
                 connection_type="imports",
             ),
-            GroverObject(
+            VFSObject(
                 path="/b.py/.connections/calls/a.py",
                 kind="connection",
                 source_path="/b.py",
@@ -1339,7 +1339,7 @@ class TestMkconn:
     async def test_mkconn_objects_validates_sources(self, db: DatabaseFileSystem):
         """Batch mkconn with objects rejects missing sources."""
         conns = [
-            GroverObject(
+            VFSObject(
                 path="/ghost.py/.connections/imports/b.py",
                 kind="connection",
                 source_path="/ghost.py",
@@ -1364,7 +1364,7 @@ class TestMkconn:
         assert "/auth.py/.connections/imports/utils.py" in set(r.paths)
 
     async def test_mkconn_through_public_api(self, db: DatabaseFileSystem, engine):
-        root = GroverFileSystem(engine=engine)
+        root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
 
         await root.write("/code/auth.py", "code")
@@ -1410,7 +1410,7 @@ class TestMkdir:
         assert r.success
 
     async def test_mkdir_through_public_api(self, db: DatabaseFileSystem, engine):
-        root = GroverFileSystem(engine=engine)
+        root = VirtualFileSystem(engine=engine)
         await root.add_mount("/store", db)
 
         r = await root.mkdir("/store/docs")
@@ -1474,7 +1474,7 @@ class TestCopy:
         assert len(r.candidates) == 2
 
     async def test_copy_through_public_api(self, db: DatabaseFileSystem, engine):
-        root = GroverFileSystem(engine=engine)
+        root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
         await root.write("/code/app.py", "code")
         r = await root.copy(src="/code/app.py", dest="/code/app_bak.py")
@@ -1607,7 +1607,7 @@ class TestMove:
         assert (await db.read("/b.py")).content == "b"
 
     async def test_move_through_public_api(self, db: DatabaseFileSystem, engine):
-        root = GroverFileSystem(engine=engine)
+        root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
         await root.write("/code/old.py", "content")
         r = await root.move(src="/code/old.py", dest="/code/new.py")
@@ -1686,7 +1686,7 @@ class TestGlob:
 
     async def test_glob_with_candidates(self, db: DatabaseFileSystem):
         """When candidates are provided, filter them in-memory."""
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(path="/src/auth.py", kind="file"),
                 Candidate(path="/src/db.py", kind="file"),
@@ -1700,7 +1700,7 @@ class TestGlob:
     async def test_glob_with_candidates_returns_fresh_detail(self, db: DatabaseFileSystem):
         """Impl returns only the glob detail; routing layer merges prior details."""
         prior = Detail(operation="search", score=0.9)
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(path="/src/auth.py", kind="file", details=(prior,)),
                 Candidate(path="/docs/readme.md", kind="file", details=(prior,)),
@@ -1853,7 +1853,7 @@ class TestGrep:
 
     async def test_grep_with_candidates_uses_existing_content(self, db: DatabaseFileSystem):
         """When candidates already carry content, no DB hydration needed."""
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(path="/a.py", kind="file", content="timeout = 30"),
                 Candidate(path="/b.py", kind="file", content="no match"),
@@ -1866,7 +1866,7 @@ class TestGrep:
     async def test_grep_with_candidates_returns_fresh_detail(self, db: DatabaseFileSystem):
         """Impl returns only the grep detail; routing layer merges prior details."""
         prior = Detail(operation="glob", score=None)
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(path="/a.py", kind="file", content="timeout = 30", details=(prior,)),
             ]
@@ -1883,7 +1883,7 @@ class TestGrep:
         """Candidates without content get hydrated from DB."""
         async with db._use_session() as s:
             await db._write_impl("/a.py", "timeout = 30", session=s)
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(path="/a.py", kind="file"),  # content=None
             ]
@@ -2466,7 +2466,7 @@ class TestReadErrorPaths:
         async with db._use_session() as s:
             r = await db._read_impl(
                 path="/a.py",
-                candidates=GroverResult(candidates=[Candidate(path="/b.py")]),
+                candidates=VFSResult(candidates=[Candidate(path="/b.py")]),
                 session=s,
             )
         assert not r.success
@@ -2475,7 +2475,7 @@ class TestReadErrorPaths:
         """database.py:713 — read with empty candidates returns empty."""
         async with db._use_session() as s:
             r = await db._read_impl(
-                candidates=GroverResult(candidates=[]),
+                candidates=VFSResult(candidates=[]),
                 session=s,
             )
         assert r.success
@@ -2485,7 +2485,7 @@ class TestReadErrorPaths:
 class TestWriteErrorPaths:
     async def test_write_both_path_and_objects(self, db: DatabaseFileSystem):
         """database.py:817 — write with both path and objects returns error."""
-        obj = GroverObjectBase(path="/a.py", content="code")
+        obj = VFSObjectBase(path="/a.py", content="code")
         async with db._use_session() as s:
             r = await db._write_impl(path="/a.py", objects=[obj], session=s)
         assert not r.success
@@ -2503,7 +2503,7 @@ class TestLsErrorPaths:
         async with db._use_session() as s:
             r = await db._ls_impl(
                 path="/src",
-                candidates=GroverResult(candidates=[Candidate(path="/other")]),
+                candidates=VFSResult(candidates=[Candidate(path="/other")]),
                 session=s,
             )
         assert not r.success
@@ -2512,7 +2512,7 @@ class TestLsErrorPaths:
         """database.py:982 — ls with empty candidates returns empty."""
         async with db._use_session() as s:
             r = await db._ls_impl(
-                candidates=GroverResult(candidates=[]),
+                candidates=VFSResult(candidates=[]),
                 session=s,
             )
         assert r.success
@@ -2530,7 +2530,7 @@ class TestLsFilterMetadataKinds:
             await db._write_impl("/src/auth.py", "code", session=s)
             # Insert a chunk whose parent_path == /src (normally chunks live
             # under files, but this exercises the filter guard).
-            chunk = GroverObject(path="/src/.chunks/login", content="chunk body")
+            chunk = VFSObject(path="/src/.chunks/login", content="chunk body")
             s.add(chunk)
             await s.flush()
         async with db._use_session() as s:
@@ -2553,7 +2553,7 @@ class TestDeleteErrorPaths:
         async with db._use_session() as s:
             r = await db._delete_impl(
                 path="/a.py",
-                candidates=GroverResult(candidates=[Candidate(path="/b.py")]),
+                candidates=VFSResult(candidates=[Candidate(path="/b.py")]),
                 session=s,
             )
         assert not r.success
@@ -2562,7 +2562,7 @@ class TestDeleteErrorPaths:
         """database.py:1060 — delete with empty candidates returns empty."""
         async with db._use_session() as s:
             r = await db._delete_impl(
-                candidates=GroverResult(candidates=[]),
+                candidates=VFSResult(candidates=[]),
                 session=s,
             )
         assert r.success

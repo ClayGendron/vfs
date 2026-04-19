@@ -1,4 +1,4 @@
-"""Tests for GroverFileSystem base class — constructor, session, helpers, routing, public methods.
+"""Tests for VirtualFileSystem base class — constructor, session, helpers, routing, public methods.
 
 Covers everything in ``base.py`` not already tested by ``test_routing.py``
 (which focuses on mount management and basic candidate routing).
@@ -11,9 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from grover.base import GroverFileSystem
-from grover.models import GroverObject
-from grover.results import EditOperation, GroverResult, TwoPathOperation
 from tests.conftest import (
     candidate as _candidate,
 )
@@ -21,14 +18,17 @@ from tests.conftest import (
     dummy_session_factory,
     tracking_session_factory,
 )
+from vfs.base import VirtualFileSystem
+from vfs.models import VFSObject
+from vfs.results import EditOperation, TwoPathOperation, VFSResult
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-class _FullRoutingFS(GroverFileSystem):
-    """GroverFileSystem with all ``_*_impl`` methods replaced by AsyncMocks."""
+class _FullRoutingFS(VirtualFileSystem):
+    """VirtualFileSystem with all ``_*_impl`` methods replaced by AsyncMocks."""
 
     _ALL_OPS = (
         "read",
@@ -67,7 +67,7 @@ class _FullRoutingFS(GroverFileSystem):
         super().__init__(session_factory=dummy_session_factory())
         self._name = name
         for op in self._ALL_OPS:
-            mock = AsyncMock(return_value=GroverResult())
+            mock = AsyncMock(return_value=VFSResult())
             setattr(self, f"_{op}_impl", mock)
             setattr(self, f"{op}_mock", mock)
 
@@ -83,24 +83,24 @@ class _FullRoutingFS(GroverFileSystem):
 class TestConstructorValidation:
     def test_no_engine_no_session_factory_raises(self):
         with pytest.raises(ValueError, match="requires either engine or session_factory"):
-            GroverFileSystem()
+            VirtualFileSystem()
 
     def test_engine_only_creates_session_factory(self):
         engine = MagicMock()
-        fs = GroverFileSystem(engine=engine)
+        fs = VirtualFileSystem(engine=engine)
         assert fs._session_factory is not None
         assert fs._engine is engine
 
     def test_session_factory_only(self):
         factory = dummy_session_factory()
-        fs = GroverFileSystem(session_factory=factory)
+        fs = VirtualFileSystem(session_factory=factory)
         assert fs._session_factory is factory
         assert fs._engine is None
 
     def test_both_engine_and_session_factory_prefers_factory(self):
         engine = MagicMock()
         factory = dummy_session_factory()
-        fs = GroverFileSystem(engine=engine, session_factory=factory)
+        fs = VirtualFileSystem(engine=engine, session_factory=factory)
         assert fs._session_factory is factory
         assert fs._engine is engine
 
@@ -168,12 +168,12 @@ class TestSessionManagement:
 
         fs = _FullRoutingFS()
         fs._session_factory = factory
-        fs._schema = "grover"
+        fs._schema = "vfs"
 
         async with fs._use_session():
             pass
 
-        assert connection_calls == [{"schema_translate_map": {None: "grover"}}]
+        assert connection_calls == [{"schema_translate_map": {None: "vfs"}}]
         assert sessions[0].committed is True
 
     async def test_use_session_skips_schema_translate_map_when_none(self):
@@ -279,23 +279,23 @@ class TestError:
 
 class TestAddPrefix:
     def test_empty_prefix_returns_result_unchanged(self):
-        r = GroverResult(candidates=[_candidate("/file.py")])
+        r = VFSResult(candidates=[_candidate("/file.py")])
         rebased = r.add_prefix("")
         assert rebased is r
 
     def test_prefix_prepends_to_candidate_paths(self):
-        r = GroverResult(candidates=[_candidate("/file.py"), _candidate("/dir/a.py")])
+        r = VFSResult(candidates=[_candidate("/file.py"), _candidate("/dir/a.py")])
         r.add_prefix("/mount")
         assert r.candidates[0].path == "/mount/file.py"
         assert r.candidates[1].path == "/mount/dir/a.py"
 
     def test_root_path_gets_prefix_without_trailing_slash(self):
-        r = GroverResult(candidates=[_candidate("/")])
+        r = VFSResult(candidates=[_candidate("/")])
         r.add_prefix("/data")
         assert r.candidates[0].path == "/data"
 
     def test_preserves_success_and_errors(self):
-        r = GroverResult(success=False, errors=["err"], candidates=[_candidate("/x.py")])
+        r = VFSResult(success=False, errors=["err"], candidates=[_candidate("/x.py")])
         r.add_prefix("/m")
         assert r.success is False
         assert r.errors == ["err"]
@@ -304,7 +304,7 @@ class TestAddPrefix:
 class TestExcludeMountedPaths:
     async def test_no_mounts_returns_unchanged(self):
         fs = _FullRoutingFS()
-        r = GroverResult(candidates=[_candidate("/a.py")])
+        r = VFSResult(candidates=[_candidate("/a.py")])
         result = fs._exclude_mounted_paths(r)
         assert len(result.candidates) == 1
 
@@ -312,7 +312,7 @@ class TestExcludeMountedPaths:
         fs = _FullRoutingFS()
         child = _FullRoutingFS("child")
         await fs.add_mount("/data", child)
-        r = GroverResult(
+        r = VFSResult(
             candidates=[
                 _candidate("/local.py"),
                 _candidate("/data/file.py"),
@@ -325,7 +325,7 @@ class TestExcludeMountedPaths:
     async def test_does_not_filter_prefix_substring(self):
         fs = _FullRoutingFS()
         await fs.add_mount("/web", _FullRoutingFS("child"))
-        r = GroverResult(candidates=[_candidate("/webinar/page.html")])
+        r = VFSResult(candidates=[_candidate("/webinar/page.html")])
         result = fs._exclude_mounted_paths(r)
         assert len(result.candidates) == 1
 
@@ -334,53 +334,53 @@ class TestRequireSameMount:
     def test_single_resolved_succeeds(self):
         fs = _FullRoutingFS()
         resolved = [(fs, "/file.py", "/mount")]
-        result = GroverFileSystem._require_same_mount(resolved, "test ops")
+        result = VirtualFileSystem._require_same_mount(resolved, "test ops")
         assert result == (fs, "/mount")
 
     def test_same_mount_succeeds(self):
         fs = _FullRoutingFS()
         resolved = [(fs, "/a.py", "/m"), (fs, "/b.py", "/m")]
-        result = GroverFileSystem._require_same_mount(resolved, "ops")
+        result = VirtualFileSystem._require_same_mount(resolved, "ops")
         assert result == (fs, "/m")
 
     def test_different_filesystem_returns_error(self):
         fs1 = _FullRoutingFS("a")
         fs2 = _FullRoutingFS("b")
         resolved = [(fs1, "/a.py", "/m"), (fs2, "/b.py", "/m")]
-        result = GroverFileSystem._require_same_mount(resolved, "move sources")
+        result = VirtualFileSystem._require_same_mount(resolved, "move sources")
         assert isinstance(result, str)
         assert "move sources" in result
 
     def test_different_prefix_returns_error(self):
         fs = _FullRoutingFS()
         resolved = [(fs, "/a.py", "/m1"), (fs, "/b.py", "/m2")]
-        result = GroverFileSystem._require_same_mount(resolved, "copy dests")
+        result = VirtualFileSystem._require_same_mount(resolved, "copy dests")
         assert isinstance(result, str)
         assert "copy dests" in result
 
 
 class TestMergeResults:
     def test_empty_list_returns_success(self):
-        r = GroverFileSystem._merge_results([])
+        r = VirtualFileSystem._merge_results([])
         assert r.success is True
         assert r.candidates == []
 
     def test_single_result_returned(self):
-        r1 = GroverResult(candidates=[_candidate("/a.py")])
-        merged = GroverFileSystem._merge_results([r1])
+        r1 = VFSResult(candidates=[_candidate("/a.py")])
+        merged = VirtualFileSystem._merge_results([r1])
         assert merged.candidates[0].path == "/a.py"
 
     def test_union_of_two_results(self):
-        r1 = GroverResult(candidates=[_candidate("/a.py")])
-        r2 = GroverResult(candidates=[_candidate("/b.py")])
-        merged = GroverFileSystem._merge_results([r1, r2])
+        r1 = VFSResult(candidates=[_candidate("/a.py")])
+        r2 = VFSResult(candidates=[_candidate("/b.py")])
+        merged = VirtualFileSystem._merge_results([r1, r2])
         paths = {c.path for c in merged.candidates}
         assert paths == {"/a.py", "/b.py"}
 
     def test_failure_propagates(self):
-        r1 = GroverResult(candidates=[_candidate("/a.py")])
-        r2 = GroverResult(success=False, errors=["fail"], candidates=[])
-        merged = GroverFileSystem._merge_results([r1, r2])
+        r1 = VFSResult(candidates=[_candidate("/a.py")])
+        r2 = VFSResult(success=False, errors=["fail"], candidates=[])
+        merged = VirtualFileSystem._merge_results([r1, r2])
         assert merged.success is False
         assert "fail" in merged.errors
 
@@ -396,7 +396,7 @@ class TestGroupByTerminal:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 _candidate("/local.py"),
                 _candidate("/data/remote.py"),
@@ -421,7 +421,7 @@ class TestGroupByTerminal:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 _candidate("/data/a.py"),
                 _candidate("/data/b.py"),
@@ -433,7 +433,7 @@ class TestGroupByTerminal:
 
     def test_empty_candidates(self):
         root = _FullRoutingFS()
-        groups = root._group_candidates_by_terminal(GroverResult())
+        groups = root._group_candidates_by_terminal(VFSResult())
         assert groups == []
 
 
@@ -444,8 +444,8 @@ class TestGroupObjectsByTerminal:
         await root.add_mount("/data", child)
 
         objs = [
-            GroverObject(path="/data/file.py", content="code"),
-            GroverObject(path="/local.py", content="local"),
+            VFSObject(path="/data/file.py", content="code"),
+            VFSObject(path="/local.py", content="local"),
         ]
         original_paths = [obj.path for obj in objs]
 
@@ -458,7 +458,7 @@ class TestGroupObjectsByTerminal:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        objs = [GroverObject(path="/data/file.py", content="code")]
+        objs = [VFSObject(path="/data/file.py", content="code")]
         groups = root._group_objects_by_terminal(objs)
 
         assert len(groups) == 1
@@ -474,11 +474,11 @@ class TestDispatchCandidates:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.read_mock.return_value = GroverResult(
+        child.read_mock.return_value = VFSResult(
             candidates=[_candidate("/remote.py", content="hello")],
         )
 
-        candidates = GroverResult(candidates=[_candidate("/data/remote.py")])
+        candidates = VFSResult(candidates=[_candidate("/data/remote.py")])
         result = await root._dispatch_candidates("read", candidates)
 
         child.read_mock.assert_awaited_once()
@@ -487,7 +487,7 @@ class TestDispatchCandidates:
 
     async def test_empty_candidates_returns_empty(self):
         root = _FullRoutingFS()
-        result = await root._dispatch_candidates("read", GroverResult())
+        result = await root._dispatch_candidates("read", VFSResult())
         assert result.candidates == []
         assert result.success is True
 
@@ -498,10 +498,10 @@ class TestDispatchCandidates:
         await root.add_mount("/m1", c1)
         await root.add_mount("/m2", c2)
 
-        c1.stat_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
-        c2.stat_mock.return_value = GroverResult(candidates=[_candidate("/b.py")])
+        c1.stat_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        c2.stat_mock.return_value = VFSResult(candidates=[_candidate("/b.py")])
 
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 _candidate("/m1/a.py"),
                 _candidate("/m2/b.py"),
@@ -529,7 +529,7 @@ class TestRouteSingle:
             await root._route_single(
                 "read",
                 "/local.py",
-                GroverResult(candidates=[_candidate("/remote.py")]),
+                VFSResult(candidates=[_candidate("/remote.py")]),
             )
 
     async def test_with_path_resolves_and_calls_impl(self):
@@ -537,7 +537,7 @@ class TestRouteSingle:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.read_mock.return_value = GroverResult(
+        child.read_mock.return_value = VFSResult(
             candidates=[_candidate("/file.py", content="data")],
         )
         result = await root._route_single("read", "/data/file.py", None)
@@ -550,11 +550,11 @@ class TestRouteSingle:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.ls_mock.return_value = GroverResult(
+        child.ls_mock.return_value = VFSResult(
             candidates=[_candidate("/x.py")],
         )
 
-        candidates = GroverResult(candidates=[_candidate("/data/x.py")])
+        candidates = VFSResult(candidates=[_candidate("/data/x.py")])
         result = await root._route_single("ls", None, candidates)
 
         child.ls_mock.assert_awaited_once()
@@ -562,7 +562,7 @@ class TestRouteSingle:
 
     async def test_unmounted_path_stays_on_self(self):
         root = _FullRoutingFS("root")
-        root.stat_mock.return_value = GroverResult(
+        root.stat_mock.return_value = VFSResult(
             candidates=[_candidate("/local.py")],
         )
         result = await root._route_single("stat", "/local.py", None)
@@ -588,7 +588,7 @@ class TestRouteTwoPath:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.move_mock.return_value = GroverResult(
+        child.move_mock.return_value = VFSResult(
             candidates=[_candidate("/b.py")],
         )
 
@@ -603,7 +603,7 @@ class TestRouteTwoPath:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.copy_mock.return_value = GroverResult(candidates=[_candidate("/b.py")])
+        child.copy_mock.return_value = VFSResult(candidates=[_candidate("/b.py")])
 
         ops = [TwoPathOperation(src="/data/a.py", dest="/data/b.py")]
         await root._route_two_path("copy", ops)
@@ -657,10 +657,10 @@ class TestCrossMountTransfer:
         await root.add_mount("/src", src)
         await root.add_mount("/dst", dst)
 
-        src.read_mock.return_value = GroverResult(
+        src.read_mock.return_value = VFSResult(
             candidates=[_candidate("/file.py", content="hello")],
         )
-        dst.write_mock.return_value = GroverResult(
+        dst.write_mock.return_value = VFSResult(
             candidates=[_candidate("/file.py")],
         )
 
@@ -678,13 +678,13 @@ class TestCrossMountTransfer:
         await root.add_mount("/src", src)
         await root.add_mount("/dst", dst)
 
-        src.read_mock.return_value = GroverResult(
+        src.read_mock.return_value = VFSResult(
             candidates=[_candidate("/file.py", content="data")],
         )
-        dst.write_mock.return_value = GroverResult(
+        dst.write_mock.return_value = VFSResult(
             candidates=[_candidate("/file.py")],
         )
-        src.delete_mock.return_value = GroverResult(
+        src.delete_mock.return_value = VFSResult(
             candidates=[_candidate("/file.py")],
         )
 
@@ -705,11 +705,11 @@ class TestRouteFanout:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.grep_mock.return_value = GroverResult(
+        child.grep_mock.return_value = VFSResult(
             candidates=[_candidate("/match.py")],
         )
 
-        candidates = GroverResult(candidates=[_candidate("/data/match.py")])
+        candidates = VFSResult(candidates=[_candidate("/data/match.py")])
         result = await root._route_fanout("grep", candidates, pattern="test")
 
         child.grep_mock.assert_awaited_once()
@@ -720,10 +720,10 @@ class TestRouteFanout:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        root.glob_mock.return_value = GroverResult(
+        root.glob_mock.return_value = VFSResult(
             candidates=[_candidate("/local.py")],
         )
-        child.glob_mock.return_value = GroverResult(
+        child.glob_mock.return_value = VFSResult(
             candidates=[_candidate("/remote.py")],
         )
 
@@ -740,10 +740,10 @@ class TestRouteFanout:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        root.glob_mock.return_value = GroverResult(
+        root.glob_mock.return_value = VFSResult(
             candidates=[_candidate("/local.py"), _candidate("/data/shadow.py")],
         )
-        child.glob_mock.return_value = GroverResult(
+        child.glob_mock.return_value = VFSResult(
             candidates=[_candidate("/real.py")],
         )
 
@@ -759,8 +759,8 @@ class TestRouteFanout:
         child = _FullRoutingFS("child")
         await root.add_mount("/web", child)
 
-        root.pagerank_mock.return_value = GroverResult()
-        child.pagerank_mock.return_value = GroverResult(
+        root.pagerank_mock.return_value = VFSResult()
+        child.pagerank_mock.return_value = VFSResult(
             candidates=[_candidate("/index.html")],
         )
 
@@ -781,27 +781,27 @@ class TestPublicCRUD:
             await fs.read()
 
         with pytest.raises(ValueError, match="Exactly one of path or candidates"):
-            await fs.read("/f.py", candidates=GroverResult(candidates=[_candidate("/f.py")]))
+            await fs.read("/f.py", candidates=VFSResult(candidates=[_candidate("/f.py")]))
 
     @pytest.mark.parametrize("method", ["read", "stat", "ls", "mkdir"])
     async def test_single_path_ops_route_to_impl(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = GroverResult(candidates=[_candidate("/f.py")])
+        mock.return_value = VFSResult(candidates=[_candidate("/f.py")])
         result = await getattr(fs, method)("/f.py")
         mock.assert_awaited_once()
         assert result.candidates[0].path == "/f.py"
 
     async def test_edit_routes(self):
         fs = _FullRoutingFS()
-        fs.edit_mock.return_value = GroverResult(candidates=[_candidate("/f.py")])
+        fs.edit_mock.return_value = VFSResult(candidates=[_candidate("/f.py")])
         result = await fs.edit("/f.py", old="x", new="y")
         fs.edit_mock.assert_awaited_once()
         assert result.candidates[0].path == "/f.py"
 
     async def test_edit_creates_edit_operation(self):
         fs = _FullRoutingFS()
-        fs.edit_mock.return_value = GroverResult()
+        fs.edit_mock.return_value = VFSResult()
         await fs.edit("/f.py", old="a", new="b", replace_all=True)
         call_kwargs = fs.edit_mock.call_args
         edits = call_kwargs.kwargs.get("edits") or call_kwargs[1].get("edits")
@@ -812,7 +812,7 @@ class TestPublicCRUD:
 
     async def test_edit_with_explicit_edits(self):
         fs = _FullRoutingFS()
-        fs.edit_mock.return_value = GroverResult()
+        fs.edit_mock.return_value = VFSResult()
         ops = [EditOperation(old="x", new="y"), EditOperation(old="a", new="b")]
         await fs.edit("/f.py", edits=ops)
         call_kwargs = fs.edit_mock.call_args
@@ -821,28 +821,28 @@ class TestPublicCRUD:
 
     async def test_delete_routes(self):
         fs = _FullRoutingFS()
-        fs.delete_mock.return_value = GroverResult(candidates=[_candidate("/f.py")])
+        fs.delete_mock.return_value = VFSResult(candidates=[_candidate("/f.py")])
         result = await fs.delete("/f.py")
         fs.delete_mock.assert_awaited_once()
         assert result.candidates[0].path == "/f.py"
 
     async def test_delete_permanent_kwarg(self):
         fs = _FullRoutingFS()
-        fs.delete_mock.return_value = GroverResult()
+        fs.delete_mock.return_value = VFSResult()
         await fs.delete("/f.py", permanent=True)
         call_kwargs = fs.delete_mock.call_args
         assert call_kwargs.kwargs.get("permanent") is True
 
     async def test_write_routes(self):
         fs = _FullRoutingFS()
-        fs.write_mock.return_value = GroverResult(candidates=[_candidate("/f.py")])
+        fs.write_mock.return_value = VFSResult(candidates=[_candidate("/f.py")])
         result = await fs.write("/f.py", "hello")
         fs.write_mock.assert_awaited_once()
         assert result.candidates[0].path == "/f.py"
 
     async def test_write_passes_content_and_overwrite(self):
         fs = _FullRoutingFS()
-        fs.write_mock.return_value = GroverResult()
+        fs.write_mock.return_value = VFSResult()
         await fs.write("/f.py", "data", overwrite=False)
         call_kwargs = fs.write_mock.call_args
         assert call_kwargs.kwargs.get("content") == "data"
@@ -850,7 +850,7 @@ class TestPublicCRUD:
 
     async def test_tree_passes_max_depth(self):
         fs = _FullRoutingFS()
-        fs.tree_mock.return_value = GroverResult(candidates=[_candidate("/dir")])
+        fs.tree_mock.return_value = VFSResult(candidates=[_candidate("/dir")])
         await fs.tree("/dir", max_depth=3)
         call_kwargs = fs.tree_mock.call_args
         assert call_kwargs.kwargs.get("max_depth") == 3
@@ -864,28 +864,28 @@ class TestPublicCRUD:
 class TestPublicTwoPath:
     async def test_move_routes(self):
         fs = _FullRoutingFS()
-        fs.move_mock.return_value = GroverResult(candidates=[_candidate("/b.py")])
+        fs.move_mock.return_value = VFSResult(candidates=[_candidate("/b.py")])
         result = await fs.move("/a.py", "/b.py")
         fs.move_mock.assert_awaited_once()
         assert result.candidates[0].path == "/b.py"
 
     async def test_move_with_batch(self):
         fs = _FullRoutingFS()
-        fs.move_mock.return_value = GroverResult()
+        fs.move_mock.return_value = VFSResult()
         moves = [TwoPathOperation(src="/a.py", dest="/b.py")]
         await fs.move(moves=moves)
         fs.move_mock.assert_awaited_once()
 
     async def test_copy_routes(self):
         fs = _FullRoutingFS()
-        fs.copy_mock.return_value = GroverResult(candidates=[_candidate("/b.py")])
+        fs.copy_mock.return_value = VFSResult(candidates=[_candidate("/b.py")])
         result = await fs.copy("/a.py", "/b.py")
         fs.copy_mock.assert_awaited_once()
         assert result.candidates[0].path == "/b.py"
 
     async def test_copy_with_batch(self):
         fs = _FullRoutingFS()
-        fs.copy_mock.return_value = GroverResult()
+        fs.copy_mock.return_value = VFSResult()
         copies = [TwoPathOperation(src="/a.py", dest="/b.py")]
         await fs.copy(copies=copies)
         fs.copy_mock.assert_awaited_once()
@@ -902,7 +902,7 @@ class TestPublicMkconn:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.mkconn_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
+        child.mkconn_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
         result = await root.mkconn("/data/a.py", "/data/b.py", "imports")
         child.mkconn_mock.assert_awaited_once()
         assert result.success is True
@@ -920,7 +920,7 @@ class TestPublicMkconn:
 
     async def test_mkconn_on_root_filesystem(self):
         fs = _FullRoutingFS()
-        fs.mkconn_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
+        fs.mkconn_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
         result = await fs.mkconn("/a.py", "/b.py", "imports")
         fs.mkconn_mock.assert_awaited_once()
         assert result.success is True
@@ -934,28 +934,28 @@ class TestPublicMkconn:
 class TestPublicSearch:
     async def test_glob_routes(self):
         fs = _FullRoutingFS()
-        fs.glob_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
+        fs.glob_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
         result = await fs.glob("*.py")
         fs.glob_mock.assert_awaited_once()
         assert result.candidates[0].path == "/a.py"
 
     async def test_glob_with_candidates(self):
         fs = _FullRoutingFS()
-        fs.glob_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
-        cands = GroverResult(candidates=[_candidate("/a.py")])
+        fs.glob_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        cands = VFSResult(candidates=[_candidate("/a.py")])
         await fs.glob("*.py", candidates=cands)
         fs.glob_mock.assert_awaited_once()
 
     async def test_grep_routes(self):
         fs = _FullRoutingFS()
-        fs.grep_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
+        fs.grep_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
         result = await fs.grep("pattern")
         fs.grep_mock.assert_awaited_once()
         assert result.candidates[0].path == "/a.py"
 
     async def test_grep_passes_kwargs(self):
         fs = _FullRoutingFS()
-        fs.grep_mock.return_value = GroverResult()
+        fs.grep_mock.return_value = VFSResult()
         await fs.grep(
             "test",
             case_mode="insensitive",
@@ -984,14 +984,14 @@ class TestPublicSearch:
     async def test_search_variants_route_to_impl(self, method, args):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
+        mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
         result = await getattr(fs, method)(*args)
         mock.assert_awaited_once()
         assert result.candidates[0].path == "/a.py"
 
     async def test_semantic_search_passes_k(self):
         fs = _FullRoutingFS()
-        fs.semantic_search_mock.return_value = GroverResult()
+        fs.semantic_search_mock.return_value = VFSResult()
         await fs.semantic_search("query", k=5)
         call_kwargs = fs.semantic_search_mock.call_args
         assert call_kwargs.kwargs.get("k") == 5
@@ -1015,22 +1015,22 @@ class TestPublicGraphTraversal:
     async def test_traversal_ops_route_to_impl(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
+        mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
         result = await getattr(fs, method)("/a.py")
         mock.assert_awaited_once()
         assert result.candidates[0].path == "/a.py"
 
     async def test_neighborhood_passes_depth(self):
         fs = _FullRoutingFS()
-        fs.neighborhood_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
+        fs.neighborhood_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
         await fs.neighborhood("/a.py", depth=3)
         call_kwargs = fs.neighborhood_mock.call_args
         assert call_kwargs.kwargs.get("depth") == 3
 
     async def test_predecessors_with_candidates(self):
         fs = _FullRoutingFS()
-        fs.predecessors_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
-        cands = GroverResult(candidates=[_candidate("/a.py")])
+        fs.predecessors_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        cands = VFSResult(candidates=[_candidate("/a.py")])
         await fs.predecessors(candidates=cands)
         fs.predecessors_mock.assert_awaited_once()
 
@@ -1045,8 +1045,8 @@ class TestPublicGraphCandidateOnly:
     async def test_subgraph_ops_dispatch(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
-        cands = GroverResult(candidates=[_candidate("/a.py")])
+        mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        cands = VFSResult(candidates=[_candidate("/a.py")])
         result = await getattr(fs, method)(cands)
         mock.assert_awaited_once()
         assert result.candidates[0].path == "/a.py"
@@ -1073,15 +1073,15 @@ class TestPublicGraphAlgorithms:
     async def test_algorithm_routes_to_impl(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
+        mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
         result = await getattr(fs, method)()
         mock.assert_awaited_once()
         assert result.candidates[0].path == "/a.py"
 
     async def test_pagerank_with_candidates(self):
         fs = _FullRoutingFS()
-        fs.pagerank_mock.return_value = GroverResult(candidates=[_candidate("/a.py")])
-        cands = GroverResult(candidates=[_candidate("/a.py")])
+        fs.pagerank_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        cands = VFSResult(candidates=[_candidate("/a.py")])
         await fs.pagerank(candidates=cands)
         fs.pagerank_mock.assert_awaited_once()
 
@@ -1090,10 +1090,10 @@ class TestPublicGraphAlgorithms:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        root.hits_mock.return_value = GroverResult(
+        root.hits_mock.return_value = VFSResult(
             candidates=[_candidate("/local.py")],
         )
-        child.hits_mock.return_value = GroverResult(
+        child.hits_mock.return_value = VFSResult(
             candidates=[_candidate("/remote.py")],
         )
 

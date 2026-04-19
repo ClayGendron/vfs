@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from grover.paths import ObjectKind
+    from vfs.paths import ObjectKind
 
 RenderMode = Literal["action", "content", "ls", "query_list", "stat", "tree"]
 CaseMode = Literal["sensitive", "insensitive", "smart"]

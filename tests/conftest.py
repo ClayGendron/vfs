@@ -1,4 +1,4 @@
-"""Shared test helpers for Grover v2 tests."""
+"""Shared test helpers for VFS v2 tests."""
 
 from __future__ import annotations
 
@@ -12,24 +12,24 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
-from grover.backends.database import DatabaseFileSystem
-from grover.backends.mssql import MSSQLFileSystem
-from grover.base import GroverFileSystem
-from grover.models import GroverObjectBase
-from grover.results import Candidate
+from vfs.backends.database import DatabaseFileSystem
+from vfs.backends.mssql import MSSQLFileSystem
+from vfs.base import VirtualFileSystem
+from vfs.models import VFSObjectBase
+from vfs.results import Candidate
 
 if TYPE_CHECKING:
-    from grover.results import GroverResult
+    from vfs.results import VFSResult
 
 # ------------------------------------------------------------------
 # --postgres / --mssql CLI flags
 # ------------------------------------------------------------------
 
-_PG_DB = "grover_test"
+_PG_DB = "vfs_test"
 _PG_URL = f"postgresql+asyncpg://localhost/{_PG_DB}"
 
 _MSSQL_DEFAULT_URL = (
-    "mssql+aioodbc://sa:Strong!Passw0rd@localhost:1433/grover_test"
+    "mssql+aioodbc://sa:Strong!Passw0rd@localhost:1433/vfs_test"
     "?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
 )
 
@@ -85,10 +85,10 @@ async def _provision_mssql_fulltext(eng) -> None:
     """
     from sqlalchemy import text
 
-    from grover.models import GroverObject
+    from vfs.models import VFSObject
 
-    table = GroverObject.__tablename__
-    catalog = "grover_test_ftcat"
+    table = VFSObject.__tablename__
+    catalog = "vfs_test_ftcat"
 
     async with eng.connect() as conn:
         conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
@@ -220,22 +220,22 @@ def candidate(path: str, *, content: str | None = None) -> Candidate:
     return Candidate(path=path, content=content)
 
 
-def make_fs(name: str = "test") -> GroverFileSystem:
-    """Create a GroverFileSystem with a dummy session factory for routing tests."""
+def make_fs(name: str = "test") -> VirtualFileSystem:
+    """Create a VirtualFileSystem with a dummy session factory for routing tests."""
     from unittest.mock import AsyncMock
 
-    fs = GroverFileSystem(session_factory=AsyncMock())
+    fs = VirtualFileSystem(session_factory=AsyncMock())
     fs._name = name
     return fs
 
 
-def require_file(result: GroverResult) -> Candidate:
+def require_file(result: VFSResult) -> Candidate:
     """Return the first candidate, asserting it exists for type narrowing."""
     assert result.file is not None
     return result.file
 
 
-def require_object[T: GroverObjectBase](obj: T | None) -> T:
+def require_object[T: VFSObjectBase](obj: T | None) -> T:
     """Assert an object exists and return the narrowed value."""
     assert obj is not None
     return obj

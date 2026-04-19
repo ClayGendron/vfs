@@ -6,8 +6,8 @@ import asyncio
 from collections import deque
 from typing import TYPE_CHECKING
 
-from grover.paths import normalize_path, parse_kind
-from grover.query.ast import (
+from vfs.paths import normalize_path, parse_kind
+from vfs.query.ast import (
     CaseMode,
     CopyCommand,
     DeleteCommand,
@@ -41,32 +41,32 @@ from grover.query.ast import (
     Visibility,
     WriteCommand,
 )
-from grover.results import Candidate, GroverResult, TwoPathOperation
+from vfs.results import Candidate, TwoPathOperation, VFSResult
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from grover.base import GroverFileSystem
+    from vfs.base import VirtualFileSystem
 
 
 async def execute_query(
-    filesystem: GroverFileSystem,
+    filesystem: VirtualFileSystem,
     plan: QueryPlan,
     *,
-    initial: GroverResult | None = None,
+    initial: VFSResult | None = None,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     """Execute a parsed query plan against *filesystem*."""
     return await _execute_node(filesystem, plan.ast, initial, user_id=user_id)
 
 
 async def _execute_node(
-    filesystem: GroverFileSystem,
+    filesystem: VirtualFileSystem,
     node: QueryNode,
-    current: GroverResult | None,
+    current: VFSResult | None,
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     match node:
         case PipelineNode(source=source, stages=stages):
             result = await _execute_node(filesystem, source, current, user_id=user_id)
@@ -84,12 +84,12 @@ async def _execute_node(
 
 
 async def _execute_stage(
-    filesystem: GroverFileSystem,
+    filesystem: VirtualFileSystem,
     stage: StageNode,
-    current: GroverResult | None,
+    current: VFSResult | None,
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     match stage:
         case ReadCommand(paths=paths):
             return await _read_like(filesystem.read, current, paths, command_name="read", user_id=user_id)
@@ -258,13 +258,13 @@ async def _execute_stage(
 
 
 async def _read_like(
-    method: Callable[..., Awaitable[GroverResult]],
-    current: GroverResult | None,
+    method: Callable[..., Awaitable[VFSResult]],
+    current: VFSResult | None,
     paths: tuple[str, ...],
     *,
     command_name: str,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     if current is not None and paths:
         raise ValueError(f"{command_name} cannot combine piped input with explicit paths")
     if current is not None:
@@ -276,15 +276,15 @@ async def _read_like(
 
 
 async def _execute_transfer(
-    filesystem: GroverFileSystem,
+    filesystem: VirtualFileSystem,
     op: str,
-    current: GroverResult | None,
+    current: VFSResult | None,
     src: str | None,
     dest: str,
     overwrite: bool,
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     normalized_dest = normalize_path(dest)
     match (current, src):
         case (None, None):
@@ -292,11 +292,11 @@ async def _execute_transfer(
         case (None, str() as source):
             method = filesystem.move if op == "move" else filesystem.copy
             return await method(src=normalize_path(source), dest=normalized_dest, overwrite=overwrite, user_id=user_id)
-        case (GroverResult(), str()):
+        case (VFSResult(), str()):
             raise ValueError(f"{op} cannot combine piped input with an explicit source path")
-        case (GroverResult(candidates=candidates), None):
+        case (VFSResult(candidates=candidates), None):
             if not candidates:
-                return GroverResult(candidates=[])
+                return VFSResult(candidates=[])
             ops = [
                 TwoPathOperation(src=candidate.path, dest=_preserve_under_root(normalized_dest, candidate.path))
                 for candidate in candidates
@@ -309,14 +309,14 @@ async def _execute_transfer(
 
 
 async def _execute_mkconn(
-    filesystem: GroverFileSystem,
-    current: GroverResult | None,
+    filesystem: VirtualFileSystem,
+    current: VFSResult | None,
     source: str | None,
     connection_type: str,
     target: str,
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     normalized_target = normalize_path(target)
     if current is None:
         if source is None:
@@ -344,14 +344,14 @@ async def _execute_mkconn(
 
 
 async def _execute_tree(
-    filesystem: GroverFileSystem,
-    current: GroverResult | None,
+    filesystem: VirtualFileSystem,
+    current: VFSResult | None,
     roots: tuple[str, ...],
     max_depth: int | None,
     visibility: Visibility,
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     if current is not None and roots:
         raise ValueError("tree cannot combine piped input with explicit paths")
 
@@ -370,8 +370,8 @@ async def _execute_tree(
 
 
 async def _execute_glob(
-    filesystem: GroverFileSystem,
-    current: GroverResult | None,
+    filesystem: VirtualFileSystem,
+    current: VFSResult | None,
     pattern: str,
     paths: tuple[str, ...],
     ext: tuple[str, ...],
@@ -379,7 +379,7 @@ async def _execute_glob(
     visibility: Visibility,
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     candidates = current
     if candidates is None and (visibility.include_all or visibility.include_kinds):
         candidates = await _collect_tree(filesystem, ("/",), max_depth=None, visibility=visibility, user_id=user_id)
@@ -394,8 +394,8 @@ async def _execute_glob(
 
 
 async def _execute_grep(
-    filesystem: GroverFileSystem,
-    current: GroverResult | None,
+    filesystem: VirtualFileSystem,
+    current: VFSResult | None,
     *,
     pattern: str,
     paths: tuple[str, ...],
@@ -413,7 +413,7 @@ async def _execute_grep(
     max_count: int | None,
     visibility: Visibility,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     candidates = current
     if candidates is None and (visibility.include_all or visibility.include_kinds):
         candidates = await _collect_tree(filesystem, ("/",), max_depth=None, visibility=visibility, user_id=user_id)
@@ -442,14 +442,14 @@ async def _execute_grep(
 
 
 async def _execute_lexical(
-    filesystem: GroverFileSystem,
-    current: GroverResult | None,
+    filesystem: VirtualFileSystem,
+    current: VFSResult | None,
     query: str,
     k: int,
     visibility: Visibility,
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     candidates = current
     if candidates is None and (visibility.include_all or visibility.include_kinds):
         candidates = await _collect_tree(filesystem, ("/",), max_depth=None, visibility=visibility, user_id=user_id)
@@ -457,14 +457,14 @@ async def _execute_lexical(
 
 
 async def _execute_graph_traversal(
-    filesystem: GroverFileSystem,
-    current: GroverResult | None,
+    filesystem: VirtualFileSystem,
+    current: VFSResult | None,
     method_name: str,
     paths: tuple[str, ...],
     depth: int,
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     method = getattr(filesystem, method_name)
     if current is not None and paths:
         raise ValueError(f"{method_name} cannot combine piped input with explicit paths")
@@ -485,13 +485,13 @@ async def _execute_graph_traversal(
 
 
 async def _execute_rank(
-    filesystem: GroverFileSystem,
-    current: GroverResult | None,
+    filesystem: VirtualFileSystem,
+    current: VFSResult | None,
     method_name: str,
     paths: tuple[str, ...],
     *,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     method = getattr(filesystem, method_name)
     if current is not None and paths:
         raise ValueError(f"{method_name} cannot combine piped input with explicit paths")
@@ -502,7 +502,7 @@ async def _execute_rank(
     return await method(user_id=user_id)
 
 
-def _seed_candidates(current: GroverResult | None, paths: tuple[str, ...], label: str) -> GroverResult:
+def _seed_candidates(current: VFSResult | None, paths: tuple[str, ...], label: str) -> VFSResult:
     if current is not None and paths:
         raise ValueError(f"{label} cannot combine piped input with explicit paths")
     if current is not None:
@@ -512,12 +512,12 @@ def _seed_candidates(current: GroverResult | None, paths: tuple[str, ...], label
     return _paths_result(paths)
 
 
-def _paths_result(paths: tuple[str, ...]) -> GroverResult:
+def _paths_result(paths: tuple[str, ...]) -> VFSResult:
     candidates = []
     for path in paths:
         normalized = normalize_path(path)
         candidates.append(Candidate(path=normalized, kind=parse_kind(normalized)))
-    return GroverResult(candidates=candidates)
+    return VFSResult(candidates=candidates)
 
 
 def _candidate_kind(candidate: Candidate) -> str:
@@ -532,10 +532,10 @@ def _preserve_under_root(root: str, source_path: str) -> str:
 
 
 def _apply_visibility(
-    result: GroverResult,
+    result: VFSResult,
     visibility: Visibility,
     defaults: set[str],
-) -> GroverResult:
+) -> VFSResult:
     if visibility.include_all:
         return result
     allowed = set(defaults) | set(visibility.include_kinds)
@@ -544,13 +544,13 @@ def _apply_visibility(
 
 
 async def _collect_tree(
-    filesystem: GroverFileSystem,
+    filesystem: VirtualFileSystem,
     roots: tuple[str, ...],
     *,
     max_depth: int | None,
     visibility: Visibility,
     user_id: str | None = None,
-) -> GroverResult:
+) -> VFSResult:
     queue: deque[tuple[str, int]] = deque((normalize_path(root), 0) for root in roots)
     seen: set[str] = set()
     collected: list[Candidate] = []
@@ -577,4 +577,4 @@ async def _collect_tree(
 
     deduped: dict[str, Candidate] = {candidate.path: candidate for candidate in collected}
     ordered = [deduped[path] for path in sorted(deduped)]
-    return GroverResult(candidates=ordered)
+    return VFSResult(candidates=ordered)

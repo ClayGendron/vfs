@@ -19,12 +19,12 @@ import re
 import pytest
 from sqlalchemy import text
 
-from grover.backends.mssql import (
+from vfs.backends.mssql import (
     MSSQLFileSystem,
     _extract_literal_terms,
     _quote_contains_term,
 )
-from grover.results import Candidate, GroverResult
+from vfs.results import Candidate, VFSResult
 
 # ---------------------------------------------------------------------------
 # Unit tests — pure Python, no DB
@@ -111,31 +111,31 @@ class TestResolveTable:
     """
 
     def _fs(self, schema: str | None) -> MSSQLFileSystem:
-        from grover.models import GroverObject
+        from vfs.models import VFSObject
 
         fs = MSSQLFileSystem.__new__(MSSQLFileSystem)
         fs._schema = schema
-        fs._model = GroverObject
+        fs._model = VFSObject
         return fs
 
     def test_qualifies_with_schema(self):
-        fs = self._fs("grover")
-        assert fs._resolve_table() == "grover.grover_objects"
+        fs = self._fs("vfs")
+        assert fs._resolve_table() == "vfs.vfs_objects"
 
     def test_bare_name_when_schema_none(self):
         fs = self._fs(None)
-        assert fs._resolve_table() == "grover_objects"
+        assert fs._resolve_table() == "vfs_objects"
 
     def test_bare_name_when_schema_empty_string(self):
         # Empty string is falsy — fall through to bare table name.
         fs = self._fs("")
-        assert fs._resolve_table() == "grover_objects"
+        assert fs._resolve_table() == "vfs_objects"
 
     def test_independent_instances_have_independent_schemas(self):
         fs_a = self._fs("tenant_a")
         fs_b = self._fs("tenant_b")
-        assert fs_a._resolve_table() == "tenant_a.grover_objects"
-        assert fs_b._resolve_table() == "tenant_b.grover_objects"
+        assert fs_a._resolve_table() == "tenant_a.vfs_objects"
+        assert fs_b._resolve_table() == "tenant_b.vfs_objects"
 
 
 class TestQuoteContainsTerm:
@@ -154,7 +154,7 @@ class TestCollectLineMatchesIntegration:
     """The base-class _collect_line_matches helper still drives MSSQL grep."""
 
     def test_returns_per_line_metadata(self):
-        from grover.backends.database import DatabaseFileSystem
+        from vfs.backends.database import DatabaseFileSystem
 
         regex = re.compile(r"foo")
         content_map = {
@@ -176,7 +176,7 @@ class TestCollectLineMatchesIntegration:
         ]
 
     def test_max_count_caps(self):
-        from grover.backends.database import DatabaseFileSystem
+        from vfs.backends.database import DatabaseFileSystem
 
         regex = re.compile(r"hit")
         content_map = {f"/f{i}.txt": "hit it" for i in range(5)}
@@ -192,7 +192,7 @@ class TestCollectLineMatchesIntegration:
 class TestSchemaConstructorPassthrough:
     """The ``schema`` kwarg must flow all the way from
     ``MSSQLFileSystem.__init__`` → ``DatabaseFileSystem.__init__`` →
-    ``GroverFileSystem.__init__`` so ``self._schema`` is set on a fully
+    ``VirtualFileSystem.__init__`` so ``self._schema`` is set on a fully
     constructed instance, not just when manually patched in.
     """
 
@@ -203,9 +203,9 @@ class TestSchemaConstructorPassthrough:
         async def factory():
             yield None  # never actually used — constructor-only test
 
-        fs = MSSQLFileSystem(session_factory=factory, schema="grover")
-        assert fs._schema == "grover"
-        assert fs._resolve_table() == "grover.grover_objects"
+        fs = MSSQLFileSystem(session_factory=factory, schema="vfs")
+        assert fs._schema == "vfs"
+        assert fs._resolve_table() == "vfs.vfs_objects"
 
     def test_schema_defaults_to_none(self):
         from contextlib import asynccontextmanager
@@ -216,7 +216,7 @@ class TestSchemaConstructorPassthrough:
 
         fs = MSSQLFileSystem(session_factory=factory)
         assert fs._schema is None
-        assert fs._resolve_table() == "grover_objects"
+        assert fs._resolve_table() == "vfs_objects"
 
 
 class TestGlobInMemoryCandidates:
@@ -232,7 +232,7 @@ class TestGlobInMemoryCandidates:
         fs._user_scoped = False
         fs._raise_on_error = False
 
-        candidates = GroverResult(
+        candidates = VFSResult(
             candidates=[
                 Candidate(path="/src/foo.py", kind="file"),
                 Candidate(path="/src/bar.ts", kind="file"),
@@ -422,7 +422,7 @@ async def _wait_for_fts_ready(
     ``PopulateStatus`` to confirm the crawl has drained.
     """
     deadline = asyncio.get_event_loop().time() + timeout_s
-    catalog = "grover_test_ftcat"
+    catalog = "vfs_test_ftcat"
     while True:
         async with db._use_session() as s:
             item_row = (await s.execute(text(f"SELECT FULLTEXTCATALOGPROPERTY('{catalog}', 'ItemCount')"))).first()
@@ -518,7 +518,7 @@ class TestLexicalSearchPushdown:
                 "/c.py": "auth logout",
             },
         )
-        candidates = GroverResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
+        candidates = VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
         async with db._use_session() as s:
             r = await db._lexical_search_impl("auth", candidates=candidates, session=s)
         assert set(r.paths) == {"/a.py", "/c.py"}
@@ -598,7 +598,7 @@ class TestGrepPushdown:
                 "/c.py": "needle c",
             },
         )
-        candidates = GroverResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
+        candidates = VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
         async with db._use_session() as s:
             r = await db._grep_impl("needle", candidates=candidates, session=s)
         assert set(r.paths) == {"/a.py", "/c.py"}

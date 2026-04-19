@@ -1,11 +1,11 @@
 """Mount-routing helpers for ``glob`` / ``grep`` fanout.
 
 Mount paths on a single router are single-segment by construction (see
-:meth:`grover.base.GroverFileSystem._normalize_mount_path`); the helpers
+:meth:`vfs.base.VirtualFileSystem._normalize_mount_path`); the helpers
 below assume that. Multi-level chains are router-to-router, with each
 level applying its own rewrite recursively as it dispatches.
 
-Strategy used by :class:`grover.base.GroverFileSystem` for absolute
+Strategy used by :class:`vfs.base.VirtualFileSystem` for absolute
 glob patterns and literal-prefix path filters:
 
 1. **Exact rewrite** when provable — literal-prefix match against the
@@ -25,18 +25,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from grover.patterns import compile_glob
+from vfs.patterns import compile_glob
 
 if TYPE_CHECKING:
     import re
 
-    from grover.base import GroverFileSystem
+    from vfs.base import VirtualFileSystem
 
 
 @dataclass(frozen=True)
 class GlobMountPlan:
     mount_path: str
-    filesystem: GroverFileSystem
+    filesystem: VirtualFileSystem
     rewritten_pattern: str
     rewritten_paths: tuple[str, ...]
     needs_post_filter: bool
@@ -45,7 +45,7 @@ class GlobMountPlan:
 @dataclass(frozen=True)
 class GrepMountPlan:
     mount_path: str
-    filesystem: GroverFileSystem
+    filesystem: VirtualFileSystem
     rewritten_paths: tuple[str, ...]
     mount_globs: tuple[str, ...]
     mount_globs_not: tuple[str, ...]

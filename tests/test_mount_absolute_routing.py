@@ -13,9 +13,9 @@ fanout happens to work — see ``test_glob_through_public_api`` in
 ``test_database.py``.
 
 Mount paths are single-segment by construction
-(see ``GroverFileSystem._normalize_mount_path``); real nesting is
+(see ``VirtualFileSystem._normalize_mount_path``); real nesting is
 router-to-router (an outer router's mount points at a non-storage
-GroverFileSystem that itself mounts a leaf). The ``nested_mounts``
+VirtualFileSystem that itself mounts a leaf). The ``nested_mounts``
 fixture exercises that two-hop case.
 
 The fixtures here use **isolated** engines per mount (one engine per
@@ -33,10 +33,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
-from grover.backends.database import DatabaseFileSystem
-from grover.base import GroverFileSystem
-from grover.client import GroverAsync
-from grover.results import Candidate, GroverResult
+from vfs.backends.database import DatabaseFileSystem
+from vfs.base import VirtualFileSystem
+from vfs.client import VFSClientAsync
+from vfs.results import Candidate, VFSResult
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -54,7 +54,7 @@ async def _sqlite_engine():
 
 
 @pytest.fixture
-async def two_mounts() -> AsyncIterator[tuple[GroverAsync, DatabaseFileSystem, DatabaseFileSystem]]:
+async def two_mounts() -> AsyncIterator[tuple[VirtualFileSystem, DatabaseFileSystem, DatabaseFileSystem]]:
     """Router with two isolated DB mounts at ``/data`` and ``/other``.
 
     Each mount has its own engine — no shared storage. Seeds a small,
@@ -68,7 +68,7 @@ async def two_mounts() -> AsyncIterator[tuple[GroverAsync, DatabaseFileSystem, D
 
     # Seed /data — written through the mount, so the router rebases
     # paths to mount-relative before they hit ``_write_impl``.
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("/data", data)
     await router.add_mount("/other", other)
 
@@ -92,7 +92,7 @@ async def two_mounts() -> AsyncIterator[tuple[GroverAsync, DatabaseFileSystem, D
 async def storageful_root_with_mount() -> AsyncIterator[tuple[DatabaseFileSystem, DatabaseFileSystem]]:
     """A real storage root (``DatabaseFileSystem``) with one mount underneath.
 
-    Important: ``GroverAsync`` has ``storage=False`` (see ``client.py``),
+    Important: ``VirtualFileSystem`` has ``storage=False`` (see ``client.py``),
     so the existing ``two_mounts`` fixture exercises the no-storage
     branch of ``_route_fanout``. The router-side post-filter and
     self-vs-mount merging path needs a storageful root to be exercised.
@@ -121,14 +121,14 @@ async def storageful_root_with_mount() -> AsyncIterator[tuple[DatabaseFileSystem
 
 
 @pytest.fixture
-async def wildcard_mount_router() -> AsyncIterator[tuple[GroverAsync, DatabaseFileSystem]]:
+async def wildcard_mount_router() -> AsyncIterator[tuple[VirtualFileSystem, DatabaseFileSystem]]:
     """Router with one mount whose name lets us test glob mount selectors.
 
     The mount name ``data`` matches ``*``, ``d?ta``, ``d[ae]ta``, and ``da*``.
     """
     engine = await _sqlite_engine()
     mount = DatabaseFileSystem(engine=engine)
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("/data", mount)
 
     await router.write("/data/src/app.py", "print('x')")
@@ -143,7 +143,7 @@ async def wildcard_mount_router() -> AsyncIterator[tuple[GroverAsync, DatabaseFi
 
 
 @pytest.fixture
-async def nested_mounts() -> AsyncIterator[tuple[GroverAsync, DatabaseFileSystem]]:
+async def nested_mounts() -> AsyncIterator[tuple[VirtualFileSystem, DatabaseFileSystem]]:
     """Router → mid-router → leaf DB, mounted at ``/l1/l2``.
 
     Exercises a two-level mount chain: the leaf should only ever see
@@ -152,9 +152,9 @@ async def nested_mounts() -> AsyncIterator[tuple[GroverAsync, DatabaseFileSystem
     """
     leaf_engine = await _sqlite_engine()
     leaf = DatabaseFileSystem(engine=leaf_engine)
-    mid = GroverFileSystem(storage=False)
+    mid = VirtualFileSystem(storage=False)
     await mid.add_mount("/l2", leaf)
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("/l1", mid)
 
     await router.write("/l1/l2/plan.md", "the plan")
@@ -168,23 +168,23 @@ async def nested_mounts() -> AsyncIterator[tuple[GroverAsync, DatabaseFileSystem
 
 
 @pytest.fixture
-async def deep_chain_mounts() -> AsyncIterator[tuple[GroverAsync, DatabaseFileSystem]]:
-    """Three-hop chain: GroverAsync → router1 → router2 → leaf DB.
+async def deep_chain_mounts() -> AsyncIterator[tuple[VirtualFileSystem, DatabaseFileSystem]]:
+    """Three-hop chain: VirtualFileSystem → router1 → router2 → leaf DB.
 
     Mounted at ``/a`` → ``/b`` → ``/c``, so the external path
     ``/a/b/c/foo.py`` resolves through three mount-prefix strips before
     hitting the leaf, where it's stored as ``/foo.py``. This is the
     "mount a fs to another, mount that to another, mount that to
-    GroverAsync" case — each hop must consume its own single-segment
+    VirtualFileSystem" case — each hop must consume its own single-segment
     mount prefix and recursively dispatch.
     """
     leaf_engine = await _sqlite_engine()
     leaf = DatabaseFileSystem(engine=leaf_engine)
-    router2 = GroverFileSystem(storage=False)
+    router2 = VirtualFileSystem(storage=False)
     await router2.add_mount("/c", leaf)
-    router1 = GroverFileSystem(storage=False)
+    router1 = VirtualFileSystem(storage=False)
     await router1.add_mount("/b", router2)
-    outer = GroverAsync()
+    outer = VFSClientAsync()
     await outer.add_mount("/a", router1)
 
     await outer.write("/a/b/c/top.md", "top")
@@ -349,7 +349,7 @@ class TestCandidateBasedSearchUnderMount:
 
     async def test_glob_candidates_with_absolute_mount_pattern(self, two_mounts):
         router, _, _ = two_mounts
-        seeds = GroverResult(
+        seeds = VFSResult(
             candidates=[
                 Candidate(path="/data/src/app.py"),
                 Candidate(path="/other/src/main.py"),
@@ -360,7 +360,7 @@ class TestCandidateBasedSearchUnderMount:
 
     async def test_grep_candidates_with_absolute_mount_glob_filter(self, two_mounts):
         router, _, _ = two_mounts
-        seeds = GroverResult(
+        seeds = VFSResult(
             candidates=[
                 Candidate(path="/data/src/app.py"),
                 Candidate(path="/other/src/main.py"),
@@ -601,7 +601,7 @@ class TestStoragefulRootWithMount:
 
     Exercises the ``_route_fanout`` branch where ``self._storage`` is
     True — root self-query + mount fanout merge — which the
-    ``GroverAsync`` fixtures don't cover.
+    ``VirtualFileSystem`` fixtures don't cover.
     """
 
     async def test_root_only_pattern_does_not_leak_mount(self, storageful_root_with_mount):
@@ -641,7 +641,7 @@ class TestStoragefulRootWithMount:
 
 
 # =========================================================================
-# Deep nested chain — GroverAsync → router → router → leaf
+# Deep nested chain — VirtualFileSystem → router → router → leaf
 # =========================================================================
 
 

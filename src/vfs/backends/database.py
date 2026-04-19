@@ -1,7 +1,7 @@
-"""DatabaseFileSystem — SQL-backed implementation of GroverFileSystem.
+"""DatabaseFileSystem — SQL-backed implementation of VirtualFileSystem.
 
 All entities (files, directories, chunks, versions, connections) live in a
-single ``grover_objects`` table.  Operations dispatch by kind — the path
+single ``vfs_objects`` table.  Operations dispatch by kind — the path
 determines the kind, and the kind determines the semantics.
 """
 
@@ -14,27 +14,27 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from sqlalchemy import case, func, or_, select
 
-from grover.base import GroverFileSystem
-from grover.bm25 import BM25Scorer, tokenize, tokenize_query
-from grover.graph import RustworkxGraph
-from grover.models import GroverObject, GroverObjectBase
-from grover.paths import connection_path, scope_path, validate_user_id, version_path
-from grover.paths import parent_path as compute_parent_path
-from grover.patterns import compile_glob, glob_to_sql_like
-from grover.permissions import check_writable
-from grover.replace import replace
-from grover.results import Candidate, Detail, EditOperation, GroverResult, TwoPathOperation
-from grover.versioning import SNAPSHOT_INTERVAL
+from vfs.base import VirtualFileSystem
+from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
+from vfs.graph import RustworkxGraph
+from vfs.models import VFSObject, VFSObjectBase
+from vfs.paths import connection_path, scope_path, validate_user_id, version_path
+from vfs.paths import parent_path as compute_parent_path
+from vfs.patterns import compile_glob, glob_to_sql_like
+from vfs.permissions import check_writable
+from vfs.replace import replace
+from vfs.results import Candidate, Detail, EditOperation, TwoPathOperation, VFSResult
+from vfs.versioning import SNAPSHOT_INTERVAL
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-    from grover.embedding import EmbeddingProvider
-    from grover.permissions import Permission, PermissionMap
-    from grover.query.ast import CaseMode, GrepOutputMode
-    from grover.vector_store import VectorStore
+    from vfs.embedding import EmbeddingProvider
+    from vfs.permissions import Permission, PermissionMap
+    from vfs.query.ast import CaseMode, GrepOutputMode
+    from vfs.vector_store import VectorStore
 
 
 class _LexicalDoc(NamedTuple):
@@ -129,10 +129,10 @@ def _unchecked_select(*entities: Any) -> Any:
     return cast("Any", select)(*entities)
 
 
-class DatabaseFileSystem(GroverFileSystem):
+class DatabaseFileSystem(VirtualFileSystem):
     """SQL-backed filesystem — portable baseline using SQLAlchemy.
 
-    Stores everything in ``grover_objects``.  Glob, grep, and lexical search
+    Stores everything in ``vfs_objects``.  Glob, grep, and lexical search
     use SQL LIKE for pre-filtering and Python for authoritative matching/scoring.
     Graph operations delegate to an internal ``RustworkxGraph``.
     """
@@ -151,7 +151,7 @@ class DatabaseFileSystem(GroverFileSystem):
         *,
         engine: AsyncEngine | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
-        model: type[GroverObjectBase] = GroverObject,
+        model: type[VFSObjectBase] = VFSObject,
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
         user_scoped: bool = False,
@@ -180,14 +180,14 @@ class DatabaseFileSystem(GroverFileSystem):
             return path
         return scope_path(path, user_id)
 
-    def _scope_candidates(self, candidates: GroverResult | None, user_id: str | None) -> GroverResult | None:
+    def _scope_candidates(self, candidates: VFSResult | None, user_id: str | None) -> VFSResult | None:
         """Scope all candidate paths if user_scoped is enabled."""
         if candidates is None or not self._user_scoped or user_id is None:
             return candidates
         scoped = [c.model_copy(update={"path": scope_path(c.path, user_id)}) for c in candidates.candidates]
         return candidates._with_candidates(scoped)
 
-    def _scope_objects(self, objects: Sequence[GroverObjectBase], user_id: str | None) -> None:
+    def _scope_objects(self, objects: Sequence[VFSObjectBase], user_id: str | None) -> None:
         """Scope object paths in place if user_scoped is enabled.
 
         For connection objects, rebuilds the connection ``path`` from
@@ -209,7 +209,7 @@ class DatabaseFileSystem(GroverFileSystem):
             obj.owner_id = user_id
             obj._rederive_path_fields()
 
-    def _unscope_result(self, result: GroverResult, user_id: str | None) -> GroverResult:
+    def _unscope_result(self, result: VFSResult, user_id: str | None) -> VFSResult:
         """Unscope all result paths if user_scoped is enabled."""
         if not self._user_scoped or user_id is None:
             return result
@@ -234,7 +234,7 @@ class DatabaseFileSystem(GroverFileSystem):
         path: str,
         session: AsyncSession,
         include_deleted: bool = False,
-    ) -> GroverObjectBase | None:
+    ) -> VFSObjectBase | None:
         """Fetch a single object by exact path."""
         stmt = select(self._model).where(self._model.path == path)  # ty: ignore[invalid-argument-type]
         if not include_deleted:
@@ -311,7 +311,7 @@ class DatabaseFileSystem(GroverFileSystem):
         *,
         unique_terms: tuple[str, ...],
         term_set: frozenset[str],
-        candidates: GroverResult | None,
+        candidates: VFSResult | None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> tuple[list[_LexicalDoc], bool, dict[str, int], dict[str, int]]:
@@ -504,9 +504,9 @@ class DatabaseFileSystem(GroverFileSystem):
         *,
         required_kind: str,
         include_deleted: bool,
-    ) -> dict[str, GroverObjectBase]:
+    ) -> dict[str, VFSObjectBase]:
         """Load required parent objects using a kind-specific policy."""
-        resolved: dict[str, GroverObjectBase] = {}
+        resolved: dict[str, VFSObjectBase] = {}
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
@@ -522,7 +522,7 @@ class DatabaseFileSystem(GroverFileSystem):
         self,
         paths: list[str],
         session: AsyncSession,
-    ) -> tuple[list[GroverObjectBase], list[str]]:
+    ) -> tuple[list[VFSObjectBase], list[str]]:
         """Identify ancestor directories that need creation or revival.
 
         Returns ``(dirs, errors)`` where *dirs* are directory objects
@@ -552,7 +552,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
         # Load ALL existing objects at ancestor paths (any kind, including
         # soft-deleted) so we can detect non-directory ancestors.
-        existing: dict[str, GroverObjectBase] = {}
+        existing: dict[str, VFSObjectBase] = {}
         for batch in self._chunk_paths(session, sorted(all_ancestors), binds_per_item=1):
             stmt = select(self._model).where(self._model.path.in_(batch))  # ty: ignore[unresolved-attribute]
             result = await session.execute(stmt)
@@ -568,7 +568,7 @@ class DatabaseFileSystem(GroverFileSystem):
             return [], errors
 
         # Collect soft-deleted dirs for revival (not mutated yet)
-        dirs: list[GroverObjectBase] = [
+        dirs: list[VFSObjectBase] = [
             existing[p] for p in sorted(existing, key=lambda p: p.count("/")) if existing[p].deleted_at is not None
         ]
 
@@ -580,7 +580,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _validate_chunk_parents(
         self,
-        write_map: dict[str, GroverObjectBase],
+        write_map: dict[str, VFSObjectBase],
         session: AsyncSession,
     ) -> tuple[set[str], list[str]]:
         """Reject chunk writes whose companion file is absent from DB and batch."""
@@ -609,11 +609,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _fetch_children_batched(
         self,
-        objs: dict[str, GroverObjectBase],
+        objs: dict[str, VFSObjectBase],
         session: AsyncSession,
         *,
         include_deleted: bool = False,
-    ) -> dict[str, list[GroverObjectBase]]:
+    ) -> dict[str, list[VFSObjectBase]]:
         """Batch-fetch children for multiple objects in two queries.
 
         Directories use ``LIKE path/%`` (all descendants).
@@ -623,7 +623,7 @@ class DatabaseFileSystem(GroverFileSystem):
         """
         dirs = {p: o for p, o in objs.items() if o.kind == "directory"}
         files = {p: o for p, o in objs.items() if o.kind != "directory"}
-        result_map: dict[str, list[GroverObjectBase]] = {p: [] for p in objs}
+        result_map: dict[str, list[VFSObjectBase]] = {p: [] for p in objs}
 
         # Directory cascade — batched OR of LIKE conditions
         if dirs:
@@ -666,8 +666,8 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _update_existing(
         self,
-        existing: GroverObjectBase,
-        incoming: GroverObjectBase,
+        existing: VFSObjectBase,
+        incoming: VFSObjectBase,
         new_content: str,
         latest_version_hash: str | None,
         session: AsyncSession,
@@ -718,7 +718,7 @@ class DatabaseFileSystem(GroverFileSystem):
         file_path: str,
         current_version: int,
         session: AsyncSession,
-    ) -> list[GroverObjectBase]:
+    ) -> list[VFSObjectBase]:
         """Fetch the version chain needed for reconstruction.
 
         Loads versions from the nearest snapshot boundary (within
@@ -726,7 +726,7 @@ class DatabaseFileSystem(GroverFileSystem):
         """
         lower_bound = max(1, current_version - SNAPSHOT_INTERVAL + 1)
         version_paths = [version_path(file_path, v) for v in range(lower_bound, current_version + 1)]
-        rows: list[GroverObjectBase] = []
+        rows: list[VFSObjectBase] = []
         for batch in self._chunk_paths(session, version_paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
@@ -737,7 +737,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _insert_new(
         self,
-        incoming: GroverObjectBase,
+        incoming: VFSObjectBase,
         new_content: str,
         session: AsyncSession,
     ) -> Candidate:
@@ -767,14 +767,14 @@ class DatabaseFileSystem(GroverFileSystem):
     async def _read_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Read content for one or more objects.
 
-        Accepts either a single ``path`` or a ``GroverResult`` of candidates.
+        Accepts either a single ``path`` or a ``VFSResult`` of candidates.
 
         - *Single path*: fetch the object by exact path, return with content.
         - *Candidates*: batch-fetch all candidate paths in one query,
@@ -787,13 +787,13 @@ class DatabaseFileSystem(GroverFileSystem):
         if candidates is None:
             if path is None:
                 return self._error("read requires a path or candidates")
-            candidates = GroverResult(candidates=[Candidate(path=path)])
+            candidates = VFSResult(candidates=[Candidate(path=path)])
         elif path is not None:
             return self._error("read requires a path or candidates, not both")
 
         incoming = {c.path: c for c in candidates.candidates}
         if not incoming:
-            return GroverResult(candidates=[])
+            return VFSResult(candidates=[])
 
         # Pre-hydrated candidates pass straight through; only fetch the gaps.
         out: list[Candidate] = []
@@ -836,7 +836,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
         return self._error(
             self._unscope_result(
-                GroverResult(
+                VFSResult(
                     candidates=out,
                     errors=errors,
                     success=len(errors) == 0,
@@ -848,11 +848,11 @@ class DatabaseFileSystem(GroverFileSystem):
     async def _stat_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Return metadata for one or more objects.
 
         Delegates to ``_read_impl`` — returns the same result including
@@ -865,12 +865,12 @@ class DatabaseFileSystem(GroverFileSystem):
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: Sequence[GroverObjectBase] | None = None,
+        objects: Sequence[VFSObjectBase] | None = None,
         overwrite: bool = True,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Write one or more file/chunk objects to the database.
 
         Accepts either a single ``path``/``content`` pair or a list of
@@ -920,7 +920,7 @@ class DatabaseFileSystem(GroverFileSystem):
         else:
             self._scope_objects(objects, user_id)
 
-        write_map: dict[str, GroverObjectBase] = {}
+        write_map: dict[str, VFSObjectBase] = {}
         errors: list[str] = []
         for obj in objects:
             if obj.path == "/":
@@ -934,7 +934,7 @@ class DatabaseFileSystem(GroverFileSystem):
             write_map[obj.path] = obj
 
         if not write_map:
-            return self._error(GroverResult(success=len(errors) == 0, errors=errors))
+            return self._error(VFSResult(success=len(errors) == 0, errors=errors))
 
         # ── Step 2: Validate chunk parents ────────────────────────────
         invalid_chunk_paths, chunk_errors = await self._validate_chunk_parents(write_map, session)
@@ -944,7 +944,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
         # ── Step 3: Resolve parent dirs (deferred) ────────────────────
         file_paths = [p for p, obj in write_map.items() if obj.kind in ("file", "directory")]
-        parent_dirs: list[GroverObjectBase] = []
+        parent_dirs: list[VFSObjectBase] = []
         if file_paths:
             parent_dirs, dir_errors = await self._resolve_parent_dirs(file_paths, session)
             if dir_errors:
@@ -967,7 +967,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
         # ── Step 4a: Fetch existing objects ──────────────────────────
         all_paths = list(write_map.keys())
-        existing_map: dict[str, GroverObjectBase] = {}
+        existing_map: dict[str, VFSObjectBase] = {}
 
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
             stmt = select(self._model).where(
@@ -1055,7 +1055,7 @@ class DatabaseFileSystem(GroverFileSystem):
             self._graph.invalidate()
 
         result = self._unscope_result(
-            GroverResult(candidates=out, errors=errors, success=len(errors) == 0),
+            VFSResult(candidates=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -1063,11 +1063,11 @@ class DatabaseFileSystem(GroverFileSystem):
     async def _ls_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """List direct children of a path.
 
         Kind-aware visibility (§5.2, §5.4 of design doc):
@@ -1090,12 +1090,12 @@ class DatabaseFileSystem(GroverFileSystem):
         if candidates is None:
             if path is None:
                 return self._error("ls requires a path or candidates")
-            candidates = GroverResult(candidates=[Candidate(path=path)])
+            candidates = VFSResult(candidates=[Candidate(path=path)])
         elif path is not None:
             return self._error("ls requires a path or candidates, not both")
 
         if not candidates.candidates:
-            return GroverResult(candidates=[])
+            return VFSResult(candidates=[])
 
         # Classify using candidate kind; query only unknowns
         dir_paths: list[str] = []
@@ -1125,7 +1125,7 @@ class DatabaseFileSystem(GroverFileSystem):
         # Single query — filter directory metadata children in Python
         all_paths = dir_paths + file_paths
         if not all_paths:
-            return GroverResult(candidates=[])
+            return VFSResult(candidates=[])
 
         dir_set = set(dir_paths)
         out: list[Candidate] = []
@@ -1140,18 +1140,18 @@ class DatabaseFileSystem(GroverFileSystem):
                     continue
                 out.append(child.to_candidate(operation="ls"))
 
-        return self._unscope_result(GroverResult(candidates=out), user_id)
+        return self._unscope_result(VFSResult(candidates=out), user_id)
 
     async def _delete_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         permanent: bool = False,
         cascade: bool = True,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Delete one or more objects.
 
         Soft-delete (default): sets ``deleted_at``, cascades to children.
@@ -1167,19 +1167,19 @@ class DatabaseFileSystem(GroverFileSystem):
         if candidates is None:
             if path is None:
                 return self._error("delete requires a path or candidates")
-            candidates = GroverResult(candidates=[Candidate(path=path)])
+            candidates = VFSResult(candidates=[Candidate(path=path)])
         elif path is not None:
             return self._error("delete requires a path or candidates, not both")
 
         paths = [c.path for c in candidates.candidates]
         if not paths:
-            return GroverResult(candidates=[])
+            return VFSResult(candidates=[])
 
         if "/" in paths:
             return self._error("Cannot delete root path")
 
         # ── Fetch targets ────────────────────────────────────────────
-        objs: dict[str, GroverObjectBase] = {}
+        objs: dict[str, VFSObjectBase] = {}
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
@@ -1193,7 +1193,7 @@ class DatabaseFileSystem(GroverFileSystem):
         errors: list[str] = []
 
         # Separate not-found errors
-        found: dict[str, GroverObjectBase] = {}
+        found: dict[str, VFSObjectBase] = {}
         for p in paths:
             if p in objs:
                 found[p] = objs[p]
@@ -1201,7 +1201,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 errors.append(f"Not found: {p}")
 
         if not found:
-            return self._error(GroverResult(errors=errors, success=len(errors) == 0))
+            return self._error(VFSResult(errors=errors, success=len(errors) == 0))
 
         # ── Batch-fetch children ─────────────────────────────────────
         children_map = await self._fetch_children_batched(
@@ -1219,7 +1219,7 @@ class DatabaseFileSystem(GroverFileSystem):
                     blocked.add(p)
             found = {p: o for p, o in found.items() if p not in blocked}
             if not found:
-                return self._error(GroverResult(errors=errors, success=len(errors) == 0))
+                return self._error(VFSResult(errors=errors, success=len(errors) == 0))
 
         # ── Per-child permission check (cascade fail-fast) ───────────
         # The router's chokepoint only saw the top-level paths.  When a
@@ -1262,7 +1262,7 @@ class DatabaseFileSystem(GroverFileSystem):
         # files that are graph nodes.
         self._graph.invalidate()
         result = self._unscope_result(
-            GroverResult(candidates=out, errors=errors, success=len(errors) == 0),
+            VFSResult(candidates=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -1273,7 +1273,7 @@ class DatabaseFileSystem(GroverFileSystem):
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Create a directory. Delegates to ``_write_impl``."""
         self._require_user_id(user_id)
         # Pass unscoped path — _write_impl handles scoping
@@ -1290,11 +1290,11 @@ class DatabaseFileSystem(GroverFileSystem):
         source: str | None = None,
         target: str | None = None,
         connection_type: str | None = None,
-        objects: Sequence[GroverObjectBase] | None = None,
+        objects: Sequence[VFSObjectBase] | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Create connection edges.
 
         Accepts either ``source``/``target``/``connection_type`` for a
@@ -1347,12 +1347,12 @@ class DatabaseFileSystem(GroverFileSystem):
     async def _edit_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         edits: list[EditOperation] | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Apply find-and-replace edits: read → replace → write.
 
         Paths are unscoped.  Each inner call does its own scope cycle,
@@ -1368,7 +1368,7 @@ class DatabaseFileSystem(GroverFileSystem):
         if not read_result.success:
             return read_result
 
-        to_write: list[GroverObjectBase] = []
+        to_write: list[VFSObjectBase] = []
         errors: list[str] = []
         for c in read_result.candidates:
             content = c.content
@@ -1397,14 +1397,14 @@ class DatabaseFileSystem(GroverFileSystem):
             if not write_result.success:
                 errors.extend(write_result.errors)
             return self._error(
-                GroverResult(
+                VFSResult(
                     candidates=write_result.candidates,
                     errors=errors,
                     success=len(errors) == 0,
                 )
             )
 
-        return self._error(GroverResult(errors=errors, success=len(errors) == 0))
+        return self._error(VFSResult(errors=errors, success=len(errors) == 0))
 
     async def _copy_impl(
         self,
@@ -1413,7 +1413,7 @@ class DatabaseFileSystem(GroverFileSystem):
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Copy objects: read sources → write to destinations.
 
         Paths in *ops* are unscoped.  Each inner ``_read_impl`` /
@@ -1427,7 +1427,7 @@ class DatabaseFileSystem(GroverFileSystem):
         # Read sources — _read_impl scopes internally, returns unscoped
         src_paths = [op.src for op in ops]
         src_result = await self._read_impl(
-            candidates=GroverResult(candidates=[Candidate(path=p) for p in src_paths]),
+            candidates=VFSResult(candidates=[Candidate(path=p) for p in src_paths]),
             user_id=user_id,
             session=session,
         )
@@ -1436,7 +1436,7 @@ class DatabaseFileSystem(GroverFileSystem):
         errors: list[str] = list(src_result.errors)
 
         # Build write objects with unscoped dest paths
-        to_write: list[GroverObjectBase] = []
+        to_write: list[VFSObjectBase] = []
         for op in ops:
             src = src_by_path.get(op.src)
             if src is None:
@@ -1444,7 +1444,7 @@ class DatabaseFileSystem(GroverFileSystem):
             to_write.append(self._model(path=op.dest, content=src.content or ""))
 
         if not to_write:
-            return self._error(GroverResult(errors=errors, success=len(errors) == 0))
+            return self._error(VFSResult(errors=errors, success=len(errors) == 0))
 
         # Write — _write_impl scopes internally, returns unscoped
         write_result = await self._write_impl(
@@ -1455,7 +1455,7 @@ class DatabaseFileSystem(GroverFileSystem):
         )
         errors.extend(write_result.errors)
         return self._error(
-            GroverResult(
+            VFSResult(
                 candidates=write_result.candidates,
                 errors=errors,
                 success=len(errors) == 0,
@@ -1469,7 +1469,7 @@ class DatabaseFileSystem(GroverFileSystem):
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Atomic same-mount rename.
 
         For each operation:
@@ -1508,7 +1508,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 continue
 
             # ── 2. Fetch descendants ─────────────────────────────────
-            descendants: list[GroverObjectBase] = []
+            descendants: list[VFSObjectBase] = []
             if src_obj.kind == "directory":
                 stmt = select(self._model).where(
                     self._model.path.like(_escape_like(op.src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
@@ -1575,7 +1575,7 @@ class DatabaseFileSystem(GroverFileSystem):
         # Moves may rename connections or rewrite target_path references.
         self._graph.invalidate()
         result = self._unscope_result(
-            GroverResult(candidates=out, errors=errors, success=len(errors) == 0),
+            VFSResult(candidates=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -1656,10 +1656,10 @@ class DatabaseFileSystem(GroverFileSystem):
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Glob pattern matching against the namespace.
 
         Two-layer approach: SQL LIKE pre-filter (coarse, fast) then
@@ -1686,7 +1686,7 @@ class DatabaseFileSystem(GroverFileSystem):
             ]
             if max_count is not None:
                 matched = matched[:max_count]
-            return self._unscope_result(GroverResult(candidates=matched), user_id)
+            return self._unscope_result(VFSResult(candidates=matched), user_id)
 
         # ── Without candidates: query DB ──────────────────────────────
         like_pattern = glob_to_sql_like(pattern)
@@ -1719,7 +1719,7 @@ class DatabaseFileSystem(GroverFileSystem):
         matched.sort(key=lambda c: c.path)
         if max_count is not None:
             matched = matched[:max_count]
-        return self._unscope_result(GroverResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(candidates=matched), user_id)
 
     async def _grep_impl(
         self,
@@ -1738,10 +1738,10 @@ class DatabaseFileSystem(GroverFileSystem):
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Regex content search across files.
 
         Pushes structural filters (``ext``, ``paths``, ``globs``) into
@@ -1845,7 +1845,7 @@ class DatabaseFileSystem(GroverFileSystem):
             after_context=after_context,
             invert_match=invert_match,
         )
-        return self._unscope_result(GroverResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(candidates=matched), user_id)
 
     @staticmethod
     def _collect_line_matches(
@@ -1916,11 +1916,11 @@ class DatabaseFileSystem(GroverFileSystem):
         self,
         query: str,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Embed *query* text, then delegate to vector search."""
         self._require_user_id(user_id)
         if self._embedding_provider is None:
@@ -1944,11 +1944,11 @@ class DatabaseFileSystem(GroverFileSystem):
         self,
         vector: list[float] | None = None,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Query the vector store for nearest neighbours."""
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
@@ -1972,17 +1972,17 @@ class DatabaseFileSystem(GroverFileSystem):
             )
             for hit in hits
         ]
-        return self._unscope_result(GroverResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(candidates=matched), user_id)
 
     async def _lexical_search_impl(
         self,
         query: str,
         k: int = 15,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """BM25-scored keyword search across all content.
 
         Tokenizes *query* (capped at 50 terms), computes IDF against
@@ -2012,7 +2012,7 @@ class DatabaseFileSystem(GroverFileSystem):
             session=session,
         )
         if not docs:
-            return GroverResult(candidates=[])
+            return VFSResult(candidates=[])
 
         doc_lengths = [doc.doc_length for doc in docs]
         term_frequency_docs = [doc.term_freqs for doc in docs]
@@ -2057,7 +2057,7 @@ class DatabaseFileSystem(GroverFileSystem):
             for doc, score in scored
         ]
 
-        return self._unscope_result(GroverResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(candidates=matched), user_id)
 
     async def _tree_impl(
         self,
@@ -2066,7 +2066,7 @@ class DatabaseFileSystem(GroverFileSystem):
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Recursive directory listing.
 
         Returns all descendant files and directories under *path*,
@@ -2116,7 +2116,7 @@ class DatabaseFileSystem(GroverFileSystem):
         objects = sorted(result.scalars().all(), key=lambda o: o.path)
 
         tree_candidates = [obj.to_candidate(operation="tree") for obj in objects]
-        return self._unscope_result(GroverResult(candidates=tree_candidates), user_id)
+        return self._unscope_result(VFSResult(candidates=tree_candidates), user_id)
 
     # ------------------------------------------------------------------
     # Graph — delegate to self._graph (RustworkxGraph)
@@ -2125,23 +2125,23 @@ class DatabaseFileSystem(GroverFileSystem):
     def _to_candidates(
         self,
         path: str | None,
-        candidates: GroverResult | None,
-    ) -> GroverResult:
-        """Normalize path/candidates into a GroverResult for the graph."""
+        candidates: VFSResult | None,
+    ) -> VFSResult:
+        """Normalize path/candidates into a VFSResult for the graph."""
         if candidates is not None:
             return candidates
         if path is not None:
-            return GroverResult(candidates=[Candidate(path=path)])
-        return GroverResult(candidates=[])
+            return VFSResult(candidates=[Candidate(path=path)])
+        return VFSResult(candidates=[])
 
     async def _predecessors_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         path = self._scope_path(path, user_id)
         candidates = self._scope_candidates(candidates, user_id)
@@ -2155,11 +2155,11 @@ class DatabaseFileSystem(GroverFileSystem):
     async def _successors_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         path = self._scope_path(path, user_id)
         candidates = self._scope_candidates(candidates, user_id)
@@ -2173,11 +2173,11 @@ class DatabaseFileSystem(GroverFileSystem):
     async def _ancestors_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         path = self._scope_path(path, user_id)
         candidates = self._scope_candidates(candidates, user_id)
@@ -2191,11 +2191,11 @@ class DatabaseFileSystem(GroverFileSystem):
     async def _descendants_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         path = self._scope_path(path, user_id)
         candidates = self._scope_candidates(candidates, user_id)
@@ -2209,12 +2209,12 @@ class DatabaseFileSystem(GroverFileSystem):
     async def _neighborhood_impl(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         depth: int = 2,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         path = self._scope_path(path, user_id)
         candidates = self._scope_candidates(candidates, user_id)
@@ -2228,11 +2228,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _meeting_subgraph_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.meeting_subgraph(
@@ -2244,11 +2244,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _min_meeting_subgraph_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.min_meeting_subgraph(
@@ -2260,11 +2260,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _pagerank_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.pagerank(
@@ -2276,11 +2276,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _betweenness_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.betweenness_centrality(
@@ -2292,11 +2292,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _closeness_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.closeness_centrality(
@@ -2308,11 +2308,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _degree_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.degree_centrality(
@@ -2324,11 +2324,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _in_degree_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.in_degree_centrality(
@@ -2340,11 +2340,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _out_degree_centrality_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.out_degree_centrality(
@@ -2356,11 +2356,11 @@ class DatabaseFileSystem(GroverFileSystem):
 
     async def _hits_impl(
         self,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
-    ) -> GroverResult:
+    ) -> VFSResult:
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         result = await self._graph.hits(

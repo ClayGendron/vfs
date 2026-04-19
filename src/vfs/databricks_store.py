@@ -6,7 +6,7 @@ because the Databricks SDK is synchronous.
 
 Requires ``databricks-vectorsearch``::
 
-    pip install grover[databricks]
+    pip install vfs[databricks]
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from grover.vector_store import VectorHit, VectorItem
+from vfs.vector_store import VectorHit, VectorItem
 
 try:
     from databricks.vector_search.client import VectorSearchClient
@@ -54,7 +54,7 @@ class DatabricksVectorStore:
         if not _HAS_DATABRICKS:
             msg = (
                 "databricks-vectorsearch is required for DatabricksVectorStore."
-                " Install it with: pip install grover[databricks]"
+                " Install it with: pip install vfs[databricks]"
             )
             raise ImportError(msg)
 

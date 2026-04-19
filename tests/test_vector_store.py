@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from grover.backends.database import DatabaseFileSystem
-from grover.vector import Vector
-from grover.vector_store import VectorHit, VectorItem, VectorStore
+from vfs.backends.database import DatabaseFileSystem
+from vfs.vector import Vector
+from vfs.vector_store import VectorHit, VectorItem, VectorStore
 
 # ---------------------------------------------------------------------------
 # Mock VectorStore
@@ -220,8 +220,8 @@ class TestDatabricksVectorStore:
 
     def _make_store(self):
         """Create a DatabricksVectorStore with mocked SDK."""
-        with patch("grover.databricks_store._HAS_DATABRICKS", True):
-            from grover.databricks_store import DatabricksVectorStore
+        with patch("vfs.databricks_store._HAS_DATABRICKS", True):
+            from vfs.databricks_store import DatabricksVectorStore
 
             store = DatabricksVectorStore(
                 index_name="catalog.schema.idx",
@@ -307,7 +307,7 @@ class TestDatabricksVectorStore:
         mock_client_cls.return_value = mock_client
         mock_client.get_index.return_value = MagicMock()
 
-        with patch("grover.databricks_store.VectorSearchClient", mock_client_cls):
+        with patch("vfs.databricks_store.VectorSearchClient", mock_client_cls):
             await store.connect()
 
         assert store._client is mock_client

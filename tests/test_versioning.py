@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from grover.versioning import (
+from vfs.versioning import (
     SNAPSHOT_INTERVAL,
     VersionRecord,
     apply_diff,

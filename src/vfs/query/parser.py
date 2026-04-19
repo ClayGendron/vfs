@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, overload
 
-from grover.query.ast import (
+from vfs.query.ast import (
     CaseMode,
     CopyCommand,
     DeleteCommand,
@@ -40,12 +40,12 @@ from grover.query.ast import (
     Visibility,
     WriteCommand,
 )
-from grover.query.types import resolve_type_aliases
+from vfs.query.types import resolve_type_aliases
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from grover.paths import ObjectKind
+    from vfs.paths import ObjectKind
 
 
 class QuerySyntaxError(ValueError):
@@ -470,7 +470,7 @@ _COMMAND_SPECS = (
         "grep",
         ("grep",),
         {
-            # Visibility (Grover native)
+            # Visibility (VFS native)
             "--all": 0,
             "--include": 1,
             # Case

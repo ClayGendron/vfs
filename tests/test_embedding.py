@@ -6,8 +6,8 @@ from typing import Any, cast
 
 import pytest
 
-from grover.embedding import EmbeddingProvider, LangChainEmbeddingProvider
-from grover.vector import Vector
+from vfs.embedding import EmbeddingProvider, LangChainEmbeddingProvider
+from vfs.vector import Vector
 
 # ---------------------------------------------------------------------------
 # Mock LangChain Embeddings — avoids requiring langchain-core in test deps
@@ -204,7 +204,7 @@ def test_rejects_non_embeddings_instance():
 
 def test_import_error_when_langchain_missing(monkeypatch: pytest.MonkeyPatch):
     """LangChainEmbeddingProvider raises ImportError when langchain-core is absent."""
-    import grover.embedding as mod
+    import vfs.embedding as mod
 
     monkeypatch.setattr(mod, "_HAS_LANGCHAIN", False)
     with pytest.raises(ImportError, match="langchain-core is required"):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from grover.query.parser import QuerySyntaxError, parse_query, tokenize
+from vfs.query.parser import QuerySyntaxError, parse_query, tokenize
 
 # ===========================================================================
 # Tokenizer
@@ -471,8 +471,8 @@ class TestParserEdgeCases:
 class TestRenderModePipelineNoStages:
     def test_pipeline_no_stages_uses_source_mode(self):
         """Line 706: PipelineNode with empty stages recurses to source render mode."""
-        from grover.query.ast import PipelineNode, ReadCommand
-        from grover.query.parser import _render_mode
+        from vfs.query.ast import PipelineNode, ReadCommand
+        from vfs.query.parser import _render_mode
 
         node = PipelineNode(source=ReadCommand(paths=("/a.py",)), stages=())
         assert _render_mode(node) == "content"
@@ -485,7 +485,7 @@ class TestRenderModePipelineNoStages:
 
 def _grep(query: str):
     """Helper: parse a bare grep command and return the GrepCommand node."""
-    from grover.query.ast import GrepCommand
+    from vfs.query.ast import GrepCommand
 
     plan = parse_query(query)
     assert isinstance(plan.ast, GrepCommand)
@@ -493,7 +493,7 @@ def _grep(query: str):
 
 
 def _glob(query: str):
-    from grover.query.ast import GlobCommand
+    from vfs.query.ast import GlobCommand
 
     plan = parse_query(query)
     assert isinstance(plan.ast, GlobCommand)
@@ -682,7 +682,7 @@ class TestGrepLimits:
 
 
 class TestGrepNoOpCompat:
-    """rg compat flags that Grover accepts but does not act on."""
+    """rg compat flags that VFS accepts but does not act on."""
 
     def test_hidden(self):
         cmd = _grep("grep foo --hidden")

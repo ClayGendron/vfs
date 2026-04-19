@@ -1,26 +1,28 @@
 __version__ = "0.0.20"
 
-from grover import permissions
-from grover.client import Grover, GroverAsync
-from grover.exceptions import (
+from vfs import permissions
+from vfs.base import VirtualFileSystem
+from vfs.client import VFSClient, VFSClientAsync
+from vfs.exceptions import (
     GraphError,
-    GroverError,
     MountError,
     NotFoundError,
     ValidationError,
+    VFSError,
     WriteConflictError,
 )
-from grover.permissions import PermissionMap
+from vfs.permissions import PermissionMap
 
 __all__ = [
     "GraphError",
-    "Grover",
-    "GroverAsync",
-    "GroverError",
     "MountError",
     "NotFoundError",
     "PermissionMap",
+    "VFSClient",
+    "VFSClientAsync",
+    "VFSError",
     "ValidationError",
+    "VirtualFileSystem",
     "WriteConflictError",
     "permissions",
 ]

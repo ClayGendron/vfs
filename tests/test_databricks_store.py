@@ -9,7 +9,7 @@ import pytest
 
 class TestDatabricksImportGuard:
     def test_raises_when_sdk_missing(self, monkeypatch: pytest.MonkeyPatch):
-        import grover.databricks_store as mod
+        import vfs.databricks_store as mod
 
         monkeypatch.setattr(mod, "_HAS_DATABRICKS", False)
         with pytest.raises(ImportError, match="databricks-vectorsearch is required"):
@@ -18,7 +18,7 @@ class TestDatabricksImportGuard:
 
 class TestDatabricksQuery:
     async def test_user_id_filter(self):
-        from grover.databricks_store import DatabricksVectorStore
+        from vfs.databricks_store import DatabricksVectorStore
 
         store = DatabricksVectorStore(index_name="idx", endpoint_name="ep")
         mock_index = MagicMock()
@@ -36,7 +36,7 @@ class TestDatabricksQuery:
 
 class TestDatabricksConnect:
     async def test_connect_with_host_and_token(self):
-        from grover.databricks_store import DatabricksVectorStore
+        from vfs.databricks_store import DatabricksVectorStore
 
         store = DatabricksVectorStore(
             index_name="idx",
@@ -50,8 +50,8 @@ class TestDatabricksConnect:
         mock_client_cls.return_value = MagicMock()
 
         with (
-            patch("grover.databricks_store.VectorSearchClient", mock_client_cls),
-            patch("grover.databricks_store.asyncio") as mock_asyncio,
+            patch("vfs.databricks_store.VectorSearchClient", mock_client_cls),
+            patch("vfs.databricks_store.asyncio") as mock_asyncio,
         ):
             mock_asyncio.to_thread = AsyncMock(return_value=mock_index)
             await store.connect()

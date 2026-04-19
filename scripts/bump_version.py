@@ -1,4 +1,4 @@
-"""Bump the project version in pyproject.toml and src/grover/__init__.py.
+"""Bump the project version in pyproject.toml and src/vfs/__init__.py.
 
 Usage:
     uv run python scripts/bump_version.py --patch   # 0.0.1 → 0.0.2
@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
-INIT_PY = ROOT / "src" / "grover" / "__init__.py"
+INIT_PY = ROOT / "src" / "vfs" / "__init__.py"
 
 VERSION_RE = re.compile(r'^(version\s*=\s*")(\d+\.\d+\.\d+)(")', re.MULTILINE)
 INIT_VERSION_RE = re.compile(r'^(__version__\s*=\s*")(\d+\.\d+\.\d+)(")', re.MULTILINE)
@@ -57,7 +57,7 @@ def main() -> None:
     updated = VERSION_RE.sub(rf"\g<1>{new_str}\3", text)
     PYPROJECT.write_text(updated)
 
-    # Update src/grover/__init__.py
+    # Update src/vfs/__init__.py
     init_text = INIT_PY.read_text()
     if INIT_VERSION_RE.search(init_text):
         updated_init = INIT_VERSION_RE.sub(rf"\g<1>{new_str}\3", init_text)

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from grover.backends.database import DatabaseFileSystem
-from grover.results import Candidate, GroverResult
 from tests.conftest import require_file
+from vfs.backends.database import DatabaseFileSystem
+from vfs.results import Candidate, VFSResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -124,7 +124,7 @@ class TestVersionExclusion:
 
     async def test_excludes_version_candidates(self, db: DatabaseFileSystem):
         """Version candidates passed in should be skipped."""
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(
                     path="/a.py/.versions/1",
@@ -243,7 +243,7 @@ class TestCandidateChaining:
                 "/c.py": "authentication service",
             },
         )
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(path="/a.py", content="authentication handler"),
                 Candidate(path="/b.py", content="authentication module"),
@@ -266,7 +266,7 @@ class TestCandidateChaining:
     ):
         """Candidates without content get hydrated from DB."""
         await _seed(db, {"/a.py": "authentication handler"})
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(path="/a.py"),
             ]
@@ -284,7 +284,7 @@ class TestCandidateChaining:
         self,
         db: DatabaseFileSystem,
     ):
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(
                     path="/a.py",

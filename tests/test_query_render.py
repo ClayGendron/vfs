@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from grover.query.render import render_query_result
-from grover.results import Candidate, Detail, GroverResult
+from vfs.query.render import render_query_result
+from vfs.results import Candidate, Detail, VFSResult
 
 
 def _candidate(
@@ -44,13 +44,13 @@ def _candidate(
 
 class TestErrorRendering:
     def test_errors_only(self):
-        result = GroverResult(success=False, errors=["file not found", "bad path"])
+        result = VFSResult(success=False, errors=["file not found", "bad path"])
         output = render_query_result(result, mode="content")
         assert "Error: file not found" in output
         assert "Error: bad path" in output
 
     def test_body_with_errors(self):
-        result = GroverResult(
+        result = VFSResult(
             success=True,
             candidates=[_candidate("/a.py", content="hello")],
             errors=["warning: deprecated"],
@@ -67,17 +67,17 @@ class TestErrorRendering:
 
 class TestContentMode:
     def test_single_file(self):
-        result = GroverResult(candidates=[_candidate("/a.py", content="hello")])
+        result = VFSResult(candidates=[_candidate("/a.py", content="hello")])
         output = render_query_result(result, mode="content")
         assert output == "hello"
 
     def test_empty_candidates(self):
-        result = GroverResult(candidates=[])
+        result = VFSResult(candidates=[])
         output = render_query_result(result, mode="content")
         assert output == ""
 
     def test_multi_file_sorted_with_headers(self):
-        result = GroverResult(
+        result = VFSResult(
             candidates=[
                 _candidate("/b.py", content="bravo"),
                 _candidate("/a.py", content="alpha"),
@@ -97,19 +97,19 @@ class TestContentMode:
 
 class TestActionMode:
     def test_no_changes(self):
-        result = GroverResult(candidates=[])
+        result = VFSResult(candidates=[])
         output = render_query_result(result, mode="action")
         assert output == "No changes"
 
     def test_single_path(self):
         detail = Detail(operation="write")
-        result = GroverResult(candidates=[_candidate("/a.py", details=(detail,))])
+        result = VFSResult(candidates=[_candidate("/a.py", details=(detail,))])
         output = render_query_result(result, mode="action")
         assert output == "Wrote /a.py"
 
     def test_multi_path(self):
         detail = Detail(operation="delete")
-        result = GroverResult(
+        result = VFSResult(
             candidates=[
                 _candidate("/a.py", details=(detail,)),
                 _candidate("/b.py", details=(detail,)),
@@ -120,7 +120,7 @@ class TestActionMode:
 
     def test_errors_only_action(self):
         # success=True with errors but no candidates → _render_action error path
-        result = GroverResult(
+        result = VFSResult(
             success=True,
             errors=["permission denied"],
             candidates=[],
@@ -140,7 +140,7 @@ class TestActionMode:
             ("custom_op", "Custom op"),
         ]:
             detail = Detail(operation=op)
-            result = GroverResult(candidates=[_candidate("/x", details=(detail,))])
+            result = VFSResult(candidates=[_candidate("/x", details=(detail,))])
             output = render_query_result(result, mode="action")
             assert verb in output
 
@@ -152,7 +152,7 @@ class TestActionMode:
 
 class TestStatMode:
     def test_stat_with_metadata(self):
-        result = GroverResult(
+        result = VFSResult(
             candidates=[
                 _candidate(
                     "/a.py",
@@ -173,7 +173,7 @@ class TestStatMode:
         assert "size_bytes: 1024" in output
 
     def test_stat_with_none_values(self):
-        result = GroverResult(candidates=[_candidate("/a.py", kind="file")])
+        result = VFSResult(candidates=[_candidate("/a.py", kind="file")])
         output = render_query_result(result, mode="stat")
         assert "/a.py" in output
         assert "kind: file" in output
@@ -187,7 +187,7 @@ class TestStatMode:
 
 class TestQueryListMode:
     def test_unranked(self):
-        result = GroverResult(
+        result = VFSResult(
             candidates=[
                 _candidate("/b.py"),
                 _candidate("/a.py"),
@@ -200,7 +200,7 @@ class TestQueryListMode:
 
     def test_ranked(self):
         # score is a property derived from details[-1].score
-        result = GroverResult(
+        result = VFSResult(
             candidates=[
                 _candidate("/a.py", details=(Detail(operation="search", score=0.95),)),
                 _candidate("/b.py", details=(Detail(operation="search", score=0.80),)),
@@ -218,6 +218,6 @@ class TestQueryListMode:
 
 class TestUnhandledMode:
     def test_raises_assertion_error(self):
-        result = GroverResult(candidates=[_candidate("/a.py")])
+        result = VFSResult(candidates=[_candidate("/a.py")])
         with pytest.raises(AssertionError, match="Unhandled render mode"):
             render_query_result(result, mode="bogus_mode")  # type: ignore[arg-type]

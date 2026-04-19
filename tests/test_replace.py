@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from grover.replace import (
+from vfs.replace import (
     block_anchor_replacer,
     get_context_lines,
     get_line_number,

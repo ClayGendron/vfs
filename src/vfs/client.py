@@ -1,21 +1,21 @@
-"""GroverAsync and Grover — async and sync clients.
+"""VFSClientAsync and VFSClient — async and sync clients.
 
-``GroverAsync`` is the async facade for long-running application servers.
-Errors return as ``GroverResult(success=False)``.
+``VFSClientAsync`` is the async facade for long-running application servers.
+Errors return as ``VFSResult(success=False)``.
 
-``Grover`` is the sync facade for data pipelines and backend processes.
+``VFSClient`` is the sync facade for data pipelines and backend processes.
 It sets ``raise_on_error=True`` so that failed operations raise
-``GroverError`` (or a subclass) immediately.
+``VFSError`` (or a subclass) immediately.
 
 Usage (async)::
 
-    g = GroverAsync()
+    g = VFSClientAsync()
     await g.add_mount("data", DatabaseFileSystem(engine=engine))
     result = await g.read("/data/hello.txt")
 
 Usage (sync)::
 
-    g = Grover()
+    g = VFSClient()
     g.add_mount("data", DatabaseFileSystem(engine=engine))
     result = g.read("/data/hello.txt")  # raises NotFoundError if missing
 """
@@ -26,23 +26,23 @@ import asyncio
 import threading
 from typing import TYPE_CHECKING, TypeVar
 
-from grover.base import GroverFileSystem
+from vfs.base import VirtualFileSystem
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Sequence
 
-    from grover.models import GroverObjectBase
-    from grover.query import QueryPlan
-    from grover.query.ast import CaseMode, GrepOutputMode
-    from grover.results import EditOperation, GroverResult, TwoPathOperation
+    from vfs.models import VFSObjectBase
+    from vfs.query import QueryPlan
+    from vfs.query.ast import CaseMode, GrepOutputMode
+    from vfs.results import EditOperation, TwoPathOperation, VFSResult
 
 _T = TypeVar("_T")
 
 
-class GroverAsync(GroverFileSystem):
+class VFSClientAsync(VirtualFileSystem):
     """Async facade — storageless router with mount-first API.
 
-    All filesystem operations are inherited from ``GroverFileSystem``.
+    All filesystem operations are inherited from ``VirtualFileSystem``.
     This subclass sets ``storage=False`` so it acts as a pure router.
     """
 
@@ -51,27 +51,27 @@ class GroverAsync(GroverFileSystem):
 
 
 # ======================================================================
-# Grover — synchronous facade with raise-on-error
+# VFSClient — synchronous facade with raise-on-error
 # ======================================================================
 
 
-class Grover:
+class VFSClient:
     """Synchronous facade for data pipelines and backend processes.
 
-    Sets ``raise_on_error=True`` on the internal ``GroverAsync`` so that
-    all mounted filesystems raise ``GroverError`` (or subclasses) on
-    failure instead of returning ``GroverResult(success=False)``.
+    Sets ``raise_on_error=True`` on the internal ``VFSClientAsync`` so that
+    all mounted filesystems raise ``VFSError`` (or subclasses) on
+    failure instead of returning ``VFSResult(success=False)``.
 
-    All operations return ``GroverResult``, matching the ``GroverFileSystem``
+    All operations return ``VFSResult``, matching the ``VirtualFileSystem``
     async API exactly.
 
     Usage::
 
-        g = Grover()
+        g = VFSClient()
         fs = DatabaseFileSystem(engine=engine)
         g.add_mount("data", fs)
         g.write("/data/hello.txt", "content")  # raises on failure
-        result = g.read("/data/hello.txt")  # returns GroverResult
+        result = g.read("/data/hello.txt")  # returns VFSResult
         print(result.content)
         g.close()
     """
@@ -82,7 +82,7 @@ class Grover:
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._thread.start()
-        self._async = GroverAsync()
+        self._async = VFSClientAsync()
         self._async._raise_on_error = True
 
     # ------------------------------------------------------------------
@@ -99,7 +99,7 @@ class Grover:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def add_mount(self, path: str, filesystem: GroverFileSystem) -> None:
+    def add_mount(self, path: str, filesystem: VirtualFileSystem) -> None:
         """Mount a filesystem at *path*."""
         self._run(self._async.add_mount(path, filesystem))
 
@@ -119,16 +119,16 @@ class Grover:
             self._thread.join(timeout=5)
 
     # ------------------------------------------------------------------
-    # CRUD — all operations return GroverResult
+    # CRUD — all operations return VFSResult
     # ------------------------------------------------------------------
 
     def read(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Read file content. Raises ``NotFoundError`` if missing."""
         return self._run(self._async.read(path, candidates=candidates, user_id=user_id))
 
@@ -136,11 +136,11 @@ class Grover:
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: Sequence[GroverObjectBase] | None = None,
+        objects: Sequence[VFSObjectBase] | None = None,
         overwrite: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Write content to *path*. Raises on conflict."""
         return self._run(self._async.write(path, content, objects=objects, overwrite=overwrite, user_id=user_id))
 
@@ -150,11 +150,11 @@ class Grover:
         old: str | None = None,
         new: str | None = None,
         edits: list[EditOperation] | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         replace_all: bool = False,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Replace *old* with *new* in the file at *path*."""
         return self._run(
             self._async.edit(
@@ -171,12 +171,12 @@ class Grover:
     def delete(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         permanent: bool = False,
         cascade: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Delete the object at *path*."""
         return self._run(
             self._async.delete(path, candidates=candidates, permanent=permanent, cascade=cascade, user_id=user_id)
@@ -185,14 +185,14 @@ class Grover:
     def stat(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Return metadata for *path*."""
         return self._run(self._async.stat(path, candidates=candidates, user_id=user_id))
 
-    def mkdir(self, path: str, *, user_id: str | None = None) -> GroverResult:
+    def mkdir(self, path: str, *, user_id: str | None = None) -> VFSResult:
         """Create a directory at *path*."""
         return self._run(self._async.mkdir(path, user_id=user_id))
 
@@ -203,7 +203,7 @@ class Grover:
         connection_type: str,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Create a connection from *source* to *target*."""
         return self._run(self._async.mkconn(source, target, connection_type, user_id=user_id))
 
@@ -215,7 +215,7 @@ class Grover:
         overwrite: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Move *src* to *dest*."""
         return self._run(self._async.move(src, dest, moves=moves, overwrite=overwrite, user_id=user_id))
 
@@ -227,17 +227,17 @@ class Grover:
         overwrite: bool = True,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Copy *src* to *dest*."""
         return self._run(self._async.copy(src, dest, copies=copies, overwrite=overwrite, user_id=user_id))
 
     def ls(
         self,
         path: str | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """List entries under *path*."""
         return self._run(self._async.ls(path, candidates=candidates, user_id=user_id))
 
@@ -247,12 +247,12 @@ class Grover:
         max_depth: int | None = None,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Recursive listing under *path*."""
         return self._run(self._async.tree(path, max_depth=max_depth, user_id=user_id))
 
     # ------------------------------------------------------------------
-    # Search — returning GroverResult (set algebra preserved)
+    # Search — returning VFSResult (set algebra preserved)
     # ------------------------------------------------------------------
 
     def glob(
@@ -262,9 +262,9 @@ class Grover:
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Find files matching *pattern*."""
         return self._run(
             self._async.glob(
@@ -294,9 +294,9 @@ class Grover:
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Search file contents for *pattern*."""
         return self._run(
             self._async.grep(
@@ -324,9 +324,9 @@ class Grover:
         query: str,
         k: int = 15,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Semantic (vector) search."""
         return self._run(self._async.semantic_search(query, k, candidates=candidates, user_id=user_id))
 
@@ -335,9 +335,9 @@ class Grover:
         vector: list[float],
         k: int = 15,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """Raw vector search."""
         return self._run(self._async.vector_search(vector, k, candidates=candidates, user_id=user_id))
 
@@ -346,132 +346,132 @@ class Grover:
         query: str,
         k: int = 15,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         """BM25 lexical search."""
         return self._run(self._async.lexical_search(query, k, candidates=candidates, user_id=user_id))
 
     # ------------------------------------------------------------------
-    # Graph — returning GroverResult (set algebra preserved)
+    # Graph — returning VFSResult (set algebra preserved)
     # ------------------------------------------------------------------
 
     def predecessors(
         self,
         path: str | None = None,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.predecessors(path, candidates=candidates, user_id=user_id))
 
     def successors(
         self,
         path: str | None = None,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.successors(path, candidates=candidates, user_id=user_id))
 
     def ancestors(
         self,
         path: str | None = None,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.ancestors(path, candidates=candidates, user_id=user_id))
 
     def descendants(
         self,
         path: str | None = None,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.descendants(path, candidates=candidates, user_id=user_id))
 
     def neighborhood(
         self,
         path: str | None = None,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         depth: int = 2,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.neighborhood(path, candidates=candidates, depth=depth, user_id=user_id))
 
     def meeting_subgraph(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.meeting_subgraph(candidates, user_id=user_id))
 
     def min_meeting_subgraph(
         self,
-        candidates: GroverResult,
+        candidates: VFSResult,
         *,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.min_meeting_subgraph(candidates, user_id=user_id))
 
     def pagerank(
         self,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.pagerank(candidates=candidates, user_id=user_id))
 
     def betweenness_centrality(
         self,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.betweenness_centrality(candidates=candidates, user_id=user_id))
 
     def closeness_centrality(
         self,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.closeness_centrality(candidates=candidates, user_id=user_id))
 
     def degree_centrality(
         self,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.degree_centrality(candidates=candidates, user_id=user_id))
 
     def in_degree_centrality(
         self,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.in_degree_centrality(candidates=candidates, user_id=user_id))
 
     def out_degree_centrality(
         self,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.out_degree_centrality(candidates=candidates, user_id=user_id))
 
     def hits(
         self,
         *,
-        candidates: GroverResult | None = None,
+        candidates: VFSResult | None = None,
         user_id: str | None = None,
-    ) -> GroverResult:
+    ) -> VFSResult:
         return self._run(self._async.hits(candidates=candidates, user_id=user_id))
 
     # ------------------------------------------------------------------
@@ -483,8 +483,8 @@ class Grover:
         query: str,
         *,
         user_id: str | None = None,
-        initial: GroverResult | None = None,
-    ) -> GroverResult:
+        initial: VFSResult | None = None,
+    ) -> VFSResult:
         """Execute a CLI-style query."""
         return self._run(self._async.run_query(query, user_id=user_id, initial=initial))
 
@@ -493,7 +493,7 @@ class Grover:
         query: str,
         *,
         user_id: str | None = None,
-        initial: GroverResult | None = None,
+        initial: VFSResult | None = None,
     ) -> str:
         """Execute a query and return rendered text."""
         return self._run(self._async.cli(query, user_id=user_id, initial=initial))

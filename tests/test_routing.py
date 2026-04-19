@@ -1,4 +1,4 @@
-"""Tests for GroverFileSystem mount management and routing."""
+"""Tests for VirtualFileSystem mount management and routing."""
 
 from __future__ import annotations
 
@@ -7,22 +7,22 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from grover.base import GroverFileSystem
-from grover.models import GroverObject
-from grover.results import GroverResult
 from tests.conftest import candidate as _candidate
 from tests.conftest import dummy_session_factory
 from tests.conftest import make_fs as _make_fs
+from vfs.base import VirtualFileSystem
+from vfs.models import VFSObject
+from vfs.results import VFSResult
 
 
-class _RoutingFS(GroverFileSystem):
+class _RoutingFS(VirtualFileSystem):
     def __init__(self, name: str = "test") -> None:
         super().__init__(session_factory=dummy_session_factory())
         self._name = name
-        self.read_mock = AsyncMock(return_value=GroverResult())
-        self.write_mock = AsyncMock(return_value=GroverResult())
-        self.delete_mock = AsyncMock(return_value=GroverResult())
-        self.glob_mock = AsyncMock(return_value=GroverResult())
+        self.read_mock = AsyncMock(return_value=VFSResult())
+        self.write_mock = AsyncMock(return_value=VFSResult())
+        self.delete_mock = AsyncMock(return_value=VFSResult())
+        self.glob_mock = AsyncMock(return_value=VFSResult())
 
     async def _read_impl(self, path=None, candidates=None, *, user_id=None, session):
         return await self.read_mock(path=path, candidates=candidates, session=session)
@@ -299,7 +299,7 @@ class TestCandidateRouting:
         child = _RoutingFS("child")
         await root.add_mount("/data", child)
 
-        result = await root.read(candidates=GroverResult())
+        result = await root.read(candidates=VFSResult())
 
         assert result.success is True
         assert result.candidates == []
@@ -311,7 +311,7 @@ class TestCandidateRouting:
         child = _RoutingFS("child")
         await root.add_mount("/data", child)
 
-        result = await root.glob("*.py", candidates=GroverResult())
+        result = await root.glob("*.py", candidates=VFSResult())
 
         assert result.success is True
         assert result.candidates == []
@@ -323,14 +323,14 @@ class TestWriteBatchRouting:
     async def test_write_batch_routes_one_logical_batch_per_terminal_fs(self):
         root = _RoutingFS("root")
         child = _RoutingFS("child")
-        child.write_mock.return_value = GroverResult(
+        child.write_mock.return_value = VFSResult(
             candidates=[_candidate("/a.py"), _candidate("/b.py")],
         )
         await root.add_mount("/data", child)
 
         objects = [
-            GroverObject(path="/data/a.py", content="a"),
-            GroverObject(path="/data/b.py", content="b"),
+            VFSObject(path="/data/a.py", content="a"),
+            VFSObject(path="/data/b.py", content="b"),
         ]
 
         result = await root.write(objects=objects)
@@ -354,7 +354,7 @@ class TestCrossMountTransfers:
         await root.add_mount("/src", src)
         await root.add_mount("/dst", dst)
 
-        src.read_mock.return_value = GroverResult(
+        src.read_mock.return_value = VFSResult(
             success=False,
             errors=["read failed"],
             candidates=[_candidate("/file.txt")],
@@ -373,13 +373,13 @@ class TestCrossMountTransfers:
         await root.add_mount("/src", src)
         await root.add_mount("/dst", dst)
 
-        src.read_mock.return_value = GroverResult(
+        src.read_mock.return_value = VFSResult(
             candidates=[_candidate("/file.txt", content="hello")],
         )
-        dst.write_mock.return_value = GroverResult(
+        dst.write_mock.return_value = VFSResult(
             candidates=[_candidate("/file.txt", content="hello")],
         )
-        src.delete_mock.return_value = GroverResult(
+        src.delete_mock.return_value = VFSResult(
             success=False,
             errors=["delete failed"],
             candidates=[_candidate("/file.txt")],
@@ -397,10 +397,10 @@ class TestCrossMountTransfers:
         await root.add_mount("/src", src)
         await root.add_mount("/dst", dst)
 
-        src.read_mock.return_value = GroverResult(
+        src.read_mock.return_value = VFSResult(
             candidates=[_candidate("/file.txt", content="hello")],
         )
-        dst.write_mock.return_value = GroverResult(
+        dst.write_mock.return_value = VFSResult(
             success=False,
             errors=["write failed"],
             candidates=[_candidate("/file.txt")],

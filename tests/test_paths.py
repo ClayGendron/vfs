@@ -1,10 +1,10 @@
-"""Tests for grover.paths — path utilities for the dot-prefix metadata namespace."""
+"""Tests for vfs.paths — path utilities for the dot-prefix metadata namespace."""
 
 from __future__ import annotations
 
 import pytest
 
-from grover.paths import (
+from vfs.paths import (
     MARKER_KINDS,
     METADATA_KIND_MAP,
     METADATA_MARKERS,

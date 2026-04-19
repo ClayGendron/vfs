@@ -7,12 +7,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
-from grover.backends.database import DatabaseFileSystem
-from grover.base import GroverFileSystem
-from grover.client import Grover, GroverAsync
-from grover.exceptions import WriteConflictError
-from grover.models import GroverObject
-from grover.permissions import (
+from vfs.backends.database import DatabaseFileSystem
+from vfs.base import VirtualFileSystem
+from vfs.client import VFSClient, VFSClientAsync
+from vfs.exceptions import WriteConflictError
+from vfs.models import VFSObject
+from vfs.permissions import (
     MUTATING_OPS,
     check_writable,
     validate_permission,
@@ -47,8 +47,8 @@ async def _make_router(
     *,
     ro_seed: tuple[str, str] | None = ("/doc.md", "hello"),
     rw_seed: tuple[str, str] | None = ("/doc.md", "hello"),
-) -> tuple[GroverAsync, DatabaseFileSystem, DatabaseFileSystem]:
-    """Build a GroverAsync with ``/ro`` (read) and ``/rw`` (read_write) mounts."""
+) -> tuple[VirtualFileSystem, DatabaseFileSystem, DatabaseFileSystem]:
+    """Build a VirtualFileSystem with ``/ro`` (read) and ``/rw`` (read_write) mounts."""
     ro_engine = await _sqlite_engine()
     rw_engine = await _sqlite_engine()
     ro = DatabaseFileSystem(engine=ro_engine, permissions="read")
@@ -57,7 +57,7 @@ async def _make_router(
         await _seed(ro, *ro_seed)
     if rw_seed is not None:
         await _seed(rw, *rw_seed)
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("ro", ro)
     await router.add_mount("rw", rw)
     return router, ro, rw
@@ -127,11 +127,11 @@ class TestConstruction:
             await engine.dispose()
 
     def test_base_class_default(self):
-        fs = GroverFileSystem(storage=False)
+        fs = VirtualFileSystem(storage=False)
         assert fs._permission_map.default == "read_write"
 
     def test_base_class_read(self):
-        fs = GroverFileSystem(storage=False, permissions="read")
+        fs = VirtualFileSystem(storage=False, permissions="read")
         assert fs._permission_map.default == "read"
 
 
@@ -157,17 +157,17 @@ class TestCheckWritable:
         assert "grep" not in MUTATING_OPS
 
     def test_returns_none_for_writable_mount(self):
-        fs = GroverFileSystem(storage=False, permissions="read_write")
+        fs = VirtualFileSystem(storage=False, permissions="read_write")
         assert check_writable(fs, "write", "/a") is None
 
     def test_returns_none_for_read_op_on_read_only_mount(self):
-        fs = GroverFileSystem(storage=False, permissions="read")
+        fs = VirtualFileSystem(storage=False, permissions="read")
         assert check_writable(fs, "read", "/a") is None
         assert check_writable(fs, "stat", "/a") is None
         assert check_writable(fs, "glob", "/a") is None
 
     def test_returns_error_for_mutation_on_read_only_mount(self):
-        fs = GroverFileSystem(storage=False, permissions="read")
+        fs = VirtualFileSystem(storage=False, permissions="read")
         result = check_writable(fs, "write", "/a")
         assert result is not None
         assert not result.success
@@ -258,7 +258,7 @@ class TestReadOnlyBlocksMutations:
     async def test_batch_write_rejected(self):
         router, _ro, _rw = await _make_router(ro_seed=None)
         try:
-            objs = [GroverObject(path="/ro/batch.md", content="x")]
+            objs = [VFSObject(path="/ro/batch.md", content="x")]
             result = await router.write(objects=objs)
             assert not result.success
             assert "Cannot write to read-only path" in result.error_message
@@ -408,7 +408,7 @@ class TestCandidateDispatch:
 
 class TestSyncRaises:
     def test_write_raises_write_conflict_error(self):
-        g = Grover()
+        g = VFSClient()
         try:
 
             async def _setup():
@@ -424,7 +424,7 @@ class TestSyncRaises:
             g.close()
 
     def test_mkdir_raises_write_conflict_error(self):
-        g = Grover()
+        g = VFSClient()
         try:
 
             async def _setup():
@@ -440,7 +440,7 @@ class TestSyncRaises:
             g.close()
 
     def test_read_does_not_raise(self):
-        g = Grover()
+        g = VFSClient()
         try:
 
             async def _setup():
@@ -475,7 +475,7 @@ class TestSharedEngineIsNotIsolated:
     future change to the model (e.g. engine-level enforcement) has to
     update this test deliberately.
 
-    See :mod:`grover.permissions` "Limitations" for the rationale.
+    See :mod:`vfs.permissions` "Limitations" for the rationale.
     Within-mount / directory-level permissions that would close this
     gap for specific use cases are future work.
     """
@@ -487,7 +487,7 @@ class TestSharedEngineIsNotIsolated:
             rw = DatabaseFileSystem(engine=shared_engine, permissions="read_write")
             await _seed(ro, "/doc.md", "original")
 
-            router = GroverAsync()
+            router = VFSClientAsync()
             await router.add_mount("ro", ro)
             await router.add_mount("back", rw)
             try:

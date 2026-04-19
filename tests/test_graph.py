@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import rustworkx
 
-from grover.graph import GraphProvider, RustworkxGraph, UnionFind
-from grover.models import GroverObject
-from grover.results import Candidate, GroverResult
+from vfs.graph import GraphProvider, RustworkxGraph, UnionFind
+from vfs.models import VFSObject
+from vfs.results import Candidate, VFSResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,14 +27,14 @@ def _fresh_mock_session():
 
 def _loaded_graph() -> RustworkxGraph:
     """Create a RustworkxGraph that skips DB loading (TTL already satisfied)."""
-    g = RustworkxGraph(model=GroverObject)
+    g = RustworkxGraph(model=VFSObject)
     g._loaded_at = time.monotonic()
     return g
 
 
-def _result(*paths: str) -> GroverResult:
-    """Build a GroverResult from path strings."""
-    return GroverResult(candidates=[Candidate(path=p) for p in paths])
+def _result(*paths: str) -> VFSResult:
+    """Build a VFSResult from path strings."""
+    return VFSResult(candidates=[Candidate(path=p) for p in paths])
 
 
 # ===========================================================================
@@ -109,20 +109,20 @@ class TestUnionFindFind:
 
 class TestRustworkxGraphInit:
     def test_empty_graph(self):
-        g = RustworkxGraph(model=GroverObject)
+        g = RustworkxGraph(model=VFSObject)
         assert len(g.nodes) == 0
         assert g._loaded_at is None
 
     def test_default_ttl(self):
-        g = RustworkxGraph(model=GroverObject)
+        g = RustworkxGraph(model=VFSObject)
         assert g._ttl == 3600
 
     def test_custom_ttl(self):
-        g = RustworkxGraph(model=GroverObject, ttl=60)
+        g = RustworkxGraph(model=VFSObject, ttl=60)
         assert g._ttl == 60
 
     def test_repr_empty(self):
-        g = RustworkxGraph(model=GroverObject)
+        g = RustworkxGraph(model=VFSObject)
         assert repr(g) == "RustworkxGraph(nodes=0, edges=0)"
 
     def test_repr_with_data(self):
@@ -334,7 +334,7 @@ class TestGraph:
 
 class TestEnsureFresh:
     async def test_loads_when_never_loaded(self):
-        g = RustworkxGraph(model=GroverObject)
+        g = RustworkxGraph(model=VFSObject)
         assert g._loaded_at is None
 
         mock_session = AsyncMock()
@@ -353,7 +353,7 @@ class TestEnsureFresh:
         mock_session.execute.assert_not_awaited()
 
     async def test_reloads_when_ttl_expired(self):
-        g = RustworkxGraph(model=GroverObject, ttl=0)
+        g = RustworkxGraph(model=VFSObject, ttl=0)
         g._loaded_at = time.monotonic() - 1  # expired
 
         mock_session = AsyncMock()
@@ -367,7 +367,7 @@ class TestEnsureFresh:
 
 class TestLoad:
     async def test_loads_connection_rows(self):
-        g = RustworkxGraph(model=GroverObject)
+        g = RustworkxGraph(model=VFSObject)
 
         row = MagicMock()
         row.source_path = "/a.py"
@@ -406,7 +406,7 @@ class TestLoad:
         assert g._out == {}
 
     async def test_skips_rows_without_source_or_target(self):
-        g = RustworkxGraph(model=GroverObject)
+        g = RustworkxGraph(model=VFSObject)
 
         row = MagicMock()
         row.source_path = None
@@ -424,7 +424,7 @@ class TestLoad:
         assert len(g.nodes) == 0
 
     async def test_falls_back_to_decomposed_type(self):
-        g = RustworkxGraph(model=GroverObject)
+        g = RustworkxGraph(model=VFSObject)
 
         row = MagicMock()
         row.source_path = "/a.py"
@@ -516,7 +516,7 @@ class TestExtractPaths:
         assert paths == ["/a.py", "/b.py"]
 
     def test_empty_result(self):
-        paths = RustworkxGraph._extract_paths(GroverResult())
+        paths = RustworkxGraph._extract_paths(VFSResult())
         assert paths == []
 
 
@@ -825,7 +825,7 @@ class TestMeetingSubgraph:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py", "/c.py"), session=_mock_session)
-        from grover.paths import decompose_connection
+        from vfs.paths import decompose_connection
 
         node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
         assert "/a.py" in node_paths
@@ -851,7 +851,7 @@ class TestMeetingSubgraph:
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py", "/b.py"), session=_mock_session)
-        from grover.paths import decompose_connection
+        from vfs.paths import decompose_connection
 
         node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
         assert node_paths == {"/a.py", "/b.py"}
@@ -862,7 +862,7 @@ class TestMeetingSubgraph:
         await g.add_node("/b.py", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py", "/b.py"), session=_mock_session)
-        from grover.paths import decompose_connection
+        from vfs.paths import decompose_connection
 
         node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
         # Both seeds present even though disconnected
@@ -919,7 +919,7 @@ class TestMinMeetingSubgraph:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
         await g.add_edge("/c.py", "/d.py", "imports", session=_mock_session)
 
-        from grover.paths import decompose_connection
+        from vfs.paths import decompose_connection
 
         meeting = await g.meeting_subgraph(_result("/a.py", "/d.py"), session=_mock_session)
         min_meeting = await g.min_meeting_subgraph(
@@ -936,7 +936,7 @@ class TestMinMeetingSubgraph:
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
-        from grover.paths import decompose_connection
+        from vfs.paths import decompose_connection
 
         result = await g.min_meeting_subgraph(
             _result("/a.py", "/c.py"),
@@ -954,7 +954,7 @@ class TestMinMeetingSubgraph:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
         await g.add_edge("/a.py", "/c.py", "imports", session=_mock_session)
 
-        from grover.paths import decompose_connection
+        from vfs.paths import decompose_connection
 
         result = await g.min_meeting_subgraph(
             _result("/a.py", "/c.py"),
@@ -988,7 +988,7 @@ class TestMinMeetingSubgraph:
         await g.add_edge("/y.py", "/b.py", "calls", session=_mock_session)
         await g.add_edge("/x.py", "/y.py", "imports", session=_mock_session)
 
-        from grover.paths import decompose_connection
+        from vfs.paths import decompose_connection
 
         # Force meeting to include both X and Y by using 3 seeds
         meeting = await g.meeting_subgraph(
@@ -1431,7 +1431,7 @@ class TestHits:
 class TestNeighborhoodUserScoped:
     async def test_user_scoped_filters_snap_in(self):
         """Line 524-525: neighborhood builds filtered snap_in when user_scoped."""
-        g = RustworkxGraph(model=GroverObject, user_scoped=True)
+        g = RustworkxGraph(model=VFSObject, user_scoped=True)
         g._loaded_at = time.monotonic()
         # User-scoped: only paths under /alice/ are visible to user_id="alice"
         await g.add_edge("/alice/a.py", "/alice/b.py", "imports", session=_mock_session)
@@ -1452,7 +1452,7 @@ class TestNeighborhoodUserScoped:
 class TestMeetingSubgraphUserScoped:
     async def test_user_scoped_filters_edges_in(self):
         """Line 583-584: meeting_subgraph builds filtered edges_in when user_scoped."""
-        g = RustworkxGraph(model=GroverObject, user_scoped=True)
+        g = RustworkxGraph(model=VFSObject, user_scoped=True)
         g._loaded_at = time.monotonic()
         await g.add_edge("/alice/a.py", "/alice/mid.py", "imports", session=_mock_session)
         await g.add_edge("/alice/mid.py", "/alice/b.py", "calls", session=_mock_session)
@@ -1580,8 +1580,8 @@ class TestMinMeetingImplDirect:
 
 class TestProtocol:
     def test_exports(self):
-        """GraphProvider and RustworkxGraph are importable from grover.graph."""
-        from grover.graph import RustworkxGraph, UnionFind
+        """GraphProvider and RustworkxGraph are importable from vfs.graph."""
+        from vfs.graph import RustworkxGraph, UnionFind
 
         assert GraphProvider is not None
         assert RustworkxGraph is not None

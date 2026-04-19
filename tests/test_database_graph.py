@@ -9,27 +9,27 @@ from __future__ import annotations
 
 import pytest
 
-from grover.backends.database import DatabaseFileSystem
-from grover.results import Candidate, GroverResult
+from vfs.backends.database import DatabaseFileSystem
+from vfs.results import Candidate, VFSResult
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
 
 
-def paths(result: GroverResult) -> set[str]:
-    """Extract path set from a GroverResult."""
+def paths(result: VFSResult) -> set[str]:
+    """Extract path set from a VFSResult."""
     return {c.path for c in result.candidates}
 
 
-def scored_paths(result: GroverResult) -> dict[str, float]:
-    """Extract {path: score} from a GroverResult."""
+def scored_paths(result: VFSResult) -> dict[str, float]:
+    """Extract {path: score} from a VFSResult."""
     return {c.path: c.score for c in result.candidates}
 
 
-def cands(*ps: str) -> GroverResult:
-    """Build a GroverResult from path strings."""
-    return GroverResult(candidates=[Candidate(path=p) for p in ps])
+def cands(*ps: str) -> VFSResult:
+    """Build a VFSResult from path strings."""
+    return VFSResult(candidates=[Candidate(path=p) for p in ps])
 
 
 # ------------------------------------------------------------------
@@ -416,7 +416,7 @@ class TestGraphConsistency:
 
     async def test_move_updates_graph(self, graph_db: DatabaseFileSystem):
         """Moving a file should update connection paths in the graph."""
-        from grover.results import TwoPathOperation
+        from vfs.results import TwoPathOperation
 
         async with graph_db._use_session() as s:
             await graph_db._move_impl(

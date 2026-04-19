@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from grover.paths import normalize_path
+from vfs.paths import normalize_path
 
 _GLOB_METACHARS = frozenset("*?[{")
 

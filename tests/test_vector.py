@@ -1,4 +1,4 @@
-"""Tests for grover.vector — Vector type and VectorType SQLAlchemy decorator."""
+"""Tests for vfs.vector — Vector type and VectorType SQLAlchemy decorator."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from grover.vector import Vector, VectorType
+from vfs.vector import Vector, VectorType
 
 # =========================================================================
 # Vector — construction and subscript forms

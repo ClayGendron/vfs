@@ -1,6 +1,6 @@
-"""Path utilities for Grover's dot-prefix metadata namespace.
+"""Path utilities for VFS's dot-prefix metadata namespace.
 
-Grover uses dot-prefixed directories (.chunks/, .versions/, .connections/, .apis/)
+VFS uses dot-prefixed directories (.chunks/, .versions/, .connections/, .apis/)
 to organize metadata as children of their parent file. These utilities handle
 path normalization, kind detection, parent resolution, and path construction
 for the unified namespace.
@@ -162,7 +162,7 @@ def normalize_path(path: str) -> str:
 
     Also collapses POSIX's preserved leading ``//`` to a single ``/``.
     POSIX §4.12 lets implementations give exactly two leading slashes
-    distinct meaning, and ``posixpath.normpath`` honors that — but Grover
+    distinct meaning, and ``posixpath.normpath`` honors that — but VFS
     treats ``//path`` and ``/path`` as the same logical location, so we
     flatten the result.  This closes a permission-bypass vector where
     ``//`` could route around a directory-prefix rule that matched the
@@ -175,7 +175,7 @@ def normalize_path(path: str) -> str:
         path = "/" + path
     path = posixpath.normpath(path)
     # POSIX preserves exactly two leading slashes (`//x` stays as `//x`,
-    # but `///x` collapses to `/x`).  Grover does not honor that
+    # but `///x` collapses to `/x`).  VFS does not honor that
     # distinction — flatten to a single leading slash.
     if path.startswith("//"):
         path = path[1:]

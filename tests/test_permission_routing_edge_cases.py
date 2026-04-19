@@ -1,9 +1,9 @@
 """Edge cases for permission enforcement in the routing/dispatch layer.
 
 Pins behavior around the subtler corners of how
-:class:`grover.permissions.PermissionMap` interacts with the chokepoints
-in :mod:`grover.base` and the storage paths in
-:mod:`grover.backends.database` — parent-directory creation vs revival,
+:class:`vfs.permissions.PermissionMap` interacts with the chokepoints
+in :mod:`vfs.base` and the storage paths in
+:mod:`vfs.backends.database` — parent-directory creation vs revival,
 empty batches, user scoping, the self-storage routing path, mount
 remove/re-add, and the rule against rebinding ``_permission_map``.
 """
@@ -14,10 +14,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, select
 
-from grover.backends.database import DatabaseFileSystem
-from grover.client import GroverAsync
-from grover.models import GroverObject
-from grover.permissions import PermissionMap, read_only
+from vfs.backends.database import DatabaseFileSystem
+from vfs.client import VFSClientAsync
+from vfs.models import VFSObject
+from vfs.permissions import PermissionMap, read_only
 
 
 async def _sqlite_engine():
@@ -39,7 +39,7 @@ async def _seed(fs: DatabaseFileSystem, path: str, content: str = "x") -> None:
 async def _raw_has_path(fs: DatabaseFileSystem, path: str) -> bool:
     assert fs._session_factory is not None
     async with fs._session_factory() as s:
-        stmt = select(GroverObject).where(GroverObject.path == path)
+        stmt = select(VFSObject).where(VFSObject.path == path)
         result = await s.execute(stmt)
         return result.scalar_one_or_none() is not None
 
@@ -47,7 +47,7 @@ async def _raw_has_path(fs: DatabaseFileSystem, path: str) -> bool:
 async def _raw_deleted_at(fs: DatabaseFileSystem, path: str):
     assert fs._session_factory is not None
     async with fs._session_factory() as s:
-        stmt = select(GroverObject).where(GroverObject.path == path)
+        stmt = select(VFSObject).where(VFSObject.path == path)
         result = await s.execute(stmt)
         obj = result.scalar_one_or_none()
         return obj.deleted_at if obj is not None else "missing"
@@ -73,7 +73,7 @@ async def test_writable_carve_out_creates_unrestricted_ancestors():
             overrides=(("/wh/a/b/c", "read_write"),),
         ),
     )
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("mnt", fs)
     try:
         r = await router.write("/mnt/wh/a/b/c/x.md", "ok")
@@ -103,7 +103,7 @@ async def test_parent_dir_revival_does_not_undelete_read_only_ancestors():
         default="read",
         overrides=(("/wh/a/b/c", "read_write"),),
     )
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("mnt", fs)
     try:
         r = await router.write("/mnt/wh/a/b/c/new.md", "ok")
@@ -123,7 +123,7 @@ async def test_parent_dir_revival_does_not_undelete_read_only_ancestors():
 async def test_route_two_path_empty_ops_is_noop():
     engine = await _sqlite_engine()
     fs = DatabaseFileSystem(engine=engine, permissions="read")
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("mnt", fs)
     try:
         r = await router.move(moves=[])
@@ -137,7 +137,7 @@ async def test_route_two_path_empty_ops_is_noop():
 async def test_empty_write_batch_is_noop_under_read_only():
     engine = await _sqlite_engine()
     fs = DatabaseFileSystem(engine=engine, permissions="read")
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("mnt", fs)
     try:
         r = await router.write(objects=[])
@@ -153,7 +153,7 @@ async def test_user_scoped_pre_scoped_path_no_double_write():
         user_scoped=True,
         permissions=read_only(write=["/synthesis"]),
     )
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("wiki", fs)
     try:
         r = await router.write("/wiki/alice/synthesis/x.md", "x", user_id="alice")
@@ -174,7 +174,7 @@ async def test_user_scoped_rule_with_user_id_in_path_is_global_not_per_user():
     there is no cross-user data leak, but the rule does not actually
     scope to alice.  Per-user policy belongs in the share / ReBAC
     layer, not :class:`PermissionMap`.  See the "User scoping" section
-    of :mod:`grover.permissions`.
+    of :mod:`vfs.permissions`.
     """
     engine = await _sqlite_engine()
     fs = DatabaseFileSystem(
@@ -182,7 +182,7 @@ async def test_user_scoped_rule_with_user_id_in_path_is_global_not_per_user():
         user_scoped=True,
         permissions=read_only(write=["/alice/synthesis"]),
     )
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("wiki", fs)
     try:
         # Bob matches the rule because the check sees the unscoped path
@@ -203,7 +203,7 @@ async def test_remove_and_readd_uses_fresh_filesystem():
     engine2 = await _sqlite_engine()
     writable = DatabaseFileSystem(engine=engine1, permissions="read_write")
     readonly = DatabaseFileSystem(engine=engine2, permissions="read")
-    router = GroverAsync()
+    router = VFSClientAsync()
     await router.add_mount("mnt", writable)
     r = await router.write("/mnt/ok.md", "ok")
     assert r.success
@@ -237,7 +237,7 @@ async def test_self_storage_database_fs_checks_own_permissions():
 def test_database_py_does_not_reassign_permission_map():
     from pathlib import Path
 
-    import grover.backends.database as dbmod
+    import vfs.backends.database as dbmod
 
     text = Path(dbmod.__file__).read_text(encoding="utf-8")
     assert "self._permission_map =" not in text

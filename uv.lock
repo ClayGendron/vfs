@@ -963,121 +963,6 @@ wheels = [
 ]
 
 [[package]]
-name = "grover"
-version = "0.0.18"
-source = { editable = "." }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "pydantic" },
-    { name = "rustworkx" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "sqlmodel" },
-    { name = "unidiff" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "aioodbc" },
-    { name = "asyncpg" },
-    { name = "databricks-vectorsearch" },
-    { name = "deepagents" },
-    { name = "langchain-core" },
-    { name = "langgraph" },
-    { name = "openai" },
-    { name = "pinecone", extra = ["asyncio"] },
-    { name = "pyodbc" },
-    { name = "tree-sitter" },
-    { name = "tree-sitter-go" },
-    { name = "tree-sitter-javascript" },
-    { name = "tree-sitter-typescript" },
-    { name = "usearch" },
-]
-databricks = [
-    { name = "databricks-vectorsearch" },
-]
-deepagents = [
-    { name = "deepagents" },
-]
-langchain = [
-    { name = "langchain-core" },
-]
-langgraph = [
-    { name = "langchain-core" },
-    { name = "langgraph" },
-]
-mssql = [
-    { name = "aioodbc" },
-    { name = "pyodbc" },
-]
-openai = [
-    { name = "openai" },
-]
-pinecone = [
-    { name = "pinecone", extra = ["asyncio"] },
-]
-postgres = [
-    { name = "asyncpg" },
-]
-search = [
-    { name = "usearch" },
-]
-treesitter = [
-    { name = "tree-sitter" },
-    { name = "tree-sitter-go" },
-    { name = "tree-sitter-javascript" },
-    { name = "tree-sitter-typescript" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "ipykernel" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-]
-docs = [
-    { name = "mkdocs-material" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aioodbc", marker = "extra == 'mssql'", specifier = ">=0.5" },
-    { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.29" },
-    { name = "databricks-vectorsearch", marker = "extra == 'databricks'", specifier = ">=0.40" },
-    { name = "deepagents", marker = "extra == 'deepagents'", specifier = ">=0.4" },
-    { name = "grover", extras = ["search", "openai", "pinecone", "databricks", "treesitter", "postgres", "mssql", "deepagents", "langchain", "langgraph"], marker = "extra == 'all'" },
-    { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.3" },
-    { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=0.3" },
-    { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
-    { name = "pinecone", extras = ["asyncio"], marker = "extra == 'pinecone'", specifier = ">=5.0" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pyodbc", marker = "extra == 'mssql'", specifier = ">=5.0" },
-    { name = "rustworkx", specifier = ">=0.17" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
-    { name = "sqlmodel", specifier = ">=0.0.31" },
-    { name = "tree-sitter", marker = "extra == 'treesitter'", specifier = ">=0.22" },
-    { name = "tree-sitter-go", marker = "extra == 'treesitter'", specifier = ">=0.21" },
-    { name = "tree-sitter-javascript", marker = "extra == 'treesitter'", specifier = ">=0.21" },
-    { name = "tree-sitter-typescript", marker = "extra == 'treesitter'", specifier = ">=0.21" },
-    { name = "unidiff", specifier = ">=0.7" },
-    { name = "usearch", marker = "extra == 'search'", specifier = ">=2.0" },
-]
-provides-extras = ["search", "treesitter", "openai", "pinecone", "databricks", "postgres", "mssql", "deepagents", "langchain", "langgraph", "all"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ipykernel", specifier = ">=7.2.0" },
-    { name = "pre-commit", specifier = ">=4.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "pytest-cov", specifier = ">=5.0" },
-]
-docs = [{ name = "mkdocs-material", specifier = ">=9.0" }]
-
-[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3172,6 +3057,121 @@ sdist = { url = "https://files.pythonhosted.org/packages/32/ce/eeb58ae4ac36fe09e
 wheels = [
     { url = "https://files.pythonhosted.org/packages/83/e4/d04a086285c20886c0daad0e026f250869201013d18f81d9ff5eada73a88/uvicorn-0.41.0-py3-none-any.whl", hash = "sha256:29e35b1d2c36a04b9e180d4007ede3bcb32a85fbdfd6c6aeb3f26839de088187", size = 68783, upload-time = "2026-02-16T23:07:22.357Z" },
 ]
+
+[[package]]
+name = "vfs-py"
+version = "0.0.20"
+source = { editable = "." }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "pydantic" },
+    { name = "rustworkx" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "sqlmodel" },
+    { name = "unidiff" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "aioodbc" },
+    { name = "asyncpg" },
+    { name = "databricks-vectorsearch" },
+    { name = "deepagents" },
+    { name = "langchain-core" },
+    { name = "langgraph" },
+    { name = "openai" },
+    { name = "pinecone", extra = ["asyncio"] },
+    { name = "pyodbc" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-go" },
+    { name = "tree-sitter-javascript" },
+    { name = "tree-sitter-typescript" },
+    { name = "usearch" },
+]
+databricks = [
+    { name = "databricks-vectorsearch" },
+]
+deepagents = [
+    { name = "deepagents" },
+]
+langchain = [
+    { name = "langchain-core" },
+]
+langgraph = [
+    { name = "langchain-core" },
+    { name = "langgraph" },
+]
+mssql = [
+    { name = "aioodbc" },
+    { name = "pyodbc" },
+]
+openai = [
+    { name = "openai" },
+]
+pinecone = [
+    { name = "pinecone", extra = ["asyncio"] },
+]
+postgres = [
+    { name = "asyncpg" },
+]
+search = [
+    { name = "usearch" },
+]
+treesitter = [
+    { name = "tree-sitter" },
+    { name = "tree-sitter-go" },
+    { name = "tree-sitter-javascript" },
+    { name = "tree-sitter-typescript" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ipykernel" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+]
+docs = [
+    { name = "mkdocs-material" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aioodbc", marker = "extra == 'mssql'", specifier = ">=0.5" },
+    { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.29" },
+    { name = "databricks-vectorsearch", marker = "extra == 'databricks'", specifier = ">=0.40" },
+    { name = "deepagents", marker = "extra == 'deepagents'", specifier = ">=0.4" },
+    { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.3" },
+    { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=0.3" },
+    { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
+    { name = "pinecone", extras = ["asyncio"], marker = "extra == 'pinecone'", specifier = ">=5.0" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyodbc", marker = "extra == 'mssql'", specifier = ">=5.0" },
+    { name = "rustworkx", specifier = ">=0.17" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
+    { name = "sqlmodel", specifier = ">=0.0.31" },
+    { name = "tree-sitter", marker = "extra == 'treesitter'", specifier = ">=0.22" },
+    { name = "tree-sitter-go", marker = "extra == 'treesitter'", specifier = ">=0.21" },
+    { name = "tree-sitter-javascript", marker = "extra == 'treesitter'", specifier = ">=0.21" },
+    { name = "tree-sitter-typescript", marker = "extra == 'treesitter'", specifier = ">=0.21" },
+    { name = "unidiff", specifier = ">=0.7" },
+    { name = "usearch", marker = "extra == 'search'", specifier = ">=2.0" },
+    { name = "vfs-py", extras = ["search", "openai", "pinecone", "databricks", "treesitter", "postgres", "mssql", "deepagents", "langchain", "langgraph"], marker = "extra == 'all'" },
+]
+provides-extras = ["search", "treesitter", "openai", "pinecone", "databricks", "postgres", "mssql", "deepagents", "langchain", "langgraph", "all"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ipykernel", specifier = ">=7.2.0" },
+    { name = "pre-commit", specifier = ">=4.0" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "pytest-cov", specifier = ">=5.0" },
+]
+docs = [{ name = "mkdocs-material", specifier = ">=9.0" }]
 
 [[package]]
 name = "virtualenv"

@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from sqlmodel import select
 
-from grover.backends.database import DatabaseFileSystem
-from grover.models import GroverObject
-from grover.paths import connection_path
-from grover.results import Candidate, GroverResult
+from vfs.backends.database import DatabaseFileSystem
+from vfs.models import VFSObject
+from vfs.paths import connection_path
+from vfs.results import Candidate, VFSResult
 
 ALICE = "alice"
 BOB = "bob"
@@ -41,13 +41,13 @@ async def seeded_scoped_db(scoped_db):
     return await seed(scoped_db)
 
 
-def candidate_paths(result: GroverResult) -> set[str]:
+def candidate_paths(result: VFSResult) -> set[str]:
     return {candidate.path for candidate in result.candidates}
 
 
-async def raw_object(fs: DatabaseFileSystem, path: str) -> GroverObject | None:
+async def raw_object(fs: DatabaseFileSystem, path: str) -> VFSObject | None:
     async with fs._session_factory() as session:
-        stmt = select(GroverObject).where(GroverObject.path == path)
+        stmt = select(VFSObject).where(VFSObject.path == path)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -65,7 +65,7 @@ async def test_read_parent_traversal_cannot_escape(seeded_scoped_db):
 
 
 async def test_candidate_smuggling_cannot_read_other_user(seeded_scoped_db):
-    smuggled = GroverResult(candidates=[Candidate(path="/bob/top-secret.txt")])
+    smuggled = VFSResult(candidates=[Candidate(path="/bob/top-secret.txt")])
 
     result = await seeded_scoped_db.read(candidates=smuggled, user_id=ALICE)
 
@@ -101,7 +101,7 @@ async def test_delete_other_user_prefixed_path_cannot_touch_other_user_row(seede
 
 
 async def test_batch_write_cannot_override_owner_or_prefix(seeded_scoped_db):
-    smuggled = GroverObject(path="/bob/stolen.txt", content="smuggled", owner_id=BOB)
+    smuggled = VFSObject(path="/bob/stolen.txt", content="smuggled", owner_id=BOB)
 
     result = await seeded_scoped_db.write(objects=[smuggled], user_id=ALICE)
 

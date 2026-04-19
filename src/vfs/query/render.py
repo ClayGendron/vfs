@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from grover.paths import split_path
+from vfs.paths import split_path
 
 if TYPE_CHECKING:
-    from grover.query.ast import RenderMode
-    from grover.results import Candidate, GroverResult
+    from vfs.query.ast import RenderMode
+    from vfs.results import Candidate, VFSResult
 
 
 def render_query_result(
-    result: GroverResult,
+    result: VFSResult,
     *,
     mode: RenderMode,
 ) -> str:
@@ -42,7 +42,7 @@ def render_query_result(
     return body
 
 
-def _render_content(result: GroverResult) -> str:
+def _render_content(result: VFSResult) -> str:
     if not result.candidates:
         return ""
     if len(result.candidates) == 1:
@@ -56,7 +56,7 @@ def _render_content(result: GroverResult) -> str:
     return "\n\n".join(blocks)
 
 
-def _render_action(result: GroverResult) -> str:
+def _render_action(result: VFSResult) -> str:
     if result.errors and not result.candidates:
         return _render_errors(result.errors)
     operation = _last_operation(result)
@@ -69,12 +69,12 @@ def _render_action(result: GroverResult) -> str:
     return f"{_verb_for(operation)} {count} paths"
 
 
-def _render_ls(result: GroverResult) -> str:
+def _render_ls(result: VFSResult) -> str:
     names = sorted(_display_name(candidate) for candidate in result.candidates)
     return "\n".join(names)
 
 
-def _render_tree(result: GroverResult) -> str:
+def _render_tree(result: VFSResult) -> str:
     paths = sorted(candidate.path.strip("/").split("/") for candidate in result.candidates if candidate.path != "/")
     tree: dict[str, dict] = {}
     for parts in paths:
@@ -96,7 +96,7 @@ def _render_tree(result: GroverResult) -> str:
     return "\n".join(lines)
 
 
-def _render_stat(result: GroverResult) -> str:
+def _render_stat(result: VFSResult) -> str:
     blocks = []
     for candidate in sorted(result.candidates, key=lambda item: item.path):
         lines = [candidate.path]
@@ -115,7 +115,7 @@ def _render_stat(result: GroverResult) -> str:
     return "\n\n".join(blocks)
 
 
-def _render_query_list(result: GroverResult) -> str:
+def _render_query_list(result: VFSResult) -> str:
     ranked = any(candidate.score for candidate in result.candidates)
     lines = []
     for candidate in sorted(result.candidates, key=lambda item: item.path):
@@ -130,7 +130,7 @@ def _render_errors(errors: list[str]) -> str:
     return "\n".join(f"Error: {error}" for error in errors)
 
 
-def _last_operation(result: GroverResult) -> str:
+def _last_operation(result: VFSResult) -> str:
     for candidate in result.candidates:
         if candidate.details:
             return candidate.details[-1].operation

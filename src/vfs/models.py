@@ -1,6 +1,6 @@
-"""GroverObject — unified kinded object model for the ``grover_objects`` table.
+"""VFSObject — unified kinded object model for the ``vfs_objects`` table.
 
-All entities in the Grover namespace (files, directories, chunks, versions,
+All entities in the VFS namespace (files, directories, chunks, versions,
 connections, api nodes) live in a single table.  The ``kind`` column determines
 which nullable fields are relevant and how operations dispatch.
 """
@@ -19,8 +19,8 @@ from sqlalchemy.orm import InstanceState
 from sqlmodel import Field, SQLModel
 from sqlmodel._compat import finish_init
 
-from grover.bm25 import tokenize as lexical_tokenize
-from grover.paths import (
+from vfs.bm25 import tokenize as lexical_tokenize
+from vfs.paths import (
     decompose_connection,
     extract_extension,
     normalize_path,
@@ -29,13 +29,13 @@ from grover.paths import (
     validate_path,
     version_path,
 )
-from grover.paths import (
+from vfs.paths import (
     parent_path as compute_parent_path,
 )
-from grover.results import Candidate, Detail
-from grover.vector import Vector, VectorType
-from grover.versioning import create_version as create_version_record
-from grover.versioning import reconstruct_version
+from vfs.results import Candidate, Detail
+from vfs.vector import Vector, VectorType
+from vfs.versioning import create_version as create_version_record
+from vfs.versioning import reconstruct_version
 
 # ---------------------------------------------------------------------------
 # Base class — adds Pydantic validation back to SQLModel table models
@@ -75,7 +75,7 @@ class ValidatedSQLModel(SQLModel):
 class VersionWritePlan:
     """Decision-complete write plan for a file mutation."""
 
-    version_rows: tuple[GroverObjectBase, ...]
+    version_rows: tuple[VFSObjectBase, ...]
     final_content: str
     final_content_hash: str
     final_size_bytes: int
@@ -84,8 +84,8 @@ class VersionWritePlan:
     chain_verified: bool = True
 
 
-class GroverObjectBase(ValidatedSQLModel):
-    """Base fields for a Grover namespace entity.
+class VFSObjectBase(ValidatedSQLModel):
+    """Base fields for a VFS namespace entity.
 
     Every entity — file, directory, chunk, version, connection, api node —
     shares these fields.  The ``kind`` column determines which nullable
@@ -168,7 +168,7 @@ class GroverObjectBase(ValidatedSQLModel):
 
     # --- Copy / Path manipulation ---------------------------------------------
 
-    def clone(self) -> GroverObjectBase:
+    def clone(self) -> VFSObjectBase:
         """Create a detached copy with independent SQLAlchemy state."""
         c = _copy_mod.copy(self)
         c.__dict__["_sa_instance_state"] = InstanceState(
@@ -184,7 +184,7 @@ class GroverObjectBase(ValidatedSQLModel):
         self.parent_path = compute_parent_path(self.path)
         self.ext = extract_extension(self.path) if self.kind == "file" else None
 
-    def add_prefix(self, prefix: str) -> GroverObjectBase:
+    def add_prefix(self, prefix: str) -> VFSObjectBase:
         """Prepend *prefix* to path in place, re-deriving name and parent."""
         if not prefix:
             return self
@@ -193,7 +193,7 @@ class GroverObjectBase(ValidatedSQLModel):
         self._rederive_path_fields()
         return self
 
-    def strip_prefix(self, prefix: str) -> GroverObjectBase:
+    def strip_prefix(self, prefix: str) -> VFSObjectBase:
         """Strip *prefix* from path in place, re-deriving name and parent."""
         if not prefix:
             return self
@@ -268,7 +268,7 @@ class GroverObjectBase(ValidatedSQLModel):
         prev_content: str | None,
         created_by: str,
         force_snapshot: bool = False,
-    ) -> GroverObjectBase:
+    ) -> VFSObjectBase:
         """Construct a version row with explicit reconstructed-state metadata."""
         content_hash, size_bytes, lines = cls._content_metadata(version_content)
         record = create_version_record(
@@ -297,7 +297,7 @@ class GroverObjectBase(ValidatedSQLModel):
     @classmethod
     def _reconstruct_file_version(
         cls,
-        version_rows: list[GroverObjectBase],
+        version_rows: list[VFSObjectBase],
         target_version: int,
     ) -> str:
         """Reconstruct the content for *target_version* from version rows."""
@@ -340,7 +340,7 @@ class GroverObjectBase(ValidatedSQLModel):
     def plan_file_write(
         self,
         new_content: str,
-        version_rows: list[GroverObjectBase] | None = None,
+        version_rows: list[VFSObjectBase] | None = None,
         *,
         latest_version_hash: str | None = None,
     ) -> VersionWritePlan:
@@ -359,7 +359,7 @@ class GroverObjectBase(ValidatedSQLModel):
             raise ValueError(msg)
         observed_content = self.content or ""
         observed_hash, observed_size, observed_lines = self._content_metadata(observed_content)
-        planned_rows: list[GroverObjectBase] = []
+        planned_rows: list[VFSObjectBase] = []
         current_content = observed_content
         current_version = self.version_number or 0
 
@@ -598,8 +598,8 @@ class GroverObjectBase(ValidatedSQLModel):
         return data
 
 
-class GroverObject(GroverObjectBase, table=True):
-    """Default concrete table — ``grover_objects``."""
+class VFSObject(VFSObjectBase, table=True):
+    """Default concrete table — ``vfs_objects``."""
 
-    __tablename__ = "grover_objects"
-    __table_args__ = (Index("ix_grover_objects_ext_kind", "ext", "kind"),)
+    __tablename__ = "vfs_objects"
+    __table_args__ = (Index("ix_vfs_objects_ext_kind", "ext", "kind"),)

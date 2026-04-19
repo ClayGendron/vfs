@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from grover.backends.database import DatabaseFileSystem
-from grover.results import Candidate, Detail, GroverResult
+from vfs.backends.database import DatabaseFileSystem
+from vfs.results import Candidate, Detail, VFSResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -26,10 +26,10 @@ def _cands_with_prior(
     *paths: str,
     operation: str = "prior_op",
     score: float = 0.5,
-) -> GroverResult:
+) -> VFSResult:
     """Build candidates with a single prior detail on each."""
     d = _prior(operation, score)
-    return GroverResult(candidates=[Candidate(path=p, details=(d,)) for p in paths])
+    return VFSResult(candidates=[Candidate(path=p, details=(d,)) for p in paths])
 
 
 def _detail_ops(candidate: Candidate) -> list[str]:
@@ -37,9 +37,9 @@ def _detail_ops(candidate: Candidate) -> list[str]:
     return [d.operation for d in candidate.details]
 
 
-def _node_candidates(result: GroverResult) -> GroverResult:
+def _node_candidates(result: VFSResult) -> VFSResult:
     """Filter out connection candidates from a subgraph result."""
-    return GroverResult(candidates=[c for c in result.candidates if "/.connections/" not in c.path])
+    return VFSResult(candidates=[c for c in result.candidates if "/.connections/" not in c.path])
 
 
 # ------------------------------------------------------------------
@@ -91,21 +91,21 @@ async def fs(db: DatabaseFileSystem):
 
 class TestInjectDetails:
     def test_no_overlap_returns_unchanged(self):
-        prior = GroverResult(candidates=[Candidate(path="/a", details=(_prior(),))])
-        result = GroverResult(candidates=[Candidate(path="/b", details=(Detail(operation="op"),))])
+        prior = VFSResult(candidates=[Candidate(path="/a", details=(_prior(),))])
+        result = VFSResult(candidates=[Candidate(path="/b", details=(Detail(operation="op"),))])
         enriched = result.inject_details(prior)
         assert len(enriched) == 1
         assert _detail_ops(enriched.candidates[0]) == ["op"]
 
     def test_overlap_prepends_prior(self):
-        prior = GroverResult(candidates=[Candidate(path="/a", details=(_prior(),))])
-        result = GroverResult(candidates=[Candidate(path="/a", details=(Detail(operation="new"),))])
+        prior = VFSResult(candidates=[Candidate(path="/a", details=(_prior(),))])
+        result = VFSResult(candidates=[Candidate(path="/a", details=(Detail(operation="new"),))])
         enriched = result.inject_details(prior)
         assert _detail_ops(enriched.candidates[0]) == ["prior_op", "new"]
 
     def test_mixed_overlap_and_new(self):
-        prior = GroverResult(candidates=[Candidate(path="/a", details=(_prior(),))])
-        result = GroverResult(
+        prior = VFSResult(candidates=[Candidate(path="/a", details=(_prior(),))])
+        result = VFSResult(
             candidates=[
                 Candidate(path="/a", details=(Detail(operation="new"),)),
                 Candidate(path="/b", details=(Detail(operation="new"),)),
@@ -116,16 +116,16 @@ class TestInjectDetails:
         assert _detail_ops(enriched.candidates[1]) == ["new"]
 
     def test_empty_prior_returns_unchanged(self):
-        prior = GroverResult(candidates=[])
-        result = GroverResult(candidates=[Candidate(path="/a", details=(Detail(operation="op"),))])
+        prior = VFSResult(candidates=[])
+        result = VFSResult(candidates=[Candidate(path="/a", details=(Detail(operation="op"),))])
         enriched = result.inject_details(prior)
         assert enriched is result
 
     def test_multiple_prior_details_preserved_in_order(self):
         d1 = Detail(operation="step1", score=1.0)
         d2 = Detail(operation="step2", score=2.0)
-        prior = GroverResult(candidates=[Candidate(path="/a", details=(d1, d2))])
-        result = GroverResult(candidates=[Candidate(path="/a", details=(Detail(operation="step3"),))])
+        prior = VFSResult(candidates=[Candidate(path="/a", details=(d1, d2))])
+        result = VFSResult(candidates=[Candidate(path="/a", details=(Detail(operation="step3"),))])
         enriched = result.inject_details(prior)
         assert _detail_ops(enriched.candidates[0]) == ["step1", "step2", "step3"]
 
@@ -147,7 +147,7 @@ class TestReadChaining:
     async def test_preserves_multiple_prior_details(self, fs: DatabaseFileSystem):
         d1 = Detail(operation="search", score=0.9)
         d2 = Detail(operation="rerank", score=0.8)
-        cands = GroverResult(candidates=[Candidate(path="/src/auth.py", details=(d1, d2))])
+        cands = VFSResult(candidates=[Candidate(path="/src/auth.py", details=(d1, d2))])
         result = await fs.read(candidates=cands)
         assert _detail_ops(result.candidates[0]) == ["search", "rerank", "read"]
 
@@ -193,7 +193,7 @@ class TestDeleteChaining:
 class TestLsChaining:
     async def test_children_have_no_injected_prior(self, fs: DatabaseFileSystem):
         """ls returns children — different paths, so no prior injection."""
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(path="/src", kind="directory", details=(_prior(),)),
             ]
@@ -387,7 +387,7 @@ class TestMultiStepChains:
         Seeds accumulate 3 details.  Intermediary nodes introduced
         by the subgraph get 2 details.
         """
-        seeds = GroverResult(
+        seeds = VFSResult(
             candidates=[
                 Candidate(
                     path="/src/api.py",
@@ -458,7 +458,7 @@ class TestMultiStepChains:
 
     async def test_score_for_retrieves_any_step(self, fs: DatabaseFileSystem):
         """After chaining, score_for() can retrieve scores from any step."""
-        cands = GroverResult(
+        cands = VFSResult(
             candidates=[
                 Candidate(
                     path="/src/auth.py",

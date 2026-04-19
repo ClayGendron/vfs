@@ -8,14 +8,14 @@ so embeddings carry provenance from creation through database storage.
 instance, adapting its ``list[float]`` results into properly-typed ``Vector``
 instances.  Requires ``langchain-core``::
 
-    pip install grover[langchain]
+    pip install vfs[langchain]
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from grover.vector import Vector
+from vfs.vector import Vector
 
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
@@ -68,7 +68,7 @@ class LangChainEmbeddingProvider:
 
     Requires ``langchain-core``::
 
-        pip install grover[langchain]
+        pip install vfs[langchain]
     """
 
     def __init__(
@@ -80,8 +80,7 @@ class LangChainEmbeddingProvider:
     ) -> None:
         if not _HAS_LANGCHAIN:
             msg = (
-                "langchain-core is required for LangChainEmbeddingProvider."
-                " Install it with: pip install grover[langchain]"
+                "langchain-core is required for LangChainEmbeddingProvider. Install it with: pip install vfs[langchain]"
             )
             raise ImportError(msg)
 

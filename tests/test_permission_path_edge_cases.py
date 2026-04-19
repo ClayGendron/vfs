@@ -1,8 +1,8 @@
 """Edge cases for permission path handling.
 
 Pins behavior across the path-normalization surface that
-:class:`grover.permissions.PermissionMap` and
-:func:`grover.paths.normalize_path` interact with: leading double
+:class:`vfs.permissions.PermissionMap` and
+:func:`vfs.paths.normalize_path` interact with: leading double
 slashes, dot segments, whitespace, unicode, control characters,
 percent encoding, and case sensitivity.  Each test exists because the
 underlying behavior was at least once a real or near-bypass; flipping
@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
-from grover.backends.database import DatabaseFileSystem
-from grover.client import GroverAsync
-from grover.models import GroverObject
-from grover.permissions import PermissionMap, read_only, read_write
+from vfs.backends.database import DatabaseFileSystem
+from vfs.client import VFSClientAsync
+from vfs.models import VFSObject
+from vfs.permissions import PermissionMap, read_only, read_write
 
 
 async def _sqlite_engine():
@@ -57,7 +57,7 @@ class TestResolveDirectDoubleSlash:
     """Regression pins for the leading-`//` bypass.
 
     POSIX §4.12 lets ``posixpath.normpath`` preserve exactly two leading
-    slashes (``//x`` → ``//x``).  Grover's :func:`normalize_path`
+    slashes (``//x`` → ``//x``).  VFS's :func:`normalize_path`
     explicitly collapses this so ``//path`` and ``/path`` resolve to the
     same logical location for both rule matching and storage routing.
     """
@@ -180,7 +180,7 @@ class TestIntegrationDirectDoubleSlash:
     async def test_direct_write_object_double_slash_evades_frozen(self):
         ws = await _workspace_fs()
         try:
-            obj = GroverObject(path="//.frozen/evil.toml", content="owned")
+            obj = VFSObject(path="//.frozen/evil.toml", content="owned")
             r = await ws.write(objects=[obj])
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
@@ -202,7 +202,7 @@ class TestIntegrationDirectDoubleSlash:
 class TestIntegrationRouterCollapsesDoubleSlash:
     async def test_router_rejects_leading_double_slash_no_mount(self):
         ws = await _workspace_fs()
-        router = GroverAsync()
+        router = VFSClientAsync()
         try:
             await router.add_mount("ws", ws)
             r = await router.write("//ws/.frozen/evil.toml", "owned")
@@ -212,7 +212,7 @@ class TestIntegrationRouterCollapsesDoubleSlash:
 
     async def test_router_inner_double_slash_collapses(self):
         ws = await _workspace_fs()
-        router = GroverAsync()
+        router = VFSClientAsync()
         try:
             await router.add_mount("ws", ws)
             r = await router.write("/ws//.frozen/evil.toml", "owned")

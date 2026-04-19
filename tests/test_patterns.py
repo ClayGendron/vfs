@@ -1,4 +1,4 @@
-"""Tests for grover.patterns — glob pattern matching and SQL LIKE translation."""
+"""Tests for vfs.patterns — glob pattern matching and SQL LIKE translation."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from grover.patterns import compile_glob, decompose_glob, glob_to_sql_like, match_glob
+from vfs.patterns import compile_glob, decompose_glob, glob_to_sql_like, match_glob
 
 # =========================================================================
 # Single star (*) — matches any characters except /
@@ -532,7 +532,7 @@ class TestEdgeCases:
 
 
 class TestMetadataPaths:
-    """Glob matching on Grover's dot-prefix metadata paths."""
+    """Glob matching on VFS's dot-prefix metadata paths."""
 
     @pytest.mark.parametrize(
         "pattern, path, expected",
@@ -606,7 +606,7 @@ class TestRealWorldPatterns:
         "pattern, path, expected",
         [
             # All Python files
-            ("**/*.py", "/src/grover/client.py", True),
+            ("**/*.py", "/src/vfs/client.py", True),
             ("**/*.py", "/tests/test_foo.py", True),
             ("**/*.py", "/setup.cfg", False),
             # All test files
@@ -619,8 +619,8 @@ class TestRealWorldPatterns:
             ("src/**", "/src/a/b/c.py", True),
             ("src/**", "/tests/foo.py", False),
             # Specific directory
-            ("src/grover/*.py", "/src/grover/client.py", True),
-            ("src/grover/*.py", "/src/grover/sub/foo.py", False),
+            ("src/vfs/*.py", "/src/vfs/client.py", True),
+            ("src/vfs/*.py", "/src/vfs/sub/foo.py", False),
             # All YAML files
             ("**/*.yml", "/config/db.yml", True),
             ("**/*.yml", "/.github/workflows/ci.yml", True),
@@ -981,11 +981,11 @@ class TestDecomposeGlob:
 
 class TestInvalidGlobPattern:
     def test_compile_glob_returns_none_on_bad_regex(self):
-        from grover.patterns import compile_glob
+        from vfs.patterns import compile_glob
 
         assert compile_glob("[z-a]") is None
 
     def test_match_glob_returns_false_on_bad_regex(self):
-        from grover.patterns import match_glob
+        from vfs.patterns import match_glob
 
         assert match_glob("/a.py", "[z-a]") is False
