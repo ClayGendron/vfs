@@ -1,23 +1,23 @@
-# `grover`: The Agentic File System
+# `vfs`: The Agentic File System
 
 <p align="center">
-  <a href="https://pypi.org/project/grover/"><img src="https://img.shields.io/pypi/v/grover" alt="PyPI version"></a>
-  <a href="https://pypi.org/project/grover/"><img src="https://img.shields.io/pypi/pyversions/grover" alt="Python"></a>
+  <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/v/vfs-py" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/pyversions/vfs-py" alt="Python"></a>
   <a href="https://github.com/ClayGendron/grover/actions/workflows/test.yml"><img src="https://github.com/ClayGendron/grover/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/ClayGendron/grover/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/grover" alt="License"></a>
   <a href="https://codecov.io/gh/ClayGendron/grover"><img src="https://codecov.io/gh/ClayGendron/grover/branch/main/graph/badge.svg" alt="Coverage"></a>
 </p>
 
 ```bash
-pip install grover
+pip install vfs-py
 ```
 
-`grover` is an in-process file system that mounts data from multiple sources to enable agentic search and operations through a Unix-like interface.
+`vfs` is an in-process file system that mounts data from multiple sources to enable agentic search and operations through a Unix-like interface.
 
 ```python
-from grover import Grover, LocalFileSystem, DatabaseFileSystem
+from vfs import VFSClient, LocalFileSystem, DatabaseFileSystem
 
-g = Grover()
+g = VFSClient()
 
 localfs = LocalFileSystem()
 dbfs = DatabaseFileSystem(engine_url="sqlite+aiosqlite:///knowledge.db")
@@ -39,18 +39,18 @@ g.close()
 > - `g.cli('search ...')` calls `g.semantic_search()`
 > - pipelines like `grep | pagerank | top 15` chain results through `g.grep()` → `g.pagerank(candidates)` → `result.top(15)`.
 
-Unix has been a foundational technology in computing for over 50 years because of its enduring core design principles: a uniform namespace, small composable tools, and portability. `grover` builds on these principles to design the platform for building agent context and performing agentic actions.
+Unix has been a foundational technology in computing for over 50 years because of its enduring core design principles: a uniform namespace, small composable tools, and portability. `vfs` builds on these principles to design the platform for building agent context and performing agentic actions.
 
-- **Agent-First Design:** `grover` is built around having the main *user* be a large language model running in a loop over a long time horizon. Building for LLMs means that operations within the file system are versioned and reversible, tools are discoverable *files* loaded into context when needed instead of by default, and every operation can be expressed through a composable CLI — the interface LLMs are increasingly trained to use.
-- **Everything is a File:** Everything within `grover` is addressable by path and conforms to standard data types. This single abstraction enables composable operations and predictable data within `grover`.
-- **Small, Composable, and On-Demand Tools:** Building a new tool for every use case should be the exception, not the norm. All the capabilities of `grover` can be accessed and expressed through a CLI which frees up context to build more performant and predictable agents. Specialized tools and MCPs can be assigned their own file paths in `grover` for ultimate flexibility without the cost of filling up context.
-- **BYOI (Bring Your Own Infrastructure):** `grover` has a database-first design and can run in-process with your application or as an MCP server. No new design patterns or infrastructure required — `grover` runs where you need it and works with your existing AI applications.
+- **Agent-First Design:** `vfs` is built around having the main *user* be a large language model running in a loop over a long time horizon. Building for LLMs means that operations within the file system are versioned and reversible, tools are discoverable *files* loaded into context when needed instead of by default, and every operation can be expressed through a composable CLI — the interface LLMs are increasingly trained to use.
+- **Everything is a File:** Everything within `vfs` is addressable by path and conforms to standard data types. This single abstraction enables composable operations and predictable data within `vfs`.
+- **Small, Composable, and On-Demand Tools:** Building a new tool for every use case should be the exception, not the norm. All the capabilities of `vfs` can be accessed and expressed through a CLI which frees up context to build more performant and predictable agents. Specialized tools and MCPs can be assigned their own file paths in `vfs` for ultimate flexibility without the cost of filling up context.
+- **BYOI (Bring Your Own Infrastructure):** `vfs` has a database-first design and can run in-process with your application or as an MCP server. No new design patterns or infrastructure required — `vfs` runs where you need it and works with your existing AI applications.
 
-> `grover` is in alpha, so we are actively building towards this vision. Please test it out and provide your feedback!
+> `vfs` is in alpha, so we are actively building towards this vision. Please test it out and provide your feedback!
 
-## The `GroverFileSystem`
+## The `VirtualFileSystem`
 
-The main class of this library is `GroverFileSystem`. It handles mounting and routing across storage backends and defines the public API surface for `grover`. The API combines familiar file system operations with search, graph traversal, and ranking. All public methods return the same composable result type, so one method's output can be used as input to the next.
+The main class of this library is `VirtualFileSystem`. It handles mounting and routing across storage backends and defines the public API surface for `vfs`. The API combines familiar file system operations with search, graph traversal, and ranking. All public methods return the same composable result type, so one method's output can be used as input to the next.
 
 | Category | Methods |
 |----------|---------|
@@ -71,7 +71,7 @@ The main class of this library is `GroverFileSystem`. It handles mounting and ro
 
 ## How It Works
 
-Everything in `grover` is addressable by path. Files, chunks, versions, and connections all live in a single namespace:
+Everything in `vfs` is addressable by path. Files, chunks, versions, and connections all live in a single namespace:
 
 ```
 /workspace/
@@ -96,7 +96,7 @@ Metadata directories (`.chunks/`, `.versions/`, `.connections/`) follow the Unix
 
 ### Composable Results
 
-Every operation returns a `GroverResult` with typed `Candidate` objects. Results support set algebra, so different retrieval strategies can be combined without LLM re-interpretation:
+Every operation returns a `VFSResult` with typed `Candidate` objects. Results support set algebra, so different retrieval strategies can be combined without LLM re-interpretation:
 
 ```python
 # Intersection — Python files that match a semantic query
@@ -117,35 +117,35 @@ Or the same thing through the CLI:
 print(g.cli('search "authentication" | glob "/workspace/**/*.py" | nbr | pagerank'))
 ```
 
-> `grover` also provides `GroverAsync` as the async facade, which is the preferred path for application servers and long-running agents. The sync `Grover` wrapper shown in these examples is a convenience layer for scripts, notebooks, and data pipelines.
+> `vfs` also provides `VFSClientAsync` as the async facade, which is the preferred path for application servers and long-running agents. The sync `VFSClient` wrapper shown in these examples is a convenience layer for scripts, notebooks, and data pipelines.
 
 ## Installation
 
 Requires Python 3.12+.
 
 ```bash
-pip install grover                # core (SQLite, rustworkx, BM25)
-pip install grover[openai]        # OpenAI embeddings
-pip install grover[langchain]     # LangChain embedding provider
-pip install grover[postgres]      # PostgreSQL backend
-pip install grover[mssql]         # MSSQL backend
-pip install grover[pinecone]      # Pinecone vector store
-pip install grover[databricks]    # Databricks Vector Search
-pip install grover[search]        # usearch (local vector search)
-pip install grover[treesitter]    # JS/TS/Go code analyzers
-pip install grover[deepagents]    # deepagents integration
-pip install grover[langgraph]     # LangGraph persistent store
-pip install grover[all]           # everything
+pip install vfs-py                # core (SQLite, rustworkx, BM25)
+pip install vfs-py[openai]        # OpenAI embeddings
+pip install vfs-py[langchain]     # LangChain embedding provider
+pip install vfs-py[postgres]      # PostgreSQL backend
+pip install vfs-py[mssql]         # MSSQL backend
+pip install vfs-py[pinecone]      # Pinecone vector store
+pip install vfs-py[databricks]    # Databricks Vector Search
+pip install vfs-py[search]        # usearch (local vector search)
+pip install vfs-py[treesitter]    # JS/TS/Go code analyzers
+pip install vfs-py[deepagents]    # deepagents integration
+pip install vfs-py[langgraph]     # LangGraph persistent store
+pip install vfs-py[all]           # everything
 ```
 
 ## Status and Roadmap
 
-`grover` is in alpha. The core file system, CLI query engine, graph algorithms, and BM25 lexical search are implemented and tested (1,779 tests, 99% coverage).
+`vfs` is in alpha. The core file system, CLI query engine, graph algorithms, and BM25 lexical search are implemented and tested (2,157 tests, 99% coverage).
 
 **What's coming next:**
 
-- **MCP single-tool interface** — expose `grover` as one MCP tool with progressive discovery via `--help`
-- **Shell entrypoint** — run `grover 'grep "auth" | pagerank | top 15'` directly from the terminal
+- **MCP single-tool interface** — expose `vfs` as one MCP tool with progressive discovery via `--help`
+- **Shell entrypoint** — run `vfs 'grep "auth" | pagerank | top 15'` directly from the terminal
 - **`.api/` control plane** — live API pass-through for external services (Jira, Slack, GitHub) alongside synced data in the same namespace
 - **LocalFileSystem** — mount local directories with files on disk and metadata in SQLite
 - **More analyzers** — Markdown, PDF, email, Slack, Jira, CSV/JSON (code analyzers for Python, JS/TS, Go exist in v1)

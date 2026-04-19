@@ -1,8 +1,24 @@
 # Changelog
 
-All notable changes to Grover will be documented in this file.
+All notable changes to vfs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [0.0.21] — 2026-04-18
+
+### Changed
+
+- **Python package renamed from `grover` to `vfs`** — imports change from `from grover import ...` to `from vfs import ...`. Matches the `vfs-py` PyPI distribution name. This is a breaking change with no compatibility shim.
+- **Class identifiers renamed to a `VFS*` / `VirtualFileSystem` scheme**:
+  - `GroverFileSystem` → `VirtualFileSystem` (in `vfs.base`)
+  - `Grover` → `VFSClient` (sync facade)
+  - `GroverAsync` → `VFSClientAsync` (async router)
+  - `GroverResult` → `VFSResult`
+  - `GroverObject` / `GroverObjectBase` → `VFSObject` / `VFSObjectBase`
+  - `GroverError` → `VFSError`
+- **DB table renamed `grover_objects` → `vfs_objects`** (and the `ix_grover_objects_ext_kind` index → `ix_vfs_objects_ext_kind`). No migration script is shipped — existing databases need their tables recreated by the consumer.
+- **`scripts/bump_version.py`** — updated to point at `src/vfs/__init__.py`.
+- **`README.md`** — examples, install commands, badges, and class names updated for the new package and identifiers.
 
 ## [0.0.20] — 2026-04-17
 
