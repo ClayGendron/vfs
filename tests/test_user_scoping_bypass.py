@@ -8,7 +8,7 @@ from sqlmodel import select
 from vfs.backends.database import DatabaseFileSystem
 from vfs.models import VFSObject
 from vfs.paths import connection_path
-from vfs.results import Candidate, VFSResult
+from vfs.results import Entry, VFSResult
 
 ALICE = "alice"
 BOB = "bob"
@@ -42,7 +42,7 @@ async def seeded_scoped_db(scoped_db):
 
 
 def candidate_paths(result: VFSResult) -> set[str]:
-    return {candidate.path for candidate in result.candidates}
+    return {entry.path for entry in result.entries}
 
 
 async def raw_object(fs: DatabaseFileSystem, path: str) -> VFSObject | None:
@@ -61,16 +61,16 @@ async def test_read_parent_traversal_cannot_escape(seeded_scoped_db):
     result = await seeded_scoped_db.read(path="/../bob/top-secret.txt", user_id=ALICE)
 
     assert result.file is None
-    assert all(candidate.content != BOB_SECRET for candidate in result.candidates)
+    assert all(entry.content != BOB_SECRET for entry in result.entries)
 
 
 async def test_candidate_smuggling_cannot_read_other_user(seeded_scoped_db):
-    smuggled = VFSResult(candidates=[Candidate(path="/bob/top-secret.txt")])
+    smuggled = VFSResult(function="read", entries=[Entry(path="/bob/top-secret.txt")])
 
     result = await seeded_scoped_db.read(candidates=smuggled, user_id=ALICE)
 
     assert result.file is None
-    assert all(candidate.content != BOB_SECRET for candidate in result.candidates)
+    assert all(entry.content != BOB_SECRET for entry in result.entries)
 
 
 async def test_copy_from_other_user_prefixed_source_fails_closed(seeded_scoped_db):
@@ -139,13 +139,13 @@ async def test_glob_parent_traversal_does_not_discover_other_user_data(seeded_sc
 async def test_grep_does_not_leak_other_user_contents(seeded_scoped_db):
     result = await seeded_scoped_db.grep(pattern=BOB_SECRET, user_id=ALICE)
 
-    assert not result.candidates
+    assert not result.entries
 
 
 async def test_graph_parent_traversal_does_not_discover_other_user_nodes(seeded_scoped_db):
     result = await seeded_scoped_db.predecessors(path="/../bob/src/auth.py", user_id=ALICE)
 
-    assert not result.candidates
+    assert not result.entries
 
 
 async def test_pagerank_remains_scoped_with_other_user_graph_present(seeded_scoped_db):

@@ -1,5 +1,9 @@
 # Database VFS Patterns
 
+- **Date:** 2026-02-17 (research conducted)
+- **Source:** migrated from `research/database-vfs-patterns.md` on 2026-04-18
+- **Status:** snapshot — landscape findings remain current; any VFS API surface references reflect the v0.1 alpha and have been superseded by the v2 architecture
+
 ## Database-Native File Systems
 
 ### PostgreSQL: Large Objects and TOAST
@@ -8,7 +12,7 @@
 
 **Large Objects (`pg_largeobject`)** provide a streaming API for data up to 4 TB. Data chunked into `LOBLKSIZE` pages in system catalog. Support random-access read/write. However, all large objects share a single system table (32 TB limit total) and require explicit lifecycle management.
 
-**Relevance to Grover:** TOAST-backed `TEXT`/`BYTEA` columns are the pragmatic choice for files up to several MB (covers most code files and documents). Grover's current `content` column approach aligns well. Large Objects add complexity without clear benefit.
+**Relevance to VFS (currently `Grover` in code):** TOAST-backed `TEXT`/`BYTEA` columns are the pragmatic choice for files up to several MB (covers most code files and documents). VFS's current `content` column approach aligns well. Large Objects add complexity without clear benefit.
 
 ### SQLite: VFS Layer
 
@@ -22,13 +26,13 @@ Supports **shims** — wrapper VFS layers that intercept operations before deleg
 
 Python access via **APSW** (Another Python SQLite Wrapper) allows subclassing VFS and VFSFile in pure Python.
 
-**Relevance to Grover:** Conceptual reference. Grover operates at the application layer (Python API + SQLModel), not the storage engine layer (page I/O). The shim pattern (layered wrappers) is analogous to Grover's composition model. APSW Python VFS could be interesting for encryption-at-rest.
+**Relevance to VFS:** Conceptual reference. VFS operates at the application layer (Python API + SQLModel), not the storage engine layer (page I/O). The shim pattern (layered wrappers) is analogous to VFS's composition model. APSW Python VFS could be interesting for encryption-at-rest.
 
 ### MySQL/MariaDB: BLOB Storage
 
 InnoDB stores BLOBs inline when small, overflows to external pages beyond ~768 bytes. Conventional wisdom: store paths in DB, content on filesystem/object storage, because BLOB-heavy tables cause backup bloat, memory pressure, and replication overhead.
 
-**Relevance to Grover:** Confirms storing content in DB is viable for code files (<1 MB). Grover's LocalFileSystem (disk + SQLite metadata) follows the recommended pattern. DatabaseFileSystem stores content in DB, fine for code/document use cases.
+**Relevance to VFS:** Confirms storing content in DB is viable for code files (<1 MB). VFS's LocalFileSystem (disk + SQLite metadata) follows the recommended pattern. DatabaseFileSystem stores content in DB, fine for code/document use cases.
 
 ### MSSQL: FILESTREAM and FileTable
 
@@ -36,7 +40,7 @@ InnoDB stores BLOBs inline when small, overflows to external pages beyond ~768 b
 
 **FileTable** extends FILESTREAM to expose a full Windows file namespace. Files stored in SQL Server appear as regular files via a Windows share. Windows file system operations are intercepted and reflected as relational data changes.
 
-**Relevance to Grover:** FILESTREAM/FileTable is the closest industrial precedent — bridges the gap between database and filesystem. The separation of content storage (filesystem) from metadata management (database) with transactional control mirrors Grover's LocalFileSystem design. FileTable's concept of exposing database content as a navigable hierarchy is very close to Grover's VFS mount model.
+**Relevance to VFS:** FILESTREAM/FileTable is the closest industrial precedent — bridges the gap between database and filesystem. The separation of content storage (filesystem) from metadata management (database) with transactional control mirrors VFS's LocalFileSystem design. FileTable's concept of exposing database content as a navigable hierarchy is very close to VFS's mount model.
 
 ---
 
@@ -52,13 +56,13 @@ Four object types identified by SHA-1 hash:
 
 These form a **Merkle DAG** — directed acyclic graph where every node is identified by its content hash. Properties: deduplication (identical content stored once), immutability (changes produce new hashes), integrity (hash verification), history independence.
 
-**Relevance to Grover:** Gold standard for versioned file storage. Grover's snapshot + forward diffs approach is simpler but less space-efficient. Content-addressing would add deduplication but complicate the schema. For AI agent use cases where files are frequently modified and versions need fast reconstruction, Grover's diff-based approach is likely more practical.
+**Relevance to VFS:** Gold standard for versioned file storage. VFS's snapshot + forward diffs approach is simpler but less space-efficient. Content-addressing would add deduplication but complicate the schema. For AI agent use cases where files are frequently modified and versions need fast reconstruction, VFS's diff-based approach is likely more practical.
 
 ### DVC (Data Version Control)
 
 Git-adjacent data versioning for ML. `dvc add` computes MD5 hash, moves file to `.dvc/cache/<hash>` (CAS), creates `.dvc` pointer file committed to Git. Actual data pushed to remote storage (S3, GCS, Azure, SSH). Acquired by lakeFS in November 2025.
 
-**Relevance to Grover:** The "metadata in Git, content in CAS cache" pattern could inspire a future optimization where file content is stored in a content-addressed blob table and version records store only hashes.
+**Relevance to VFS:** The "metadata in Git, content in CAS cache" pattern could inspire a future optimization where file content is stored in a content-addressed blob table and version records store only hashes.
 
 ### LakeFS: Git-Like Branching for Data Lakes
 
@@ -73,7 +77,7 @@ Diffs computed by comparing range hashes — diff time proportional to differenc
 
 Committed metadata (immutable SSTables on object store) separated from uncommitted/staged metadata (mutable, stored in PostgreSQL/DynamoDB).
 
-**Relevance to Grover:** The two-layer Merkle tree is elegant for efficient versioning at scale. Separation of committed (immutable) vs. uncommitted (mutable) metadata maps to Grover's model. Zero-copy branching could be valuable if Grover adds branching — branches as metadata-only references to existing version chains.
+**Relevance to VFS:** The two-layer Merkle tree is elegant for efficient versioning at scale. Separation of committed (immutable) vs. uncommitted (mutable) metadata maps to VFS's model. Zero-copy branching could be valuable if VFS adds branching — branches as metadata-only references to existing version chains.
 
 ### Dolt: Version-Controlled SQL Database
 
@@ -89,19 +93,19 @@ Version history stored as a commit graph (Merkle DAG) of Prolly Trees. Branching
 
 Version control exposed through SQL: system tables (`dolt_log`, `dolt_diff`, `dolt_status`) and stored procedures (`dolt_commit`, `dolt_merge`, `dolt_branch`).
 
-**Relevance to Grover:** Prolly Trees are the most interesting data structure for Grover's future — they solve the tension between B-tree performance and content-addressable versioning. However, implementing them is a major undertaking. More practical takeaway: Dolt's approach of exposing version control through the query interface (virtual tables) could inspire a similar pattern in Grover.
+**Relevance to VFS:** Prolly Trees are the most interesting data structure for VFS's future — they solve the tension between B-tree performance and content-addressable versioning. However, implementing them is a major undertaking. More practical takeaway: Dolt's approach of exposing version control through the query interface (virtual tables) could inspire a similar pattern in VFS.
 
 ### Project Nessie
 
 Transactional catalog adding Git-like semantics (branches, tags, commits) to Apache Iceberg table metadata. Versions at the catalog pointer level, not content level.
 
-**Relevance to Grover:** Less directly applicable. The concept of versioning at the pointer/reference level is relevant — could enable cheaper branching than content-level versioning.
+**Relevance to VFS:** Less directly applicable. The concept of versioning at the pointer/reference level is relevant — could enable cheaper branching than content-level versioning.
 
 ### TerminusDB
 
 In-memory graph database with native Git-like revision control. Built on succinct data structures (Rust). Uses delta encoding — changes stored as append-only deltas. Database state is immutable — every change creates a new delta.
 
-**Relevance to Grover:** Delta encoding on immutable storage is close to Grover's diff-based versioning. Key difference: TerminusDB operates on graph triples (RDF), Grover on file content.
+**Relevance to VFS:** Delta encoding on immutable storage is close to VFS's diff-based versioning. Key difference: TerminusDB operates on graph triples (RDF), VFS on file content.
 
 ---
 
@@ -117,7 +121,7 @@ In-memory graph database with native Git-like revision control. Built on succinc
 
 Common pattern: one table for directory entries (path, parent, type), one for content (BLOBs), FUSE callbacks translating FS operations to SQL queries.
 
-**Relevance to Grover:** Validates the concept but not production quality. Key lesson: **performance is the main challenge** — every file operation becomes a database round-trip. Grover avoids this by providing a Python API that can batch and optimize, rather than implementing raw POSIX syscalls.
+**Relevance to VFS:** Validates the concept but not production quality. Key lesson: **performance is the main challenge** — every file operation becomes a database round-trip. VFS avoids this by providing a Python API that can batch and optimize, rather than implementing raw POSIX syscalls.
 
 ---
 
@@ -149,7 +153,7 @@ Four composable layers:
 
 Handles mutability via **permanodes** (stable identity blobs) and **claims** (immutable, timestamped mutations). Current state reconstructed by applying all claims in order.
 
-**Relevance to Grover:** Perkeep's permanode/claims model maps to Grover's `File` + `FileVersion` — file identity (path) is mutable, version content is immutable.
+**Relevance to VFS:** Perkeep's permanode/claims model maps to VFS's `File` + `FileVersion` — file identity (path) is mutable, version content is immutable.
 
 ### Python CAS Libraries
 
@@ -157,7 +161,7 @@ Handles mutability via **permanodes** (stable identity blobs) and **claims** (im
 - **Fsdb** — CAS designed for many large files
 - **FVS** — file versioning using hash-based deduplication
 
-### CAS Value for Grover
+### CAS Value for VFS
 
 1. **Deduplication** — agents frequently revert files; CAS stores identical content once
 2. **Integrity verification** — content hashes provide free corruption detection
@@ -183,7 +187,7 @@ Handles mutability via **permanodes** (stable identity blobs) and **claims** (im
 2. **Pointer-based snapshot** — record snapshot ID; copy-on-write only for modified files. Divergence-proportional storage.
 3. **Metadata-only snapshot** — with CAS, snapshot = mapping of `{path -> content_hash}`. O(1) creation. Most efficient.
 
-Metadata-only composes naturally with CAS. For Grover's current diff-based versioning, pointer-based snapshots are the practical choice.
+Metadata-only composes naturally with CAS. For VFS's current diff-based versioning, pointer-based snapshots are the practical choice.
 
 ### Branching and Merging
 
@@ -192,7 +196,7 @@ Requirements:
 2. **Isolated writes** — branch-specific overlay, not shared state
 3. **Merging** — three-way diff (ancestor, source, destination), flag conflicts
 
-LakeFS and Dolt demonstrate feasibility at scale with Merkle-tree storage. For Grover, simpler approach: branches as named snapshot references with copy-on-write for modifications.
+LakeFS and Dolt demonstrate feasibility at scale with Merkle-tree storage. For VFS, simpler approach: branches as named snapshot references with copy-on-write for modifications.
 
 ---
 
@@ -225,7 +229,7 @@ Session variable pattern: set once per request, all queries auto-filtered. Datab
 
 **Performance:** RLS adds overhead (extra WHERE clause). Index on `tenant_id` essential. Complex policies should be encapsulated in functions.
 
-### Grover's Current Approach
+### VFS's Current Approach
 
 Application-level isolation via `UserScopedFileSystem`:
 - Prefixes paths with `/{user_id}/`
@@ -246,7 +250,7 @@ SQLite-backed filesystem specifically for AI agents:
 - FUSE integration: mount as real filesystem
 - Philosophy: "Treat agent state like a filesystem, but implement it as a database"
 
-| Aspect | AgentFS | Grover |
+| Aspect | AgentFS | VFS |
 |--------|---------|--------|
 | Storage | Single SQLite file | SQLite or PostgreSQL, local or pure-DB |
 | Versioning | Snapshot-by-copy | Built-in version chain with diffs |
@@ -256,7 +260,7 @@ SQLite-backed filesystem specifically for AI agents:
 | Audit | Append-only tool call log | Event bus + file events |
 | FUSE | Yes | No (Python API) |
 
-Grover is more feature-rich. AgentFS's simplicity (one file = one agent) is appealing for single-agent use cases.
+VFS is more feature-rich. AgentFS's simplicity (one file = one agent) is appealing for single-agent use cases.
 
 ---
 

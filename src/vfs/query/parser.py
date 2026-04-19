@@ -28,7 +28,6 @@ from vfs.query.ast import (
     QueryPlan,
     RankCommand,
     ReadCommand,
-    RenderMode,
     SemanticSearchCommand,
     SortCommand,
     StageNode,
@@ -41,6 +40,7 @@ from vfs.query.ast import (
     WriteCommand,
 )
 from vfs.query.types import resolve_type_aliases
+from vfs.results import validate_projection
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -223,13 +223,73 @@ class _Parser:
 
 
 def parse_query(query: str) -> QueryPlan:
-    """Parse *query* into an AST and an ordered execution plan."""
-    ast = _Parser(tokenize(query)).parse()
+    """Parse *query* into an AST and an ordered execution plan.
+
+    Recognizes a top-level ``--output`` flag — a comma-separated list of
+    Entry field names (or the ``default`` / ``all`` sentinels) that
+    selects what each returned entry should carry.  ``--output`` may
+    appear anywhere in the query and applies to the whole pipeline.
+    Unknown field names raise :class:`QuerySyntaxError` at parse time.
+    """
+    tokens, projection = _extract_output_flag(tokenize(query))
+    ast = _Parser(tokens).parse()
     return QueryPlan(
         ast=ast,
         methods=_planned_methods(ast),
-        render_mode=_render_mode(ast),
+        projection=projection,
     )
+
+
+def _extract_output_flag(
+    tokens: tuple[Token, ...],
+) -> tuple[tuple[Token, ...], tuple[str, ...] | None]:
+    """Strip ``--output`` (and its value) from the token stream.
+
+    Accepts both ``--output path,score`` (two tokens) and
+    ``--output=path,score`` (one token) forms.  Comma-splits the value
+    into individual projection names and validates them via
+    :func:`validate_projection` so unknowns surface immediately, before
+    any backend work happens.
+
+    Returns the filtered token stream plus the projection tuple (or
+    ``None`` if no flag was present).  Repeating ``--output`` is an
+    error — the user almost certainly meant to combine names in one
+    comma-separated list.
+    """
+    out: list[Token] = []
+    projection: tuple[str, ...] | None = None
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        raw_value: str | None = None
+        consumed = 1
+        if token.kind == "word" and token.value == "--output":
+            if i + 1 >= len(tokens) or tokens[i + 1].kind not in {"word", "string"}:
+                msg = f"--output requires a value at position {token.position}"
+                raise QuerySyntaxError(msg)
+            raw_value = tokens[i + 1].value
+            consumed = 2
+        elif token.kind == "word" and token.value.startswith("--output="):
+            raw_value = token.value[len("--output=") :]
+
+        if raw_value is not None:
+            if projection is not None:
+                msg = f"--output may only be specified once (position {token.position})"
+                raise QuerySyntaxError(msg)
+            names = tuple(n for n in (part.strip() for part in raw_value.split(",")) if n)
+            if not names:
+                msg = f"--output requires at least one field name at position {token.position}"
+                raise QuerySyntaxError(msg)
+            try:
+                projection = validate_projection(names)
+            except ValueError as exc:
+                raise QuerySyntaxError(str(exc)) from exc
+            i += consumed
+            continue
+
+        out.append(token)
+        i += 1
+    return tuple(out), projection
 
 
 def _build_read(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
@@ -416,16 +476,9 @@ def _build_rank(method_name: RankMethod) -> Callable[[list[str], dict[str, FlagV
 
 
 def _build_sort(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
-    operation = None
-    if len(positionals) > 1:
-        raise QuerySyntaxError("sort accepts at most one positional operation name")
-    if positionals and "--by" in options:
-        raise QuerySyntaxError("sort cannot combine a positional operation with --by")
     if positionals:
-        operation = positionals[0]
-    elif "--by" in options:
-        operation = str(options["--by"])
-    return SortCommand(operation=operation, reverse="--asc" not in options)
+        raise QuerySyntaxError("sort does not accept positional arguments")
+    return SortCommand(reverse="--asc" not in options)
 
 
 def _build_top(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
@@ -589,7 +642,7 @@ _COMMAND_SPECS = (
         _build_rank("out_degree_centrality"),
     ),
     CommandSpec("hits", ("hits",), {"--all": 0, "--include": 1}, _build_rank("hits")),
-    CommandSpec("sort", ("sort",), {"--by": 1, "--asc": 0}, _build_sort),
+    CommandSpec("sort", ("sort",), {"--asc": 0}, _build_sort),
     CommandSpec("top", ("top",), {}, _build_top),
     CommandSpec("kinds", ("kinds",), {}, _build_kinds),
 )
@@ -908,49 +961,5 @@ def _planned_methods(node: QueryNode) -> tuple[str, ...]:
             return ("kinds",)
         case IntersectStage(query=query) | ExceptStage(query=query):
             return _planned_methods(query)
-        case _:  # pragma: no cover
-            raise ValueError(f"Unknown node type: {node}")
-
-
-def _render_mode(node: QueryNode) -> RenderMode:
-    match node:
-        case PipelineNode(stages=stages) if stages:
-            return _render_mode(stages[-1])
-        case PipelineNode(source=source):
-            return _render_mode(source)
-        case UnionNode(operands=operands):
-            modes: set[RenderMode] = {_render_mode(operand) for operand in operands}
-            return modes.pop() if len(modes) == 1 else "query_list"
-        case ReadCommand():
-            return "content"
-        case StatCommand():
-            return "stat"
-        case LsCommand():
-            return "ls"
-        case TreeCommand():
-            return "tree"
-        case (
-            DeleteCommand()
-            | EditCommand()
-            | WriteCommand()
-            | MkdirCommand()
-            | MoveCommand()
-            | CopyCommand()
-            | MkconnCommand()
-        ):
-            return "action"
-        case GlobCommand() | GrepCommand() | SemanticSearchCommand() | LexicalSearchCommand() | VectorSearchCommand():
-            return "query_list"
-        case (
-            GraphTraversalCommand()
-            | MeetingGraphCommand()
-            | RankCommand()
-            | SortCommand()
-            | TopCommand()
-            | KindsCommand()
-        ):
-            return "query_list"
-        case IntersectStage() | ExceptStage():
-            return "query_list"
         case _:  # pragma: no cover
             raise ValueError(f"Unknown node type: {node}")

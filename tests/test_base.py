@@ -12,11 +12,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tests.conftest import (
-    candidate as _candidate,
-)
-from tests.conftest import (
     dummy_session_factory,
     tracking_session_factory,
+)
+from tests.conftest import (
+    entry as _entry,
 )
 from vfs.base import VirtualFileSystem
 from vfs.models import VFSObject
@@ -274,28 +274,28 @@ class TestError:
         r = fs._error("something broke")
         assert r.success is False
         assert r.errors == ["something broke"]
-        assert r.candidates == []
+        assert r.entries == []
 
 
 class TestAddPrefix:
     def test_empty_prefix_returns_result_unchanged(self):
-        r = VFSResult(candidates=[_candidate("/file.py")])
+        r = VFSResult(entries=[_entry("/file.py")])
         rebased = r.add_prefix("")
         assert rebased is r
 
-    def test_prefix_prepends_to_candidate_paths(self):
-        r = VFSResult(candidates=[_candidate("/file.py"), _candidate("/dir/a.py")])
+    def test_prefix_prepends_to_entry_paths(self):
+        r = VFSResult(entries=[_entry("/file.py"), _entry("/dir/a.py")])
         r.add_prefix("/mount")
-        assert r.candidates[0].path == "/mount/file.py"
-        assert r.candidates[1].path == "/mount/dir/a.py"
+        assert r.entries[0].path == "/mount/file.py"
+        assert r.entries[1].path == "/mount/dir/a.py"
 
     def test_root_path_gets_prefix_without_trailing_slash(self):
-        r = VFSResult(candidates=[_candidate("/")])
+        r = VFSResult(entries=[_entry("/")])
         r.add_prefix("/data")
-        assert r.candidates[0].path == "/data"
+        assert r.entries[0].path == "/data"
 
     def test_preserves_success_and_errors(self):
-        r = VFSResult(success=False, errors=["err"], candidates=[_candidate("/x.py")])
+        r = VFSResult(success=False, errors=["err"], entries=[_entry("/x.py")])
         r.add_prefix("/m")
         assert r.success is False
         assert r.errors == ["err"]
@@ -304,30 +304,30 @@ class TestAddPrefix:
 class TestExcludeMountedPaths:
     async def test_no_mounts_returns_unchanged(self):
         fs = _FullRoutingFS()
-        r = VFSResult(candidates=[_candidate("/a.py")])
+        r = VFSResult(entries=[_entry("/a.py")])
         result = fs._exclude_mounted_paths(r)
-        assert len(result.candidates) == 1
+        assert len(result.entries) == 1
 
-    async def test_filters_candidates_under_mount(self):
+    async def test_filters_entries_under_mount(self):
         fs = _FullRoutingFS()
         child = _FullRoutingFS("child")
         await fs.add_mount("/data", child)
         r = VFSResult(
-            candidates=[
-                _candidate("/local.py"),
-                _candidate("/data/file.py"),
-                _candidate("/data"),
+            entries=[
+                _entry("/local.py"),
+                _entry("/data/file.py"),
+                _entry("/data"),
             ]
         )
         result = fs._exclude_mounted_paths(r)
-        assert [c.path for c in result.candidates] == ["/local.py"]
+        assert [c.path for c in result.entries] == ["/local.py"]
 
     async def test_does_not_filter_prefix_substring(self):
         fs = _FullRoutingFS()
         await fs.add_mount("/web", _FullRoutingFS("child"))
-        r = VFSResult(candidates=[_candidate("/webinar/page.html")])
+        r = VFSResult(entries=[_entry("/webinar/page.html")])
         result = fs._exclude_mounted_paths(r)
-        assert len(result.candidates) == 1
+        assert len(result.entries) == 1
 
 
 class TestRequireSameMount:
@@ -363,30 +363,30 @@ class TestMergeResults:
     def test_empty_list_returns_success(self):
         r = VirtualFileSystem._merge_results([])
         assert r.success is True
-        assert r.candidates == []
+        assert r.entries == []
 
     def test_single_result_returned(self):
-        r1 = VFSResult(candidates=[_candidate("/a.py")])
+        r1 = VFSResult(entries=[_entry("/a.py")])
         merged = VirtualFileSystem._merge_results([r1])
-        assert merged.candidates[0].path == "/a.py"
+        assert merged.entries[0].path == "/a.py"
 
     def test_union_of_two_results(self):
-        r1 = VFSResult(candidates=[_candidate("/a.py")])
-        r2 = VFSResult(candidates=[_candidate("/b.py")])
+        r1 = VFSResult(entries=[_entry("/a.py")])
+        r2 = VFSResult(entries=[_entry("/b.py")])
         merged = VirtualFileSystem._merge_results([r1, r2])
-        paths = {c.path for c in merged.candidates}
+        paths = {c.path for c in merged.entries}
         assert paths == {"/a.py", "/b.py"}
 
     def test_failure_propagates(self):
-        r1 = VFSResult(candidates=[_candidate("/a.py")])
-        r2 = VFSResult(success=False, errors=["fail"], candidates=[])
+        r1 = VFSResult(entries=[_entry("/a.py")])
+        r2 = VFSResult(success=False, errors=["fail"], entries=[])
         merged = VirtualFileSystem._merge_results([r1, r2])
         assert merged.success is False
         assert "fail" in merged.errors
 
 
 # =========================================================================
-# Candidate dispatch
+# Entry dispatch
 # =========================================================================
 
 
@@ -397,9 +397,9 @@ class TestGroupByTerminal:
         await root.add_mount("/data", child)
 
         candidates = VFSResult(
-            candidates=[
-                _candidate("/local.py"),
-                _candidate("/data/remote.py"),
+            entries=[
+                _entry("/local.py"),
+                _entry("/data/remote.py"),
             ]
         )
         groups = root._group_candidates_by_terminal(candidates)
@@ -411,10 +411,10 @@ class TestGroupByTerminal:
         for fs, prefix, result in groups:
             if fs._name == "root":
                 assert prefix == ""
-                assert result.candidates[0].path == "/local.py"
+                assert result.entries[0].path == "/local.py"
             else:
                 assert prefix == "/data"
-                assert result.candidates[0].path == "/remote.py"
+                assert result.entries[0].path == "/remote.py"
 
     async def test_single_mount_groups_together(self):
         root = _FullRoutingFS("root")
@@ -422,14 +422,14 @@ class TestGroupByTerminal:
         await root.add_mount("/data", child)
 
         candidates = VFSResult(
-            candidates=[
-                _candidate("/data/a.py"),
-                _candidate("/data/b.py"),
+            entries=[
+                _entry("/data/a.py"),
+                _entry("/data/b.py"),
             ]
         )
         groups = root._group_candidates_by_terminal(candidates)
         assert len(groups) == 1
-        assert len(groups[0][2].candidates) == 2
+        assert len(groups[0][2].entries) == 2
 
     def test_empty_candidates(self):
         root = _FullRoutingFS()
@@ -475,20 +475,21 @@ class TestDispatchCandidates:
         await root.add_mount("/data", child)
 
         child.read_mock.return_value = VFSResult(
-            candidates=[_candidate("/remote.py", content="hello")],
+            function="read",
+            entries=[_entry("/remote.py", content="hello")],
         )
 
-        candidates = VFSResult(candidates=[_candidate("/data/remote.py")])
+        candidates = VFSResult(function="read", entries=[_entry("/data/remote.py")])
         result = await root._dispatch_candidates("read", candidates)
 
         child.read_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/data/remote.py"
-        assert result.candidates[0].content == "hello"
+        assert result.entries[0].path == "/data/remote.py"
+        assert result.entries[0].content == "hello"
 
     async def test_empty_candidates_returns_empty(self):
         root = _FullRoutingFS()
         result = await root._dispatch_candidates("read", VFSResult())
-        assert result.candidates == []
+        assert result.entries == []
         assert result.success is True
 
     async def test_merges_results_from_multiple_mounts(self):
@@ -498,18 +499,19 @@ class TestDispatchCandidates:
         await root.add_mount("/m1", c1)
         await root.add_mount("/m2", c2)
 
-        c1.stat_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
-        c2.stat_mock.return_value = VFSResult(candidates=[_candidate("/b.py")])
+        c1.stat_mock.return_value = VFSResult(function="stat", entries=[_entry("/a.py")])
+        c2.stat_mock.return_value = VFSResult(function="stat", entries=[_entry("/b.py")])
 
         candidates = VFSResult(
-            candidates=[
-                _candidate("/m1/a.py"),
-                _candidate("/m2/b.py"),
-            ]
+            function="stat",
+            entries=[
+                _entry("/m1/a.py"),
+                _entry("/m2/b.py"),
+            ],
         )
         result = await root._dispatch_candidates("stat", candidates)
 
-        paths = {c.path for c in result.candidates}
+        paths = {c.path for c in result.entries}
         assert paths == {"/m1/a.py", "/m2/b.py"}
 
 
@@ -529,7 +531,7 @@ class TestRouteSingle:
             await root._route_single(
                 "read",
                 "/local.py",
-                VFSResult(candidates=[_candidate("/remote.py")]),
+                VFSResult(function="read", entries=[_entry("/remote.py")]),
             )
 
     async def test_with_path_resolves_and_calls_impl(self):
@@ -538,12 +540,13 @@ class TestRouteSingle:
         await root.add_mount("/data", child)
 
         child.read_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.py", content="data")],
+            function="read",
+            entries=[_entry("/file.py", content="data")],
         )
         result = await root._route_single("read", "/data/file.py", None)
 
         child.read_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/data/file.py"
+        assert result.entries[0].path == "/data/file.py"
 
     async def test_with_candidates_dispatches(self):
         root = _FullRoutingFS("root")
@@ -551,24 +554,26 @@ class TestRouteSingle:
         await root.add_mount("/data", child)
 
         child.ls_mock.return_value = VFSResult(
-            candidates=[_candidate("/x.py")],
+            function="ls",
+            entries=[_entry("/x.py")],
         )
 
-        candidates = VFSResult(candidates=[_candidate("/data/x.py")])
+        candidates = VFSResult(function="ls", entries=[_entry("/data/x.py")])
         result = await root._route_single("ls", None, candidates)
 
         child.ls_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/data/x.py"
+        assert result.entries[0].path == "/data/x.py"
 
     async def test_unmounted_path_stays_on_self(self):
         root = _FullRoutingFS("root")
         root.stat_mock.return_value = VFSResult(
-            candidates=[_candidate("/local.py")],
+            function="stat",
+            entries=[_entry("/local.py")],
         )
         result = await root._route_single("stat", "/local.py", None)
 
         root.stat_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/local.py"
+        assert result.entries[0].path == "/local.py"
 
 
 # =========================================================================
@@ -581,7 +586,7 @@ class TestRouteTwoPath:
         root = _FullRoutingFS()
         result = await root._route_two_path("move", [])
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_same_mount_calls_impl(self):
         root = _FullRoutingFS("root")
@@ -589,21 +594,22 @@ class TestRouteTwoPath:
         await root.add_mount("/data", child)
 
         child.move_mock.return_value = VFSResult(
-            candidates=[_candidate("/b.py")],
+            function="move",
+            entries=[_entry("/b.py")],
         )
 
         ops = [TwoPathOperation(src="/data/a.py", dest="/data/b.py")]
         result = await root._route_two_path("move", ops)
 
         child.move_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/data/b.py"
+        assert result.entries[0].path == "/data/b.py"
 
     async def test_same_mount_rebases_ops(self):
         root = _FullRoutingFS("root")
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.copy_mock.return_value = VFSResult(candidates=[_candidate("/b.py")])
+        child.copy_mock.return_value = VFSResult(function="copy", entries=[_entry("/b.py")])
 
         ops = [TwoPathOperation(src="/data/a.py", dest="/data/b.py")]
         await root._route_two_path("copy", ops)
@@ -658,10 +664,12 @@ class TestCrossMountTransfer:
         await root.add_mount("/dst", dst)
 
         src.read_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.py", content="hello")],
+            function="read",
+            entries=[_entry("/file.py", content="hello")],
         )
         dst.write_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.py")],
+            function="write",
+            entries=[_entry("/file.py")],
         )
 
         result = await root.copy("/src/file.py", "/dst/file.py")
@@ -669,7 +677,7 @@ class TestCrossMountTransfer:
         src.read_mock.assert_awaited_once()
         dst.write_mock.assert_awaited_once()
         assert result.success is True
-        assert result.candidates[0].path == "/dst/file.py"
+        assert result.entries[0].path == "/dst/file.py"
 
     async def test_cross_mount_move_also_deletes_source(self):
         root = _FullRoutingFS("root")
@@ -679,13 +687,16 @@ class TestCrossMountTransfer:
         await root.add_mount("/dst", dst)
 
         src.read_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.py", content="data")],
+            function="read",
+            entries=[_entry("/file.py", content="data")],
         )
         dst.write_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.py")],
+            function="write",
+            entries=[_entry("/file.py")],
         )
         src.delete_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.py")],
+            function="delete",
+            entries=[_entry("/file.py")],
         )
 
         result = await root.move("/src/file.py", "/dst/file.py")
@@ -706,14 +717,15 @@ class TestRouteFanout:
         await root.add_mount("/data", child)
 
         child.grep_mock.return_value = VFSResult(
-            candidates=[_candidate("/match.py")],
+            function="grep",
+            entries=[_entry("/match.py")],
         )
 
-        candidates = VFSResult(candidates=[_candidate("/data/match.py")])
+        candidates = VFSResult(function="grep", entries=[_entry("/data/match.py")])
         result = await root._route_fanout("grep", candidates, pattern="test")
 
         child.grep_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/data/match.py"
+        assert result.entries[0].path == "/data/match.py"
 
     async def test_without_candidates_fans_out(self):
         root = _FullRoutingFS("root")
@@ -721,17 +733,19 @@ class TestRouteFanout:
         await root.add_mount("/data", child)
 
         root.glob_mock.return_value = VFSResult(
-            candidates=[_candidate("/local.py")],
+            function="glob",
+            entries=[_entry("/local.py")],
         )
         child.glob_mock.return_value = VFSResult(
-            candidates=[_candidate("/remote.py")],
+            function="glob",
+            entries=[_entry("/remote.py")],
         )
 
         result = await root._route_fanout("glob", None, pattern="*.py")
 
         root.glob_mock.assert_awaited_once()
         child.glob_mock.assert_awaited_once()
-        paths = {c.path for c in result.candidates}
+        paths = {c.path for c in result.entries}
         assert "/local.py" in paths
         assert "/data/remote.py" in paths
 
@@ -741,15 +755,17 @@ class TestRouteFanout:
         await root.add_mount("/data", child)
 
         root.glob_mock.return_value = VFSResult(
-            candidates=[_candidate("/local.py"), _candidate("/data/shadow.py")],
+            function="glob",
+            entries=[_entry("/local.py"), _entry("/data/shadow.py")],
         )
         child.glob_mock.return_value = VFSResult(
-            candidates=[_candidate("/real.py")],
+            function="glob",
+            entries=[_entry("/real.py")],
         )
 
         result = await root._route_fanout("glob", None, pattern="*.py")
 
-        paths = {c.path for c in result.candidates}
+        paths = {c.path for c in result.entries}
         assert "/local.py" in paths
         assert "/data/real.py" in paths
         assert "/data/shadow.py" not in paths
@@ -759,13 +775,14 @@ class TestRouteFanout:
         child = _FullRoutingFS("child")
         await root.add_mount("/web", child)
 
-        root.pagerank_mock.return_value = VFSResult()
+        root.pagerank_mock.return_value = VFSResult(function="pagerank")
         child.pagerank_mock.return_value = VFSResult(
-            candidates=[_candidate("/index.html")],
+            function="pagerank",
+            entries=[_entry("/index.html")],
         )
 
         result = await root._route_fanout("pagerank", None)
-        assert result.candidates[0].path == "/web/index.html"
+        assert result.entries[0].path == "/web/index.html"
 
 
 # =========================================================================
@@ -781,23 +798,23 @@ class TestPublicCRUD:
             await fs.read()
 
         with pytest.raises(ValueError, match="Exactly one of path or candidates"):
-            await fs.read("/f.py", candidates=VFSResult(candidates=[_candidate("/f.py")]))
+            await fs.read("/f.py", candidates=VFSResult(function="read", entries=[_entry("/f.py")]))
 
     @pytest.mark.parametrize("method", ["read", "stat", "ls", "mkdir"])
     async def test_single_path_ops_route_to_impl(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = VFSResult(candidates=[_candidate("/f.py")])
+        mock.return_value = VFSResult(function=method, entries=[_entry("/f.py")])
         result = await getattr(fs, method)("/f.py")
         mock.assert_awaited_once()
-        assert result.candidates[0].path == "/f.py"
+        assert result.entries[0].path == "/f.py"
 
     async def test_edit_routes(self):
         fs = _FullRoutingFS()
-        fs.edit_mock.return_value = VFSResult(candidates=[_candidate("/f.py")])
+        fs.edit_mock.return_value = VFSResult(function="edit", entries=[_entry("/f.py")])
         result = await fs.edit("/f.py", old="x", new="y")
         fs.edit_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/f.py"
+        assert result.entries[0].path == "/f.py"
 
     async def test_edit_creates_edit_operation(self):
         fs = _FullRoutingFS()
@@ -821,10 +838,10 @@ class TestPublicCRUD:
 
     async def test_delete_routes(self):
         fs = _FullRoutingFS()
-        fs.delete_mock.return_value = VFSResult(candidates=[_candidate("/f.py")])
+        fs.delete_mock.return_value = VFSResult(function="delete", entries=[_entry("/f.py")])
         result = await fs.delete("/f.py")
         fs.delete_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/f.py"
+        assert result.entries[0].path == "/f.py"
 
     async def test_delete_permanent_kwarg(self):
         fs = _FullRoutingFS()
@@ -835,10 +852,10 @@ class TestPublicCRUD:
 
     async def test_write_routes(self):
         fs = _FullRoutingFS()
-        fs.write_mock.return_value = VFSResult(candidates=[_candidate("/f.py")])
+        fs.write_mock.return_value = VFSResult(function="write", entries=[_entry("/f.py")])
         result = await fs.write("/f.py", "hello")
         fs.write_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/f.py"
+        assert result.entries[0].path == "/f.py"
 
     async def test_write_passes_content_and_overwrite(self):
         fs = _FullRoutingFS()
@@ -850,7 +867,7 @@ class TestPublicCRUD:
 
     async def test_tree_passes_max_depth(self):
         fs = _FullRoutingFS()
-        fs.tree_mock.return_value = VFSResult(candidates=[_candidate("/dir")])
+        fs.tree_mock.return_value = VFSResult(function="tree", entries=[_entry("/dir")])
         await fs.tree("/dir", max_depth=3)
         call_kwargs = fs.tree_mock.call_args
         assert call_kwargs.kwargs.get("max_depth") == 3
@@ -864,10 +881,10 @@ class TestPublicCRUD:
 class TestPublicTwoPath:
     async def test_move_routes(self):
         fs = _FullRoutingFS()
-        fs.move_mock.return_value = VFSResult(candidates=[_candidate("/b.py")])
+        fs.move_mock.return_value = VFSResult(function="move", entries=[_entry("/b.py")])
         result = await fs.move("/a.py", "/b.py")
         fs.move_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/b.py"
+        assert result.entries[0].path == "/b.py"
 
     async def test_move_with_batch(self):
         fs = _FullRoutingFS()
@@ -878,10 +895,10 @@ class TestPublicTwoPath:
 
     async def test_copy_routes(self):
         fs = _FullRoutingFS()
-        fs.copy_mock.return_value = VFSResult(candidates=[_candidate("/b.py")])
+        fs.copy_mock.return_value = VFSResult(function="copy", entries=[_entry("/b.py")])
         result = await fs.copy("/a.py", "/b.py")
         fs.copy_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/b.py"
+        assert result.entries[0].path == "/b.py"
 
     async def test_copy_with_batch(self):
         fs = _FullRoutingFS()
@@ -902,7 +919,7 @@ class TestPublicMkconn:
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.mkconn_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        child.mkconn_mock.return_value = VFSResult(function="mkconn", entries=[_entry("/a.py")])
         result = await root.mkconn("/data/a.py", "/data/b.py", "imports")
         child.mkconn_mock.assert_awaited_once()
         assert result.success is True
@@ -920,7 +937,7 @@ class TestPublicMkconn:
 
     async def test_mkconn_on_root_filesystem(self):
         fs = _FullRoutingFS()
-        fs.mkconn_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        fs.mkconn_mock.return_value = VFSResult(function="mkconn", entries=[_entry("/a.py")])
         result = await fs.mkconn("/a.py", "/b.py", "imports")
         fs.mkconn_mock.assert_awaited_once()
         assert result.success is True
@@ -934,24 +951,24 @@ class TestPublicMkconn:
 class TestPublicSearch:
     async def test_glob_routes(self):
         fs = _FullRoutingFS()
-        fs.glob_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        fs.glob_mock.return_value = VFSResult(function="glob", entries=[_entry("/a.py")])
         result = await fs.glob("*.py")
         fs.glob_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/a.py"
+        assert result.entries[0].path == "/a.py"
 
     async def test_glob_with_candidates(self):
         fs = _FullRoutingFS()
-        fs.glob_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
-        cands = VFSResult(candidates=[_candidate("/a.py")])
+        fs.glob_mock.return_value = VFSResult(function="glob", entries=[_entry("/a.py")])
+        cands = VFSResult(function="glob", entries=[_entry("/a.py")])
         await fs.glob("*.py", candidates=cands)
         fs.glob_mock.assert_awaited_once()
 
     async def test_grep_routes(self):
         fs = _FullRoutingFS()
-        fs.grep_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        fs.grep_mock.return_value = VFSResult(function="grep", entries=[_entry("/a.py")])
         result = await fs.grep("pattern")
         fs.grep_mock.assert_awaited_once()
-        assert result.candidates[0].path == "/a.py"
+        assert result.entries[0].path == "/a.py"
 
     async def test_grep_passes_kwargs(self):
         fs = _FullRoutingFS()
@@ -984,10 +1001,10 @@ class TestPublicSearch:
     async def test_search_variants_route_to_impl(self, method, args):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        mock.return_value = VFSResult(function=method, entries=[_entry("/a.py")])
         result = await getattr(fs, method)(*args)
         mock.assert_awaited_once()
-        assert result.candidates[0].path == "/a.py"
+        assert result.entries[0].path == "/a.py"
 
     async def test_semantic_search_passes_k(self):
         fs = _FullRoutingFS()
@@ -1015,22 +1032,22 @@ class TestPublicGraphTraversal:
     async def test_traversal_ops_route_to_impl(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        mock.return_value = VFSResult(function=method, entries=[_entry("/a.py")])
         result = await getattr(fs, method)("/a.py")
         mock.assert_awaited_once()
-        assert result.candidates[0].path == "/a.py"
+        assert result.entries[0].path == "/a.py"
 
     async def test_neighborhood_passes_depth(self):
         fs = _FullRoutingFS()
-        fs.neighborhood_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        fs.neighborhood_mock.return_value = VFSResult(function="neighborhood", entries=[_entry("/a.py")])
         await fs.neighborhood("/a.py", depth=3)
         call_kwargs = fs.neighborhood_mock.call_args
         assert call_kwargs.kwargs.get("depth") == 3
 
     async def test_predecessors_with_candidates(self):
         fs = _FullRoutingFS()
-        fs.predecessors_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
-        cands = VFSResult(candidates=[_candidate("/a.py")])
+        fs.predecessors_mock.return_value = VFSResult(function="predecessors", entries=[_entry("/a.py")])
+        cands = VFSResult(function="predecessors", entries=[_entry("/a.py")])
         await fs.predecessors(candidates=cands)
         fs.predecessors_mock.assert_awaited_once()
 
@@ -1045,11 +1062,11 @@ class TestPublicGraphCandidateOnly:
     async def test_subgraph_ops_dispatch(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
-        cands = VFSResult(candidates=[_candidate("/a.py")])
+        mock.return_value = VFSResult(function=method, entries=[_entry("/a.py")])
+        cands = VFSResult(function=method, entries=[_entry("/a.py")])
         result = await getattr(fs, method)(cands)
         mock.assert_awaited_once()
-        assert result.candidates[0].path == "/a.py"
+        assert result.entries[0].path == "/a.py"
 
 
 # =========================================================================
@@ -1073,15 +1090,15 @@ class TestPublicGraphAlgorithms:
     async def test_algorithm_routes_to_impl(self, method):
         fs = _FullRoutingFS()
         mock = getattr(fs, f"{method}_mock")
-        mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
+        mock.return_value = VFSResult(function=method, entries=[_entry("/a.py")])
         result = await getattr(fs, method)()
         mock.assert_awaited_once()
-        assert result.candidates[0].path == "/a.py"
+        assert result.entries[0].path == "/a.py"
 
     async def test_pagerank_with_candidates(self):
         fs = _FullRoutingFS()
-        fs.pagerank_mock.return_value = VFSResult(candidates=[_candidate("/a.py")])
-        cands = VFSResult(candidates=[_candidate("/a.py")])
+        fs.pagerank_mock.return_value = VFSResult(function="pagerank", entries=[_entry("/a.py")])
+        cands = VFSResult(function="pagerank", entries=[_entry("/a.py")])
         await fs.pagerank(candidates=cands)
         fs.pagerank_mock.assert_awaited_once()
 
@@ -1091,14 +1108,16 @@ class TestPublicGraphAlgorithms:
         await root.add_mount("/data", child)
 
         root.hits_mock.return_value = VFSResult(
-            candidates=[_candidate("/local.py")],
+            function="hits",
+            entries=[_entry("/local.py")],
         )
         child.hits_mock.return_value = VFSResult(
-            candidates=[_candidate("/remote.py")],
+            function="hits",
+            entries=[_entry("/remote.py")],
         )
 
         result = await root.hits()
-        paths = {c.path for c in result.candidates}
+        paths = {c.path for c in result.entries}
         assert "/local.py" in paths
         assert "/data/remote.py" in paths
 
@@ -1113,7 +1132,7 @@ class TestEdgeCaseMissingArgs:
         fs = _FullRoutingFS()
         result = await fs._route_write_batch([], overwrite=True)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_edit_without_old_new_returns_error(self):
         fs = _FullRoutingFS()

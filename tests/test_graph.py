@@ -10,7 +10,8 @@ import rustworkx
 
 from vfs.graph import GraphProvider, RustworkxGraph, UnionFind
 from vfs.models import VFSObject
-from vfs.results import Candidate, VFSResult
+from vfs.paths import decompose_connection
+from vfs.results import Entry, VFSResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,7 +35,17 @@ def _loaded_graph() -> RustworkxGraph:
 
 def _result(*paths: str) -> VFSResult:
     """Build a VFSResult from path strings."""
-    return VFSResult(candidates=[Candidate(path=p) for p in paths])
+    return VFSResult(entries=[Entry(path=p) for p in paths])
+
+
+def _node_paths(result: VFSResult) -> set[str]:
+    """Extract entry paths that are nodes (not connections)."""
+    return {e.path for e in result.entries if not decompose_connection(e.path)}
+
+
+def _edge_entries(result: VFSResult) -> list[Entry]:
+    """Extract entries that represent connection edges."""
+    return [e for e in result.entries if decompose_connection(e.path)]
 
 
 # ===========================================================================
@@ -339,7 +350,7 @@ class TestEnsureFresh:
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
+        mock_result.all.return_value = []
         mock_session.execute.return_value = mock_result
 
         await g.ensure_fresh(mock_session)
@@ -358,7 +369,7 @@ class TestEnsureFresh:
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
+        mock_result.all.return_value = []
         mock_session.execute.return_value = mock_result
 
         await g.ensure_fresh(mock_session)
@@ -378,7 +389,7 @@ class TestLoad:
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [row]
+        mock_result.all.return_value = [row]
         mock_session.execute.return_value = mock_result
 
         await g._load(mock_session)
@@ -397,7 +408,7 @@ class TestLoad:
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
+        mock_result.all.return_value = []
         mock_session.execute.return_value = mock_result
 
         await g._load(mock_session)
@@ -417,7 +428,7 @@ class TestLoad:
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [row]
+        mock_result.all.return_value = [row]
         mock_session.execute.return_value = mock_result
 
         await g._load(mock_session)
@@ -435,7 +446,7 @@ class TestLoad:
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [row]
+        mock_result.all.return_value = [row]
         mock_session.execute.return_value = mock_result
 
         await g._load(mock_session)
@@ -448,65 +459,58 @@ class TestLoad:
 # ===========================================================================
 
 
-class TestRelationshipCandidates:
-    def test_builds_candidates(self):
+class TestRelationshipEntries:
+    def test_builds_entries(self):
         paths_dict = {"/a.py": ["/b.py", "/c.py"]}
-        result = RustworkxGraph._relationship_candidates(paths_dict, "predecessors")
+        result = RustworkxGraph._relationship_entries(paths_dict)
         assert len(result) == 1
         assert result[0].path == "/a.py"
-        assert result[0].details[0].operation == "predecessors"
-        metadata = result[0].details[0].metadata
-        assert metadata is not None
-        assert metadata["paths"] == ["/b.py", "/c.py"]
 
     def test_sorted_by_path(self):
         paths_dict = {"/c.py": ["/a.py"], "/a.py": ["/b.py"]}
-        result = RustworkxGraph._relationship_candidates(paths_dict, "successors")
-        assert [c.path for c in result] == ["/a.py", "/c.py"]
+        result = RustworkxGraph._relationship_entries(paths_dict)
+        assert [e.path for e in result] == ["/a.py", "/c.py"]
 
 
-class TestSubgraphCandidates:
-    def test_builds_node_and_edge_candidates(self):
+class TestSubgraphEntries:
+    def test_builds_node_and_edge_entries(self):
         node_set = {"/a.py", "/b.py"}
         edges_out = {"/a.py": frozenset(["/b.py"])}
         edge_types = {("/a.py", "/b.py"): "imports"}
-        result = RustworkxGraph._subgraph_candidates(
+        result = RustworkxGraph._subgraph_entries(
             node_set,
             edges_out,
             edge_types,
-            "neighborhood",
         )
-        # 2 node candidates + 1 connection candidate
+        # 2 node entries + 1 connection entry
         assert len(result) == 3
-        node_paths = [c.path for c in result if c.weight is None]
+        node_paths = [e.path for e in result if not decompose_connection(e.path)]
         assert sorted(node_paths) == ["/a.py", "/b.py"]
-        conn_candidates = [c for c in result if c.weight == 1.0]
-        assert len(conn_candidates) == 1
+        conn_entries = [e for e in result if decompose_connection(e.path)]
+        assert len(conn_entries) == 1
 
     def test_only_includes_edges_within_node_set(self):
         node_set = {"/a.py"}
         edges_out = {"/a.py": frozenset(["/b.py"])}  # /b.py not in node_set
         edge_types = {("/a.py", "/b.py"): "imports"}
-        result = RustworkxGraph._subgraph_candidates(
+        result = RustworkxGraph._subgraph_entries(
             node_set,
             edges_out,
             edge_types,
-            "subgraph",
         )
         assert len(result) == 1  # only the node, no edge
 
 
-class TestScoreCandidates:
+class TestScoreEntries:
     def test_sorted_descending(self):
         scores = {"/a.py": 0.3, "/b.py": 0.9, "/c.py": 0.5}
-        result = RustworkxGraph._score_candidates(scores, "pagerank")
-        assert [c.path for c in result] == ["/b.py", "/c.py", "/a.py"]
+        result = RustworkxGraph._score_entries(scores)
+        assert [e.path for e in result] == ["/b.py", "/c.py", "/a.py"]
 
-    def test_scores_in_details(self):
+    def test_scores_in_entries(self):
         scores = {"/a.py": 0.42}
-        result = RustworkxGraph._score_candidates(scores, "pagerank")
-        assert result[0].details[0].score == 0.42
-        assert result[0].details[0].operation == "pagerank"
+        result = RustworkxGraph._score_entries(scores)
+        assert result[0].score == 0.42
 
 
 class TestExtractPaths:
@@ -532,7 +536,7 @@ class TestPredecessors:
         await g.add_edge("/c.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.predecessors(_result("/b.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert paths == {"/a.py", "/c.py"}
 
     async def test_excludes_query_paths(self):
@@ -540,7 +544,7 @@ class TestPredecessors:
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.predecessors(_result("/b.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert "/b.py" not in paths
 
     async def test_no_predecessors(self):
@@ -549,13 +553,13 @@ class TestPredecessors:
 
         result = await g.predecessors(_result("/a.py"), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_unknown_path_returns_empty(self):
         g = _loaded_graph()
         result = await g.predecessors(_result("/missing.py"), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_error_returns_failure(self):
         g = _loaded_graph()
@@ -566,11 +570,11 @@ class TestPredecessors:
         assert result.success is False
         assert "predecessors failed" in result.errors[0]
 
-    async def test_returns_detail_with_operation(self):
+    async def test_returns_function_name(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         result = await g.predecessors(_result("/b.py"), session=_mock_session)
-        assert result.candidates[0].details[0].operation == "predecessors"
+        assert result.function == "predecessors"
 
 
 class TestSuccessors:
@@ -580,7 +584,7 @@ class TestSuccessors:
         await g.add_edge("/a.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.successors(_result("/a.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert paths == {"/b.py", "/c.py"}
 
     async def test_excludes_query_paths(self):
@@ -588,7 +592,7 @@ class TestSuccessors:
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.successors(_result("/a.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert "/a.py" not in paths
 
     async def test_no_successors(self):
@@ -597,7 +601,7 @@ class TestSuccessors:
 
         result = await g.successors(_result("/a.py"), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_error_returns_failure(self):
         g = _loaded_graph()
@@ -622,7 +626,7 @@ class TestAncestors:
         await g.add_edge("/c.py", "/d.py", "imports", session=_mock_session)
 
         result = await g.ancestors(_result("/d.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert paths == {"/a.py", "/b.py", "/c.py"}
 
     async def test_excludes_query_paths(self):
@@ -630,7 +634,7 @@ class TestAncestors:
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.ancestors(_result("/b.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert "/b.py" not in paths
 
     async def test_no_ancestors(self):
@@ -639,13 +643,13 @@ class TestAncestors:
 
         result = await g.ancestors(_result("/a.py"), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_unknown_path_returns_empty(self):
         g = _loaded_graph()
         result = await g.ancestors(_result("/missing.py"), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_handles_cycle(self):
         g = _loaded_graph()
@@ -653,7 +657,7 @@ class TestAncestors:
         await g.add_edge("/b.py", "/a.py", "imports", session=_mock_session)
 
         result = await g.ancestors(_result("/a.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert paths == {"/b.py"}
 
     async def test_multiple_candidates(self):
@@ -663,14 +667,14 @@ class TestAncestors:
         await g.add_edge("/c.py", "/d.py", "imports", session=_mock_session)
 
         result = await g.ancestors(_result("/b.py", "/d.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert paths == {"/a.py", "/c.py"}
 
-    async def test_detail_operation(self):
+    async def test_function_name(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         result = await g.ancestors(_result("/b.py"), session=_mock_session)
-        assert result.candidates[0].details[0].operation == "ancestors"
+        assert result.function == "ancestors"
 
     async def test_error_returns_failure(self):
         g = _loaded_graph()
@@ -694,7 +698,7 @@ class TestDescendants:
         await g.add_edge("/c.py", "/d.py", "imports", session=_mock_session)
 
         result = await g.descendants(_result("/a.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert paths == {"/b.py", "/c.py", "/d.py"}
 
     async def test_excludes_query_paths(self):
@@ -702,7 +706,7 @@ class TestDescendants:
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.descendants(_result("/a.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert "/a.py" not in paths
 
     async def test_no_descendants(self):
@@ -711,13 +715,13 @@ class TestDescendants:
 
         result = await g.descendants(_result("/a.py"), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_unknown_path_returns_empty(self):
         g = _loaded_graph()
         result = await g.descendants(_result("/missing.py"), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_error_returns_failure(self):
         g = _loaded_graph()
@@ -741,16 +745,14 @@ class TestNeighborhood:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.neighborhood(_result("/b.py"), depth=1, session=_mock_session)
-        node_paths = {c.path for c in result.candidates if c.weight is None}
-        assert node_paths == {"/a.py", "/b.py", "/c.py"}
+        assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
 
     async def test_depth_0_returns_seed_only(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.neighborhood(_result("/a.py"), depth=0, session=_mock_session)
-        node_paths = {c.path for c in result.candidates if c.weight is None}
-        assert node_paths == {"/a.py"}
+        assert _node_paths(result) == {"/a.py"}
 
     async def test_follows_both_directions(self):
         # A → B, C → B — neighborhood of B includes both A and C
@@ -759,8 +761,7 @@ class TestNeighborhood:
         await g.add_edge("/c.py", "/b.py", "calls", session=_mock_session)
 
         result = await g.neighborhood(_result("/b.py"), depth=1, session=_mock_session)
-        node_paths = {c.path for c in result.candidates if c.weight is None}
-        assert node_paths == {"/a.py", "/b.py", "/c.py"}
+        assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
 
     async def test_includes_edges_within_visited(self):
         g = _loaded_graph()
@@ -768,8 +769,7 @@ class TestNeighborhood:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.neighborhood(_result("/b.py"), depth=1, session=_mock_session)
-        edge_candidates = [c for c in result.candidates if c.weight is not None]
-        assert len(edge_candidates) == 2  # a→b and b→c
+        assert len(_edge_entries(result)) == 2  # a→b and b→c
 
     async def test_excludes_edges_outside_visited(self):
         # A → B → C → D, depth=1 from B visits {A, B, C}
@@ -780,28 +780,26 @@ class TestNeighborhood:
         await g.add_edge("/c.py", "/d.py", "imports", session=_mock_session)
 
         result = await g.neighborhood(_result("/b.py"), depth=1, session=_mock_session)
-        node_paths = {c.path for c in result.candidates if c.weight is None}
-        assert "/d.py" not in node_paths
+        assert "/d.py" not in _node_paths(result)
 
     async def test_unknown_path_returns_empty(self):
         g = _loaded_graph()
         result = await g.neighborhood(_result("/missing.py"), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_disconnected_node(self):
         g = _loaded_graph()
         await g.add_node("/a.py", session=_mock_session)
 
         result = await g.neighborhood(_result("/a.py"), depth=2, session=_mock_session)
-        node_paths = {c.path for c in result.candidates if c.weight is None}
-        assert node_paths == {"/a.py"}
+        assert _node_paths(result) == {"/a.py"}
 
-    async def test_detail_operation(self):
+    async def test_function_name(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         result = await g.neighborhood(_result("/a.py"), depth=1, session=_mock_session)
-        assert result.candidates[0].details[0].operation == "neighborhood"
+        assert result.function == "neighborhood"
 
     async def test_error_returns_failure(self):
         g = _loaded_graph()
@@ -825,9 +823,7 @@ class TestMeetingSubgraph:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py", "/c.py"), session=_mock_session)
-        from vfs.paths import decompose_connection
-
-        node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
+        node_paths = _node_paths(result)
         assert "/a.py" in node_paths
         assert "/c.py" in node_paths
         assert "/b.py" in node_paths  # intermediate
@@ -837,24 +833,21 @@ class TestMeetingSubgraph:
         await g.add_node("/a.py", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py"), session=_mock_session)
-        assert len(result.candidates) == 1
-        assert result.candidates[0].path == "/a.py"
+        assert len(result.entries) == 1
+        assert result.entries[0].path == "/a.py"
 
     async def test_zero_seeds(self):
         g = _loaded_graph()
         result = await g.meeting_subgraph(_result(), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_adjacent_seeds(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py", "/b.py"), session=_mock_session)
-        from vfs.paths import decompose_connection
-
-        node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
-        assert node_paths == {"/a.py", "/b.py"}
+        assert _node_paths(result) == {"/a.py", "/b.py"}
 
     async def test_disconnected_seeds(self):
         g = _loaded_graph()
@@ -862,27 +855,24 @@ class TestMeetingSubgraph:
         await g.add_node("/b.py", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py", "/b.py"), session=_mock_session)
-        from vfs.paths import decompose_connection
-
-        node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
+        node_paths = _node_paths(result)
         # Both seeds present even though disconnected
         assert "/a.py" in node_paths
         assert "/b.py" in node_paths
 
-    async def test_includes_edge_candidates(self):
+    async def test_includes_edge_entries(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py", "/b.py"), session=_mock_session)
-        edge_candidates = [c for c in result.candidates if c.weight is not None]
-        assert len(edge_candidates) == 1
+        assert len(_edge_entries(result)) == 1
 
-    async def test_detail_operation(self):
+    async def test_function_name(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
         result = await g.meeting_subgraph(_result("/a.py", "/b.py"), session=_mock_session)
-        assert result.candidates[0].details[0].operation == "meeting_subgraph"
+        assert result.function == "meeting_subgraph"
 
     async def test_unknown_seed_ignored(self):
         g = _loaded_graph()
@@ -893,8 +883,8 @@ class TestMeetingSubgraph:
             session=_mock_session,
         )
         # Only the valid seed is returned
-        assert len(result.candidates) == 1
-        assert result.candidates[0].path == "/a.py"
+        assert len(result.entries) == 1
+        assert result.entries[0].path == "/a.py"
 
     async def test_error_returns_failure(self):
         g = _loaded_graph()
@@ -919,16 +909,14 @@ class TestMinMeetingSubgraph:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
         await g.add_edge("/c.py", "/d.py", "imports", session=_mock_session)
 
-        from vfs.paths import decompose_connection
-
         meeting = await g.meeting_subgraph(_result("/a.py", "/d.py"), session=_mock_session)
         min_meeting = await g.min_meeting_subgraph(
             _result("/a.py", "/d.py"),
             session=_mock_session,
         )
 
-        meeting_nodes = {c.path for c in meeting.candidates if not decompose_connection(c.path)}
-        min_nodes = {c.path for c in min_meeting.candidates if not decompose_connection(c.path)}
+        meeting_nodes = _node_paths(meeting)
+        min_nodes = _node_paths(min_meeting)
         assert min_nodes <= meeting_nodes
 
     async def test_contains_seeds(self):
@@ -936,13 +924,11 @@ class TestMinMeetingSubgraph:
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
-        from vfs.paths import decompose_connection
-
         result = await g.min_meeting_subgraph(
             _result("/a.py", "/c.py"),
             session=_mock_session,
         )
-        node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
+        node_paths = _node_paths(result)
         assert "/a.py" in node_paths
         assert "/c.py" in node_paths
 
@@ -954,13 +940,11 @@ class TestMinMeetingSubgraph:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
         await g.add_edge("/a.py", "/c.py", "imports", session=_mock_session)
 
-        from vfs.paths import decompose_connection
-
         result = await g.min_meeting_subgraph(
             _result("/a.py", "/c.py"),
             session=_mock_session,
         )
-        node_paths = {c.path for c in result.candidates if not decompose_connection(c.path)}
+        node_paths = _node_paths(result)
         assert "/a.py" in node_paths
         assert "/c.py" in node_paths
         # B may or may not be removed depending on articulation point logic
@@ -970,8 +954,8 @@ class TestMinMeetingSubgraph:
         await g.add_node("/a.py", session=_mock_session)
 
         result = await g.min_meeting_subgraph(_result("/a.py"), session=_mock_session)
-        assert len(result.candidates) == 1
-        assert result.candidates[0].path == "/a.py"
+        assert len(result.entries) == 1
+        assert result.entries[0].path == "/a.py"
 
     async def test_prunes_intermediate_non_articulation_node(self):
         """Exercises the articulation point removal loop (lines 726-732).
@@ -988,20 +972,18 @@ class TestMinMeetingSubgraph:
         await g.add_edge("/y.py", "/b.py", "calls", session=_mock_session)
         await g.add_edge("/x.py", "/y.py", "imports", session=_mock_session)
 
-        from vfs.paths import decompose_connection
-
         # Force meeting to include both X and Y by using 3 seeds
         meeting = await g.meeting_subgraph(
             _result("/a.py", "/b.py", "/x.py"),
             session=_mock_session,
         )
-        meeting_nodes = {c.path for c in meeting.candidates if not decompose_connection(c.path)}
+        meeting_nodes = _node_paths(meeting)
 
         result = await g.min_meeting_subgraph(
             _result("/a.py", "/b.py", "/x.py"),
             session=_mock_session,
         )
-        min_nodes = {c.path for c in result.candidates if not decompose_connection(c.path)}
+        min_nodes = _node_paths(result)
         assert {"/a.py", "/b.py", "/x.py"} <= min_nodes
         # Y is not a seed and not an articulation point → prunable
         if len(meeting_nodes) > 3:
@@ -1130,9 +1112,9 @@ class TestPagerank:
 
         result = await g.pagerank(_result(), session=_mock_session)
         assert result.success is True
-        assert len(result.candidates) == 3
+        assert len(result.entries) == 3
         # All scores should be positive
-        assert all(c.score >= 0 for c in result.candidates)
+        assert all(e.score is not None and e.score >= 0 for e in result.entries)
 
     async def test_filters_by_candidates(self):
         g = _loaded_graph()
@@ -1140,20 +1122,20 @@ class TestPagerank:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.pagerank(_result("/a.py"), session=_mock_session)
-        assert len(result.candidates) == 1
-        assert result.candidates[0].path == "/a.py"
+        assert len(result.entries) == 1
+        assert result.entries[0].path == "/a.py"
 
     async def test_empty_graph(self):
         g = _loaded_graph()
         result = await g.pagerank(_result(), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
-    async def test_detail_operation(self):
+    async def test_function_name(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         result = await g.pagerank(_result(), session=_mock_session)
-        assert result.candidates[0].details[0].operation == "pagerank"
+        assert result.function == "pagerank"
 
     async def test_sorted_descending(self):
         g = _loaded_graph()
@@ -1161,7 +1143,7 @@ class TestPagerank:
         await g.add_edge("/c.py", "/b.py", "calls", session=_mock_session)
 
         result = await g.pagerank(_result(), session=_mock_session)
-        scores = [c.score for c in result.candidates]
+        scores = [e.score for e in result.entries]
         assert scores == sorted(scores, reverse=True)
 
 
@@ -1178,7 +1160,7 @@ class TestBetweennessCentrality:
 
         result = await g.betweenness_centrality(_result(), session=_mock_session)
         assert result.success is True
-        assert len(result.candidates) == 3
+        assert len(result.entries) == 3
 
     async def test_bridge_node_scores_highest(self):
         # A → B → C — B is the bridge
@@ -1187,15 +1169,15 @@ class TestBetweennessCentrality:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.betweenness_centrality(_result(), session=_mock_session)
-        scores = {c.path: c.score for c in result.candidates}
+        scores = {e.path: e.score for e in result.entries}
         assert scores["/b.py"] >= scores["/a.py"]
         assert scores["/b.py"] >= scores["/c.py"]
 
-    async def test_detail_operation(self):
+    async def test_function_name(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         result = await g.betweenness_centrality(_result(), session=_mock_session)
-        assert result.candidates[0].details[0].operation == "betweenness_centrality"
+        assert result.function == "betweenness_centrality"
 
     async def test_error_returns_failure(self):
         """Covers _run_centrality error handler (lines 761-762)."""
@@ -1220,7 +1202,7 @@ class TestClosenessCentrality:
 
         result = await g.closeness_centrality(_result(), session=_mock_session)
         assert result.success is True
-        assert len(result.candidates) == 3
+        assert len(result.entries) == 3
 
     async def test_filters_by_candidates(self):
         g = _loaded_graph()
@@ -1228,14 +1210,14 @@ class TestClosenessCentrality:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.closeness_centrality(_result("/b.py"), session=_mock_session)
-        assert len(result.candidates) == 1
-        assert result.candidates[0].path == "/b.py"
+        assert len(result.entries) == 1
+        assert result.entries[0].path == "/b.py"
 
-    async def test_detail_operation(self):
+    async def test_function_name(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         result = await g.closeness_centrality(_result(), session=_mock_session)
-        assert result.candidates[0].details[0].operation == "closeness_centrality"
+        assert result.function == "closeness_centrality"
 
 
 # ===========================================================================
@@ -1250,7 +1232,7 @@ class TestDegreeCentrality:
 
         result = await g.degree_centrality(_result(), session=_mock_session)
         assert result.success is True
-        assert len(result.candidates) == 2
+        assert len(result.entries) == 2
 
     async def test_in_degree_centrality(self):
         g = _loaded_graph()
@@ -1258,7 +1240,7 @@ class TestDegreeCentrality:
         await g.add_edge("/c.py", "/b.py", "calls", session=_mock_session)
 
         result = await g.in_degree_centrality(_result(), session=_mock_session)
-        scores = {c.path: c.score for c in result.candidates}
+        scores = {e.path: e.score for e in result.entries}
         # B has 2 incoming edges, highest in-degree
         assert scores["/b.py"] > scores["/a.py"]
 
@@ -1268,21 +1250,21 @@ class TestDegreeCentrality:
         await g.add_edge("/a.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.out_degree_centrality(_result(), session=_mock_session)
-        scores = {c.path: c.score for c in result.candidates}
+        scores = {e.path: e.score for e in result.entries}
         # A has 2 outgoing edges, highest out-degree
         assert scores["/a.py"] > scores["/b.py"]
 
-    async def test_detail_operations(self):
+    async def test_function_names(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
 
-        for method, op in [
+        for method, fn_name in [
             (g.degree_centrality, "degree_centrality"),
             (g.in_degree_centrality, "in_degree_centrality"),
             (g.out_degree_centrality, "out_degree_centrality"),
         ]:
             result = await method(_result(), session=_mock_session)
-            assert result.candidates[0].details[0].operation == op
+            assert result.function == fn_name
 
 
 # ===========================================================================
@@ -1291,28 +1273,15 @@ class TestDegreeCentrality:
 
 
 class TestHits:
-    async def test_returns_hub_and_authority_scores(self):
+    async def test_returns_scores(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         await g.add_edge("/a.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.hits(_result(), session=_mock_session)
         assert result.success is True
-        for c in result.candidates:
-            meta = c.details[0].metadata
-            assert meta is not None
-            assert "authority" in meta
-            assert "hub" in meta
-
-    async def test_authority_score_in_detail(self):
-        g = _loaded_graph()
-        await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
-
-        result = await g.hits(_result(), session=_mock_session)
-        for c in result.candidates:
-            metadata = c.details[0].metadata
-            assert metadata is not None
-            assert c.details[0].score == metadata["authority"]
+        for e in result.entries:
+            assert e.score is not None
 
     async def test_filters_by_candidates(self):
         g = _loaded_graph()
@@ -1320,8 +1289,8 @@ class TestHits:
         await g.add_edge("/b.py", "/c.py", "calls", session=_mock_session)
 
         result = await g.hits(_result("/b.py"), session=_mock_session)
-        assert len(result.candidates) == 1
-        assert result.candidates[0].path == "/b.py"
+        assert len(result.entries) == 1
+        assert result.entries[0].path == "/b.py"
 
     async def test_edgeless_graph_returns_zero_scores(self):
         g = _loaded_graph()
@@ -1330,11 +1299,8 @@ class TestHits:
 
         result = await g.hits(_result(), session=_mock_session)
         assert result.success is True
-        for c in result.candidates:
-            assert c.score == 0.0
-            metadata = c.details[0].metadata
-            assert metadata is not None
-            assert metadata["hub"] == 0.0
+        for e in result.entries:
+            assert e.score == 0.0
 
     async def test_edgeless_filters_to_graph_paths(self):
         """Non-graph candidates are excluded even in the edgeless early-return."""
@@ -1342,7 +1308,7 @@ class TestHits:
         await g.add_node("/a.py", session=_mock_session)
 
         result = await g.hits(_result("/a.py", "/missing.py"), session=_mock_session)
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert "/a.py" in paths
         assert "/missing.py" not in paths
 
@@ -1350,7 +1316,7 @@ class TestHits:
         g = _loaded_graph()
         result = await g.hits(_result(), session=_mock_session)
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
 
     async def test_custom_max_iter_and_tol(self):
         g = _loaded_graph()
@@ -1363,13 +1329,13 @@ class TestHits:
             session=_mock_session,
         )
         assert result.success is True
-        assert len(result.candidates) == 2
+        assert len(result.entries) == 2
 
-    async def test_detail_operation(self):
+    async def test_function_name(self):
         g = _loaded_graph()
         await g.add_edge("/a.py", "/b.py", "imports", session=_mock_session)
         result = await g.hits(_result(), session=_mock_session)
-        assert result.candidates[0].details[0].operation == "hits"
+        assert result.function == "hits"
 
     async def test_sorted_by_authority_descending(self):
         # Hub → many targets: hub should have high hub score,
@@ -1380,7 +1346,7 @@ class TestHits:
         await g.add_edge("/hub.py", "/auth3.py", "imports", session=_mock_session)
 
         result = await g.hits(_result(), session=_mock_session)
-        scores = [c.score for c in result.candidates]
+        scores = [e.score for e in result.entries]
         assert scores == sorted(scores, reverse=True)
 
     async def test_score_hub(self):
@@ -1389,13 +1355,8 @@ class TestHits:
         await g.add_edge("/hub.py", "/b.py", "calls", session=_mock_session)
 
         result = await g.hits(_result(), score="hub", session=_mock_session)
-        # Detail.score should be the hub value
-        for c in result.candidates:
-            metadata = c.details[0].metadata
-            assert metadata is not None
-            assert c.details[0].score == metadata["hub"]
         # Hub node should rank first when scoring by hub
-        assert result.candidates[0].path == "/hub.py"
+        assert result.entries[0].path == "/hub.py"
 
     async def test_score_authority(self):
         g = _loaded_graph()
@@ -1403,10 +1364,9 @@ class TestHits:
         await g.add_edge("/hub.py", "/b.py", "calls", session=_mock_session)
 
         result = await g.hits(_result(), score="authority", session=_mock_session)
-        for c in result.candidates:
-            metadata = c.details[0].metadata
-            assert metadata is not None
-            assert c.details[0].score == metadata["authority"]
+        assert result.success is True
+        for e in result.entries:
+            assert e.score is not None
 
     async def test_score_invalid(self):
         g = _loaded_graph()
@@ -1443,7 +1403,7 @@ class TestNeighborhoodUserScoped:
             user_id="alice",
             session=_mock_session,
         )
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert "/alice/b.py" in paths
         # /bob/c.py is not visible to alice
         assert "/bob/c.py" not in paths
@@ -1463,7 +1423,7 @@ class TestMeetingSubgraphUserScoped:
             session=_mock_session,
         )
         assert result.success is True
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert "/alice/a.py" in paths
         assert "/alice/b.py" in paths
 
@@ -1483,7 +1443,7 @@ class TestMinMeetingSubgraphPruning:
             session=_mock_session,
         )
         assert result.success is True
-        paths = {c.path for c in result.candidates}
+        paths = {e.path for e in result.entries}
         assert "/a.py" in paths
         assert "/b.py" in paths
         # X should be pruned since it's not an articulation point
@@ -1572,7 +1532,7 @@ class TestMinMeetingImplDirect:
             edge_types,
         )
         assert result.success
-        node_paths = {c.path for c in result.candidates if "/.connections/" not in c.path}
+        node_paths = {e.path for e in result.entries if "/.connections/" not in e.path}
         assert "/a.py" in node_paths
         assert "/b.py" in node_paths
         assert "/x.py" not in node_paths

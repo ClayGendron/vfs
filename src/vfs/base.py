@@ -30,7 +30,7 @@ from vfs.permissions import (
     check_writable,
     coerce_permissions,
 )
-from vfs.results import Candidate, EditOperation, TwoPathOperation, VFSResult
+from vfs.results import EditOperation, Entry, TwoPathOperation, VFSResult
 from vfs.routing import (
     GlobMountPlan,
     GrepMountPlan,
@@ -176,14 +176,17 @@ class VirtualFileSystem:
         ``VFSResult`` contains candidates with paths relative to that
         terminal filesystem.
         """
-        groups: dict[tuple[int, str], tuple[VirtualFileSystem, list[Candidate]]] = {}
-        for c in candidates.candidates:
+        groups: dict[tuple[int, str], tuple[VirtualFileSystem, list[Entry]]] = {}
+        for c in candidates.entries:
             fs, rel, prefix = self._resolve_terminal(c.path)
             key = (id(fs), prefix)
             if key not in groups:
                 groups[key] = (fs, [])
             groups[key][1].append(c.model_copy(update={"path": rel}))
-        return [(fs, pfx, VFSResult(candidates=cands)) for ((_id, pfx), (fs, cands)) in groups.items()]
+        return [
+            (fs, pfx, VFSResult(function=candidates.function, entries=cands))
+            for ((_id, pfx), (fs, cands)) in groups.items()
+        ]
 
     def _group_objects_by_terminal(
         self,
@@ -257,13 +260,14 @@ class VirtualFileSystem:
         groups = self._group_candidates_by_terminal(candidates)
         if not groups:
             return VFSResult(
+                function=op,
                 success=candidates.success,
                 errors=list(candidates.errors),
-                candidates=[],
+                entries=[],
             )
 
         for fs, prefix, gc in groups:
-            for cand in gc.candidates:
+            for cand in gc.entries:
                 err = check_writable(fs, op, cand.path, mount_prefix=prefix)
                 if err is not None:
                     return err
@@ -281,7 +285,7 @@ class VirtualFileSystem:
         results = await asyncio.gather(
             *(_run_group(fs, pfx, gc) for fs, pfx, gc in groups),
         )
-        return self._merge_results(list(results)).inject_details(candidates)
+        return self._merge_results(list(results))
 
     async def _dispatch_glob_candidates(
         self,
@@ -298,10 +302,10 @@ class VirtualFileSystem:
         if regex is None:
             return self._error(f"Invalid glob pattern: {pattern}")
 
-        filtered = candidates._with_candidates(
+        filtered = candidates._with_entries(
             [
                 c
-                for c in candidates.candidates
+                for c in candidates.entries
                 if regex.match(c.path) is not None
                 and self._matches_path_filters(c.path, paths)
                 and self._matches_ext_filters(c.path, ext=ext)
@@ -317,7 +321,7 @@ class VirtualFileSystem:
             max_count=None,
         )
         if max_count is not None:
-            result = result._with_candidates(result.candidates[:max_count])
+            result = result._with_entries(result.entries[:max_count])
         return result
 
     async def _dispatch_grep_candidates(
@@ -343,10 +347,10 @@ class VirtualFileSystem:
         """Filter absolute-path grep candidates before grouping by terminal."""
         include_regexes = self._compile_path_globs(globs)
         exclude_regexes = self._compile_path_globs(globs_not)
-        filtered = candidates._with_candidates(
+        filtered = candidates._with_entries(
             [
                 c
-                for c in candidates.candidates
+                for c in candidates.entries
                 if self._matches_path_filters(c.path, paths)
                 and self._matches_ext_filters(c.path, ext=ext, ext_not=ext_not)
                 and (not include_regexes or any(regex.match(c.path) is not None for regex in include_regexes))
@@ -495,7 +499,7 @@ class VirtualFileSystem:
         deletes. A crash between phases may leave data on both filesystems.
         """
         if not ops:
-            return VFSResult(success=True, candidates=[])
+            return VFSResult(function=op, success=True, entries=[])
 
         src_resolved = [self._resolve_terminal(o.src) for o in ops]
         dst_resolved = [self._resolve_terminal(o.dest) for o in ops]
@@ -585,7 +589,7 @@ class VirtualFileSystem:
                         user_id=user_id,
                         session=s,
                     )
-                    for dst_rel, candidate in zip(dst_rels, read_results.candidates, strict=True)
+                    for dst_rel, candidate in zip(dst_rels, read_results.entries, strict=True)
                 ]
             )
         if not write_results.success:
@@ -610,6 +614,7 @@ class VirtualFileSystem:
         paths: tuple[str, ...],
         ext: tuple[str, ...],
         max_count: int | None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None,
         user_id: str | None,
     ) -> VFSResult:
@@ -632,6 +637,7 @@ class VirtualFileSystem:
                 paths=paths,
                 ext=ext,
                 max_count=max_count,
+                columns=columns,
             )
 
         pattern_regex = compile_glob(pattern)
@@ -671,13 +677,14 @@ class VirtualFileSystem:
 
         async def _query_self() -> VFSResult:
             if not self._storage:
-                return VFSResult(success=True, candidates=[])
+                return VFSResult(function="glob", success=True, entries=[])
             async with self._use_session() as s:
                 return await self._glob_impl(
                     pattern=pattern,
                     paths=paths,
                     ext=ext,
                     max_count=self_max_count,
+                    columns=columns,
                     user_id=user_id,
                     session=s,
                 )
@@ -694,6 +701,7 @@ class VirtualFileSystem:
                 paths=rewritten_paths,
                 ext=ext,
                 max_count=None if needs_post_filter else max_count,
+                columns=columns,
                 user_id=user_id,
             )
 
@@ -718,14 +726,14 @@ class VirtualFileSystem:
         ):
             rebased = result.add_prefix(plan.mount_path)
             if plan.needs_post_filter:
-                rebased = rebased._with_candidates(
-                    [c for c in rebased.candidates if pattern_regex.match(c.path) is not None],
+                rebased = rebased._with_entries(
+                    [c for c in rebased.entries if pattern_regex.match(c.path) is not None],
                 )
             results.append(rebased)
 
         merged = self._merge_results(results)
         if any_router_post_filter and max_count is not None:
-            merged = merged._with_candidates(merged.candidates[:max_count])
+            merged = merged._with_entries(merged.entries[:max_count])
         return merged
 
     async def _route_grep_fanout(
@@ -745,6 +753,7 @@ class VirtualFileSystem:
         after_context: int,
         output_mode: GrepOutputMode,
         max_count: int | None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None,
         user_id: str | None,
     ) -> VFSResult:
@@ -775,6 +784,7 @@ class VirtualFileSystem:
                 after_context=after_context,
                 output_mode=output_mode,
                 max_count=max_count,
+                columns=columns,
             )
 
         mount_plans: list[GrepMountPlan] = []
@@ -851,7 +861,7 @@ class VirtualFileSystem:
 
         async def _query_self() -> VFSResult:
             if not self._storage:
-                return VFSResult(success=True, candidates=[])
+                return VFSResult(function="grep", success=True, entries=[])
             async with self._use_session() as s:
                 return await self._grep_impl(
                     pattern=pattern,
@@ -868,6 +878,7 @@ class VirtualFileSystem:
                     after_context=after_context,
                     output_mode=output_mode,
                     max_count=self_max_count,
+                    columns=columns,
                     user_id=user_id,
                     session=s,
                 )
@@ -895,6 +906,7 @@ class VirtualFileSystem:
                 after_context=after_context,
                 output_mode=output_mode,
                 max_count=None if needs_router_filter else max_count,
+                columns=columns,
                 user_id=user_id,
             )
 
@@ -920,10 +932,10 @@ class VirtualFileSystem:
         ):
             rebased = result.add_prefix(plan.mount_path)
             if plan.needs_router_filter:
-                rebased = rebased._with_candidates(
+                rebased = rebased._with_entries(
                     [
                         c
-                        for c in rebased.candidates
+                        for c in rebased.entries
                         if (
                             (
                                 not plan.post_include_regexes
@@ -937,7 +949,7 @@ class VirtualFileSystem:
 
         merged = self._merge_results(results)
         if any_router_post_filter and max_count is not None:
-            merged = merged._with_candidates(merged.candidates[:max_count])
+            merged = merged._with_entries(merged.entries[:max_count])
         return merged
 
     async def _route_fanout(
@@ -959,7 +971,7 @@ class VirtualFileSystem:
 
         if not self._storage:
             if not self._mounts:
-                return VFSResult(success=True, candidates=[])
+                return VFSResult(function=op, success=True, entries=[])
             mount_results = await asyncio.gather(
                 *(getattr(fs, op)(user_id=user_id, **kwargs) for fs in self._mounts.values()),
             )
@@ -991,7 +1003,7 @@ class VirtualFileSystem:
     ) -> VFSResult:
         """Route a batch of object writes to terminal filesystems in parallel."""
         if not objects:
-            return VFSResult(success=True, candidates=[])
+            return VFSResult(function="write", success=True, entries=[])
 
         groups = self._group_objects_by_terminal(objects)
 
@@ -1020,10 +1032,8 @@ class VirtualFileSystem:
         prefixes = list(self._mounts.keys())
         if not prefixes:
             return result
-        filtered = [
-            c for c in result.candidates if not any(c.path == p or c.path.startswith(p + "/") for p in prefixes)
-        ]
-        return result._with_candidates(filtered)
+        filtered = [c for c in result.entries if not any(c.path == p or c.path.startswith(p + "/") for p in prefixes)]
+        return result._with_entries(filtered)
 
     @staticmethod
     def _merge_results(results: list[VFSResult]) -> VFSResult:
@@ -1034,7 +1044,7 @@ class VirtualFileSystem:
         while preserving all successful candidates.
         """
         if not results:
-            return VFSResult(success=True, candidates=[])
+            return VFSResult(success=True, entries=[])
         merged = results[0]
         for r in results[1:]:
             merged = merged | r
@@ -1126,7 +1136,7 @@ class VirtualFileSystem:
 
         plan = self.parse_query(query)
         result = await execute_query(self, plan, initial=initial, user_id=user_id)
-        return render_query_result(result, mode=plan.render_mode)
+        return render_query_result(result, plan)
 
     # -------------------------------------------------------------------
     # public methods
@@ -1139,18 +1149,20 @@ class VirtualFileSystem:
         path: str | None = None,
         candidates: VFSResult | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
-        return await self._route_single("read", path, candidates, user_id=user_id)
+        return await self._route_single("read", path, candidates, columns=columns, user_id=user_id)
 
     async def stat(
         self,
         path: str | None = None,
         candidates: VFSResult | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
-        return await self._route_single("stat", path, candidates, user_id=user_id)
+        return await self._route_single("stat", path, candidates, columns=columns, user_id=user_id)
 
     async def edit(
         self,
@@ -1174,9 +1186,10 @@ class VirtualFileSystem:
         path: str | None = None,
         candidates: VFSResult | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
-        return await self._route_single("ls", path, candidates, user_id=user_id)
+        return await self._route_single("ls", path, candidates, columns=columns, user_id=user_id)
 
     async def delete(
         self,
@@ -1224,9 +1237,17 @@ class VirtualFileSystem:
         path: str,
         max_depth: int | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
-        return await self._route_single("tree", path, None, max_depth=max_depth, user_id=user_id)
+        return await self._route_single(
+            "tree",
+            path,
+            None,
+            max_depth=max_depth,
+            columns=columns,
+            user_id=user_id,
+        )
 
     async def move(
         self,
@@ -1299,6 +1320,7 @@ class VirtualFileSystem:
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
@@ -1307,6 +1329,7 @@ class VirtualFileSystem:
             paths=paths,
             ext=ext,
             max_count=max_count,
+            columns=columns,
             candidates=candidates,
             user_id=user_id,
         )
@@ -1328,6 +1351,7 @@ class VirtualFileSystem:
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
@@ -1346,6 +1370,7 @@ class VirtualFileSystem:
             after_context=after_context,
             output_mode=output_mode,
             max_count=max_count,
+            columns=columns,
             candidates=candidates,
             user_id=user_id,
         )
@@ -1633,6 +1658,7 @@ class VirtualFileSystem:
         path: str,
         max_depth: int | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:
@@ -1645,6 +1671,7 @@ class VirtualFileSystem:
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
@@ -1668,6 +1695,7 @@ class VirtualFileSystem:
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,

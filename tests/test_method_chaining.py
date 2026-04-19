@@ -1,9 +1,11 @@
-"""Tests that method chaining preserves prior details through the routing layer.
+"""Tests that method chaining routes candidates through the dispatch layer.
 
 Every public method that accepts ``candidates`` routes through
-``_dispatch_candidates`` which calls ``inject_details`` to prepend
-prior details from the incoming candidates onto overlapping result
-candidates.  These tests verify that contract end-to-end.
+``_dispatch_candidates`` which filters the result set by the incoming
+candidate paths.  These tests verify that contract end-to-end — after
+the new ``Entry`` / ``VFSResult(function=, entries=)`` refactor, the
+per-step ``Detail`` chain is gone; instead we assert on the result's
+``function`` envelope and the surviving paths.
 """
 
 from __future__ import annotations
@@ -11,35 +13,26 @@ from __future__ import annotations
 import pytest
 
 from vfs.backends.database import DatabaseFileSystem
-from vfs.results import Candidate, Detail, VFSResult
+from vfs.results import Entry, VFSResult
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
 
 
-def _prior(operation: str = "prior_op", score: float = 0.5) -> Detail:
-    return Detail(operation=operation, score=score)
+def _cands(*paths: str, function: str = "") -> VFSResult:
+    """Build a result with plain path entries."""
+    return VFSResult(function=function, entries=[Entry(path=p) for p in paths])
 
 
-def _cands_with_prior(
-    *paths: str,
-    operation: str = "prior_op",
-    score: float = 0.5,
-) -> VFSResult:
-    """Build candidates with a single prior detail on each."""
-    d = _prior(operation, score)
-    return VFSResult(candidates=[Candidate(path=p, details=(d,)) for p in paths])
-
-
-def _detail_ops(candidate: Candidate) -> list[str]:
-    """Extract operation names from a candidate's detail chain."""
-    return [d.operation for d in candidate.details]
-
-
-def _node_candidates(result: VFSResult) -> VFSResult:
-    """Filter out connection candidates from a subgraph result."""
-    return VFSResult(candidates=[c for c in result.candidates if "/.connections/" not in c.path])
+def _node_result(result: VFSResult) -> VFSResult:
+    """Filter out connection entries from a subgraph result."""
+    return VFSResult(
+        function=result.function,
+        entries=[e for e in result.entries if "/.connections/" not in e.path],
+        success=result.success,
+        errors=list(result.errors),
+    )
 
 
 # ------------------------------------------------------------------
@@ -85,92 +78,38 @@ async def fs(db: DatabaseFileSystem):
 
 
 # ------------------------------------------------------------------
-# inject_details unit tests
-# ------------------------------------------------------------------
-
-
-class TestInjectDetails:
-    def test_no_overlap_returns_unchanged(self):
-        prior = VFSResult(candidates=[Candidate(path="/a", details=(_prior(),))])
-        result = VFSResult(candidates=[Candidate(path="/b", details=(Detail(operation="op"),))])
-        enriched = result.inject_details(prior)
-        assert len(enriched) == 1
-        assert _detail_ops(enriched.candidates[0]) == ["op"]
-
-    def test_overlap_prepends_prior(self):
-        prior = VFSResult(candidates=[Candidate(path="/a", details=(_prior(),))])
-        result = VFSResult(candidates=[Candidate(path="/a", details=(Detail(operation="new"),))])
-        enriched = result.inject_details(prior)
-        assert _detail_ops(enriched.candidates[0]) == ["prior_op", "new"]
-
-    def test_mixed_overlap_and_new(self):
-        prior = VFSResult(candidates=[Candidate(path="/a", details=(_prior(),))])
-        result = VFSResult(
-            candidates=[
-                Candidate(path="/a", details=(Detail(operation="new"),)),
-                Candidate(path="/b", details=(Detail(operation="new"),)),
-            ]
-        )
-        enriched = result.inject_details(prior)
-        assert _detail_ops(enriched.candidates[0]) == ["prior_op", "new"]
-        assert _detail_ops(enriched.candidates[1]) == ["new"]
-
-    def test_empty_prior_returns_unchanged(self):
-        prior = VFSResult(candidates=[])
-        result = VFSResult(candidates=[Candidate(path="/a", details=(Detail(operation="op"),))])
-        enriched = result.inject_details(prior)
-        assert enriched is result
-
-    def test_multiple_prior_details_preserved_in_order(self):
-        d1 = Detail(operation="step1", score=1.0)
-        d2 = Detail(operation="step2", score=2.0)
-        prior = VFSResult(candidates=[Candidate(path="/a", details=(d1, d2))])
-        result = VFSResult(candidates=[Candidate(path="/a", details=(Detail(operation="step3"),))])
-        enriched = result.inject_details(prior)
-        assert _detail_ops(enriched.candidates[0]) == ["step1", "step2", "step3"]
-
-
-# ------------------------------------------------------------------
 # CRUD chaining
 # ------------------------------------------------------------------
 
 
 class TestReadChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py")
         result = await fs.read(candidates=cands)
         assert len(result) == 1
-        c = result.candidates[0]
-        assert _detail_ops(c) == ["prior_op", "read"]
-        assert c.content is not None
-
-    async def test_preserves_multiple_prior_details(self, fs: DatabaseFileSystem):
-        d1 = Detail(operation="search", score=0.9)
-        d2 = Detail(operation="rerank", score=0.8)
-        cands = VFSResult(candidates=[Candidate(path="/src/auth.py", details=(d1, d2))])
-        result = await fs.read(candidates=cands)
-        assert _detail_ops(result.candidates[0]) == ["search", "rerank", "read"]
+        entry = result.entries[0]
+        assert entry.path == "/src/auth.py"
+        assert entry.content is not None
+        assert result.function == "read"
 
     async def test_multi_candidate_read(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py")
+        cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.read(candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "read"]
+        assert {e.path for e in result.entries} == {"/src/auth.py", "/src/utils.py"}
 
 
 class TestStatChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/utils.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/utils.py")
         result = await fs.stat(candidates=cands)
         assert len(result) == 1
-        # stat delegates to read_impl, so the detail says "read"
-        assert _detail_ops(result.candidates[0]) == ["prior_op", "read"]
+        assert result.entries[0].path == "/src/utils.py"
 
 
 class TestEditChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/config.py")
+    async def test_edits_candidate(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/config.py")
         result = await fs.edit(
             candidates=cands,
             old="DEBUG = True",
@@ -178,30 +117,26 @@ class TestEditChaining:
         )
         assert result.success
         assert len(result) == 1
-        assert _detail_ops(result.candidates[0]) == ["prior_op", "write"]
+        assert result.entries[0].path == "/src/config.py"
 
 
 class TestDeleteChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/config.py")
+    async def test_deletes_candidate(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/config.py")
         result = await fs.delete(candidates=cands)
         assert result.success
-        config = next(c for c in result.candidates if c.path == "/src/config.py")
-        assert _detail_ops(config) == ["prior_op", "delete"]
+        assert any(e.path == "/src/config.py" for e in result.entries)
 
 
 class TestLsChaining:
-    async def test_children_have_no_injected_prior(self, fs: DatabaseFileSystem):
-        """ls returns children — different paths, so no prior injection."""
+    async def test_returns_children(self, fs: DatabaseFileSystem):
+        """ls returns children — different paths from the seed."""
         cands = VFSResult(
-            candidates=[
-                Candidate(path="/src", kind="directory", details=(_prior(),)),
-            ]
+            entries=[Entry(path="/src", kind="directory")],
         )
         result = await fs.ls(candidates=cands)
         assert len(result) > 0
-        for c in result.candidates:
-            assert _detail_ops(c) == ["ls"]
+        assert result.function == "ls"
 
 
 # ------------------------------------------------------------------
@@ -210,35 +145,34 @@ class TestLsChaining:
 
 
 class TestGlobChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py", "/src/config.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/utils.py", "/src/config.py")
         result = await fs.glob("**/*.py", candidates=cands)
         assert len(result) >= 1
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "glob"]
+        assert result.function == "glob"
+        # All surviving entries must be in the candidate set
+        surviving = {e.path for e in result.entries}
+        assert surviving <= {"/src/auth.py", "/src/utils.py", "/src/config.py"}
 
     async def test_filtered_out_candidates_do_not_appear(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/config.py")
+        cands = _cands("/src/auth.py", "/src/config.py")
         result = await fs.glob("/src/auth*", candidates=cands)
         assert len(result) == 1
-        assert result.candidates[0].path == "/src/auth.py"
-        assert _detail_ops(result.candidates[0]) == ["prior_op", "glob"]
+        assert result.entries[0].path == "/src/auth.py"
 
 
 class TestGrepChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/db.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/db.py")
         result = await fs.grep("import utils", candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "grep"]
+        assert result.function == "grep"
 
     async def test_filtered_out_candidates_do_not_appear(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/config.py")
+        cands = _cands("/src/auth.py", "/src/config.py")
         result = await fs.grep("import", candidates=cands)
         assert len(result) == 1
-        assert result.candidates[0].path == "/src/auth.py"
-        assert _detail_ops(result.candidates[0]) == ["prior_op", "grep"]
+        assert result.entries[0].path == "/src/auth.py"
 
 
 # ------------------------------------------------------------------
@@ -247,39 +181,38 @@ class TestGrepChaining:
 
 
 class TestNeighborhoodChaining:
-    async def test_seeds_preserve_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py")
+    async def test_seeds_appear_in_neighborhood(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py")
         result = await fs.neighborhood(candidates=cands, depth=1)
-        auth = next(c for c in result.candidates if c.path == "/src/auth.py")
-        assert _detail_ops(auth) == ["prior_op", "neighborhood"]
+        paths = {e.path for e in result.entries if "/.connections/" not in e.path}
+        assert "/src/auth.py" in paths
+        assert result.function == "neighborhood"
 
-    async def test_discoveries_have_no_prior(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py")
+    async def test_discovers_neighbors(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py")
         result = await fs.neighborhood(candidates=cands, depth=1)
-        non_seeds = [c for c in result.candidates if c.path != "/src/auth.py" and "/.connections/" not in c.path]
+        non_seeds = [e for e in result.entries if e.path != "/src/auth.py" and "/.connections/" not in e.path]
         assert len(non_seeds) > 0
-        for c in non_seeds:
-            assert _detail_ops(c) == ["neighborhood"]
 
 
 class TestMeetingSubgraphChaining:
-    async def test_seeds_preserve_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/db.py")
+    async def test_includes_seeds(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/db.py")
         result = await fs.meeting_subgraph(candidates=cands)
-        for seed_path in ["/src/auth.py", "/src/db.py"]:
-            seed = next(c for c in result.candidates if c.path == seed_path)
-            assert seed.details[0].operation == "prior_op"
-            assert seed.details[-1].operation == "meeting_subgraph"
+        node_paths = {e.path for e in result.entries if "/.connections/" not in e.path}
+        assert "/src/auth.py" in node_paths
+        assert "/src/db.py" in node_paths
+        assert result.function == "meeting_subgraph"
 
 
 class TestMinMeetingSubgraphChaining:
-    async def test_seeds_preserve_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/api.py", "/src/db.py")
+    async def test_includes_seeds(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/api.py", "/src/db.py")
         result = await fs.min_meeting_subgraph(candidates=cands)
-        for seed_path in ["/src/api.py", "/src/db.py"]:
-            seed = next(c for c in result.candidates if c.path == seed_path)
-            assert seed.details[0].operation == "prior_op"
-            assert seed.details[-1].operation == "min_meeting_subgraph"
+        node_paths = {e.path for e in result.entries if "/.connections/" not in e.path}
+        assert "/src/api.py" in node_paths
+        assert "/src/db.py" in node_paths
+        assert result.function == "min_meeting_subgraph"
 
 
 # ------------------------------------------------------------------
@@ -288,67 +221,61 @@ class TestMinMeetingSubgraphChaining:
 
 
 class TestPageRankChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.pagerank(candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "pagerank"]
-            assert c.details[-1].score is not None
+        assert result.function == "pagerank"
+        for e in result.entries:
+            assert e.score is not None
 
 
 class TestBetweennessCentralityChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.betweenness_centrality(candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "betweenness_centrality"]
+        assert result.function == "betweenness_centrality"
 
 
 class TestClosenessCentralityChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.closeness_centrality(candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "closeness_centrality"]
+        assert result.function == "closeness_centrality"
 
 
 class TestDegreeCentralityChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.degree_centrality(candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "degree_centrality"]
+        assert result.function == "degree_centrality"
 
 
 class TestInDegreeCentralityChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.in_degree_centrality(candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "in_degree_centrality"]
+        assert result.function == "in_degree_centrality"
 
 
 class TestOutDegreeCentralityChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.out_degree_centrality(candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "out_degree_centrality"]
+        assert result.function == "out_degree_centrality"
 
 
 class TestHitsChaining:
-    async def test_preserves_prior_details(self, fs: DatabaseFileSystem):
-        cands = _cands_with_prior("/src/auth.py", "/src/utils.py")
+    async def test_filters_by_candidates(self, fs: DatabaseFileSystem):
+        cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.hits(candidates=cands)
         assert len(result) == 2
-        for c in result.candidates:
-            assert _detail_ops(c) == ["prior_op", "hits"]
+        assert result.function == "hits"
 
 
 # ------------------------------------------------------------------
@@ -358,119 +285,86 @@ class TestHitsChaining:
 
 class TestMultiStepChains:
     async def test_glob_grep_read(self, fs: DatabaseFileSystem):
-        """glob → grep → read: 3 details on survivors."""
+        """glob → grep → read: surviving paths narrow at each step."""
         r1 = await fs.glob("/src/*.py")
         assert len(r1) >= 3
+        assert r1.function == "glob"
 
         r2 = await fs.grep("import", candidates=r1)
         assert len(r2) >= 1
-        for c in r2.candidates:
-            assert _detail_ops(c) == ["glob", "grep"]
+        assert r2.function == "grep"
+        # All grep survivors must have been in the glob set
+        assert {e.path for e in r2.entries} <= set(r1.paths)
 
         r3 = await fs.read(candidates=r2)
-        for c in r3.candidates:
-            assert _detail_ops(c) == ["glob", "grep", "read"]
-            assert c.content is not None
+        assert r3.function == "read"
+        assert {e.path for e in r3.entries} <= set(r2.paths)
+        for e in r3.entries:
+            assert e.content is not None
 
     async def test_glob_pagerank(self, fs: DatabaseFileSystem):
-        """glob → pagerank: 2 details on survivors."""
+        """glob → pagerank: pagerank filters to the glob set."""
         r1 = await fs.glob("/src/*.py")
         r2 = await fs.pagerank(candidates=r1)
         assert len(r2) >= 1
-        for c in r2.candidates:
-            assert _detail_ops(c) == ["glob", "pagerank"]
-            assert c.details[-1].score is not None
+        assert r2.function == "pagerank"
+        assert {e.path for e in r2.entries} <= set(r1.paths)
+        for e in r2.entries:
+            assert e.score is not None
 
     async def test_search_min_meeting_subgraph_pagerank(self, fs: DatabaseFileSystem):
         """Simulated search → min_meeting_subgraph → pagerank.
 
-        Seeds accumulate 3 details.  Intermediary nodes introduced
-        by the subgraph get 2 details.
+        Seeds must survive through the subgraph and carry scores at the end.
         """
-        seeds = VFSResult(
-            candidates=[
-                Candidate(
-                    path="/src/api.py",
-                    details=(Detail(operation="search", score=0.9),),
-                ),
-                Candidate(
-                    path="/src/db.py",
-                    details=(Detail(operation="search", score=0.7),),
-                ),
-            ]
-        )
+        seeds = _cands("/src/api.py", "/src/db.py", function="lexical_search")
         seed_paths = {"/src/api.py", "/src/db.py"}
 
         # Step 2: min_meeting_subgraph
         subgraph = await fs.min_meeting_subgraph(candidates=seeds)
         assert subgraph.success
-        subgraph_nodes = _node_candidates(subgraph)
+        assert subgraph.function == "min_meeting_subgraph"
+        subgraph_nodes = _node_result(subgraph)
         node_paths = set(subgraph_nodes.paths)
         assert seed_paths <= node_paths, "Seeds must survive in subgraph"
-
-        for c in subgraph_nodes.candidates:
-            if c.path in seed_paths:
-                assert c.details[0].operation == "search"
-                assert c.details[-1].operation == "min_meeting_subgraph"
-            else:
-                assert _detail_ops(c) == ["min_meeting_subgraph"]
 
         # Step 3: pagerank
         ranked = await fs.pagerank(candidates=subgraph_nodes)
         assert ranked.success
+        assert ranked.function == "pagerank"
 
-        for c in ranked.candidates:
-            if c.path in seed_paths:
-                assert _detail_ops(c) == ["search", "min_meeting_subgraph", "pagerank"]
-            else:
-                assert _detail_ops(c) == ["min_meeting_subgraph", "pagerank"]
-            assert c.details[-1].score is not None
+        ranked_paths = {e.path for e in ranked.entries}
+        assert ranked_paths <= node_paths
+        for e in ranked.entries:
+            assert e.score is not None
 
     async def test_grep_meeting_subgraph_hits(self, fs: DatabaseFileSystem):
-        """grep → meeting_subgraph → hits: 3 details on seeds."""
+        """grep → meeting_subgraph → hits: seeds survive the whole pipeline."""
         r1 = await fs.grep("import")
         seed_paths = set(r1.paths)
         assert len(r1) >= 2
 
         r2 = await fs.meeting_subgraph(candidates=r1)
-        r2_nodes = _node_candidates(r2)
-        for c in r2_nodes.candidates:
-            if c.path in seed_paths:
-                assert c.details[0].operation == "grep"
-                assert c.details[-1].operation == "meeting_subgraph"
+        assert r2.function == "meeting_subgraph"
+        r2_nodes = _node_result(r2)
+        # Every grep seed should still be in the subgraph node set
+        assert seed_paths <= {e.path for e in r2_nodes.entries}
 
         r3 = await fs.hits(candidates=r2_nodes)
-        for c in r3.candidates:
-            if c.path in seed_paths:
-                assert _detail_ops(c) == ["grep", "meeting_subgraph", "hits"]
-            else:
-                assert _detail_ops(c) == ["meeting_subgraph", "hits"]
+        assert r3.function == "hits"
+        # All hits survivors were subgraph nodes
+        assert {e.path for e in r3.entries} <= {e.path for e in r2_nodes.entries}
 
     async def test_four_step_chain(self, fs: DatabaseFileSystem):
-        """glob → grep → read → pagerank: 4 details."""
+        """glob → grep → read → pagerank: each step narrows the set."""
         r1 = await fs.glob("/src/*.py")
         r2 = await fs.grep("import", candidates=r1)
         r3 = await fs.read(candidates=r2)
         r4 = await fs.pagerank(candidates=r3)
         assert len(r4) >= 1
-        for c in r4.candidates:
-            assert _detail_ops(c) == ["glob", "grep", "read", "pagerank"]
-
-    async def test_score_for_retrieves_any_step(self, fs: DatabaseFileSystem):
-        """After chaining, score_for() can retrieve scores from any step."""
-        cands = VFSResult(
-            candidates=[
-                Candidate(
-                    path="/src/auth.py",
-                    details=(Detail(operation="search", score=0.9),),
-                ),
-                Candidate(
-                    path="/src/utils.py",
-                    details=(Detail(operation="search", score=0.7),),
-                ),
-            ]
-        )
-        result = await fs.pagerank(candidates=cands)
-        for c in result.candidates:
-            assert c.score_for("search") > 0
-            assert c.score_for("pagerank") >= 0
+        assert r4.function == "pagerank"
+        # Final survivors were present at every prior stage
+        final_paths = {e.path for e in r4.entries}
+        assert final_paths <= set(r3.paths)
+        assert final_paths <= set(r2.paths)
+        assert final_paths <= set(r1.paths)

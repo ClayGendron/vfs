@@ -6,6 +6,7 @@ import asyncio
 from collections import deque
 from typing import TYPE_CHECKING
 
+from vfs.columns import ENTRY_FIELD_TO_MODEL_COLUMNS, required_model_columns
 from vfs.paths import normalize_path, parse_kind
 from vfs.query.ast import (
     CaseMode,
@@ -41,7 +42,7 @@ from vfs.query.ast import (
     Visibility,
     WriteCommand,
 )
-from vfs.results import Candidate, TwoPathOperation, VFSResult
+from vfs.results import ENTRY_FIELDS, PROJECTION_SENTINELS, Entry, TwoPathOperation, VFSResult
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -56,8 +57,23 @@ async def execute_query(
     initial: VFSResult | None = None,
     user_id: str | None = None,
 ) -> VFSResult:
-    """Execute a parsed query plan against *filesystem*."""
-    return await _execute_node(filesystem, plan.ast, initial, user_id=user_id)
+    """Execute a parsed query plan against *filesystem*.
+
+    When ``plan.projection`` is set, it flows down to every stage that
+    accepts a ``columns`` kwarg so the SELECT pulls exactly the requested
+    fields.  After the pipeline finishes, any projected entry-field that
+    is null on every entry triggers a single ``fs.read(columns=missing)``
+    backfill — that's the one place hydration may issue an extra query,
+    and it never bypasses the public read surface.
+    """
+    result = await _execute_node(
+        filesystem,
+        plan.ast,
+        initial,
+        projection=plan.projection,
+        user_id=user_id,
+    )
+    return await _hydrate_projection(filesystem, result, plan.projection, user_id=user_id)
 
 
 async def _execute_node(
@@ -65,22 +81,45 @@ async def _execute_node(
     node: QueryNode,
     current: VFSResult | None,
     *,
+    projection: tuple[str, ...] | None = None,
     user_id: str | None = None,
 ) -> VFSResult:
     match node:
         case PipelineNode(source=source, stages=stages):
-            result = await _execute_node(filesystem, source, current, user_id=user_id)
+            result = await _execute_node(filesystem, source, current, projection=projection, user_id=user_id)
             for stage in stages:
-                result = await _execute_stage(filesystem, stage, result, user_id=user_id)
+                result = await _execute_stage(
+                    filesystem,
+                    stage,
+                    result,
+                    projection=projection,
+                    user_id=user_id,
+                )
             return result
         case UnionNode(operands=operands):
             results = await asyncio.gather(
-                *(_execute_node(filesystem, operand, current, user_id=user_id) for operand in operands),
+                *(
+                    _execute_node(filesystem, operand, current, projection=projection, user_id=user_id)
+                    for operand in operands
+                ),
             )
             return filesystem._merge_results(list(results))
         case _:
             assert isinstance(node, StageNode)
-            return await _execute_stage(filesystem, node, current, user_id=user_id)
+            return await _execute_stage(filesystem, node, current, projection=projection, user_id=user_id)
+
+
+def _cols_for(function: str, projection: tuple[str, ...] | None) -> frozenset[str] | None:
+    """Resolve the model-column set for *function* under the user's projection.
+
+    ``None`` projection passes through as ``None`` — the impl falls back
+    to its own ``default_columns(function)``.  Otherwise we widen the
+    default with whatever model columns back the user-requested entry
+    fields.
+    """
+    if projection is None:
+        return None
+    return required_model_columns(function, projection)
 
 
 async def _execute_stage(
@@ -88,15 +127,39 @@ async def _execute_stage(
     stage: StageNode,
     current: VFSResult | None,
     *,
+    projection: tuple[str, ...] | None = None,
     user_id: str | None = None,
 ) -> VFSResult:
     match stage:
         case ReadCommand(paths=paths):
-            return await _read_like(filesystem.read, current, paths, command_name="read", user_id=user_id)
+            return await _read_like(
+                filesystem.read,
+                current,
+                paths,
+                command_name="read",
+                function_name="read",
+                columns=_cols_for("read", projection),
+                user_id=user_id,
+            )
         case StatCommand(paths=paths):
-            return await _read_like(filesystem.stat, current, paths, command_name="stat", user_id=user_id)
+            return await _read_like(
+                filesystem.stat,
+                current,
+                paths,
+                command_name="stat",
+                function_name="stat",
+                columns=_cols_for("stat", projection),
+                user_id=user_id,
+            )
         case DeleteCommand(paths=paths):
-            return await _read_like(filesystem.delete, current, paths, command_name="rm", user_id=user_id)
+            return await _read_like(
+                filesystem.delete,
+                current,
+                paths,
+                command_name="rm",
+                function_name="delete",
+                user_id=user_id,
+            )
         case EditCommand(old=old, new=new, paths=paths, replace_all=replace_all):
             if current is not None and paths:
                 raise ValueError("edit cannot combine piped input with explicit paths")
@@ -110,7 +173,7 @@ async def _execute_stage(
                 )
             if not paths:
                 raise ValueError("edit requires a path when it is not used in a pipeline")
-            explicit = _paths_result(paths)
+            explicit = _paths_result(paths, function="edit")
             return await filesystem.edit(
                 candidates=explicit,
                 old=old,
@@ -141,17 +204,26 @@ async def _execute_stage(
         case MkconnCommand(source=source, connection_type=connection_type, target=target):
             return await _execute_mkconn(filesystem, current, source, connection_type, target, user_id=user_id)
         case LsCommand(paths=paths):
+            ls_cols = _cols_for("ls", projection)
             if current is not None and paths:
                 raise ValueError("ls cannot combine piped input with explicit paths")
             if current is not None:
-                return await filesystem.ls(candidates=current, user_id=user_id)
+                return await filesystem.ls(candidates=current, columns=ls_cols, user_id=user_id)
             if not paths:
-                return await filesystem.ls(path="/", user_id=user_id)
-            explicit = _paths_result(paths)
-            return await filesystem.ls(candidates=explicit, user_id=user_id)
+                return await filesystem.ls(path="/", columns=ls_cols, user_id=user_id)
+            explicit = _paths_result(paths, function="ls")
+            return await filesystem.ls(candidates=explicit, columns=ls_cols, user_id=user_id)
         case TreeCommand(paths=paths, max_depth=max_depth, visibility=visibility):
             roots = tuple(normalize_path(path) for path in paths) if paths else ()
-            return await _execute_tree(filesystem, current, roots, max_depth, visibility, user_id=user_id)
+            return await _execute_tree(
+                filesystem,
+                current,
+                roots,
+                max_depth,
+                visibility,
+                columns=_cols_for("tree", projection),
+                user_id=user_id,
+            )
         case GlobCommand(
             pattern=pattern,
             paths=glob_paths,
@@ -167,6 +239,7 @@ async def _execute_stage(
                 glob_ext,
                 glob_max_count,
                 visibility,
+                columns=_cols_for("glob", projection),
                 user_id=user_id,
             )
             return _apply_visibility(result, visibility, {"file", "directory"})
@@ -205,6 +278,7 @@ async def _execute_stage(
                 output_mode=output_mode,
                 max_count=max_count,
                 visibility=visibility,
+                columns=_cols_for("grep", projection),
                 user_id=user_id,
             )
             return _apply_visibility(result, visibility, {"file", "directory"})
@@ -221,7 +295,8 @@ async def _execute_stage(
             result = await _execute_graph_traversal(filesystem, current, method_name, paths, depth, user_id=user_id)
             return _apply_visibility(result, visibility, {"file", "directory", "connection"})
         case MeetingGraphCommand(paths=paths, minimal=minimal, visibility=visibility):
-            seeds = _seed_candidates(current, paths, "meetinggraph")
+            function_name = "min_meeting_subgraph" if minimal else "meeting_subgraph"
+            seeds = _seed_candidates(current, paths, "meetinggraph", function_name=function_name)
             result = (
                 await filesystem.min_meeting_subgraph(candidates=seeds, user_id=user_id)
                 if minimal
@@ -231,10 +306,10 @@ async def _execute_stage(
         case RankCommand(method_name=method_name, paths=paths, visibility=visibility):
             result = await _execute_rank(filesystem, current, method_name, paths, user_id=user_id)
             return _apply_visibility(result, visibility, {"file", "directory", "connection"})
-        case SortCommand(operation=operation, reverse=reverse):
+        case SortCommand(reverse=reverse):
             if current is None:
                 raise ValueError("sort requires piped input")
-            return current.sort(operation=operation, reverse=reverse)
+            return current.sort(reverse=reverse)
         case TopCommand(k=k):
             if current is None:
                 raise ValueError("top requires piped input")
@@ -246,12 +321,12 @@ async def _execute_stage(
         case IntersectStage(query=query):
             if current is None:
                 raise ValueError("intersect requires piped input")
-            other = await _execute_node(filesystem, query, None, user_id=user_id)
+            other = await _execute_node(filesystem, query, None, projection=projection, user_id=user_id)
             return current & other
         case ExceptStage(query=query):
             if current is None:
                 raise ValueError("except requires piped input")
-            other = await _execute_node(filesystem, query, None, user_id=user_id)
+            other = await _execute_node(filesystem, query, None, projection=projection, user_id=user_id)
             return current - other
         case _:  # pragma: no cover
             raise ValueError(f"Unknown stage: {stage}")
@@ -263,16 +338,19 @@ async def _read_like(
     paths: tuple[str, ...],
     *,
     command_name: str,
+    function_name: str,
+    columns: frozenset[str] | None = None,
     user_id: str | None = None,
 ) -> VFSResult:
+    extra: dict[str, object] = {"columns": columns} if columns is not None else {}
     if current is not None and paths:
         raise ValueError(f"{command_name} cannot combine piped input with explicit paths")
     if current is not None:
-        return await method(candidates=current, user_id=user_id)
+        return await method(candidates=current, user_id=user_id, **extra)
     if not paths:
         raise ValueError(f"{command_name} requires explicit paths when it is not used in a pipeline")
-    explicit = _paths_result(paths)
-    return await method(candidates=explicit, user_id=user_id)
+    explicit = _paths_result(paths, function=function_name)
+    return await method(candidates=explicit, user_id=user_id, **extra)
 
 
 async def _execute_transfer(
@@ -294,12 +372,12 @@ async def _execute_transfer(
             return await method(src=normalize_path(source), dest=normalized_dest, overwrite=overwrite, user_id=user_id)
         case (VFSResult(), str()):
             raise ValueError(f"{op} cannot combine piped input with an explicit source path")
-        case (VFSResult(candidates=candidates), None):
-            if not candidates:
-                return VFSResult(candidates=[])
+        case (VFSResult(entries=entries), None):
+            if not entries:
+                return VFSResult(function=op, entries=[])
             ops = [
-                TwoPathOperation(src=candidate.path, dest=_preserve_under_root(normalized_dest, candidate.path))
-                for candidate in candidates
+                TwoPathOperation(src=entry.path, dest=_preserve_under_root(normalized_dest, entry.path))
+                for entry in entries
             ]
             if op == "move":
                 return await filesystem.move(moves=ops, overwrite=overwrite, user_id=user_id)
@@ -332,12 +410,12 @@ async def _execute_mkconn(
     results = await asyncio.gather(
         *(
             filesystem.mkconn(
-                source=candidate.path,
+                source=entry.path,
                 target=normalized_target,
                 connection_type=connection_type,
                 user_id=user_id,
             )
-            for candidate in current.candidates
+            for entry in current.entries
         )
     )
     return filesystem._merge_results(list(results))
@@ -350,21 +428,29 @@ async def _execute_tree(
     max_depth: int | None,
     visibility: Visibility,
     *,
+    columns: frozenset[str] | None = None,
     user_id: str | None = None,
 ) -> VFSResult:
     if current is not None and roots:
         raise ValueError("tree cannot combine piped input with explicit paths")
 
     if current is not None:
-        roots = tuple(candidate.path for candidate in current.candidates)
+        roots = tuple(entry.path for entry in current.entries)
     elif not roots:
         roots = ("/",)
 
     if visibility.include_all or visibility.include_kinds:
-        return await _collect_tree(filesystem, roots, max_depth=max_depth, visibility=visibility, user_id=user_id)
+        return await _collect_tree(
+            filesystem,
+            roots,
+            max_depth=max_depth,
+            visibility=visibility,
+            result_function="tree",
+            user_id=user_id,
+        )
 
     results = await asyncio.gather(
-        *(filesystem.tree(path=root, max_depth=max_depth, user_id=user_id) for root in roots),
+        *(filesystem.tree(path=root, max_depth=max_depth, columns=columns, user_id=user_id) for root in roots),
     )
     return filesystem._merge_results(list(results))
 
@@ -378,6 +464,7 @@ async def _execute_glob(
     max_count: int | None,
     visibility: Visibility,
     *,
+    columns: frozenset[str] | None = None,
     user_id: str | None = None,
 ) -> VFSResult:
     candidates = current
@@ -388,6 +475,7 @@ async def _execute_glob(
         paths=paths,
         ext=ext,
         max_count=max_count,
+        columns=columns,
         candidates=candidates,
         user_id=user_id,
     )
@@ -412,13 +500,14 @@ async def _execute_grep(
     output_mode: GrepOutputMode,
     max_count: int | None,
     visibility: Visibility,
+    columns: frozenset[str] | None = None,
     user_id: str | None = None,
 ) -> VFSResult:
     candidates = current
     if candidates is None and (visibility.include_all or visibility.include_kinds):
         candidates = await _collect_tree(filesystem, ("/",), max_depth=None, visibility=visibility, user_id=user_id)
     if candidates is not None and any(
-        _candidate_kind(candidate) != "file" and candidate.content is None for candidate in candidates.candidates
+        _entry_kind(entry) != "file" and entry.content is None for entry in candidates.entries
     ):
         candidates = await filesystem.read(candidates=candidates, user_id=user_id)
     return await filesystem.grep(
@@ -436,6 +525,7 @@ async def _execute_grep(
         after_context=after_context,
         output_mode=output_mode,
         max_count=max_count,
+        columns=columns,
         candidates=candidates,
         user_id=user_id,
     )
@@ -473,14 +563,14 @@ async def _execute_graph_traversal(
             return await method(candidates=current, depth=depth, user_id=user_id)
         return await method(candidates=current, user_id=user_id)
     if paths:
-        explicit = _paths_result(paths)
+        explicit = _paths_result(paths, function=method_name)
         if len(paths) > 1:
             if method_name == "neighborhood":
                 return await method(candidates=explicit, depth=depth, user_id=user_id)
             return await method(candidates=explicit, user_id=user_id)
         if method_name == "neighborhood":
-            return await method(path=explicit.candidates[0].path, depth=depth, user_id=user_id)
-        return await method(path=explicit.candidates[0].path, user_id=user_id)
+            return await method(path=explicit.entries[0].path, depth=depth, user_id=user_id)
+        return await method(path=explicit.entries[0].path, user_id=user_id)
     raise ValueError(f"{method_name} requires explicit paths when it is not used in a pipeline")
 
 
@@ -498,30 +588,99 @@ async def _execute_rank(
     if current is not None:
         return await method(candidates=current, user_id=user_id)
     if paths:
-        return await method(candidates=_paths_result(paths), user_id=user_id)
+        return await method(candidates=_paths_result(paths, function=method_name), user_id=user_id)
     return await method(user_id=user_id)
 
 
-def _seed_candidates(current: VFSResult | None, paths: tuple[str, ...], label: str) -> VFSResult:
+def _seed_candidates(
+    current: VFSResult | None,
+    paths: tuple[str, ...],
+    label: str,
+    *,
+    function_name: str = "",
+) -> VFSResult:
     if current is not None and paths:
         raise ValueError(f"{label} cannot combine piped input with explicit paths")
     if current is not None:
         return current
     if not paths:
         raise ValueError(f"{label} requires explicit paths when it is not used in a pipeline")
-    return _paths_result(paths)
+    return _paths_result(paths, function=function_name)
 
 
-def _paths_result(paths: tuple[str, ...]) -> VFSResult:
-    candidates = []
+async def _hydrate_projection(
+    filesystem: VirtualFileSystem,
+    result: VFSResult,
+    projection: tuple[str, ...] | None,
+    *,
+    user_id: str | None = None,
+) -> VFSResult:
+    """Backfill any projected entry-fields that are null on every entry.
+
+    Applies only when ``projection`` is set, the result has entries, and
+    at least one requested field is null on *all* entries — that's the
+    signal that the producing stage didn't populate it.  Mixed states
+    (some entries have it, others don't) are left alone: that's a
+    legitimate union-of-stages outcome, not a missing column.
+
+    Hydration goes through ``filesystem.read(columns=...)`` — the same
+    public surface any caller uses — so it picks up mounts, scoping, and
+    permission checks for free.  At most one extra query.
+    """
+    if not projection or not result.entries:
+        return result
+
+    requested_fields = [name for name in projection if name not in PROJECTION_SENTINELS and name in ENTRY_FIELDS]
+    if not requested_fields:
+        return result
+
+    missing_fields = [name for name in requested_fields if all(getattr(e, name) is None for e in result.entries)]
+    if not missing_fields:
+        return result
+
+    missing_cols: frozenset[str] = frozenset()
+    for name in missing_fields:
+        missing_cols |= ENTRY_FIELD_TO_MODEL_COLUMNS.get(name, frozenset())
+    if not missing_cols:
+        # Only computed fields requested (score / lines) — nothing to read.
+        return result
+
+    seed = VFSResult(
+        function="read",
+        entries=[Entry(path=e.path) for e in result.entries],
+    )
+    hydrated = await filesystem.read(
+        candidates=seed,
+        columns=missing_cols,
+        user_id=user_id,
+    )
+    by_path = {e.path: e for e in hydrated.entries}
+    new_entries = []
+    for entry in result.entries:
+        fresh = by_path.get(entry.path)
+        if fresh is None:
+            new_entries.append(entry)
+            continue
+        update: dict[str, object] = {}
+        for name in missing_fields:
+            if getattr(entry, name) is None:
+                value = getattr(fresh, name)
+                if value is not None:
+                    update[name] = value
+        new_entries.append(entry.model_copy(update=update) if update else entry)
+    return result._with_entries(new_entries)
+
+
+def _paths_result(paths: tuple[str, ...], function: str = "") -> VFSResult:
+    entries = []
     for path in paths:
         normalized = normalize_path(path)
-        candidates.append(Candidate(path=normalized, kind=parse_kind(normalized)))
-    return VFSResult(candidates=candidates)
+        entries.append(Entry(path=normalized, kind=parse_kind(normalized)))
+    return VFSResult(function=function, entries=entries)
 
 
-def _candidate_kind(candidate: Candidate) -> str:
-    return candidate.kind or parse_kind(candidate.path)
+def _entry_kind(entry: Entry) -> str:
+    return entry.kind or parse_kind(entry.path)
 
 
 def _preserve_under_root(root: str, source_path: str) -> str:
@@ -539,8 +698,8 @@ def _apply_visibility(
     if visibility.include_all:
         return result
     allowed = set(defaults) | set(visibility.include_kinds)
-    filtered = [candidate for candidate in result.candidates if _candidate_kind(candidate) in allowed]
-    return result._with_candidates(filtered)
+    filtered = [entry for entry in result.entries if _entry_kind(entry) in allowed]
+    return result._with_entries(filtered)
 
 
 async def _collect_tree(
@@ -549,11 +708,12 @@ async def _collect_tree(
     *,
     max_depth: int | None,
     visibility: Visibility,
+    result_function: str = "ls",
     user_id: str | None = None,
 ) -> VFSResult:
     queue: deque[tuple[str, int]] = deque((normalize_path(root), 0) for root in roots)
     seen: set[str] = set()
-    collected: list[Candidate] = []
+    collected: list[Entry] = []
     while queue:
         path, depth = queue.popleft()
         if path in seen:
@@ -568,13 +728,13 @@ async def _collect_tree(
             return listing
 
         visible_listing = _apply_visibility(listing, visibility, {"file", "directory"})
-        collected.extend(visible_listing.candidates)
+        collected.extend(visible_listing.entries)
 
-        for candidate in listing.candidates:
-            kind = _candidate_kind(candidate)
+        for entry in listing.entries:
+            kind = _entry_kind(entry)
             if kind in {"file", "directory"}:
-                queue.append((candidate.path, depth + 1))
+                queue.append((entry.path, depth + 1))
 
-    deduped: dict[str, Candidate] = {candidate.path: candidate for candidate in collected}
+    deduped: dict[str, Entry] = {entry.path: entry for entry in collected}
     ordered = [deduped[path] for path in sorted(deduped)]
-    return VFSResult(candidates=ordered)
+    return VFSResult(function=result_function, entries=ordered)

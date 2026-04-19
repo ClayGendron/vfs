@@ -277,7 +277,7 @@ class TestReadsSucceed:
         try:
             result = await router.read("/ro/doc.md")
             assert result.success
-            assert result.candidates[0].content == "hello"
+            assert result.entries[0].content == "hello"
         finally:
             await router.close()
 
@@ -310,7 +310,7 @@ class TestReadsSucceed:
         try:
             result = await router.glob("**/*.md")
             assert result.success
-            assert any("/ro/doc.md" in c.path for c in result.candidates)
+            assert any("/ro/doc.md" in e.path for e in result.entries)
         finally:
             await router.close()
 
@@ -319,7 +319,7 @@ class TestReadsSucceed:
         try:
             result = await router.grep("hello")
             assert result.success
-            assert any("/ro/doc.md" in c.path for c in result.candidates)
+            assert any("/ro/doc.md" in e.path for e in result.entries)
         finally:
             await router.close()
 
@@ -339,7 +339,7 @@ class TestCrossMount:
             # Verify the file actually landed
             read = await router.read("/rw/doc.md")
             assert read.success
-            assert read.candidates[0].content == "hello"
+            assert read.entries[0].content == "hello"
         finally:
             await router.close()
 
@@ -386,7 +386,7 @@ class TestCandidateDispatch:
         try:
             listing = await router.glob("/**/*.md")
             # Both mounts should contribute candidates
-            paths = {c.path for c in listing.candidates}
+            paths = {e.path for e in listing.entries}
             assert "/ro/doc.md" in paths
             assert "/rw/doc.md" in paths
 
@@ -507,7 +507,7 @@ class TestSharedEngineIsNotIsolated:
                 # sibling's write — the storage was mutated.
                 leaked = await router.read("/ro/doc.md")
                 assert leaked.success
-                assert leaked.candidates[0].content == "PWNED_VIA_SIBLING"
+                assert leaked.entries[0].content == "PWNED_VIA_SIBLING"
             finally:
                 await router.close()
         finally:

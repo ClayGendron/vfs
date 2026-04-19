@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from vfs.paths import ObjectKind
 
-RenderMode = Literal["action", "content", "ls", "query_list", "stat", "tree"]
 CaseMode = Literal["sensitive", "insensitive", "smart"]
 GrepOutputMode = Literal["lines", "files", "count"]
 
@@ -201,7 +200,6 @@ class RankCommand(StageNode):
 
 @dataclass(frozen=True)
 class SortCommand(StageNode):
-    operation: str | None = None
     reverse: bool = True
 
 
@@ -227,8 +225,15 @@ class ExceptStage(StageNode):
 
 @dataclass(frozen=True)
 class QueryPlan:
-    """Parsed query plus the ordered method calls it lowers to."""
+    """Parsed query plus the ordered method calls it lowers to.
+
+    ``projection`` carries the user's ``--output`` selection in the Entry
+    vocabulary (e.g. ``("path", "score", "in_degree")``).  ``None`` means
+    the caller didn't pass ``--output`` — the executor and renderer fall
+    back to per-function defaults from :mod:`vfs.columns` and
+    :mod:`vfs.results`.
+    """
 
     ast: QueryNode
     methods: tuple[str, ...]
-    render_mode: RenderMode
+    projection: tuple[str, ...] | None = None

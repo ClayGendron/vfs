@@ -1,17 +1,21 @@
 # LangChain/LangGraph Integration Analysis
 
+- **Date:** 2026-02-17 (research conducted)
+- **Source:** migrated from `research/langchain-integration-analysis.md` on 2026-04-18
+- **Status:** snapshot — landscape findings remain current; any VFS API surface references reflect the v0.1 alpha and have been superseded by the v2 architecture
+
 ## Overview
 
-This analysis evaluates integration points between Grover and the LangChain/LangGraph ecosystem. Grover's combination of versioned filesystem + knowledge graph + semantic search is unique — no other integration offers all three.
+This analysis evaluates integration points between VFS (currently `Grover` in code) and the LangChain/LangGraph ecosystem. VFS's combination of versioned filesystem + knowledge graph + semantic search is unique — no other integration offers all three.
 
 ## Integration Points Evaluated
 
 ### Tier 1 — High Value, Clear Fit
 
-| Integration | Interface | What It Does | Grover Advantage |
+| Integration | Interface | What It Does | VFS Advantage |
 |-------------|-----------|-------------|------------------|
-| **Retriever** | `langchain_core.retrievers.BaseRetriever` | Expose semantic search as LangChain retriever | Any RAG pipeline can use Grover's vector search |
-| **Loader** | `langchain_core.document_loaders.BaseLoader` | Stream Grover files as Documents | Versioned filesystem + glob filtering for ingestion |
+| **Retriever** | `langchain_core.retrievers.BaseRetriever` | Expose semantic search as LangChain retriever | Any RAG pipeline can use VFS's vector search |
+| **Loader** | `langchain_core.document_loaders.BaseLoader` | Stream VFS files as Documents | Versioned filesystem + glob filtering for ingestion |
 | **Store** | `langgraph.store.base.BaseStore` | Persistent memory store for LangGraph agents | Hierarchical namespaces map to file paths, versioned |
 | **CheckpointSaver** | `langgraph.checkpoint.base.BaseCheckpointSaver` | Persist agent checkpoints | Versioned storage gives checkpoint history for free |
 
@@ -21,13 +25,13 @@ This analysis evaluates integration points between Grover and the LangChain/Lang
 |-------------|-----------|-------|
 | **VectorStore** | `langchain_core.vectorstores.VectorStore` | Overlaps with Retriever; more complex (add/delete docs) |
 | **ChatMessageHistory** | `langchain_core.chat_history.BaseChatMessageHistory` | Store conversation history as versioned files |
-| **Tool** | `langchain_core.tools.BaseTool` | Wrap Grover ops as callable tools (read, write, search) |
+| **Tool** | `langchain_core.tools.BaseTool` | Wrap VFS ops as callable tools (read, write, search) |
 
 ### Tier 3 — Low Priority
 
 | Integration | Notes |
 |-------------|-------|
-| **Embeddings** | Grover already has pluggable providers; wrapping LangChain Embeddings adds indirection |
+| **Embeddings** | VFS already has pluggable providers; wrapping LangChain Embeddings adds indirection |
 | **OutputParser** | No natural fit |
 | **Memory** | Deprecated in favor of Store |
 
@@ -45,7 +49,7 @@ CheckpointSaver deferred — requires deeper study of checkpoint serialization f
 - Inherits from `RunnableSerializable[str, list[Document]]` and `ABC`
 - Abstract: `_get_relevant_documents(query: str, *, run_manager: CallbackManagerForRetrieverRun) -> list[Document]`
 - Optional: `_aget_relevant_documents(query: str, *, run_manager: AsyncCallbackManagerForRetrieverRun) -> list[Document]`
-- Pydantic model — needs `ConfigDict(arbitrary_types_allowed=True)` for Grover field
+- Pydantic model — needs `ConfigDict(arbitrary_types_allowed=True)` for VFS field
 - Public interface: `.invoke(query)` / `.ainvoke(query)` from Runnable
 
 ### BaseLoader (`langchain_core.document_loaders`)

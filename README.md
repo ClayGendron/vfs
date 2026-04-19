@@ -1,4 +1,4 @@
-# `vfs`: The Agentic File System
+# vfs: The Virtual File System for Agents
 
 <p align="center">
   <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/v/vfs-py" alt="PyPI version"></a>

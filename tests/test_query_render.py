@@ -1,39 +1,46 @@
-"""Tests for query/render.py — all render modes and helpers."""
+"""Tests for query/render.py — render_query_result public API across modes."""
 
 from __future__ import annotations
 
-import pytest
-
+from vfs.query.ast import QueryPlan, ReadCommand
 from vfs.query.render import render_query_result
-from vfs.results import Candidate, Detail, VFSResult
+from vfs.results import Entry, VFSResult
 
 
-def _candidate(
+def _plan(projection: tuple[str, ...] | None = None) -> QueryPlan:
+    """Build a minimal QueryPlan for renderer tests.
+
+    The renderer only reads ``plan.projection``; the AST and methods are
+    immaterial here, so we hand it a placeholder ``ReadCommand`` to
+    satisfy the dataclass contract.
+    """
+    return QueryPlan(
+        ast=ReadCommand(),
+        methods=(),
+        projection=projection,
+    )
+
+
+def _entry(
     path: str,
     *,
     content: str | None = None,
     kind: str | None = None,
     score: float | None = None,
-    details: tuple[Detail, ...] = (),
-    lines: int | None = None,
     size_bytes: int | None = None,
-    tokens: int | None = None,
-    mime_type: str | None = None,
-    created_at: str | None = None,
-    updated_at: str | None = None,
-) -> Candidate:
-    return Candidate(
+    updated_at=None,
+    in_degree: int | None = None,
+    out_degree: int | None = None,
+) -> Entry:
+    return Entry(
         path=path,
         content=content,
         kind=kind,
         score=score,
-        details=details,
-        lines=lines,
         size_bytes=size_bytes,
-        tokens=tokens,
-        mime_type=mime_type,
-        created_at=created_at,
         updated_at=updated_at,
+        in_degree=in_degree,
+        out_degree=out_degree,
     )
 
 
@@ -44,20 +51,28 @@ def _candidate(
 
 class TestErrorRendering:
     def test_errors_only(self):
-        result = VFSResult(success=False, errors=["file not found", "bad path"])
-        output = render_query_result(result, mode="content")
-        assert "Error: file not found" in output
-        assert "Error: bad path" in output
+        result = VFSResult(
+            success=False,
+            errors=["file not found", "bad path"],
+            function="read",
+        )
+        output = render_query_result(result, _plan())
+        # Multi-error uses the "ERRORS:" prefix
+        assert "file not found" in output
+        assert "bad path" in output
+        assert output.startswith("ERRORS")
 
     def test_body_with_errors(self):
         result = VFSResult(
             success=True,
-            candidates=[_candidate("/a.py", content="hello")],
+            function="read",
+            entries=[_entry("/a.py", content="hello")],
             errors=["warning: deprecated"],
         )
-        output = render_query_result(result, mode="content")
+        output = render_query_result(result, _plan())
         assert "hello" in output
-        assert "Error: warning: deprecated" in output
+        assert "warning: deprecated" in output
+        assert "ERROR" in output
 
 
 # ===========================================================================
@@ -67,23 +82,27 @@ class TestErrorRendering:
 
 class TestContentMode:
     def test_single_file(self):
-        result = VFSResult(candidates=[_candidate("/a.py", content="hello")])
-        output = render_query_result(result, mode="content")
+        result = VFSResult(
+            function="read",
+            entries=[_entry("/a.py", content="hello")],
+        )
+        output = render_query_result(result, _plan())
         assert output == "hello"
 
     def test_empty_candidates(self):
-        result = VFSResult(candidates=[])
-        output = render_query_result(result, mode="content")
+        result = VFSResult(function="read", entries=[])
+        output = render_query_result(result, _plan())
         assert output == ""
 
     def test_multi_file_sorted_with_headers(self):
         result = VFSResult(
-            candidates=[
-                _candidate("/b.py", content="bravo"),
-                _candidate("/a.py", content="alpha"),
-            ]
+            function="read",
+            entries=[
+                _entry("/b.py", content="bravo"),
+                _entry("/a.py", content="alpha"),
+            ],
         )
-        output = render_query_result(result, mode="content")
+        output = render_query_result(result, _plan())
         assert "==> /a.py <==" in output
         assert "==> /b.py <==" in output
         # a.py should come before b.py (sorted)
@@ -97,36 +116,40 @@ class TestContentMode:
 
 class TestActionMode:
     def test_no_changes(self):
-        result = VFSResult(candidates=[])
-        output = render_query_result(result, mode="action")
+        result = VFSResult(function="write", entries=[])
+        output = render_query_result(result, _plan())
         assert output == "No changes"
 
     def test_single_path(self):
-        detail = Detail(operation="write")
-        result = VFSResult(candidates=[_candidate("/a.py", details=(detail,))])
-        output = render_query_result(result, mode="action")
+        result = VFSResult(
+            function="write",
+            entries=[_entry("/a.py")],
+        )
+        output = render_query_result(result, _plan())
         assert output == "Wrote /a.py"
 
     def test_multi_path(self):
-        detail = Detail(operation="delete")
         result = VFSResult(
-            candidates=[
-                _candidate("/a.py", details=(detail,)),
-                _candidate("/b.py", details=(detail,)),
-            ]
+            function="delete",
+            entries=[
+                _entry("/a.py"),
+                _entry("/b.py"),
+            ],
         )
-        output = render_query_result(result, mode="action")
+        output = render_query_result(result, _plan())
         assert output == "Deleted 2 paths"
 
     def test_errors_only_action(self):
-        # success=True with errors but no candidates → _render_action error path
+        # success=True with errors but no entries → action renders "No changes" + error block
         result = VFSResult(
             success=True,
+            function="write",
             errors=["permission denied"],
-            candidates=[],
+            entries=[],
         )
-        output = render_query_result(result, mode="action")
-        assert "Error: permission denied" in output
+        output = render_query_result(result, _plan())
+        assert "permission denied" in output
+        assert "ERROR" in output
 
     def test_all_verbs(self):
         for op, verb in [
@@ -137,11 +160,9 @@ class TestActionMode:
             ("copy", "Copied"),
             ("mkdir", "Created"),
             ("mkconn", "Connected"),
-            ("custom_op", "Custom op"),
         ]:
-            detail = Detail(operation=op)
-            result = VFSResult(candidates=[_candidate("/x", details=(detail,))])
-            output = render_query_result(result, mode="action")
+            result = VFSResult(function=op, entries=[_entry("/x")])
+            output = render_query_result(result, _plan())
             assert verb in output
 
 
@@ -153,31 +174,32 @@ class TestActionMode:
 class TestStatMode:
     def test_stat_with_metadata(self):
         result = VFSResult(
-            candidates=[
-                _candidate(
+            function="stat",
+            entries=[
+                _entry(
                     "/a.py",
                     kind="file",
-                    lines=42,
                     size_bytes=1024,
-                    tokens=100,
-                    mime_type="text/x-python",
-                    created_at="2024-01-01",
-                    updated_at="2024-06-01",
+                    in_degree=3,
+                    out_degree=5,
                 ),
-            ]
+            ],
         )
-        output = render_query_result(result, mode="stat")
+        output = render_query_result(result, _plan())
         assert "/a.py" in output
         assert "kind: file" in output
-        assert "lines: 42" in output
         assert "size_bytes: 1024" in output
 
     def test_stat_with_none_values(self):
-        result = VFSResult(candidates=[_candidate("/a.py", kind="file")])
-        output = render_query_result(result, mode="stat")
+        result = VFSResult(
+            function="stat",
+            entries=[_entry("/a.py", kind="file")],
+        )
+        output = render_query_result(result, _plan())
         assert "/a.py" in output
         assert "kind: file" in output
-        assert "lines:" not in output
+        # Null fields shouldn't appear in the block rendering
+        assert "size_bytes:" not in output
 
 
 # ===========================================================================
@@ -188,36 +210,27 @@ class TestStatMode:
 class TestQueryListMode:
     def test_unranked(self):
         result = VFSResult(
-            candidates=[
-                _candidate("/b.py"),
-                _candidate("/a.py"),
-            ]
+            function="glob",
+            entries=[
+                _entry("/b.py"),
+                _entry("/a.py"),
+            ],
         )
-        output = render_query_result(result, mode="query_list")
+        output = render_query_result(result, _plan())
         assert "/a.py" in output
         assert "/b.py" in output
-        assert "\t" not in output
 
     def test_ranked(self):
-        # score is a property derived from details[-1].score
+        # Ranked-search function uses block rendering with score sub-line
         result = VFSResult(
-            candidates=[
-                _candidate("/a.py", details=(Detail(operation="search", score=0.95),)),
-                _candidate("/b.py", details=(Detail(operation="search", score=0.80),)),
-            ]
+            function="lexical_search",
+            entries=[
+                _entry("/a.py", score=0.95),
+                _entry("/b.py", score=0.80),
+            ],
         )
-        output = render_query_result(result, mode="query_list")
-        assert "/a.py\t0.9500" in output
-        assert "/b.py\t0.8000" in output
-
-
-# ===========================================================================
-# Unhandled mode
-# ===========================================================================
-
-
-class TestUnhandledMode:
-    def test_raises_assertion_error(self):
-        result = VFSResult(candidates=[_candidate("/a.py")])
-        with pytest.raises(AssertionError, match="Unhandled render mode"):
-            render_query_result(result, mode="bogus_mode")  # type: ignore[arg-type]
+        output = render_query_result(result, _plan())
+        assert "/a.py" in output
+        assert "/b.py" in output
+        assert "0.9500" in output
+        assert "0.8000" in output

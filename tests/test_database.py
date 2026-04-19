@@ -13,7 +13,7 @@ from tests.conftest import require_file, require_object, require_text, set_param
 from vfs.backends.database import DatabaseFileSystem
 from vfs.base import VirtualFileSystem
 from vfs.models import VFSObject, VFSObjectBase
-from vfs.results import Candidate, Detail, EditOperation, TwoPathOperation, VFSResult
+from vfs.results import EditOperation, Entry, TwoPathOperation, VFSResult
 
 
 def _stored_payload(obj: VFSObjectBase) -> str:
@@ -34,7 +34,6 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             w = await db._write_impl("/hello.txt", "hello world", session=s)
         assert w.success
-        assert w.content == "hello world"
         file = require_file(w)
         assert file.kind == "file"
         assert file.path == "/hello.txt"
@@ -146,15 +145,15 @@ class TestWriteAndRead:
             await db._write_impl("/a.py", "aaa", session=s)
             await db._write_impl("/b.py", "bbb", session=s)
         candidates = VFSResult(
-            candidates=[
-                Candidate(path="/a.py"),
-                Candidate(path="/b.py"),
-                Candidate(path="/nope.py"),
+            entries=[
+                Entry(path="/a.py"),
+                Entry(path="/b.py"),
+                Entry(path="/nope.py"),
             ]
         )
         async with db._use_session() as s:
             r = await db._read_impl(candidates=candidates, session=s)
-        assert len(r.candidates) == 2
+        assert len(r.entries) == 2
         assert r.paths == ("/a.py", "/b.py")
         assert not r.success  # nope.py not found → errors
 
@@ -162,7 +161,6 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             w = await db._write_impl("/file.txt", "line1\nline2\nline3", session=s)
         file = require_file(w)
-        assert file.lines == 3
         assert file.size_bytes == len(b"line1\nline2\nline3")
 
     async def test_write_under_existing_file_ancestor_rejected(self, db: DatabaseFileSystem):
@@ -270,7 +268,6 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             r = await db._write_impl("/revive.txt", "new", overwrite=False, session=s)
         assert r.success
-        assert r.content == "new"
 
         async with db._use_session() as s:
             obj = await db._get_object("/revive.txt", s, include_deleted=True)
@@ -280,16 +277,19 @@ class TestWriteAndRead:
 
 
 class TestStat:
-    async def test_stat_delegates_to_read(self, db: DatabaseFileSystem):
+    async def test_stat_returns_metadata_no_content(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/file.txt", "some content", session=s)
         async with db._use_session() as s:
             r = await db._stat_impl("/file.txt", session=s)
         assert r.success
         file = require_file(r)
-        assert file.content == "some content"
-        assert file.lines == 1
         assert file.path == "/file.txt"
+        assert file.kind == "file"
+        assert file.size_bytes == len("some content")
+        # Stat is metadata-only by default — content stays None.
+        assert file.content is None
+        assert r.function == "stat"
 
     async def test_stat_nonexistent(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -309,7 +309,8 @@ class TestEdit:
                 session=s,
             )
         assert r.success
-        assert "'earth'" in require_text(r.content)
+        r2 = await db.read("/file.py")
+        assert "'earth'" in require_text(r2.content)
 
     async def test_edit_multiple_edits(self, db: DatabaseFileSystem):
         await db.write("/file.py", "x = 1\ny = 2\nz = 3\n")
@@ -323,7 +324,8 @@ class TestEdit:
                 session=s,
             )
         assert r.success
-        assert r.content == "x = 10\ny = 2\nz = 30\n"
+        r2 = await db.read("/file.py")
+        assert r2.content == "x = 10\ny = 2\nz = 30\n"
 
     async def test_edit_replace_all(self, db: DatabaseFileSystem):
         await db.write("/file.txt", "foo bar foo baz foo")
@@ -336,7 +338,8 @@ class TestEdit:
                 session=s,
             )
         assert r.success
-        assert r.content == "qux bar qux baz qux"
+        r2 = await db.read("/file.txt")
+        assert r2.content == "qux bar qux baz qux"
 
     async def test_edit_string_not_found(self, db: DatabaseFileSystem):
         await db.write("/file.txt", "hello world")
@@ -375,9 +378,9 @@ class TestEdit:
         await db.write("/a.py", "old_name = 1")
         await db.write("/b.py", "old_name = 2")
         candidates = VFSResult(
-            candidates=[
-                Candidate(path="/a.py"),
-                Candidate(path="/b.py"),
+            entries=[
+                Entry(path="/a.py"),
+                Entry(path="/b.py"),
             ]
         )
         async with db._use_session() as s:
@@ -389,7 +392,7 @@ class TestEdit:
                 session=s,
             )
         assert r.success
-        assert len(r.candidates) == 2
+        assert len(r.entries) == 2
         r2 = await db.read("/a.py")
         assert r2.content == "new_name = 1"
 
@@ -405,7 +408,8 @@ class TestEdit:
                 session=s,
             )
         assert r.success
-        assert "return 1" in require_text(r.content)
+        r2 = await db.read("/indent.py")
+        assert "return 1" in require_text(r2.content)
 
     async def test_edit_through_public_api(self, db: DatabaseFileSystem, engine):
         root = VirtualFileSystem(engine=engine)
@@ -629,7 +633,7 @@ class TestBatchWriteAtScale:
         r = await db.write(objects=objects)
 
         assert r.success, r.error_message
-        assert len(r.candidates) == n
+        assert len(r.entries) == n
 
         # Spot-check first, last, and a middle file
         mid_i = n // 2
@@ -664,7 +668,7 @@ class TestBatchWriteAtScale:
         r = await db.write(objects=objects)
 
         assert r.success, r.error_message
-        assert len(r.candidates) == n
+        assert len(r.entries) == n
 
         # Every top-level and nested dir should have been auto-created
         async with db._use_session() as s:
@@ -865,7 +869,7 @@ class TestLs:
             r = await db._ls_impl("/src", session=s)
         assert r.success
         assert r.paths == ("/src/app.py",)
-        for c in r.candidates:
+        for c in r.entries:
             assert c.kind in ("file", "directory")
 
     async def test_ls_root(self, db: DatabaseFileSystem):
@@ -885,14 +889,14 @@ class TestLs:
         async with db._use_session() as s:
             r = await db._ls_impl("/empty", session=s)
         assert r.success
-        assert len(r.candidates) == 0
+        assert len(r.entries) == 0
 
     async def test_ls_nonexistent_path(self, db: DatabaseFileSystem):
         """Single-path ls on a nonexistent path returns empty (unknown kind, not in DB)."""
         async with db._use_session() as s:
             r = await db._ls_impl("/nope", session=s)
         assert r.success
-        assert len(r.candidates) == 0
+        assert len(r.entries) == 0
 
     async def test_ls_excludes_deleted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -915,9 +919,9 @@ class TestLs:
             await db._write_impl("/lib/b.py", "b", session=s)
 
         candidates = VFSResult(
-            candidates=[
-                Candidate(path="/src", kind="directory"),
-                Candidate(path="/lib", kind="directory"),
+            entries=[
+                Entry(path="/src", kind="directory"),
+                Entry(path="/lib", kind="directory"),
             ]
         )
         async with db._use_session() as s:
@@ -930,7 +934,7 @@ class TestLs:
         async with db._use_session() as s:
             await db._write_impl("/src/a.py", "a", session=s)
 
-        candidates = VFSResult(candidates=[Candidate(path="/src")])
+        candidates = VFSResult(entries=[Entry(path="/src")])
         async with db._use_session() as s:
             r = await db._ls_impl(candidates=candidates, session=s)
         assert r.success
@@ -944,9 +948,9 @@ class TestLs:
             await db._write_impl("/lib/utils.py", "utils", session=s)
 
         candidates = VFSResult(
-            candidates=[
-                Candidate(path="/src", kind="directory"),
-                Candidate(path="/src/auth.py", kind="file"),
+            entries=[
+                Entry(path="/src", kind="directory"),
+                Entry(path="/src/auth.py", kind="file"),
             ]
         )
         async with db._use_session() as s:
@@ -972,7 +976,7 @@ class TestLs:
         async with db._use_session() as s:
             r = await db._ls_impl(
                 "/src",
-                candidates=VFSResult(candidates=[Candidate(path="/lib", kind="directory")]),
+                candidates=VFSResult(entries=[Entry(path="/lib", kind="directory")]),
                 session=s,
             )
         assert not r.success
@@ -1028,7 +1032,7 @@ class TestDelete:
             r = await db._delete_impl("/auth.py", session=s)
         assert r.success
         # Result includes the file + cascaded children
-        assert len(r.candidates) > 1
+        assert len(r.entries) > 1
 
         async with db._use_session() as s:
             v1 = await db._get_object("/auth.py/.versions/1", s, include_deleted=True)
@@ -1094,9 +1098,9 @@ class TestDelete:
             await db._write_impl("/b.txt", "b", session=s)
 
         candidates = VFSResult(
-            candidates=[
-                Candidate(path="/a.txt"),
-                Candidate(path="/b.txt"),
+            entries=[
+                Entry(path="/a.txt"),
+                Entry(path="/b.txt"),
             ]
         )
         async with db._use_session() as s:
@@ -1134,13 +1138,15 @@ class TestDelete:
         async with db._use_session() as s:
             r = await db._write_impl("/revive.txt", "v2", session=s)
         assert r.success
-        assert r.content == "v2"
+        async with db._use_session() as s:
+            r2 = await db._read_impl("/revive.txt", session=s)
+        assert r2.content == "v2"
 
     async def test_delete_rejects_both_path_and_candidates(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._delete_impl(
                 "/a.txt",
-                candidates=VFSResult(candidates=[Candidate(path="/b.txt")]),
+                candidates=VFSResult(entries=[Entry(path="/b.txt")]),
                 session=s,
             )
         assert not r.success
@@ -1201,7 +1207,7 @@ class TestDelete:
         async with db._use_session() as s:
             r = await db._delete_impl("/src", cascade=True, session=s)
         assert r.success
-        assert len(r.candidates) > 1
+        assert len(r.entries) > 1
 
     async def test_non_cascade_batch_mixed(self, db: DatabaseFileSystem):
         """Batch with some empty and some non-empty paths."""
@@ -1210,9 +1216,9 @@ class TestDelete:
             await db._write_impl("/full_dir/file.txt", "x", session=s)
 
         candidates = VFSResult(
-            candidates=[
-                Candidate(path="/ok_dir"),
-                Candidate(path="/full_dir"),
+            entries=[
+                Entry(path="/ok_dir"),
+                Entry(path="/full_dir"),
             ]
         )
         async with db._use_session() as s:
@@ -1334,7 +1340,7 @@ class TestMkconn:
         async with db._use_session() as s:
             r = await db._mkconn_impl(objects=conns, session=s)
         assert r.success
-        assert len(r.candidates) == 2
+        assert len(r.entries) == 2
 
     async def test_mkconn_objects_validates_sources(self, db: DatabaseFileSystem):
         """Batch mkconn with objects rejects missing sources."""
@@ -1471,7 +1477,7 @@ class TestCopy:
                 session=s,
             )
         assert r.success
-        assert len(r.candidates) == 2
+        assert len(r.entries) == 2
 
     async def test_copy_through_public_api(self, db: DatabaseFileSystem, engine):
         root = VirtualFileSystem(engine=engine)
@@ -1673,7 +1679,7 @@ class TestGlob:
             await db._mkconn_impl("/src/auth.py", "/src/db.py", "imports", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/**", session=s)
-        kinds = {c.kind for c in r.candidates}
+        kinds = {c.kind for c in r.entries}
         assert kinds <= {"file", "directory"}
 
     async def test_glob_no_match(self, db: DatabaseFileSystem):
@@ -1687,31 +1693,15 @@ class TestGlob:
     async def test_glob_with_candidates(self, db: DatabaseFileSystem):
         """When candidates are provided, filter them in-memory."""
         cands = VFSResult(
-            candidates=[
-                Candidate(path="/src/auth.py", kind="file"),
-                Candidate(path="/src/db.py", kind="file"),
-                Candidate(path="/docs/readme.md", kind="file"),
+            entries=[
+                Entry(path="/src/auth.py", kind="file"),
+                Entry(path="/src/db.py", kind="file"),
+                Entry(path="/docs/readme.md", kind="file"),
             ]
         )
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/src/*.py", candidates=cands, session=s)
         assert set(r.paths) == {"/src/auth.py", "/src/db.py"}
-
-    async def test_glob_with_candidates_returns_fresh_detail(self, db: DatabaseFileSystem):
-        """Impl returns only the glob detail; routing layer merges prior details."""
-        prior = Detail(operation="search", score=0.9)
-        cands = VFSResult(
-            candidates=[
-                Candidate(path="/src/auth.py", kind="file", details=(prior,)),
-                Candidate(path="/docs/readme.md", kind="file", details=(prior,)),
-            ]
-        )
-        async with db._use_session() as s:
-            r = await db._glob_impl(pattern="/src/*.py", candidates=cands, session=s)
-        assert len(r) == 1
-        c = r.candidates[0]
-        assert len(c.details) == 1
-        assert c.details[0].operation == "glob"
 
     async def test_glob_empty_pattern_errors(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -1742,7 +1732,7 @@ class TestGlob:
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/src", session=s)
         assert "/src" in r.paths
-        assert r.candidates[0].kind == "directory"
+        assert r.entries[0].kind == "directory"
 
     async def test_glob_through_public_api(self, db: DatabaseFileSystem, engine):
         root = DatabaseFileSystem(engine=engine)
@@ -1768,11 +1758,11 @@ class TestGrep:
         assert len(r) == 1
         file = require_file(r)
         assert file.path == "/a.py"
-        meta = file.details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 1
-        assert meta["line_matches"][0]["line"] == 2
-        assert "timeout" in meta["line_matches"][0]["text"]
+        assert file.score == 1.0
+        assert file.lines is not None
+        assert file.lines[0].match == 2
+        content_lines = (file.content or "").splitlines()
+        assert "timeout" in content_lines[file.lines[0].match - 1]
 
     async def test_grep_multiple_matches_in_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -1780,10 +1770,9 @@ class TestGrep:
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="TODO", session=s)
         file = require_file(r)
-        metadata = file.details[0].metadata
-        assert metadata is not None
-        assert metadata["match_count"] == 2
-        assert file.details[0].score == 2.0
+        assert file.lines is not None
+        assert len(file.lines) == 2
+        assert file.score == 2.0
 
     async def test_grep_across_multiple_files(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -1827,10 +1816,9 @@ class TestGrep:
             r = await db._grep_impl(pattern=r"timeout\s*=\s*\d{3}", session=s)
         assert len(r) == 1
         file = require_file(r)
-        metadata = file.details[0].metadata
-        assert metadata is not None
-        assert metadata["match_count"] == 1
-        assert metadata["line_matches"][0]["line"] == 2
+        assert file.score == 1.0
+        assert file.lines is not None
+        assert file.lines[0].match == 2
 
     async def test_grep_invalid_regex(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -1854,38 +1842,22 @@ class TestGrep:
     async def test_grep_with_candidates_uses_existing_content(self, db: DatabaseFileSystem):
         """When candidates already carry content, no DB hydration needed."""
         cands = VFSResult(
-            candidates=[
-                Candidate(path="/a.py", kind="file", content="timeout = 30"),
-                Candidate(path="/b.py", kind="file", content="no match"),
+            entries=[
+                Entry(path="/a.py", kind="file", content="timeout = 30"),
+                Entry(path="/b.py", kind="file", content="no match"),
             ]
         )
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
         assert r.paths == ("/a.py",)
 
-    async def test_grep_with_candidates_returns_fresh_detail(self, db: DatabaseFileSystem):
-        """Impl returns only the grep detail; routing layer merges prior details."""
-        prior = Detail(operation="glob", score=None)
-        cands = VFSResult(
-            candidates=[
-                Candidate(path="/a.py", kind="file", content="timeout = 30", details=(prior,)),
-            ]
-        )
-        async with db._use_session() as s:
-            r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
-        assert len(r) == 1
-        c = r.candidates[0]
-        assert len(c.details) == 1
-        assert c.details[0].operation == "grep"
-        assert c.details[0].score == 1.0
-
     async def test_grep_with_candidates_hydrates_missing_content(self, db: DatabaseFileSystem):
         """Candidates without content get hydrated from DB."""
         async with db._use_session() as s:
             await db._write_impl("/a.py", "timeout = 30", session=s)
         cands = VFSResult(
-            candidates=[
-                Candidate(path="/a.py", kind="file"),  # content=None
+            entries=[
+                Entry(path="/a.py", kind="file"),  # content=None
             ]
         )
         async with db._use_session() as s:
@@ -2022,22 +1994,18 @@ class TestGrepRipgrepFilters:
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="grep", ext=("py",), output_mode="files", session=s)
         assert "/src/a.py" in r.paths
-        c = next(c for c in r.candidates if c.path == "/src/a.py")
-        meta = c.details[0].metadata
-        assert meta is not None
-        assert "line_matches" not in meta
-        assert meta["match_count"] == 1
+        c = next(c for c in r.entries if c.path == "/src/a.py")
+        assert c.lines is None
+        assert c.score == 1.0
 
     async def test_grep_output_mode_count(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/a.py", "TODO\nok\nTODO\nTODO", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="TODO", output_mode="count", session=s)
-        c = next(c for c in r.candidates if c.path == "/a.py")
-        meta = c.details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 3
-        assert "line_matches" not in meta
+        c = next(c for c in r.entries if c.path == "/a.py")
+        assert c.score == 3.0
+        assert c.lines is None
 
     # ── context windows ─────────────────────────────────────────────
 
@@ -2046,25 +2014,25 @@ class TestGrepRipgrepFilters:
             await db._write_impl("/a.py", "l1\nl2 MATCH\nl3\nl4\nl5", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="MATCH", after_context=2, session=s)
-        c = r.candidates[0]
-        meta = c.details[0].metadata
-        assert meta is not None
-        entries = meta["line_matches"]
-        assert [e["line"] for e in entries] == [2, 3, 4]
-        assert entries[0].get("context") is None
-        assert entries[1]["context"] is True
-        assert entries[2]["context"] is True
+        c = r.entries[0]
+        assert c.lines is not None
+        # A single match on line 2 with after_context=2 yields a window
+        # [2..4]; all three LineMatch rows share start=2, end=4 and
+        # the match line 2 appears first.
+        assert c.lines[0].match == 2
+        assert c.lines[0].start == 2
+        assert c.lines[0].end == 4
 
     async def test_grep_before_context(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/a.py", "l1\nl2\nl3\nl4 MATCH\nl5", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="MATCH", before_context=2, session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        entries = meta["line_matches"]
-        assert [e["line"] for e in entries] == [2, 3, 4]
-        assert entries[-1].get("context") is None
+        c = r.entries[0]
+        assert c.lines is not None
+        assert c.lines[0].match == 4
+        assert c.lines[0].start == 2
+        assert c.lines[0].end == 4
 
     async def test_grep_context_windows_merge(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -2080,11 +2048,12 @@ class TestGrepRipgrepFilters:
                 after_context=1,
                 session=s,
             )
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        entries = meta["line_matches"]
-        assert [e["line"] for e in entries] == [1, 2, 3, 4, 5]
-        assert meta["match_count"] == 2
+        c = r.entries[0]
+        assert c.lines is not None
+        # Two matches (lines 2 and 4) merged into window [1..5]
+        assert [lm.match for lm in c.lines] == [2, 4]
+        assert all(lm.start == 1 and lm.end == 5 for lm in c.lines)
+        assert c.score == 2.0
 
     # ── regex modifiers ─────────────────────────────────────────────
 
@@ -2096,30 +2065,27 @@ class TestGrepRipgrepFilters:
             await db._write_impl("/a.py", "value = foo.bar\nother = fooxbar", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="foo.bar", fixed_strings=True, session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 1
-        assert meta["line_matches"][0]["line"] == 1
+        c = r.entries[0]
+        assert c.score == 1.0
+        assert c.lines is not None
+        assert c.lines[0].match == 1
 
     async def test_grep_word_regexp(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/a.py", "grep\ngrepper\nregrep\n", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="grep", word_regexp=True, session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 1
+        assert r.entries[0].score == 1.0
 
     async def test_grep_invert_match(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/a.py", "alpha\nbeta\ngamma", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="beta", invert_match=True, session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 2
-        lines = {e["line"] for e in meta["line_matches"]}
-        assert lines == {1, 3}
+        c = r.entries[0]
+        assert c.score == 2.0
+        assert c.lines is not None
+        assert {lm.match for lm in c.lines} == {1, 3}
 
     async def test_grep_smart_case_lowercase_pattern_matches_upper(
         self,
@@ -2129,9 +2095,7 @@ class TestGrepRipgrepFilters:
             await db._write_impl("/a.py", "FOO\nfoo", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="foo", case_mode="smart", session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 2
+        assert r.entries[0].score == 2.0
 
     async def test_grep_smart_case_uppercase_pattern_is_sensitive(
         self,
@@ -2141,9 +2105,7 @@ class TestGrepRipgrepFilters:
             await db._write_impl("/a.py", "FOO\nfoo", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="FOO", case_mode="smart", session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 1
+        assert r.entries[0].score == 1.0
 
     # ── combined filters ─────────────────────────────────────────────
 
@@ -2272,7 +2234,7 @@ class TestTree:
             await db._write_impl("/src/a.py/.chunks/login", "chunk", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/src", session=s)
-        kinds = {c.kind for c in r.candidates}
+        kinds = {c.kind for c in r.entries}
         assert kinds <= {"file", "directory"}
 
     async def test_tree_empty_directory(self, db: DatabaseFileSystem):
@@ -2290,7 +2252,7 @@ class TestTree:
             await db._write_impl("/d/m.py", "m", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/d", session=s)
-        file_paths = [c.path for c in r.candidates if c.kind == "file"]
+        file_paths = [c.path for c in r.entries if c.kind == "file"]
         assert file_paths == ["/d/a.py", "/d/m.py", "/d/z.py"]
 
     async def test_tree_excludes_soft_deleted(self, db: DatabaseFileSystem):
@@ -2451,7 +2413,9 @@ class TestUpdateContentPath:
         async with db._use_session() as s:
             r = await db._write_impl("/src/auth.py/.chunks/login", "def login(): pass", session=s)
         assert r.success
-        assert r.content == "def login(): pass"
+        async with db._use_session() as s:
+            r2 = await db._read_impl("/src/auth.py/.chunks/login", session=s)
+        assert r2.content == "def login(): pass"
 
 
 class TestReadErrorPaths:
@@ -2466,7 +2430,7 @@ class TestReadErrorPaths:
         async with db._use_session() as s:
             r = await db._read_impl(
                 path="/a.py",
-                candidates=VFSResult(candidates=[Candidate(path="/b.py")]),
+                candidates=VFSResult(entries=[Entry(path="/b.py")]),
                 session=s,
             )
         assert not r.success
@@ -2475,11 +2439,11 @@ class TestReadErrorPaths:
         """database.py:713 — read with empty candidates returns empty."""
         async with db._use_session() as s:
             r = await db._read_impl(
-                candidates=VFSResult(candidates=[]),
+                candidates=VFSResult(entries=[]),
                 session=s,
             )
         assert r.success
-        assert len(r.candidates) == 0
+        assert len(r.entries) == 0
 
 
 class TestWriteErrorPaths:
@@ -2503,7 +2467,7 @@ class TestLsErrorPaths:
         async with db._use_session() as s:
             r = await db._ls_impl(
                 path="/src",
-                candidates=VFSResult(candidates=[Candidate(path="/other")]),
+                candidates=VFSResult(entries=[Entry(path="/other")]),
                 session=s,
             )
         assert not r.success
@@ -2512,11 +2476,11 @@ class TestLsErrorPaths:
         """database.py:982 — ls with empty candidates returns empty."""
         async with db._use_session() as s:
             r = await db._ls_impl(
-                candidates=VFSResult(candidates=[]),
+                candidates=VFSResult(entries=[]),
                 session=s,
             )
         assert r.success
-        assert len(r.candidates) == 0
+        assert len(r.entries) == 0
 
 
 class TestLsFilterMetadataKinds:
@@ -2536,7 +2500,7 @@ class TestLsFilterMetadataKinds:
         async with db._use_session() as s:
             r = await db._ls_impl("/src", session=s)
         assert r.success
-        kinds = {c.kind for c in r.candidates}
+        kinds = {c.kind for c in r.entries}
         # Only file and directory kinds should be present; chunk filtered out
         assert kinds <= {"file", "directory"}
 
@@ -2553,7 +2517,7 @@ class TestDeleteErrorPaths:
         async with db._use_session() as s:
             r = await db._delete_impl(
                 path="/a.py",
-                candidates=VFSResult(candidates=[Candidate(path="/b.py")]),
+                candidates=VFSResult(entries=[Entry(path="/b.py")]),
                 session=s,
             )
         assert not r.success
@@ -2562,11 +2526,11 @@ class TestDeleteErrorPaths:
         """database.py:1060 — delete with empty candidates returns empty."""
         async with db._use_session() as s:
             r = await db._delete_impl(
-                candidates=VFSResult(candidates=[]),
+                candidates=VFSResult(entries=[]),
                 session=s,
             )
         assert r.success
-        assert len(r.candidates) == 0
+        assert len(r.entries) == 0
 
 
 class TestEditImplErrors:

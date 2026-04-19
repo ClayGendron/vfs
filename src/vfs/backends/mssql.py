@@ -39,7 +39,7 @@ from vfs.backends.database import (
 from vfs.bm25 import tokenize_query
 from vfs.paths import scope_path
 from vfs.patterns import compile_glob, decompose_glob, glob_to_sql_like
-from vfs.results import Candidate, Detail, VFSResult
+from vfs.results import Entry, VFSResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -301,15 +301,16 @@ class MSSQLFileSystem(DatabaseFileSystem):
             content_by_path = {r.path: r.content for r in content_rows}
 
         result = VFSResult(
-            candidates=[
-                Candidate(
+            function="lexical_search",
+            entries=[
+                Entry(
                     path=path,
                     kind=kind,
                     content=content_by_path.get(path),
-                    details=(Detail(operation="lexical_search", score=score),),
+                    score=score,
                 )
                 for path, kind, score in scored_paths
-            ]
+            ],
         )
         return self._unscope_result(result, user_id)
 
@@ -419,6 +420,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
@@ -474,10 +476,13 @@ class MSSQLFileSystem(DatabaseFileSystem):
                 after_context=after_context,
                 output_mode=output_mode,
                 max_count=max_count,
+                columns=columns,
                 candidates=candidates,
                 user_id=user_id,
                 session=session,
             )
+
+        cols = self._resolve_columns("grep", columns) | {"content"}
 
         self._require_user_id(user_id)
         if not pattern:
@@ -520,10 +525,15 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         # Path-only projection is only safe when the regex predicate is
         # in SQL and guarantees a match — i.e. not inverted and caller
-        # only wants -l.  Everything else fetches content for the
-        # client-side line scan.
+        # only wants -l.  Lines/count modes need content for the client-
+        # side line scan; widen the SELECT to the user's projected cols
+        # so each row carries everything the entries need in one trip.
         files_only = output_mode == "files" and not invert_match
-        select_cols = "o.path" if files_only else "o.path, o.content"
+        if files_only:
+            select_set: frozenset[str] = frozenset({"path"})
+        else:
+            select_set = cols | {"content"}
+        select_cols = ", ".join(f"o.{c}" for c in sorted(select_set))
         content_not_null = "" if files_only else "AND o.content IS NOT NULL"
 
         regex_clause = ""
@@ -563,19 +573,22 @@ class MSSQLFileSystem(DatabaseFileSystem):
         rows = (await session.execute(sql, params)).all()
 
         if files_only:
-            matched = [
-                Candidate(
-                    path=row.path,
-                    kind="file",
-                    details=(Detail(operation="grep", metadata={}),),
-                )
-                for row in rows
-            ]
-            return self._unscope_result(VFSResult(candidates=matched), user_id)
+            # Files-only mode: regex predicate runs in SQL, every row is a
+            # guaranteed hit.  Entries carry path + kind (kind hardcoded
+            # because the WHERE clause already filtered to ``kind='file'``);
+            # any wider projection backfills via hydration since we didn't
+            # SELECT it here.
+            matched = [Entry(path=row.path, kind="file") for row in rows]
+            return self._unscope_result(VFSResult(function="grep", entries=matched), user_id)
 
-        content_map = {row.path: row.content for row in rows if row.content}
+        # Lines/count modes: rows carry content + every projected col, so
+        # _collect_line_matches builds entries directly from real rows via
+        # _row_to_entry — no SimpleNamespace stand-ins, no hydration round
+        # trip for cols we already selected.
+        rows_by_path = {row.path: row for row in rows if row.content}
         matched = self._collect_line_matches(
-            content_map,
+            rows_by_path,
+            cols,
             regex,
             max_count,
             output_mode=output_mode,
@@ -583,7 +596,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             after_context=after_context,
             invert_match=invert_match,
         )
-        return self._unscope_result(VFSResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(function="grep", entries=matched), user_id)
 
     # ------------------------------------------------------------------
     # Glob — REGEXP_LIKE pushdown on path
@@ -596,6 +609,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
@@ -624,11 +638,13 @@ class MSSQLFileSystem(DatabaseFileSystem):
                 paths=paths,
                 ext=ext,
                 max_count=max_count,
+                columns=columns,
                 candidates=candidates,
                 user_id=user_id,
                 session=session,
             )
 
+        cols = self._resolve_columns("glob", columns)
         self._require_user_id(user_id)
         unscoped_pattern = pattern
         if self._user_scoped and user_id:
@@ -653,7 +669,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         if ext and decomposition.ext:
             merged_ext = tuple(e for e in ext if e in decomposition.ext)
             if not merged_ext:
-                return self._unscope_result(VFSResult(candidates=[]), user_id)
+                return self._unscope_result(VFSResult(function="glob", entries=[]), user_id)
         elif decomposition.ext:
             merged_ext = decomposition.ext
         else:
@@ -706,8 +722,12 @@ class MSSQLFileSystem(DatabaseFileSystem):
             # effect.
             kind_clause = "kind = 'file'" if decomposition.files_only else "kind IN ('file', 'directory')"
 
+        # SELECT only what the entries need — content is excluded from the
+        # default glob projection so we don't ship every file's body for
+        # a path-pattern listing.
+        select_cols = ", ".join(sorted(cols))
         sql = text(f"""
-            SELECT {top_clause}path, kind, content
+            SELECT {top_clause}{select_cols}
             FROM {table}
             WHERE {kind_clause}
               AND deleted_at IS NULL
@@ -718,13 +738,5 @@ class MSSQLFileSystem(DatabaseFileSystem):
         """)
 
         rows = (await session.execute(sql, params)).all()
-        matched = [
-            Candidate(
-                path=row.path,
-                kind=row.kind,
-                content=row.content,
-                details=(Detail(operation="glob"),),
-            )
-            for row in rows
-        ]
-        return self._unscope_result(VFSResult(candidates=matched), user_id)
+        matched = [self._row_to_entry(row, cols) for row in rows]
+        return self._unscope_result(VFSResult(function="glob", entries=matched), user_id)

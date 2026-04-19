@@ -1,5 +1,9 @@
 # deepagents Analysis (v0.4.1)
 
+- **Date:** 2026-03-04 (research conducted)
+- **Source:** migrated from `research/deepagents-analysis.md` on 2026-04-18
+- **Status:** snapshot — landscape findings remain current; any VFS API surface references reflect the v0.1 alpha and have been superseded by the v2 architecture
+
 ## What It Is
 
 **deepagents** is an open-source Python package built on **LangGraph** and **LangChain** that enables creating sophisticated AI agents with four key capabilities:
@@ -154,9 +158,9 @@ The `FilesystemMiddleware` exposes these tools to agents:
 | StoreBackend | Namespace | Medium | Proper namespace factory needed |
 | CompositeBackend | Via routes | Varies | Depends on routed backends |
 
-## Integration Points with Grover
+## Integration Points with VFS
 
-### What deepagents has that Grover doesn't
+### What deepagents has that VFS (currently `Grover` in code) doesn't
 - Agent orchestration (LangGraph state machine, tool calling loop)
 - Sub-agent spawning with isolated context
 - Context window management (summarization, offloading)
@@ -164,7 +168,7 @@ The `FilesystemMiddleware` exposes these tools to agents:
 - Shell execution in sandboxes
 - Middleware pipeline for cross-cutting concerns
 
-### What Grover has that deepagents doesn't
+### What VFS has that deepagents doesn't
 - **Versioning** — deepagents stores files, not versions. No history, no diffs, no rollback.
 - **Trash/restore** — deletions in deepagents are permanent.
 - **Knowledge graph** — no dependency tracking, no code analysis.
@@ -174,11 +178,11 @@ The `FilesystemMiddleware` exposes these tools to agents:
 
 ### Integration Strategy
 
-Grover can be wrapped as a custom `BackendProtocol` implementation:
+VFS can be wrapped as a custom `BackendProtocol` implementation:
 
 ```python
 class GroverBackend:
-    """deepagents BackendProtocol backed by Grover."""
+    """deepagents BackendProtocol backed by VFS."""
 
     def __init__(self, grover: Grover):
         self.grover = grover
@@ -191,9 +195,9 @@ class GroverBackend:
     async def glob_info(self, pattern: str, path: str) -> list[FileInfo]: ...
 ```
 
-This would give any LangGraph deep agent access to Grover's versioned filesystem, graph, and search — with zero changes to deepagents itself.
+This would give any LangGraph deep agent access to VFS's versioned filesystem, graph, and search — with zero changes to deepagents itself.
 
-Additional Grover-specific tools could be exposed as custom middleware:
+Additional VFS-specific tools could be exposed as custom middleware:
 
 - `search_semantic(query, k)` — vector similarity search
 - `list_versions(path)` / `restore_version(path, version)` — version management

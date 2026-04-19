@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grover — Brand Lookbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@300;400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* ──── PRIMARY PALETTE ──── */
+    --canopy:       #1A2F23;   /* Deep forest — primary bg */
+    --understory:   #243B2E;   /* Mid forest — cards, surfaces */
+    --moss:         #2D4A38;   /* Elevated surfaces */
+    --fern:         #4A7C5C;   /* Secondary accent */
+    --sage:         #7BAE8E;   /* Muted text, borders */
+    --mint:         #A8D5BA;   /* Light accent */
+    --meadow:       #D4F0E0;   /* Light text on dark */
+    --daylight:     #F0FAF4;   /* Brightest text */
+
+    /* ──── ACCENT PALETTE ──── */
+    --ember:        #E8734A;   /* Primary action — warm contrast */
+    --ember-glow:   #F09070;   /* Hover state */
+    --amber:        #E8B44A;   /* Warnings, highlights */
+    --violet:       #8B6CC1;   /* Vector/search accent */
+    --cyan:         #4ABCE8;   /* Filesystem accent */
+
+    /* ──── NEUTRALS ──── */
+    --bark:         #1A1A18;   /* True dark */
+    --stone:        #2A2A27;   /* Code blocks */
+    --dust:         #8A8A82;   /* Muted text */
+    --fog:          #C8C8C2;   /* Secondary text on dark */
+    --cloud:        #F5F5F0;   /* Light mode bg */
+    --snow:         #FAFAF8;   /* Light mode surface */
+
+    /* ──── TYPOGRAPHY ──── */
+    --font-display: 'DM Serif Display', Georgia, serif;
+    --font-body:    'Instrument Sans', -apple-system, sans-serif;
+    --font-mono:    'JetBrains Mono', 'Fira Code', monospace;
+
+    /* ──── SPACING ──── */
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 40px;
+    --space-2xl: 64px;
+    --space-3xl: 96px;
+    --space-4xl: 140px;
+
+    /* ──── RADIUS ──── */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 16px;
+    --radius-xl: 24px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--canopy);
+    color: var(--meadow);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ──── NOISE TEXTURE OVERLAY ──── */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ──── LAYOUT ──── */
+  .page { max-width: 1200px; margin: 0 auto; padding: 0 var(--space-xl); }
+
+  section {
+    padding: var(--space-4xl) 0;
+    border-bottom: 1px solid rgba(122, 174, 142, 0.12);
+  }
+  section:last-child { border-bottom: none; }
+
+  /* ──── SECTION LABELS ──── */
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--sage);
+    margin-bottom: var(--space-lg);
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+  }
+  .section-label::before {
+    content: '';
+    width: 24px;
+    height: 1px;
+    background: var(--sage);
+  }
+
+  /* ──── HERO ──── */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    border-bottom: none;
+  }
+
+  .hero-bg {
+    position: absolute;
+    top: -20%; right: -10%;
+    width: 700px; height: 700px;
+    background: radial-gradient(ellipse, rgba(74, 124, 92, 0.15) 0%, transparent 70%);
+    pointer-events: none;
+    animation: drift 20s ease-in-out infinite;
+  }
+  .hero-bg-2 {
+    position: absolute;
+    bottom: -10%; left: -15%;
+    width: 500px; height: 500px;
+    background: radial-gradient(ellipse, rgba(232, 115, 74, 0.07) 0%, transparent 70%);
+    pointer-events: none;
+    animation: drift 25s ease-in-out infinite reverse;
+  }
+
+  @keyframes drift {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(30px, -20px); }
+  }
+
+  .hero-content { position: relative; z-index: 1; }
+
+  .hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 2px;
+    color: var(--ember);
+    margin-bottom: var(--space-lg);
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.2s forwards;
+  }
+
+  .hero-title {
+    font-family: var(--font-display);
+    font-size: clamp(56px, 8vw, 120px);
+    font-weight: 400;
+    line-height: 0.95;
+    color: var(--daylight);
+    margin-bottom: var(--space-xl);
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.4s forwards;
+  }
+
+  .hero-subtitle {
+    font-family: var(--font-body);
+    font-size: clamp(18px, 2vw, 22px);
+    font-weight: 400;
+    color: var(--sage);
+    max-width: 550px;
+    line-height: 1.6;
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.6s forwards;
+  }
+  .hero-subtitle em {
+    font-style: italic;
+    font-family: var(--font-display);
+    color: var(--mint);
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .hero-pip-install {
+    margin-top: var(--space-2xl);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-md);
+    background: var(--stone);
+    border: 1px solid rgba(122, 174, 142, 0.15);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-lg);
+    font-family: var(--font-mono);
+    font-size: 15px;
+    color: var(--fog);
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.8s forwards;
+  }
+  .hero-pip-install .prompt { color: var(--sage); margin-right: 4px; }
+  .hero-pip-install .pkg { color: var(--ember); }
+
+  /* ──── BRAND MARK ──── */
+  .brandmark-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3xl);
+    align-items: start;
+  }
+
+  .brandmark-display {
+    background: var(--understory);
+    border-radius: var(--radius-lg);
+    padding: var(--space-3xl);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 4/3;
+    border: 1px solid rgba(122, 174, 142, 0.08);
+  }
+
+  .logo-lockup {
+    text-align: center;
+  }
+  .logo-icon {
+    width: 80px; height: 80px;
+    margin: 0 auto var(--space-lg);
+    position: relative;
+  }
+  .logo-icon svg { width: 100%; height: 100%; }
+
+  .logo-text {
+    font-family: var(--font-display);
+    font-size: 48px;
+    color: var(--daylight);
+    letter-spacing: -0.5px;
+  }
+
+  .logo-tagline {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--sage);
+    margin-top: var(--space-sm);
+    text-transform: uppercase;
+  }
+
+  .brandmark-notes h3 {
+    font-family: var(--font-display);
+    font-size: 28px;
+    color: var(--daylight);
+    margin-bottom: var(--space-lg);
+  }
+  .brandmark-notes p {
+    color: var(--sage);
+    margin-bottom: var(--space-md);
+    font-size: 15px;
+  }
+
+  .mark-variants {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-md);
+    margin-top: var(--space-xl);
+  }
+  .mark-variant {
+    aspect-ratio: 1;
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border: 1px solid rgba(122, 174, 142, 0.1);
+  }
+  .mark-variant .mini-logo {
+    font-family: var(--font-display);
+    font-size: 22px;
+  }
+  .mark-variant.dark {
+    background: var(--bark);
+    color: var(--daylight);
+  }
+  .mark-variant.light {
+    background: var(--cloud);
+    color: var(--canopy);
+  }
+  .mark-variant.accent {
+    background: var(--ember);
+    color: white;
+  }
+
+  /* ──── COLOR PALETTE ──── */
+  .palette-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-md);
+    margin-bottom: var(--space-2xl);
+  }
+
+  .color-card {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid rgba(122, 174, 142, 0.08);
+  }
+  .color-swatch {
+    height: 100px;
+    position: relative;
+  }
+  .color-swatch.large { height: 140px; }
+  .color-info {
+    padding: var(--space-md);
+    background: var(--understory);
+  }
+  .color-name {
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--daylight);
+    margin-bottom: 2px;
+  }
+  .color-hex {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--sage);
+  }
+  .color-usage {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--dust);
+    margin-top: var(--space-xs);
+  }
+
+  .palette-group-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--dust);
+    margin-bottom: var(--space-md);
+    margin-top: var(--space-xl);
+  }
+  .palette-group-label:first-child { margin-top: 0; }
+
+  /* ──── TYPOGRAPHY SECTION ──── */
+  .type-specimen {
+    margin-bottom: var(--space-3xl);
+  }
+
+  .type-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: var(--space-xl);
+    padding-bottom: var(--space-md);
+    border-bottom: 1px solid rgba(122, 174, 142, 0.1);
+  }
+  .type-family-name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--ember);
+    letter-spacing: 1px;
+  }
+  .type-family-class {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--dust);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .type-display-sample {
+    font-family: var(--font-display);
+    font-size: clamp(42px, 5vw, 72px);
+    color: var(--daylight);
+    line-height: 1.1;
+    margin-bottom: var(--space-lg);
+  }
+  .type-display-sample em {
+    color: var(--sage);
+  }
+
+  .type-body-sample {
+    font-family: var(--font-body);
+    font-size: 17px;
+    color: var(--meadow);
+    max-width: 640px;
+    line-height: 1.7;
+    margin-bottom: var(--space-lg);
+  }
+
+  .type-mono-sample {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--mint);
+    background: var(--stone);
+    padding: var(--space-lg);
+    border-radius: var(--radius-md);
+    line-height: 1.8;
+    border: 1px solid rgba(122, 174, 142, 0.08);
+    overflow-x: auto;
+  }
+  .type-mono-sample .comment { color: var(--dust); }
+  .type-mono-sample .keyword { color: var(--violet); }
+  .type-mono-sample .string { color: var(--amber); }
+  .type-mono-sample .func { color: var(--cyan); }
+  .type-mono-sample .cls { color: var(--ember-glow); }
+
+  .type-scale {
+    margin-top: var(--space-xl);
+  }
+  .type-scale-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-xl);
+    padding: var(--space-md) 0;
+    border-bottom: 1px solid rgba(122, 174, 142, 0.06);
+  }
+  .type-scale-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--dust);
+    min-width: 100px;
+    letter-spacing: 1px;
+  }
+  .type-scale-size {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--sage);
+    min-width: 60px;
+  }
+
+  /* ──── TRIFECTA SECTION ──── */
+  .trifecta-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-lg);
+    margin-top: var(--space-xl);
+  }
+
+  .trifecta-card {
+    background: var(--understory);
+    border-radius: var(--radius-lg);
+    padding: var(--space-xl);
+    border: 1px solid rgba(122, 174, 142, 0.08);
+    transition: border-color 0.3s ease, transform 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .trifecta-card:hover {
+    border-color: rgba(122, 174, 142, 0.2);
+    transform: translateY(-2px);
+  }
+  .trifecta-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+  }
+  .trifecta-card.graph::before { background: var(--fern); }
+  .trifecta-card.vector::before { background: var(--violet); }
+  .trifecta-card.vfs::before { background: var(--cyan); }
+
+  .trifecta-icon {
+    width: 40px; height: 40px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: var(--space-lg);
+    font-size: 20px;
+  }
+  .trifecta-card.graph .trifecta-icon { background: rgba(74, 124, 92, 0.2); color: var(--mint); }
+  .trifecta-card.vector .trifecta-icon { background: rgba(139, 108, 193, 0.2); color: var(--violet); }
+  .trifecta-card.vfs .trifecta-icon { background: rgba(74, 188, 232, 0.2); color: var(--cyan); }
+
+  .trifecta-title {
+    font-family: var(--font-display);
+    font-size: 22px;
+    color: var(--daylight);
+    margin-bottom: var(--space-sm);
+  }
+  .trifecta-desc {
+    font-size: 14px;
+    color: var(--sage);
+    line-height: 1.6;
+  }
+
+  /* ──── COMPONENT SAMPLES ──── */
+  .components-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+    margin-top: var(--space-xl);
+  }
+
+  .component-card {
+    background: var(--understory);
+    border-radius: var(--radius-lg);
+    padding: var(--space-xl);
+    border: 1px solid rgba(122, 174, 142, 0.08);
+  }
+  .component-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--dust);
+    margin-bottom: var(--space-lg);
+  }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: var(--space-md); flex-wrap: wrap; align-items: center; }
+
+  .btn {
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 10px 24px;
+    border-radius: var(--radius-sm);
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    letter-spacing: 0.2px;
+  }
+  .btn-primary {
+    background: var(--ember);
+    color: white;
+  }
+  .btn-primary:hover { background: var(--ember-glow); transform: translateY(-1px); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--daylight);
+    border: 1px solid rgba(122, 174, 142, 0.25);
+  }
+  .btn-secondary:hover { border-color: var(--sage); }
+  .btn-ghost {
+    background: transparent;
+    color: var(--sage);
+    padding: 10px 16px;
+  }
+  .btn-ghost:hover { color: var(--daylight); }
+
+  /* Badges */
+  .badge-row { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: 100px;
+    letter-spacing: 0.5px;
+  }
+  .badge-graph { background: rgba(74, 124, 92, 0.2); color: var(--mint); }
+  .badge-vector { background: rgba(139, 108, 193, 0.2); color: var(--violet); }
+  .badge-vfs { background: rgba(74, 188, 232, 0.2); color: var(--cyan); }
+  .badge-default { background: rgba(200, 200, 194, 0.1); color: var(--fog); }
+
+  /* Code inline */
+  code.inline {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--stone);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    color: var(--mint);
+  }
+
+  /* Input */
+  .input-sample {
+    width: 100%;
+    font-family: var(--font-body);
+    font-size: 14px;
+    padding: 10px 16px;
+    background: var(--bark);
+    border: 1px solid rgba(122, 174, 142, 0.15);
+    border-radius: var(--radius-sm);
+    color: var(--daylight);
+    outline: none;
+    transition: border-color 0.2s;
+    margin-bottom: var(--space-md);
+  }
+  .input-sample:focus { border-color: var(--ember); }
+  .input-sample::placeholder { color: var(--dust); }
+
+  .input-label {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fog);
+    margin-bottom: var(--space-xs);
+    display: block;
+  }
+
+  /* ──── VOICE & TONE ──── */
+  .voice-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+    margin-top: var(--space-xl);
+  }
+  .voice-card {
+    padding: var(--space-xl);
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(122, 174, 142, 0.1);
+  }
+  .voice-card.do { border-left: 3px solid var(--fern); }
+  .voice-card.dont { border-left: 3px solid var(--ember); }
+
+  .voice-card-header {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: var(--space-lg);
+  }
+  .voice-card.do .voice-card-header { color: var(--mint); }
+  .voice-card.dont .voice-card-header { color: var(--ember); }
+
+  .voice-example {
+    font-family: var(--font-body);
+    font-size: 15px;
+    color: var(--fog);
+    margin-bottom: var(--space-md);
+    padding-left: var(--space-md);
+    border-left: 1px solid rgba(122, 174, 142, 0.08);
+    line-height: 1.6;
+  }
+
+  /* ──── LIGHT MODE PREVIEW ──── */
+  .light-mode-preview {
+    background: var(--cloud);
+    border-radius: var(--radius-lg);
+    padding: var(--space-2xl);
+    margin-top: var(--space-xl);
+    border: 1px solid rgba(26, 47, 35, 0.08);
+  }
+
+  .light-mode-preview .lm-title {
+    font-family: var(--font-display);
+    font-size: 36px;
+    color: var(--canopy);
+    margin-bottom: var(--space-sm);
+  }
+  .light-mode-preview .lm-subtitle {
+    font-family: var(--font-body);
+    font-size: 16px;
+    color: var(--moss);
+    margin-bottom: var(--space-xl);
+  }
+  .light-mode-preview .lm-code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--snow);
+    padding: var(--space-lg);
+    border-radius: var(--radius-md);
+    color: var(--canopy);
+    border: 1px solid rgba(26, 47, 35, 0.08);
+    line-height: 1.8;
+  }
+  .light-mode-preview .lm-code .lm-kw { color: var(--violet); }
+  .light-mode-preview .lm-code .lm-str { color: var(--ember); }
+  .light-mode-preview .lm-code .lm-fn { color: #2B7A5B; }
+  .light-mode-preview .lm-code .lm-cmt { color: var(--dust); }
+
+  .light-mode-preview .lm-btn {
+    display: inline-block;
+    margin-top: var(--space-lg);
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 10px 24px;
+    background: var(--canopy);
+    color: var(--daylight);
+    border-radius: var(--radius-sm);
+    border: none;
+    cursor: pointer;
+  }
+
+  /* ──── SPACING / GRID DEMO ──── */
+  .spacing-demo {
+    display: flex;
+    gap: var(--space-md);
+    align-items: flex-end;
+    margin-top: var(--space-xl);
+    flex-wrap: wrap;
+  }
+  .spacing-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+  .spacing-visual {
+    background: var(--fern);
+    border-radius: var(--radius-sm);
+    opacity: 0.6;
+    width: 48px;
+  }
+  .spacing-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--dust);
+    letter-spacing: 0.5px;
+  }
+  .spacing-value {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--sage);
+  }
+
+  /* ──── FOOTER ──── */
+  .lookbook-footer {
+    padding: var(--space-3xl) 0;
+    text-align: center;
+  }
+  .footer-mark {
+    font-family: var(--font-display);
+    font-size: 24px;
+    color: var(--daylight);
+    margin-bottom: var(--space-sm);
+  }
+  .footer-sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--dust);
+    letter-spacing: 2px;
+  }
+
+  /* ──── RESPONSIVE ──── */
+  @media (max-width: 768px) {
+    .brandmark-section,
+    .components-grid,
+    .voice-grid { grid-template-columns: 1fr; }
+    .trifecta-grid { grid-template-columns: 1fr; }
+    .palette-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ══════════════════════ HERO ══════════════════════ -->
+  <section class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-bg-2"></div>
+    <div class="hero-content">
+      <div class="hero-eyebrow">BRAND LOOKBOOK — 2026</div>
+      <h1 class="hero-title">Grover</h1>
+      <p class="hero-subtitle">
+        The retrieval trifecta for generative AI.<br>
+        <em>Graph. Vectors. Filesystem.</em>
+      </p>
+      <div class="hero-pip-install">
+        <span class="prompt">$</span> pip install <span class="pkg">grover</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ BRAND MARK ══════════════════════ -->
+  <section>
+    <div class="section-label">01 — Brand Mark</div>
+    <div class="brandmark-section">
+      <div class="brandmark-display">
+        <div class="logo-lockup">
+          <div class="logo-icon">
+            <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- Tree / Graph hybrid mark -->
+              <circle cx="40" cy="16" r="6" fill="#E8734A"/>
+              <circle cx="20" cy="40" r="5" fill="#7BAE8E"/>
+              <circle cx="60" cy="40" r="5" fill="#8B6CC1"/>
+              <circle cx="30" cy="62" r="5" fill="#4ABCE8"/>
+              <circle cx="54" cy="62" r="5" fill="#4A7C5C"/>
+              <!-- Edges -->
+              <line x1="40" y1="22" x2="22" y2="36" stroke="#7BAE8E" stroke-width="1.5" opacity="0.6"/>
+              <line x1="40" y1="22" x2="58" y2="36" stroke="#8B6CC1" stroke-width="1.5" opacity="0.6"/>
+              <line x1="22" y1="44" x2="30" y2="58" stroke="#4ABCE8" stroke-width="1.5" opacity="0.6"/>
+              <line x1="58" y1="44" x2="54" y2="58" stroke="#4A7C5C" stroke-width="1.5" opacity="0.6"/>
+              <line x1="22" y1="42" x2="56" y2="42" stroke="rgba(168,213,186,0.15)" stroke-width="1" stroke-dasharray="3 3"/>
+            </svg>
+          </div>
+          <div class="logo-text">Grover</div>
+          <div class="logo-tagline">Rove through your data</div>
+        </div>
+      </div>
+      <div class="brandmark-notes">
+        <h3>The Mark</h3>
+        <p>The logomark is a directed graph that reads as a tree — roots at the bottom, branching upward. Each node carries a pillar color: ember (entry point), green (graph), violet (vectors), cyan (filesystem).</p>
+        <p>The dashed horizontal line represents the hidden connections that vector similarity reveals — structure that isn't visible in the explicit graph.</p>
+        <p>Set in <strong>DM Serif Display</strong>, the wordmark carries warmth and confidence. The serif conveys craftsmanship; the weight says production-ready.</p>
+
+        <div class="mark-variants">
+          <div class="mark-variant dark">
+            <div class="mini-logo">Grover</div>
+            <span>Dark</span>
+          </div>
+          <div class="mark-variant light">
+            <div class="mini-logo">Grover</div>
+            <span>Light</span>
+          </div>
+          <div class="mark-variant accent">
+            <div class="mini-logo">Grover</div>
+            <span>Accent</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ COLOR PALETTE ══════════════════════ -->
+  <section>
+    <div class="section-label">02 — Color System</div>
+
+    <div class="palette-group-label">Forest — Core Palette</div>
+    <div class="palette-grid">
+      <div class="color-card">
+        <div class="color-swatch large" style="background: var(--canopy);"></div>
+        <div class="color-info">
+          <div class="color-name">Canopy</div>
+          <div class="color-hex">#1A2F23</div>
+          <div class="color-usage">Primary background</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch large" style="background: var(--understory);"></div>
+        <div class="color-info">
+          <div class="color-name">Understory</div>
+          <div class="color-hex">#243B2E</div>
+          <div class="color-usage">Cards, surfaces</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch large" style="background: var(--moss);"></div>
+        <div class="color-info">
+          <div class="color-name">Moss</div>
+          <div class="color-hex">#2D4A38</div>
+          <div class="color-usage">Elevated surfaces</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch large" style="background: var(--fern);"></div>
+        <div class="color-info">
+          <div class="color-name">Fern</div>
+          <div class="color-hex">#4A7C5C</div>
+          <div class="color-usage">Secondary accent, graph</div>
+        </div>
+      </div>
+    </div>
+    <div class="palette-grid">
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--sage);"></div>
+        <div class="color-info">
+          <div class="color-name">Sage</div>
+          <div class="color-hex">#7BAE8E</div>
+          <div class="color-usage">Muted text, borders</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--mint);"></div>
+        <div class="color-info">
+          <div class="color-name">Mint</div>
+          <div class="color-hex">#A8D5BA</div>
+          <div class="color-usage">Code highlights</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--meadow);"></div>
+        <div class="color-info">
+          <div class="color-name">Meadow</div>
+          <div class="color-hex">#D4F0E0</div>
+          <div class="color-usage">Body text</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--daylight);"></div>
+        <div class="color-info">
+          <div class="color-name">Daylight</div>
+          <div class="color-hex">#F0FAF4</div>
+          <div class="color-usage">Headings, emphasis</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="palette-group-label">Signal — Pillar Accents</div>
+    <div class="palette-grid">
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--ember);"></div>
+        <div class="color-info">
+          <div class="color-name">Ember</div>
+          <div class="color-hex">#E8734A</div>
+          <div class="color-usage">Primary CTA, entry point</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--violet);"></div>
+        <div class="color-info">
+          <div class="color-name">Violet</div>
+          <div class="color-hex">#8B6CC1</div>
+          <div class="color-usage">Vector search pillar</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--cyan);"></div>
+        <div class="color-info">
+          <div class="color-name">Cyan</div>
+          <div class="color-hex">#4ABCE8</div>
+          <div class="color-usage">Filesystem pillar</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--amber);"></div>
+        <div class="color-info">
+          <div class="color-name">Amber</div>
+          <div class="color-hex">#E8B44A</div>
+          <div class="color-usage">Warnings, highlights</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="palette-group-label">Neutral — Structure</div>
+    <div class="palette-grid">
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--bark);"></div>
+        <div class="color-info">
+          <div class="color-name">Bark</div>
+          <div class="color-hex">#1A1A18</div>
+          <div class="color-usage">Code backgrounds</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--stone);"></div>
+        <div class="color-info">
+          <div class="color-name">Stone</div>
+          <div class="color-hex">#2A2A27</div>
+          <div class="color-usage">Code blocks</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--cloud);"></div>
+        <div class="color-info">
+          <div class="color-name">Cloud</div>
+          <div class="color-hex">#F5F5F0</div>
+          <div class="color-usage">Light mode background</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: var(--snow);"></div>
+        <div class="color-info">
+          <div class="color-name">Snow</div>
+          <div class="color-hex">#FAFAF8</div>
+          <div class="color-usage">Light mode surface</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ TYPOGRAPHY ══════════════════════ -->
+  <section>
+    <div class="section-label">03 — Typography</div>
+
+    <!-- Display -->
+    <div class="type-specimen">
+      <div class="type-header">
+        <span class="type-family-name">DM Serif Display</span>
+        <span class="type-family-class">Display / Headings</span>
+      </div>
+      <div class="type-display-sample">
+        Rove through your data. <em>Grover.</em>
+      </div>
+      <p style="font-family: var(--font-body); font-size: 14px; color: var(--dust); max-width: 500px;">
+        A refined transitional serif with optical precision. Used for the wordmark, headings, and moments of emphasis. The contrast between thick and thin strokes mirrors the relationship between graph structure (heavy, defined) and vector similarity (subtle, continuous).
+      </p>
+    </div>
+
+    <!-- Body -->
+    <div class="type-specimen">
+      <div class="type-header">
+        <span class="type-family-name">Instrument Sans</span>
+        <span class="type-family-class">Body / Interface</span>
+      </div>
+      <div class="type-body-sample">
+        Grover combines in-memory graph storage, vector search indexing, and a virtual filesystem into a single retrieval engine. Agents navigate your data the way they already know how — through files and directories — while Grover handles the traversal and similarity matching underneath.
+      </div>
+      <p style="font-family: var(--font-body); font-size: 14px; color: var(--dust); max-width: 500px;">
+        Clean, contemporary, and highly legible at all sizes. The humanist proportions keep docs and UI feeling approachable rather than clinical. Available in weights 400–700.
+      </p>
+    </div>
+
+    <!-- Mono -->
+    <div class="type-specimen">
+      <div class="type-header">
+        <span class="type-family-name">JetBrains Mono</span>
+        <span class="type-family-class">Code / Technical</span>
+      </div>
+      <div class="type-mono-sample">
+<span class="keyword">from</span> grover <span class="keyword">import</span> <span class="cls">Grover</span>, <span class="cls">Node</span>, <span class="cls">Edge</span>
+
+<span class="comment"># Initialize with your data</span>
+g = <span class="cls">Grover</span>()
+g.<span class="func">add_node</span>(<span class="cls">Node</span>(id=<span class="string">"doc-1"</span>, text=<span class="string">"quarterly report"</span>))
+g.<span class="func">add_edge</span>(<span class="cls">Edge</span>(src=<span class="string">"doc-1"</span>, dst=<span class="string">"team-eng"</span>))
+
+<span class="comment"># Mount as a virtual filesystem</span>
+fs = g.<span class="func">mount</span>(<span class="string">"/data"</span>)
+
+<span class="comment"># Agents navigate naturally</span>
+results = fs.<span class="func">ls</span>(<span class="string">"/data/teams/eng"</span>)
+similar = fs.<span class="func">search</span>(<span class="string">"revenue forecast"</span>, top=<span class="string">5</span>)
+      </div>
+    </div>
+
+    <!-- Type Scale -->
+    <div class="type-scale">
+      <div class="type-scale-row">
+        <span class="type-scale-label">Display XL</span>
+        <span class="type-scale-size">72px</span>
+        <span style="font-family: var(--font-display); font-size: 36px; color: var(--daylight);">Grover</span>
+      </div>
+      <div class="type-scale-row">
+        <span class="type-scale-label">Display</span>
+        <span class="type-scale-size">48px</span>
+        <span style="font-family: var(--font-display); font-size: 28px; color: var(--daylight);">The retrieval trifecta</span>
+      </div>
+      <div class="type-scale-row">
+        <span class="type-scale-label">Heading</span>
+        <span class="type-scale-size">28px</span>
+        <span style="font-family: var(--font-display); font-size: 22px; color: var(--daylight);">Graph-native retrieval</span>
+      </div>
+      <div class="type-scale-row">
+        <span class="type-scale-label">Subheading</span>
+        <span class="type-scale-size">20px</span>
+        <span style="font-family: var(--font-body); font-size: 18px; font-weight: 600; color: var(--meadow);">Build wherever your data lives</span>
+      </div>
+      <div class="type-scale-row">
+        <span class="type-scale-label">Body</span>
+        <span class="type-scale-size">16px</span>
+        <span style="font-family: var(--font-body); font-size: 16px; color: var(--meadow);">Agents navigate your data through files and directories.</span>
+      </div>
+      <div class="type-scale-row">
+        <span class="type-scale-label">Caption</span>
+        <span class="type-scale-size">13px</span>
+        <span style="font-family: var(--font-body); font-size: 13px; color: var(--sage);">MIT Licensed · Python 3.10+</span>
+      </div>
+      <div class="type-scale-row">
+        <span class="type-scale-label">Mono</span>
+        <span class="type-scale-size">14px</span>
+        <span style="font-family: var(--font-mono); font-size: 14px; color: var(--mint);">pip install grover</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ TRIFECTA ══════════════════════ -->
+  <section>
+    <div class="section-label">04 — The Trifecta</div>
+    <p style="font-family: var(--font-display); font-size: 28px; color: var(--daylight); max-width: 600px;">
+      Three retrieval modes. One interface. Each pillar carries its own accent color.
+    </p>
+    <div class="trifecta-grid">
+      <div class="trifecta-card graph">
+        <div class="trifecta-icon">⬡</div>
+        <div class="trifecta-title">Graph Storage</div>
+        <div class="trifecta-desc">In-memory directed graph optimized for traversal. CSR format, NetworkX-compatible. Your data's real structure — not LLM-extracted guesses.</div>
+      </div>
+      <div class="trifecta-card vector">
+        <div class="trifecta-icon">◎</div>
+        <div class="trifecta-title">Vector Index</div>
+        <div class="trifecta-desc">HNSW similarity search over node embeddings. Find what's semantically close, then traverse the graph to find what's structurally connected.</div>
+      </div>
+      <div class="trifecta-card vfs">
+        <div class="trifecta-icon">⌸</div>
+        <div class="trifecta-title">Virtual Filesystem</div>
+        <div class="trifecta-desc">Mount your graph as a navigable directory. Agents use ls, read, search — tools they already have. No new query language to learn.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ COMPONENTS ══════════════════════ -->
+  <section>
+    <div class="section-label">05 — UI Components</div>
+
+    <div class="components-grid">
+      <div class="component-card">
+        <div class="component-label">Buttons</div>
+        <div class="btn-row">
+          <button class="btn btn-primary">Get Started</button>
+          <button class="btn btn-secondary">Documentation</button>
+          <button class="btn btn-ghost">Learn more →</button>
+        </div>
+      </div>
+
+      <div class="component-card">
+        <div class="component-label">Badges / Pillar Tags</div>
+        <div class="badge-row">
+          <span class="badge badge-graph">Graph</span>
+          <span class="badge badge-vector">Vector</span>
+          <span class="badge badge-vfs">Filesystem</span>
+          <span class="badge badge-default">v0.1.0</span>
+        </div>
+      </div>
+
+      <div class="component-card">
+        <div class="component-label">Code Inline</div>
+        <p style="color: var(--fog); font-size: 15px; line-height: 1.8;">
+          Initialize with <code class="inline">Grover()</code> and mount your graph using <code class="inline">g.mount("/data")</code>. Search with <code class="inline">fs.search("query")</code>.
+        </p>
+      </div>
+
+      <div class="component-card">
+        <div class="component-label">Form Elements</div>
+        <label class="input-label">API Endpoint</label>
+        <input class="input-sample" type="text" placeholder="https://api.grover.dev/v1" />
+        <div class="btn-row">
+          <button class="btn btn-primary">Connect</button>
+          <button class="btn btn-secondary">Test</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ LIGHT MODE ══════════════════════ -->
+  <section>
+    <div class="section-label">06 — Light Mode</div>
+    <p style="font-family: var(--font-body); font-size: 15px; color: var(--sage); max-width: 500px; margin-bottom: var(--space-md);">
+      The forest palette inverts cleanly. Canopy becomes the text color; Cloud becomes the canvas. Same warmth, same hierarchy.
+    </p>
+
+    <div class="light-mode-preview">
+      <div class="lm-title">Grover</div>
+      <div class="lm-subtitle">The retrieval engine that agents already know how to use.</div>
+      <div class="lm-code">
+<span class="lm-kw">import</span> grover
+
+<span class="lm-cmt"># Build your graph wherever your data lives</span>
+g = grover.<span class="lm-fn">from_postgres</span>(<span class="lm-str">"postgresql://localhost/mydb"</span>)
+
+<span class="lm-cmt"># Mount and explore</span>
+fs = g.<span class="lm-fn">mount</span>(<span class="lm-str">"/data"</span>)
+fs.<span class="lm-fn">ls</span>(<span class="lm-str">"/"</span>)
+<span class="lm-cmt"># → ['teams/', 'projects/', 'documents/']</span>
+      </div>
+      <button class="lm-btn">Read the Docs →</button>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ VOICE & TONE ══════════════════════ -->
+  <section>
+    <div class="section-label">07 — Voice &amp; Tone</div>
+    <p style="font-family: var(--font-display); font-size: 28px; color: var(--daylight); max-width: 600px; margin-bottom: var(--space-md);">
+      Confident. Clear. Never corporate.
+    </p>
+    <p style="font-family: var(--font-body); font-size: 15px; color: var(--sage); max-width: 560px;">
+      Grover speaks like a senior engineer explaining something to a peer — direct, opinionated, and respectful of the reader's intelligence. No hype. No hand-waving.
+    </p>
+
+    <div class="voice-grid">
+      <div class="voice-card do">
+        <div class="voice-card-header">✓ This</div>
+        <div class="voice-example">"Grover mounts your graph as a filesystem. Agents use ls and read — tools they already have."</div>
+        <div class="voice-example">"Vector search finds what's similar. Graph traversal finds what's connected. You need both."</div>
+        <div class="voice-example">"pip install grover. That's the whole ops story."</div>
+      </div>
+      <div class="voice-card dont">
+        <div class="voice-card-header">✗ Not This</div>
+        <div class="voice-example">"Grover leverages cutting-edge AI to revolutionize the retrieval paradigm."</div>
+        <div class="voice-example">"Our enterprise-grade solution enables seamless integration with your existing infrastructure."</div>
+        <div class="voice-example">"Unlock the full potential of your data with Grover's powerful platform."</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ SPACING ══════════════════════ -->
+  <section>
+    <div class="section-label">08 — Spacing Scale</div>
+    <p style="font-family: var(--font-body); font-size: 15px; color: var(--sage); max-width: 500px;">
+      Based on a 4px grid with deliberate jumps. Generous whitespace is a core brand value — the design should breathe.
+    </p>
+    <div class="spacing-demo">
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 4px;"></div>
+        <span class="spacing-label">xs</span>
+        <span class="spacing-value">4px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 8px;"></div>
+        <span class="spacing-label">sm</span>
+        <span class="spacing-value">8px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 16px;"></div>
+        <span class="spacing-label">md</span>
+        <span class="spacing-value">16px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 24px;"></div>
+        <span class="spacing-label">lg</span>
+        <span class="spacing-value">24px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 40px;"></div>
+        <span class="spacing-label">xl</span>
+        <span class="spacing-value">40px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 64px;"></div>
+        <span class="spacing-label">2xl</span>
+        <span class="spacing-value">64px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 96px;"></div>
+        <span class="spacing-label">3xl</span>
+        <span class="spacing-value">96px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 140px;"></div>
+        <span class="spacing-label">4xl</span>
+        <span class="spacing-value">140px</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ FOOTER ══════════════════════ -->
+  <div class="lookbook-footer">
+    <div class="footer-mark">Grover</div>
+    <div class="footer-sub">BRAND LOOKBOOK · V1.0 · 2026</div>
+  </div>
+
+</div>
+
+</body>
+</html>

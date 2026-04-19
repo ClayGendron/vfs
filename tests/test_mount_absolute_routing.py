@@ -36,7 +36,7 @@ from sqlmodel import SQLModel
 from vfs.backends.database import DatabaseFileSystem
 from vfs.base import VirtualFileSystem
 from vfs.client import VFSClientAsync
-from vfs.results import Candidate, VFSResult
+from vfs.results import Entry, VFSResult
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -350,10 +350,11 @@ class TestCandidateBasedSearchUnderMount:
     async def test_glob_candidates_with_absolute_mount_pattern(self, two_mounts):
         router, _, _ = two_mounts
         seeds = VFSResult(
-            candidates=[
-                Candidate(path="/data/src/app.py"),
-                Candidate(path="/other/src/main.py"),
-            ]
+            function="glob",
+            entries=[
+                Entry(path="/data/src/app.py"),
+                Entry(path="/other/src/main.py"),
+            ],
         )
         r = await router.glob("/data/**/*.py", candidates=seeds)
         assert set(r.paths) == {"/data/src/app.py"}
@@ -361,10 +362,11 @@ class TestCandidateBasedSearchUnderMount:
     async def test_grep_candidates_with_absolute_mount_glob_filter(self, two_mounts):
         router, _, _ = two_mounts
         seeds = VFSResult(
-            candidates=[
-                Candidate(path="/data/src/app.py"),
-                Candidate(path="/other/src/main.py"),
-            ]
+            function="glob",
+            entries=[
+                Entry(path="/data/src/app.py"),
+                Entry(path="/other/src/main.py"),
+            ],
         )
         r = await router.grep("print", candidates=seeds, globs=("/data/**/*.py",))
         assert set(r.paths) == {"/data/src/app.py"}

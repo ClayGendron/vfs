@@ -529,7 +529,7 @@ class TestFrozenIsland:
         try:
             r = await router.read("/workspace/.frozen/locked.toml")
             assert r.success
-            assert r.candidates[0].content == "config"
+            assert r.entries[0].content == "config"
         finally:
             await router.close()
 
@@ -673,7 +673,7 @@ class TestBatchFailFast:
         try:
             listing = await router.glob("/**/*")
             assert listing.success
-            paths = {c.path for c in listing.candidates}
+            paths = {e.path for e in listing.entries}
             assert "/ws/.frozen/c.toml" in paths
             assert "/ws/src/a.py" in paths
 

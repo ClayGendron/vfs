@@ -1,6 +1,10 @@
 # Expansion Opportunities
 
-Detailed analysis of each identified opportunity for expanding Grover's feature set, organized by priority.
+- **Date:** 2026-03-04 (research conducted)
+- **Source:** migrated from `research/expansion-opportunities.md` on 2026-04-18
+- **Status:** snapshot — landscape findings remain current; any VFS API surface references reflect the v0.1 alpha and have been superseded by the v2 architecture
+
+Detailed analysis of each identified opportunity for expanding VFS's (currently `Grover` in code) feature set, organized by priority.
 
 ---
 
@@ -8,13 +12,13 @@ Detailed analysis of each identified opportunity for expanding Grover's feature 
 
 ### 1. deepagents BackendProtocol Implementation
 
-**What:** Implement Grover as a `BackendProtocol` for LangChain's deepagents framework, allowing any LangGraph deep agent to use Grover as its file storage backend.
+**What:** Implement VFS as a `BackendProtocol` for LangChain's deepagents framework, allowing any LangGraph deep agent to use VFS as its file storage backend.
 
-**Why:** deepagents is the most directly comparable framework, and its `BackendProtocol` maps cleanly to Grover's existing operations. This is the fastest path to getting Grover into production agent systems.
+**Why:** deepagents is the most directly comparable framework, and its `BackendProtocol` maps cleanly to VFS's existing operations. This is the fastest path to getting VFS into production agent systems.
 
 **Interface mapping:**
 
-| deepagents method | Grover equivalent |
+| deepagents method | VFS equivalent |
 |-------------------|-------------------|
 | `ls_info(path)` | `list_dir(path)` |
 | `read(path, offset, limit)` | `read(path, offset, limit)` |
@@ -23,13 +27,13 @@ Detailed analysis of each identified opportunity for expanding Grover's feature 
 | `grep_raw(pattern, path, glob)` | `grep(pattern, path, glob_filter=glob, fixed_string=True)` |
 | `glob_info(pattern, path)` | `glob(pattern, path)` |
 
-**Additional value:** Grover-specific tools exposed as custom middleware:
+**Additional value:** VFS-specific tools exposed as custom middleware:
 - `search_semantic(query, k)` — vector similarity search
 - `list_versions(path)` / `restore_version(path, v)` — version management
 - `successors(path)` / `predecessors(path)` — graph queries
 - `list_trash()` / `restore_from_trash(path)` — soft-delete management
 
-**Effort:** Medium. Protocol adapter + middleware. No changes to Grover core.
+**Effort:** Medium. Protocol adapter + middleware. No changes to VFS core.
 
 **Dependencies:** deepagents as optional dependency.
 
@@ -37,9 +41,9 @@ Detailed analysis of each identified opportunity for expanding Grover's feature 
 
 ### 2. MCP Server
 
-**What:** Build a Model Context Protocol server that exposes Grover's versioned filesystem, semantic search, and graph queries as MCP tools.
+**What:** Build a Model Context Protocol server that exposes VFS's versioned filesystem, semantic search, and graph queries as MCP tools.
 
-**Why:** MCP is the emerging standard for AI tool access. A Grover MCP server would make Grover accessible to Claude Desktop, Cursor, VS Code, and any MCP-compatible client — instantly. No competing MCP server offers versioning, semantic search, or graph queries.
+**Why:** MCP is the emerging standard for AI tool access. A VFS MCP server would make VFS accessible to Claude Desktop, Cursor, VS Code, and any MCP-compatible client — instantly. No competing MCP server offers versioning, semantic search, or graph queries.
 
 **Tools to expose:**
 
@@ -68,15 +72,15 @@ Detailed analysis of each identified opportunity for expanding Grover's feature 
 
 ### 3. Agent Memory Layer
 
-**What:** Position Grover as the storage backend for agent memory systems, compatible with Letta's context repository model.
+**What:** Position VFS as the storage backend for agent memory systems, compatible with Letta's context repository model.
 
-**Why:** Letta's MemFS demonstrates strong demand for file-based agent memory with versioning. Grover already has everything MemFS provides (versioned files, directory hierarchy) plus things it lacks (semantic search over memory, dependency graph of memory relationships, database-backed persistence, multi-user sharing).
+**Why:** Letta's MemFS demonstrates strong demand for file-based agent memory with versioning. VFS already has everything MemFS provides (versioned files, directory hierarchy) plus things it lacks (semantic search over memory, dependency graph of memory relationships, database-backed persistence, multi-user sharing).
 
 **Approach:**
 - Define memory file conventions compatible with Letta's MemFS format (markdown + frontmatter)
 - Support the three-tier memory model: History (immutable), Memory (persistent/mutable), Scratchpad (ephemeral)
-- Use Grover's VFS mounts to map tiers to different backends (e.g., scratchpad -> ephemeral, memory -> persistent DB)
-- Search over memory files via Grover's semantic search
+- Use VFS's mounts to map tiers to different backends (e.g., scratchpad -> ephemeral, memory -> persistent DB)
+- Search over memory files via VFS's semantic search
 - Track memory relationships via the knowledge graph (e.g., "this memory references that conversation")
 
 **Effort:** Medium. Mostly conventions and documentation, plus optional helper utilities.
@@ -163,8 +167,8 @@ Merge = three-way diff between ancestor, source, dest.
 **Why:** Greptile's research demonstrates:
 - Raw code embeddings produce poor search results
 - **Code-to-NL translation before embedding yields 12% better accuracy**
-- Function-level chunking (which Grover already does) outperforms file-level
-- Combining semantic search with structural understanding (which Grover has via graph) is the winning approach
+- Function-level chunking (which VFS already does) outperforms file-level
+- Combining semantic search with structural understanding (which VFS has via graph) is the winning approach
 
 **Approach:**
 1. Add a `CodeDescriber` protocol with method `describe(code: str, language: str) -> str`
@@ -181,14 +185,14 @@ Merge = three-way diff between ancestor, source, dest.
 
 ### 7. Sandbox Integration Adapters
 
-**What:** Lightweight adapters for running Grover inside E2B, Modal, and Fly.io Sprites sandboxes.
+**What:** Lightweight adapters for running VFS inside E2B, Modal, and Fly.io Sprites sandboxes.
 
-**Why:** No sandbox currently provides versioned file access, semantic search, or graph queries. Grover running inside a sandbox fills all these gaps.
+**Why:** No sandbox currently provides versioned file access, semantic search, or graph queries. VFS running inside a sandbox fills all these gaps.
 
 **Approach:**
 - **E2B adapter**: `DatabaseFileSystem` connecting to external PostgreSQL. Agent workspace persists across ephemeral sandbox sessions.
-- **Fly.io Sprites adapter**: `LocalFileSystem` using the Sprite's persistent storage. Grover adds versioning/search to the already-persistent FS.
-- **Generic Docker adapter**: Dockerfile + entrypoint that initializes Grover with configurable backend.
+- **Fly.io Sprites adapter**: `LocalFileSystem` using the Sprite's persistent storage. VFS adds versioning/search to the already-persistent FS.
+- **Generic Docker adapter**: Dockerfile + entrypoint that initializes VFS with configurable backend.
 
 **Effort:** Low per adapter (mostly configuration + documentation).
 
@@ -200,15 +204,15 @@ Merge = three-way diff between ancestor, source, dest.
 
 ### 8. AFS Reference Implementation
 
-**What:** Align Grover with the "Everything is Context" paper's formal model, positioning it as the reference implementation of the Agentic File System concept.
+**What:** Align VFS with the "Everything is Context" paper's formal model, positioning it as the reference implementation of the Agentic File System concept.
 
-**Why:** The AFS paper validates Grover's core philosophy and provides a theoretical framework. Being the reference implementation gives Grover academic credibility and positions it as the canonical tool in this emerging space.
+**Why:** The AFS paper validates VFS's core philosophy and provides a theoretical framework. Being the reference implementation gives VFS academic credibility and positions it as the canonical tool in this emerging space.
 
 **Alignment work:**
-- Map Grover's three-tier storage (mount types) to AFS's History/Memory/Scratchpad tiers
+- Map VFS's three-tier storage (mount types) to AFS's History/Memory/Scratchpad tiers
 - Add transaction logging (already have event bus; formalize into audit log)
 - Add metadata governance (file metadata policies, access tracking)
-- Publish alignment document showing how Grover implements each AFS principle
+- Publish alignment document showing how VFS implements each AFS principle
 
 **Effort:** Medium. Mostly design alignment and documentation, some new features.
 
@@ -220,7 +224,7 @@ Merge = three-way diff between ancestor, source, dest.
 
 **What:** Extend `UserScopedFileSystem` for agent-to-agent file sharing with controlled permissions and version visibility.
 
-**Why:** Multi-agent systems are growing (CrewAI, AutoGen, LangGraph multi-agent). Agents need to share work products, and Grover's existing sharing infrastructure is designed for users but works for agents too.
+**Why:** Multi-agent systems are growing (CrewAI, AutoGen, LangGraph multi-agent). Agents need to share work products, and VFS's existing sharing infrastructure is designed for users but works for agents too.
 
 **Enhancements:**
 - Agent identity model (agents as first-class users with `agent_id`)
@@ -237,7 +241,7 @@ Merge = three-way diff between ancestor, source, dest.
 
 ### 10. Cloud-Native Backend (S3/GCS)
 
-**What:** Add S3/GCS object storage as a Grover storage backend, separating data (object store) from metadata (database).
+**What:** Add S3/GCS object storage as a VFS storage backend, separating data (object store) from metadata (database).
 
 **Why:** Enables enterprise scale. Object storage is cheap, durable, and globally distributed. Metadata stays in PostgreSQL for fast queries. Pattern proven by JuiceFS, lakeFS.
 
@@ -256,13 +260,13 @@ Merge = three-way diff between ancestor, source, dest.
 
 ### 11. FUSE Mount
 
-**What:** Expose Grover mounts as FUSE filesystems, allowing agents and users to use standard Unix tools against Grover-backed files.
+**What:** Expose VFS mounts as FUSE filesystems, allowing agents and users to use standard Unix tools against VFS-backed files.
 
-**Why:** AgentFS demonstrates demand. FUSE access means `git`, `grep`, `find`, editors, and any other tool works against Grover files without modification.
+**Why:** AgentFS demonstrates demand. FUSE access means `git`, `grep`, `find`, editors, and any other tool works against VFS files without modification.
 
 **Approach:**
 - Use `fusepy` or `pyfuse3` Python library
-- Map FUSE callbacks to Grover operations (read -> `read()`, write -> `write()`, readdir -> `list_dir()`)
+- Map FUSE callbacks to VFS operations (read -> `read()`, write -> `write()`, readdir -> `list_dir()`)
 - Version access via special `.versions/` virtual directory per file
 - Read-only mode for safety, optional read-write
 

@@ -302,13 +302,13 @@ class TestVFSClientSearchAndListing:
         g.write("/data/b.py", "b")
         result = g.glob("**/*.py")
         assert isinstance(result, VFSResult)
-        assert len(result.candidates) == 2
+        assert len(result.entries) == 2
 
     def test_grep_returns_vfs_result(self, g: VFSClient):
         g.write("/data/test.txt", "needle in haystack")
         result = g.grep("needle")
         assert isinstance(result, VFSResult)
-        assert len(result.candidates) >= 1
+        assert len(result.entries) >= 1
 
     def test_set_algebra_works(self, g: VFSClient):
         g.write("/data/a.py", "import os")
@@ -318,8 +318,8 @@ class TestVFSClientSearchAndListing:
         py_files = g.glob("**/*.py")
         importers = g.grep("import")
         intersection = py_files & importers
-        assert any("a.py" in c.path for c in intersection.candidates)
-        assert not any("b.py" in c.path for c in intersection.candidates)
+        assert any("a.py" in e.path for e in intersection.entries)
+        assert not any("b.py" in e.path for e in intersection.entries)
 
     def test_ls_returns_vfs_result(self, g: VFSClient):
         g.mkdir("/data/subdir")
@@ -342,7 +342,7 @@ class TestVFSClientQuery:
         g.write("/data/hello.py", "print('hi')")
         result = g.run_query('glob "**/*.py"')
         assert isinstance(result, VFSResult)
-        assert any("hello.py" in c.path for c in result.candidates)
+        assert any("hello.py" in e.path for e in result.entries)
 
     def test_cli_returns_str(self, g: VFSClient):
         g.write("/data/hello.py", "print('hi')")

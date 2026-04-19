@@ -1,14 +1,16 @@
 # Graph Memory & Meeting Subgraph Research
 
-Research into rustworkx graph memory characteristics and optimal algorithms for extracting meeting subgraphs connecting seed nodes in large directed graphs.
+- **Date:** 2026-03-03 (research conducted)
+- **Source:** migrated from `research/graph-memory-and-meeting-subgraph.md` on 2026-04-18
+- **Status:** snapshot — landscape findings remain current; any VFS API surface references reflect the v0.1 alpha and have been superseded by the v2 architecture
 
-**Date:** 2026-02-27
+Research into rustworkx graph memory characteristics and optimal algorithms for extracting meeting subgraphs connecting seed nodes in large directed graphs.
 
 ---
 
 ## Context
 
-Grover uses rustworkx `PyDiGraph` for in-memory knowledge graphs (file dependencies, code analysis). As the system scales to multi-tenant deployment, two questions arise:
+VFS (currently `Grover` in code) uses rustworkx `PyDiGraph` for in-memory knowledge graphs (file dependencies, code analysis). As the system scales to multi-tenant deployment, two questions arise:
 
 1. **How much memory does a rustworkx graph consume?** Can we serve 50+ concurrent users within a 2 GB RAM budget?
 2. **What is the fastest algorithm for extracting a meeting subgraph** — the minimal connected subgraph linking a set of seed nodes?

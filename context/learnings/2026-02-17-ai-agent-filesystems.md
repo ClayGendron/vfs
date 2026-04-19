@@ -1,14 +1,18 @@
 # AI Agent Filesystems and File Management
 
+- **Date:** 2026-02-17 (research conducted)
+- **Source:** migrated from `research/ai-agent-filesystems.md` on 2026-04-18
+- **Status:** snapshot — landscape findings remain current; any VFS API surface references reflect the v0.1 alpha and have been superseded by the v2 architecture
+
 ## AI Agent Frameworks with File/Storage Abstractions
 
 ### LangChain Deep Agents
 
-The most directly comparable system to Grover. Released late 2025, introduced a pluggable filesystem backend with a mount-like composite pattern.
+The most directly comparable system to VFS (currently `Grover` in code). Released late 2025, introduced a pluggable filesystem backend with a mount-like composite pattern.
 
 - `BackendProtocol` with methods: `ls_info()`, `read()`, `grep_raw()`, `glob_info()`, `write()`, `edit()`
 - Built-in backends: StateBackend (ephemeral), FilesystemBackend (local disk), StoreBackend (persistent via Redis/Postgres), sandbox backends (Modal, Daytona, Deno)
-- `CompositeBackend` routes operations by path prefix — validates Grover's mount architecture
+- `CompositeBackend` routes operations by path prefix — validates VFS's mount architecture
 - Key insight from their blog: "a single interface through which an agent can flexibly store, retrieve, and update an infinite amount of context"
 
 See [deepagents-analysis.md](deepagents-analysis.md) for full technical breakdown.
@@ -62,16 +66,16 @@ CVE-2025-53109 and CVE-2025-53110 exposed directory traversal bypasses in the fi
 - **No relationship awareness.** Files treated as isolated entities.
 - **Stateless.** No persistent state about managed files.
 
-### Grover MCP Server Opportunity
+### VFS MCP Server Opportunity
 
-A Grover MCP Server would expose:
+A VFS MCP Server would expose:
 - `write_file` with automatic versioning and rollback via `restore_version`
 - `search_semantic` for meaning-based file search
 - `query_graph` for "what files depend on X?" queries
 - `diff` and `history` for version comparison
 - Safe delete with trash and restore
 
-This would make Grover accessible to Claude Desktop, Cursor, VS Code, and any MCP-compatible client.
+This would make VFS accessible to Claude Desktop, Cursor, VS Code, and any MCP-compatible client.
 
 ---
 
@@ -131,9 +135,9 @@ Sandboxed environment with shell, editor, and browser. Memory layer stores "vect
 - **Dependency graphs are not reusable.** Aider's repo map, Augment's graph, Greptile's codegraph are all internal.
 - **Semantic search is always cloud-hosted.** No lightweight local-first option.
 
-### Grover's Unique Value for Code Agents
+### VFS's Unique Value for Code Agents
 
-Grover provides all three capabilities (versioning, dependency graph, semantic search) as a single local-first library:
+VFS provides all three capabilities (versioning, dependency graph, semantic search) as a single local-first library:
 - File versioning with diff-based storage (lighter than Git for agent workspaces)
 - Code dependency analysis (Python AST, JS/TS/Go via tree-sitter, extensible)
 - Local HNSW semantic search (usearch, no cloud dependency)

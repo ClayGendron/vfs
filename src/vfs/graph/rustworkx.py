@@ -23,7 +23,7 @@ import rustworkx
 from sqlmodel import select
 
 from vfs.paths import connection_path, decompose_connection
-from vfs.results import Candidate, Detail, VFSResult
+from vfs.results import Entry, VFSResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -256,17 +256,24 @@ class RustworkxGraph:
         new_in: dict[str, set[str]] = {}
         new_edge_types: dict[tuple[str, str], str] = {}
 
-        stmt = select(self._model).where(
+        # Graph load only needs the four connection columns — projecting the
+        # full row would pull every file's content + embedding blob just to
+        # rebuild the edge list.
+        stmt = select(
+            self._model.path,
+            self._model.source_path,
+            self._model.target_path,
+            self._model.connection_type,
+        ).where(
             self._model.kind == "connection",
             self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
         result = await session.execute(stmt)
-        rows: list[VFSObjectBase] = list(result.scalars().all())
-        for obj in rows:
-            src = obj.source_path
-            tgt = obj.target_path
-            parts = decompose_connection(obj.path)
-            conn_type = obj.connection_type or (parts.connection_type if parts else "")
+        for row in result.all():
+            src = row.source_path
+            tgt = row.target_path
+            parts = decompose_connection(row.path)
+            conn_type = row.connection_type or (parts.connection_type if parts else "")
             if src and tgt:
                 new_nodes.add(src)
                 new_nodes.add(tgt)
@@ -286,70 +293,62 @@ class RustworkxGraph:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _relationship_candidates(
+    def _relationship_entries(
         paths_dict: dict[str, list[str]],
-        operation: str,
-    ) -> list[Candidate]:
-        """Build candidates from {path: [related_paths]} mapping."""
-        return [
-            Candidate(
-                path=p,
-                details=(
-                    Detail(
-                        operation=operation,
-                        metadata={"paths": sorted(paths_dict[p])},
-                    ),
-                ),
-            )
-            for p in sorted(paths_dict)
-        ]
+    ) -> list[Entry]:
+        """Build entries from {path: [related_paths]} mapping."""
+        return [Entry(path=p) for p in sorted(paths_dict)]
 
     @staticmethod
-    def _subgraph_candidates(
+    def _subgraph_entries(
         node_set: set[str],
         edges_out: dict[str, frozenset[str]],
         edge_types: dict[tuple[str, str], str],
-        operation: str,
-    ) -> list[Candidate]:
-        """Build node + connection candidates from a subgraph."""
-        detail = Detail(operation=operation)
-
+    ) -> list[Entry]:
+        """Build node + connection entries from a subgraph."""
         # Nodes
-        candidates: list[Candidate] = [Candidate(path=p, details=(detail,)) for p in sorted(node_set)]
+        entries: list[Entry] = [Entry(path=p) for p in sorted(node_set)]
 
-        # Edges as connection candidates
-        candidates.extend(
-            Candidate(
-                path=connection_path(s, t, edge_types[(s, t)]),
-                weight=1.0,
-                details=(detail,),
-            )
+        # Edges as connection entries
+        entries.extend(
+            Entry(path=connection_path(s, t, edge_types[(s, t)]))
             for s in node_set
             for t in edges_out.get(s, frozenset())
             if t in node_set
         )
 
-        return candidates
+        return entries
 
     @staticmethod
-    def _score_candidates(
+    def _score_entries(
         scores: dict[str, float],
-        operation: str,
-    ) -> list[Candidate]:
-        """Build candidates from {path: score} mapping, sorted by score descending."""
+        *,
+        in_degrees: dict[str, int] | None = None,
+        out_degrees: dict[str, int] | None = None,
+    ) -> list[Entry]:
+        """Build entries from {path: score} mapping, sorted by score descending.
+
+        When *in_degrees* / *out_degrees* are provided (pagerank-run degree
+        counts), those values are written into each ``Entry`` directly and
+        override any persisted degree columns on the object row.
+        """
         sorted_items = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        in_degrees = in_degrees or {}
+        out_degrees = out_degrees or {}
         return [
-            Candidate(
+            Entry(
                 path=path,
-                details=(Detail(operation=operation, score=score),),
+                score=score,
+                in_degree=in_degrees.get(path),
+                out_degree=out_degrees.get(path),
             )
             for path, score in sorted_items
         ]
 
     @staticmethod
-    def _extract_paths(candidates: VFSResult) -> list[str]:
+    def _extract_paths(result: VFSResult) -> list[str]:
         """Extract path strings from a VFSResult."""
-        return [c.path for c in candidates.candidates]
+        return [e.path for e in result.entries]
 
     # ------------------------------------------------------------------
     # Light reads — async inline (no thread overhead)
@@ -386,11 +385,12 @@ class RustworkxGraph:
                         predecessor_targets.setdefault(s, []).append(t)
 
             return VFSResult(
-                candidates=self._relationship_candidates(predecessor_targets, "predecessors"),
+                function="predecessors",
+                entries=self._relationship_entries(predecessor_targets),
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"predecessors failed: {e}"])
+            return VFSResult(function="predecessors", success=False, errors=[f"predecessors failed: {e}"])
 
     async def successors(
         self,
@@ -412,11 +412,12 @@ class RustworkxGraph:
                         successor_sources.setdefault(t, []).append(s)
 
             return VFSResult(
-                candidates=self._relationship_candidates(successor_sources, "successors"),
+                function="successors",
+                entries=self._relationship_entries(successor_sources),
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"successors failed: {e}"])
+            return VFSResult(function="successors", success=False, errors=[f"successors failed: {e}"])
 
     # ------------------------------------------------------------------
     # Heavy traversal — async via to_thread
@@ -435,7 +436,7 @@ class RustworkxGraph:
             visible = self._visible_nodes(user_id)
             valid_paths = set(self._extract_paths(candidates)) & visible
             if not valid_paths:
-                return VFSResult()
+                return VFSResult(function="ancestors")
             nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
                 self._ancestors_impl,
@@ -445,7 +446,7 @@ class RustworkxGraph:
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"ancestors failed: {e}"])
+            return VFSResult(function="ancestors", success=False, errors=[f"ancestors failed: {e}"])
 
     @staticmethod
     def _ancestors_impl(
@@ -461,7 +462,8 @@ class RustworkxGraph:
                 if p is not None and p not in valid_paths:
                     result_map.setdefault(p, []).append(candidate)
         return VFSResult(
-            candidates=RustworkxGraph._relationship_candidates(result_map, "ancestors"),
+            function="ancestors",
+            entries=RustworkxGraph._relationship_entries(result_map),
         )
 
     async def descendants(
@@ -477,7 +479,7 @@ class RustworkxGraph:
             visible = self._visible_nodes(user_id)
             valid_paths = set(self._extract_paths(candidates)) & visible
             if not valid_paths:
-                return VFSResult()
+                return VFSResult(function="descendants")
             nodes, edges_out = self._snapshot(user_id)
             return await asyncio.to_thread(
                 self._descendants_impl,
@@ -487,7 +489,7 @@ class RustworkxGraph:
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"descendants failed: {e}"])
+            return VFSResult(function="descendants", success=False, errors=[f"descendants failed: {e}"])
 
     @staticmethod
     def _descendants_impl(
@@ -503,7 +505,8 @@ class RustworkxGraph:
                 if p is not None and p not in valid_paths:
                     result_map.setdefault(p, []).append(candidate)
         return VFSResult(
-            candidates=RustworkxGraph._relationship_candidates(result_map, "descendants"),
+            function="descendants",
+            entries=RustworkxGraph._relationship_entries(result_map),
         )
 
     async def neighborhood(
@@ -520,7 +523,7 @@ class RustworkxGraph:
             visible = self._visible_nodes(user_id)
             seed_paths = set(self._extract_paths(candidates)) & visible
             if not seed_paths:
-                return VFSResult()
+                return VFSResult(function="neighborhood")
 
             _, snap_out = self._snapshot(user_id)
             if self._user_scoped and user_id:
@@ -548,16 +551,16 @@ class RustworkxGraph:
 
             visited_edges = {s: ts for s, ts in snap_out.items() if s in visited}
             return VFSResult(
-                candidates=self._subgraph_candidates(
+                function="neighborhood",
+                entries=self._subgraph_entries(
                     visited,
                     visited_edges,
                     snap_edge_types,
-                    "neighborhood",
                 ),
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"neighborhood failed: {e}"])
+            return VFSResult(function="neighborhood", success=False, errors=[f"neighborhood failed: {e}"])
 
     # ------------------------------------------------------------------
     # Subgraph algorithms
@@ -580,9 +583,9 @@ class RustworkxGraph:
             visible = self._visible_nodes(user_id)
             valid_seeds = [p for p in self._extract_paths(candidates) if p in visible]
             if len(valid_seeds) <= 1:
-                detail = Detail(operation="meeting_subgraph")
                 return VFSResult(
-                    candidates=[Candidate(path=p, details=(detail,)) for p in valid_seeds],
+                    function="meeting_subgraph",
+                    entries=[Entry(path=p) for p in valid_seeds],
                 )
             _, edges_out = self._snapshot(user_id)
             if self._user_scoped and user_id:
@@ -598,7 +601,7 @@ class RustworkxGraph:
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"meeting_subgraph failed: {e}"])
+            return VFSResult(function="meeting_subgraph", success=False, errors=[f"meeting_subgraph failed: {e}"])
 
     @staticmethod
     def _meeting_subgraph_impl(
@@ -656,11 +659,11 @@ class RustworkxGraph:
         kept = RustworkxGraph._strip_leaves(kept, edges_out, edges_in, seed_set)
 
         return VFSResult(
-            candidates=RustworkxGraph._subgraph_candidates(
+            function="meeting_subgraph",
+            entries=RustworkxGraph._subgraph_entries(
                 kept,
                 edges_out,
                 edge_types,
-                "meeting_subgraph",
             ),
         )
 
@@ -718,16 +721,25 @@ class RustworkxGraph:
         try:
             meeting = await self.meeting_subgraph(candidates, user_id=user_id, session=session)
             if not meeting.success:
-                return meeting
+                # Re-wrap under this function's name.
+                return VFSResult(
+                    function="min_meeting_subgraph",
+                    success=False,
+                    errors=list(meeting.errors),
+                )
 
             candidate_paths = set(self._extract_paths(candidates))
             # Extract node set from meeting result — connection paths
             # contain /.connections/, node paths don't.
-            node_set = {c.path for c in meeting.candidates if not decompose_connection(c.path)}
+            node_set = {e.path for e in meeting.entries if not decompose_connection(e.path)}
 
-            # If meeting subgraph is already minimal, return it
+            # If meeting subgraph is already minimal, return it under the
+            # current function's name.
             if len(node_set) <= len(candidate_paths):
-                return meeting
+                return VFSResult(
+                    function="min_meeting_subgraph",
+                    entries=list(meeting.entries),
+                )
 
             # Build edge topology from stored edge types (authoritative)
             edges_out: dict[str, set[str]] = {}
@@ -744,7 +756,11 @@ class RustworkxGraph:
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"min_meeting_subgraph failed: {e}"])
+            return VFSResult(
+                function="min_meeting_subgraph",
+                success=False,
+                errors=[f"min_meeting_subgraph failed: {e}"],
+            )
 
     @staticmethod
     def _min_meeting_impl(
@@ -788,11 +804,11 @@ class RustworkxGraph:
 
         edges_out_frozen = {s: frozenset(ts) for s, ts in edges_out.items()}
         return VFSResult(
-            candidates=RustworkxGraph._subgraph_candidates(
+            function="min_meeting_subgraph",
+            entries=RustworkxGraph._subgraph_entries(
                 current_nodes,
                 edges_out_frozen,
                 edge_types,
-                "min_meeting_subgraph",
             ),
         )
 
@@ -802,7 +818,7 @@ class RustworkxGraph:
 
     async def _run_centrality(
         self,
-        operation: str,
+        function: str,
         rx_fn: Any,
         candidates: VFSResult,
         session: AsyncSession,
@@ -818,34 +834,49 @@ class RustworkxGraph:
                 nodes,
                 edges_out,
                 candidates,
-                operation,
+                function,
                 rx_fn,
                 kwargs,
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"{operation} failed: {e}"])
+            return VFSResult(function=function, success=False, errors=[f"{function} failed: {e}"])
 
     @staticmethod
     def _centrality_impl(
         nodes: frozenset[str],
         edges_out: dict[str, frozenset[str]],
         candidates: VFSResult,
-        operation: str,
+        function: str,
         rx_fn: Any,
         kwargs: dict[str, object],
     ) -> VFSResult:
         graph, _, idx_to_path = RustworkxGraph._build_graph_from(nodes, edges_out)
         if graph.num_nodes() == 0:
-            return VFSResult()
+            return VFSResult(function=function)
         scores = rx_fn(graph, **kwargs)
         raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
         # Filter to candidate paths if any were provided
         candidate_paths = set(RustworkxGraph._extract_paths(candidates))
         if candidate_paths:
             raw = {p: s for p, s in raw.items() if p in candidate_paths}
+
+        # Compute in/out degrees from the rustworkx graph — these override
+        # any persisted degree columns on the underlying object row.
+        in_degrees: dict[str, int] = {}
+        out_degrees: dict[str, int] = {}
+        for idx, path in idx_to_path.items():
+            if path in raw:
+                in_degrees[path] = graph.in_degree(idx)
+                out_degrees[path] = graph.out_degree(idx)
+
         return VFSResult(
-            candidates=RustworkxGraph._score_candidates(raw, operation),
+            function=function,
+            entries=RustworkxGraph._score_entries(
+                raw,
+                in_degrees=in_degrees,
+                out_degrees=out_degrees,
+            ),
         )
 
     async def pagerank(
@@ -957,14 +988,14 @@ class RustworkxGraph:
     ) -> VFSResult:
         """HITS hub and authority scores.
 
-        *score* selects which metric becomes the ``Detail.score`` and
-        controls sort order.  ``"authority"`` (default) ranks by how
-        many hubs point to a node.  ``"hub"`` ranks by how many
-        authorities a node points to.  Both values are always available
-        in ``Detail.metadata``.
+        *score* selects which metric becomes the ``Entry.score`` and controls
+        sort order.  ``"authority"`` (default) ranks by how many hubs point
+        to a node.  ``"hub"`` ranks by how many authorities a node points
+        to.
         """
         if score not in ("authority", "hub"):
             return VFSResult(
+                function="hits",
                 success=False,
                 errors=[f"hits score must be 'authority' or 'hub', got {score!r}"],
             )
@@ -982,7 +1013,7 @@ class RustworkxGraph:
             )
 
         except Exception as e:
-            return VFSResult(success=False, errors=[f"hits failed: {e}"])
+            return VFSResult(function="hits", success=False, errors=[f"hits failed: {e}"])
 
     @staticmethod
     def _hits_impl(
@@ -996,22 +1027,24 @@ class RustworkxGraph:
         graph, _, idx_to_path = RustworkxGraph._build_graph_from(nodes, edges_out)
         candidate_paths = set(RustworkxGraph._extract_paths(candidates))
 
+        # Precompute per-node in/out degrees so the Entry rows carry the
+        # values observed by the rustworkx run, overriding persisted degrees.
+        in_degrees_all: dict[str, int] = {idx_to_path[i]: graph.in_degree(i) for i in idx_to_path}
+        out_degrees_all: dict[str, int] = {idx_to_path[i]: graph.out_degree(i) for i in idx_to_path}
+
         if graph.num_nodes() == 0 or graph.num_edges() == 0:
             # Filter to graph-only paths, consistent with the normal path
             # where non-graph candidates are silently dropped via score dicts.
             graph_paths = set(idx_to_path.values())
             all_paths = sorted(candidate_paths & graph_paths) if candidate_paths else sorted(graph_paths)
             return VFSResult(
-                candidates=[
-                    Candidate(
+                function="hits",
+                entries=[
+                    Entry(
                         path=p,
-                        details=(
-                            Detail(
-                                operation="hits",
-                                score=0.0,
-                                metadata={"authority": 0.0, "hub": 0.0},
-                            ),
-                        ),
+                        score=0.0,
+                        in_degree=in_degrees_all.get(p),
+                        out_degree=out_degrees_all.get(p),
                     )
                     for p in all_paths
                 ],
@@ -1027,19 +1060,13 @@ class RustworkxGraph:
         primary = auths if score == "authority" else hubs
         all_paths = sorted(primary, key=primary.__getitem__, reverse=True)
         return VFSResult(
-            candidates=[
-                Candidate(
+            function="hits",
+            entries=[
+                Entry(
                     path=p,
-                    details=(
-                        Detail(
-                            operation="hits",
-                            score=primary[p],
-                            metadata={
-                                "authority": auths[p],
-                                "hub": hubs[p],
-                            },
-                        ),
-                    ),
+                    score=primary[p],
+                    in_degree=in_degrees_all.get(p),
+                    out_degree=out_degrees_all.get(p),
                 )
                 for p in all_paths
             ],

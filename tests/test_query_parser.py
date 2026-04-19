@@ -91,12 +91,10 @@ class TestBuilders:
     def test_stat(self):
         plan = parse_query("stat /a.py")
         assert plan.methods == ("stat",)
-        assert plan.render_mode == "stat"
 
     def test_delete(self):
         plan = parse_query("rm /a.py")
         assert plan.methods == ("delete",)
-        assert plan.render_mode == "action"
 
     def test_edit_requires_old_and_new(self):
         with pytest.raises(QuerySyntaxError, match="edit requires old and new"):
@@ -206,20 +204,20 @@ class TestBuilders:
         plan = parse_query("pred /a.py")
         assert plan.methods == ("predecessors",)
 
-    def test_sort_by_flag(self):
-        plan = parse_query('glob "*.py" | sort --by score')
-        assert plan.methods == ("glob", "sort")
-
     def test_sort_asc(self):
         plan = parse_query('glob "*.py" | sort --asc')
         assert plan.methods == ("glob", "sort")
 
-    def test_sort_positional_and_by_conflict(self):
-        with pytest.raises(QuerySyntaxError, match="cannot combine"):
-            parse_query('glob "*.py" | sort score --by name')
+    def test_sort_by_flag_rejected(self):
+        with pytest.raises(QuerySyntaxError, match=r"Unknown flag: --by"):
+            parse_query('glob "*.py" | sort --by score')
+
+    def test_sort_positional_rejected(self):
+        with pytest.raises(QuerySyntaxError, match="does not accept positional arguments"):
+            parse_query('glob "*.py" | sort score')
 
     def test_sort_too_many_positionals(self):
-        with pytest.raises(QuerySyntaxError, match="at most one"):
+        with pytest.raises(QuerySyntaxError, match="does not accept positional arguments"):
             parse_query('glob "*.py" | sort a b')
 
     def test_top_wrong_count(self):
@@ -316,102 +314,6 @@ class TestFlagSplitting:
 
 
 # ===========================================================================
-# _render_mode coverage
-# ===========================================================================
-
-
-class TestRenderMode:
-    def test_content_for_read(self):
-        assert parse_query("read /a").render_mode == "content"
-
-    def test_stat_for_stat(self):
-        assert parse_query("stat /a").render_mode == "stat"
-
-    def test_ls_for_ls(self):
-        assert parse_query("ls /a").render_mode == "ls"
-
-    def test_tree_for_tree(self):
-        assert parse_query("tree /a").render_mode == "tree"
-
-    def test_action_for_write(self):
-        assert parse_query('write /a "x"').render_mode == "action"
-
-    def test_action_for_delete(self):
-        assert parse_query("rm /a").render_mode == "action"
-
-    def test_action_for_edit(self):
-        assert parse_query("edit /a old new").render_mode == "action"
-
-    def test_action_for_mkdir(self):
-        assert parse_query("mkdir /a").render_mode == "action"
-
-    def test_action_for_move(self):
-        assert parse_query("mv /a /b").render_mode == "action"
-
-    def test_action_for_copy(self):
-        assert parse_query("cp /a /b").render_mode == "action"
-
-    def test_action_for_mkconn(self):
-        assert parse_query("mkconn imports /b").render_mode == "action"
-
-    def test_query_list_for_glob(self):
-        assert parse_query('glob "*.py"').render_mode == "query_list"
-
-    def test_query_list_for_grep(self):
-        assert parse_query("grep pattern").render_mode == "query_list"
-
-    def test_query_list_for_search(self):
-        assert parse_query('search "q"').render_mode == "query_list"
-
-    def test_query_list_for_lsearch(self):
-        assert parse_query('lsearch "q"').render_mode == "query_list"
-
-    def test_query_list_for_vsearch(self):
-        assert parse_query("vsearch 0.1 0.2").render_mode == "query_list"
-
-    def test_query_list_for_graph_traversal(self):
-        assert parse_query("pred /a").render_mode == "query_list"
-
-    def test_query_list_for_meetinggraph(self):
-        assert parse_query("meetinggraph /a /b").render_mode == "query_list"
-
-    def test_query_list_for_rank(self):
-        assert parse_query("pagerank").render_mode == "query_list"
-
-    def test_query_list_for_sort_in_pipeline(self):
-        plan = parse_query('glob "*.py" | sort')
-        assert plan.render_mode == "query_list"
-
-    def test_query_list_for_top_in_pipeline(self):
-        plan = parse_query('glob "*.py" | top 5')
-        assert plan.render_mode == "query_list"
-
-    def test_query_list_for_kinds_in_pipeline(self):
-        plan = parse_query('glob "*.py" | kinds file')
-        assert plan.render_mode == "query_list"
-
-    def test_query_list_for_intersect(self):
-        plan = parse_query('glob "*.py" | intersect(glob "*.txt")')
-        assert plan.render_mode == "query_list"
-
-    def test_query_list_for_except(self):
-        plan = parse_query('glob "*.py" | except(glob "*.txt")')
-        assert plan.render_mode == "query_list"
-
-    def test_pipeline_render_mode_from_last_stage(self):
-        plan = parse_query('glob "*.py" | read')
-        assert plan.render_mode == "content"
-
-    def test_union_mixed_modes_becomes_query_list(self):
-        plan = parse_query("read /a & ls /b")
-        assert plan.render_mode == "query_list"
-
-    def test_pipeline_no_stages_uses_source(self):
-        plan = parse_query("read /a")
-        assert plan.render_mode == "content"
-
-
-# ===========================================================================
 # Additional parser edge cases
 # ===========================================================================
 
@@ -461,21 +363,6 @@ class TestParserEdgeCases:
         """Lines 595-596: _parse_int with non-integer."""
         with pytest.raises(QuerySyntaxError, match="requires an integer"):
             parse_query("top abc")
-
-
-# ===========================================================================
-# Coverage: line 706 — PipelineNode with no stages
-# ===========================================================================
-
-
-class TestRenderModePipelineNoStages:
-    def test_pipeline_no_stages_uses_source_mode(self):
-        """Line 706: PipelineNode with empty stages recurses to source render mode."""
-        from vfs.query.ast import PipelineNode, ReadCommand
-        from vfs.query.parser import _render_mode
-
-        node = PipelineNode(source=ReadCommand(paths=("/a.py",)), stages=())
-        assert _render_mode(node) == "content"
 
 
 # ===========================================================================
@@ -763,3 +650,60 @@ class TestFlagParsing:
     def test_flag_requires_value(self):
         with pytest.raises(QuerySyntaxError, match="requires a value"):
             parse_query("grep foo -t")
+
+
+class TestOutputFlag:
+    def test_no_output_means_none(self):
+        plan = parse_query("glob /a")
+        assert plan.projection is None
+
+    def test_output_two_token_form(self):
+        plan = parse_query("glob /a --output path,score")
+        assert plan.projection == ("path", "score")
+
+    def test_output_equals_form(self):
+        plan = parse_query("glob /a --output=path,score")
+        assert plan.projection == ("path", "score")
+
+    def test_output_at_pipeline_end(self):
+        plan = parse_query("glob /a | sort --output path,updated_at")
+        assert plan.projection == ("path", "updated_at")
+
+    def test_output_strips_whitespace(self):
+        plan = parse_query("glob /a --output 'path, score, kind'")
+        assert plan.projection == ("path", "score", "kind")
+
+    def test_output_supports_default_sentinel(self):
+        plan = parse_query("glob /a --output default")
+        assert plan.projection == ("default",)
+
+    def test_output_supports_all_sentinel(self):
+        plan = parse_query("glob /a --output all")
+        assert plan.projection == ("all",)
+
+    def test_output_unknown_field_rejected(self):
+        with pytest.raises(QuerySyntaxError, match="unknown field 'bogus'"):
+            parse_query("glob /a --output path,bogus")
+
+    def test_output_repeated_rejected(self):
+        with pytest.raises(QuerySyntaxError, match="only be specified once"):
+            parse_query("glob /a --output path --output kind")
+
+    def test_output_requires_value(self):
+        with pytest.raises(QuerySyntaxError, match="requires a value"):
+            parse_query("glob /a --output")
+
+    def test_output_empty_value_rejected(self):
+        with pytest.raises(QuerySyntaxError, match="at least one field"):
+            parse_query("glob /a --output ''")
+
+    def test_output_leaves_non_output_args_intact(self):
+        plan = parse_query("grep foo --output path -i")
+        # The grep flag (-i case-insensitive) stays attached to the GrepCommand.
+        from vfs.query.ast import GrepCommand, PipelineNode
+
+        ast = plan.ast
+        cmd = ast.source if isinstance(ast, PipelineNode) else ast
+        assert isinstance(cmd, GrepCommand)
+        assert cmd.case_mode == "insensitive"
+        assert plan.projection == ("path",)

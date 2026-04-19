@@ -1,147 +1,99 @@
-"""Tests for VFS v2 result types — Detail, Candidate, VFSResult."""
+"""Tests for VFS result types — Entry, LineMatch, VFSResult."""
 
 from __future__ import annotations
 
-import uuid
-from typing import Any
+import json
 
 import pytest
 from pydantic import ValidationError
 
-from vfs.results import Candidate, Detail, VFSResult
-
-
-def _c(path: str, kind: str = "file", **kwargs: Any) -> Candidate:
-    """Shorthand for building test candidates with auto-generated id."""
-    return Candidate(id=str(uuid.uuid4()), path=path, kind=kind, **kwargs)
-
+from tests.conftest import entry as _e
+from vfs.results import Entry, LineMatch, VFSResult
 
 # ---------------------------------------------------------------------------
-# Detail
+# Entry
 # ---------------------------------------------------------------------------
 
 
-class TestDetail:
+class TestEntry:
     def test_construction(self):
-        d = Detail(operation="semantic_search", score=0.95)
-        assert d.operation == "semantic_search"
-        assert d.score == 0.95
-        assert d.success is True
+        e = Entry(path="/src/auth.py", kind="file")
+        assert e.path == "/src/auth.py"
+        assert e.kind == "file"
+        assert e.name == "auth.py"
+        assert e.content is None
+        assert e.lines is None
+        assert e.score is None
+        assert e.size_bytes is None
+        assert e.in_degree is None
+        assert e.out_degree is None
+        assert e.updated_at is None
 
-    def test_defaults(self):
-        d = Detail(operation="read")
-        assert d.score is None
-        assert d.success is True
-        assert d.message == ""
-        assert d.metadata is None
+    def test_defaults_all_none(self):
+        e = Entry(path="/a.py")
+        assert e.kind is None
+        assert e.content is None
+        assert e.lines is None
+        assert e.score is None
+        assert e.size_bytes is None
+        assert e.in_degree is None
+        assert e.out_degree is None
+        assert e.updated_at is None
 
-    def test_json_excludes_none(self):
-        d = Detail(
-            operation="grep",
-            metadata={"line_number": 42, "line_content": "def login():"},
-        )
-        data = d.model_dump(exclude_none=True)
-        assert data["operation"] == "grep"
-        assert data["metadata"]["line_number"] == 42
-
-    def test_json_round_trip(self):
-        d = Detail(operation="pagerank", score=0.42)
-        data = d.model_dump()
-        restored = Detail.model_validate(data)
-        assert restored == d
+    def test_requires_path(self):
+        with pytest.raises(ValidationError):
+            Entry.model_validate({"kind": "file"})
 
     def test_frozen(self):
-        d = Detail(operation="read")
+        e = Entry(path="/a.py")
         with pytest.raises(ValidationError):
-            d.operation = "write"
+            e.path = "/b.py"
 
+    def test_name_property(self):
+        assert Entry(path="/src/auth.py").name == "auth.py"
+        assert Entry(path="/a.py/.versions/3").name == "3"
 
-# ---------------------------------------------------------------------------
-# Candidate
-# ---------------------------------------------------------------------------
+    def test_with_line_matches(self):
+        lm = LineMatch(start=1, end=3, match=2)
+        e = Entry(path="/a.py", lines=[lm])
+        assert e.lines is not None
+        assert e.lines[0].match == 2
+        assert e.lines[0].start == 1
+        assert e.lines[0].end == 3
 
-
-class TestCandidate:
-    def test_construction(self):
-        c = _c("/src/auth.py")
-        assert c.path == "/src/auth.py"
-        assert c.kind == "file"  # _c helper sets kind="file"
-        assert c.name == "auth.py"
-        assert c.content is None
-        assert c.lines is None
-
-    def test_score_property_empty_details(self):
-        c = _c("/a.py")
-        assert c.score == 0.0
-
-    def test_score_property_from_last_detail(self):
-        c = _c(
-            "/a.py",
-            details=[
-                Detail(operation="search", score=0.9),
-                Detail(operation="pagerank", score=0.42),
-            ],
-        )
-        assert c.score == 0.42
-
-    def test_json_excludes_none(self):
-        c = _c("/a.py", lines=100, size_bytes=4096)
-        data = c.model_dump(exclude_none=True)
-        assert "content" not in data
-        assert "weight" not in data
-        assert data["path"] == "/a.py"
-        assert data["lines"] == 100
-
-    def test_connection_candidate(self):
-        c = _c(
-            "/a.py/.connections/imports/b.py",
-            kind="connection",
-            weight=1.0,
-            distance=0.5,
-        )
-        data = c.model_dump(exclude_none=True)
-        assert data["weight"] == 1.0
-        assert data["distance"] == 0.5
-        assert c.kind == "connection"
-
-    def test_version_candidate(self):
-        c = _c(
-            "/a.py/.versions/3",
-            kind="version",
-        )
-        assert c.name == "3"
-
-    def test_json_round_trip(self):
-        c = _c(
-            "/a.py",
-            lines=50,
-            details=[Detail(operation="read", score=1.0)],
-        )
-        data = c.model_dump()
-        restored = Candidate.model_validate(data)
-        assert restored.path == c.path
-        assert restored.score == c.score
-
-    def test_frozen(self):
-        c = _c("/a.py")
-        with pytest.raises(ValidationError):
-            c.path = "/b.py"
-
-    def test_zero_metrics_included_in_json(self):
+    def test_zero_metrics_preserved_in_json(self):
         """0 is not None — zero metrics should be present in JSON."""
-        c = _c("/a.py", lines=0, size_bytes=0)
-        data = c.model_dump(exclude_none=True)
-        assert "lines" in data
-        assert data["lines"] == 0
+        e = Entry(path="/a.py", size_bytes=0, score=0.0)
+        data = e.model_dump(exclude_none=True)
+        assert data["size_bytes"] == 0
+        assert data["score"] == 0.0
 
-    def test_details_is_immutable_tuple(self):
-        """details is a tuple — truly immutable, not just frozen field assignment."""
-        c = _c("/a.py")
-        assert isinstance(c.details, tuple)
+    def test_json_round_trip(self):
+        e = Entry(path="/a.py", kind="file", size_bytes=50, score=0.42)
+        data = e.model_dump()
+        restored = Entry.model_validate(data)
+        assert restored == e
 
 
 # ---------------------------------------------------------------------------
-# VFSResult — construction & data access
+# LineMatch
+# ---------------------------------------------------------------------------
+
+
+class TestLineMatch:
+    def test_named_tuple_fields(self):
+        lm = LineMatch(start=1, end=5, match=3)
+        assert lm.start == 1
+        assert lm.end == 5
+        assert lm.match == 3
+        # NamedTuple indexing order: start, end, match.
+        assert lm[0] == 1
+        assert lm[1] == 5
+        assert lm[2] == 3
+
+
+# ---------------------------------------------------------------------------
+# VFSResult — envelope, iteration, truthiness
 # ---------------------------------------------------------------------------
 
 
@@ -151,488 +103,713 @@ class TestVFSResultBasics:
         assert r.success is True
         assert r.errors == []
         assert r.error_message == ""
-        assert r.candidates == []
+        assert r.function == ""
+        assert r.entries == []
         assert r.paths == ()
         assert r.file is None
         assert r.content is None
         assert len(r) == 0
-        assert not r  # empty + success = falsy (no candidates)
+        assert not r  # empty + success = falsy (no entries)
 
-    def test_with_candidates(self):
+    def test_with_entries(self):
         r = VFSResult(
-            candidates=[
-                _c("/a.py"),
-                _c("/b.py"),
-            ]
+            function="glob",
+            entries=[_e("/a.py"), _e("/b.py")],
         )
         assert len(r) == 2
         assert r.paths == ("/a.py", "/b.py")
         assert r.file is not None
         assert r.file.path == "/a.py"
+        assert r.function == "glob"
         assert r
 
     def test_failed_result_is_falsy(self):
-        r = VFSResult(
-            success=False,
-            candidates=[_c("/a.py")],
-        )
+        r = VFSResult(success=False, function="glob", entries=[_e("/a.py")])
         assert not r
 
     def test_contains(self):
-        r = VFSResult(candidates=[_c("/a.py")])
+        r = VFSResult(function="glob", entries=[_e("/a.py")])
         assert "/a.py" in r
         assert "/b.py" not in r
 
-    def test_iter_candidates(self):
-        candidates = [_c("/a.py"), _c("/b.py")]
-        r = VFSResult(candidates=candidates)
-        paths = [c.path for c in r.iter_candidates()]
+    def test_iter_entries(self):
+        entries = [_e("/a.py"), _e("/b.py")]
+        r = VFSResult(function="glob", entries=entries)
+        paths = [e.path for e in r.iter_entries()]
         assert paths == ["/a.py", "/b.py"]
 
-    def test_dict_conversion_uses_model_iteration(self):
-        r = VFSResult(candidates=[_c("/a.py")])
-        data = dict(r)
-        assert data["success"] is True
-        assert data["candidates"][0].path == "/a.py"
-
     def test_content_shorthand(self):
-        r = VFSResult(candidates=[_c("/a.py", content="print('hello')")])
+        r = VFSResult(function="read", entries=[_e("/a.py", content="print('hello')")])
         assert r.content == "print('hello')"
 
-    def test_explain(self):
-        d1 = Detail(operation="search", score=0.9)
-        d2 = Detail(operation="pagerank", score=0.4)
+    def test_errors_and_error_message(self):
         r = VFSResult(
-            candidates=[
-                _c("/a.py", details=[d1, d2]),
-                _c("/b.py", details=[d1]),
-            ]
+            function="glob",
+            entries=[_e("/a.py"), _e("/b.py")],
+            errors=["problem one", "problem two"],
         )
-        assert len(r.explain("/a.py")) == 2
-        assert len(r.explain("/b.py")) == 1
-        assert r.explain("/c.py") == []
+        assert r.errors == ["problem one", "problem two"]
+        assert r.error_message == "problem one; problem two"
 
 
 # ---------------------------------------------------------------------------
-# VFSResult — factories
+# VFSResult — set algebra (left-wins merge)
 # ---------------------------------------------------------------------------
 
 
-class TestVFSResultConstruction:
-    def test_direct_construction(self):
-        r = VFSResult(
-            candidates=[
-                _c("/a.py"),
-                _c("/b.py"),
-            ],
-            errors=["test"],
-        )
-        assert len(r) == 2
-        assert r.paths == ("/a.py", "/b.py")
-        assert r.errors == ["test"]
-        assert r.error_message == "test"
-
-
-# ---------------------------------------------------------------------------
-# VFSResult — set algebra
-# ---------------------------------------------------------------------------
+def _make(paths: list[str], function: str = "glob", score: float | None = None) -> VFSResult:
+    entries = [Entry(path=p, kind="file", score=score) for p in paths]
+    return VFSResult(function=function, entries=entries)
 
 
 class TestVFSResultSetAlgebra:
-    def _make(self, paths: list[str], operation: str = "test") -> VFSResult:
-        return VFSResult(candidates=[_c(p, details=[Detail(operation=operation)]) for p in paths])
-
     def test_intersection(self):
-        a = self._make(["/a.py", "/b.py", "/c.py"], "search")
-        b = self._make(["/b.py", "/c.py", "/d.py"], "grep")
+        a = _make(["/a.py", "/b.py", "/c.py"], function="glob")
+        b = _make(["/b.py", "/c.py", "/d.py"], function="glob")
         result = a & b
         assert set(result.paths) == {"/b.py", "/c.py"}
 
-    def test_intersection_merges_details(self):
-        a = self._make(["/a.py"], "search")
-        b = self._make(["/a.py"], "grep")
-        result = a & b
-        assert len(result.candidates[0].details) == 2
-        ops = [d.operation for d in result.candidates[0].details]
-        assert ops == ["search", "grep"]
-
     def test_intersection_empty(self):
-        a = self._make(["/a.py"])
-        b = self._make(["/b.py"])
+        a = _make(["/a.py"])
+        b = _make(["/b.py"])
         result = a & b
         assert len(result) == 0
 
     def test_union(self):
-        a = self._make(["/a.py", "/b.py"], "search")
-        b = self._make(["/b.py", "/c.py"], "grep")
+        a = _make(["/a.py", "/b.py"], function="glob")
+        b = _make(["/b.py", "/c.py"], function="glob")
         result = a | b
         assert set(result.paths) == {"/a.py", "/b.py", "/c.py"}
 
-    def test_union_merges_overlapping_details(self):
-        a = self._make(["/a.py"], "search")
-        b = self._make(["/a.py"], "grep")
-        result = a | b
-        assert len(result.candidates[0].details) == 2
-
     def test_difference(self):
-        a = self._make(["/a.py", "/b.py", "/c.py"])
-        b = self._make(["/b.py"])
+        a = _make(["/a.py", "/b.py", "/c.py"])
+        b = _make(["/b.py"])
         result = a - b
         assert set(result.paths) == {"/a.py", "/c.py"}
 
     def test_difference_empty_right(self):
-        a = self._make(["/a.py", "/b.py"])
+        a = _make(["/a.py", "/b.py"])
         b = VFSResult()
         result = a - b
         assert set(result.paths) == {"/a.py", "/b.py"}
 
     def test_success_propagation_and(self):
-        a = VFSResult(success=True, candidates=[_c("/a.py")])
-        b = VFSResult(success=False, candidates=[_c("/a.py")])
+        a = VFSResult(success=True, function="glob", entries=[_e("/a.py")])
+        b = VFSResult(success=False, function="glob", entries=[_e("/a.py")])
         result = a & b
         assert result.success is False
 
     def test_success_propagation_or(self):
-        a = VFSResult(success=True, candidates=[_c("/a.py")])
-        b = VFSResult(success=False, candidates=[_c("/b.py")])
+        a = VFSResult(success=True, function="glob", entries=[_e("/a.py")])
+        b = VFSResult(success=False, function="glob", entries=[_e("/b.py")])
         result = a | b
         assert result.success is False
 
+    def test_sub_preserves_left_success(self):
+        a = VFSResult(success=True, function="glob", entries=[_e("/a.py")])
+        b = VFSResult(success=False, function="glob", entries=[_e("/b.py")])
+        result = a - b
+        assert result.success is True
+
+
+class TestLeftWinsMerge:
+    def test_intersection_left_wins_on_content(self):
+        a = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py", kind="file", content="from left")],
+        )
+        b = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py", kind="file", content="from right")],
+        )
+        result = a & b
+        assert result.entries[0].content == "from left"
+
+    def test_merge_preserves_empty_string_content(self):
+        """content='' (empty file) should NOT be replaced by right's content."""
+        a = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py", kind="file", content="")],
+        )
+        b = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py", kind="file", content="real content")],
+        )
+        result = a & b
+        assert result.entries[0].content == ""
+
+    def test_merge_preserves_zero_metrics_from_left(self):
+        """size_bytes=0 on left should NOT be replaced by right's value."""
+        a = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py", kind="file", size_bytes=0)],
+        )
+        b = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py", kind="file", size_bytes=4096)],
+        )
+        result = a & b
+        assert result.entries[0].size_bytes == 0
+
+    def test_merge_falls_back_to_right_for_none(self):
+        """Left has None → right's value is used."""
+        a = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py")],
+        )
+        b = VFSResult(
+            function="glob",
+            entries=[
+                Entry(
+                    path="/a.py",
+                    kind="file",
+                    content="hello",
+                    size_bytes=4096,
+                    score=0.7,
+                ),
+            ],
+        )
+        result = a & b
+        merged = result.entries[0]
+        assert merged.kind == "file"
+        assert merged.content == "hello"
+        assert merged.size_bytes == 4096
+        assert merged.score == 0.7
+
+    def test_as_dict_last_wins_on_duplicate_paths(self):
+        """If entries have duplicate paths, _as_dict keeps the last one."""
+        e1 = Entry(path="/a.py", kind="file", content="first")
+        e2 = Entry(path="/a.py", kind="file", content="second")
+        r = VFSResult(function="glob", entries=[e1, e2])
+        d = r._as_dict()
+        assert len(d) == 1
+        assert d["/a.py"].content == "second"
+
 
 # ---------------------------------------------------------------------------
-# VFSResult — enrichment chains
+# VFSResult — function propagation on set algebra
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionPropagation:
+    def test_same_function_union_preserves_function(self):
+        a = _make(["/a.py"], function="glob")
+        b = _make(["/b.py"], function="glob")
+        result = a | b
+        assert result.function == "glob"
+
+    def test_cross_function_union_is_hybrid(self):
+        a = _make(["/a.py"], function="glob")
+        b = _make(["/b.py"], function="vector_search", score=0.9)
+        result = a | b
+        assert result.function == "hybrid"
+
+    def test_cross_function_intersection_is_hybrid(self):
+        a = _make(["/a.py"], function="glob")
+        b = _make(["/a.py"], function="vector_search", score=0.9)
+        result = a & b
+        assert result.function == "hybrid"
+
+    def test_empty_envelope_union_with_empty_envelope(self):
+        """Both operands have empty function string → result is also empty."""
+        a = VFSResult(entries=[_e("/a.py")])
+        b = VFSResult(entries=[_e("/b.py")])
+        result = a | b
+        assert result.function == ""
+
+    def test_empty_envelope_unions_to_other_function(self):
+        """If one side has function='' it shouldn't force hybrid."""
+        a = VFSResult(entries=[_e("/a.py")])
+        b = _make(["/b.py"], function="glob")
+        result = a | b
+        assert result.function == "glob"
+
+    def test_difference_preserves_left_function(self):
+        a = _make(["/a.py", "/b.py"], function="glob")
+        b = _make(["/b.py"], function="vector_search", score=0.1)
+        result = a - b
+        assert result.function == "glob"
+
+
+# ---------------------------------------------------------------------------
+# VFSResult — enrichment (sort / top / filter / kinds / prefix / scope)
 # ---------------------------------------------------------------------------
 
 
 class TestVFSResultEnrichment:
-    def test_sort_by_last_operation(self):
+    def test_sort_by_score_default(self):
         r = VFSResult(
-            candidates=[
-                _c("/low.py", details=[Detail(operation="search", score=0.1)]),
-                _c("/high.py", details=[Detail(operation="search", score=0.9)]),
-                _c("/mid.py", details=[Detail(operation="search", score=0.5)]),
+            function="vector_search",
+            entries=[
+                Entry(path="/low.py", score=0.1),
+                Entry(path="/high.py", score=0.9),
+                Entry(path="/mid.py", score=0.5),
             ],
         )
         sorted_r = r.sort()
-        assert [c.path for c in sorted_r.iter_candidates()] == ["/high.py", "/mid.py", "/low.py"]
-
-    def test_sort_by_explicit_operation(self):
-        r = VFSResult(
-            candidates=[
-                _c(
-                    "/a.py",
-                    details=[
-                        Detail(operation="search", score=0.9),
-                        Detail(operation="pagerank", score=0.2),
-                    ],
-                ),
-                _c(
-                    "/b.py",
-                    details=[
-                        Detail(operation="search", score=0.1),
-                        Detail(operation="pagerank", score=0.8),
-                    ],
-                ),
-            ],
-        )
-        # Default: sort by last operation (pagerank)
-        sorted_r = r.sort()
-        assert sorted_r.candidates[0].path == "/b.py"
-        # Explicit: sort by search
-        sorted_r = r.sort(operation="search")
-        assert sorted_r.candidates[0].path == "/a.py"
+        assert [e.path for e in sorted_r.iter_entries()] == ["/high.py", "/mid.py", "/low.py"]
 
     def test_sort_ascending(self):
         r = VFSResult(
-            candidates=[
-                _c("/high.py", details=[Detail(operation="s", score=0.9)]),
-                _c("/low.py", details=[Detail(operation="s", score=0.1)]),
+            function="vector_search",
+            entries=[
+                Entry(path="/high.py", score=0.9),
+                Entry(path="/low.py", score=0.1),
             ],
         )
         sorted_r = r.sort(reverse=False)
-        assert [c.path for c in sorted_r.iter_candidates()] == ["/low.py", "/high.py"]
+        assert [e.path for e in sorted_r.iter_entries()] == ["/low.py", "/high.py"]
 
     def test_sort_custom_key(self):
         r = VFSResult(
-            candidates=[
-                _c("/small.py", size_bytes=100),
-                _c("/big.py", size_bytes=9000),
-            ]
+            function="glob",
+            entries=[
+                Entry(path="/small.py", size_bytes=100),
+                Entry(path="/big.py", size_bytes=9000),
+            ],
         )
-        sorted_r = r.sort(key=lambda c: c.size_bytes)
-        assert sorted_r.candidates[0].path == "/big.py"
+        sorted_r = r.sort(key=lambda e: e.size_bytes or 0)
+        assert sorted_r.entries[0].path == "/big.py"
 
-    def test_sort_no_args_uses_last_score(self):
-        """sort() with no args uses candidate.score (last detail's score)."""
+    def test_sort_none_scores_sink_to_bottom(self):
         r = VFSResult(
-            candidates=[
-                _c("/a.py", details=[Detail(operation="s", score=0.1)]),
-                _c("/b.py", details=[Detail(operation="s", score=0.9)]),
-            ]
+            function="vector_search",
+            entries=[
+                Entry(path="/a.py", score=None),
+                Entry(path="/b.py", score=0.5),
+            ],
         )
         sorted_r = r.sort()
-        assert sorted_r.candidates[0].path == "/b.py"
+        assert sorted_r.entries[0].path == "/b.py"
+        assert sorted_r.entries[1].path == "/a.py"
+
+    def test_sort_preserves_function(self):
+        r = VFSResult(
+            function="vector_search",
+            entries=[Entry(path="/a.py", score=0.1)],
+        )
+        assert r.sort().function == "vector_search"
 
     def test_top(self):
         r = VFSResult(
-            candidates=[
-                _c("/a.py", details=[Detail(operation="s", score=0.1)]),
-                _c("/b.py", details=[Detail(operation="s", score=0.9)]),
-                _c("/c.py", details=[Detail(operation="s", score=0.5)]),
+            function="vector_search",
+            entries=[
+                Entry(path="/a.py", score=0.1),
+                Entry(path="/b.py", score=0.9),
+                Entry(path="/c.py", score=0.5),
             ],
         )
         top2 = r.top(2)
         assert len(top2) == 2
-        assert top2.candidates[0].path == "/b.py"
-        assert top2.candidates[1].path == "/c.py"
+        assert top2.entries[0].path == "/b.py"
+        assert top2.entries[1].path == "/c.py"
 
     def test_top_more_than_available(self):
-        r = VFSResult(
-            candidates=[_c("/a.py", details=[Detail(operation="s")])],
-        )
+        r = VFSResult(function="vector_search", entries=[Entry(path="/a.py", score=0.1)])
         top5 = r.top(5)
         assert len(top5) == 1
 
+    def test_top_zero_raises(self):
+        r = VFSResult(function="vector_search", entries=[Entry(path="/a.py", score=0.5)])
+        with pytest.raises(ValueError, match="k must be >= 1"):
+            r.top(0)
+
+    def test_top_negative_raises(self):
+        r = VFSResult(function="vector_search", entries=[Entry(path="/a.py", score=0.5)])
+        with pytest.raises(ValueError, match="k must be >= 1"):
+            r.top(-1)
+
     def test_filter(self):
         r = VFSResult(
-            candidates=[
-                _c("/a.py", size_bytes=100),
-                _c("/b/", kind="directory"),
-                _c("/c.py", size_bytes=0),
-            ]
+            function="glob",
+            entries=[
+                Entry(path="/a.py", kind="file", size_bytes=100),
+                Entry(path="/b/", kind="directory"),
+                Entry(path="/c.py", kind="file", size_bytes=0),
+            ],
         )
-        files_with_content = r.filter(lambda c: c.kind == "file" and c.size_bytes > 0)
+        files_with_content = r.filter(lambda e: e.kind == "file" and (e.size_bytes or 0) > 0)
         assert len(files_with_content) == 1
-        assert files_with_content.candidates[0].path == "/a.py"
+        assert files_with_content.entries[0].path == "/a.py"
 
     def test_kinds(self):
         r = VFSResult(
-            candidates=[
-                _c("/a.py"),
-                _c("/b/", kind="directory"),
-                _c("/a.py/.chunks/login", kind="chunk"),
-            ]
+            function="glob",
+            entries=[
+                Entry(path="/a.py", kind="file"),
+                Entry(path="/b/", kind="directory"),
+                Entry(path="/a.py/.chunks/login", kind="chunk"),
+            ],
         )
         files_only = r.kinds("file")
         assert len(files_only) == 1
         files_and_chunks = r.kinds("file", "chunk")
         assert len(files_and_chunks) == 2
 
-
-class TestScoreFor:
-    def test_score_for(self):
-        c = _c(
-            "/a.py",
-            details=[
-                Detail(operation="search", score=0.9),
-                Detail(operation="pagerank", score=0.4),
-            ],
+    def test_add_prefix(self):
+        r = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py"), Entry(path="/b.py")],
         )
-        assert c.score_for("search") == 0.9
-        assert c.score_for("pagerank") == 0.4
-        assert c.score_for("nonexistent") == 0.0
+        r.add_prefix("/user1")
+        assert set(r.paths) == {"/user1/a.py", "/user1/b.py"}
+
+    def test_add_prefix_empty_is_noop(self):
+        r = VFSResult(function="glob", entries=[Entry(path="/a.py")])
+        r.add_prefix("")
+        assert r.paths == ("/a.py",)
+
+    def test_strip_user_scope(self):
+        r = VFSResult(
+            function="glob",
+            entries=[Entry(path="/123/docs/README.md"), Entry(path="/123/src/a.py")],
+        )
+        stripped = r.strip_user_scope("123")
+        assert set(stripped.paths) == {"/docs/README.md", "/src/a.py"}
 
 
 # ---------------------------------------------------------------------------
-# VFSResult — JSON serialization
+# VFSResult — JSON / string serialization
 # ---------------------------------------------------------------------------
 
 
 class TestVFSResultJSON:
-    def test_model_dump_exclude_none(self):
-        r = VFSResult(candidates=[_c("/a.py", lines=142, details=[Detail(operation="semantic_search", score=0.95)])])
-        data = r.model_dump(exclude_none=True)
-        candidate = data["candidates"][0]
-        assert "content" not in candidate
-        assert "weight" not in candidate
-        assert candidate["path"] == "/a.py"
-        assert candidate["lines"] == 142
-        detail = candidate["details"][0]
-        assert "metadata" not in detail
-        assert detail["operation"] == "semantic_search"
-        assert detail["score"] == 0.95
+    def test_to_json_excludes_none_by_default(self):
+        r = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a.py", kind="file")],
+        )
+        parsed = json.loads(r.to_json())
+        entry = parsed["entries"][0]
+        assert entry["path"] == "/a.py"
+        assert entry["kind"] == "file"
+        # None fields are excluded.
+        assert "content" not in entry
+        assert "score" not in entry
+        assert "size_bytes" not in entry
+        assert "updated_at" not in entry
 
-    def test_json_round_trip(self):
+    def test_to_json_include_none(self):
+        r = VFSResult(function="glob", entries=[Entry(path="/a.py")])
+        parsed = json.loads(r.to_json(exclude_none=False))
+        entry = parsed["entries"][0]
+        # All Entry fields present.
+        for field in (
+            "path",
+            "kind",
+            "lines",
+            "content",
+            "size_bytes",
+            "score",
+            "in_degree",
+            "out_degree",
+            "updated_at",
+        ):
+            assert field in entry
+
+    def test_to_json_round_trip(self):
         r = VFSResult(
             success=True,
             errors=["Found 2 files"],
-            candidates=[
-                _c("/a.py", details=[Detail(operation="glob", score=0.0)]),
-                _c("/b.py", details=[Detail(operation="glob", score=0.0)]),
-            ],
+            function="glob",
+            entries=[Entry(path="/a.py", kind="file"), Entry(path="/b.py", kind="file")],
         )
-        data = r.model_dump()
-        restored = VFSResult.model_validate(data)
-        assert restored.paths == r.paths
-        assert restored.success == r.success
-        assert restored.errors == r.errors
-        assert len(restored.candidates) == 2
-        assert restored.candidates[0].details[0].operation == "glob"
-
-    def test_independent_candidate_lists(self):
-        """Pydantic v2 should give each instance its own candidates list."""
-        r1 = VFSResult()
-        r2 = VFSResult()
-        assert r1.candidates is not r2.candidates
-
-    def test_json_string_round_trip(self):
-        """FastAPI uses model_dump_json, not model_dump."""
-        r = VFSResult(
-            candidates=[_c("/a.py", details=[Detail(operation="read")])],
-        )
-        json_str = r.model_dump_json(exclude_none=True)
+        json_str = r.to_json()
         restored = VFSResult.model_validate_json(json_str)
         assert restored.paths == r.paths
         assert restored.success == r.success
+        assert restored.errors == r.errors
+        assert restored.function == r.function
+        assert len(restored.entries) == 2
 
-
-# ---------------------------------------------------------------------------
-# Merge edge cases
-# ---------------------------------------------------------------------------
-
-
-class TestMergeEdgeCases:
-    def test_merge_preserves_zero_metrics_from_left(self):
-        """lines=0 on left should NOT be replaced by right's value."""
-        a = VFSResult(
-            candidates=[
-                Candidate(id="1", path="/a.py", kind="file", lines=0, size_bytes=0),
-            ]
-        )
-        b = VFSResult(
-            candidates=[
-                Candidate(id="2", path="/a.py", kind="file", lines=50, size_bytes=4096),
-            ]
-        )
-        result = a & b
-        assert result.candidates[0].lines == 0
-        assert result.candidates[0].size_bytes == 0
-
-    def test_merge_preserves_empty_string_content(self):
-        """content='' (empty file) should NOT be replaced by right's content."""
-        a = VFSResult(
-            candidates=[
-                Candidate(id="1", path="/a.py", kind="file", content=""),
-            ]
-        )
-        b = VFSResult(
-            candidates=[
-                Candidate(id="2", path="/a.py", kind="file", content="real content"),
-            ]
-        )
-        result = a & b
-        assert result.candidates[0].content == ""
-
-    def test_merge_preserves_left_id(self):
-        """Left candidate's id wins in a merge."""
-        a = VFSResult(
-            candidates=[
-                Candidate(id="left-id", path="/a.py", kind="file"),
-            ]
-        )
-        b = VFSResult(
-            candidates=[
-                Candidate(id="right-id", path="/a.py", kind="file"),
-            ]
-        )
-        result = a & b
-        assert result.candidates[0].id == "left-id"
-
-    def test_merge_falls_back_to_right_for_none(self):
-        """When left has None, right's value is used."""
-        a = VFSResult(
-            candidates=[
-                Candidate(
-                    id=None,
-                    path="/a.py",
-                    kind=None,
-                    content=None,
-                    lines=None,
-                    size_bytes=None,
-                    tokens=None,
-                    mime_type=None,
-                ),
-            ]
-        )
-        b = VFSResult(
-            candidates=[
-                Candidate(
-                    id="2",
-                    path="/a.py",
-                    kind="file",
-                    content="hello",
-                    lines=50,
-                    size_bytes=4096,
-                    tokens=900,
-                    mime_type="text/python",
-                ),
-            ]
-        )
-        result = a & b
-        assert result.candidates[0].id == "2"
-        assert result.candidates[0].kind == "file"
-        assert result.candidates[0].content == "hello"
-        assert result.candidates[0].lines == 50
-        assert result.candidates[0].size_bytes == 4096
-        assert result.candidates[0].tokens == 900
-        assert result.candidates[0].mime_type == "text/python"
-
-
-# ---------------------------------------------------------------------------
-# Top edge cases
-# ---------------------------------------------------------------------------
-
-
-class TestTopEdgeCases:
-    def test_top_zero_raises(self):
+    def test_model_dump_round_trip(self):
         r = VFSResult(
-            candidates=[_c("/a.py", details=[Detail(operation="s", score=0.5)])],
+            function="vector_search",
+            entries=[Entry(path="/a.py", score=0.9), Entry(path="/b.py", score=0.5)],
         )
-        with pytest.raises(ValueError, match="k must be >= 1"):
-            r.top(0)
+        data = r.model_dump()
+        restored = VFSResult.model_validate(data)
+        assert restored.function == "vector_search"
+        assert [e.score for e in restored.entries] == [0.9, 0.5]
 
-    def test_top_negative_raises(self):
+    def test_independent_entries_lists(self):
+        """Each instance should own its entries list."""
+        r1 = VFSResult()
+        r2 = VFSResult()
+        assert r1.entries is not r2.entries
+
+
+# ---------------------------------------------------------------------------
+# VFSResult — to_str dispatch (smoke-level; snapshots come later)
+# ---------------------------------------------------------------------------
+
+
+class TestToStr:
+    def test_glob_one_path_per_line(self):
         r = VFSResult(
-            candidates=[_c("/a.py", details=[Detail(operation="s", score=0.5)])],
+            function="glob",
+            entries=[Entry(path="/a.py"), Entry(path="/b.py"), Entry(path="/c.py")],
         )
-        with pytest.raises(ValueError, match="k must be >= 1"):
-            r.top(-1)
+        rendered = r.to_str()
+        assert rendered == "/a.py\n/b.py\n/c.py"
 
+    def test_glob_multicolumn_renders_markdown_table(self):
+        """Multi-column path lists render as a GFM table — pipes line up."""
+        from datetime import datetime
 
-# ---------------------------------------------------------------------------
-# Additional coverage from review
-# ---------------------------------------------------------------------------
-
-
-class TestScoreEdgeCases:
-    def test_score_property_with_none_score(self):
-        """score=None on last detail should return 0.0."""
-        c = _c("/a.py", details=[Detail(operation="read", score=None)])
-        assert c.score == 0.0
-
-    def test_score_for_with_none_score(self):
-        """score_for returns 0.0 when the matching detail has score=None."""
-        c = _c("/a.py", details=[Detail(operation="read", score=None)])
-        assert c.score_for("read") == 0.0
-
-    def test_score_for_returns_most_recent_duplicate(self):
-        """When multiple details share an operation, most recent wins."""
-        c = _c(
-            "/a.py",
-            details=[
-                Detail(operation="search", score=0.3),
-                Detail(operation="search", score=0.9),
+        r = VFSResult(
+            function="glob",
+            entries=[
+                Entry(
+                    path="/docs/guide.md",
+                    size_bytes=27,
+                    updated_at=datetime(2026, 4, 19, 19, 47, 15, 672705),
+                ),
+                Entry(
+                    path="/docs/intro.md",
+                    size_bytes=34,
+                    updated_at=datetime(2026, 4, 19, 19, 47, 15, 668105),
+                ),
             ],
         )
-        assert c.score_for("search") == 0.9
+        rendered = r.to_str(projection=("path", "size_bytes", "updated_at"))
+        expected = (
+            "| path           | size_bytes | updated_at                 |\n"
+            "| -------------- | ---------: | -------------------------- |\n"
+            "| /docs/guide.md |         27 | 2026-04-19 19:47:15.672705 |\n"
+            "| /docs/intro.md |         34 | 2026-04-19 19:47:15.668105 |"
+        )
+        assert rendered == expected
+
+    def test_markdown_table_pipes_and_dashes_align(self):
+        """Every pipe in the output must sit at the same column offset per row."""
+        r = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a", size_bytes=1), Entry(path="/long_path", size_bytes=9999)],
+        )
+        rendered = r.to_str(projection=("path", "size_bytes"))
+        rows = rendered.split("\n")
+        # Same number of pipes on every row, at the same positions.
+        pipe_positions = [[i for i, c in enumerate(r) if c == "|"] for r in rows]
+        assert len({tuple(p) for p in pipe_positions}) == 1, pipe_positions
+
+    def test_markdown_table_right_aligns_numeric_fields(self):
+        """``size_bytes`` / ``score`` / degrees render with a trailing-colon divider."""
+        r = VFSResult(
+            function="glob",
+            entries=[Entry(path="/a", size_bytes=5)],
+        )
+        rendered = r.to_str(projection=("path", "size_bytes"))
+        # Divider row's second cell ends with ':' (GFM right-align marker).
+        divider = rendered.split("\n")[1]
+        left_cell, right_cell = [c.strip() for c in divider.strip("|").split("|")]
+        assert not left_cell.endswith(":")
+        assert right_cell.endswith(":")
+
+    def test_markdown_table_escapes_pipes_in_values(self):
+        """A literal ``|`` in a cell escapes to ``\\|`` so it doesn't break the row."""
+        r = VFSResult(
+            function="glob",
+            entries=[Entry(path="/has|pipe", kind="file")],
+        )
+        rendered = r.to_str(projection=("path", "kind"))
+        assert r"/has\|pipe" in rendered
+        # Exactly 3 unescaped pipes per row (leading, middle, trailing).
+        for row in rendered.split("\n"):
+            unescaped = row.replace(r"\|", "")
+            assert unescaped.count("|") == 3
+
+    def test_empty_multicolumn_still_emits_header_and_divider(self):
+        """Empty multi-column path list: header + divider, no data rows."""
+        r = VFSResult(function="glob", entries=[])
+        rendered = r.to_str(projection=("path", "size_bytes"))
+        assert rendered == ""  # Empty entries short-circuit — no header for zero rows.
+
+    def test_empty_success_result_is_empty_string(self):
+        r = VFSResult(function="glob", entries=[])
+        assert r.to_str() == ""
+
+    def test_error_result_renders_error(self):
+        r = VFSResult(success=False, function="glob", errors=["boom"])
+        assert r.to_str() == "ERROR: boom"
+
+    def test_multiple_errors_render_errors_plural(self):
+        r = VFSResult(success=False, function="glob", errors=["one", "two"])
+        assert r.to_str() == "ERRORS: one; two"
+
+    def test_grep_renders_path_line_content(self):
+        content = "line one\nhit here\nline three\n"
+        e = Entry(
+            path="/a.py",
+            content=content,
+            lines=[LineMatch(start=2, end=2, match=2)],
+        )
+        r = VFSResult(function="grep", entries=[e])
+        rendered = r.to_str()
+        # Default grep projection = path:match:content-slice.
+        assert rendered == "/a.py:2:hit here"
+
+    def test_grep_renders_context_lines_rg_style(self):
+        """``-B`` / ``-A`` context expands into one prefixed row per source line.
+
+        Match line uses ``:`` separators; context lines use ``-`` separators
+        — same shape as ripgrep so downstream tools can parse line-by-line
+        without knowing the schema.
+        """
+        content = "# Intro\nhydrate the index\nwelcome\n"
+        e = Entry(
+            path="/docs/intro.md",
+            content=content,
+            lines=[LineMatch(start=1, end=3, match=2)],
+        )
+        r = VFSResult(function="grep", entries=[e])
+        rendered = r.to_str()
+        assert rendered == ("/docs/intro.md-1-# Intro\n/docs/intro.md:2:hydrate the index\n/docs/intro.md-3-welcome")
+
+    def test_grep_context_window_clipped_to_content_length(self):
+        """Phantom line numbers past end-of-file are silently skipped."""
+        content = "only line\n"
+        e = Entry(
+            path="/a.py",
+            content=content,
+            lines=[LineMatch(start=1, end=5, match=1)],
+        )
+        r = VFSResult(function="grep", entries=[e])
+        assert r.to_str() == "/a.py:1:only line"
+
+    def test_grep_entry_level_projection_falls_back_to_markdown_table(self):
+        """Projecting entry-level fields switches grep from line output to a table.
+
+        ``size_bytes`` / ``updated_at`` / degrees are per-file attributes.
+        Mixing them into rg-style line output produces ambiguous
+        separators (``hydrate downstream:27``), so the renderer falls
+        back to the standard Markdown-table view — one row per entry.
+        """
+        from datetime import datetime
+
+        content = "a\nhit\nb\n"
+        e = Entry(
+            path="/a.py",
+            content=content,
+            lines=[LineMatch(start=1, end=3, match=2)],
+            size_bytes=47,
+            updated_at=datetime(2026, 4, 19, 12, 0, 0),
+        )
+        r = VFSResult(function="grep", entries=[e])
+        rendered = r.to_str(projection=("path", "size_bytes", "updated_at"))
+        # Table shape: header, divider, one data row. No ``/a.py:2:hit``
+        # line-oriented output anywhere — the caller opted out of it.
+        rows = rendered.split("\n")
+        assert len(rows) == 3
+        assert rows[0].startswith("| path")
+        assert "size_bytes" in rows[0]
+        assert "/a.py" in rows[2]
+        assert "47" in rows[2]
+
+    def test_bare_string_projection_raises_typeerror(self):
+        """``projection=('path')`` (no trailing comma) is a common Python typo.
+
+        Without a guard it iterates character-by-character into an
+        ``unknown field 'p'`` confusion. We short-circuit at the boundary
+        with a clear ``TypeError`` that names the mistake.
+        """
+        r = VFSResult(function="glob", entries=[Entry(path="/a.py")])
+        with pytest.raises(TypeError, match=r"tuple or list.*bare string 'path'"):
+            r.to_str(projection="path")  # ty: ignore[invalid-argument-type]
+
+    def test_explicit_null_projection_appends_note(self):
+        r = VFSResult(function="glob", entries=[Entry(path="/a.py")])
+        rendered = r.to_str(projection=("path", "out_degree"))
+        assert "NOTE: out_degree not populated for any entries." in rendered
+
+    def test_grep_native_projection_still_renders_line_by_line(self):
+        """Projection of just ``path``/``lines``/``content`` keeps rg-style output."""
+        content = "a\nhit\nb\n"
+        e = Entry(
+            path="/a.py",
+            content=content,
+            lines=[LineMatch(start=1, end=3, match=2)],
+            # Entry has entry-level data but we don't project it — stay rg-style.
+            size_bytes=47,
+        )
+        r = VFSResult(function="grep", entries=[e])
+        rendered = r.to_str(projection=("path", "lines", "content"))
+        assert rendered == ("/a.py-1-a\n/a.py:2:hit\n/a.py-3-b")
+
+    def test_grep_overlapping_context_windows_render_once(self):
+        """Merged grep windows should emit one block even when they contain two hits."""
+        e = Entry(
+            path="/a.py",
+            content="one\nhit A\nhit B\nfour\n",
+            lines=[
+                LineMatch(start=1, end=4, match=2),
+                LineMatch(start=1, end=4, match=3),
+            ],
+        )
+        r = VFSResult(function="grep", entries=[e])
+        rendered = r.to_str(projection=("path", "lines", "content"))
+        assert rendered == "/a.py-1-one\n/a.py:2:hit A\n/a.py:3:hit B\n/a.py-4-four"
+
+    def test_grep_without_content_falls_back_to_per_segment(self):
+        """Dropping ``content`` from the projection switches to one row per segment."""
+        e = Entry(
+            path="/a.py",
+            content="one\ntwo\nthree\n",
+            lines=[LineMatch(start=1, end=3, match=2)],
+        )
+        r = VFSResult(function="grep", entries=[e])
+        assert r.to_str(projection=("path", "lines")) == "/a.py:2"
+
+    def test_grep_no_segments_emits_path(self):
+        """``--files-with-matches`` / ``--count`` output: entries have no ``lines``."""
+        e = Entry(path="/a.py", content="hit\n")
+        r = VFSResult(function="grep", entries=[e])
+        assert r.to_str() == "/a.py"
+
+    def test_vector_search_renders_as_markdown_table(self):
+        r = VFSResult(
+            function="vector_search",
+            entries=[Entry(path="/a.py", score=0.9)],
+        )
+        rendered = r.to_str()
+        assert "| path" in rendered
+        assert "score" in rendered
+        assert "/a.py" in rendered
+        assert "0.9000" in rendered
+
+    def test_read_returns_content(self):
+        r = VFSResult(
+            function="read",
+            entries=[Entry(path="/a.py", content="print('hi')")],
+        )
+        assert r.to_str() == "print('hi')"
+
+    def test_action_write_one_path(self):
+        r = VFSResult(function="write", entries=[Entry(path="/a.py")])
+        assert r.to_str() == "Wrote /a.py"
+
+    def test_action_write_many_paths(self):
+        r = VFSResult(
+            function="write",
+            entries=[Entry(path="/a.py"), Entry(path="/b.py")],
+        )
+        assert r.to_str() == "Wrote 2 paths"
+
+    def test_success_true_with_errors_appends_error_block(self):
+        r = VFSResult(
+            success=True,
+            function="glob",
+            entries=[Entry(path="/a.py")],
+            errors=["warn"],
+        )
+        rendered = r.to_str()
+        assert rendered.startswith("/a.py")
+        assert rendered.endswith("ERROR: warn")
 
 
-class TestSubSuccessPropagation:
-    def test_sub_preserves_left_success(self):
-        a = VFSResult(success=True, candidates=[_c("/a.py")])
-        b = VFSResult(success=False, candidates=[_c("/b.py")])
-        result = a - b
-        assert result.success is True
+# ---------------------------------------------------------------------------
+# _first_set helper
+# ---------------------------------------------------------------------------
 
 
 class TestFirstSet:
@@ -656,48 +833,3 @@ class TestFirstSet:
 
     def test_preserves_zero_float(self):
         assert VFSResult._first_set(0.0, 1.0) == 0.0
-
-
-class TestRequiredFields:
-    def test_candidate_id_is_optional(self):
-        c = Candidate(path="/a.py", kind="file")
-        assert c.id is None
-
-    def test_candidate_kind_is_optional(self):
-        c = Candidate(path="/a.py")
-        assert c.kind is None
-
-    def test_candidate_requires_path(self):
-        with pytest.raises(ValidationError):
-            Candidate.model_validate({"kind": "file"})
-
-
-class TestDatetimeRoundTrip:
-    def test_candidate_datetime_json_round_trip(self):
-        from datetime import UTC, datetime
-
-        now = datetime.now(UTC)
-        c = Candidate(id="1", path="/a.py", kind="file", created_at=now, updated_at=now)
-        json_str = c.model_dump_json()
-        restored = Candidate.model_validate_json(json_str)
-        assert restored.created_at == now
-        assert restored.updated_at == now
-
-
-class TestDuplicatePaths:
-    def test_as_dict_last_wins_on_duplicate_paths(self):
-        """If candidates have duplicate paths, _as_dict keeps the last one."""
-        c1 = Candidate(id="1", path="/a.py", kind="file", content="first")
-        c2 = Candidate(id="2", path="/a.py", kind="file", content="second")
-        r = VFSResult(candidates=[c1, c2])
-        d = r._as_dict()
-        assert len(d) == 1
-        assert d["/a.py"].content == "second"
-
-    def test_intersection_with_duplicates_on_one_side(self):
-        c1 = Candidate(id="1", path="/a.py", kind="file", content="first")
-        c2 = Candidate(id="2", path="/a.py", kind="file", content="second")
-        a = VFSResult(candidates=[c1, c2])
-        b = VFSResult(candidates=[_c("/a.py")])
-        result = a & b
-        assert len(result) == 1

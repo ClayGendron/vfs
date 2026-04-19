@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tests.conftest import candidate as _candidate
 from tests.conftest import dummy_session_factory
+from tests.conftest import entry as _entry
 from tests.conftest import make_fs as _make_fs
 from vfs.base import VirtualFileSystem
 from vfs.models import VFSObject
@@ -302,7 +302,7 @@ class TestCandidateRouting:
         result = await root.read(candidates=VFSResult())
 
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
         root.read_mock.assert_not_awaited()
         child.read_mock.assert_not_awaited()
 
@@ -314,7 +314,7 @@ class TestCandidateRouting:
         result = await root.glob("*.py", candidates=VFSResult())
 
         assert result.success is True
-        assert result.candidates == []
+        assert result.entries == []
         root.glob_mock.assert_not_awaited()
         child.glob_mock.assert_not_awaited()
 
@@ -324,7 +324,8 @@ class TestWriteBatchRouting:
         root = _RoutingFS("root")
         child = _RoutingFS("child")
         child.write_mock.return_value = VFSResult(
-            candidates=[_candidate("/a.py"), _candidate("/b.py")],
+            function="write",
+            entries=[_entry("/a.py"), _entry("/b.py")],
         )
         await root.add_mount("/data", child)
 
@@ -357,7 +358,8 @@ class TestCrossMountTransfers:
         src.read_mock.return_value = VFSResult(
             success=False,
             errors=["read failed"],
-            candidates=[_candidate("/file.txt")],
+            function="read",
+            entries=[_entry("/file.txt")],
         )
 
         result = await root.copy("/src/file.txt", "/dst/file.txt")
@@ -374,15 +376,18 @@ class TestCrossMountTransfers:
         await root.add_mount("/dst", dst)
 
         src.read_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.txt", content="hello")],
+            function="read",
+            entries=[_entry("/file.txt", content="hello")],
         )
         dst.write_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.txt", content="hello")],
+            function="write",
+            entries=[_entry("/file.txt", content="hello")],
         )
         src.delete_mock.return_value = VFSResult(
             success=False,
             errors=["delete failed"],
-            candidates=[_candidate("/file.txt")],
+            function="delete",
+            entries=[_entry("/file.txt")],
         )
 
         result = await root.move("/src/file.txt", "/dst/file.txt")
@@ -398,12 +403,14 @@ class TestCrossMountTransfers:
         await root.add_mount("/dst", dst)
 
         src.read_mock.return_value = VFSResult(
-            candidates=[_candidate("/file.txt", content="hello")],
+            function="read",
+            entries=[_entry("/file.txt", content="hello")],
         )
         dst.write_mock.return_value = VFSResult(
             success=False,
             errors=["write failed"],
-            candidates=[_candidate("/file.txt")],
+            function="write",
+            entries=[_entry("/file.txt")],
         )
 
         result = await root.copy("/src/file.txt", "/dst/file.txt")

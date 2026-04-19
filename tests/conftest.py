@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
@@ -16,7 +18,7 @@ from vfs.backends.database import DatabaseFileSystem
 from vfs.backends.mssql import MSSQLFileSystem
 from vfs.base import VirtualFileSystem
 from vfs.models import VFSObjectBase
-from vfs.results import Candidate
+from vfs.results import Entry
 
 if TYPE_CHECKING:
     from vfs.results import VFSResult
@@ -215,9 +217,9 @@ def tracking_session_factory():
     return _factory, sessions
 
 
-def candidate(path: str, *, content: str | None = None) -> Candidate:
-    """Create a minimal Candidate for test assertions."""
-    return Candidate(path=path, content=content)
+def entry(path: str, *, content: str | None = None) -> Entry:
+    """Create a minimal Entry for test assertions."""
+    return Entry(path=path, content=content)
 
 
 def make_fs(name: str = "test") -> VirtualFileSystem:
@@ -229,8 +231,8 @@ def make_fs(name: str = "test") -> VirtualFileSystem:
     return fs
 
 
-def require_file(result: VFSResult) -> Candidate:
-    """Return the first candidate, asserting it exists for type narrowing."""
+def require_file(result: VFSResult) -> Entry:
+    """Return the first entry, asserting it exists for type narrowing."""
     assert result.file is not None
     return result.file
 
@@ -245,6 +247,68 @@ def require_text(text: str | None) -> str:
     """Assert a text field is present and return the narrowed value."""
     assert text is not None
     return text
+
+
+class SQLCapture:
+    """Captures every compiled SQL statement issued through an engine.
+
+    Use as the value yielded by the ``sql_capture`` fixture. Statements land in
+    ``self.statements`` in execution order. Helpers narrow the list to reads
+    against the ``vfs_objects`` table, which is the only thing Phase 4
+    narrowing assertions care about.
+    """
+
+    _SELECT_OBJECTS_RE = re.compile(
+        r"\bFROM\s+vfs_objects\b",
+        re.IGNORECASE,
+    )
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    def reset(self) -> None:
+        self.statements.clear()
+
+    def reads_against_objects(self) -> list[str]:
+        return [
+            s for s in self.statements if s.lstrip().upper().startswith("SELECT") and self._SELECT_OBJECTS_RE.search(s)
+        ]
+
+    def assert_no_column(self, column: str) -> None:
+        """Assert no read against ``vfs_objects`` selected the given column.
+
+        Matches the SQLAlchemy-rendered ``vfs_objects.<column>`` reference,
+        which is how compiled SELECTs name projected columns regardless of
+        dialect.
+        """
+        needle = re.compile(rf"\bvfs_objects\.{re.escape(column)}\b", re.IGNORECASE)
+        offenders = [s for s in self.reads_against_objects() if needle.search(s)]
+        assert not offenders, (
+            f"Expected no SELECTs to project vfs_objects.{column!r} "
+            f"but found {len(offenders)}:\n" + "\n---\n".join(offenders)
+        )
+
+
+@pytest.fixture
+def sql_capture(engine):
+    """Capture compiled SQL statements issued against ``engine``.
+
+    Hooks ``before_cursor_execute`` on the underlying sync engine so the
+    fully-rendered SQL (after dialect compilation) is what lands in
+    ``capture.statements``. Use ``capture.reset()`` to drop pre-test setup
+    statements before exercising the code under test.
+    """
+    capture = SQLCapture()
+    sync_engine = engine.sync_engine
+
+    def _on_execute(_conn, _cursor, statement, _parameters, _context, _executemany):
+        capture.statements.append(statement)
+
+    event.listen(sync_engine, "before_cursor_execute", _on_execute)
+    try:
+        yield capture
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _on_execute)
 
 
 def set_parameter_budget(db: DatabaseFileSystem, fallback: int) -> None:

@@ -81,7 +81,7 @@ class TestStorageFlag:
         fs = VirtualFileSystem(storage=False)
         result = await fs.glob("*.py")
         assert result.success
-        assert len(result.candidates) == 0
+        assert len(result.entries) == 0
 
     async def test_route_fanout_fans_out_to_mounts(self):
         router = VirtualFileSystem(storage=False)
@@ -95,7 +95,7 @@ class TestStorageFlag:
 
             result = await router.glob("**/*.py")
             assert result.success
-            assert any("hello.py" in c.path for c in result.candidates)
+            assert any("hello.py" in e.path for e in result.entries)
         finally:
             await engine.dispose()
 
@@ -258,7 +258,7 @@ class TestVFSClientAsyncRouting:
 
             result = await g.glob("**/*.py")
             assert result.success
-            paths = {c.path for c in result.candidates}
+            paths = {e.path for e in result.entries}
             assert "/one/file.py" in paths
             assert "/two/file.py" in paths
         finally:
@@ -274,7 +274,7 @@ class TestVFSClientAsyncRouting:
 
             result = await g.grep("needle")
             assert result.success
-            paths = {c.path for c in result.candidates}
+            paths = {e.path for e in result.entries}
             assert "/a/file.txt" in paths
             assert "/b/file.txt" in paths
         finally:
@@ -284,7 +284,7 @@ class TestVFSClientAsyncRouting:
         g = VFSClientAsync()
         result = await g.glob("**")
         assert result.success
-        assert len(result.candidates) == 0
+        assert len(result.entries) == 0
 
 
 class TestVFSClientAsyncQueryEngine:
@@ -297,7 +297,7 @@ class TestVFSClientAsyncQueryEngine:
             await g.write("/data/hello.py", "print('hi')")
             result = await g.run_query('glob "**/*.py"')
             assert result.success
-            assert any("hello.py" in c.path for c in result.candidates)
+            assert any("hello.py" in e.path for e in result.entries)
         finally:
             await g.close()
 

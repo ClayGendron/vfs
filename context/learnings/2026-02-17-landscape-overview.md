@@ -1,5 +1,9 @@
 # Landscape Overview
 
+- **Date:** 2026-02-17 (research conducted)
+- **Source:** migrated from `research/landscape-overview.md` on 2026-04-18
+- **Status:** snapshot — landscape findings remain current; any VFS API surface references reflect the v0.1 alpha and have been superseded by the v2 architecture
+
 ## Industry Direction
 
 The AI agent ecosystem is converging on **"everything is a file" as the core abstraction for agent context management**. This has been validated independently by multiple sources:
@@ -11,13 +15,13 @@ The AI agent ecosystem is converging on **"everything is a file" as the core abs
 - **AFS Paper** ("Everything is Context", Dec 2025) — academic formalization of the agentic file system concept
 - **LangChain Blog** — "models are specifically trained to understand traversing filesystems"
 
-Grover's foundational principle — everything is a file path — is directly aligned with where the industry is heading.
+VFS's (currently `Grover` in code) foundational principle — everything is a file path — is directly aligned with where the industry is heading.
 
 ## Competitive Positioning
 
 | System | Versioned FS | Knowledge Graph | Semantic Search | Agent-Oriented | Local-First |
 |--------|:---:|:---:|:---:|:---:|:---:|
-| **Grover** | Yes (diffs) | Yes (rustworkx) | Yes (usearch) | Yes | Yes |
+| **VFS** | Yes (diffs) | Yes (rustworkx) | Yes (usearch) | Yes | Yes |
 | Deep Agents | No | No | No | Yes | Partial |
 | AgentFS (Turso) | CoW snapshots | No | No | Yes | Yes |
 | Letta MemFS | Git-based | No | Via tools | Memory only | Yes |
@@ -28,7 +32,7 @@ Grover's foundational principle — everything is a file path — is directly al
 | lakeFS | Git-like | No | No | No | No |
 | JuiceFS | No | No | No | No | No |
 
-**Grover is the only system with all five properties.** No competitor offers the integrated versioning + knowledge graph + semantic search stack.
+**VFS is the only system with all five properties.** No competitor offers the integrated versioning + knowledge graph + semantic search stack.
 
 ## Key Gaps in the Market
 
@@ -47,7 +51,7 @@ Grover's foundational principle — everything is a file path — is directly al
 ### High Priority
 1. **deepagents BackendProtocol implementation** — immediate integration path
 2. **MCP Server** — broadest reach across AI clients
-3. **Agent memory layer** — positions Grover as infrastructure for memory systems
+3. **Agent memory layer** — positions VFS as infrastructure for memory systems
 
 ### Medium Priority
 4. **Content-addressable storage** — deduplication and integrity for versioning

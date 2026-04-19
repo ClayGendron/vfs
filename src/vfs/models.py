@@ -32,7 +32,7 @@ from vfs.paths import (
 from vfs.paths import (
     parent_path as compute_parent_path,
 )
-from vfs.results import Candidate, Detail
+from vfs.results import Entry
 from vfs.vector import Vector, VectorType
 from vfs.versioning import create_version as create_version_record
 from vfs.versioning import reconstruct_version
@@ -123,6 +123,11 @@ class VFSObjectBase(ValidatedSQLModel):
     tokens: int = Field(default=0)
     lexical_tokens: int = Field(default=0)
 
+    # --- Graph degree (persisted; populated by external graph-rebuild) ------
+
+    in_degree: int | None = Field(default=None, index=True)
+    out_degree: int | None = Field(default=None, index=True)
+
     # --- Chunk-specific -----------------------------------------------------
 
     line_start: int | None = Field(default=None)
@@ -208,27 +213,26 @@ class VFSObjectBase(ValidatedSQLModel):
         self._rederive_path_fields()
         return self
 
-    def to_candidate(
+    def to_entry(
         self,
         *,
-        operation: str,
         score: float | None = None,
-        metadata: dict | None = None,
-    ) -> Candidate:
-        """Project this object to an immutable Candidate."""
-        return Candidate(
-            id=self.id,
+        include_content: bool = False,
+    ) -> Entry:
+        """Project this object to an immutable ``Entry``.
+
+        Callers pass ``score`` for ranked results (vector/bm25/pagerank). By
+        default ``content`` is omitted — set ``include_content=True`` for
+        ``read`` / ``grep`` paths that genuinely need the text.
+        """
+        return Entry(
             path=self.path,
             kind=self.kind,
-            content=self.content,
-            lines=self.lines,
+            content=self.content if include_content else None,
             size_bytes=self.size_bytes,
-            tokens=self.tokens,
-            mime_type=self.mime_type,
-            weight=self.connection_weight,
-            distance=self.connection_distance,
-            details=(Detail(operation=operation, score=score, metadata=metadata),),
-            created_at=self.created_at,
+            score=score,
+            in_degree=self.in_degree,
+            out_degree=self.out_degree,
             updated_at=self.updated_at,
         )
 

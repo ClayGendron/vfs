@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from sqlalchemy import case, func, or_, select
 
 from vfs.base import VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
+from vfs.columns import ENTRY_BACKED_MODEL_COLUMNS, default_columns
 from vfs.graph import RustworkxGraph
 from vfs.models import VFSObject, VFSObjectBase
 from vfs.paths import connection_path, scope_path, validate_user_id, version_path
@@ -23,7 +25,7 @@ from vfs.paths import parent_path as compute_parent_path
 from vfs.patterns import compile_glob, glob_to_sql_like
 from vfs.permissions import check_writable
 from vfs.replace import replace
-from vfs.results import Candidate, Detail, EditOperation, TwoPathOperation, VFSResult
+from vfs.results import EditOperation, Entry, LineMatch, TwoPathOperation, VFSResult
 from vfs.versioning import SNAPSHOT_INTERVAL
 
 if TYPE_CHECKING:
@@ -53,7 +55,7 @@ def _escape_like(term: str) -> str:
 
 
 def _regex_flags_for_mode(case_mode: CaseMode, pattern: str) -> int:
-    """Map an rg-style case mode to Python ``re`` flags.
+    """Map a rg-style case mode to Python ``re`` flags.
 
     ``smart`` matches rg's smart-case: case-insensitive iff the pattern
     contains no uppercase characters.
@@ -91,37 +93,43 @@ def _build_line_matches_with_context(
     match_indices: list[int],
     before: int,
     after: int,
-) -> list[dict[str, object]]:
-    """Emit line_matches entries covering matches plus rg-style context.
+) -> list[LineMatch]:
+    """Emit one ``LineMatch`` per match, with merged context-window spans.
 
-    Overlapping or adjacent context windows are merged so a single span
-    contributes exactly one entry per line.  Context lines are marked
-    with ``"context": True`` in the returned dicts; match lines are not.
-    With ``before == after == 0`` the output degrades to a flat list of
-    match-only entries preserving the original shape.
+    Each match yields a ``LineMatch(start, end, match)`` where ``match`` is
+    the 1-indexed matching line and ``start``/``end`` bracket its context
+    window.  Overlapping or adjacent context windows are merged: all
+    matches whose individual windows fall inside the same merged span
+    share the merged ``start``/``end`` so downstream consumers can
+    reconstruct the rg-style grouped output.  With ``before == after == 0``
+    each match's ``start == end == match`` (no context expansion).
     """
     if not match_indices:
         return []
     total = len(lines)
-    windows: list[list[int]] = []  # each: [start, end] inclusive
+    # Each merged window is (start, end) inclusive 0-indexed.
+    windows: list[list[int]] = []
+    # For each match_index, remember which window it belongs to.
+    window_of: list[int] = []
     for mi in match_indices:
         start = max(0, mi - before)
         end = min(total - 1, mi + after)
         if windows and start <= windows[-1][1] + 1:
             if end > windows[-1][1]:
                 windows[-1][1] = end
+            window_of.append(len(windows) - 1)
         else:
             windows.append([start, end])
+            window_of.append(len(windows) - 1)
 
-    match_set = set(match_indices)
-    result: list[dict[str, object]] = []
-    for start, end in windows:
-        for idx in range(start, end + 1):
-            entry: dict[str, object] = {"line": idx + 1, "text": lines[idx]}
-            if idx not in match_set:
-                entry["context"] = True
-            result.append(entry)
-    return result
+    return [
+        LineMatch(
+            start=windows[window_of[i]][0] + 1,
+            end=windows[window_of[i]][1] + 1,
+            match=mi + 1,
+        )
+        for i, mi in enumerate(match_indices)
+    ]
 
 
 def _unchecked_select(*entities: Any) -> Any:
@@ -184,8 +192,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         """Scope all candidate paths if user_scoped is enabled."""
         if candidates is None or not self._user_scoped or user_id is None:
             return candidates
-        scoped = [c.model_copy(update={"path": scope_path(c.path, user_id)}) for c in candidates.candidates]
-        return candidates._with_candidates(scoped)
+        scoped = [e.model_copy(update={"path": scope_path(e.path, user_id)}) for e in candidates.entries]
+        return candidates._with_entries(scoped)
 
     def _scope_objects(self, objects: Sequence[VFSObjectBase], user_id: str | None) -> None:
         """Scope object paths in place if user_scoped is enabled.
@@ -226,6 +234,74 @@ class DatabaseFileSystem(VirtualFileSystem):
             raise ValueError(f"Invalid user_id: {err}")
 
     # ------------------------------------------------------------------
+    # Column-narrowing helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_columns(
+        self,
+        function: str,
+        columns: frozenset[str] | None,
+    ) -> frozenset[str]:
+        """Return the model columns to SELECT for *function*.
+
+        ``columns=None`` falls through to ``default_columns(function)``.
+        ``path`` is force-included — every Entry must carry a path, and
+        downstream code (regex re-match, dedup, scoping) depends on it.
+
+        User-supplied ``columns`` must be Entry-backed model column names;
+        anything else (including typos like ``size`` for ``size_bytes``,
+        or internal columns like ``parent_path``) raises ``ValueError``
+        with the valid set — turning a cryptic ``AttributeError`` from
+        SQLAlchemy into a clear contract violation at the boundary.
+        """
+        if columns is not None:
+            unknown = columns - ENTRY_BACKED_MODEL_COLUMNS
+            if unknown:
+                valid = ", ".join(sorted(ENTRY_BACKED_MODEL_COLUMNS))
+                bad = ", ".join(sorted(unknown))
+                msg = f"unknown column(s): {bad}. Valid columns: {valid}"
+                raise ValueError(msg)
+        cols = columns if columns is not None else default_columns(function)
+        return cols | {"path"}
+
+    def _select_columns(self, cols: frozenset[str]) -> list[Any]:
+        """Return SQLAlchemy column expressions for *cols*, path-first.
+
+        Stable column order keeps SELECT statements diffable across runs
+        and helps regex assertions in ``test_backend_projection.py`` stay
+        readable.  ``cols`` is trusted here — validation lives on
+        :meth:`_resolve_columns`, which is the public entry point.
+        """
+        ordered = ["path", *sorted(c for c in cols if c != "path")]
+        return [getattr(self._model, c) for c in ordered]
+
+    def _row_to_entry(
+        self,
+        row: Any,
+        cols: frozenset[str],
+        *,
+        score: float | None = None,
+        lines: list[LineMatch] | None = None,
+    ) -> Entry:
+        """Build an :class:`Entry` from a narrow-select row.
+
+        Only fields whose backing column is in *cols* are populated; the
+        rest stay ``None``. ``score`` and ``lines`` are computed (no
+        backing column) — pass them explicitly when relevant.
+        """
+        return Entry(
+            path=row.path,
+            kind=row.kind if "kind" in cols else None,
+            content=row.content if "content" in cols else None,
+            size_bytes=row.size_bytes if "size_bytes" in cols else None,
+            updated_at=row.updated_at if "updated_at" in cols else None,
+            in_degree=row.in_degree if "in_degree" in cols else None,
+            out_degree=row.out_degree if "out_degree" in cols else None,
+            score=score,
+            lines=lines,
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -236,7 +312,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         include_deleted: bool = False,
     ) -> VFSObjectBase | None:
         """Fetch a single object by exact path."""
-        stmt = select(self._model).where(self._model.path == path)  # ty: ignore[invalid-argument-type]
+        stmt = select(self._model).where(self._model.path == path)
         if not include_deleted:
             stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
         result = await session.execute(stmt)
@@ -351,7 +427,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         if candidates is not None:
             need_hydration: list[str] = []
-            for candidate in candidates.candidates:
+            for candidate in candidates.entries:
                 if candidate.kind == "version":
                     continue
                 if candidate.content is not None:
@@ -510,7 +586,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
-                self._model.kind == required_kind,  # ty: ignore[invalid-argument-type]
+                self._model.kind == required_kind,
             )
             if not include_deleted:
                 stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
@@ -671,7 +747,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         new_content: str,
         latest_version_hash: str | None,
         session: AsyncSession,
-    ) -> Candidate:
+    ) -> Entry:
         """Update an existing (or soft-deleted) object with new content.
 
         Fast path: when the file hash and latest version hash agree,
@@ -711,7 +787,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         else:
             existing.update_content(new_content)  # pragma: no cover — defensive: files always have content
 
-        return existing.to_candidate(operation="write")
+        return existing.to_entry()
 
     async def _fetch_version_chain(
         self,
@@ -740,7 +816,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         incoming: VFSObjectBase,
         new_content: str,
         session: AsyncSession,
-    ) -> Candidate:
+    ) -> Entry:
         """Insert a new file or chunk.
 
         New files get an initial v1 snapshot.  Chunks are added directly.
@@ -758,7 +834,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             incoming.update_content(new_content)
             session.add(version_obj)
         session.add(incoming)
-        return incoming.to_candidate(operation="write")
+        return incoming.to_entry()
 
     # ------------------------------------------------------------------
     # CRUD
@@ -769,6 +845,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         path: str | None = None,
         candidates: VFSResult | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:
@@ -780,41 +857,43 @@ class DatabaseFileSystem(VirtualFileSystem):
         - *Candidates*: batch-fetch all candidate paths in one query,
           preserve prior details from the incoming candidates, and report
           errors for any paths not found.
+
+        ``columns`` narrows the SELECT to only the requested model columns.
+        With explicit ``columns``, the pre-hydration pass-through is bypassed
+        — every requested path goes to the DB so that exactly the requested
+        column set is returned.
         """
+        cols = self._resolve_columns("read", columns)
+        explicit_columns = columns is not None
         self._require_user_id(user_id)
         path = self._scope_path(path, user_id)
         candidates = self._scope_candidates(candidates, user_id)
         if candidates is None:
             if path is None:
                 return self._error("read requires a path or candidates")
-            candidates = VFSResult(candidates=[Candidate(path=path)])
+            candidates = VFSResult(function="read", entries=[Entry(path=path)])
         elif path is not None:
             return self._error("read requires a path or candidates, not both")
 
-        incoming = {c.path: c for c in candidates.candidates}
+        incoming = {c.path: c for c in candidates.entries}
         if not incoming:
-            return VFSResult(candidates=[])
+            return VFSResult(function="read", entries=[])
 
-        # Pre-hydrated candidates pass straight through; only fetch the gaps.
-        out: list[Candidate] = []
+        out: list[Entry] = []
         errors: list[str] = []
         gap_paths: list[str] = []
         for p, c in incoming.items():
-            if c.content is not None:
+            # Default-columns read can pass pre-hydrated candidates straight
+            # through; an explicit-columns read must re-fetch so the returned
+            # entries carry exactly the requested fields.
+            if not explicit_columns and c.content is not None:
                 out.append(
-                    Candidate(
-                        id=c.id,
+                    Entry(
                         path=c.path,
                         kind=c.kind,
                         content=c.content,
                         lines=c.lines,
                         size_bytes=c.size_bytes,
-                        tokens=c.tokens,
-                        mime_type=c.mime_type,
-                        weight=c.weight,
-                        distance=c.distance,
-                        details=(Detail(operation="read"),),
-                        created_at=c.created_at,
                         updated_at=c.updated_at,
                     )
                 )
@@ -822,22 +901,23 @@ class DatabaseFileSystem(VirtualFileSystem):
                 gap_paths.append(p)
 
         for batch in self._chunk_paths(session, gap_paths, binds_per_item=1):
-            stmt = select(self._model).where(
+            stmt = select(*self._select_columns(cols)).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
             )
             result = await session.execute(stmt)
-            objs = {obj.path: obj for obj in result.scalars().all()}
+            rows_by_path = {row.path: row for row in result.all()}
             for p in batch:
-                if p in objs:
-                    out.append(objs[p].to_candidate(operation="read"))
+                if p in rows_by_path:
+                    out.append(self._row_to_entry(rows_by_path[p], cols))
                 else:
                     errors.append(f"Not found: {p}")
 
         return self._error(
             self._unscope_result(
                 VFSResult(
-                    candidates=out,
+                    function="read",
+                    entries=out,
                     errors=errors,
                     success=len(errors) == 0,
                 ),
@@ -850,16 +930,24 @@ class DatabaseFileSystem(VirtualFileSystem):
         path: str | None = None,
         candidates: VFSResult | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:
         """Return metadata for one or more objects.
 
-        Delegates to ``_read_impl`` — returns the same result including
-        content.  Callers that need metadata-only should strip content
-        from the returned candidates.
+        Delegates to ``_read_impl`` with stat's narrower default column
+        set (no ``content``).  Callers may widen by passing ``columns``.
         """
-        return await self._read_impl(path=path, candidates=candidates, user_id=user_id, session=session)
+        cols = self._resolve_columns("stat", columns)
+        result = await self._read_impl(
+            path=path,
+            candidates=candidates,
+            columns=cols,
+            user_id=user_id,
+            session=session,
+        )
+        return result.model_copy(update={"function": "stat"})
 
     async def _write_impl(
         self,
@@ -999,7 +1087,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                     latest_version_hash[file_path] = content_hash
 
         # ── Step 5: Process each write ─────────────────────────────────
-        out: list[Candidate] = []
+        out: list[Entry] = []
         for obj_path, incoming in ((p, obj) for p, obj in write_map.items() if p not in invalid_chunk_paths):
             new_content = incoming.content or ""
             existing = existing_map.get(obj_path)
@@ -1013,10 +1101,10 @@ class DatabaseFileSystem(VirtualFileSystem):
                             existing.update_content(new_content)
                         else:
                             existing.updated_at = datetime.now(UTC)
-                        candidate = existing.to_candidate(operation="write")
+                        candidate = existing.to_entry()
                     else:
                         session.add(incoming)
-                        candidate = incoming.to_candidate(operation="write")
+                        candidate = incoming.to_entry()
                 elif existing is not None:
                     if existing.deleted_at is None and not overwrite:
                         errors.append(f"Already exists (overwrite=False): {obj_path}")
@@ -1055,7 +1143,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             self._graph.invalidate()
 
         result = self._unscope_result(
-            VFSResult(candidates=out, errors=errors, success=len(errors) == 0),
+            VFSResult(function="write", entries=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -1065,6 +1153,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         path: str | None = None,
         candidates: VFSResult | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:
@@ -1084,24 +1173,25 @@ class DatabaseFileSystem(VirtualFileSystem):
         round-trip for results that already carry type information from
         a prior operation (read, glob, write, etc.).
         """
+        cols = self._resolve_columns("ls", columns)
         self._require_user_id(user_id)
         path = self._scope_path(path, user_id)
         candidates = self._scope_candidates(candidates, user_id)
         if candidates is None:
             if path is None:
                 return self._error("ls requires a path or candidates")
-            candidates = VFSResult(candidates=[Candidate(path=path)])
+            candidates = VFSResult(function="ls", entries=[Entry(path=path)])
         elif path is not None:
             return self._error("ls requires a path or candidates, not both")
 
-        if not candidates.candidates:
-            return VFSResult(candidates=[])
+        if not candidates.entries:
+            return VFSResult(function="ls", entries=[])
 
         # Classify using candidate kind; query only unknowns
         dir_paths: list[str] = []
         file_paths: list[str] = []
         unknown_paths: list[str] = []
-        for c in candidates.candidates:
+        for c in candidates.entries:
             if c.path == "/" or c.kind == "directory":
                 dir_paths.append(c.path)
             elif c.kind is not None:
@@ -1111,36 +1201,40 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         if unknown_paths:
             for batch in self._chunk_paths(session, unknown_paths, binds_per_item=1):
-                stmt = select(self._model).where(
+                stmt = select(self._model.path, self._model.kind).where(  # ty: ignore[no-matching-overload]
                     self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
                     self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
-                for obj in result.scalars().all():
-                    if obj.kind == "directory":
-                        dir_paths.append(obj.path)
-                    elif obj.kind == "file":
-                        file_paths.append(obj.path)
+                for row in result.all():
+                    if row.kind == "directory":
+                        dir_paths.append(row.path)
+                    elif row.kind == "file":
+                        file_paths.append(row.path)
 
         # Single query — filter directory metadata children in Python
         all_paths = dir_paths + file_paths
         if not all_paths:
-            return VFSResult(candidates=[])
+            return VFSResult(function="ls", entries=[])
 
         dir_set = set(dir_paths)
-        out: list[Candidate] = []
+        # parent_path + kind are needed for the directory-metadata visibility
+        # filter; widen the SELECT to include them even if not in the
+        # projected columns.
+        select_cols = self._select_columns(cols | {"parent_path", "kind"})
+        out: list[Entry] = []
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
-            stmt = select(self._model).where(
+            stmt = select(*select_cols).where(
                 self._model.parent_path.in_(batch),  # ty: ignore[unresolved-attribute]
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
             )
             result = await session.execute(stmt)
-            for child in result.scalars().all():
-                if child.parent_path in dir_set and child.kind not in ("file", "directory"):
+            for row in result.all():
+                if row.parent_path in dir_set and row.kind not in ("file", "directory"):
                     continue
-                out.append(child.to_candidate(operation="ls"))
+                out.append(self._row_to_entry(row, cols))
 
-        return self._unscope_result(VFSResult(candidates=out), user_id)
+        return self._unscope_result(VFSResult(function="ls", entries=out), user_id)
 
     async def _delete_impl(
         self,
@@ -1167,13 +1261,13 @@ class DatabaseFileSystem(VirtualFileSystem):
         if candidates is None:
             if path is None:
                 return self._error("delete requires a path or candidates")
-            candidates = VFSResult(candidates=[Candidate(path=path)])
+            candidates = VFSResult(function="delete", entries=[Entry(path=path)])
         elif path is not None:
             return self._error("delete requires a path or candidates, not both")
 
-        paths = [c.path for c in candidates.candidates]
+        paths = [c.path for c in candidates.entries]
         if not paths:
-            return VFSResult(candidates=[])
+            return VFSResult(function="delete", entries=[])
 
         if "/" in paths:
             return self._error("Cannot delete root path")
@@ -1189,7 +1283,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             result = await session.execute(stmt)
             objs.update({obj.path: obj for obj in result.scalars().all()})
 
-        out: list[Candidate] = []
+        out: list[Entry] = []
         errors: list[str] = []
 
         # Separate not-found errors
@@ -1201,7 +1295,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 errors.append(f"Not found: {p}")
 
         if not found:
-            return self._error(VFSResult(errors=errors, success=len(errors) == 0))
+            return self._error(VFSResult(function="delete", errors=errors, success=len(errors) == 0))
 
         # ── Batch-fetch children ─────────────────────────────────────
         children_map = await self._fetch_children_batched(
@@ -1219,7 +1313,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                     blocked.add(p)
             found = {p: o for p, o in found.items() if p not in blocked}
             if not found:
-                return self._error(VFSResult(errors=errors, success=len(errors) == 0))
+                return self._error(VFSResult(function="delete", errors=errors, success=len(errors) == 0))
 
         # ── Per-child permission check (cascade fail-fast) ───────────
         # The router's chokepoint only saw the top-level paths.  When a
@@ -1243,17 +1337,17 @@ class DatabaseFileSystem(VirtualFileSystem):
             children = children_map.get(p, [])
             try:
                 if permanent:
-                    out.append(obj.to_candidate(operation="delete"))
+                    out.append(obj.to_entry())
                     for child in children:
-                        out.append(child.to_candidate(operation="delete"))
+                        out.append(child.to_entry())
                         await session.delete(child)
                     await session.delete(obj)
                 else:
                     obj.deleted_at = now
-                    out.append(obj.to_candidate(operation="delete"))
+                    out.append(obj.to_entry())
                     for child in children:
                         child.deleted_at = now
-                        out.append(child.to_candidate(operation="delete"))
+                        out.append(child.to_entry())
             except Exception as e:
                 errors.append(f"Delete failed for {p}: {e}")
 
@@ -1262,7 +1356,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         # files that are graph nodes.
         self._graph.invalidate()
         result = self._unscope_result(
-            VFSResult(candidates=out, errors=errors, success=len(errors) == 0),
+            VFSResult(function="delete", entries=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -1370,7 +1464,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         to_write: list[VFSObjectBase] = []
         errors: list[str] = []
-        for c in read_result.candidates:
+        for c in read_result.entries:
             content = c.content
             if content is None:
                 errors.append(f"No content to edit: {c.path}")
@@ -1398,13 +1492,14 @@ class DatabaseFileSystem(VirtualFileSystem):
                 errors.extend(write_result.errors)
             return self._error(
                 VFSResult(
-                    candidates=write_result.candidates,
+                    function="edit",
+                    entries=write_result.entries,
                     errors=errors,
                     success=len(errors) == 0,
                 )
             )
 
-        return self._error(VFSResult(errors=errors, success=len(errors) == 0))
+        return self._error(VFSResult(function="edit", errors=errors, success=len(errors) == 0))
 
     async def _copy_impl(
         self,
@@ -1427,12 +1522,12 @@ class DatabaseFileSystem(VirtualFileSystem):
         # Read sources — _read_impl scopes internally, returns unscoped
         src_paths = [op.src for op in ops]
         src_result = await self._read_impl(
-            candidates=VFSResult(candidates=[Candidate(path=p) for p in src_paths]),
+            candidates=VFSResult(function="read", entries=[Entry(path=p) for p in src_paths]),
             user_id=user_id,
             session=session,
         )
 
-        src_by_path = {c.path: c for c in src_result.candidates}
+        src_by_path = {c.path: c for c in src_result.entries}
         errors: list[str] = list(src_result.errors)
 
         # Build write objects with unscoped dest paths
@@ -1444,7 +1539,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             to_write.append(self._model(path=op.dest, content=src.content or ""))
 
         if not to_write:
-            return self._error(VFSResult(errors=errors, success=len(errors) == 0))
+            return self._error(VFSResult(function="copy", errors=errors, success=len(errors) == 0))
 
         # Write — _write_impl scopes internally, returns unscoped
         write_result = await self._write_impl(
@@ -1456,7 +1551,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         errors.extend(write_result.errors)
         return self._error(
             VFSResult(
-                candidates=write_result.candidates,
+                function="copy",
+                entries=write_result.entries,
                 errors=errors,
                 success=len(errors) == 0,
             )
@@ -1492,7 +1588,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 for op in ops
             ]
 
-        out: list[Candidate] = []
+        out: list[Entry] = []
         errors: list[str] = []
 
         for op in ops:
@@ -1518,7 +1614,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 descendants = list(result.scalars().all())
             else:
                 stmt = select(self._model).where(
-                    self._model.parent_path == op.src,  # ty: ignore[invalid-argument-type]
+                    self._model.parent_path == op.src,
                     self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
@@ -1552,7 +1648,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             # only need to find *incoming* connections from other files
             # whose target_path points into the moved subtree.
             conn_stmt = select(self._model).where(
-                self._model.kind == "connection",  # ty: ignore[invalid-argument-type]
+                self._model.kind == "connection",
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 or_(
                     self._model.target_path == op.src,  # ty: ignore[invalid-argument-type]
@@ -1561,21 +1657,21 @@ class DatabaseFileSystem(VirtualFileSystem):
             )
             conn_result = await session.execute(conn_stmt)
             for conn in conn_result.scalars().all():
-                conn.target_path = op.dest + conn.target_path[len(op.src) :]  # ty: ignore[not-subscriptable]
+                conn.target_path = op.dest + conn.target_path[len(op.src) :]
                 conn.path = connection_path(
-                    conn.source_path,  # ty: ignore[invalid-argument-type]
+                    conn.source_path,
                     conn.target_path,
-                    conn.connection_type,  # ty: ignore[invalid-argument-type]
+                    conn.connection_type,
                 )
                 conn._rederive_path_fields()
 
-            out.append(src_obj.to_candidate(operation="move"))
+            out.append(src_obj.to_entry())
 
         await session.flush()
         # Moves may rename connections or rewrite target_path references.
         self._graph.invalidate()
         result = self._unscope_result(
-            VFSResult(candidates=out, errors=errors, success=len(errors) == 0),
+            VFSResult(function="move", entries=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -1656,6 +1752,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         paths: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
@@ -1666,6 +1763,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         Python regex post-filter (authoritative).  Files and directories
         only by default (§5.4).
         """
+        cols = self._resolve_columns("glob", columns)
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         if candidates is None and self._user_scoped and user_id:
@@ -1679,19 +1777,15 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         # ── With candidates: filter in-memory ─────────────────────────
         if candidates is not None:
-            matched = [
-                c.model_copy(update={"details": (Detail(operation="glob"),)})
-                for c in candidates.candidates
-                if regex.match(c.path) is not None
-            ]
+            matched = [c for c in candidates.entries if regex.match(c.path) is not None]
             if max_count is not None:
                 matched = matched[:max_count]
-            return self._unscope_result(VFSResult(candidates=matched), user_id)
+            return self._unscope_result(VFSResult(function="glob", entries=matched), user_id)
 
         # ── Without candidates: query DB ──────────────────────────────
         like_pattern = glob_to_sql_like(pattern)
 
-        stmt = select(self._model).where(
+        stmt = select(*self._select_columns(cols)).where(
             self._model.kind.in_(["file", "directory"]),  # ty: ignore[unresolved-attribute]
             self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
@@ -1713,13 +1807,11 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         result = await session.execute(stmt)
 
-        matched = [
-            obj.to_candidate(operation="glob") for obj in result.scalars().all() if regex.match(obj.path) is not None
-        ]
+        matched = [self._row_to_entry(row, cols) for row in result.all() if regex.match(row.path) is not None]
         matched.sort(key=lambda c: c.path)
         if max_count is not None:
             matched = matched[:max_count]
-        return self._unscope_result(VFSResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(function="glob", entries=matched), user_id)
 
     async def _grep_impl(
         self,
@@ -1738,6 +1830,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
+        columns: frozenset[str] | None = None,
         candidates: VFSResult | None = None,
         user_id: str | None = None,
         session: AsyncSession,
@@ -1748,7 +1841,14 @@ class DatabaseFileSystem(VirtualFileSystem):
         SQL and compiles *pattern* into a Python regex (wrapped for
         ``fixed_strings`` / ``word_regexp``) that scans per line on the
         narrowed candidate set.  Files only by default (§5.4).
+
+        ``columns`` is the projection set the caller wants on each
+        returned entry; ``content`` is force-included because the scan
+        needs it.  Anything else in ``columns`` (e.g. ``in_degree``,
+        ``updated_at``) rides along in the same SELECT and lands on the
+        emitted entries — no second round-trip required.
         """
+        cols = self._resolve_columns("grep", columns) | {"content"}
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         if not pattern:
@@ -1764,40 +1864,50 @@ class DatabaseFileSystem(VirtualFileSystem):
         except re.error as exc:
             return self._error(f"Invalid regex pattern: {exc}")
 
-        # ── Build path → content map ─────────────────────────────────
-        content_map: dict[str, str] = {}
+        # ── Fetch the rows we need to scan ───────────────────────────
+        select_cols = self._select_columns(cols)
+        rows_by_path: dict[str, Any] = {}
 
         if candidates is not None:
-            # Reuse content already on candidates; hydrate only the gaps
-            need_hydration: list[str] = []
-            for c in candidates.candidates:
+            # Reuse candidate content where present; only DB-fetch the gaps.
+            # Pre-hydrated entries become pseudo-rows so the downstream code
+            # path is uniform — fields the candidate lacks stay None on the
+            # emitted entry (Phase 6 hydration can backfill via fs.read).
+            paths_to_fetch: list[str] = []
+            for c in candidates.entries:
                 if c.content is not None:
-                    content_map[c.path] = c.content
+                    rows_by_path[c.path] = SimpleNamespace(
+                        path=c.path,
+                        kind=c.kind,
+                        content=c.content,
+                        size_bytes=c.size_bytes,
+                        updated_at=c.updated_at,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                    )
                 else:
-                    need_hydration.append(c.path)
-
-            if need_hydration:
-                for batch in self._chunk_paths(session, need_hydration, binds_per_item=1):
-                    stmt = select(self._model).where(
-                        self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
-                        self._model.kind == "file",  # ty: ignore[invalid-argument-type]
-                        self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
-                    )
-                    stmt = self._apply_structural_filters(
-                        stmt,
-                        ext=ext,
-                        ext_not=ext_not,
-                        paths=paths,
-                        globs=globs,
-                        globs_not=globs_not,
-                        user_id=user_id,
-                    )
-                    result = await session.execute(stmt)
-                    for obj in result.scalars().all():
-                        if obj.content:
-                            content_map[obj.path] = obj.content
+                    paths_to_fetch.append(c.path)
+            for batch in self._chunk_paths(session, paths_to_fetch, binds_per_item=1):
+                stmt = select(*select_cols).where(
+                    self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
+                    self._model.kind == "file",  # ty: ignore[invalid-argument-type]
+                    self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+                )
+                stmt = self._apply_structural_filters(
+                    stmt,
+                    ext=ext,
+                    ext_not=ext_not,
+                    paths=paths,
+                    globs=globs,
+                    globs_not=globs_not,
+                    user_id=user_id,
+                )
+                result = await session.execute(stmt)
+                for row in result.all():
+                    if row.content:
+                        rows_by_path[row.path] = row
         else:
-            stmt = select(self._model).where(
+            stmt = select(*select_cols).where(
                 self._model.kind == "file",  # ty: ignore[invalid-argument-type]
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 self._model.content.isnot(None),  # ty: ignore[unresolved-attribute]
@@ -1814,9 +1924,9 @@ class DatabaseFileSystem(VirtualFileSystem):
                 user_id=user_id,
             )
             result = await session.execute(stmt)
-            for obj in result.scalars().all():
-                if obj.content:
-                    content_map[obj.path] = obj.content
+            for row in result.all():
+                if row.content:
+                    rows_by_path[row.path] = row
 
         # ── Authoritative glob post-filter ───────────────────────────
         # LIKE is a pre-filter; compile_glob is the source of truth.
@@ -1827,17 +1937,16 @@ class DatabaseFileSystem(VirtualFileSystem):
             neg_regexes = [
                 r for r in (compile_glob(self._scope_filter_prefix(g, user_id)) for g in globs_not) if r is not None
             ]
-            filtered: dict[str, str] = {}
-            for p, c in content_map.items():
-                if pos_regexes and not any(r.match(p) for r in pos_regexes):
-                    continue
-                if neg_regexes and any(r.match(p) for r in neg_regexes):
-                    continue
-                filtered[p] = c
-            content_map = filtered
+            rows_by_path = {
+                p: row
+                for p, row in rows_by_path.items()
+                if (not pos_regexes or any(r.match(p) for r in pos_regexes))
+                and not (neg_regexes and any(r.match(p) for r in neg_regexes))
+            }
 
         matched = self._collect_line_matches(
-            content_map,
+            rows_by_path,
+            cols,
             regex,
             max_count,
             output_mode=output_mode,
@@ -1845,11 +1954,12 @@ class DatabaseFileSystem(VirtualFileSystem):
             after_context=after_context,
             invert_match=invert_match,
         )
-        return self._unscope_result(VFSResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(function="grep", entries=matched), user_id)
 
-    @staticmethod
     def _collect_line_matches(
-        content_map: dict[str, str],
+        self,
+        rows_by_path: dict[str, Any],
+        cols: frozenset[str],
         regex: re.Pattern[str],
         max_count: int | None = None,
         *,
@@ -1857,25 +1967,22 @@ class DatabaseFileSystem(VirtualFileSystem):
         before_context: int = 0,
         after_context: int = 0,
         invert_match: bool = False,
-    ) -> list[Candidate]:
-        """Build grep candidates from a ``{path: content}`` mapping.
+    ) -> list[Entry]:
+        """Build grep entries from a ``{path: row}`` mapping.
 
-        Iterates ``content_map`` in sorted-path order and runs
-        ``regex.search`` per line.  ``output_mode`` controls the shape of
-        the returned detail metadata:
-
-        * ``"lines"`` — attach per-line matches with merged context
-          windows driven by ``before_context`` / ``after_context``.
-          Context lines carry ``"context": True`` in the metadata entry.
-        * ``"files"`` / ``"count"`` — no line-level detail, just a
-          per-file match count.
+        Iterates in sorted-path order, scans ``row.content`` line-by-line,
+        and emits one ``Entry`` per matched file.  Each entry is built via
+        :meth:`_row_to_entry` so it carries every column in *cols*, plus
+        the computed ``score`` (match count) and ``lines`` (per-match
+        context spans, when ``output_mode == "lines"``).
 
         ``invert_match`` flips the per-line predicate (``-v``).  Stops at
         *max_count* matched files when set.
         """
-        matched: list[Candidate] = []
-        for path in sorted(content_map):
-            content = content_map[path]
+        matched: list[Entry] = []
+        for path in sorted(rows_by_path):
+            row = rows_by_path[path]
+            content = row.content
             lines = content.split("\n")
             match_indices: list[int] = []
             for idx, line_text in enumerate(lines):
@@ -1885,10 +1992,9 @@ class DatabaseFileSystem(VirtualFileSystem):
             if not match_indices:
                 continue
 
-            match_count = len(match_indices)
-            metadata: dict[str, object] = {"match_count": match_count}
+            line_matches: list[LineMatch] | None = None
             if output_mode == "lines":
-                metadata["line_matches"] = _build_line_matches_with_context(
+                line_matches = _build_line_matches_with_context(
                     lines,
                     match_indices,
                     before_context,
@@ -1896,17 +2002,12 @@ class DatabaseFileSystem(VirtualFileSystem):
                 )
 
             matched.append(
-                Candidate(
-                    path=path,
-                    kind="file",
-                    details=(
-                        Detail(
-                            operation="grep",
-                            score=float(match_count),
-                            metadata=metadata,
-                        ),
-                    ),
-                )
+                self._row_to_entry(
+                    row,
+                    cols,
+                    score=float(len(match_indices)),
+                    lines=line_matches,
+                ),
             )
             if max_count is not None and len(matched) >= max_count:
                 break
@@ -1957,7 +2058,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         if vector is None:
             return self._error("vector_search requires a vector")
 
-        paths = [c.path for c in candidates.candidates] if candidates else None
+        paths = [c.path for c in candidates.entries] if candidates else None
         hits = await self._vector_store.query(
             vector,
             k=k,
@@ -1966,13 +2067,13 @@ class DatabaseFileSystem(VirtualFileSystem):
         )
 
         matched = [
-            Candidate(
+            Entry(
                 path=hit.path,
-                details=(Detail(operation="vector_search", score=hit.score),),
+                score=hit.score,
             )
             for hit in hits
         ]
-        return self._unscope_result(VFSResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(function="vector_search", entries=matched), user_id)
 
     async def _lexical_search_impl(
         self,
@@ -2012,7 +2113,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             session=session,
         )
         if not docs:
-            return VFSResult(candidates=[])
+            return VFSResult(function="lexical_search", entries=[])
 
         doc_lengths = [doc.doc_length for doc in docs]
         term_frequency_docs = [doc.term_freqs for doc in docs]
@@ -2048,22 +2149,23 @@ class DatabaseFileSystem(VirtualFileSystem):
         )[:k]
 
         matched = [
-            Candidate(
+            Entry(
                 path=doc.path,
                 kind=doc.kind,
                 content=doc.content,
-                details=(Detail(operation="lexical_search", score=score),),
+                score=score,
             )
             for doc, score in scored
         ]
 
-        return self._unscope_result(VFSResult(candidates=matched), user_id)
+        return self._unscope_result(VFSResult(function="lexical_search", entries=matched), user_id)
 
     async def _tree_impl(
         self,
         path: str,
         max_depth: int | None = None,
         *,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:
@@ -2074,6 +2176,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         the traversal goes (1 = direct children only).
         Metadata kinds are excluded (§5.4).
         """
+        cols = self._resolve_columns("tree", columns)
         self._require_user_id(user_id)
         path = self._scope_path(path, user_id) or path
         # Default to root
@@ -2092,7 +2195,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 return self._error(f"Not a directory: {path}")
 
         # ── Query descendants ─────────────────────────────────────────
-        stmt = select(self._model).where(
+        stmt = select(*self._select_columns(cols)).where(
             self._model.kind.in_(["file", "directory"]),  # ty: ignore[unresolved-attribute]
             self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
@@ -2113,10 +2216,10 @@ class DatabaseFileSystem(VirtualFileSystem):
             stmt = stmt.where(slash_count <= max_slashes)
 
         result = await session.execute(stmt)
-        objects = sorted(result.scalars().all(), key=lambda o: o.path)
+        rows = sorted(result.all(), key=lambda r: r.path)
 
-        tree_candidates = [obj.to_candidate(operation="tree") for obj in objects]
-        return self._unscope_result(VFSResult(candidates=tree_candidates), user_id)
+        tree_entries = [self._row_to_entry(row, cols) for row in rows]
+        return self._unscope_result(VFSResult(function="tree", entries=tree_entries), user_id)
 
     # ------------------------------------------------------------------
     # Graph — delegate to self._graph (RustworkxGraph)
@@ -2131,8 +2234,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         if candidates is not None:
             return candidates
         if path is not None:
-            return VFSResult(candidates=[Candidate(path=path)])
-        return VFSResult(candidates=[])
+            return VFSResult(entries=[Entry(path=path)])
+        return VFSResult(entries=[])
 
     async def _predecessors_impl(
         self,

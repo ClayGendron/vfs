@@ -30,10 +30,6 @@ async def query_fs(db: DatabaseFileSystem):
     return db
 
 
-def _ops(result) -> dict[str, list[str]]:
-    return {candidate.path: [detail.operation for detail in candidate.details] for candidate in result.candidates}
-
-
 class TestParseQuery:
     def test_methods_follow_query_order(self, query_fs: DatabaseFileSystem):
         plan = query_fs.parse_query(
@@ -61,14 +57,10 @@ class TestRunQuery:
     async def test_glob_grep_read_pipeline(self, query_fs: DatabaseFileSystem):
         result = await query_fs.run_query('glob "/src/*.py" | grep "import" | read')
         assert set(result.paths) == {"/src/auth.py", "/src/db.py", "/src/api.py"}
-        for operations in _ops(result).values():
-            assert operations == ["glob", "grep", "read"]
 
     async def test_intersect_and_except(self, query_fs: DatabaseFileSystem):
         result = await query_fs.run_query('glob "/src/*.py" | intersect (grep "import") | except (grep "auth")')
         assert set(result.paths) == {"/src/auth.py", "/src/db.py"}
-        for operations in _ops(result).values():
-            assert operations == ["glob", "grep"]
 
     async def test_union_keeps_both_branches(self, query_fs: DatabaseFileSystem):
         result = await query_fs.run_query('grep "import" & grep "DEBUG"')
@@ -83,9 +75,8 @@ class TestRunQuery:
         assert copied.content == "import utils\ndef login(): pass"
 
     async def test_local_transforms_apply_after_query(self, query_fs: DatabaseFileSystem):
-        result = await query_fs.run_query('grep "import" | sort grep | top 2')
+        result = await query_fs.run_query('grep "import" | sort | top 2')
         assert len(result) == 2
-        assert all(candidate.details[-1].operation == "grep" for candidate in result.candidates)
 
 
 class TestCliRendering:
@@ -99,9 +90,58 @@ class TestCliRendering:
 
     async def test_ls_renders_names(self, query_fs: DatabaseFileSystem):
         text = await query_fs.cli("ls /src")
-        assert text.splitlines() == ["api.py", "auth.py", "config.py", "db.py", "utils.py"]
+        assert sorted(text.splitlines()) == sorted(
+            ["/src/api.py", "/src/auth.py", "/src/config.py", "/src/db.py", "/src/utils.py"],
+        )
 
     async def test_tree_renders_ascii_tree(self, query_fs: DatabaseFileSystem):
         text = await query_fs.cli("tree /src")
         assert "└── src" in text
         assert "auth.py" in text
+
+    async def test_tree_with_visibility_still_renders_ascii_tree(self, query_fs: DatabaseFileSystem):
+        text = await query_fs.cli("tree /src --all")
+        assert "└── src" in text
+        assert "auth.py" in text
+        assert "/src/auth.py" not in text
+
+
+class TestCliOutputFlag:
+    """End-to-end checks for the top-level ``--output`` flag.
+
+    These hit the real DatabaseFileSystem: parse → execute → render.
+    """
+
+    async def test_output_path_only(self, query_fs: DatabaseFileSystem):
+        text = await query_fs.cli('glob "/src/*.py" --output path')
+        # to_str picks the path-only arrangement when projection=("path",)
+        lines = sorted(text.splitlines())
+        assert lines == sorted(
+            [
+                "/src/api.py",
+                "/src/auth.py",
+                "/src/config.py",
+                "/src/db.py",
+                "/src/utils.py",
+            ],
+        )
+
+    async def test_output_unknown_field_rejected(self, query_fs: DatabaseFileSystem):
+        with pytest.raises(QuerySyntaxError, match="unknown field 'bogus'"):
+            await query_fs.cli('glob "/src/*.py" --output bogus')
+
+    async def test_run_query_threads_columns_through_glob(self, query_fs: DatabaseFileSystem):
+        # A projection that includes a non-default column triggers the
+        # widened SELECT and entries carry the field directly.
+        result = await query_fs.run_query('glob "/src/*.py" --output path,kind,updated_at')
+        assert result.entries
+        for entry in result.entries:
+            assert entry.updated_at is not None
+
+    async def test_hydration_fills_grep_entries(self, query_fs: DatabaseFileSystem):
+        # grep entries carry path+kind+content+score+lines by default;
+        # asking for ``updated_at`` requires the hydration pass to backfill.
+        result = await query_fs.run_query('grep "import" --output path,updated_at')
+        assert result.entries
+        for entry in result.entries:
+            assert entry.updated_at is not None

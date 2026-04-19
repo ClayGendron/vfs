@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -24,7 +25,7 @@ from vfs.backends.mssql import (
     _extract_literal_terms,
     _quote_contains_term,
 )
-from vfs.results import Candidate, VFSResult
+from vfs.results import Entry, VFSResult
 
 # ---------------------------------------------------------------------------
 # Unit tests — pure Python, no DB
@@ -153,34 +154,45 @@ class TestQuoteContainsTerm:
 class TestCollectLineMatchesIntegration:
     """The base-class _collect_line_matches helper still drives MSSQL grep."""
 
+    @staticmethod
+    def _row(path: str, content: str, kind: str = "file") -> SimpleNamespace:
+        """Build a pseudo-row matching the narrow-SELECT row interface."""
+        return SimpleNamespace(
+            path=path,
+            kind=kind,
+            content=content,
+            size_bytes=len(content),
+            updated_at=None,
+            in_degree=None,
+            out_degree=None,
+        )
+
     def test_returns_per_line_metadata(self):
         from vfs.backends.database import DatabaseFileSystem
 
         regex = re.compile(r"foo")
-        content_map = {
-            "/a.py": "foo bar\nbaz qux\nfoo again",
-            "/b.py": "no match here",
+        rows = {
+            "/a.py": self._row("/a.py", "foo bar\nbaz qux\nfoo again"),
+            "/b.py": self._row("/b.py", "no match here"),
         }
-        matched = DatabaseFileSystem._collect_line_matches(content_map, regex, max_count=None)
+        cols = frozenset({"path", "kind", "content"})
+        db = DatabaseFileSystem.__new__(DatabaseFileSystem)
+        matched = db._collect_line_matches(rows, cols, regex, max_count=None)
         assert len(matched) == 1
         assert matched[0].path == "/a.py"
         assert matched[0].kind == "file"
-        detail = matched[0].details[0]
-        assert detail.operation == "grep"
-        assert detail.score == 2.0
-        assert detail.metadata is not None
-        assert detail.metadata["match_count"] == 2
-        assert detail.metadata["line_matches"] == [
-            {"line": 1, "text": "foo bar"},
-            {"line": 3, "text": "foo again"},
-        ]
+        assert matched[0].score == 2.0
+        assert matched[0].lines is not None
+        assert [lm.match for lm in matched[0].lines] == [1, 3]
 
     def test_max_count_caps(self):
         from vfs.backends.database import DatabaseFileSystem
 
         regex = re.compile(r"hit")
-        content_map = {f"/f{i}.txt": "hit it" for i in range(5)}
-        matched = DatabaseFileSystem._collect_line_matches(content_map, regex, max_count=2)
+        rows = {f"/f{i}.txt": self._row(f"/f{i}.txt", "hit it") for i in range(5)}
+        cols = frozenset({"path", "kind", "content"})
+        db = DatabaseFileSystem.__new__(DatabaseFileSystem)
+        matched = db._collect_line_matches(rows, cols, regex, max_count=2)
         assert len(matched) == 2
 
 
@@ -233,10 +245,10 @@ class TestGlobInMemoryCandidates:
         fs._raise_on_error = False
 
         candidates = VFSResult(
-            candidates=[
-                Candidate(path="/src/foo.py", kind="file"),
-                Candidate(path="/src/bar.ts", kind="file"),
-                Candidate(path="/tests/foo.py", kind="file"),
+            entries=[
+                Entry(path="/src/foo.py", kind="file"),
+                Entry(path="/src/bar.ts", kind="file"),
+                Entry(path="/tests/foo.py", kind="file"),
             ]
         )
         result = await fs._glob_impl(  # type: ignore[call-arg]
@@ -245,8 +257,7 @@ class TestGlobInMemoryCandidates:
             session=None,  # type: ignore[arg-type]
         )
         assert sorted(result.paths) == ["/src/foo.py", "/tests/foo.py"]
-        for c in result.candidates:
-            assert c.details[0].operation == "glob"
+        assert result.function == "glob"
 
 
 class TestBuildGrepStructuralSql:
@@ -487,7 +498,7 @@ class TestLexicalSearchPushdown:
         async with db._use_session() as s:
             r = await db._lexical_search_impl("alpha", session=s)
         # Even if chunk rows exist for /with_chunks.py, only file rows return.
-        for c in r.candidates:
+        for c in r.entries:
             assert c.kind == "file"
 
     async def test_multi_term_ranking(self, request, db: MSSQLFileSystem):
@@ -518,7 +529,7 @@ class TestLexicalSearchPushdown:
                 "/c.py": "auth logout",
             },
         )
-        candidates = VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
+        candidates = VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
         async with db._use_session() as s:
             r = await db._lexical_search_impl("auth", candidates=candidates, session=s)
         assert set(r.paths) == {"/a.py", "/c.py"}
@@ -547,9 +558,7 @@ class TestGrepPushdown:
             r = await db._grep_impl(r"def login\(", session=s)
         assert r.success
         assert set(r.paths) == {"/a.py"}
-        detail = r.candidates[0].details[0]
-        assert detail.metadata is not None
-        assert detail.metadata["match_count"] == 1
+        assert r.entries[0].score == 1.0
 
     async def test_pure_regex(self, request, db: MSSQLFileSystem):
         """Patterns with no literals fall through to direct REGEXP_LIKE."""
@@ -585,7 +594,7 @@ class TestGrepPushdown:
         await _seed(db, {"/source.py": "needle in a haystack"})
         async with db._use_session() as s:
             r = await db._grep_impl("needle", session=s)
-        for c in r.candidates:
+        for c in r.entries:
             assert c.kind == "file"
 
     async def test_with_candidate_filter(self, request, db: MSSQLFileSystem):
@@ -598,7 +607,7 @@ class TestGrepPushdown:
                 "/c.py": "needle c",
             },
         )
-        candidates = VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
+        candidates = VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
         async with db._use_session() as s:
             r = await db._grep_impl("needle", candidates=candidates, session=s)
         assert set(r.paths) == {"/a.py", "/c.py"}
@@ -701,66 +710,56 @@ class TestGrepRipgrepFiltersMssql:
         async with db._use_session() as s:
             r = await db._grep_impl("grep", ext=("py",), output_mode="files", session=s)
         assert "/src/a.py" in r.paths
-        detail = r.candidates[0].details[0]
-        meta = detail.metadata
-        assert meta is not None
-        assert "line_matches" not in meta
+        entry = r.entries[0]
+        assert entry.lines is None
 
     async def test_output_mode_count_returns_counts(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "TODO\nok\nTODO\nTODO"})
         async with db._use_session() as s:
             r = await db._grep_impl("TODO", output_mode="count", session=s)
-        detail = r.candidates[0].details[0]
-        meta = detail.metadata
-        assert meta is not None
-        assert meta["match_count"] == 3
-        assert "line_matches" not in meta
+        entry = r.entries[0]
+        assert entry.score == 3.0
+        assert entry.lines is None
 
     async def test_context_window_after(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "l1\nl2 MATCH\nl3\nl4\nl5"})
         async with db._use_session() as s:
             r = await db._grep_impl("MATCH", after_context=2, session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert [e["line"] for e in meta["line_matches"]] == [2, 3, 4]
+        entry = r.entries[0]
+        assert entry.lines is not None
+        assert entry.lines[0].match == 2
+        assert entry.lines[0].start == 2
+        assert entry.lines[0].end == 4
 
     async def test_fixed_strings_treats_regex_as_literal(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "foo.bar\nfooxbar"})
         async with db._use_session() as s:
             r = await db._grep_impl("foo.bar", fixed_strings=True, session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 1
+        assert r.entries[0].score == 1.0
 
     async def test_word_regexp_boundaries(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "grep\ngrepper\nregrep"})
         async with db._use_session() as s:
             r = await db._grep_impl("grep", word_regexp=True, session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 1
+        assert r.entries[0].score == 1.0
 
     async def test_invert_match_returns_non_matching_lines(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "alpha\nbeta\ngamma"})
         async with db._use_session() as s:
             r = await db._grep_impl("beta", invert_match=True, session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 2
+        assert r.entries[0].score == 2.0
 
     async def test_smart_case_lowercase_matches_upper(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "FOO\nfoo"})
         async with db._use_session() as s:
             r = await db._grep_impl("foo", case_mode="smart", session=s)
-        meta = r.candidates[0].details[0].metadata
-        assert meta is not None
-        assert meta["match_count"] == 2
+        assert r.entries[0].score == 2.0
 
     async def test_combined_filters_and_together(self, request, db: MSSQLFileSystem):
         _mssql_required(request)

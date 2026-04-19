@@ -1,5 +1,9 @@
 # Agent Memory, Context Engineering, and Sandboxed Environments
 
+- **Date:** 2026-02-17 (research conducted)
+- **Source:** migrated from `research/agent-memory-context.md` on 2026-04-18
+- **Status:** snapshot — landscape findings remain current; any VFS API surface references reflect the v0.1 alpha and have been superseded by the v2 architecture
+
 ## AI Agent Memory Systems
 
 ### Letta (formerly MemGPT)
@@ -31,7 +35,7 @@ Formalizes the "agentic file system" concept. Key ideas:
 - **File operations governed by:** metadata, transaction logs, access policies
 - Implemented in the open-source AIGNE framework (early stage)
 
-**This paper explicitly validates Grover's "everything is a file" philosophy** and extends it to the context engineering domain.
+**This paper explicitly validates VFS's (currently `Grover` in code) "everything is a file" philosophy** and extends it to the context engineering domain.
 
 ### LangChain Context Engineering
 
@@ -47,11 +51,11 @@ Uses the filesystem as overflow storage:
 - **No system combines agent memory with code understanding.** Letta handles memory; code agents handle code. None does both.
 - **AFS paper is theoretical.** AIGNE implementation is early-stage. No production-ready library implements the full vision.
 
-### Grover as Agent Memory Infrastructure
+### VFS as Agent Memory Infrastructure
 
-Grover could serve as the storage layer for agent memory systems. Its versioned filesystem already implements many AFS concepts:
+VFS could serve as the storage layer for agent memory systems. Its versioned filesystem already implements many AFS concepts:
 
-| AFS Concept | Grover Implementation |
+| AFS Concept | VFS Implementation |
 |-------------|----------------------|
 | Everything is a file | Core principle — file paths are identity |
 | Traceability | Version chain with diffs |
@@ -59,7 +63,7 @@ Grover could serve as the storage layer for agent memory systems. Its versioned 
 | Event-driven sync | EventBus: write file -> graph rebuilds -> embeddings re-index |
 | Access policies | UserScopedFileSystem with sharing |
 
-A Grover-backed agent memory system would add what Letta's MemFS lacks:
+A VFS-backed agent memory system would add what Letta's MemFS lacks:
 - Semantic search over memory files
 - Dependency graph of memory relationships
 - Database-backed persistence with multi-user sharing
@@ -76,9 +80,9 @@ RAG is transforming from "retrieval-augmented generation" into a "context engine
 
 Confirms this is the dominant concern for production agent systems. The key challenge: assembling the right context from large codebases for each agent interaction.
 
-### Grover as a Context Engine
+### VFS as a Context Engine
 
-Grover's event-driven architecture is inherently a context engineering pipeline:
+VFS's event-driven architecture is inherently a context engineering pipeline:
 
 ```
 File Write -> EventBus -> Graph Update -> Search Re-index
@@ -113,12 +117,12 @@ Docker containers with workspace mounting. Sandbox exposes filesystem, terminal,
 - **Basic state persistence.** E2B sandboxes are ephemeral (24-hour max). Fly.io persists filesystem without versioning or querying.
 - **No cross-sandbox knowledge sharing.** Each sandbox is isolated. Knowledge can't be queried across sessions.
 
-### Grover in Sandboxes
+### VFS in Sandboxes
 
-Grover could run inside any sandbox, providing versioned operations, analysis, and search as a portable library:
+VFS could run inside any sandbox, providing versioned operations, analysis, and search as a portable library:
 
 - **E2B**: `DatabaseFileSystem` (pure DB) persists agent work across ephemeral sessions by connecting to an external database
-- **Fly.io Sprites**: Grover adds versioning and search to Sprites' persistent filesystem
+- **Fly.io Sprites**: VFS adds versioning and search to Sprites' persistent filesystem
 - **Multi-agent coordination**: `UserScopedFileSystem` with sharing enables agents in separate sandboxes to share files with controlled permissions
 
 ---
@@ -134,7 +138,7 @@ Multiple independent sources converge:
 - Letta's MemFS uses files for agent memory
 - AgentFS builds agent runtime on SQLite filesystem
 
-**Strong validation of Grover's foundational design.**
+**Strong validation of VFS's foundational design.**
 
 ### Pattern 2: Graph-RAG for Codebases
 
@@ -143,7 +147,7 @@ Multiple independent sources converge:
 - **Augment Code** — semantic dependency graphs of entire codebases.
 - **Greptile** — codegraphs for code review (82% bug catch rate).
 
-Grover already has this: rustworkx-based knowledge graph with auto-populated code analyzers.
+VFS already has this: rustworkx-based knowledge graph with auto-populated code analyzers.
 
 ### Pattern 3: Semantic Code Search Requires Special Treatment
 
@@ -153,11 +157,11 @@ Greptile's research:
 - Function-level chunking outperforms file-level chunking
 - Combining semantic search with structural understanding is the winning approach
 
-**Enhancement opportunity for Grover:** Add NL-description generation before embedding.
+**Enhancement opportunity for VFS:** Add NL-description generation before embedding.
 
 ### Pattern 4: Context Engineering as Paradigm
 
-The focus has shifted from "how to retrieve" to "how to assemble context." Grover's event-driven three-layer architecture (FS + graph + search) is inherently a context engineering pipeline.
+The focus has shifted from "how to retrieve" to "how to assemble context." VFS's event-driven three-layer architecture (FS + graph + search) is inherently a context engineering pipeline.
 
 ### Pattern 5: Agent-Native Filesystems Are Emerging
 
@@ -167,7 +171,7 @@ The space is nascent but growing:
 - **Letta MemFS** — git-backed memory filesystem
 - **AFS paper** — formal theoretical framework
 
-None provides Grover's full stack. They each address one or two concerns; Grover addresses all of them.
+None provides VFS's full stack. They each address one or two concerns; VFS addresses all of them.
 
 ---
 
