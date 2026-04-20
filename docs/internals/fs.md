@@ -1,530 +1,106 @@
 # Filesystem Internals
 
-This document covers the internal design of Grover's filesystem layer: how writes happen, how sessions are managed, how versions are stored, and why certain ordering decisions were made.
+This page focuses on the current filesystem mechanics in `src/vfs`: mount routing, metadata paths, session ownership, and write ordering.
 
-For the high-level architecture diagram and component relationships, see [fs_architecture.md](../fs_architecture.md).
+## Mount Resolution
 
----
+`VirtualFileSystem` routes every public operation by longest-prefix mount match:
 
-## Table of Contents
+1. normalize the caller path
+2. walk mounts until the terminal filesystem is found
+3. strip the accumulated mount prefix before delegating
+4. rebase returned paths back to caller-visible absolute paths
 
-- [Write Order of Operations](#write-order-of-operations)
-- [Delete Order of Operations](#delete-order-of-operations)
-- [Move Semantics](#move-semantics)
-- [User-Scoped Mounts](#user-scoped-mounts)
-- [Session Lifecycle](#session-lifecycle)
-- [Capability Protocols](#capability-protocols)
-- [Version Snapshotting](#version-snapshotting)
-- [Soft Delete and Trash](#soft-delete-and-trash)
-- [Reconciliation](#reconciliation)
-- [External Edit Detection](#external-edit-detection)
-- [LocalFileSystem vs DatabaseFileSystem](#localfilesystem-vs-databasefilesystem)
-- [Path Validation and Security](#path-validation-and-security)
+Mount points are single segments such as `/workspace` or `/docs`. The root router always owns `/`, so mounting at `/` is rejected.
 
----
+## Session Ownership
 
-## Write Order of Operations
+SQL sessions are injected by the router:
 
-### The Rule
+- mounted filesystems receive a session for one routed operation
+- backends never create or own long-lived sessions
+- backends `flush()` mutations when they need transactional visibility
+- the router commits on success and rolls back on error
 
-All mutating operations (`write`, `edit`) follow the same sequence:
+This matters because `DatabaseFileSystem` is designed to stay mostly stateless. Its durable state lives in the database and its transient state lives in the per-operation session.
 
+## Storage Layout
+
+`DatabaseFileSystem` persists everything in `vfs_objects`. The object kind is inferred from the path itself.
+
+Examples:
+
+```text
+/workspace/auth.py
+/workspace/notes/
+/.vfs/workspace/auth.py/__meta__/chunks/login
+/.vfs/workspace/auth.py/__meta__/versions/3
+/.vfs/workspace/auth.py/__meta__/edges/out/imports/workspace/utils.py
 ```
-1. Save version record to session  (not yet committed)
-2. Write content to storage         (write_content callback)
-3. Flush the session                (session.flush)
-4. VFS commits on _session_for exit (session.commit)
+
+This single-table model keeps CRUD, metadata inspection, and graph persistence aligned around one identity scheme.
+
+## Write Ordering
+
+Mutations intentionally use content-before-commit ordering:
+
+1. stage version metadata in the session
+2. write the new content or metadata row
+3. flush the session
+4. commit when the router exits the session context
+
+If the write fails before commit, the router rolls back and the version record disappears with it. That is preferable to commit-first behavior, which can leave visible metadata pointing at content that was never written.
+
+## Edges
+
+`mkedge(source, target, edge_type)` writes a canonical outgoing edge path under:
+
+```text
+/.vfs/<source>/__meta__/edges/out/<edge_type>/<target>
 ```
 
-If step 2 fails, the VFS context manager calls `session.rollback()`, which discards the version record from step 1. The database is clean.
-
-If step 4 fails after step 2 succeeds, the content exists in storage but the database has no record of it. This is an **orphan file** — invisible to the system and harmless.
-
-### Why Not Commit First?
-
-The opposite ordering — commit the session, then write content — creates **phantom metadata**: the database says a file exists at version N with hash X, but the content is missing or stale on disk. This is actively broken state:
-
-- `read()` returns `None` content for a file the database says exists.
-- `get_version_content()` fails hash verification.
-- The rollback in the `except` block is useless because the commit already happened.
-
-### Failure Mode Comparison
-
-| Scenario | Content-First (correct) | Commit-First (wrong) |
-|----------|------------------------|---------------------|
-| Storage write fails | Rollback discards version record. **Clean.** | DB committed with version record pointing to missing content. **Broken.** |
-| Commit fails after write | Orphan file on disk, DB has old metadata. **Inert.** | N/A — commit happened first. |
-| Both succeed | File and metadata consistent. **Clean.** | File and metadata consistent. **Clean.** |
-
-An orphan file on disk is strictly better than phantom metadata because:
-
-- The system cannot see an orphan file (no DB record references it).
-- Orphan files can be garbage-collected by `reconcile()`.
-- Phantom metadata causes user-visible errors on every subsequent read.
-
-### How It Applies to Each Backend
-
-**LocalFileSystem**: Content is written to disk via atomic temp-file + rename. The commit then persists the version record and metadata to SQLite. If the disk write fails, the rollback removes the version record. If the SQLite commit fails, the disk file exists but is invisible — no user impact.
-
-**DatabaseFileSystem**: `write_content()` updates the `File.content` column on the same session object. Both the content update and the version record are part of the same transaction, so they commit or roll back together atomically when VFS exits `_session_for()`.
-
-### History
-
-This ordering has been the intended design since the initial filesystem implementation. It was accidentally reversed in commit `f7e039a` ("Fix high-severity FS issues H1-H8") which swapped to commit-first with the comment "C1: prevents desync." That was incorrect and has been reverted. **Do not change this ordering.**
-
-### Code Locations
-
-Write and edit orchestration lives in `operations.py`. The pattern is:
+Because edges are just persisted paths, they can be listed, inspected, and deleted through the normal filesystem operations:
 
 ```python
-# operations.py — write_file() and edit_file()
-await write_content(path, content, session)
-await session.flush()
+g.mkedge("/src/auth.py", "/src/utils.py", "imports")
+g.ls("/.vfs/src/auth.py/__meta__/edges/out")
+g.delete("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
 ```
 
-Sessions are always injected by VFS via `_session_for(mount)`. The VFS context manager handles commit on success and rollback on error. Backends and operations only call `session.flush()` to make changes visible within the transaction.
+The in-memory graph is then projected from those persisted rows.
 
----
+## Search Execution
 
-## Delete Order of Operations
+`DatabaseFileSystem` uses a hybrid strategy:
 
-Delete follows the same **content-before-commit** principle as writes:
+- SQL prefilters narrow candidate rows cheaply
+- Python remains the authoritative matcher and scorer where needed
 
-### LocalFileSystem
+That keeps the baseline backend portable across SQLite, Postgres, and SQL Server. Native backends then override the hot paths:
 
-1. DB soft-delete: set `deleted_at`, move to trash path → `session.flush()`
-2. Disk unlink: remove the file from disk
-3. Return `DeleteResult(success=True)`
-4. VFS commits the session via `_session_for`
+- `PostgresFileSystem` pushes grep, glob, lexical search, and pgvector search into Postgres
+- `MSSQLFileSystem` pushes grep, glob, and full-text work into SQL Server
 
-### Failure Modes
+## Result Rebasing
 
-| Scenario | What happens | State |
-|----------|-------------|-------|
-| Unlink fails | Return `DeleteResult(success=False)`, session rolls back | Clean — file exists on disk and in DB |
-| VFS commit fails after unlink | Disk file gone, DB rolled back (file appears "alive") | Phantom metadata — `reconcile()` fixes it |
-| Both succeed | File trashed in DB, gone from disk | Clean |
+When a routed operation returns rows from a mounted filesystem, the router rewrites them back to absolute caller-visible paths before returning the `VFSResult`.
 
-The commit-failure case is rare (SQLite WAL + FULL sync) and reconcile handles it.
+That is why mounted backends can store and query relative paths internally while callers always see `/mount/...` paths.
 
-### DatabaseFileSystem
+## User Scoping
 
-No disk involved — soft-delete is metadata-only (set `deleted_at`, move path to trash). Everything happens within the same DB transaction.
+When `user_scoped=True`, storage paths are rewritten through `scope_path()` and validated with `validate_user_id()`:
 
----
+- caller path: `/notes/today.md`
+- stored path for `user_id="alice"`: `/alice/notes/today.md`
 
-## Move Semantics
+Returned entries are unscoped again before they leave the mounted filesystem, so callers do not need to know the storage prefixing rules.
 
-Move supports two modes via the `follow` parameter:
+## Failure Model
 
-### `follow=False` (default) — Clean Break
+The two clients differ on normal failures:
 
-The default mimics git's path-is-identity model. Moving a file creates a **new** file record at the destination and soft-deletes the source. The destination file has no version history — it starts fresh at version 1. Any shares on the source path become stale (they still point to the old path).
+- `VFSClientAsync` returns `VFSResult(success=False, errors=[...])`
+- `VFSClient` raises the corresponding `VFSError` subclass
 
-For directories, all children are recreated at the new path with new file records. The `is_directory` flag is preserved on child directories.
-
-### `follow=True` — In-Place Rename
-
-When `follow=True`, the existing file record is updated in-place (path column changes). This preserves:
-- **File identity** — same `id` / primary key
-- **Version history** — all versions remain associated with the file
-- **Share paths** — `SharingService.update_share_paths()` bulk-updates shares from old prefix to new prefix
-
-For directories, all children have their paths updated in-place as well. Parent directories are created at the destination if they don't exist.
-
-### Overwrite Case
-
-When the destination already exists, both modes behave the same: the source content overwrites the destination (new version created), and the source is soft-deleted. With `follow=True`, share paths are also updated.
-
----
-
-## User-Scoped Mounts
-
-User scoping is implemented in `UserScopedFileSystem`, a subclass of `DatabaseFileSystem`. VFS is a pure mount router — it passes `user_id` through to the backend. All path rewriting, share permission checks, and trash scoping are handled inside `UserScopedFileSystem`.
-
-Every public VFS method accepts `user_id: str | None = None`. On user-scoped mounts, `user_id` is required.
-
-### Path Resolution Flow
-
-```
-User calls:  g.read("/ws/notes.md", user_id="alice")
-                    │
-                    ▼
-VFS passes user_id to backend
-                    │
-                    ▼
-UserScopedFileSystem._resolve_path("/notes.md", "alice") → "/alice/notes.md"
-                    │
-                    ▼
-DatabaseFileSystem.read("/alice/notes.md", session=sess)
-                    │
-                    ▼
-UserScopedFileSystem._strip_user_prefix(result.path, "alice")
-                    │
-                    ▼
-User gets:  "/ws/notes.md"
-```
-
-For `@shared/{owner}/` paths:
-
-```
-User calls:  g.read("/ws/@shared/bob/doc.md", user_id="alice")
-                    │
-                    ▼
-UserScopedFileSystem._resolve_path → "/bob/doc.md"
-UserScopedFileSystem._check_share_access(session, "/bob/doc.md", "alice", "read")
-                    │
-                    ▼
-DatabaseFileSystem.read("/bob/doc.md", session=sess)
-```
-
-### Share Table Schema
-
-```
-grover_file_shares
-├── id          (str, PK — UUID)
-├── path        (str, indexed — stored path with user prefix)
-├── grantee_id  (str, indexed)
-├── permission  (str — "read" or "write")
-├── granted_by  (str)
-├── created_at  (datetime)
-└── expires_at  (datetime | None)
-```
-
-`SharingService` is stateless (like `MetadataService`). It takes a model at construction and a session at call time. Permission resolution walks ancestor paths (e.g., share on `/alice/projects/` grants access to `/alice/projects/docs/file.md`).
-
-### SupportsReBAC Protocol
-
-Share dispatch in `GroverAsync` uses the `SupportsReBAC` runtime-checkable protocol. Any backend implementing `share()`, `unshare()`, `list_shares_on_path()`, and `list_shared_with_me()` participates in sharing. `UserScopedFileSystem` implements this; plain backends do not.
-
-### Trash Scoping
-
-On user-scoped mounts, `UserScopedFileSystem` passes `owner_id=user_id` to all trash operations. The `owner_id` filter is added to the SQL WHERE clause so each user only sees and manages their own trashed files. On regular mounts, `owner_id` is `None` and all trash is visible.
-
----
-
-## Session Lifecycle
-
-Sessions are managed by VFS and injected into backends. Every operation creates, uses, commits, and closes its own session.
-
-### VFS `_session_for(mount)`
-
-`VFS._session_for(mount)` is an async context manager that provides sessions to backend operations.
-
-```python
-@asynccontextmanager
-async def _session_for(self, mount):
-    if not mount.has_session_factory:
-        yield None  # Non-SQL backends get None
-        return
-
-    session = mount.session_factory()
-    try:
-        yield session
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()
-```
-
-SQL backends **fail fast** if session is None:
-
-```python
-def _require_session(self, session):
-    if session is None:
-        raise GroverError("LocalFileSystem requires a session")
-    return session
-```
-
-### Backend Session Usage
-
-All backend methods accept `session: AsyncSession | None = None` (keyword-only). SQL backends call `_require_session()` at the top of each method. Backends never create, commit, or close sessions — they only call `session.flush()` after mutations to make changes visible within the transaction. VFS handles the full session lifecycle (create → inject → commit/rollback → close).
-
-**LocalFileSystem**: Uses the injected session for all metadata and version operations. Disk I/O is independent of the session.
-
-**DatabaseFileSystem**: Stateless — holds no session factory, no cached session, and no mutable state. All DB operations use the injected session.
-
-### SQLite Configuration (LocalFileSystem)
-
-The SQLite engine is configured with these pragmas on every connection:
-
-| Pragma | Value | Purpose |
-|--------|-------|---------|
-| `journal_mode` | `WAL` | Write-ahead logging; concurrent reads during writes |
-| `synchronous` | `FULL` | fsync on every commit for durability |
-| `busy_timeout` | `5000` | Wait 5 seconds on lock contention before raising `SQLITE_BUSY` |
-| `foreign_keys` | `ON` | Enforce foreign key constraints |
-
----
-
-## Capability Protocols
-
-Grover uses a two-tier protocol structure. `GroverFileSystem` is the single protocol every backend must implement (CRUD, queries, versioning, trash, search, connections, chunks). Two opt-in protocols remain:
-
-### Protocol Hierarchy
-
-```
-GroverFileSystem (core — every backend)
-    Lifecycle: open, close
-    CRUD: read, write, edit, delete, mkdir, move, copy
-    Queries: list_dir, exists, get_info, glob, grep, tree
-    Versioning: list_versions, get_version_content, restore_version, verify_versions, verify_all_versions
-    Trash: list_trash, restore_from_trash, empty_trash
-    Search: vector_search, lexical_search, search_add_batch, search_remove_file
-    Connections: add_connection, delete_connection, list_connections
-    Chunks: replace_file_chunks, delete_file_chunks, list_file_chunks
-
-SupportsReBAC (opt-in — user-scoped access control)
-    share, unshare, list_shares_on_path, list_shared_with_me
-
-SupportsReconcile (opt-in — disk ↔ DB sync)
-    reconcile → GroverResult
-```
-
-### Implementation
-
-| Backend | GroverFileSystem | SupportsReconcile | SupportsReBAC |
-|---------|:---:|:---:|:---:|
-| LocalFileSystem | Y | Y | N |
-| DatabaseFileSystem | Y | N | N |
-| UserScopedFileSystem | Y | N | Y |
-
-### Opt-in Capability Handling
-
-- **`reconcile()`** → silently skips mounts that don't implement `SupportsReconcile`
-- **Share operations** (`share`, `unshare`, etc.) → returns failure result if backend doesn't implement `SupportsReBAC`
-
-`GroverAsync` catches `CapabilityNotSupportedError` and returns appropriate `Result(success=False, message=...)`. The agent loop always gets Results, never unhandled exceptions from normal operations.
-
-### Chunk Storage
-
-Chunks (functions, classes, methods extracted by code analyzers) are stored as **database rows** in the `grover_file_chunks` table, not as VFS files. This avoids polluting glob/tree results with internal metadata.
-
-When `_analyze_and_integrate()` processes a file:
-
-1. The analyzer extracts chunks (list of `ChunkFile` records).
-2. Chunk records are written to the DB via `backend.replace_file_chunks()`. This is a full replace: all existing chunks for the file are deleted, then new ones are inserted.
-3. Graph nodes and "contains" edges are created for each chunk (using synthetic `path` identifiers). These graph nodes have `parent_path`, `line_start`, `line_end`, and `name` attributes.
-4. Chunks are embedded and indexed in the per-mount search engine with enriched metadata (`chunk_name`, `line_start`, `line_end`).
-
-On file delete or move, the handler opens a single DB session to remove search entries, chunk DB rows (via `delete_file_chunks()`), and connection records (via `delete_connections_for_path()`). The hardened `remove_file_subgraph()` cleans up graph nodes by unioning two child-finding methods: `parent_path` attribute scan and `"contains"` edge traversal.
-
-### user_id propagation
-
-All facade mutation methods accept an optional `user_id` parameter (default `None`). Processing methods forward `user_id` to `_analyze_and_integrate()`, which passes it to `backend.replace_file_chunks()` so chunk records are tagged with the correct owner in user-scoped environments.
-
----
-
-## Version Snapshotting
-
-Every `write()` and `edit()` creates a `FileVersion` record via `VersioningService`. Versions use a **snapshot + forward diff** strategy to balance storage efficiency with reconstruction speed.
-
-### Snapshot Interval
-
-```
-SNAPSHOT_INTERVAL = 20
-```
-
-A version is stored as a **full snapshot** when any of these conditions are true:
-
-- It is version 1 (the initial write).
-- `version_num % SNAPSHOT_INTERVAL == 0` (every 20th version).
-- There is no previous content to diff against (`old_content is None`).
-
-All other versions store a **forward unified diff** from the previous content to the new content.
-
-### Storage Format
-
-| `is_snapshot` | `content` column contains |
-|---------------|--------------------------|
-| `True` | Full file text |
-| `False` | Unified diff (compatible with `unidiff` library) |
-
-The `content_hash` field always stores the SHA-256 of the **reconstructed** content (not the diff itself). This enables integrity verification on reconstruction.
-
-### Reconstructing a Version
-
-To retrieve version N:
-
-1. Find the nearest snapshot at or before version N.
-2. Fetch the chain: all versions from that snapshot through N, ordered ascending.
-3. Start with the snapshot's full content.
-4. Apply each subsequent diff in order using `apply_diff()`.
-5. Verify: SHA-256 of the result must match the `content_hash` stored in version N.
-
-```
-v1 (snapshot) → v2 (diff) → v3 (diff) → ... → v20 (snapshot) → v21 (diff) → ...
-```
-
-To reconstruct v23: start from v20 (nearest snapshot), apply diffs for v21, v22, v23.
-
-### Diff Utilities (`providers/versioning/diff.py`)
-
-- `compute_diff(old, new)` — Generates a unified diff via `difflib.unified_diff`. Handles missing-newline-at-EOF markers required by the `unidiff` parser.
-- `apply_diff(base, diff)` — Parses a unified diff with `unidiff.PatchSet` and applies hunks in reverse order. Returns the base unchanged if the diff is empty.
-- `reconstruct_version(chain)` — Takes an ordered list of `(is_snapshot, content)` tuples, replays from the first snapshot, and returns the final text.
-
----
-
-## Soft Delete and Trash
-
-### How Soft Delete Works
-
-When `delete(path, permanent=False)` is called (the default):
-
-1. The file's `original_path` is set to its current `path`.
-2. The file's `path` is rewritten to a trash path: `/__trash__/{file_id}/{name}`.
-3. `deleted_at` is set to the current timestamp.
-4. If the target is a directory, all children undergo the same transformation.
-5. The session is flushed (VFS commits after return).
-
-The trash path format uses the file's UUID to prevent collisions when multiple files with the same name are deleted.
-
-### LocalFileSystem Specifics
-
-Before soft-deleting, `LocalFileSystem.delete()`:
-
-1. Reads the file content from disk.
-2. If no DB record exists (the file was created outside Grover, e.g. by git or an
-   IDE), creates a DB record and version 1 snapshot as a backup.
-3. Calls `delete_file()` to perform the soft-delete in the DB.
-4. Physically removes the file from disk (content-before-commit).
-
-On restore (`restore_from_trash`), the content is written back to disk from the version history.
-
-### Trash Operations
-
-| Operation | Behavior |
-|-----------|----------|
-| `list_trash()` | Returns all files where `deleted_at IS NOT NULL`, showing `original_path` |
-| `restore_from_trash(path)` | Looks up by `original_path`, clears `deleted_at`, restores `path`. Recursively restores children for directories. |
-| `empty_trash()` | Permanently deletes all trashed files: removes version records, content, and file records. |
-
-### Read Protection
-
-`read()` rejects any path under `/__trash__/`. Trashed files are only accessible through `list_trash()` and `restore_from_trash()`.
-
----
-
-## Reconciliation
-
-`LocalFileSystem` implements `SupportsReconcile` with a `reconcile()` method that synchronizes disk state with DB state:
-
-1. Walk all files on disk within the workspace.
-2. For each disk file not in the DB → create a DB record (created).
-3. For each DB file not on disk → soft-delete the DB record (deleted).
-4. For each file that exists in both → compare content hashes and update if changed (updated).
-
-VFS delegates `reconcile()` to capable backends, aggregating results across mounts.
-
----
-
-## External Edit Detection
-
-When a file tracked by Grover is modified outside Grover (by an IDE, git, shell, or direct DB update), the version diff chain breaks. The diff for the next Grover operation would be computed against the external content, but reconstruction replays diffs from the last known Grover version — producing wrong content and failing hash verification with `ConsistencyError`.
-
-### How Detection Works
-
-At `write()` and `edit()` time, `check_external_edit()` in `operations.py` compares the actual storage content's SHA-256 hash against `file.content_hash` (the last Grover-written hash). If they differ, an external tool modified the file.
-
-`content_hash` is only updated through Grover's own `write_file()` and `edit_file()` code paths, making it a reliable "last Grover-known hash" marker regardless of backend:
-
-- **LocalFileSystem**: `_read_content()` reads from disk. An IDE or git edit changes the disk but not `content_hash` → mismatch detected.
-- **DatabaseFileSystem**: `_read_content()` reads `File.content` from the DB. A direct SQL UPDATE changes `content` but not `content_hash` → mismatch detected.
-
-### What Happens on Detection
-
-A **synthetic snapshot version** is inserted with `created_by="external"`:
-
-1. `file.current_version` is incremented.
-2. `file.content_hash` and `file.size_bytes` are updated to match the external content.
-3. `versioning.save_version()` is called with `old_content=""`, which forces a full snapshot (via the `not old_content` branch).
-4. The calling function (`write_file` or `edit_file`) then proceeds normally — incrementing the version again and creating its own version record.
-
-### Why Snapshots
-
-Storing the external version as a full snapshot (not a diff) avoids the cost of reconstructing the previous Grover version to compute a diff. It also gives version reconstruction a clean base — subsequent diffs can be applied from the snapshot without needing to bridge the gap from the last Grover version to the external state.
-
-### Example Version Chain
-
-```
-v1: snapshot  "hello"                           (Grover write)
-v2: diff      v1→"hello world"                  (Grover edit)
-    ── VS Code edits file to "hello world!!!" ──
-v3: snapshot  "hello world!!!"                  (external, auto-detected)
-v4: diff      v3→"hello world!!! # updated"     (Grover edit)
-```
-
-Reconstruction of any version works correctly because v3 is a snapshot — diffs don't need to bridge the gap from v2 to the external state.
-
-### Detect-on-Mutate, Not File Watching
-
-Detection happens only at `write()` and `edit()` time. There is no file watcher, no background process, and no new dependencies. This keeps the system simple and avoids the complexity of real-time monitoring. File watching can be layered on as a separate enhancement if needed.
-
-### Code Location
-
-`check_external_edit()` is a standalone async function in `operations.py`. It follows the composition pattern — any backend that calls `write_file()` or `edit_file()` from `operations.py` gets external edit detection automatically. No changes are needed in individual backends.
-
----
-
-## LocalFileSystem vs DatabaseFileSystem
-
-| Aspect | LocalFileSystem | DatabaseFileSystem |
-|--------|----------------|-------------------|
-| **Content storage** | Files on disk at `workspace_dir` | `File.content` column in DB |
-| **Metadata storage** | SQLite at `data_dir/` | External DB (PostgreSQL, MSSQL, etc.) |
-| **`File.content` column** | Always `NULL` | Contains actual file text |
-| **Instance state** | Workspace dir, SQLite engine, session factory | Dialect, file model, file version model (immutable) |
-| **Session handling** | Session injected by VFS, flush only | Session injected by VFS, flush only |
-| **Atomic writes** | Temp file + fsync + rename | Standard DB transaction |
-| **IDE/git visibility** | Files are real on disk | No physical files |
-| **`list_dir()` behavior** | Merges DB records with disk scan | DB records only |
-| **Path security** | Symlink detection, workspace boundary enforcement | N/A (virtual paths only) |
-| **Delete behavior** | Backs up content before delete, removes from disk | Metadata-only delete |
-| **Restore behavior** | Writes content back to disk from version history | Metadata restoration (content already in DB) |
-| **Capabilities** | Versions, Trash, Reconcile, FileChunks | Versions, Trash, FileChunks |
-
-### When to Use Which
-
-**LocalFileSystem** is the default for local development. Files live on disk where IDEs, git, and other tools can interact with them directly. The SQLite database provides versioning and metadata without interfering with normal filesystem access.
-
-**DatabaseFileSystem** is designed for server deployments, cloud environments, and cases where all state should live in a single database. There are no physical files to manage, and the database's ACID properties handle all consistency guarantees.
-
----
-
-## Path Validation and Security
-
-### Normalization (`normalize_path`)
-
-All paths are normalized before use:
-
-- Ensures leading `/`.
-- Collapses multiple slashes (`//` → `/`).
-- Resolves `.` and `..` via `posixpath.normpath`.
-- Strips trailing slashes (except root `/`).
-- Applies Unicode NFC normalization.
-
-### Validation (`validate_path`)
-
-Rejects paths that contain:
-
-- Null bytes (`\x00`).
-- Control characters (ASCII 1-31 except common whitespace).
-- Paths longer than 4096 characters.
-- Empty or whitespace-only paths.
-
-### LocalFileSystem Path Security
-
-`_resolve_path_sync()` provides additional protection:
-
-1. Normalizes the virtual path.
-2. Joins with `workspace_dir` to get the candidate physical path.
-3. Walks each path component, checking for symlinks at every level.
-4. Resolves the final path and verifies it is within `workspace_dir` via
-   `resolved.relative_to(workspace_dir.resolve())`.
-5. Raises `PermissionError` if any symlink is detected or the resolved path
-   escapes the workspace boundary.
-
-This prevents both `../` traversal and symlink-based escape attacks.
+The backend behavior is the same underneath; only the facade changes how failures surface to the caller.

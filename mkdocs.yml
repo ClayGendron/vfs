@@ -1,6 +1,6 @@
-site_name: Grover
-site_description: The agentic filesystem. Safe file operations, knowledge graphs, and semantic search — unified for AI agents.
-site_url: https://claygendron.github.io/grover/
+site_name: vfs
+site_description: The virtual file system for agents.
+site_url: https://claygendron.github.io/vfs/
 repo_url: https://github.com/ClayGendron/grover
 repo_name: ClayGendron/grover
 

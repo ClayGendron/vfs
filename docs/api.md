@@ -1,1285 +1,191 @@
 # API Reference
 
-This is the complete API reference for Grover. For a quick overview, see the [Home](index.md).
+This page tracks the current public `vfs` surface in `src/vfs`. It intentionally describes the shipped `VFSClient` / `VFSClientAsync` API rather than the older Grover facade.
 
----
-
-## Grover / GroverAsync
-
-The main entry points. `Grover` is a thread-safe synchronous wrapper around `GroverAsync`. Both expose the same API — `Grover` methods are synchronous, `GroverAsync` methods are `async`.
+## Clients
 
 ```python
-from grover import Grover, GroverAsync
+from vfs import VFSClient, VFSClientAsync, VirtualFileSystem
 ```
 
-### Constructor
+| Type | Purpose |
+|------|---------|
+| `VFSClientAsync` | Async facade for servers, workers, and agent runtimes. Inherits `VirtualFileSystem` and returns `VFSResult(success=False, ...)` on normal failures. |
+| `VFSClient` | Sync wrapper around `VFSClientAsync`. Uses a private event loop thread and sets `raise_on_error=True`, so failures raise `VFSError` subclasses. |
+| `VirtualFileSystem` | The mount-aware async base class. It owns routing, path rebasing, and session injection. |
+
+## Backends
 
 ```python
-Grover(*, indexing_mode=IndexingMode.BACKGROUND, debounce_delay=0.1)
-GroverAsync(*, indexing_mode=IndexingMode.BACKGROUND, debounce_delay=0.1)
+from vfs.backends import DatabaseFileSystem, MSSQLFileSystem, PostgresFileSystem
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `indexing_mode` | `IndexingMode` | Controls how file mutations are dispatched to indexing handlers. `BACKGROUND` (default): mutations are debounced per-path and processed in background tasks so `write()`/`edit()` return immediately. `MANUAL`: all scheduling is suppressed; only an explicit call to `index()` populates the graph and search index. |
-| `debounce_delay` | `float` | Seconds to wait before dispatching a debounced task (default `0.1`). Only applies in `BACKGROUND` mode. Multiple rapid writes to the same path within this window are coalesced into a single analysis pass. |
+| Backend | Purpose |
+|---------|---------|
+| `DatabaseFileSystem` | Portable SQL-backed filesystem using a single `vfs_objects` table. |
+| `PostgresFileSystem` | PostgreSQL-native overrides for grep, glob, lexical search, and pgvector-backed vector search. |
+| `MSSQLFileSystem` | SQL Server / Azure SQL backend with native full-text and regex pushdown. |
 
-Search providers (`embedding_provider`, `search_provider`) are configured per-mount via `add_mount()`, not on the constructor. See [Mount / Unmount](#mount--unmount) below.
-
-### Mount / Unmount
-
-```python
-g.add_mount(path=None, *, mount=None, filesystem=None,
-            engine_config=None, session_config=None,
-            mount_type=None, permission=Permission.READ_WRITE,
-            label="", hidden=False,
-            embedding_provider=None, search_provider=None)
-g.unmount(path)
-```
-
-Mount a storage backend at a virtual path. You can pass one of:
-
-- `engine_config=EngineConfig(...)` — Grover creates and owns the engine
-- `session_config=SessionConfig(...)` — your app owns the engine and session factory
-- `filesystem=LocalFileSystem(...)` or `filesystem=DatabaseFileSystem()` — pre-created backend instance
-- `mount=mount` — a pre-built `Mount` object directly
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `path` | `str | None` | `None` | Virtual mount path (e.g., `"/project"`). Required unless passing `mount=`. |
-| `mount` | `Mount | None` | `None` | Pre-built mount object. Mutually exclusive with all other parameters. |
-| `filesystem` | `GroverFileSystem | None` | `None` | Pre-created backend instance |
-| `engine_config` | `EngineConfig | None` | `None` | Config for Grover-owned engine (see [EngineConfig / SessionConfig](#engineconfig--sessionconfig) below) |
-| `session_config` | `SessionConfig | None` | `None` | Config for app-owned session factory (see below) |
-| `mount_type` | `str | None` | `None` | Mount type label (auto-detected if `None`) |
-| `permission` | `Permission` | `READ_WRITE` | `Permission.READ_WRITE` or `Permission.READ_ONLY` |
-| `label` | `str` | `""` | Human-readable mount label |
-| `hidden` | `bool` | `False` | Hidden mounts are excluded from listing and indexing |
-| `embedding_provider` | `EmbeddingProvider | None` | `None` | Embedding provider for search (e.g., `OpenAIEmbedding`). Required for vector search. |
-| `search_provider` | `SearchProvider | None` | `None` | Search backend (e.g., `LocalVectorStore`, `PineconeVectorStore`). Required for vector search. |
-
-**Provider injection**: `add_mount()` auto-creates a `RustworkxGraph` as graph provider for non-hidden mounts. Search providers are never auto-created — you must pass both `embedding_provider` and `search_provider` to enable vector search. If either is missing, search operations return `success=False`.
-
-#### EngineConfig / SessionConfig
+Constructor shape for the baseline backend:
 
 ```python
-from grover import EngineConfig, SessionConfig, create_async_engine_factory
-```
-
-**`EngineConfig`** — Grover creates and owns the async engine. The engine is stored on the `Mount` and disposed on unmount/close.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `url` | `str | None` | `None` | Database URL (e.g., `"postgresql+asyncpg://..."`, `"sqlite+aiosqlite://..."`). Mutually exclusive with `engine_factory`. |
-| `engine_factory` | `Callable[[], AsyncEngine] | None` | `None` | Deferred engine factory for advanced setups. Mutually exclusive with `url`. |
-| `create_tables` | `bool` | `True` | Whether to create tables on mount |
-| `file_model` | `type | None` | `None` | Custom SQLModel file table class |
-| `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
-| `file_chunk_model` | `type | None` | `None` | Custom SQLModel file chunk table class |
-
-**`SessionConfig`** — your app owns the engine and session factory. Grover does not manage engine lifecycle.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `session_factory` | `Callable[[], AsyncSession]` | required | Zero-arg callable that returns an `AsyncSession` |
-| `dialect` | `str | None` | `None` | Explicit dialect override. Inferred from session factory bind if not set. |
-| `file_model` | `type | None` | `None` | Custom SQLModel file table class |
-| `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
-| `file_chunk_model` | `type | None` | `None` | Custom SQLModel file chunk table class |
-
-**`create_async_engine_factory`** — helper to create deferred engine factories for databases that need custom `connect_args` or other engine options.
-
-```python
-# Simple — Grover creates engine from URL
-await g.add_mount("/data", engine_config=EngineConfig(url="postgresql+asyncpg://localhost/mydb"))
-
-# Advanced — custom engine factory
-factory = create_async_engine_factory(
-    "mssql+aioodbc://...",
-    connect_args={"TrustServerCertificate": "yes"},
-)
-await g.add_mount("/data", engine_config=EngineConfig(engine_factory=factory))
-# To use a non-default schema, configure it on the engine (e.g., via connect events or connect_args)
-
-# App-owned session
-await g.add_mount("/data", session_config=SessionConfig(session_factory=my_session_factory))
-```
-
-For user-scoped mounts, pass a `UserScopedFileSystem` as the filesystem (see [architecture.md](architecture.md#user-scoped-file-systems)).
-
-### Filesystem Operations
-
-All filesystem methods accept an optional `user_id` keyword argument. On user-scoped mounts (using `UserScopedFileSystem`), `user_id` is **required** — paths are automatically namespaced per user (e.g., `/notes.md` → `/{user_id}/notes.md` in the backend). On regular mounts, `user_id` is accepted but ignored.
-
-```python
-g.read(path, *, user_id=None) -> ReadResult
-g.write(path, content, *, user_id=None) -> WriteResult
-g.edit(path, old, new, *, user_id=None) -> EditResult
-g.delete(path, permanent=False, *, user_id=None) -> DeleteResult
-g.list_dir(path="/", *, candidates=None, user_id=None) -> ListDirResult
-g.exists(path, *, user_id=None) -> ExistsResult
-g.move(src, dest, *, user_id=None, follow=False) -> MoveResult
-g.copy(src, dest, *, user_id=None) -> WriteResult
-```
-
-| Method | Description |
-|--------|-------------|
-| `read(path)` | Read file content. Returns `ReadResult` with `success`, `content`, `total_lines`, etc. |
-| `write(path, content)` | Write content to a file. Creates the file if it doesn't exist, creates a new version if it does. Returns `WriteResult` with `success`, `created`, `version`. |
-| `edit(path, old, new)` | Find-and-replace within a file. Returns `EditResult` with `success` and `version`. |
-| `delete(path, permanent=False)` | Delete a file. Default is soft-delete (moves to trash). Pass `permanent=True` for permanent deletion. Returns `DeleteResult`. |
-| `list_dir(path)` | List directory entries at *path*. `"/"` lists mount points. An optional `candidates` kwarg (`FileSearchSet`) post-filters results to the intersection. On user-scoped mounts, the user's root listing includes a virtual `@shared/` entry. |
-| `exists(path)` | Check if a path exists. Returns `ExistsResult` with `exists: bool`. |
-| `move(src, dest, *, follow=False)` | Move a file or directory. Default (`follow=False`) creates a clean break — new file record at dest, source soft-deleted, no version history carryover. `follow=True` does an in-place rename — same file record, versions follow, share paths updated. Returns `MoveResult`. |
-| `copy(src, dest)` | Copy a file to a new path. Returns `WriteResult`. |
-
-#### Model-based writes
-
-Write files using model instances instead of raw path + content pairs. The system manages all metadata (hash, size, version, timestamps) — caller-set values on the model are ignored.
-
-```python
-g.write_file(file, *, overwrite=True, user_id=None) -> WriteResult
-g.write_files(files, *, overwrite=True, user_id=None) -> BatchWriteResult
-```
-
-| Method | Description |
-|--------|-------------|
-| `write_file(file)` | Write a single file from a `File` model instance. Creates or updates. Returns `WriteResult` with `success`, `created`, `version`. |
-| `write_files(files)` | Batch write up to 100 files. Uses a single DB query to look up existing records, then per-file versioning. Returns `BatchWriteResult` with `results`, `succeeded`, `failed`. Partial failures are supported — successful files are written even if others fail. |
-
-```python
-from grover.models.file import File
-
-# Single file
-result = g.write_file(File(path="/project/hello.py", content="print('hello')"))
-assert result.created is True
-
-# Batch (up to 100)
-files = [
-    File(path="/project/a.py", content="# module a"),
-    File(path="/project/b.py", content="# module b"),
-]
-batch = g.write_files(files)
-assert batch.succeeded == 2
-```
-
-#### Model-based chunk writes
-
-Write chunks directly using model instances. Each chunk must reference an existing parent file. The chunk path must be a valid chunk ref (containing `#`).
-
-```python
-g.write_chunk(chunk, *, user_id=None) -> ChunkResult
-g.write_chunks(chunks, *, user_id=None) -> BatchChunkResult
-```
-
-| Method | Description |
-|--------|-------------|
-| `write_chunk(chunk)` | Write a single chunk from a `FileChunk` model. Upserts by chunk path. Returns `ChunkResult`. |
-| `write_chunks(chunks)` | Batch write chunks. Uses one DB query to find existing chunks, upserts all in one flush. Returns `BatchChunkResult` with `results`, `succeeded`, `failed`. |
-
-```python
-from grover.models.chunk import FileChunk
-
-# Write a chunk (parent file must exist)
-g.write("/project/auth.py", "def login(): pass")
-result = g.write_chunk(FileChunk(
-    file_path="/project/auth.py",
-    path="/project/auth.py#login",
-    name="login",
-    content="def login(): pass",
-))
-assert result.success is True
-```
-
-#### Move semantics: `follow=True` vs `follow=False`
-
-The `follow` parameter controls how `move()` handles identity and history:
-
-**`follow=False` (default) — clean break.** Creates a brand-new file record at the destination. The source is soft-deleted. Version history stays with the old path (accessible via trash/restore). Use this when you want a fresh start at the new location.
-
-```python
-g.move("/project/old.py", "/project/new.py")
-# /project/old.py → soft-deleted (in trash)
-# /project/new.py → new file record, version 1
-# Version history for old.py is preserved in trash
-```
-
-**`follow=True` — in-place rename.** The file record itself is updated to the new path. Version history, file ID, and shares all follow the file. Use this when renaming or reorganizing and you want continuity.
-
-```python
-g.move("/project/old.py", "/project/new.py", follow=True)
-# /project/old.py → gone (record updated, not deleted)
-# /project/new.py → same file record, same versions, same shares
-# Share paths are automatically updated
-```
-
-### Search / Query
-
-```python
-g.glob(pattern, path="/", *, candidates=None) -> GlobResult
-g.grep(pattern, path="/", *, candidates=None, ...) -> GrepResult
-g.tree(path="/", *, max_depth=None, candidates=None) -> TreeResult
-```
-
-| Method | Description |
-|--------|-------------|
-| `glob(pattern, path, *, candidates)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `file_candidates` (list of `FileCandidate`). If `candidates` (`FileSearchSet`) is provided, results are filtered to the intersection. |
-| `grep(pattern, path, *, candidates, ...)` | Search file contents with regex. Returns `GrepResult` with `file_candidates` (list of `FileCandidate`). Each candidate's evidence includes `GrepEvidence` with `line_matches`. If `candidates` (`FileSearchSet`) is provided, only candidate files are searched (pre-filter). |
-| `tree(path, *, max_depth, candidates)` | List all entries under *path* recursively. `"/"` trees all mounts. An optional `candidates` kwarg (`FileSearchSet`) post-filters results to the intersection. Returns `TreeResult` with `entries`, `total_files`, `total_dirs`. |
-
-**grep options:**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `pattern` | `str` | required | Regex pattern (or literal if `fixed_string=True`) |
-| `path` | `str` | `"/"` | Directory or file to search |
-| `glob_filter` | `str | None` | `None` | Only search files matching this glob pattern |
-| `case_sensitive` | `bool` | `True` | Case-sensitive matching |
-| `fixed_string` | `bool` | `False` | Treat pattern as literal string, not regex |
-| `invert` | `bool` | `False` | Return non-matching lines |
-| `word_match` | `bool` | `False` | Match whole words only (`\b` boundaries) |
-| `context_lines` | `int` | `0` | Lines of context before/after each match |
-| `max_results` | `int` | `1000` | Maximum matches returned (0 = unlimited) |
-| `max_results_per_file` | `int` | `0` | Maximum matches per file (0 = unlimited) |
-| `count_only` | `bool` | `False` | Return count in message, no match details |
-| `files_only` | `bool` | `False` | One match per file (file listing mode) |
-
-### Sharing
-
-Available on mounts whose backend implements `SupportsReBAC` (e.g., `UserScopedFileSystem`). Share files or directories with other users.
-
-```python
-g.share(path, grantee_id, permission="read", *, user_id) -> ShareResult
-g.unshare(path, grantee_id, *, user_id) -> ShareResult
-g.list_shares(path, *, user_id) -> ShareSearchResult
-g.list_shared_with_me(*, user_id) -> ShareSearchResult
-```
-
-| Method | Description |
-|--------|-------------|
-| `share(path, grantee_id, permission, *, user_id)` | Share a file or directory. `permission` is `"read"` or `"write"`. Only the file owner can create shares. Returns `ShareResult`. |
-| `unshare(path, grantee_id, *, user_id)` | Remove a share. Returns `ShareResult`. |
-| `list_shares(path, *, user_id)` | List all shares on a given path. Returns `ShareSearchResult` (a `FileSearchResult` subclass) with `candidates` containing `ShareEvidence`. |
-| `list_shared_with_me(*, user_id)` | List all files shared with the current user. Paths are returned with `@shared/{owner}/` prefix. Returns `ShareSearchResult`. |
-
-Shared files are accessible via the `@shared/` virtual namespace:
-
-```python
-# Alice shares a file with Bob
-g.share("/ws/notes.md", "bob", user_id="alice")
-
-# Bob reads it via @shared/
-content = g.read("/ws/@shared/alice/notes.md", user_id="bob")
-
-# Bob can browse @shared/ like a directory
-shared_owners = g.list_dir("/ws/@shared", user_id="bob")
-alice_files = g.list_dir("/ws/@shared/alice", user_id="bob")
-```
-
-Directory shares grant access to all descendants (prefix matching).
-
-### Reconciliation
-
-```python
-g.reconcile(mount_path=None) -> GroverResult
-```
-
-Synchronize the database with the actual filesystem state. Only available for backends that implement `SupportsReconcile` (currently `LocalFileSystem`).
-
-Returns a `GroverResult` containing a `File` entry for each affected file. Each file carries a `ReconcileDetail` with `action="created"` (disk file added to DB) or `action="deleted"` (DB record soft-deleted because disk file is missing). Use `result.succeeded`/`result.failed` for counts.
-
-### Graph Queries
-
-```python
-g.successors(path) -> GraphResult
-g.predecessors(path) -> GraphResult
-g.path_between(source, target) -> GraphResult
-g.contains(path) -> GraphResult
-```
-
-| Method | Description |
-|--------|-------------|
-| `successors(path)` | Files that this file depends on (outgoing edges). |
-| `predecessors(path)` | Files that depend on this file (incoming edges). |
-| `path_between(source, target)` | Shortest path between two files using Dijkstra (weight-aware). Returns `None` if no path exists. |
-| `contains(path)` | Chunks (functions, classes) contained in this file. Returns nodes connected by `"contains"` edges. |
-
-### Connection Operations
-
-```python
-g.add_connection(source_path, target_path, connection_type, *, weight=1.0) -> ConnectionResult
-g.delete_connection(source_path, target_path, *, connection_type=None) -> ConnectionResult
-g.list_connections(path, *, direction="both", connection_type=None) -> ConnectionListResult
-```
-
-Connections are persisted through the filesystem layer (not directly on the graph). The in-memory graph is updated via background worker processing after the DB transaction commits. This makes the filesystem the single source of truth for all persistent edge data.
-
-| Method | Description |
-|--------|-------------|
-| `add_connection(source, target, type)` | Create or update a connection. Returns `ConnectionResult`. The connection path identity is `source[type]target`. |
-| `delete_connection(source, target)` | Delete a connection. If `connection_type` is `None`, deletes all connections between source and target. |
-| `list_connections(path)` | List connections for a path. `direction` can be `"out"`, `"in"`, or `"both"` (default). Returns `ConnectionListResult` with `connections: list`. |
-
-`ConnectionResult` fields: `success`, `message`, `path`, `source_path`, `target_path`, `connection_type`.
-
-### Graph Algorithms
-
-These convenience methods delegate to the graph backend. They raise `CapabilityNotSupportedError` if the backend doesn't support the required capability protocol.
-
-Graph operations resolve to the per-mount graph for the given path. `pagerank()` and `find_nodes()` accept an optional `path` parameter to select which mount's graph to use (defaults to the first visible mount).
-
-```python
-g.pagerank(*, personalization=None, path=None) -> GraphResult
-g.meeting_subgraph(paths, *, max_size=50) -> GraphResult
-g.neighborhood(path, *, max_depth=2, direction="both", edge_types=None) -> GraphResult
-g.find_nodes(*, path=None, **attrs) -> GraphResult
-```
-
-| Method | Protocol | Description |
-|--------|----------|-------------|
-| `pagerank(personalization=None, path=None)` | `SupportsCentrality` | PageRank scores for all nodes. Optional `personalization` dict biases the random walk. `path` selects which mount's graph. |
-| `meeting_subgraph(paths, max_size=50)` | `SupportsSubgraph` | Subgraph connecting multiple nodes via shortest paths, scored by PageRank. Pruned to `max_size` nodes. |
-| `neighborhood(path, max_depth=2, direction="both", edge_types=None)` | `SupportsSubgraph` | BFS neighborhood around a node. `direction`: `"out"`, `"in"`, or `"both"`. |
-| `find_nodes(path=None, **attrs)` | `SupportsFiltering` | Find nodes by attribute predicates. `path` selects which mount's graph. Callable values are used as predicates; non-callable values are matched by equality. |
-
-> **Note:** `ancestors()` and `descendants()` are available on the `GraphProvider` protocol (via `SupportsTraversal`) but are not exposed as facade methods on `Grover`/`GroverAsync`. Access them directly via `g.get_graph().ancestors(path)` if needed.
-
-### Search
-
-```python
-g.vector_search(query, k=10, *, path="/", candidates=None, user_id=None) -> VectorSearchResult
-g.lexical_search(query, k=10, *, path="/", candidates=None, user_id=None) -> LexicalSearchResult
-g.hybrid_search(query, k=10, *, alpha=0.5, path="/", candidates=None, user_id=None) -> FileSearchResult
-g.search(query, *, path="/", glob=None, grep=None, k=10, candidates=None, user_id=None) -> FileSearchResult
-```
-
-All search methods accept an optional `candidates: FileSearchSet | None` parameter. When provided, results are filtered to only include files present in the candidates set. This enables composable pipelines where the output of one query feeds into the next.
-
-| Method | Description |
-|--------|-------------|
-| `vector_search(query, k, *, candidates)` | Semantic search using embedding + vector store. Requires `embedding_provider` and `search_provider` on the mount. Returns `VectorSearchResult`. If `candidates` (`FileSearchSet`) is provided, results are post-filtered to the intersection. |
-| `lexical_search(query, k, *, candidates)` | BM25/full-text keyword search via the filesystem's DB-backed lexical search. Returns `LexicalSearchResult`. If `candidates` is provided, results are filtered to the intersection. |
-| `hybrid_search(query, k, alpha, *, candidates)` | Combines vector and lexical results. `alpha` controls the blend: 1.0 = pure vector, 0.0 = pure lexical. Passes `candidates` through to sub-calls. |
-| `search(query, *, candidates, ...)` | Composable search pipeline: optional glob/grep filters followed by vector search. If `candidates` is provided, it seeds the pipeline as the initial filter set. |
-
-Search is routed through per-mount filesystem providers. When `path="/"`, results are aggregated across all mounts. When `path` targets a specific mount, search is scoped to that mount.
-
-Returns `success=False` results if the required providers (`search_provider`, `embedding_provider`) are not configured on the mount.
-
-**Composable pipelines:** Since `FileSearchResult` is a subclass of `FileSearchSet`, the output of any query method can feed directly into the `candidates` parameter of another:
-
-```python
-# Glob → grep → vector search pipeline
-py_files = g.glob("**/*.py")           # FileSearchResult (is-a FileSearchSet)
-with_auth = g.grep("auth", candidates=py_files)  # only searches .py files
-relevant = g.vector_search("login flow", candidates=with_auth)
-
-# list_dir / tree use path + optional candidates filter
-g.list_dir("/src")                    # list /src directory
-g.tree("/tests", max_depth=2)         # tree /tests directory
-```
-
-### Index and Persistence
-
-```python
-g.index(mount_path=None) -> dict[str, int]
-g.flush()
-g.save()
-g.close()
-```
-
-| Method | Description |
-|--------|-------------|
-| `index(mount_path)` | Walk the filesystem, analyze all files, build the knowledge graph and search index. Pass a `mount_path` to index a single mount, or `None` for all visible mounts. Returns stats: `{"files_scanned": N, "chunks_created": N, "edges_added": N, "files_skipped": N}`. Runs inline regardless of `indexing_mode`. |
-| `flush()` | Wait for all pending background indexing to complete. In `BACKGROUND` mode, drains the debounce queue and awaits all active analysis tasks. In `MANUAL` mode, this is a no-op. Call before querying if you need guaranteed consistency after recent writes. |
-| `save()` | Persist the search index to disk. Automatically drains pending events before saving. Graph edges are persisted through `ConnectionService` at write time, not during `save()`. |
-| `close()` | Save state and shut down all subsystems. Automatically drains pending events before saving. Idempotent. |
-
-### Properties and Methods
-
-```python
-g.get_graph(path=None) -> GraphProvider   # Per-mount knowledge graph
-```
-
-`get_graph(path)` returns the graph provider for the mount owning `path`. If `path` is `None`, returns the first available mount's graph. Each mount has its own isolated `RustworkxGraph` instance, auto-injected at mount time. The graph is accessed through `mount.filesystem.graph_provider`.
-
----
-
-## Key Types
-
-### Ref
-
-```python
-from grover import Ref
-```
-
-Immutable identity for any Grover entity. A thin wrapper around a single path string that supports four synthetic path formats:
-
-| Entity | Format | Example |
-|--------|--------|---------|
-| File | plain path | `/src/auth.py` |
-| Chunk | `file#symbol` | `/src/auth.py#login` |
-| Version | `file@N` | `/src/auth.py@3` |
-| Connection | `source[type]target` | `/src/auth.py[imports]/src/utils.py` |
-
-**Type checks** (mutually exclusive):
-
-| Property | Returns `True` when |
-|----------|-------------------|
-| `ref.is_file` | Plain file path (no suffix) |
-| `ref.is_chunk` | Path contains `#symbol` |
-| `ref.is_version` | Path contains `@N` |
-| `ref.is_connection` | Path contains `[type]` |
-
-**Decomposition properties:**
-
-| Property | File | Chunk | Version | Connection |
-|----------|------|-------|---------|------------|
-| `base_path` | path | file path | file path | source path |
-| `chunk` | `None` | symbol name | `None` | `None` |
-| `version` | `None` | `None` | version int | `None` |
-| `source` | `None` | `None` | `None` | source path |
-| `target` | `None` | `None` | `None` | target path |
-| `connection_type` | `None` | `None` | `None` | type string |
-
-**Factory classmethods:**
-
-```python
-Ref.for_chunk("/src/auth.py", "login")           # Ref('/src/auth.py#login')
-Ref.for_version("/src/auth.py", 3)               # Ref('/src/auth.py@3')
-Ref.for_connection("/a.py", "/b.py", "imports")   # Ref('/a.py[imports]/b.py')
-```
-
-### IndexingMode
-
-```python
-from grover import IndexingMode
-```
-
-Controls how file mutation events are dispatched to indexing handlers.
-
-| Value | Behavior |
-|-------|----------|
-| `IndexingMode.BACKGROUND` | Default. Events are debounced per-path and dispatched in background `asyncio.Task` instances. `write()` and `edit()` return immediately; indexing happens asynchronously. Call `flush()` before querying if you need guaranteed consistency. |
-| `IndexingMode.MANUAL` | All event dispatch is suppressed. Only an explicit call to `index()` populates the graph and search engine. Useful for batch import scenarios where you want to write many files first, then index once. |
-
-```python
-# Background mode (default) — writes are fast, index in the background
-g = Grover()
-
-# Manual mode — full control over when indexing happens
-g = Grover(indexing_mode=IndexingMode.MANUAL)
-```
-
-### SearchResult (internal)
-
-```python
-from grover.providers.search.types import SearchResult
-```
-
-Internal type used by the filesystem's `SearchMethodsMixin` and vector store backends. The public `Grover.search()` API returns `FileSearchResult` (see [Result Types](#result-types) below), which wraps these into `FileCandidate` objects with `VectorEvidence`.
-
-```python
-@dataclass(frozen=True)
-class SearchResult:
-    ref: Ref                    # The matched file or chunk
-    score: float                # Cosine similarity (0–1)
-    content: str                # The matched text
-    parent_path: str | None     # Parent file path (for chunks)
-```
-
-### Result Types
-
-Grover has two result families:
-
-- **`FileOperationResult`** — base for content operations (read, write, edit, delete, etc.). Enriched base with `path`, `content`, `message`, `success`, `line_start`, `line_offset`, `version`.
-- **`FileSearchResult`** — base for search/query results. Contains `file_candidates: list[FileCandidate]` and `connection_candidates: list[ConnectionCandidate]`. Each candidate has a `path` and `evidence` list. Supports set algebra (`&`, `|`, `-`, `>>`), `rebase()`, `remap_paths()`.
-
-All result types live in `grover.results` (canonical location).
-
-```python
-from grover import (
-    # Operation results
-    FileOperationResult, ReadResult, WriteResult, EditResult,
-    DeleteResult, MkdirResult, MoveResult, RestoreResult,
-    GetVersionContentResult, ShareResult, ConnectionResult,
-    FileInfoResult, ExistsResult,
-    ChunkResult, ChunkListResult, ConnectionListResult,
-    # Search results
-    FileSearchResult, FileCandidate, ConnectionCandidate, Evidence,
-    GlobResult, GrepResult, TreeResult, ListDirResult,
-    TrashResult, VersionResult, ShareSearchResult,
-    VectorSearchResult, LexicalSearchResult, HybridSearchResult,
-    GraphResult, LineMatch,
-    # Filter operators
-    FilterValue, eq, ne, gt, gte, lt, lte, in_, not_in, and_, or_, exists,
+DatabaseFileSystem(
+    *,
+    engine=None,
+    session_factory=None,
+    model=VFSObject,
+    embedding_provider=None,
+    vector_store=None,
+    user_scoped=False,
+    permissions="read_write",
+    schema=None,
 )
 ```
 
-Every result has a `success: bool` and `message: str` field. Always check `success` before using other fields — this is the primary error handling pattern in Grover:
+`engine` and `session_factory` are mutually interchangeable entry points for SQLAlchemy async sessions. `user_scoped=True` enables per-user path namespacing when `user_id` is supplied on operations.
 
-```python
-result = g.read("/project/missing.py")
-if result.success:
-    print(result.content)       # safe to access
-else:
-    print(result.message)       # e.g., "File not found: /project/missing.py"
-    # result.content is "" — don't use it
-
-result = g.write("/project/hello.py", "content")
-if result.success:
-    print(f"Version {result.version}, created={result.created}")
-```
-
-This design is intentional: agents running in loops should handle failures gracefully without try/except blocks. Operations never raise exceptions for expected failures (missing files, permission errors, etc.) — they return a result with `success=False` and a descriptive `message`.
-
-#### FileOperationResult subclasses
-
-| Type | Key Fields (beyond base) |
-|------|------------|
-| `ReadResult` | `total_lines`, `lines_read`, `truncated` |
-| `WriteResult` | `created` (bool) |
-| `EditResult` | (base fields sufficient) |
-| `DeleteResult` | `permanent` (bool), `total_deleted` |
-| `MkdirResult` | `created_dirs` (list) |
-| `MoveResult` | `old_path`, `new_path` |
-| `RestoreResult` | `restored_version` |
-| `GetVersionContentResult` | (base has `content` + `version`) |
-| `ShareResult` | `grantee_id`, `permission`, `granted_by` |
-| `ConnectionResult` | `source_path`, `target_path`, `connection_type` |
-| `FileInfoResult` | `is_directory`, `mime_type`, `size_bytes`, `created_at`, `updated_at`, `permission`, `mount_type`. `get_info()` always returns this (never `None`); check `success` for not-found. |
-| `ExistsResult` | `exists` (bool) |
-| `BatchWriteResult` | `results: list[WriteResult]`, `succeeded` (int), `failed` (int) |
-| `BatchChunkResult` | `results: list[ChunkResult]`, `succeeded` (int), `failed` (int) |
-| `ChunkResult` | `count` (int) |
-| `ChunkListResult` | `chunks` (list) |
-| `ConnectionListResult` | `connections` (list) |
-| `VerifyVersionResult` | `versions_checked`, `versions_passed`, `versions_failed`, `errors: list[VersionChainError]` |
-
-`VersionChainError` is a frozen dataclass with fields: `version`, `expected_hash`, `actual_hash`, `error`.
-
-#### FileSearchResult subclasses
-
-Each search result contains `file_candidates: list[FileCandidate]`, where each candidate has a `path: str` and `evidence: list[Evidence]`.
-
-| Type | Evidence Type | Key Evidence Fields |
-|------|--------------|-------------------|
-| `GlobResult` | `GlobEvidence` | `is_directory`, `size_bytes`, `mime_type` |
-| `GrepResult` | `GrepEvidence` | `line_matches: list[LineMatch]` |
-| `TreeResult` | (mixed) | `total_files`, `total_dirs` on result |
-| `ListDirResult` | `ListDirEvidence` | `is_directory`, `size_bytes`, `mime_type` |
-| `TrashResult` | `TrashEvidence` | `deleted_at`, `deleted_by` |
-| `VersionResult` | `VersionEvidence` | `version`, `content_hash`, `size_bytes`, `created_at`, `created_by` |
-| `ShareSearchResult` | `ShareEvidence` | `grantee_id`, `permission`, `granted_by`, `expires_at` |
-| `VectorSearchResult` | `VectorEvidence` | `snippet` |
-| `LexicalSearchResult` | `LexicalEvidence` | `score`, `snippet` |
-| `HybridSearchResult` | (mixed) | Vector + lexical evidence |
-| `GraphResult` (relationship) | `GraphRelationshipEvidence` | `paths: list[str]` |
-| `GraphResult` (centrality) | `GraphCentralityEvidence` | `scores: dict[str, float]` |
-
-#### Query results (frozen, tuple-based)
-
-| Type | Key Fields |
-|------|------------|
-| `LineMatch` | `line_number`, `line_content` |
-
----
-
-## Filesystem Layer
-
-```python
-from grover.backends import (
-    LocalFileSystem,
-    DatabaseFileSystem,
-    GroverFileSystem,
-    SupportsReBAC,
-    SupportsReconcile,
-)
-from grover.mount import MountRegistry
-from grover.permissions import Permission
-```
-
-### LocalFileSystem
-
-```python
-LocalFileSystem(workspace_dir, *, data_dir=None)
-```
-
-Stores files on disk at `workspace_dir`. Metadata and version history live in a SQLite database at `data_dir` (defaults to `~/.grover/{workspace_slug}/`).
-
-Implements: `GroverFileSystem`, `SupportsReconcile`.
-
-### DatabaseFileSystem
-
-```python
-DatabaseFileSystem()
-```
-
-Pure-database storage. All content lives in the `File.content` column. Stateless — requires a session to be injected by VFS. Configuration (dialect, schema, model overrides) is set internally via `_configure()` at mount time based on the `EngineConfig` or `SessionConfig` passed to `add_mount()`.
-
-Implements: `GroverFileSystem`.
-
-### PostgresFileSystem
-
-```python
-PostgresFileSystem(...)
-```
-
-PostgreSQL-native backend. `lexical_search`, `grep`, and `glob` run inside Postgres; `vector_search` and `semantic_search` default to pgvector when the configured model declares `embedding` as a native `vector(<N>)` column. The vector dimension and index contract live on the `VFSObject` model declaration, not on the backend constructor. Passing `vector_store=` keeps the same external-store path as the portable backend for vector and semantic search, while lexical / grep / glob remain Postgres-native.
-
-### Permission
-
-```python
-from grover.permissions import Permission
-
-Permission.READ_WRITE  # Full access (default)
-Permission.READ_ONLY   # Reads and listings only
-```
-
-**Read-only enforcement**: When a mount (or path within a mount via `read_only_paths`) is set to `READ_ONLY`, all mutations return a failed Result with `success=False` and a descriptive message — no exceptions are raised. This applies to: `write`, `edit`, `delete`, `mkdir`, `move`, `copy`, `restore_version`, `restore_from_trash`, `share`, `unshare`, `add_connection`, `delete_connection`. Multi-mount operations (`empty_trash`, `reconcile`, `index`) silently skip read-only mounts. Read and query operations (`read`, `glob`, `grep`, `list_dir`, `tree`, `list_connections`, `list_shares`, graph queries, search) are unaffected.
-
-### Protocols
-
-| Protocol | Methods |
-|----------|---------|
-| `GroverFileSystem` | CRUD (`read`, `write`, `edit`, `delete`, `mkdir`, `move`, `copy`), queries (`list_dir`, `exists`, `get_info`, `glob`, `grep`, `tree`), versioning (`list_versions`, `get_version_content`, `restore_version`, `verify_versions`, `verify_all_versions`), trash (`list_trash`, `restore_from_trash`, `empty_trash`), search (`vector_search`, `lexical_search`, `search_add_batch`, `search_remove_file`), connections (`add_connection`, `delete_connection`, `list_connections`), chunks (`replace_file_chunks`, `delete_file_chunks`, `list_file_chunks`) |
-| `SupportsReBAC` | `share`, `unshare`, `list_shares_on_path`, `list_shared_with_me` |
-| `SupportsReconcile` | `reconcile` |
-
-All protocols are `runtime_checkable`. Every backend must implement `GroverFileSystem`. The two opt-in protocols are for features only some backends provide.
-
-### Exceptions
-
-```python
-from grover.exceptions import (
-    GroverError,                    # Base exception
-    PathNotFoundError,              # File or directory not found
-    MountNotFoundError,             # No mount matches the path
-    StorageError,                   # Backend I/O failure
-    ConsistencyError,               # Metadata/content mismatch
-    CapabilityNotSupportedError,    # Backend doesn't support this operation
-    AuthenticationRequiredError,    # user_id missing on user-scoped mount
-)
-```
-
----
-
-## RustworkxGraph
-
-```python
-from grover.providers.graph import RustworkxGraph
-```
-
-In-memory directed graph backed by `rustworkx.PyDiGraph`. Nodes are file paths (strings), edges have a free-form type string. Implements the `GraphProvider` protocol plus all capability protocols.
-
-### Node Operations
-
-```python
-graph.add_node(path, **attrs)
-graph.remove_node(path)
-graph.has_node(path) -> bool
-graph.get_node(path) -> dict
-graph.nodes() -> list[str]
-```
-
-### Edge Operations
-
-```python
-graph.add_edge(source, target, edge_type, weight=1.0, edge_id=None, **attrs)
-graph.remove_edge(source, target)
-graph.has_edge(source, target) -> bool
-graph.get_edge(source, target) -> dict
-graph.edges() -> list[tuple[str, str, dict]]
-```
-
-### Query Methods (async)
-
-All query methods are `async def`. Use `await` when calling on `RustworkxGraph` directly.
-
-```python
-await graph.predecessors(path) -> list[Ref]     # Incoming edges (predecessors)
-await graph.successors(path) -> list[Ref]       # Outgoing edges (successors)
-await graph.path_between(source, target) -> list[Ref] | None  # Dijkstra
-await graph.contains(path) -> list[Ref]         # "contains" edges only
-await graph.by_parent(path) -> list[Ref]        # Nodes with matching parent_path
-```
-
-### Centrality (`SupportsCentrality`) — async + `to_thread`
-
-Heavy algorithms run in a thread pool via `asyncio.to_thread()` with immutable snapshots for thread safety.
-
-```python
-await graph.pagerank(*, alpha=0.85, personalization=None, max_iter=100, tol=1e-6) -> dict[str, float]
-await graph.betweenness_centrality(*, normalized=True) -> dict[str, float]
-await graph.closeness_centrality() -> dict[str, float]
-await graph.katz_centrality(*, alpha=0.1, beta=1.0, max_iter=1000, tol=1e-6) -> dict[str, float]
-await graph.degree_centrality() -> dict[str, float]
-await graph.in_degree_centrality() -> dict[str, float]
-await graph.out_degree_centrality() -> dict[str, float]
-```
-
-### Connectivity (`SupportsConnectivity`) — async + `to_thread`
-
-```python
-await graph.weakly_connected_components() -> list[set[str]]
-await graph.strongly_connected_components() -> list[set[str]]
-await graph.is_weakly_connected() -> bool
-```
-
-### Traversal (`SupportsTraversal`) — async + `to_thread`
-
-```python
-await graph.ancestors(path) -> set[str]
-await graph.descendants(path) -> set[str]
-await graph.all_simple_paths(source, target, *, cutoff=None) -> list[list[str]]
-graph.topological_sort() -> list[str]                   # Raises ValueError on cycles
-graph.shortest_path_length(source, target) -> float | None
-```
-
-### Subgraph Extraction (`SupportsSubgraph`)
-
-```python
-graph.subgraph(paths) -> SubgraphResult
-graph.neighborhood(path, *, max_depth=2, direction="both", edge_types=None) -> SubgraphResult
-graph.meeting_subgraph(start_paths, *, max_size=50) -> SubgraphResult
-graph.common_reachable(paths, *, direction="forward") -> set[str]
-graph.remove_file_subgraph(path)  # Remove node + all children
-```
-
-### Filtering (`SupportsFiltering`)
-
-```python
-graph.find_nodes(**attrs) -> list[str]                  # Callable or equality predicates
-graph.find_edges(*, edge_type=None, source=None, target=None) -> list[tuple[str, str, dict]]
-graph.edges_of(path, *, direction="both", edge_types=None) -> list[tuple[str, str, dict]]
-```
-
-### Node Similarity (`SupportsNodeSimilarity`)
-
-```python
-graph.node_similarity(path1, path2, *, method="jaccard") -> float
-graph.similar_nodes(path, *, method="jaccard", k=10) -> list[tuple[str, float]]
-```
-
-### Properties
-
-```python
-graph.node_count -> int
-graph.edge_count -> int
-graph.is_dag() -> bool
-```
-
-### Persistence
-
-```python
-await graph.from_sql(session, path_prefix="/mount")  # Load from grover_file_connections only
-```
-
-The graph is a pure in-memory projection. `from_sql()` loads edges from `grover_file_connections` — nodes come exclusively from connection endpoints. Files with no connections are not loaded into the graph. The mount `path_prefix` converts relative DB paths to absolute graph paths.
-
-Query methods handle unknown paths gracefully:
-- **Single-node queries** (`predecessors`, `successors`, `ancestors`, `descendants`, `path_between`, etc.) return empty success results for unknown paths instead of raising `KeyError`.
-- **Candidate-based methods** (`pagerank`, `subgraph`, `connecting_subgraph`, etc.) inject unknown candidate paths into the computation graph — chunks/versions get inferred edges to their parent file, plain files appear as isolated nodes.
-- **Mutation methods** (`remove_node`, `get_node`, `remove_file_subgraph`) still raise `KeyError` for missing nodes.
-
-### Analyzers
-
-```python
-from grover.analyzers import (
-    Analyzer,           # Protocol
-    AnalyzerRegistry,   # Extension → analyzer mapping
-    ChunkFile,          # Extracted code chunk
-    EdgeData,           # Extracted dependency edge
-)
-```
-
-Built-in analyzers:
-
-| Language | Analyzer | Requires |
-|----------|----------|----------|
-| Python | `PythonAnalyzer` | Nothing (uses stdlib `ast`) |
-| JavaScript | `JavaScriptAnalyzer` | `treesitter` extra |
-| TypeScript | `TypeScriptAnalyzer` | `treesitter` extra |
-| Go | `GoAnalyzer` | `treesitter` extra |
-
-### Graph Protocols
-
-The graph API uses the same protocol pattern as the filesystem layer. `GraphProvider` and all opt-in capability protocols live in `providers/graph/protocol.py`. Check support with `isinstance()`:
-
-```python
-from grover import GraphProvider
-from grover.providers.graph.protocol import (
-    SupportsCentrality,      # PageRank, betweenness, closeness, katz, degree
-    SupportsConnectivity,    # Weakly/strongly connected components
-    SupportsTraversal,       # Ancestors, descendants, topological sort, shortest paths
-    SupportsSubgraph,        # Subgraph extraction, neighborhood, meeting subgraph
-    SupportsFiltering,       # Attribute-based node/edge filtering
-    SupportsNodeSimilarity,  # Jaccard structural similarity
-    SupportsPersistence,     # SQL persistence (to_sql / from_sql)
-)
-
-if isinstance(g.get_graph(), SupportsCentrality):
-    scores = g.get_graph().pagerank()
-```
-
-`RustworkxGraph` implements all protocols. Custom graph backends only need to implement `GraphProvider` plus whichever capabilities they support.
-
-### SubgraphResult
-
-```python
-from grover.providers.graph.types import SubgraphResult
-```
-
-Frozen dataclass returned by subgraph extraction methods. Deeply immutable — `tuple` for sequences, `MappingProxyType` for scores.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `nodes` | `tuple[str, ...]` | Node paths in the subgraph |
-| `edges` | `tuple[tuple[str, str, dict], ...]` | Edges with metadata |
-| `scores` | `MappingProxyType[str, float]` | Optional node scores (e.g., PageRank) |
-
----
-
-## Search
-
-Grover's search layer is built around two provider protocols on the filesystem — **EmbeddingProvider** (text → vectors) and **SearchProvider** (store/search vectors, optional lexical search). There is no `SearchEngine` intermediary; the filesystem's `SearchMethodsMixin` orchestrates providers directly.
-
-```python
-from grover import (
-    EmbeddingProvider, SearchProvider,
-    VectorEntry, IndexConfig, IndexInfo,
-    FilterExpression, FilterValue, eq, gt, and_, or_,
-)
-from grover.providers.search.protocol import IndexConfig  # index configuration
-```
-
-### SearchProvider Protocol
-
-```python
-from grover import SearchProvider
-from grover.providers.search.protocol import IndexConfig
-
-@runtime_checkable
-class SearchProvider(Protocol):
-    async def connect(self) -> None: ...
-    async def close(self) -> None: ...
-    async def create_index(self, config: IndexConfig) -> None: ...
-    async def upsert(self, *, files: list[File]) -> BatchResult: ...
-    async def delete(self, *, files: list[str]) -> BatchResult: ...
-    async def vector_search(self, vector: list[float], *, k: int = 10, candidates: FileSearchSet | None = None) -> FileSearchResult: ...
-```
-
-`SearchProvider` handles vector storage and index management. All built-in stores (`LocalVectorStore`, `PineconeVectorStore`, `DatabricksVectorStore`) implement it. Methods accept domain types: `upsert` takes `File` objects (with `path` and `embedding`), `delete` takes path strings, and `vector_search` returns `FileSearchResult` directly. An optional `candidates` parameter on `vector_search` post-filters results to a known set of paths.
-
-`IndexConfig` is a frozen dataclass (`name`, `dimension`, `metric`, `cloud_config`) defined in `providers/search/protocol.py`.
-
-Lexical search is handled by the filesystem backend (`DatabaseFileSystem.lexical_search`) via DB-native full-text search (FTS5, tsquery, FREETEXT, or LIKE fallback) — it is not part of the `SearchProvider` protocol.
-
-### EmbeddingProvider Protocol
-
-```python
-from grover import EmbeddingProvider
-
-@runtime_checkable
-class EmbeddingProvider(Protocol):
-    async def embed(self, text: str) -> list[float]: ...
-    async def embed_batch(self, texts: list[str]) -> list[list[float]]: ...
-    @property
-    def dimensions(self) -> int: ...
-    @property
-    def model_name(self) -> str: ...
-```
-
-### Embedding Providers
-
-**OpenAIEmbedding** — OpenAI API. Requires the `openai` extra.
-
-```python
-from grover.providers.embedding import OpenAIEmbedding
-provider = OpenAIEmbedding(model="text-embedding-3-small", dimensions=384)
-```
-
-**LangChainEmbedding** — wraps any LangChain `Embeddings` instance. Requires the `langchain` extra.
-
-```python
-from grover.providers.embedding import LangChainEmbedding
-provider = LangChainEmbedding(embeddings=langchain_embeddings, dimensions=384)
-```
-
-### Search Provider Backends
-
-All built-in stores implement `SearchProvider`. Pass them to `add_mount(..., search_provider=...)`.
-
-**LocalVectorStore** — in-process usearch HNSW index for local development.
-
-```python
-from grover.providers.search import LocalVectorStore
-store = LocalVectorStore(dimension=384, metric="cosine")
-store.dimension  # 384
-```
-
-**PineconeVectorStore** — Pinecone cloud vector database. Requires the `pinecone` extra.
-
-```python
-from grover.providers.search import PineconeVectorStore
-store = PineconeVectorStore(index_name="my-index", api_key="...", namespace="")
-await store.connect()
-```
-
-**DatabricksVectorStore** — Databricks Vector Search (Direct Vector Access). Requires the `databricks` extra.
-
-```python
-from grover.providers.search import DatabricksVectorStore
-store = DatabricksVectorStore(
-    index_name="catalog.schema.my_index",
-    endpoint_name="my_endpoint",
-)
-await store.connect()
-```
-
-### Filter Expressions
-
-Provider-agnostic filter AST with builder helpers:
-
-```python
-from grover import eq, ne, gt, gte, lt, lte, in_, not_in, exists, and_, or_
-
-# Simple comparison
-f = eq("language", "python")
-
-# Combined
-f = and_(eq("language", "python"), gt("year", 2020))
-
-# Nested
-f = or_(eq("type", "code"), and_(eq("type", "doc"), gt("pages", 5)))
-
-# Use in search
-results = await store.search([0.1, ...], k=10, filter=f)
-```
-
-Filters are compiled to provider-native formats automatically (MongoDB-style dicts for Pinecone, SQL-like strings for Databricks, simple dicts for local).
-
-### Data Types
-
-```python
-@dataclass(frozen=True)
-class VectorEntry:
-    id: str
-    vector: list[float]
-    metadata: dict[str, Any]
-
-@dataclass(frozen=True)
-class VectorHit:
-    id: str
-    score: float
-    metadata: dict[str, Any]
-    vector: list[float] | None
-
-@dataclass(frozen=True)
-class IndexConfig:
-    name: str
-    dimension: int
-    metric: str = "cosine"
-    cloud_config: dict[str, Any] = {}
-
-@dataclass(frozen=True)
-class IndexInfo:
-    name: str
-    dimension: int
-    metric: str
-    vector_count: int = 0
-    metadata: dict[str, Any] = {}
-```
-
----
-
-## Models
-
-```python
-from grover.models import File, FileVersion, FileChunk, FileConnection
-from grover.models.vector import Vector, VectorType
-```
-
-SQLModel table classes for direct database access if needed.
-
-| Model | Table | Purpose |
-|-------|-------|---------|
-| `File` | `grover_files` | File metadata, content, version tracking, soft-delete |
-| `FileVersion` | `grover_file_versions` | Version snapshots and diffs |
-| `FileChunk` | `grover_file_chunks` | Code chunks (functions, classes) |
-| `FileConnection` | `grover_file_connections` | File-to-file connections/edges |
-| `Vector` | — | Runtime `list[float]` subclass with dimension and model name tracking (see below) |
-| `VectorType` | — | SQLAlchemy `TypeDecorator` — stores Vector as JSON text, validates dimension and model |
-
-#### Vector subscript forms
-
-```python
-Vector[1536]                          # dimension only
-Vector["text-embedding-3-large"]      # model name only
-Vector[1536, "text-embedding-3-large"] # both
-Vector.for_provider(my_provider)       # derive from EmbeddingProvider
-```
-
-Instances expose `.dimension` and `.model_name` read-only properties (both `int | None` and `str | None`).
-
-`VectorType` accepts optional `dimension` and `model_name` parameters. On bind, it validates that a `Vector` instance's model name matches the column's declared model name (plain `list[float]` values and `Vector` instances without a model name skip the check). `VectorType.from_provider(provider)` creates a `VectorType` with both dimension and model name from an `EmbeddingProvider`.
-
-### Background Indexing
-
-```python
-from grover.worker import BackgroundWorker, IndexingMode
-```
-
-The `BackgroundWorker` handles debounced background task scheduling for indexing. It is created internally by `GroverAsync` and is not typically used directly. The `IndexingMode` enum controls behavior:
-
-| Mode | Behavior |
-|------|----------|
-| `IndexingMode.BACKGROUND` | File mutations schedule analysis tasks with per-path debouncing (default) |
-| `IndexingMode.MANUAL` | All scheduling is suppressed; call `index()` explicitly |
-
-Facade methods call processing functions directly via the worker instead of emitting events. `flush()` drains all pending work. `close()` and `save()` auto-drain before persisting state.
-
----
-
-## deepagents Integration
-
-```python
-from grover.integrations.deepagents import GroverBackend, GroverMiddleware
-```
-
-Requires the `deepagents` extra: `pip install grover[deepagents]`
-
-### GroverBackend
-
-Implements the deepagents `BackendProtocol`. Accepts either `Grover` (sync) or `GroverAsync` (native async).
-
-```python
-# From an existing Grover instance (sync)
-backend = GroverBackend(grover)
-
-# From a GroverAsync instance (native async)
-backend = GroverBackend(grover_async)
-
-# Convenience factories
-backend = GroverBackend.from_local("/path/to/workspace")
-backend = GroverBackend.from_database(engine)
-
-# Async factories (return GroverAsync-backed backend)
-backend = await GroverBackend.from_local_async("/path/to/workspace")
-backend = await GroverBackend.from_database_async(engine)
-```
-
-| Method | Description |
-|--------|-------------|
-| `ls_info(path)` | List directory entries as `FileInfo` dicts |
-| `read(path)` | Read file content in cat -n format |
-| `write(path, content)` | Create-only write (errors if file exists) |
-| `edit(path, old, new, replace_all)` | Find-and-replace within a file |
-| `grep_raw(pattern, path, glob)` | Literal string search across files |
-| `glob_info(pattern, path)` | Find files matching a glob pattern |
-| `upload_files(files)` | Batch file upload (list of `(path, bytes)` tuples) |
-| `download_files(paths)` | Batch file download (returns bytes) |
-
-All methods have async variants (`als_info`, `aread`, etc.):
-- **With `GroverAsync`:** async methods call native async API directly; sync methods wrap via `asyncio.run()`.
-- **With `Grover`:** sync methods work directly; async methods raise `TypeError`.
-
-**Key semantics:**
-- `write()` uses create-only semantics (`overwrite=False`) — returns error if file exists
-- `files_update` is always `None` (Grover is external storage)
-- Path validation rejects `..`, `~`, and paths without leading `/`
-
-### GroverMiddleware
-
-A deepagents `AgentMiddleware` that adds Grover-specific tools beyond standard file ops. Accepts either `Grover` or `GroverAsync`.
-
-```python
-middleware = GroverMiddleware(grover)
-middleware = GroverMiddleware(grover_async)  # tools get native async coroutines
-middleware = GroverMiddleware(grover, enable_search=False, enable_graph=False)
-```
-
-When `GroverAsync` is passed, all tools include both sync and async (coroutine) implementations for native async execution.
-
-| Tool | Description |
-|------|-------------|
-| `list_versions` | Show version history with timestamps, sizes, hashes |
-| `get_version_content` | Read a specific past version of a file |
-| `restore_version` | Restore a file to a previous version (creates new version) |
-| `delete_file` | Soft-delete a file to trash |
-| `list_trash` | List all soft-deleted files |
-| `restore_from_trash` | Recover a file from trash |
-| `search_semantic` | Semantic similarity search (requires embedding provider) |
-| `successors` | Direct successors (outgoing edges) from the knowledge graph |
-| `predecessors` | Direct predecessors (incoming edges) from the knowledge graph |
-
-Toggle tool groups with `enable_search=False` (removes `search_semantic`) and `enable_graph=False` (removes `successors`, `predecessors`).
-
----
-
-## LangChain Integration
-
-```python
-from grover.integrations.langchain import GroverRetriever, GroverLoader
-```
-
-Requires the `langchain` extra: `pip install grover[langchain]`
-
-### GroverRetriever
-
-LangChain `BaseRetriever` backed by Grover's semantic search. Works in any LangChain chain or RAG pipeline. Accepts either `Grover` or `GroverAsync`.
-
-```python
-# Sync
-retriever = GroverRetriever(grover=g, k=10)
-docs = retriever.invoke("search query")
-
-# Async (native)
-retriever = GroverRetriever(grover=ga, k=10)
-docs = await retriever.ainvoke("search query")
-```
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `grover` | `Grover \| GroverAsync` | required | Grover instance with search index |
-| `k` | `int` | `10` | Maximum number of results |
-
-Returns `list[Document]` with:
-- `page_content` — concatenated chunk snippets (or file path if no snippets)
-- `metadata["path"]` — file path
-- `metadata["chunks"]` — number of chunk matches (if any)
-- `id` — file path
-
-**Async behavior:**
-- **With `GroverAsync`:** `_aget_relevant_documents` calls native async API; `_get_relevant_documents` wraps via `asyncio.run()`.
-- **With `Grover`:** `_get_relevant_documents` works directly; `_aget_relevant_documents` raises `TypeError`.
-
-Returns empty list when search index is not available.
-
-### GroverLoader
-
-LangChain `BaseLoader` that streams Grover files as Documents. Generator-based (`lazy_load()`) for memory efficiency. Accepts either `Grover` or `GroverAsync`.
-
-```python
-# Sync: load all text files recursively
-loader = GroverLoader(grover=g, path="/project")
-docs = loader.load()
-
-# Async: stream documents with native async
-loader = GroverLoader(grover=ga, path="/project")
-async for doc in loader.alazy_load():
-    process(doc)
-
-# Load only Python files
-loader = GroverLoader(grover=g, path="/project", glob_pattern="*.py")
-
-# Non-recursive (immediate children only)
-loader = GroverLoader(grover=g, path="/project", recursive=False)
-```
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `grover` | `Grover \| GroverAsync` | required | Grover instance |
-| `path` | `str` | `"/"` | Root path to load from |
-| `glob_pattern` | `str \| None` | `None` | Filter files by glob pattern (e.g., `"*.py"`) |
-| `recursive` | `bool` | `True` | Walk subdirectories recursively |
-
-Returns `list[Document]` (via `load()`) or `Iterator[Document]` (via `lazy_load()`) with:
-- `page_content` — file content
-- `metadata["path"]` — file path
-- `metadata["source"]` — file path (LangChain convention)
-- `metadata["size_bytes"]` — file size
-- `id` — file path
-
-Binary files are automatically skipped.
-
-**Async behavior:**
-- **With `GroverAsync`:** `alazy_load()` is a native async generator; `lazy_load()` collects from `alazy_load()` via `asyncio.run()`.
-- **With `Grover`:** `lazy_load()` works directly; `alazy_load()` raises `TypeError`.
-
----
-
-## LangGraph Integration
-
-```python
-from grover.integrations.langchain import GroverStore
-```
-
-Requires the `langgraph` extra: `pip install grover[langgraph]`
-
-### GroverStore
-
-LangGraph `BaseStore` implementation for persistent agent memory. Namespace tuples map to directory paths, values are stored as JSON files. Accepts either `Grover` or `GroverAsync`.
-
-```python
-store = GroverStore(grover=g, prefix="/data/store")
-
-# Put and get
-store.put(("users", "alice"), "prefs", {"theme": "dark"})
-item = store.get(("users", "alice"), "prefs")
-# item.value == {"theme": "dark"}
-
-# Delete
-store.delete(("users", "alice"), "prefs")
-
-# List namespaces
-namespaces = store.list_namespaces()
-
-# Search (uses Grover's semantic search when available)
-results = store.search(("docs",), query="API reference")
-```
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `grover` | `Grover \| GroverAsync` | required | Grover instance |
-| `prefix` | `str` | `"/store"` | Path prefix for all stored items |
-
-**Namespace-to-path mapping:** Namespace `("users", "alice", "notes")` with key `"idea-1"` maps to `{prefix}/users/alice/notes/idea-1.json`.
-
-**Supported operations:**
-- `GetOp` — read a key from a namespace
-- `PutOp` — write a value (or delete with `value=None`)
-- `SearchOp` — semantic search within a namespace (falls back to listing if no search index)
-- `ListNamespacesOp` — list namespaces with match conditions and depth limiting
-
-**Async behavior:**
-- **With `GroverAsync`:** `abatch()` calls native async handlers; `batch()` wraps via `asyncio.run()`.
-- **With `Grover`:** `batch()` works directly; `abatch()` raises `TypeError`.
-
----
-
-## Migrations
-
-```python
-from grover.migrations import backfill_alpha_refactor
-```
-
-### backfill_alpha_refactor
-
-Idempotent migration script for the alpha refactor schema changes. Safe to run multiple times.
+## Mounting
 
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
-from grover.migrations import backfill_alpha_refactor
 
-engine = create_async_engine("sqlite+aiosqlite:///grover.db")
-report = await backfill_alpha_refactor(engine)
-# {"file_versions_file_path": "added", "file_chunks_path": "renamed", ...}
+from vfs import VFSClient
+from vfs.backends import DatabaseFileSystem
+
+engine = create_async_engine("sqlite+aiosqlite:///workspace.db")
+
+g = VFSClient()
+g.add_mount("workspace", DatabaseFileSystem(engine=engine))
 ```
 
-**What it does:**
+Mount paths are single segments such as `"workspace"` or `"/workspace"`. The router rebases returned paths automatically, so the mounted filesystem only sees `"/"`-relative paths internally.
 
-| Step | Description |
-|------|-------------|
-| `file_versions_file_path` | Adds `file_path` column to `grover_file_versions`, backfills from joined `grover_files.path` |
-| `file_chunks_path` | Renames `chunk_path` → `path` on `grover_file_chunks` |
-| `file_chunks_vector` | Adds `vector` column (nullable JSON text) to `grover_file_chunks` |
-| `files_vector` | Adds `vector` column (nullable JSON text) to `grover_files` |
-| `file_connections_path` | Adds `path` column to `grover_file_connections`, computes from `source_path[type]target_path` |
-| `embeddings_dropped` | Drops `grover_embeddings` table |
+## Core Methods
 
-**Report values:** `"added"`, `"renamed"`, `"exists"`, `"table_missing"`, `"dropped"`, `"not_present"`.
+All client methods return `VFSResult` on success. The async and sync facades expose the same method names.
 
-### Schema validation
+### CRUD and Navigation
 
-`add_mount()` automatically checks for schema compatibility when mounting an engine-based backend. If the database has an old schema, it raises `SchemaIncompatibleError` with instructions to run the migration.
+| Method | Notes |
+|--------|-------|
+| `read(path=None, candidates=None, *, user_id=None)` | Read file content. |
+| `write(path=None, content=None, objects=None, overwrite=True, *, user_id=None)` | Write one path or batch-write model objects. |
+| `edit(path=None, old=None, new=None, edits=None, candidates=None, replace_all=False, *, user_id=None)` | Single or multi-edit replacement. |
+| `delete(path=None, candidates=None, permanent=False, cascade=True, *, user_id=None)` | Soft or permanent delete. |
+| `stat(path=None, candidates=None, *, user_id=None)` | Metadata lookup for one path. |
+| `mkdir(path, *, user_id=None)` | Create a directory path. |
+| `mkedge(source, target, edge_type, *, user_id=None)` | Create a canonical outgoing edge row. |
+| `move(src=None, dest=None, moves=None, overwrite=True, *, user_id=None)` | Move one path or a batch of pairs. |
+| `copy(src=None, dest=None, copies=None, overwrite=True, *, user_id=None)` | Copy one path or a batch of pairs. |
+| `ls(path=None, candidates=None, *, user_id=None)` | Non-recursive listing. |
+| `tree(path, max_depth=None, *, user_id=None)` | Recursive listing. |
+
+### Pattern and Retrieval
+
+| Method | Notes |
+|--------|-------|
+| `glob(pattern, *, paths=(), ext=(), max_count=None, candidates=None, user_id=None)` | Path matching with optional path and extension filters. |
+| `grep(pattern, *, paths=(), ext=(), ext_not=(), globs=(), globs_not=(), case_mode="sensitive", fixed_strings=False, word_regexp=False, invert_match=False, before_context=0, after_context=0, output_mode="lines", max_count=None, candidates=None, user_id=None)` | Regex or fixed-string content search. |
+| `semantic_search(query, k=15, *, candidates=None, user_id=None)` | Embedding-backed search using the mounted embedding provider and vector store. |
+| `vector_search(vector, k=15, *, candidates=None, user_id=None)` | Raw vector lookup. |
+| `lexical_search(query, k=15, *, candidates=None, user_id=None)` | BM25 or backend-native lexical ranking. |
+
+### Graph Traversal and Ranking
+
+| Method | Notes |
+|--------|-------|
+| `predecessors(path=None, *, candidates=None, user_id=None)` | Immediate inbound neighbors. |
+| `successors(path=None, *, candidates=None, user_id=None)` | Immediate outbound neighbors. |
+| `ancestors(path=None, *, candidates=None, user_id=None)` | Recursive inbound traversal. |
+| `descendants(path=None, *, candidates=None, user_id=None)` | Recursive outbound traversal. |
+| `neighborhood(path=None, *, candidates=None, depth=2, user_id=None)` | Radius-limited expansion. |
+| `meeting_subgraph(candidates, *, user_id=None)` | Union of connecting paths between candidates. |
+| `min_meeting_subgraph(candidates, *, user_id=None)` | Reduced meeting graph variant. |
+| `pagerank(*, candidates=None, user_id=None)` | PageRank over the mounted graph projection. |
+| `betweenness_centrality(*, candidates=None, user_id=None)` | Betweenness scoring. |
+| `closeness_centrality(*, candidates=None, user_id=None)` | Closeness scoring. |
+| `degree_centrality(*, candidates=None, user_id=None)` | Degree scoring. |
+| `in_degree_centrality(*, candidates=None, user_id=None)` | Inbound degree scoring. |
+| `out_degree_centrality(*, candidates=None, user_id=None)` | Outbound degree scoring. |
+| `hits(*, candidates=None, user_id=None)` | HITS authority / hub scoring. |
+
+### Query Engine
+
+| Method | Notes |
+|--------|-------|
+| `parse_query(query)` | Parse a CLI-style query string into a `QueryPlan`. |
+| `run_query(query, *, user_id=None, initial=None)` | Execute the parsed plan and return `VFSResult`. |
+| `cli(query, *, user_id=None, initial=None)` | Execute and render to text. |
+
+The query parser lives in `vfs.query` and supports stage aliases such as `search`, `grep`, `pred`, `succ`, `nbr`, `meetinggraph`, `pagerank`, and `top`.
+
+## Results
+
+```python
+from vfs.results import EditOperation, Entry, LineMatch, TwoPathOperation, VFSResult
+```
+
+| Type | Purpose |
+|------|---------|
+| `VFSResult` | Unified envelope with `function`, `entries`, `success`, and `errors`. |
+| `Entry` | Flat row shape used by every function. Fields are populated opportunistically by the producing operation. |
+| `EditOperation` | Immutable batch edit descriptor for `edit()`. |
+| `TwoPathOperation` | Immutable `(src, dest)` pair for `move()` and `copy()`. |
+| `LineMatch` | `(start, end, match)` tuple for grep output with context windows. |
+
+Useful `VFSResult` helpers:
+
+```python
+result.paths
+result.content
+result.file
+result.top(10)
+result.sort("score", reverse=True)
+result.filter(lambda entry: entry.kind == "file")
+result.to_json()
+result.to_str()
+
+combined = result | other
+intersected = result & other
+diffed = result - other
+```
+
+## Path Helpers
+
+```python
+from vfs.paths import (
+    chunk_path,
+    decompose_edge,
+    edge_in_path,
+    edge_out_path,
+    version_path,
+)
+```
+
+Canonical metadata paths:
+
+| Entity | Helper |
+|--------|--------|
+| Chunk | `chunk_path("/src/auth.py", "login")` |
+| Version | `version_path("/src/auth.py", 3)` |
+| Outgoing edge | `edge_out_path("/src/auth.py", "/src/utils.py", "imports")` |
+| Incoming edge | `edge_in_path("/src/auth.py", "/src/utils.py", "imports")` |
+
+`decompose_edge()` turns a canonical edge path back into `source`, `target`, and `edge_type`.
+
+## Error Model
+
+```python
+from vfs import GraphError, MountError, NotFoundError, ValidationError, VFSError, WriteConflictError
+```
+
+- `VFSClientAsync` returns failed `VFSResult` values for normal operational failures.
+- `VFSClient` raises the corresponding `VFSError` subclass instead.
+- Mount routing, validation, and graph execution errors are normalized through the shared exception hierarchy.
+
+## Related Modules
+
+- `vfs.query` exposes `QueryPlan`, `parse_query`, `execute_query`, and `render_query_result`.
+- `vfs.permissions` exposes `PermissionMap` and the path-level permission helpers.
+- `vfs.models` defines `VFSObject` and backend-facing storage models.
+- `vfs.graph` exposes the in-memory graph provider used by `DatabaseFileSystem`.
