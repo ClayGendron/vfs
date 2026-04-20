@@ -116,17 +116,17 @@ class TestWriteAndRead:
     async def test_write_chunk(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/src/auth.py", "full content", session=s)
-            w = await db._write_impl("/src/auth.py/.chunks/login", "def login():", session=s)
+            w = await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "def login():", session=s)
         assert w.success
         assert require_file(w).kind == "chunk"
 
         async with db._use_session() as s:
-            r = await db._read_impl("/src/auth.py/.chunks/login", session=s)
+            r = await db._read_impl("/.vfs/src/auth.py/__meta__/chunks/login", session=s)
         assert r.content == "def login():"
 
     async def test_write_chunk_requires_existing_parent_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/ghost.py/.chunks/login", "def login():", session=s)
+            r = await db._write_impl("/.vfs/ghost.py/__meta__/chunks/login", "def login():", session=s)
         assert not r.success
         assert "Chunk parent file not found" in r.error_message
 
@@ -135,16 +135,16 @@ class TestWriteAndRead:
             r = await db._write_impl(
                 objects=[
                     VFSObject(path="/src/auth.py", content="full content"),
-                    VFSObject(path="/src/auth.py/.chunks/login", content="def login():"),
+                    VFSObject(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
                 ],
                 session=s,
             )
         assert r.success
-        assert r.paths == ("/src/auth.py", "/src/auth.py/.chunks/login")
+        assert r.paths == ("/src/auth.py", "/.vfs/src/auth.py/__meta__/chunks/login")
 
         async with db._use_session() as s:
             file_obj = await db._get_object("/src/auth.py", s)
-            chunk_obj = await db._get_object("/src/auth.py/.chunks/login", s)
+            chunk_obj = await db._get_object("/.vfs/src/auth.py/__meta__/chunks/login", s)
         assert file_obj is not None
         assert chunk_obj is not None
 
@@ -153,30 +153,30 @@ class TestWriteAndRead:
 
         r = await db.write(
             objects=[
-                VFSObject(path="/src/auth.py/.chunks/login", content="def login():"),
+                VFSObject(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
                 VFSObject(path="/src/auth.py", content="full content"),
             ]
         )
         assert r.success
-        assert r.paths == ("/src/auth.py/.chunks/login", "/src/auth.py")
+        assert r.paths == ("/.vfs/src/auth.py/__meta__/chunks/login", "/src/auth.py")
 
         async with db._use_session() as s:
             file_obj = await db._get_object("/src/auth.py", s)
-            chunk_obj = await db._get_object("/src/auth.py/.chunks/login", s)
+            chunk_obj = await db._get_object("/.vfs/src/auth.py/__meta__/chunks/login", s)
         assert file_obj is not None
         assert chunk_obj is not None
 
     async def test_write_rejects_version_path(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/file.txt/.versions/1", "nope", session=s)
+            r = await db._write_impl("/.vfs/file.txt/__meta__/versions/1", "nope", session=s)
         assert not r.success
         assert "version" in r.error_message.lower()
 
     async def test_write_accepts_connection_path(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/a.py/.connections/imports/b.py", "nope", session=s)
+            r = await db._write_impl("/.vfs/a.py/__meta__/edges/out/imports/b.py", "nope", session=s)
         assert r.success
-        assert require_file(r).kind == "connection"
+        assert require_file(r).kind == "edge"
 
     async def test_read_nonexistent(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -473,8 +473,8 @@ class TestAutoVersioning:
             await db._write_impl("/file.txt", "v2", session=s)
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/file.txt/.versions/1", s)
-            v2 = await db._get_object("/file.txt/.versions/2", s)
+            v1 = await db._get_object("/.vfs/file.txt/__meta__/versions/1", s)
+            v2 = await db._get_object("/.vfs/file.txt/__meta__/versions/2", s)
         assert v1 is not None
         assert v2 is not None
         assert v1.is_snapshot is True
@@ -495,8 +495,8 @@ class TestAutoVersioning:
 
         # Both version records should exist
         async with db._use_session() as s:
-            r1 = await db._read_impl("/file.txt/.versions/1", session=s)
-            r2 = await db._read_impl("/file.txt/.versions/2", session=s)
+            r1 = await db._read_impl("/.vfs/file.txt/__meta__/versions/1", session=s)
+            r2 = await db._read_impl("/.vfs/file.txt/__meta__/versions/2", session=s)
         assert r1.success
         assert r2.success
 
@@ -520,8 +520,8 @@ class TestAutoVersioning:
         # Version 1 is the first full file state.
         # Version 2 is stored as a forward diff from v1 -> v2.
         async with db._use_session() as s:
-            v1_obj = await db._get_object("/file.txt/.versions/1", s)
-            v2_obj = await db._get_object("/file.txt/.versions/2", s)
+            v1_obj = await db._get_object("/.vfs/file.txt/__meta__/versions/1", s)
+            v2_obj = await db._get_object("/.vfs/file.txt/__meta__/versions/2", s)
         v1 = require_object(v1_obj)
         v2 = require_object(v2_obj)
         assert v1.is_snapshot is not None
@@ -549,7 +549,7 @@ class TestAutoVersioning:
                 await db._write_impl("/file.txt", f"v{i}", session=s)
 
         async with db._use_session() as s:
-            v10 = await db._get_object("/file.txt/.versions/10", s)
+            v10 = await db._get_object("/.vfs/file.txt/__meta__/versions/10", s)
         assert v10 is not None
         assert v10.is_snapshot is True
         assert v10.version_diff is None
@@ -566,8 +566,8 @@ class TestAutoVersioning:
 
         async with db._use_session() as s:
             file_obj = await db._get_object("/app.py", s)
-            v2 = await db._get_object("/app.py/.versions/2", s)
-            v3 = await db._get_object("/app.py/.versions/3", s)
+            v2 = await db._get_object("/.vfs/app.py/__meta__/versions/2", s)
+            v3 = await db._get_object("/.vfs/app.py/__meta__/versions/3", s)
 
         assert file_obj is not None
         assert file_obj.version_number == 3
@@ -586,7 +586,7 @@ class TestAutoVersioning:
         await db.write("/repair.txt", "v2")
 
         async with db._use_session() as s:
-            bad = await db._get_object("/repair.txt/.versions/2", s)
+            bad = await db._get_object("/.vfs/repair.txt/__meta__/versions/2", s)
             assert bad is not None
             await s.delete(bad)
 
@@ -595,8 +595,8 @@ class TestAutoVersioning:
 
         async with db._use_session() as s:
             file_obj = await db._get_object("/repair.txt", s)
-            v3 = await db._get_object("/repair.txt/.versions/3", s)
-            v4 = await db._get_object("/repair.txt/.versions/4", s)
+            v3 = await db._get_object("/.vfs/repair.txt/__meta__/versions/3", s)
+            v4 = await db._get_object("/.vfs/repair.txt/__meta__/versions/4", s)
 
         assert file_obj is not None
         assert file_obj.version_number == 4
@@ -611,13 +611,13 @@ class TestAutoVersioning:
     async def test_chunk_write_does_not_version(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/file.py", "full", session=s)
-            await db._write_impl("/file.py/.chunks/fn", "def fn(): pass", session=s)
+            await db._write_impl("/.vfs/file.py/__meta__/chunks/fn", "def fn(): pass", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/file.py/.chunks/fn", "def fn(): return 1", session=s)
+            await db._write_impl("/.vfs/file.py/__meta__/chunks/fn", "def fn(): return 1", session=s)
 
         # No version should be created for chunk overwrites
         async with db._use_session() as s:
-            r = await db._read_impl("/file.py/.chunks/fn/.versions/1", session=s)
+            r = await db._read_impl("/.vfs/.vfs/file.py/__meta__/chunks/fn/__meta__/versions/1", session=s)
         assert not r.success
 
 
@@ -739,7 +739,7 @@ class TestBatchWriteAtScale:
         # Spot-check: current content is v2, version 1 exists
         async with db._use_session() as s:
             live = await db._get_object("/src/f_00500.py", s)
-            ver = await db._get_object("/src/f_00500.py/.versions/1", s)
+            ver = await db._get_object("/.vfs/src/f_00500.py/__meta__/versions/1", s)
         assert live is not None and live.content == "v2_500"
         assert ver is not None and ver.kind == "version"
 
@@ -762,7 +762,7 @@ class TestFastPathVersioning:
         assert require_object(f).version_number == 2  # 1→2, not 1→repair→3
 
         async with db._use_session() as s:
-            v2 = await db._get_object("/fp.txt/.versions/2", s)
+            v2 = await db._get_object("/.vfs/fp.txt/__meta__/versions/2", s)
         assert v2 is not None
         assert v2.is_snapshot is False
         assert v2.created_by == "auto"
@@ -780,7 +780,7 @@ class TestFastPathVersioning:
 
         # Delete intermediate version row
         async with db._use_session() as s:
-            v2 = await db._get_object("/chain.txt/.versions/2", s)
+            v2 = await db._get_object("/.vfs/chain.txt/__meta__/versions/2", s)
             assert v2 is not None
             await s.delete(v2)
 
@@ -790,7 +790,7 @@ class TestFastPathVersioning:
 
         async with db._use_session() as s:
             f = await db._get_object("/chain.txt", s)
-            v2_after = await db._get_object("/chain.txt/.versions/2", s)
+            v2_after = await db._get_object("/.vfs/chain.txt/__meta__/versions/2", s)
         # Version advances directly, no repair snapshot inserted
         assert require_object(f).version_number == 4
         assert v2_after is None  # still missing
@@ -806,7 +806,7 @@ class TestFastPathVersioning:
 
         # Delete the latest version row (v2)
         async with db._use_session() as s:
-            v2 = await db._get_object("/slow.txt/.versions/2", s)
+            v2 = await db._get_object("/.vfs/slow.txt/__meta__/versions/2", s)
             assert v2 is not None
             await s.delete(v2)
 
@@ -816,7 +816,7 @@ class TestFastPathVersioning:
 
         async with db._use_session() as s:
             f = await db._get_object("/slow.txt", s)
-            v3 = await db._get_object("/slow.txt/.versions/3", s)
+            v3 = await db._get_object("/.vfs/slow.txt/__meta__/versions/3", s)
         # Repair snapshot for v2's content + new v4 diff
         assert require_object(f).version_number == 4
         assert v3 is not None
@@ -836,7 +836,7 @@ class TestFastPathVersioning:
 
         async with db._use_session() as s:
             f = await db._get_object("/ext.txt", s)
-            v2 = await db._get_object("/ext.txt/.versions/2", s)
+            v2 = await db._get_object("/.vfs/ext.txt/__meta__/versions/2", s)
         assert require_object(f).version_number == 3
         assert v2 is not None
         assert v2.created_by == "external"
@@ -892,17 +892,20 @@ class TestLs:
         assert r.success
         assert set(r.paths) == {"/data/docs", "/data/src"}
 
-    async def test_ls_file_returns_metadata_children(self, db: DatabaseFileSystem):
+    async def test_ls_file_requires_explicit_vfs_metadata_browse(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/auth.py", "code", session=s)
-            await db._write_impl("/auth.py/.chunks/login", "def login():", session=s)
+            await db._write_impl("/.vfs/auth.py/__meta__/chunks/login", "def login():", session=s)
 
         async with db._use_session() as s:
             r = await db._ls_impl("/auth.py", session=s)
         assert r.success
-        paths = set(r.paths)
-        assert "/auth.py/.chunks/login" in paths
-        assert "/auth.py/.versions/1" in paths
+        assert r.paths == ()
+
+        async with db._use_session() as s:
+            meta = await db._ls_impl("/.vfs/auth.py", session=s)
+        assert meta.success
+        assert meta.paths == ("/.vfs/auth.py/__meta__",)
 
     async def test_ls_directory_hides_metadata_kinds(self, db: DatabaseFileSystem):
         """ls on a directory should not return chunks/versions of child files."""
@@ -924,7 +927,7 @@ class TestLs:
         async with db._use_session() as s:
             r = await db._ls_impl("/", session=s)
         assert r.success
-        assert set(r.paths) == {"/a.txt", "/b.txt"}
+        assert set(r.paths) == {"/.vfs", "/a.txt", "/b.txt"}
 
     async def test_ls_empty_directory(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
@@ -954,7 +957,7 @@ class TestLs:
         async with db._use_session() as s:
             r = await db._ls_impl("/", session=s)
         assert r.success
-        assert r.paths == ("/a.txt",)
+        assert set(r.paths) == {"/.vfs", "/a.txt"}
 
     async def test_ls_with_candidates_known_kind(self, db: DatabaseFileSystem):
         """Candidates with kind set skip the DB kind lookup."""
@@ -988,7 +991,7 @@ class TestLs:
         """Batch ls on a mix of files and directories."""
         async with db._use_session() as s:
             await db._write_impl("/src/auth.py", "code", session=s)
-            await db._write_impl("/src/auth.py/.chunks/login", "chunk", session=s)
+            await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "chunk", session=s)
             await db._write_impl("/lib/utils.py", "utils", session=s)
 
         candidates = VFSResult(
@@ -1000,12 +1003,7 @@ class TestLs:
         async with db._use_session() as s:
             r = await db._ls_impl(candidates=candidates, session=s)
         assert r.success
-        paths = set(r.paths)
-        # Directory child
-        assert "/src/auth.py" in paths
-        # File metadata children
-        assert "/src/auth.py/.chunks/login" in paths
-        assert "/src/auth.py/.versions/1" in paths
+        assert set(r.paths) == {"/src/auth.py"}
 
     async def test_ls_through_public_api(self, db: DatabaseFileSystem, engine):
         root = VirtualFileSystem(engine=engine)
@@ -1070,7 +1068,7 @@ class TestDelete:
         async with db._use_session() as s:
             await db._write_impl("/auth.py", "v2", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/auth.py/.chunks/login", "chunk", session=s)
+            await db._write_impl("/.vfs/auth.py/__meta__/chunks/login", "chunk", session=s)
 
         async with db._use_session() as s:
             r = await db._delete_impl("/auth.py", session=s)
@@ -1079,23 +1077,23 @@ class TestDelete:
         assert len(r.entries) > 1
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/auth.py/.versions/1", s, include_deleted=True)
-            chunk = await db._get_object("/auth.py/.chunks/login", s, include_deleted=True)
+            v1 = await db._get_object("/.vfs/auth.py/__meta__/versions/1", s, include_deleted=True)
+            chunk = await db._get_object("/.vfs/auth.py/__meta__/chunks/login", s, include_deleted=True)
         assert v1 is not None and v1.deleted_at is not None
         assert chunk is not None and chunk.deleted_at is not None
 
     async def test_permanent_delete_cascades_to_metadata(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/auth.py", "code", session=s)
-            await db._write_impl("/auth.py/.chunks/fn", "chunk", session=s)
+            await db._write_impl("/.vfs/auth.py/__meta__/chunks/fn", "chunk", session=s)
 
         async with db._use_session() as s:
             await db._delete_impl("/auth.py", permanent=True, session=s)
 
         async with db._use_session() as s:
             obj = await db._get_object("/auth.py", s, include_deleted=True)
-            chunk = await db._get_object("/auth.py/.chunks/fn", s, include_deleted=True)
-            version = await db._get_object("/auth.py/.versions/1", s, include_deleted=True)
+            chunk = await db._get_object("/.vfs/auth.py/__meta__/chunks/fn", s, include_deleted=True)
+            version = await db._get_object("/.vfs/auth.py/__meta__/versions/1", s, include_deleted=True)
         assert obj is None
         assert chunk is None
         assert version is None
@@ -1157,13 +1155,13 @@ class TestDelete:
         assert a is None
         assert b is None
 
-    async def test_delete_connection(self, db: DatabaseFileSystem):
+    async def test_delete_edge(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/a.py", "a", session=s)
         async with db._use_session() as s:
-            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+            await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
 
-        conn_path = "/a.py/.connections/imports/b.py"
+        conn_path = "/.vfs/a.py/__meta__/edges/out/imports/b.py"
         async with db._use_session() as s:
             r = await db._delete_impl(conn_path, session=s)
         assert r.success
@@ -1238,7 +1236,7 @@ class TestDelete:
     async def test_non_cascade_delete_file_with_chunks_rejected(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/chunked.py", "code", session=s)
-            await db._write_impl("/chunked.py/.chunks/fn", "def fn():", session=s)
+            await db._write_impl("/.vfs/chunked.py/__meta__/chunks/fn", "def fn():", session=s)
         async with db._use_session() as s:
             r = await db._delete_impl("/chunked.py", cascade=False, session=s)
         assert not r.success
@@ -1274,69 +1272,69 @@ class TestDelete:
 
 
 # ------------------------------------------------------------------
-# Part 8: mkconn
+# Part 8: mkedge
 # ------------------------------------------------------------------
 
 
-class TestMkconn:
-    async def test_mkconn_creates_connection(self, db: DatabaseFileSystem):
+class TestMkedge:
+    async def test_mkedge_creates_edge(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/auth.py", "code", session=s)
 
         async with db._use_session() as s:
-            r = await db._mkconn_impl("/auth.py", "/utils.py", "imports", session=s)
+            r = await db._mkedge_impl("/auth.py", "/utils.py", "imports", session=s)
         assert r.success
         file = require_file(r)
-        assert file.kind == "connection"
-        assert file.path == "/auth.py/.connections/imports/utils.py"
+        assert file.kind == "edge"
+        assert file.path == "/.vfs/auth.py/__meta__/edges/out/imports/utils.py"
 
-    async def test_mkconn_stores_correct_fields(self, db: DatabaseFileSystem):
+    async def test_mkedge_stores_correct_fields(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/src/auth.py", "code", session=s)
 
         async with db._use_session() as s:
-            await db._mkconn_impl("/src/auth.py", "/src/utils.py", "imports", session=s)
+            await db._mkedge_impl("/src/auth.py", "/src/utils.py", "imports", session=s)
 
         async with db._use_session() as s:
             conn = await db._get_object(
-                "/src/auth.py/.connections/imports/src/utils.py",
+                "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py",
                 s,
             )
         assert conn is not None
-        assert conn.kind == "connection"
+        assert conn.kind == "edge"
         assert conn.source_path == "/src/auth.py"
         assert conn.target_path == "/src/utils.py"
-        assert conn.connection_type == "imports"
-        assert conn.parent_path == "/src/auth.py"
+        assert conn.edge_type == "imports"
+        assert conn.parent_path == "/.vfs/src/auth.py/__meta__/edges/out/imports/src"
 
-    async def test_mkconn_source_not_found(self, db: DatabaseFileSystem):
+    async def test_mkedge_source_not_found(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._mkconn_impl("/nope.py", "/utils.py", "imports", session=s)
+            r = await db._mkedge_impl("/nope.py", "/utils.py", "imports", session=s)
         assert not r.success
         assert "Source not found" in r.error_message
 
-    async def test_mkconn_duplicate_updates(self, db: DatabaseFileSystem):
-        """Writing the same connection again updates it (via write upsert)."""
+    async def test_mkedge_duplicate_updates(self, db: DatabaseFileSystem):
+        """Writing the same edge again updates it (via write upsert)."""
         async with db._use_session() as s:
             await db._write_impl("/a.py", "a", session=s)
         async with db._use_session() as s:
-            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+            await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
         async with db._use_session() as s:
-            r = await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+            r = await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
         assert r.success
 
-    async def test_mkconn_revives_soft_deleted(self, db: DatabaseFileSystem):
+    async def test_mkedge_revives_soft_deleted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/a.py", "a", session=s)
         async with db._use_session() as s:
-            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+            await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
 
-        conn_path = "/a.py/.connections/imports/b.py"
+        conn_path = "/.vfs/a.py/__meta__/edges/out/imports/b.py"
         async with db._use_session() as s:
             await db._delete_impl(conn_path, session=s)
 
         async with db._use_session() as s:
-            r = await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+            r = await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
         assert r.success
 
         async with db._use_session() as s:
@@ -1344,83 +1342,83 @@ class TestMkconn:
         assert conn is not None
         assert conn.deleted_at is None
 
-    async def test_mkconn_missing_args(self, db: DatabaseFileSystem):
+    async def test_mkedge_missing_args(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._mkconn_impl(session=s)
+            r = await db._mkedge_impl(session=s)
         assert not r.success
 
-    async def test_mkconn_rejects_both_args_and_objects(self, db: DatabaseFileSystem):
+    async def test_mkedge_rejects_both_args_and_objects(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._mkconn_impl(
+            r = await db._mkedge_impl(
                 "/a.py",
                 "/b.py",
                 "imports",
-                objects=[VFSObject(path="/x.py/.connections/imports/y.py", kind="connection")],
+                objects=[VFSObject(path="/.vfs/x.py/__meta__/edges/out/imports/y.py", kind="edge")],
                 session=s,
             )
         assert not r.success
 
-    async def test_mkconn_with_objects_batch(self, db: DatabaseFileSystem):
+    async def test_mkedge_with_objects_batch(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/a.py", "a", session=s)
             await db._write_impl("/b.py", "b", session=s)
 
         conns = [
             VFSObject(
-                path="/a.py/.connections/imports/b.py",
-                kind="connection",
+                path="/.vfs/a.py/__meta__/edges/out/imports/b.py",
+                kind="edge",
                 source_path="/a.py",
                 target_path="/b.py",
-                connection_type="imports",
+                edge_type="imports",
             ),
             VFSObject(
-                path="/b.py/.connections/calls/a.py",
-                kind="connection",
+                path="/.vfs/b.py/__meta__/edges/out/calls/a.py",
+                kind="edge",
                 source_path="/b.py",
                 target_path="/a.py",
-                connection_type="calls",
+                edge_type="calls",
             ),
         ]
         async with db._use_session() as s:
-            r = await db._mkconn_impl(objects=conns, session=s)
+            r = await db._mkedge_impl(objects=conns, session=s)
         assert r.success
         assert len(r.entries) == 2
 
-    async def test_mkconn_objects_validates_sources(self, db: DatabaseFileSystem):
-        """Batch mkconn with objects rejects missing sources."""
+    async def test_mkedge_objects_validates_sources(self, db: DatabaseFileSystem):
+        """Batch mkedge with objects rejects missing sources."""
         conns = [
             VFSObject(
-                path="/ghost.py/.connections/imports/b.py",
-                kind="connection",
+                path="/.vfs/ghost.py/__meta__/edges/out/imports/b.py",
+                kind="edge",
                 source_path="/ghost.py",
                 target_path="/b.py",
-                connection_type="imports",
+                edge_type="imports",
             ),
         ]
         async with db._use_session() as s:
-            r = await db._mkconn_impl(objects=conns, session=s)
+            r = await db._mkedge_impl(objects=conns, session=s)
         assert not r.success
         assert "Source not found" in r.error_message
 
-    async def test_mkconn_visible_in_ls(self, db: DatabaseFileSystem):
+    async def test_mkedge_visible_in_ls(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl("/auth.py", "code", session=s)
         async with db._use_session() as s:
-            await db._mkconn_impl("/auth.py", "/utils.py", "imports", session=s)
+            await db._mkedge_impl("/auth.py", "/utils.py", "imports", session=s)
 
         async with db._use_session() as s:
-            r = await db._ls_impl("/auth.py", session=s)
+            r = await db._ls_impl("/.vfs/auth.py/__meta__/edges/out/imports", session=s)
         assert r.success
-        assert "/auth.py/.connections/imports/utils.py" in set(r.paths)
+        assert "/.vfs/auth.py/__meta__/edges/out/imports/utils.py" in set(r.paths)
 
-    async def test_mkconn_through_public_api(self, db: DatabaseFileSystem, engine):
+    async def test_mkedge_through_public_api(self, db: DatabaseFileSystem, engine):
         root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
 
         await root.write("/code/auth.py", "code")
-        r = await root.mkconn("/code/auth.py", "/code/utils.py", "imports")
+        r = await root.mkedge("/code/auth.py", "/code/utils.py", "imports")
         assert r.success
-        assert require_file(r).path == "/code/auth.py/.connections/imports/utils.py"
+        assert require_file(r).path == "/code/.vfs/auth.py/__meta__/edges/out/imports/utils.py"
 
 
 # ------------------------------------------------------------------
@@ -1575,7 +1573,7 @@ class TestMove:
     async def test_move_cascades_metadata(self, db: DatabaseFileSystem):
         """Chunks and versions follow the file."""
         await db.write("/old.py", "v1")
-        await db.write("/old.py/.chunks/fn", "def fn():")
+        await db.write("/.vfs/old.py/__meta__/chunks/fn", "def fn():")
         async with db._use_session() as s:
             r = await db._move_impl(
                 ops=[TwoPathOperation(src="/old.py", dest="/new.py")],
@@ -1584,11 +1582,11 @@ class TestMove:
         assert r.success
 
         # Chunk moved
-        rc = await db.read("/new.py/.chunks/fn")
+        rc = await db.read("/.vfs/new.py/__meta__/chunks/fn")
         assert rc.content == "def fn():"
         # Version moved
         async with db._use_session() as s:
-            v = await db._get_object("/new.py/.versions/1", s)
+            v = await db._get_object("/.vfs/new.py/__meta__/versions/1", s)
         assert v is not None
 
     async def test_move_updates_incoming_connection_targets(self, db: DatabaseFileSystem):
@@ -1596,7 +1594,7 @@ class TestMove:
         await db.write("/a.py", "a")
         await db.write("/b.py", "b")
         async with db._use_session() as s:
-            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+            await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
 
         # Move the target
         async with db._use_session() as s:
@@ -1607,8 +1605,8 @@ class TestMove:
 
         # The connection from /a.py should now point to /c.py
         async with db._use_session() as s:
-            old_conn = await db._get_object("/a.py/.connections/imports/b.py", s)
-            new_conn = await db._get_object("/a.py/.connections/imports/c.py", s)
+            old_conn = await db._get_object("/.vfs/a.py/__meta__/edges/out/imports/b.py", s)
+            new_conn = await db._get_object("/.vfs/a.py/__meta__/edges/out/imports/c.py", s)
         assert old_conn is None
         assert new_conn is not None
         assert new_conn.target_path == "/c.py"
@@ -1618,7 +1616,7 @@ class TestMove:
         await db.write("/a.py", "a")
         await db.write("/b.py", "b")
         async with db._use_session() as s:
-            await db._mkconn_impl("/a.py", "/b.py", "imports", session=s)
+            await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
 
         # Move the source
         async with db._use_session() as s:
@@ -1629,7 +1627,7 @@ class TestMove:
 
         # Connection should now live under /z.py with updated source_path
         async with db._use_session() as s:
-            conn = await db._get_object("/z.py/.connections/imports/b.py", s)
+            conn = await db._get_object("/.vfs/z.py/__meta__/edges/out/imports/b.py", s)
         assert conn is not None
         assert conn.source_path == "/z.py"
         assert conn.target_path == "/b.py"
@@ -1719,8 +1717,8 @@ class TestGlob:
         """Metadata kinds (chunks, versions, connections) are excluded."""
         async with db._use_session() as s:
             await db._write_impl("/src/auth.py", "code", session=s)
-            await db._write_impl("/src/auth.py/.chunks/login", "chunk", session=s)
-            await db._mkconn_impl("/src/auth.py", "/src/db.py", "imports", session=s)
+            await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "chunk", session=s)
+            await db._mkedge_impl("/src/auth.py", "/src/db.py", "imports", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/**", session=s)
         kinds = {c.kind for c in r.entries}
@@ -1878,7 +1876,7 @@ class TestGrep:
         """Grep only searches file content, not chunks/connections."""
         async with db._use_session() as s:
             await db._write_impl("/a.py", "no match", session=s)
-            await db._write_impl("/a.py/.chunks/login", "timeout here", session=s)
+            await db._write_impl("/.vfs/a.py/__meta__/chunks/login", "timeout here", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="timeout", session=s)
         assert len(r) == 0
@@ -2271,11 +2269,11 @@ class TestTree:
         assert "Not a directory" in r.error_message
 
     async def test_tree_excludes_metadata(self, db: DatabaseFileSystem):
-        """Chunks, versions, connections are excluded from tree output."""
+        """Chunks, versions, and edges are excluded from tree output."""
         async with db._use_session() as s:
             await db._write_impl("/src/a.py", "v1", session=s)
             await db._write_impl("/src/a.py", "v2", session=s)  # creates version
-            await db._write_impl("/src/a.py/.chunks/login", "chunk", session=s)
+            await db._write_impl("/.vfs/src/a.py/__meta__/chunks/login", "chunk", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/src", session=s)
         kinds = {c.kind for c in r.entries}
@@ -2398,8 +2396,8 @@ class TestLikeWildcardSafety:
         await db.write("/lib/100other/x.py", "other")
         await db.write("/caller.py", "import")
         async with db._use_session() as s:
-            await db._mkconn_impl("/caller.py", "/lib/100%/mod.py", "imports", session=s)
-            await db._mkconn_impl("/caller.py", "/lib/100other/x.py", "imports", session=s)
+            await db._mkedge_impl("/caller.py", "/lib/100%/mod.py", "imports", session=s)
+            await db._mkedge_impl("/caller.py", "/lib/100other/x.py", "imports", session=s)
 
         async with db._use_session() as s:
             r = await db._move_impl(
@@ -2410,12 +2408,12 @@ class TestLikeWildcardSafety:
 
         # Connection to moved file should be updated
         async with db._use_session() as s:
-            obj = await db._get_object("/caller.py/.connections/imports/vendor/100%/mod.py", s)
+            obj = await db._get_object("/.vfs/caller.py/__meta__/edges/out/imports/vendor/100%/mod.py", s)
         assert obj is not None
 
         # Connection to /lib/100other/x.py must be untouched
         async with db._use_session() as s:
-            obj = await db._get_object("/caller.py/.connections/imports/lib/100other/x.py", s)
+            obj = await db._get_object("/.vfs/caller.py/__meta__/edges/out/imports/lib/100other/x.py", s)
         assert obj is not None
 
 
@@ -2453,12 +2451,12 @@ class TestUpdateContentPath:
         """database.py:628 — overwriting a chunk takes the update_content path."""
         async with db._use_session() as s:
             await db._write_impl("/src/auth.py", "full content", session=s)
-            await db._write_impl("/src/auth.py/.chunks/login", "def login():", session=s)
+            await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "def login():", session=s)
         async with db._use_session() as s:
-            r = await db._write_impl("/src/auth.py/.chunks/login", "def login(): pass", session=s)
+            r = await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "def login(): pass", session=s)
         assert r.success
         async with db._use_session() as s:
-            r2 = await db._read_impl("/src/auth.py/.chunks/login", session=s)
+            r2 = await db._read_impl("/.vfs/src/auth.py/__meta__/chunks/login", session=s)
         assert r2.content == "def login(): pass"
 
 
@@ -2538,7 +2536,7 @@ class TestLsFilterMetadataKinds:
             await db._write_impl("/src/auth.py", "code", session=s)
             # Insert a chunk whose parent_path == /src (normally chunks live
             # under files, but this exercises the filter guard).
-            chunk = VFSObject(path="/src/.chunks/login", content="chunk body")
+            chunk = VFSObject(path="/.vfs/src/__meta__/chunks/login", content="chunk body")
             s.add(chunk)
             await s.flush()
         async with db._use_session() as s:

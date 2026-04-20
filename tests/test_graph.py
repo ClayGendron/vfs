@@ -10,7 +10,7 @@ import rustworkx
 
 from vfs.graph import GraphProvider, RustworkxGraph, UnionFind
 from vfs.models import VFSObject
-from vfs.paths import decompose_connection
+from vfs.paths import decompose_edge
 from vfs.results import Entry, VFSResult
 
 # ---------------------------------------------------------------------------
@@ -40,12 +40,12 @@ def _result(*paths: str) -> VFSResult:
 
 def _node_paths(result: VFSResult) -> set[str]:
     """Extract entry paths that are nodes (not connections)."""
-    return {e.path for e in result.entries if not decompose_connection(e.path)}
+    return {e.path for e in result.entries if not decompose_edge(e.path)}
 
 
 def _edge_entries(result: VFSResult) -> list[Entry]:
     """Extract entries that represent connection edges."""
-    return [e for e in result.entries if decompose_connection(e.path)]
+    return [e for e in result.entries if decompose_edge(e.path)]
 
 
 # ===========================================================================
@@ -383,9 +383,9 @@ class TestLoad:
         row = MagicMock()
         row.source_path = "/a.py"
         row.target_path = "/b.py"
-        row.path = "/a.py/.connections/imports/b.py"
-        row.connection_type = "imports"
-        row.kind = "connection"
+        row.path = "/.vfs/a.py/__meta__/edges/out/imports/b.py"
+        row.edge_type = "imports"
+        row.kind = "edge"
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
@@ -423,8 +423,8 @@ class TestLoad:
         row.source_path = None
         row.target_path = "/b.py"
         row.path = "/orphan"
-        row.connection_type = None
-        row.kind = "connection"
+        row.edge_type = None
+        row.kind = "edge"
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
@@ -440,9 +440,9 @@ class TestLoad:
         row = MagicMock()
         row.source_path = "/a.py"
         row.target_path = "/b.py"
-        row.path = "/a.py/.connections/calls/b.py"
-        row.connection_type = None  # not set — should decompose from path
-        row.kind = "connection"
+        row.path = "/.vfs/a.py/__meta__/edges/out/calls/b.py"
+        row.edge_type = None  # not set — should decompose from path
+        row.kind = "edge"
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
@@ -450,7 +450,7 @@ class TestLoad:
         mock_session.execute.return_value = mock_result
 
         await g._load(mock_session)
-        # connection_type decomposed from path
+        # edge_type decomposed from path
         assert g._edge_types[("/a.py", "/b.py")] != ""
 
 
@@ -484,9 +484,9 @@ class TestSubgraphEntries:
         )
         # 2 node entries + 1 connection entry
         assert len(result) == 3
-        node_paths = [e.path for e in result if not decompose_connection(e.path)]
+        node_paths = [e.path for e in result if not decompose_edge(e.path)]
         assert sorted(node_paths) == ["/a.py", "/b.py"]
-        conn_entries = [e for e in result if decompose_connection(e.path)]
+        conn_entries = [e for e in result if decompose_edge(e.path)]
         assert len(conn_entries) == 1
 
     def test_only_includes_edges_within_node_set(self):
@@ -1539,7 +1539,7 @@ class TestMinMeetingImplDirect:
             edge_types,
         )
         assert result.success
-        node_paths = {e.path for e in result.entries if "/.connections/" not in e.path}
+        node_paths = {e.path for e in result.entries if "/__meta__/edges/" not in e.path}
         assert "/a.py" in node_paths
         assert "/b.py" in node_paths
         assert "/x.py" not in node_paths

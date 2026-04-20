@@ -12,8 +12,8 @@ from sqlmodel import select
 from vfs.backends.database import DatabaseFileSystem
 from vfs.models import VFSObject
 from vfs.paths import (
-    connection_path,
-    decompose_connection,
+    edge_out_path,
+    decompose_edge,
     scope_path,
     unscope_path,
     validate_user_id,
@@ -97,31 +97,31 @@ class TestUnscopePath:
         with pytest.raises(ValueError, match="does not start with"):
             unscope_path("/456/docs/README.md", "123")
 
-    def test_connection_path_both_parts_unscoped(self):
-        scoped = connection_path("/123/src/main.py", "/123/src/auth.py", "imports")
-        # /123/src/main.py/.connections/imports/123/src/auth.py
+    def test_edge_path_both_parts_unscoped(self):
+        scoped = edge_out_path("/123/src/main.py", "/123/src/auth.py", "imports")
+        # /.vfs/123/src/main.py/__meta__/edges/out/imports/123/src/auth.py
         unscoped = unscope_path(scoped, "123")
-        assert unscoped == "/src/main.py/.connections/imports/src/auth.py"
+        assert unscoped == "/.vfs/src/main.py/__meta__/edges/out/imports/src/auth.py"
         # Verify decomposition matches
-        parts = decompose_connection(unscoped)
+        parts = decompose_edge(unscoped)
         assert parts is not None
         assert parts.source == "/src/main.py"
         assert parts.target == "/src/auth.py"
-        assert parts.connection_type == "imports"
+        assert parts.edge_type == "imports"
 
     def test_roundtrip(self):
         original = "/docs/report.pdf"
         assert unscope_path(scope_path(original, "u1"), "u1") == original
 
-    def test_roundtrip_connection(self):
+    def test_roundtrip_edge(self):
         src, tgt, ct = "/src/main.py", "/src/auth.py", "imports"
-        scoped_conn = connection_path(
+        scoped_conn = edge_out_path(
             scope_path(src, "u1"),
             scope_path(tgt, "u1"),
             ct,
         )
         unscoped = unscope_path(scoped_conn, "u1")
-        assert unscoped == connection_path(src, tgt, ct)
+        assert unscoped == edge_out_path(src, tgt, ct)
 
 
 class TestStripUserScope:
@@ -136,11 +136,11 @@ class TestStripUserScope:
         stripped = result.strip_user_scope("u1")
         assert [e.path for e in stripped.entries] == ["/docs/a.md", "/docs/b.md"]
 
-    def test_strips_connection_paths(self):
-        conn = connection_path("/u1/a.py", "/u1/b.py", "imports")
+    def test_strips_edge_paths(self):
+        conn = edge_out_path("/u1/a.py", "/u1/b.py", "imports")
         result = VFSResult(function="ls", entries=[Entry(path=conn)])
         stripped = result.strip_user_scope("u1")
-        expected = connection_path("/a.py", "/b.py", "imports")
+        expected = edge_out_path("/a.py", "/b.py", "imports")
         assert stripped.entries[0].path == expected
 
 
@@ -267,37 +267,37 @@ class TestUserScopedDelete:
         assert r2.file.content == "b"
 
 
-class TestUserScopedMkconn:
-    async def test_mkconn_scoped(self, scoped_db):
+class TestUserScopedMkedge:
+    async def test_mkedge_scoped(self, scoped_db):
         await scoped_db.write(path="/src/main.py", content="main", user_id="u1")
         await scoped_db.write(path="/src/auth.py", content="auth", user_id="u1")
 
-        result = await scoped_db.mkconn(
+        result = await scoped_db.mkedge(
             source="/src/main.py",
             target="/src/auth.py",
-            connection_type="imports",
+            edge_type="imports",
             user_id="u1",
         )
         assert result.success
-        # Connection path should be unscoped in result
+        # Edge path should be unscoped in result
         conn = result.entries[0]
-        parts = decompose_connection(conn.path)
+        parts = decompose_edge(conn.path)
         assert parts is not None
         assert parts.source == "/src/main.py"
         assert parts.target == "/src/auth.py"
-        assert parts.connection_type == "imports"
+        assert parts.edge_type == "imports"
 
 
 class TestUserScopedGraph:
     async def test_predecessors_scoped(self, scoped_db):
         await scoped_db.write(path="/a.py", content="a", user_id="u1")
         await scoped_db.write(path="/b.py", content="b", user_id="u1")
-        await scoped_db.mkconn("/a.py", "/b.py", "imports", user_id="u1")
+        await scoped_db.mkedge("/a.py", "/b.py", "imports", user_id="u1")
 
         # u2 has different files
         await scoped_db.write(path="/a.py", content="a2", user_id="u2")
         await scoped_db.write(path="/b.py", content="b2", user_id="u2")
-        await scoped_db.mkconn("/a.py", "/b.py", "calls", user_id="u2")
+        await scoped_db.mkedge("/a.py", "/b.py", "calls", user_id="u2")
 
         # u1's predecessors of /b.py should only show u1's /a.py
         result = await scoped_db.predecessors(path="/b.py", user_id="u1")
@@ -308,14 +308,14 @@ class TestUserScopedGraph:
         # u1 graph
         await scoped_db.write(path="/a.py", content="a", user_id="u1")
         await scoped_db.write(path="/b.py", content="b", user_id="u1")
-        await scoped_db.mkconn("/a.py", "/b.py", "imports", user_id="u1")
+        await scoped_db.mkedge("/a.py", "/b.py", "imports", user_id="u1")
 
         # u2 graph (larger)
         for name in ["x", "y", "z", "w"]:
             await scoped_db.write(path=f"/{name}.py", content=name, user_id="u2")
-        await scoped_db.mkconn("/x.py", "/y.py", "imports", user_id="u2")
-        await scoped_db.mkconn("/y.py", "/z.py", "imports", user_id="u2")
-        await scoped_db.mkconn("/z.py", "/w.py", "imports", user_id="u2")
+        await scoped_db.mkedge("/x.py", "/y.py", "imports", user_id="u2")
+        await scoped_db.mkedge("/y.py", "/z.py", "imports", user_id="u2")
+        await scoped_db.mkedge("/z.py", "/w.py", "imports", user_id="u2")
 
         # u1's pagerank should only include u1's nodes
         result = await scoped_db.pagerank(user_id="u1")

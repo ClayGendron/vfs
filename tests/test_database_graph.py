@@ -62,15 +62,15 @@ async def graph_db(db: DatabaseFileSystem):
             await db._write_impl(path, f"# {path}", session=s)
 
     async with db._use_session() as s:
-        await db._mkconn_impl("/src/auth.py", "/src/utils.py", "imports", session=s)
+        await db._mkedge_impl("/src/auth.py", "/src/utils.py", "imports", session=s)
     async with db._use_session() as s:
-        await db._mkconn_impl("/src/utils.py", "/src/db.py", "imports", session=s)
+        await db._mkedge_impl("/src/utils.py", "/src/db.py", "imports", session=s)
     async with db._use_session() as s:
-        await db._mkconn_impl("/src/auth.py", "/src/db.py", "calls", session=s)
+        await db._mkedge_impl("/src/auth.py", "/src/db.py", "calls", session=s)
     async with db._use_session() as s:
-        await db._mkconn_impl("/src/api.py", "/src/auth.py", "imports", session=s)
+        await db._mkedge_impl("/src/api.py", "/src/auth.py", "imports", session=s)
     async with db._use_session() as s:
-        await db._mkconn_impl("/src/api.py", "/src/utils.py", "imports", session=s)
+        await db._mkedge_impl("/src/api.py", "/src/utils.py", "imports", session=s)
 
     return db
 
@@ -373,7 +373,7 @@ class TestGraphConsistency:
     async def test_new_connection_appears_in_graph(self, graph_db: DatabaseFileSystem):
         """Adding a connection should be visible to subsequent graph queries."""
         async with graph_db._use_session() as s:
-            await graph_db._mkconn_impl(
+            await graph_db._mkedge_impl(
                 "/src/config.py",
                 "/src/db.py",
                 "imports",
@@ -384,15 +384,15 @@ class TestGraphConsistency:
             r = await graph_db._successors_impl("/src/config.py", session=s)
         assert paths(r) == {"/src/db.py"}
 
-    async def test_delete_connection_removes_from_graph(self, graph_db: DatabaseFileSystem):
-        """Deleting a connection should remove it from subsequent graph queries."""
+    async def test_delete_edge_removes_from_graph(self, graph_db: DatabaseFileSystem):
+        """Deleting an edge should remove it from subsequent graph queries."""
         # Verify edge exists first
         async with graph_db._use_session() as s:
             r = await graph_db._successors_impl("/src/auth.py", session=s)
         assert "/src/utils.py" in paths(r)
 
-        # Delete the connection
-        conn_path = "/src/auth.py/.connections/imports/src/utils.py"
+        # Delete the edge
+        conn_path = "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py"
         async with graph_db._use_session() as s:
             await graph_db._delete_impl(conn_path, session=s)
 

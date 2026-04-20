@@ -23,7 +23,7 @@ from vfs.query.ast import (
     LexicalSearchCommand,
     LsCommand,
     MeetingGraphCommand,
-    MkconnCommand,
+    MkedgeCommand,
     MkdirCommand,
     MoveCommand,
     PipelineNode,
@@ -201,8 +201,8 @@ async def _execute_stage(
             return await _execute_transfer(filesystem, "move", current, src, dest, overwrite, user_id=user_id)
         case CopyCommand(src=src, dest=dest, overwrite=overwrite):
             return await _execute_transfer(filesystem, "copy", current, src, dest, overwrite, user_id=user_id)
-        case MkconnCommand(source=source, connection_type=connection_type, target=target):
-            return await _execute_mkconn(filesystem, current, source, connection_type, target, user_id=user_id)
+        case MkedgeCommand(source=source, edge_type=edge_type, target=target):
+            return await _execute_mkedge(filesystem, current, source, edge_type, target, user_id=user_id)
         case LsCommand(paths=paths):
             ls_cols = _cols_for("ls", projection)
             if current is not None and paths:
@@ -293,7 +293,7 @@ async def _execute_stage(
             return _apply_visibility(result, visibility, {"file", "directory"})
         case GraphTraversalCommand(method_name=method_name, paths=paths, depth=depth, visibility=visibility):
             result = await _execute_graph_traversal(filesystem, current, method_name, paths, depth, user_id=user_id)
-            return _apply_visibility(result, visibility, {"file", "directory", "connection"})
+            return _apply_visibility(result, visibility, {"file", "directory", "edge"})
         case MeetingGraphCommand(paths=paths, minimal=minimal, visibility=visibility):
             function_name = "min_meeting_subgraph" if minimal else "meeting_subgraph"
             seeds = _seed_candidates(current, paths, "meetinggraph", function_name=function_name)
@@ -302,10 +302,10 @@ async def _execute_stage(
                 if minimal
                 else await filesystem.meeting_subgraph(candidates=seeds, user_id=user_id)
             )
-            return _apply_visibility(result, visibility, {"file", "directory", "connection"})
+            return _apply_visibility(result, visibility, {"file", "directory", "edge"})
         case RankCommand(method_name=method_name, paths=paths, visibility=visibility):
             result = await _execute_rank(filesystem, current, method_name, paths, user_id=user_id)
-            return _apply_visibility(result, visibility, {"file", "directory", "connection"})
+            return _apply_visibility(result, visibility, {"file", "directory", "edge"})
         case SortCommand(reverse=reverse):
             if current is None:
                 raise ValueError("sort requires piped input")
@@ -386,11 +386,11 @@ async def _execute_transfer(
             raise ValueError(f"Invalid arguments for {op}")
 
 
-async def _execute_mkconn(
+async def _execute_mkedge(
     filesystem: VirtualFileSystem,
     current: VFSResult | None,
     source: str | None,
-    connection_type: str,
+    edge_type: str,
     target: str,
     *,
     user_id: str | None = None,
@@ -398,21 +398,21 @@ async def _execute_mkconn(
     normalized_target = normalize_path(target)
     if current is None:
         if source is None:
-            raise ValueError("mkconn requires a source path when it is not used in a pipeline")
-        return await filesystem.mkconn(
+            raise ValueError("mkedge requires a source path when it is not used in a pipeline")
+        return await filesystem.mkedge(
             source=normalize_path(source),
             target=normalized_target,
-            connection_type=connection_type,
+            edge_type=edge_type,
             user_id=user_id,
         )
     if source is not None:
-        raise ValueError("mkconn cannot combine piped input with an explicit source path")
+        raise ValueError("mkedge cannot combine piped input with an explicit source path")
     results = await asyncio.gather(
         *(
-            filesystem.mkconn(
+            filesystem.mkedge(
                 source=entry.path,
                 target=normalized_target,
-                connection_type=connection_type,
+                edge_type=edge_type,
                 user_id=user_id,
             )
             for entry in current.entries

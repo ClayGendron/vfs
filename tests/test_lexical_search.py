@@ -125,7 +125,7 @@ class TestVersionExclusion:
             r = await db._lexical_search_impl("authentication", session=s)
         result_paths = {e.path for e in r.entries}
         assert "/a.py" in result_paths
-        assert not any("/.versions/" in p for p in result_paths)
+        assert not any("/__meta__/versions/" in p for p in result_paths)
 
     async def test_excludes_version_candidates(self, db: DatabaseFileSystem):
         """Version candidates passed in should be skipped."""
@@ -133,7 +133,7 @@ class TestVersionExclusion:
             function="lexical_search",
             entries=[
                 Entry(
-                    path="/a.py/.versions/1",
+                    path="/.vfs/a.py/__meta__/versions/1",
                     kind="version",
                     content="authentication handler",
                 ),
@@ -206,7 +206,7 @@ class TestSearchesAllContent:
         await _seed(db, {"/a.py": "file content here"})
         async with db._use_session() as s:
             await db._write_impl(
-                "/a.py/.chunks/login",
+                "/.vfs/a.py/__meta__/chunks/login",
                 "authentication timeout handler",
                 session=s,
             )
@@ -214,13 +214,13 @@ class TestSearchesAllContent:
             r = await db._lexical_search_impl("authentication", session=s)
         assert len(r) >= 1
         chunk_paths = [e.path for e in r.entries]
-        assert "/a.py/.chunks/login" in chunk_paths
+        assert "/.vfs/a.py/__meta__/chunks/login" in chunk_paths
 
     async def test_finds_files_and_chunks(self, db: DatabaseFileSystem):
         await _seed(db, {"/a.py": "authentication in file"})
         async with db._use_session() as s:
             await db._write_impl(
-                "/a.py/.chunks/login",
+                "/.vfs/a.py/__meta__/chunks/login",
                 "authentication in chunk",
                 session=s,
             )
@@ -228,7 +228,7 @@ class TestSearchesAllContent:
             r = await db._lexical_search_impl("authentication", session=s)
         result_paths = {e.path for e in r.entries}
         assert "/a.py" in result_paths
-        assert "/a.py/.chunks/login" in result_paths
+        assert "/.vfs/a.py/__meta__/chunks/login" in result_paths
 
 
 # ------------------------------------------------------------------

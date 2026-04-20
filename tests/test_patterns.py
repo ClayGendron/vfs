@@ -527,7 +527,7 @@ class TestEdgeCases:
 
 
 # =========================================================================
-# Metadata paths — .chunks/, .versions/, .connections/
+# Metadata paths — ``/.vfs/.../__meta__/...``
 # =========================================================================
 
 
@@ -538,56 +538,56 @@ class TestMetadataPaths:
         "pattern, path, expected",
         [
             # Chunk paths
-            ("**/.chunks/*", "/src/auth.py/.chunks/login", True),
-            ("**/.chunks/*", "/src/auth.py/.chunks/logout", True),
-            ("**/.chunks/*", "/src/auth.py", False),
+            ("/.vfs/**/__meta__/chunks/*", "/.vfs/src/auth.py/__meta__/chunks/login", True),
+            ("/.vfs/**/__meta__/chunks/*", "/.vfs/src/auth.py/__meta__/chunks/logout", True),
+            ("/.vfs/**/__meta__/chunks/*", "/src/auth.py", False),
             # Version paths
-            ("**/.versions/*", "/src/auth.py/.versions/3", True),
-            ("**/.versions/*", "/src/auth.py/.versions/1", True),
-            ("**/.versions/*", "/src/auth.py", False),
-            # Connection paths — deeper nesting
+            ("/.vfs/**/__meta__/versions/*", "/.vfs/src/auth.py/__meta__/versions/3", True),
+            ("/.vfs/**/__meta__/versions/*", "/.vfs/src/auth.py/__meta__/versions/1", True),
+            ("/.vfs/**/__meta__/versions/*", "/src/auth.py", False),
+            # Edge paths — deeper nesting
             (
-                "**/.connections/**",
-                "/src/auth.py/.connections/imports/src/utils.py",
+                "/.vfs/**/__meta__/edges/out/**",
+                "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py",
                 True,
             ),
             (
-                "**/.connections/imports/**",
-                "/src/auth.py/.connections/imports/src/utils.py",
+                "/.vfs/**/__meta__/edges/out/imports/**",
+                "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py",
                 True,
             ),
-            ("**/.connections/**", "/src/auth.py", False),
+            ("/.vfs/**/__meta__/edges/out/**", "/src/auth.py", False),
             # Chunks for a specific file
             (
-                "/src/auth.py/.chunks/*",
-                "/src/auth.py/.chunks/login",
+                "/.vfs/src/auth.py/__meta__/chunks/*",
+                "/.vfs/src/auth.py/__meta__/chunks/login",
                 True,
             ),
             (
-                "/src/auth.py/.chunks/*",
-                "/src/auth.py/.chunks/logout",
+                "/.vfs/src/auth.py/__meta__/chunks/*",
+                "/.vfs/src/auth.py/__meta__/chunks/logout",
                 True,
             ),
             (
-                "/src/auth.py/.chunks/*",
-                "/src/other.py/.chunks/login",
+                "/.vfs/src/auth.py/__meta__/chunks/*",
+                "/.vfs/src/other.py/__meta__/chunks/login",
                 False,
             ),
             # All metadata under a specific file
             (
-                "/src/auth.py/.**",
-                "/src/auth.py/.chunks/login",
+                "/.vfs/src/auth.py/__meta__/**",
+                "/.vfs/src/auth.py/__meta__/chunks/login",
                 True,
             ),
             (
-                "/src/auth.py/.**",
-                "/src/auth.py/.versions/3",
+                "/.vfs/src/auth.py/__meta__/**",
+                "/.vfs/src/auth.py/__meta__/versions/3",
                 True,
             ),
             # API paths
-            ("**/.apis/*", "/jira/.apis/ticket", True),
-            ("**/.apis/*", "/jira/.apis/search", True),
-            ("**/.apis/*", "/jira/search", False),
+            ("/.vfs/**/__meta__/apis/*", "/.vfs/jira/__meta__/apis/ticket", True),
+            ("/.vfs/**/__meta__/apis/*", "/.vfs/jira/__meta__/apis/search", True),
+            ("/.vfs/**/__meta__/apis/*", "/jira/search", False),
         ],
     )
     def test_metadata_paths(self, pattern: str, path: str, expected: bool):
@@ -635,7 +635,7 @@ class TestRealWorldPatterns:
             ("**/__pycache__/*", "/src/__pycache__/foo.pyc", True),
             ("**/__pycache__/*", "/src/a/__pycache__/bar.pyc", True),
             # Specific chunk patterns
-            ("/**/.chunks/*", "/src/auth.py/.chunks/login", True),
+            ("/.vfs/**/__meta__/chunks/*", "/.vfs/src/auth.py/__meta__/chunks/login", True),
             # All markdown files at root
             ("/*.md", "/README.md", True),
             ("/*.md", "/src/docs/README.md", False),

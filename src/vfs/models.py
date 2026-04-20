@@ -1,7 +1,7 @@
 """VFSObject — unified kinded object model for the ``vfs_objects`` table.
 
 All entities in the VFS namespace (files, directories, chunks, versions,
-connections, api nodes) live in a single table.  The ``kind`` column determines
+edges, api nodes) live in a single table.  The ``kind`` column determines
 which nullable fields are relevant and how operations dispatch.
 """
 
@@ -23,8 +23,9 @@ from sqlmodel.main import SQLModelMetaclass
 
 from vfs.bm25 import tokenize as lexical_tokenize
 from vfs.paths import (
-    decompose_connection,
+    decompose_edge,
     extract_extension,
+    is_meta_root_path,
     normalize_path,
     parse_kind,
     split_path,
@@ -106,7 +107,7 @@ class PostgresVectorColumnSpec:
 class VFSObjectBase(ValidatedSQLModel):
     """Base fields for a VFS namespace entity.
 
-    Every entity — file, directory, chunk, version, connection, api node —
+    Every entity — file, directory, chunk, version, edge, api node —
     shares these fields.  The ``kind`` column determines which nullable
     fields are relevant and how operations dispatch.
 
@@ -121,10 +122,10 @@ class VFSObjectBase(ValidatedSQLModel):
         max_length=36,
         primary_key=True,
     )
-    path: str = Field(max_length=4096, unique=True, index=True)
+    path: str = Field(max_length=8192, unique=True, index=True)
     external_id: str | None = Field(default=None, max_length=4096)
     name: str = Field(default="", max_length=255)
-    parent_path: str = Field(default="", max_length=4096, index=True)
+    parent_path: str = Field(default="", max_length=8192, index=True)
     kind: str = Field(default="", max_length=32, index=True)
 
     # --- Content ------------------------------------------------------------
@@ -153,13 +154,13 @@ class VFSObjectBase(ValidatedSQLModel):
     is_snapshot: bool | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=255)
 
-    # --- Connection-specific ------------------------------------------------
+    # --- Edge-specific ------------------------------------------------------
 
     source_path: str | None = Field(default=None, max_length=4096, index=True)
     target_path: str | None = Field(default=None, max_length=4096, index=True)
-    connection_type: str | None = Field(default=None, max_length=255)
-    connection_weight: float | None = Field(default=None)
-    connection_distance: float | None = Field(default=None)
+    edge_type: str | None = Field(default=None, max_length=255)
+    edge_weight: float | None = Field(default=None)
+    edge_distance: float | None = Field(default=None)
 
     # --- Embedding ----------------------------------------------------------
 
@@ -526,7 +527,10 @@ class VFSObjectBase(ValidatedSQLModel):
         if not valid:
             allows_long_metadata_path = (
                 err == "Path too long (max 4096 characters)"
-                and inferred_kind in {"chunk", "version", "connection", "api"}
+                and (
+                    inferred_kind in {"chunk", "version", "edge", "api"}
+                    or (inferred_kind == "directory" and is_meta_root_path(path))
+                )
                 and len(path) <= 8192
             )
             if allows_long_metadata_path:
@@ -545,23 +549,26 @@ class VFSObjectBase(ValidatedSQLModel):
         # Infer kind from path markers if not explicitly set
         if not data.get("kind"):
             data["kind"] = inferred_kind
+        elif data["kind"] not in {"file", "directory", "chunk", "version", "edge", "api"}:
+            msg = f"Unknown kind: {data['kind']!r}"
+            raise ValueError(msg)
 
         # Derive extension from path for fast type-scoped queries (files only).
-        # Chunks, versions, connections, apis, and directories leave ext NULL
+        # Chunks, versions, edges, apis, and directories leave ext NULL
         # so the (ext, kind) index only covers file rows.  ``ValidatedSQLModel``
         # re-runs the validator with all field defaults populated, so presence
         # of "ext" in *data* is not a reliable signal — check for None instead.
         if data.get("ext") is None and data.get("kind") == "file":
             data["ext"] = extract_extension(path)
 
-        # For connections, extract source/target/type from path
-        if data.get("kind") == "connection":
-            parts = decompose_connection(path)
+        # For edges, extract source/target/type from path.
+        if data.get("kind") == "edge":
+            parts = decompose_edge(path)
             if parts:
                 if not data.get("source_path"):
                     data["source_path"] = parts.source
-                if not data.get("connection_type"):
-                    data["connection_type"] = parts.connection_type
+                if not data.get("edge_type"):
+                    data["edge_type"] = parts.edge_type
                 if not data.get("target_path"):
                     data["target_path"] = parts.target
 

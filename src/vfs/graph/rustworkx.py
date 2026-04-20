@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import rustworkx
 from sqlmodel import select
 
-from vfs.paths import connection_path, decompose_connection
+from vfs.paths import decompose_edge, edge_out_path
 from vfs.results import Entry, VFSResult
 
 if TYPE_CHECKING:
@@ -246,7 +246,7 @@ class RustworkxGraph:
         await self._load(session)
 
     async def _load(self, session: AsyncSession) -> None:
-        """Load graph state from VFSObject connection rows.
+        """Load graph state from VFSObject edge rows.
 
         Build-then-swap: new state is assembled in local variables and
         assigned atomically so concurrent readers never see an empty graph.
@@ -256,30 +256,30 @@ class RustworkxGraph:
         new_in: dict[str, set[str]] = {}
         new_edge_types: dict[tuple[str, str], str] = {}
 
-        # Graph load only needs the four connection columns — projecting the
+        # Graph load only needs the four edge columns — projecting the
         # full row would pull every file's content + embedding blob just to
         # rebuild the edge list.
         stmt = select(
             self._model.path,
             self._model.source_path,
             self._model.target_path,
-            self._model.connection_type,
+            self._model.edge_type,
         ).where(
-            self._model.kind == "connection",
+            self._model.kind == "edge",
             self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
         result = await session.execute(stmt)
         for row in result.all():
             src = row.source_path
             tgt = row.target_path
-            parts = decompose_connection(row.path)
-            conn_type = row.connection_type or (parts.connection_type if parts else "")
+            parts = decompose_edge(row.path)
+            edge_type = row.edge_type or (parts.edge_type if parts else "")
             if src and tgt:
                 new_nodes.add(src)
                 new_nodes.add(tgt)
                 new_out.setdefault(src, set()).add(tgt)
                 new_in.setdefault(tgt, set()).add(src)
-                new_edge_types[(src, tgt)] = conn_type
+                new_edge_types[(src, tgt)] = edge_type
 
         # Atomic swap
         self._nodes = new_nodes
@@ -305,13 +305,13 @@ class RustworkxGraph:
         edges_out: dict[str, frozenset[str]],
         edge_types: dict[tuple[str, str], str],
     ) -> list[Entry]:
-        """Build node + connection entries from a subgraph."""
+        """Build node + edge entries from a subgraph."""
         # Nodes
         entries: list[Entry] = [Entry(path=p) for p in sorted(node_set)]
 
-        # Edges as connection entries
+        # Edges as projected edge entries.
         entries.extend(
-            Entry(path=connection_path(s, t, edge_types[(s, t)]))
+            Entry(path=edge_out_path(s, t, edge_types[(s, t)]))
             for s in node_set
             for t in edges_out.get(s, frozenset())
             if t in node_set
@@ -729,9 +729,9 @@ class RustworkxGraph:
                 )
 
             candidate_paths = set(self._extract_paths(candidates))
-            # Extract node set from meeting result — connection paths
-            # contain /.connections/, node paths don't.
-            node_set = {e.path for e in meeting.entries if not decompose_connection(e.path)}
+            # Extract node set from meeting result — projected edge paths
+            # decompose, node paths do not.
+            node_set = {e.path for e in meeting.entries if not decompose_edge(e.path)}
 
             # If meeting subgraph is already minimal, return it under the
             # current function's name.

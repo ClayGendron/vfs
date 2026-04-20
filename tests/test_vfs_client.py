@@ -357,7 +357,7 @@ class TestVFSClientQuery:
 
 
 # ==================================================================
-# VFSClient sync wrapper — move, copy, mkconn
+# VFSClient sync wrapper — move, copy, mkedge
 # ==================================================================
 
 
@@ -378,10 +378,10 @@ class TestVFSClientTransferOps:
         assert g.read("/data/orig.txt").content == "content"
         assert g.read("/data/dup.txt").content == "content"
 
-    def test_mkconn_returns_vfs_result(self, g: VFSClient):
+    def test_mkedge_returns_vfs_result(self, g: VFSClient):
         g.write("/data/a.py", "import b")
         g.write("/data/b.py", "class B: ...")
-        result = g.mkconn("/data/a.py", "/data/b.py", "imports")
+        result = g.mkedge("/data/a.py", "/data/b.py", "imports")
         assert isinstance(result, VFSResult)
 
 
@@ -396,8 +396,8 @@ class TestVFSClientGraph:
         g.write("/data/a.py", "x")
         g.write("/data/b.py", "y")
         g.write("/data/c.py", "z")
-        g.mkconn("/data/a.py", "/data/b.py", "imports")
-        g.mkconn("/data/b.py", "/data/c.py", "calls")
+        g.mkedge("/data/a.py", "/data/b.py", "imports")
+        g.mkedge("/data/b.py", "/data/c.py", "calls")
 
     def test_predecessors(self, g: VFSClient):
         result = g.predecessors("/data/b.py")

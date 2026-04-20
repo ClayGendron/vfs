@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from vfs.backends.database import DatabaseFileSystem
 from vfs.models import VFSObject
-from vfs.paths import connection_path
+from vfs.paths import edge_out_path
 from vfs.results import Entry, VFSResult
 
 ALICE = "alice"
@@ -26,13 +26,13 @@ async def seed(scoped_db: DatabaseFileSystem) -> DatabaseFileSystem:
     await scoped_db.write(path="/move-me.txt", content=ALICE_PAYLOAD, user_id=ALICE)
     await scoped_db.write(path="/src/entry.py", content="import helper", user_id=ALICE)
     await scoped_db.write(path="/src/helper.py", content="def alice_helper():\n    return 'alice'", user_id=ALICE)
-    await scoped_db.mkconn("/src/entry.py", "/src/helper.py", "imports", user_id=ALICE)
+    await scoped_db.mkedge("/src/entry.py", "/src/helper.py", "imports", user_id=ALICE)
 
     await scoped_db.write(path="/notes/private.txt", content="bob-private", user_id=BOB)
     await scoped_db.write(path="/top-secret.txt", content=BOB_SECRET, user_id=BOB)
     await scoped_db.write(path="/src/main.py", content="import auth", user_id=BOB)
     await scoped_db.write(path="/src/auth.py", content="def bob_auth():\n    return 'bob'", user_id=BOB)
-    await scoped_db.mkconn("/src/main.py", "/src/auth.py", "imports", user_id=BOB)
+    await scoped_db.mkedge("/src/main.py", "/src/auth.py", "imports", user_id=BOB)
     return scoped_db
 
 
@@ -114,12 +114,12 @@ async def test_batch_write_cannot_override_owner_or_prefix(seeded_scoped_db):
     assert await read_content(seeded_scoped_db, "/stolen.txt", user_id=BOB) is None
 
 
-async def test_mkconn_target_smuggling_is_rehomed(seeded_scoped_db):
-    result = await seeded_scoped_db.mkconn("/src/entry.py", "/bob/top-secret.txt", "imports", user_id=ALICE)
+async def test_mkedge_target_smuggling_is_rehomed(seeded_scoped_db):
+    result = await seeded_scoped_db.mkedge("/src/entry.py", "/bob/top-secret.txt", "imports", user_id=ALICE)
 
     assert result.success
 
-    stored_path = connection_path(
+    stored_path = edge_out_path(
         "/alice/src/entry.py",
         "/alice/bob/top-secret.txt",
         "imports",

@@ -196,16 +196,16 @@ class VFSClient:
         """Create a directory at *path*."""
         return self._run(self._async.mkdir(path, user_id=user_id))
 
-    def mkconn(
+    def mkedge(
         self,
         source: str,
         target: str,
-        connection_type: str,
+        edge_type: str,
         *,
         user_id: str | None = None,
     ) -> VFSResult:
-        """Create a connection from *source* to *target*."""
-        return self._run(self._async.mkconn(source, target, connection_type, user_id=user_id))
+        """Create a directed edge from *source* to *target*."""
+        return self._run(self._async.mkedge(source, target, edge_type, user_id=user_id))
 
     def move(
         self,

@@ -18,7 +18,7 @@ from vfs.query.ast import (
     LexicalSearchCommand,
     LsCommand,
     MeetingGraphCommand,
-    MkconnCommand,
+    MkedgeCommand,
     MkdirCommand,
     MoveCommand,
     PipelineNode,
@@ -60,7 +60,7 @@ def _fs():
         "mkdir",
         "move",
         "copy",
-        "mkconn",
+        "mkedge",
         "glob",
         "grep",
         "semantic_search",
@@ -216,37 +216,37 @@ class TestTransferCommands:
 
 
 # ===========================================================================
-# Mkconn command
+# Mkedge command
 # ===========================================================================
 
 
-class TestMkconnCommand:
-    async def test_mkconn_no_source_no_pipe_raises(self):
+class TestMkedgeCommand:
+    async def test_mkedge_no_source_no_pipe_raises(self):
         fs = _fs()
-        node = MkconnCommand(connection_type="imports", target="/b.py")
+        node = MkedgeCommand(edge_type="imports", target="/b.py")
         with pytest.raises(ValueError, match="requires a source"):
             await execute_query(fs, _plan(node))
 
-    async def test_mkconn_piped_plus_source_raises(self):
+    async def test_mkedge_piped_plus_source_raises(self):
         fs = _fs()
         node = PipelineNode(
             source=ReadCommand(paths=("/a.py",)),
-            stages=(MkconnCommand(source="/x.py", connection_type="imports", target="/b.py"),),
+            stages=(MkedgeCommand(source="/x.py", edge_type="imports", target="/b.py"),),
         )
         fs.read.return_value = _result("/a.py")
         with pytest.raises(ValueError, match="cannot combine piped input"):
             await execute_query(fs, _plan(node))
 
-    async def test_mkconn_piped_multi_source(self):
+    async def test_mkedge_piped_multi_source(self):
         fs = _fs()
         fs.read.return_value = _result("/a.py", "/c.py")
-        fs.mkconn.return_value = VFSResult(entries=[Entry(path="/conn")])
+        fs.mkedge.return_value = VFSResult(entries=[Entry(path="/conn")])
         node = PipelineNode(
             source=ReadCommand(paths=("/a.py", "/c.py")),
-            stages=(MkconnCommand(connection_type="imports", target="/b.py"),),
+            stages=(MkedgeCommand(edge_type="imports", target="/b.py"),),
         )
         await execute_query(fs, _plan(node))
-        assert fs.mkconn.call_count == 2
+        assert fs.mkedge.call_count == 2
 
 
 # ===========================================================================
@@ -865,17 +865,17 @@ class TestExplicitTransfer:
 
 
 # ===========================================================================
-# Mkconn with explicit source (line 267)
+# Mkedge with explicit source (line 267)
 # ===========================================================================
 
 
-class TestMkconnExplicitSource:
-    async def test_mkconn_explicit_source(self):
+class TestMkedgeExplicitSource:
+    async def test_mkedge_explicit_source(self):
         fs = _fs()
-        fs.mkconn.return_value = VFSResult(entries=[Entry(path="/conn")])
-        node = MkconnCommand(source="/a.py", connection_type="imports", target="/b.py")
+        fs.mkedge.return_value = VFSResult(entries=[Entry(path="/conn")])
+        node = MkedgeCommand(source="/a.py", edge_type="imports", target="/b.py")
         await execute_query(fs, _plan(node))
-        fs.mkconn.assert_called_once()
+        fs.mkedge.assert_called_once()
 
 
 # ===========================================================================

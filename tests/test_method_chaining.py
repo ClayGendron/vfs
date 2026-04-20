@@ -26,17 +26,17 @@ def _cands(*paths: str, function: str = "") -> VFSResult:
 
 
 def _node_result(result: VFSResult) -> VFSResult:
-    """Filter out connection entries from a subgraph result."""
+    """Filter out edge entries from a subgraph result."""
     return VFSResult(
         function=result.function,
-        entries=[e for e in result.entries if "/.connections/" not in e.path],
+        entries=[e for e in result.entries if "/__meta__/edges/" not in e.path],
         success=result.success,
         errors=list(result.errors),
     )
 
 
 # ------------------------------------------------------------------
-# Fixture: files + connections
+# Fixture: files + edges
 # ------------------------------------------------------------------
 
 
@@ -72,7 +72,7 @@ async def fs(db: DatabaseFileSystem):
         ("/src/api.py", "/src/utils.py", "imports"),
     ]:
         async with db._use_session() as s:
-            await db._mkconn_impl(src, tgt, typ, session=s)
+            await db._mkedge_impl(src, tgt, typ, session=s)
 
     return db
 
@@ -184,14 +184,14 @@ class TestNeighborhoodChaining:
     async def test_seeds_appear_in_neighborhood(self, fs: DatabaseFileSystem):
         cands = _cands("/src/auth.py")
         result = await fs.neighborhood(candidates=cands, depth=1)
-        paths = {e.path for e in result.entries if "/.connections/" not in e.path}
+        paths = {e.path for e in result.entries if "/__meta__/edges/" not in e.path}
         assert "/src/auth.py" in paths
         assert result.function == "neighborhood"
 
     async def test_discovers_neighbors(self, fs: DatabaseFileSystem):
         cands = _cands("/src/auth.py")
         result = await fs.neighborhood(candidates=cands, depth=1)
-        non_seeds = [e for e in result.entries if e.path != "/src/auth.py" and "/.connections/" not in e.path]
+        non_seeds = [e for e in result.entries if e.path != "/src/auth.py" and "/__meta__/edges/" not in e.path]
         assert len(non_seeds) > 0
 
 
@@ -199,7 +199,7 @@ class TestMeetingSubgraphChaining:
     async def test_includes_seeds(self, fs: DatabaseFileSystem):
         cands = _cands("/src/auth.py", "/src/db.py")
         result = await fs.meeting_subgraph(candidates=cands)
-        node_paths = {e.path for e in result.entries if "/.connections/" not in e.path}
+        node_paths = {e.path for e in result.entries if "/__meta__/edges/" not in e.path}
         assert "/src/auth.py" in node_paths
         assert "/src/db.py" in node_paths
         assert result.function == "meeting_subgraph"
@@ -209,7 +209,7 @@ class TestMinMeetingSubgraphChaining:
     async def test_includes_seeds(self, fs: DatabaseFileSystem):
         cands = _cands("/src/api.py", "/src/db.py")
         result = await fs.min_meeting_subgraph(candidates=cands)
-        node_paths = {e.path for e in result.entries if "/.connections/" not in e.path}
+        node_paths = {e.path for e in result.entries if "/__meta__/edges/" not in e.path}
         assert "/src/api.py" in node_paths
         assert "/src/db.py" in node_paths
         assert result.function == "min_meeting_subgraph"

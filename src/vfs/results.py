@@ -140,7 +140,7 @@ _CENTRALITY_FUNCTIONS: frozenset[str] = frozenset(
     },
 )
 _ACTION_FUNCTIONS: frozenset[str] = frozenset(
-    {"write", "delete", "edit", "move", "copy", "mkdir", "mkconn"},
+    {"write", "delete", "edit", "move", "copy", "mkdir", "mkedge"},
 )
 _PATH_LIST_FUNCTIONS: frozenset[str] = frozenset(
     {"glob", "ls", "hybrid"}
@@ -746,7 +746,7 @@ def _verb_for(operation: str) -> str:
             return "Copied"
         case "mkdir":
             return "Created"
-        case "mkconn":
+        case "mkedge":
             return "Connected"
         case _:
             return operation.replace("_", " ").capitalize() if operation else "Completed"

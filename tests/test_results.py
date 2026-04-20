@@ -52,7 +52,7 @@ class TestEntry:
 
     def test_name_property(self):
         assert Entry(path="/src/auth.py").name == "auth.py"
-        assert Entry(path="/a.py/.versions/3").name == "3"
+        assert Entry(path="/.vfs/a.py/__meta__/versions/3").name == "3"
 
     def test_with_line_matches(self):
         lm = LineMatch(start=1, end=3, match=2)
@@ -439,7 +439,7 @@ class TestVFSResultEnrichment:
             entries=[
                 Entry(path="/a.py", kind="file"),
                 Entry(path="/b/", kind="directory"),
-                Entry(path="/a.py/.chunks/login", kind="chunk"),
+                Entry(path="/.vfs/a.py/__meta__/chunks/login", kind="chunk"),
             ],
         )
         files_only = r.kinds("file")

@@ -148,17 +148,17 @@ class TestBuilders:
         with pytest.raises(QuerySyntaxError, match="cp requires"):
             parse_query("cp /a /b /c")
 
-    def test_mkconn_two_args(self):
-        plan = parse_query("mkconn imports /b.py")
-        assert plan.methods == ("mkconn",)
+    def test_mkedge_two_args(self):
+        plan = parse_query("mkedge imports /b.py")
+        assert plan.methods == ("mkedge",)
 
-    def test_mkconn_three_args(self):
-        plan = parse_query("mkconn /a.py imports /b.py")
-        assert plan.methods == ("mkconn",)
+    def test_mkedge_three_args(self):
+        plan = parse_query("mkedge /a.py imports /b.py")
+        assert plan.methods == ("mkedge",)
 
-    def test_mkconn_wrong_args(self):
-        with pytest.raises(QuerySyntaxError, match="mkconn requires"):
-            parse_query("mkconn only_one")
+    def test_mkedge_wrong_args(self):
+        with pytest.raises(QuerySyntaxError, match="mkedge requires"):
+            parse_query("mkedge only_one")
 
     def test_glob_wrong_count(self):
         with pytest.raises(QuerySyntaxError, match="glob requires"):
@@ -277,8 +277,8 @@ class TestKindNames:
             "chunks",
             "version",
             "versions",
-            "connection",
-            "connections",
+            "edge",
+            "edges",
             "api",
             "apis",
         ):

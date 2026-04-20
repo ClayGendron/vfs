@@ -1,7 +1,7 @@
 """DatabaseFileSystem — SQL-backed implementation of VirtualFileSystem.
 
-All entities (files, directories, chunks, versions, connections) live in a
-single ``vfs_objects`` table.  Operations dispatch by kind — the path
+All entities (files, directories, chunks, versions, edges) live in a
+single ``vfs_objects`` table. Operations dispatch by kind — the path
 determines the kind, and the kind determines the semantics.
 """
 
@@ -9,18 +9,29 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections import deque
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from sqlalchemy import case, func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
 from vfs.columns import ENTRY_BACKED_MODEL_COLUMNS, default_columns
 from vfs.graph import RustworkxGraph
 from vfs.models import VFSObject, VFSObjectBase
-from vfs.paths import connection_path, scope_path, validate_user_id, version_path
+from vfs.paths import (
+    METADATA_ROOT,
+    base_path,
+    edge_out_path,
+    meta_root,
+    scope_path,
+    validate_mutation_path,
+    validate_user_id,
+    version_path,
+)
 from vfs.paths import parent_path as compute_parent_path
 from vfs.patterns import compile_glob, glob_to_sql_like
 from vfs.permissions import check_writable
@@ -47,6 +58,13 @@ class _LexicalDoc(NamedTuple):
     term_freqs: dict[str, int]
     doc_length: int
     content: str
+
+
+class _InverseEdgeSpec(NamedTuple):
+    owner_root: str
+    target_path: str
+    edge_type: str | None
+    source_prefix: str | None
 
 
 def _escape_like(term: str) -> str:
@@ -232,7 +250,7 @@ class DatabaseFileSystem(VirtualFileSystem):
     def _scope_objects(self, objects: Sequence[VFSObjectBase], user_id: str | None) -> None:
         """Scope object paths in place if user_scoped is enabled.
 
-        For connection objects, rebuilds the connection ``path`` from
+        For edge objects, rebuild the canonical edge ``path`` from
         the scoped ``source_path`` and ``target_path`` so all three
         fields are consistently scoped.
         """
@@ -243,9 +261,9 @@ class DatabaseFileSystem(VirtualFileSystem):
                 obj.source_path = scope_path(obj.source_path, user_id)
             if obj.target_path:
                 obj.target_path = scope_path(obj.target_path, user_id)
-            # Rebuild connection path from scoped endpoints
-            if obj.kind == "connection" and obj.source_path and obj.target_path and obj.connection_type:
-                obj.path = connection_path(obj.source_path, obj.target_path, obj.connection_type)
+            # Rebuild the canonical out-edge path from the scoped endpoints.
+            if obj.kind == "edge" and obj.source_path and obj.target_path and obj.edge_type:
+                obj.path = edge_out_path(obj.source_path, obj.target_path, obj.edge_type)
             else:
                 obj.path = scope_path(obj.path, user_id)
             obj.owner_id = user_id
@@ -366,6 +384,139 @@ class DatabaseFileSystem(VirtualFileSystem):
             stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    def _parse_inverse_edge_path(path: str) -> _InverseEdgeSpec | None:
+        marker = "/__meta__/edges/in"
+        idx = path.find(marker)
+        if idx < 0:
+            return None
+        owner_root = path[:idx]
+        target_path = owner_root if "/__meta__/chunks/" in owner_root or "/__meta__/versions/" in owner_root else base_path(owner_root)
+        rest = path[idx + len(marker) :]
+        if not rest:
+            return _InverseEdgeSpec(owner_root=owner_root, target_path=target_path, edge_type=None, source_prefix=None)
+        if not rest.startswith("/"):
+            return None
+        rest = rest[1:]
+        if not rest:
+            return _InverseEdgeSpec(owner_root=owner_root, target_path=target_path, edge_type=None, source_prefix=None)
+        slash = rest.find("/")
+        if slash < 0:
+            return _InverseEdgeSpec(owner_root=owner_root, target_path=target_path, edge_type=rest, source_prefix=None)
+        return _InverseEdgeSpec(
+            owner_root=owner_root,
+            target_path=target_path,
+            edge_type=rest[:slash],
+            source_prefix="/" + rest[slash + 1 :],
+        )
+
+    async def _incoming_edge_rows(
+        self,
+        path: str,
+        session: AsyncSession,
+    ) -> tuple[_InverseEdgeSpec, list[SimpleNamespace]] | None:
+        spec = self._parse_inverse_edge_path(path)
+        if spec is None:
+            return None
+        if await self._get_object(spec.target_path, session) is None:
+            return spec, []
+        stmt = select(
+            self._model.source_path,
+            self._model.edge_type,
+        ).where(
+            self._model.kind == "edge",
+            self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+            self._model.target_path == spec.target_path,  # ty: ignore[invalid-argument-type]
+        )
+        result = await session.execute(stmt)
+        rows = [
+            SimpleNamespace(source_path=source_path, edge_type=edge_type)
+            for source_path, edge_type in result.all()
+            if source_path is not None and edge_type is not None
+        ]
+        return spec, rows
+
+    async def _inverse_entry(
+        self,
+        path: str,
+        cols: frozenset[str],
+        session: AsyncSession,
+    ) -> Entry | None:
+        parsed = await self._incoming_edge_rows(path, session)
+        if parsed is None:
+            return None
+        spec, rows = parsed
+        if not rows:
+            return None
+        kind: str | None = "directory" if "kind" in cols else None
+        if spec.edge_type is None:
+            return Entry(path=path, kind=kind)
+
+        matching = [row for row in rows if row.edge_type == spec.edge_type]
+        if not matching:
+            return None
+
+        if spec.source_prefix is None:
+            return Entry(path=path, kind=kind)
+
+        exact = any(row.source_path == spec.source_prefix for row in matching)
+        has_descendants = any(
+            row.source_path.startswith(spec.source_prefix.rstrip("/") + "/")
+            for row in matching
+        )
+        if exact:
+            return Entry(path=path, kind="edge" if "kind" in cols else None)
+        if has_descendants:
+            return Entry(path=path, kind=kind)
+        return None
+
+    async def _inverse_children(
+        self,
+        path: str,
+        cols: frozenset[str],
+        session: AsyncSession,
+    ) -> list[Entry]:
+        parsed = await self._incoming_edge_rows(path, session)
+        if parsed is None:
+            return []
+        spec, rows = parsed
+        if not rows:
+            return []
+
+        child_kinds: dict[str, str] = {}
+        base = path.rstrip("/")
+
+        if spec.edge_type is None:
+            for row in rows:
+                child_kinds.setdefault(f"{base}/{row.edge_type}", "directory")
+            return [Entry(path=child, kind=kind if "kind" in cols else None) for child, kind in sorted(child_kinds.items())]
+
+        matching = [row for row in rows if row.edge_type == spec.edge_type]
+        if not matching:
+            return []
+
+        for row in matching:
+            source_path = row.source_path
+            if spec.source_prefix is None:
+                remainder = source_path.lstrip("/")
+            else:
+                prefix = spec.source_prefix.rstrip("/")
+                if source_path == prefix:
+                    continue
+                wanted = prefix + "/"
+                if not source_path.startswith(wanted):
+                    continue
+                remainder = source_path[len(wanted) :]
+            if not remainder:
+                continue
+            first, _, tail = remainder.partition("/")
+            child_path = f"{base}/{first}"
+            child_kind = "directory" if tail else "edge"
+            if child_kinds.get(child_path) != "directory":
+                child_kinds[child_path] = child_kind
+
+        return [Entry(path=child, kind=kind if "kind" in cols else None) for child, kind in sorted(child_kinds.items())]
 
     def _parameter_budget(self, session: AsyncSession) -> int:
         """Return a conservative parameter budget for the current SQL dialect."""
@@ -667,6 +818,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         for path in paths:
             current = compute_parent_path(path)
             while current != "/":
+                if current == METADATA_ROOT:
+                    break
                 if current in all_ancestors:
                     break
                 all_ancestors.add(current)
@@ -703,17 +856,37 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         return dirs, []
 
+    async def _ensure_metadata_root(self, session: AsyncSession) -> None:
+        """Ensure the reserved ``/.vfs`` directory exists.
+
+        Parallel write batches all need the same projected metadata root.
+        Create or revive it once and tolerate a concurrent creator racing
+        us to the unique key.
+        """
+        existing = await self._get_object(METADATA_ROOT, session, include_deleted=True)
+        if existing is not None:
+            if existing.deleted_at is not None:
+                existing.deleted_at = None
+                existing.updated_at = datetime.now(UTC)
+            return
+        try:
+            async with session.begin_nested():
+                session.add(self._model(path=METADATA_ROOT, kind="directory"))
+                await session.flush()
+        except IntegrityError:
+            pass
+
     async def _validate_chunk_parents(
         self,
         write_map: dict[str, VFSObjectBase],
         session: AsyncSession,
     ) -> tuple[set[str], list[str]]:
         """Reject chunk writes whose companion file is absent from DB and batch."""
-        chunk_writes = [obj for obj in write_map.values() if obj.kind == "chunk" and obj.parent_path not in write_map]
+        chunk_writes = [obj for obj in write_map.values() if obj.kind == "chunk" and base_path(obj.path) not in write_map]
         if not chunk_writes:
             return set(), []
 
-        parent_paths = sorted({obj.parent_path for obj in chunk_writes})
+        parent_paths = sorted({base_path(obj.path) for obj in chunk_writes})
         existing_parents = set(
             await self._resolve_required_parents(
                 parent_paths,
@@ -726,9 +899,10 @@ class DatabaseFileSystem(VirtualFileSystem):
         invalid_paths: set[str] = set()
         errors: list[str] = []
         for obj in chunk_writes:
-            if obj.parent_path not in existing_parents:
+            owning_file = base_path(obj.path)
+            if owning_file not in existing_parents:
                 invalid_paths.add(obj.path)
-                errors.append(f"Chunk parent file not found: {obj.parent_path} (for {obj.path})")
+                errors.append(f"Chunk parent file not found: {owning_file} (for {obj.path})")
 
         return invalid_paths, errors
 
@@ -749,15 +923,23 @@ class DatabaseFileSystem(VirtualFileSystem):
         dirs = {p: o for p, o in objs.items() if o.kind == "directory"}
         files = {p: o for p, o in objs.items() if o.kind != "directory"}
         result_map: dict[str, list[VFSObjectBase]] = {p: [] for p in objs}
+        or_batch_size = min(self._query_chunk_size(session, binds_per_item=2), 200)
 
         # Directory cascade — batched OR of LIKE conditions
         if dirs:
             dir_paths = list(dirs.keys())
-            for batch in self._chunk_paths(session, dir_paths, binds_per_item=1):
+            for start in range(0, len(dir_paths), or_batch_size):
+                batch = dir_paths[start : start + or_batch_size]
                 conditions = [
                     self._model.path.like(_escape_like(p) + "/%", escape="\\")  # ty: ignore[unresolved-attribute]
                     for p in batch
                 ]
+                for p in batch:
+                    rooted = meta_root(p)
+                    conditions.append(self._model.path == rooted)  # ty: ignore[invalid-argument-type]
+                    conditions.append(
+                        self._model.path.like(_escape_like(rooted) + "/%", escape="\\")  # ty: ignore[unresolved-attribute]
+                    )
                 stmt = select(self._model).where(or_(*conditions))
                 if not include_deleted:
                     stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
@@ -765,23 +947,48 @@ class DatabaseFileSystem(VirtualFileSystem):
                 for child in rows.scalars().all():
                     # Match child to its owning directory (longest prefix)
                     for dp in batch:
-                        if child.path.startswith(dp + "/"):
+                        rooted = meta_root(dp)
+                        if (
+                            child.path.startswith(dp + "/")
+                            or child.path == rooted
+                            or child.path.startswith(rooted + "/")
+                        ):
                             result_map[dp].append(child)
                             break
 
-        # File/chunk/connection cascade — batched parent_path IN
+        # File / metadata endpoint cascade.
         if files:
             file_paths = list(files.keys())
-            for batch in self._chunk_paths(session, file_paths, binds_per_item=1):
-                stmt = select(self._model).where(
-                    self._model.parent_path.in_(batch),  # ty: ignore[unresolved-attribute]
-                )
+            for start in range(0, len(file_paths), or_batch_size):
+                batch = file_paths[start : start + or_batch_size]
+                conditions: list[Any] = []
+                for path in batch:
+                    obj = files[path]
+                    if obj.kind == "file":
+                        rooted = meta_root(path)
+                        conditions.append(self._model.path == rooted)
+                        conditions.append(
+                            self._model.path.like(_escape_like(rooted) + "/%", escape="\\")  # ty: ignore[unresolved-attribute]
+                        )
+                    else:
+                        conditions.append(
+                            self._model.path.like(_escape_like(path) + "/%", escape="\\")  # ty: ignore[unresolved-attribute]
+                        )
+                stmt = select(self._model).where(or_(*conditions))
                 if not include_deleted:
                     stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
                 rows = await session.execute(stmt)
                 for child in rows.scalars().all():
-                    if child.parent_path in result_map:
-                        result_map[child.parent_path].append(child)
+                    for path in batch:
+                        obj = files[path]
+                        if obj.kind == "file":
+                            rooted = meta_root(path)
+                            if child.path == rooted or child.path.startswith(rooted + "/"):
+                                result_map[path].append(child)
+                                break
+                        elif child.path.startswith(path + "/"):
+                            result_map[path].append(child)
+                            break
 
         return result_map
 
@@ -961,7 +1168,11 @@ class DatabaseFileSystem(VirtualFileSystem):
                 if p in rows_by_path:
                     out.append(self._row_to_entry(rows_by_path[p], cols))
                 else:
-                    errors.append(f"Not found: {p}")
+                    inverse = await self._inverse_entry(p, cols, session)
+                    if inverse is not None:
+                        out.append(inverse)
+                    else:
+                        errors.append(f"Not found: {p}")
 
         return self._error(
             self._unscope_result(
@@ -1064,7 +1275,11 @@ class DatabaseFileSystem(VirtualFileSystem):
             if obj.path == "/":
                 errors.append("Cannot write to root path")
                 continue
-            if obj.kind not in ("file", "chunk", "connection", "directory"):
+            ok, reserved_err = validate_mutation_path(obj.path, kind=obj.kind)
+            if not ok:
+                errors.append(reserved_err)
+                continue
+            if obj.kind not in ("file", "chunk", "edge", "directory"):
                 errors.append(f"Cannot write to {obj.kind} path: {obj.path}")
                 continue
             if obj.path in write_map:
@@ -1081,7 +1296,9 @@ class DatabaseFileSystem(VirtualFileSystem):
             return self._error(errors)
 
         # ── Step 3: Resolve parent dirs (deferred) ────────────────────
-        file_paths = [p for p, obj in write_map.items() if obj.kind in ("file", "directory")]
+        await self._ensure_metadata_root(session)
+        file_paths = list(write_map)
+        file_paths.extend(version_path(path, 1) for path, obj in write_map.items() if obj.kind == "file")
         parent_dirs: list[VFSObjectBase] = []
         if file_paths:
             parent_dirs, dir_errors = await self._resolve_parent_dirs(file_paths, session)
@@ -1187,9 +1404,9 @@ class DatabaseFileSystem(VirtualFileSystem):
                     session.add(d)
             await session.flush()
 
-        # Invalidate graph if any connections were written — their
+        # Invalidate the graph if any edges were written — their
         # source/target edges need to appear on the next query.
-        if out and any(c.kind == "connection" for c in out):
+        if out and any(c.kind == "edge" for c in out):
             self._graph.invalidate()
 
         result = self._unscope_result(
@@ -1212,10 +1429,10 @@ class DatabaseFileSystem(VirtualFileSystem):
         Kind-aware visibility (§5.2, §5.4 of design doc):
 
         - **Directory** → returns ``file`` and ``directory`` children only.
-          Metadata kinds (chunk, version, connection, api) are hidden,
+          Metadata kinds (chunk, version, edge, api) are hidden,
           matching the Unix ``ls`` convention for dot-prefixed entries.
         - **File** → returns *all* metadata children (chunks, versions,
-          connections) since those are the only children a file has.
+          edges) since those are the only children a file has.
 
         When called with *candidates*, the candidate's ``kind`` field is
         used directly if populated.  Only candidates with ``kind is None``
@@ -1265,6 +1482,11 @@ class DatabaseFileSystem(VirtualFileSystem):
         # Single query — filter directory metadata children in Python
         all_paths = dir_paths + file_paths
         if not all_paths:
+            synthetic = []
+            for candidate in candidates.entries:
+                synthetic.extend(await self._inverse_children(candidate.path, cols, session))
+            if synthetic:
+                return self._unscope_result(VFSResult(function="ls", entries=synthetic), user_id)
             return VFSResult(function="ls", entries=[])
 
         dir_set = set(dir_paths)
@@ -1280,9 +1502,20 @@ class DatabaseFileSystem(VirtualFileSystem):
             )
             result = await session.execute(stmt)
             for row in result.all():
-                if row.parent_path in dir_set and row.kind not in ("file", "directory"):
+                if (
+                    row.parent_path in dir_set
+                    and row.kind not in ("file", "directory")
+                    and not row.parent_path.startswith("/.vfs")
+                ):
                     continue
                 out.append(self._row_to_entry(row, cols))
+
+        seen_paths = {entry.path for entry in out}
+        for candidate in candidates.entries:
+            for entry in await self._inverse_children(candidate.path, cols, session):
+                if entry.path not in seen_paths:
+                    out.append(entry)
+                    seen_paths.add(entry.path)
 
         return self._unscope_result(VFSResult(function="ls", entries=out), user_id)
 
@@ -1429,21 +1662,21 @@ class DatabaseFileSystem(VirtualFileSystem):
         )
         return result
 
-    async def _mkconn_impl(
+    async def _mkedge_impl(
         self,
         source: str | None = None,
         target: str | None = None,
-        connection_type: str | None = None,
+        edge_type: str | None = None,
         objects: Sequence[VFSObjectBase] | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:
-        """Create connection edges.
+        """Create directed edge rows.
 
-        Accepts either ``source``/``target``/``connection_type`` for a
-        single connection, or ``objects`` for a batch of pre-built
-        connection objects.  Validates that each source exists, then
+        Accepts either ``source``/``target``/``edge_type`` for a
+        single edge, or ``objects`` for a batch of pre-built edge
+        objects.  Validates that each source exists, then
         delegates to ``_write_impl``.
 
         All paths are unscoped.  Scoping is applied only for the DB
@@ -1451,19 +1684,19 @@ class DatabaseFileSystem(VirtualFileSystem):
         """
         self._require_user_id(user_id)
         if objects is None:
-            if not source or not target or not connection_type:
-                return self._error("mkconn requires source/target/connection_type or objects")
+            if not source or not target or not edge_type:
+                return self._error("mkedge requires source/target/type or objects")
             objects = [
                 self._model(
-                    path=connection_path(source, target, connection_type),
-                    kind="connection",
+                    path=edge_out_path(source, target, edge_type),
+                    kind="edge",
                     source_path=source,
                     target_path=target,
-                    connection_type=connection_type,
+                    edge_type=edge_type,
                 )
             ]
-        elif source is not None or target is not None or connection_type is not None:
-            return self._error("mkconn requires source/target/connection_type or objects, not both")
+        elif source is not None or target is not None or edge_type is not None:
+            return self._error("mkedge requires source/target/type or objects, not both")
 
         # Validate all sources exist (query uses scoped paths)
         unscoped_sources = sorted({obj.source_path for obj in objects if obj.source_path})
@@ -1486,7 +1719,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         result = await self._write_impl(objects=objects, user_id=user_id, session=session)
         if result.success:
             self._graph.invalidate()
-        return result
+        return result.model_copy(update={"function": "mkedge"})
 
     async def _edit_impl(
         self,
@@ -1623,7 +1856,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         2. Fetch all descendants (children, metadata)
         3. Rewrite paths: replace source prefix with dest
         4. Re-derive parent_path / name on all affected rows
-        5. Update connection source_path / target_path references
+        5. Update edge source_path / target_path references
         """
         self._require_user_id(user_id)
         if not ops:
@@ -1662,9 +1895,20 @@ class DatabaseFileSystem(VirtualFileSystem):
                 )
                 result = await session.execute(stmt)
                 descendants = list(result.scalars().all())
+            elif src_obj.kind == "file":
+                rooted_src = meta_root(op.src)
+                stmt = select(self._model).where(
+                    or_(
+                        self._model.path == rooted_src,  # ty: ignore[invalid-argument-type]
+                        self._model.path.like(_escape_like(rooted_src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
+                    ),
+                    self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+                )
+                result = await session.execute(stmt)
+                descendants = list(result.scalars().all())
             else:
                 stmt = select(self._model).where(
-                    self._model.parent_path == op.src,
+                    self._model.path.like(_escape_like(op.src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
                     self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
@@ -1674,31 +1918,40 @@ class DatabaseFileSystem(VirtualFileSystem):
             src_obj.path = op.dest
             src_obj._rederive_path_fields()
 
+            rooted_src = meta_root(op.src) if src_obj.kind == "file" else None
+            rooted_dest = meta_root(op.dest) if src_obj.kind == "file" else None
+
             for desc in descendants:
-                desc.path = op.dest + desc.path[len(op.src) :]
+                if rooted_src is not None and rooted_dest is not None:
+                    if desc.path == rooted_src:
+                        desc.path = rooted_dest
+                    elif desc.path.startswith(rooted_src + "/"):
+                        desc.path = rooted_dest + desc.path[len(rooted_src) :]
+                else:
+                    desc.path = op.dest + desc.path[len(op.src) :]
                 desc._rederive_path_fields()
 
-            # ── 5a. Fix descendants that are connections ────────────
+            # ── 5a. Fix descendants that are edges ──────────────────
             # Step 3 prefix-swapped their path, but source_path and
-            # the connection path encoding are stale.  Rebuild them.
+            # the edge path encoding are stale. Rebuild them.
             for desc in descendants:
-                if desc.kind == "connection" and desc.source_path:
+                if desc.kind == "edge" and desc.source_path:
                     desc.source_path = op.dest + desc.source_path[len(op.src) :]
-                    if desc.target_path and desc.connection_type:
-                        desc.path = connection_path(
+                    if desc.target_path and desc.edge_type:
+                        desc.path = edge_out_path(
                             desc.source_path,
                             desc.target_path,
-                            desc.connection_type,
+                            desc.edge_type,
                         )
                         desc._rederive_path_fields()
 
-            # ── 5b. Fix connections elsewhere whose target moved ──────
-            # Connections live under their source (/.connections/), so
-            # outgoing connections already moved with descendants.  We
-            # only need to find *incoming* connections from other files
+            # ── 5b. Fix edges elsewhere whose target moved ────────────
+            # Canonical out-edge rows live under their source metadata
+            # root, so outgoing edges already moved with descendants. We
+            # only need to find incoming edges from other files
             # whose target_path points into the moved subtree.
             conn_stmt = select(self._model).where(
-                self._model.kind == "connection",
+                self._model.kind == "edge",
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 or_(
                     self._model.target_path == op.src,  # ty: ignore[invalid-argument-type]
@@ -1708,17 +1961,17 @@ class DatabaseFileSystem(VirtualFileSystem):
             conn_result = await session.execute(conn_stmt)
             for conn in conn_result.scalars().all():
                 conn.target_path = op.dest + conn.target_path[len(op.src) :]
-                conn.path = connection_path(
+                conn.path = edge_out_path(
                     conn.source_path,
                     conn.target_path,
-                    conn.connection_type,
+                    conn.edge_type,
                 )
                 conn._rederive_path_fields()
 
             out.append(src_obj.to_entry())
 
         await session.flush()
-        # Moves may rename connections or rewrite target_path references.
+        # Moves may rename edges or rewrite target_path references.
         self._graph.invalidate()
         result = self._unscope_result(
             VFSResult(function="move", entries=out, errors=errors, success=len(errors) == 0),
@@ -1836,9 +2089,17 @@ class DatabaseFileSystem(VirtualFileSystem):
         like_pattern = glob_to_sql_like(pattern)
 
         stmt = select(*self._select_columns(cols)).where(
-            self._model.kind.in_(["file", "directory"]),  # ty: ignore[unresolved-attribute]
             self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
+        targets_metadata = pattern.startswith("/.vfs") or any(p.startswith("/.vfs") for p in paths)
+        if not targets_metadata:
+            stmt = stmt.where(
+                self._model.kind.in_(["file", "directory"]),  # ty: ignore[unresolved-attribute]
+            )
+            stmt = stmt.where(
+                self._model.path != "/.vfs",  # ty: ignore[invalid-argument-type]
+                ~self._model.path.like("/.vfs/%", escape="\\"),  # ty: ignore[unresolved-attribute]
+            )
 
         if like_pattern is not None:
             stmt = stmt.where(
@@ -2237,6 +2498,31 @@ class DatabaseFileSystem(VirtualFileSystem):
         if max_depth is not None and max_depth < 1:
             return self._error(f"max_depth must be >= 1, got {max_depth}")
 
+        if "/__meta__/edges/in" in path:
+            traversal_cols = cols | {"kind"}
+            root_entry = await self._inverse_entry(path, traversal_cols, session)
+            if root_entry is None:
+                return self._error(f"Not found: {path}")
+            if root_entry.kind != "directory":
+                return self._error(f"Not a directory: {path}")
+
+            entries: list[Entry] = []
+            queue: deque[tuple[str, int]] = deque([(path, 0)])
+            while queue:
+                current, depth = queue.popleft()
+                if max_depth is not None and depth >= max_depth:
+                    continue
+                children = sorted(
+                    await self._inverse_children(current, traversal_cols, session),
+                    key=lambda entry: entry.path,
+                )
+                for child in children:
+                    entries.append(child if "kind" in cols else child.model_copy(update={"kind": None}))
+                    if child.kind == "directory":
+                        queue.append((child.path, depth + 1))
+
+            return self._unscope_result(VFSResult(function="tree", entries=entries), user_id)
+
         # Validate path exists and is a directory (skip for root)
         if path != "/":
             obj = await self._get_object(path, session)
@@ -2247,9 +2533,12 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         # ── Query descendants ─────────────────────────────────────────
         stmt = select(*self._select_columns(cols)).where(
-            self._model.kind.in_(["file", "directory"]),  # ty: ignore[unresolved-attribute]
             self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
+        if not path.startswith("/.vfs"):
+            stmt = stmt.where(
+                self._model.kind.in_(["file", "directory"]),  # ty: ignore[unresolved-attribute]
+            )
 
         if path == "/":
             stmt = stmt.where(self._model.path != "/")  # ty: ignore[invalid-argument-type]

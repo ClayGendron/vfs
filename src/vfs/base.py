@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, cast
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from vfs.exceptions import _classify_error
-from vfs.paths import connection_path, extract_extension, normalize_path
+from vfs.paths import edge_out_path, extract_extension, normalize_path
 from vfs.patterns import compile_glob
 from vfs.permissions import (
     Permission,
@@ -1282,11 +1282,11 @@ class VirtualFileSystem:
             copies = [TwoPathOperation(src=src, dest=dest)]
         return await self._route_two_path("copy", copies, overwrite=overwrite, user_id=user_id)
 
-    async def mkconn(
+    async def mkedge(
         self,
         source: str,
         target: str,
-        connection_type: str,
+        edge_type: str,
         *,
         user_id: str | None = None,
     ) -> VFSResult:
@@ -1294,21 +1294,17 @@ class VirtualFileSystem:
         tgt_fs, tgt_rel, _ = self._resolve_terminal(target)
         if src_fs is not tgt_fs:
             return self._error(
-                f"Cross-mount connections not supported: {source} and {target} resolve to different filesystems",
+                f"Cross-mount edges not supported: {source} and {target} resolve to different filesystems",
             )
-        # Check the actual connection-write target, not just the source
-        # file path.  A rule placed on `<source>/.connections` (or any
-        # ancestor of the connection metadata path) needs to fire here
-        # the same way it would for a direct write to that path.
-        conn_write_path = connection_path(src_rel, tgt_rel, connection_type)
-        err = check_writable(src_fs, "mkconn", conn_write_path, mount_prefix=src_pfx)
+        edge_write_path = edge_out_path(src_rel, tgt_rel, edge_type)
+        err = check_writable(src_fs, "mkedge", edge_write_path, mount_prefix=src_pfx)
         if err is not None:
             return err
         async with src_fs._use_session() as s:
-            result = await src_fs._mkconn_impl(
+            result = await src_fs._mkedge_impl(
                 src_rel,
                 tgt_rel,
-                connection_type,
+                edge_type,
                 user_id=user_id,
                 session=s,
             )
@@ -1644,11 +1640,11 @@ class VirtualFileSystem:
     ) -> VFSResult:
         raise NotImplementedError
 
-    async def _mkconn_impl(
+    async def _mkedge_impl(
         self,
         source: str | None = None,
         target: str | None = None,
-        connection_type: str | None = None,
+        edge_type: str | None = None,
         objects: Sequence[VFSObjectBase] | None = None,
         *,
         user_id: str | None = None,

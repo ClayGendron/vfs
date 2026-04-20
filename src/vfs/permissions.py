@@ -4,7 +4,7 @@ A VFS filesystem has a :class:`PermissionMap`: one default permission
 plus zero or more directory-prefix overrides.  Every mutating operation
 funnels through one of five chokepoints in :mod:`vfs.base`
 (``_route_single``, ``_route_write_batch``, ``_route_two_path``,
-``_dispatch_candidates``, ``mkconn``) and each chokepoint calls
+``_dispatch_candidates``, ``mkedge``) and each chokepoint calls
 :func:`check_writable` on the resolved terminal filesystem with the
 filesystem-relative path before touching storage.
 
@@ -130,7 +130,7 @@ Permission = Literal["read", "read_write"]
 
 
 MUTATING_OPS: frozenset[str] = frozenset(
-    {"write", "edit", "delete", "mkdir", "mkconn", "move", "copy"},
+    {"write", "edit", "delete", "mkdir", "mkedge", "move", "copy"},
 )
 """Operation names that mutate the backing store.
 
@@ -283,7 +283,14 @@ def check_writable(
     """
     if op not in MUTATING_OPS:
         return None
-    resolved = fs._permission_map._resolve(rel)
+    candidates = _permission_candidates(rel)
+    resolved = fs._permission_map._resolve(candidates[0])
+    for candidate in candidates[1:]:
+        alternate = fs._permission_map._resolve(candidate)
+        if alternate.rule_prefix is None:
+            continue
+        if resolved.rule_prefix is None or len(alternate.rule_prefix) > len(resolved.rule_prefix):
+            resolved = alternate
     if resolved.permission == "read_write":
         return None
     full = _join(mount_prefix, rel)
@@ -301,3 +308,19 @@ def _join(mount_prefix: str, rel: str) -> str:
     if rel == "/" or rel == "":
         return mount_prefix or "/"
     return f"{mount_prefix}{rel}"
+
+
+def _permission_candidates(rel: str) -> tuple[str, ...]:
+    """Return the rule-coordinate candidates for *rel*.
+
+    Projected metadata lives under ``/.vfs`` but should still inherit
+    rules declared on the logical source path (for example a writable
+    hole at ``/synthesis`` must also allow writes under
+    ``/.vfs/synthesis/...``). Keep the canonical metadata path first so
+    explicit rules on ``/.vfs/...`` still win by longest-prefix match.
+    """
+    normalized = normalize_path(rel)
+    if normalized.startswith("/.vfs/"):
+        alias = normalized[len("/.vfs") :]
+        return (normalized, alias or "/")
+    return (normalized,)

@@ -20,7 +20,7 @@ from vfs.query.ast import (
     LexicalSearchCommand,
     LsCommand,
     MeetingGraphCommand,
-    MkconnCommand,
+    MkedgeCommand,
     MkdirCommand,
     MoveCommand,
     PipelineNode,
@@ -360,16 +360,22 @@ def _build_copy(positionals: list[str], options: dict[str, FlagValue]) -> StageN
     raise QuerySyntaxError("cp requires 'src dest' or, in a pipeline, just 'dest-root'")
 
 
-def _build_mkconn(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
+def _looks_like_path(value: str) -> bool:
+    return value.startswith("/") or "/" in value
+
+
+def _build_mkedge(positionals: list[str], _options: dict[str, FlagValue]) -> StageNode:
     if len(positionals) == 2:
-        return MkconnCommand(connection_type=positionals[0], target=positionals[1])
+        first, second = positionals
+        if _looks_like_path(first) and not _looks_like_path(second):
+            return MkedgeCommand(target=first, edge_type=second)
+        return MkedgeCommand(edge_type=first, target=second)
     if len(positionals) == 3:
-        return MkconnCommand(
-            source=positionals[0],
-            connection_type=positionals[1],
-            target=positionals[2],
-        )
-    raise QuerySyntaxError("mkconn requires 'source type target' or, in a pipeline, 'type target'")
+        source, second, third = positionals
+        if _looks_like_path(second) and not _looks_like_path(third):
+            return MkedgeCommand(source=source, target=second, edge_type=third)
+        return MkedgeCommand(source=source, edge_type=second, target=third)
+    raise QuerySyntaxError("mkedge requires 'source target type' or, in a pipeline, 'target type'")
 
 
 def _build_glob(positionals: list[str], options: dict[str, FlagValue]) -> StageNode:
@@ -504,7 +510,7 @@ _COMMAND_SPECS = (
     CommandSpec("mkdir", ("mkdir",), {}, _build_mkdir),
     CommandSpec("move", ("mv", "move"), {"--overwrite": 0, "--no-overwrite": 0}, _build_move),
     CommandSpec("copy", ("cp", "copy"), {"--overwrite": 0, "--no-overwrite": 0}, _build_copy),
-    CommandSpec("mkconn", ("mkconn",), {}, _build_mkconn),
+    CommandSpec("mkedge", ("mkedge",), {}, _build_mkedge),
     CommandSpec(
         "glob",
         ("glob",),
@@ -893,8 +899,8 @@ def _parse_kind_name(name: str) -> ObjectKind:
             return "chunk"
         case "version" | "versions":
             return "version"
-        case "connection" | "connections":
-            return "connection"
+        case "edge" | "edges":
+            return "edge"
         case "api" | "apis":
             return "api"
         case _:
@@ -933,8 +939,8 @@ def _planned_methods(node: QueryNode) -> tuple[str, ...]:
             return ("move",)
         case CopyCommand():
             return ("copy",)
-        case MkconnCommand():
-            return ("mkconn",)
+        case MkedgeCommand():
+            return ("mkedge",)
         case GlobCommand():
             return ("glob",)
         case GrepCommand():

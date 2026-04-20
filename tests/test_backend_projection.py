@@ -82,7 +82,7 @@ async def _seed(db: DatabaseFileSystem) -> None:
         await db._write_impl("/docs/intro.md", "# Intro\nhello world", session=s)
         await db._write_impl("/docs/guide.md", "# Guide\nhydrate the index", session=s)
         await db._write_impl("/src/auth.py", "def login(): pass", session=s)
-        await db._write_impl("/src/auth.py/.chunks/login", "def login(): pass", session=s)
+        await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "def login(): pass", session=s)
 
 
 class TestGlobProjection:

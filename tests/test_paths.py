@@ -1,4 +1,4 @@
-"""Tests for vfs.paths — path utilities for the dot-prefix metadata namespace."""
+"""Tests for vfs.paths — path utilities for the ``/.vfs/.../__meta__`` namespace."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from vfs.paths import (
     MARKER_KINDS,
     METADATA_KIND_MAP,
     METADATA_MARKERS,
-    ConnectionParts,
+    EdgeParts,
     api_path,
     base_path,
     chunk_path,
-    connection_path,
-    decompose_connection,
+    edge_out_path,
+    decompose_edge,
     extract_extension,
     normalize_path,
     parent_path,
@@ -54,7 +54,7 @@ class TestNormalizePath:
         assert normalize_path("/../../../etc/passwd") == "/etc/passwd"
 
     def test_metadata_traversal(self):
-        assert normalize_path("/.chunks/../../../etc/passwd") == "/etc/passwd"
+        assert normalize_path("/.vfs/../../../etc/passwd") == "/etc/passwd"
 
     def test_nfc_normalization(self):
         # NFD é (e + combining acute) should collapse to NFC é
@@ -86,14 +86,14 @@ class TestSplitPath:
 
     def test_metadata_path_is_literal_split(self):
         # split_path is a pure string operation, not metadata-aware
-        assert split_path("/src/auth.py/.chunks/login") == (
-            "/src/auth.py/.chunks",
+        assert split_path("/.vfs/src/auth.py/__meta__/chunks/login") == (
+            "/.vfs/src/auth.py/__meta__/chunks",
             "login",
         )
 
-    def test_connection_path_is_literal_split(self):
-        assert split_path("/src/auth.py/.connections/imports/src/utils.py") == (
-            "/src/auth.py/.connections/imports/src",
+    def test_edge_path_is_literal_split(self):
+        assert split_path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py") == (
+            "/.vfs/src/auth.py/__meta__/edges/out/imports/src",
             "utils.py",
         )
 
@@ -109,8 +109,8 @@ class TestValidatePath:
             "/src/auth.py",
             "/",
             "/a",
-            "/src/auth.py/.chunks/login",
-            "/jira/.apis/ticket",
+            "/.vfs/src/auth.py/__meta__/chunks/login",
+            "/.vfs/jira/__meta__/apis/ticket",
             "/documents/quarterly-report.pdf",
         ]
         for p in valid:
@@ -168,16 +168,16 @@ class TestParseKind:
     # --- Metadata markers ---
 
     def test_chunk(self):
-        assert parse_kind("/src/auth.py/.chunks/login") == "chunk"
+        assert parse_kind("/.vfs/src/auth.py/__meta__/chunks/login") == "chunk"
 
     def test_version(self):
-        assert parse_kind("/src/auth.py/.versions/3") == "version"
+        assert parse_kind("/.vfs/src/auth.py/__meta__/versions/3") == "version"
 
-    def test_connection(self):
-        assert parse_kind("/src/auth.py/.connections/imports/src/utils.py") == "connection"
+    def test_edge(self):
+        assert parse_kind("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py") == "edge"
 
     def test_api(self):
-        assert parse_kind("/jira/.apis/ticket") == "api"
+        assert parse_kind("/.vfs/jira/__meta__/apis/ticket") == "api"
 
     # --- Files with extensions ---
 
@@ -204,11 +204,11 @@ class TestParseKind:
     def test_dotfile_with_extension(self):
         assert parse_kind("/.env.local") == "file"
 
-    # --- Reserved metadata names as bare directories ---
+    # --- Dot-prefixed user paths remain ordinary files ---
 
     @pytest.mark.parametrize("name", [".chunks", ".versions", ".connections", ".apis"])
-    def test_reserved_names_are_directories(self, name):
-        assert parse_kind(f"/foo/{name}") == "directory"
+    def test_dot_prefixed_metadata_like_names_are_files(self, name):
+        assert parse_kind(f"/foo/{name}") == "file"
 
     # --- Extensionless files (case-insensitive) ---
 
@@ -232,7 +232,7 @@ class TestParseKind:
     # --- Marker boundary (no false positives) ---
 
     def test_similar_name_not_misclassified(self):
-        # "/my-connections/" should not trigger the /.connections/ marker
+        # Similar user paths should not be mistaken for reserved metadata roots.
         assert parse_kind("/my-connections/file.sql") == "file"
 
 
@@ -246,28 +246,28 @@ class TestBasePath:
         assert base_path("/src/auth.py") == "/src/auth.py"
 
     def test_chunk(self):
-        assert base_path("/src/auth.py/.chunks/login") == "/src/auth.py"
+        assert base_path("/.vfs/src/auth.py/__meta__/chunks/login") == "/src/auth.py"
 
     def test_version(self):
-        assert base_path("/src/auth.py/.versions/3") == "/src/auth.py"
+        assert base_path("/.vfs/src/auth.py/__meta__/versions/3") == "/src/auth.py"
 
     def test_connection_deep_target(self):
-        assert base_path("/src/auth.py/.connections/imports/src/deep/path.py") == "/src/auth.py"
+        assert base_path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/deep/path.py") == "/src/auth.py"
 
     def test_api(self):
-        assert base_path("/jira/.apis/ticket") == "/jira"
+        assert base_path("/.vfs/jira/__meta__/apis/ticket") == "/jira"
 
     def test_root(self):
         assert base_path("/") == "/"
 
     def test_bare_metadata_dir(self):
-        assert base_path("/src/auth.py/.chunks") == "/src/auth.py"
-        assert base_path("/src/auth.py/.versions") == "/src/auth.py"
-        assert base_path("/src/auth.py/.connections") == "/src/auth.py"
-        assert base_path("/jira/.apis") == "/jira"
+        assert base_path("/.vfs/src/auth.py/__meta__/chunks") == "/src/auth.py"
+        assert base_path("/.vfs/src/auth.py/__meta__/versions") == "/src/auth.py"
+        assert base_path("/.vfs/src/auth.py/__meta__/edges/out") == "/src/auth.py"
+        assert base_path("/.vfs/jira/__meta__/apis") == "/jira"
 
     def test_first_marker_wins(self):
-        assert base_path("/foo/.chunks/.versions/1") == "/foo"
+        assert base_path("/.vfs/.vfs/foo/__meta__/chunks/__meta__/versions/1") == "/.vfs/foo"
 
 
 # =========================================================================
@@ -286,20 +286,22 @@ class TestParentPath:
         assert parent_path("/") == "/"
 
     def test_chunk(self):
-        assert parent_path("/src/auth.py/.chunks/login") == "/src/auth.py"
+        assert parent_path("/.vfs/src/auth.py/__meta__/chunks/login") == "/.vfs/src/auth.py/__meta__/chunks"
 
     def test_version(self):
-        assert parent_path("/src/auth.py/.versions/3") == "/src/auth.py"
+        assert parent_path("/.vfs/src/auth.py/__meta__/versions/3") == "/.vfs/src/auth.py/__meta__/versions"
 
-    def test_connection(self):
-        assert parent_path("/src/auth.py/.connections/imports/src/utils.py") == "/src/auth.py"
+    def test_edge(self):
+        assert (
+            parent_path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
+            == "/.vfs/src/auth.py/__meta__/edges/out/imports/src"
+        )
 
     def test_api(self):
-        assert parent_path("/jira/.apis/ticket") == "/jira"
+        assert parent_path("/.vfs/jira/__meta__/apis/ticket") == "/.vfs/jira/__meta__/apis"
 
     def test_bare_metadata_dir(self):
-        # /.chunks (no trailing /) falls through to split_path
-        assert parent_path("/src/auth.py/.chunks") == "/src/auth.py"
+        assert parent_path("/.vfs/src/auth.py/__meta__/chunks") == "/.vfs/src/auth.py/__meta__"
 
 
 # =========================================================================
@@ -309,10 +311,10 @@ class TestParentPath:
 
 class TestChunkPath:
     def test_basic(self):
-        assert chunk_path("/src/auth.py", "login") == "/src/auth.py/.chunks/login"
+        assert chunk_path("/src/auth.py", "login") == "/.vfs/src/auth.py/__meta__/chunks/login"
 
     def test_normalizes_file_path(self):
-        assert chunk_path("src/auth.py", "login") == "/src/auth.py/.chunks/login"
+        assert chunk_path("src/auth.py", "login") == "/.vfs/src/auth.py/__meta__/chunks/login"
 
     def test_roundtrip_parse_kind(self):
         assert parse_kind(chunk_path("/f.py", "x")) == "chunk"
@@ -327,11 +329,11 @@ class TestChunkPath:
 
     def test_metadata_base_rejected(self):
         with pytest.raises(ValueError, match="metadata"):
-            chunk_path("/f.py/.chunks/bar", "x")
+            chunk_path("/.vfs/f.py/__meta__/chunks/bar", "x")
 
     def test_reserved_ending_rejected(self):
-        with pytest.raises(ValueError, match="reserved"):
-            chunk_path("/foo/.chunks", "x")
+        with pytest.raises(ValueError, match="metadata path"):
+            chunk_path("/.vfs/foo/__meta__/chunks", "x")
 
 
 # =========================================================================
@@ -341,7 +343,7 @@ class TestChunkPath:
 
 class TestVersionPath:
     def test_basic(self):
-        assert version_path("/src/auth.py", 3) == "/src/auth.py/.versions/3"
+        assert version_path("/src/auth.py", 3) == "/.vfs/src/auth.py/__meta__/versions/3"
 
     def test_roundtrip_parse_kind(self):
         assert parse_kind(version_path("/f.py", 1)) == "version"
@@ -356,19 +358,19 @@ class TestVersionPath:
 
     def test_metadata_base_rejected(self):
         with pytest.raises(ValueError, match="metadata"):
-            version_path("/f.py/.versions/1", 2)
+            version_path("/.vfs/f.py/__meta__/versions/1", 2)
 
 
 # =========================================================================
-# connection_path + decompose_connection (roundtrip)
+# edge_out_path + decompose_edge (roundtrip)
 # =========================================================================
 
 
-class TestConnectionPath:
+class TestEdgePath:
     def test_basic(self):
         assert (
-            connection_path("/src/auth.py", "/src/utils.py", "imports")
-            == "/src/auth.py/.connections/imports/src/utils.py"
+            edge_out_path("/src/auth.py", "/src/utils.py", "imports")
+            == "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py"
         )
 
     def test_roundtrip(self):
@@ -378,63 +380,66 @@ class TestConnectionPath:
             ("/a.py", "/deep/nested/path.py", "calls"),
         ]
         for s, t, c in cases:
-            path = connection_path(s, t, c)
-            parts = decompose_connection(path)
-            assert parts == ConnectionParts(source=s, target=t, connection_type=c)
+            path = edge_out_path(s, t, c)
+            parts = decompose_edge(path)
+            assert parts == EdgeParts(source=s, target=t, edge_type=c, direction="out")
 
     def test_normalizes_target(self):
-        p = connection_path("/a.py", "src//utils.py", "imports")
-        assert p == "/a.py/.connections/imports/src/utils.py"
+        p = edge_out_path("/a.py", "src//utils.py", "imports")
+        assert p == "/.vfs/a.py/__meta__/edges/out/imports/src/utils.py"
 
     def test_empty_type_rejected(self):
-        with pytest.raises(ValueError, match="connection_type"):
-            connection_path("/a.py", "/b.py", "")
+        with pytest.raises(ValueError, match="edge_type"):
+            edge_out_path("/a.py", "/b.py", "")
 
     def test_slash_in_type_rejected(self):
-        with pytest.raises(ValueError, match="connection_type"):
-            connection_path("/a.py", "/b.py", "calls/async")
+        with pytest.raises(ValueError, match="edge_type"):
+            edge_out_path("/a.py", "/b.py", "calls/async")
 
     def test_root_target_rejected(self):
         with pytest.raises(ValueError, match="target"):
-            connection_path("/a.py", "/", "imports")
+            edge_out_path("/a.py", "/", "imports")
 
     def test_metadata_base_rejected(self):
-        with pytest.raises(ValueError, match="metadata"):
-            connection_path("/a.py/.connections/imports/b.py", "/c.py", "calls")
+        with pytest.raises(ValueError, match="projected edge path"):
+            edge_out_path("/.vfs/a.py/__meta__/edges/out/imports/b.py", "/c.py", "calls")
 
 
-class TestDecomposeConnection:
+class TestDecomposeEdge:
     def test_basic(self):
-        result = decompose_connection("/src/auth.py/.connections/imports/src/utils.py")
-        assert result == ConnectionParts(
+        result = decompose_edge("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
+        assert result == EdgeParts(
             source="/src/auth.py",
             target="/src/utils.py",
-            connection_type="imports",
+            edge_type="imports",
+            direction="out",
         )
 
     def test_not_a_connection(self):
-        assert decompose_connection("/src/auth.py") is None
+        assert decompose_edge("/src/auth.py") is None
 
     def test_type_only_no_target(self):
-        assert decompose_connection("/foo/.connections/imports") is None
+        assert decompose_edge("/.vfs/foo/__meta__/edges/out/imports") is None
 
     def test_deep_target(self):
-        result = decompose_connection("/a.py/.connections/calls/src/deep/nested/path.py")
+        result = decompose_edge("/.vfs/a.py/__meta__/edges/out/calls/src/deep/nested/path.py")
         assert result is not None
         assert result.source == "/a.py"
         assert result.target == "/src/deep/nested/path.py"
-        assert result.connection_type == "calls"
+        assert result.edge_type == "calls"
+        assert result.direction == "out"
 
     def test_named_access(self):
-        result = decompose_connection("/a.py/.connections/imports/b.py")
+        result = decompose_edge("/.vfs/a.py/__meta__/edges/out/imports/b.py")
         assert result is not None
         assert result.source == "/a.py"
         assert result.target == "/b.py"
-        assert result.connection_type == "imports"
+        assert result.edge_type == "imports"
         # Positional matches named
         assert result[0] == result.source
         assert result[1] == result.target
-        assert result[2] == result.connection_type
+        assert result[2] == result.edge_type
+        assert result[3] == result.direction
 
 
 # =========================================================================
@@ -444,7 +449,7 @@ class TestDecomposeConnection:
 
 class TestApiPath:
     def test_basic(self):
-        assert api_path("/jira", "ticket") == "/jira/.apis/ticket"
+        assert api_path("/jira", "ticket") == "/.vfs/jira/__meta__/apis/ticket"
 
     def test_roundtrip_parse_kind(self):
         assert parse_kind(api_path("/jira", "ticket")) == "api"
@@ -462,8 +467,8 @@ class TestApiPath:
             api_path("/jira", "ticket/create")
 
     def test_metadata_mount_rejected(self):
-        with pytest.raises(ValueError, match="reserved"):
-            api_path("/jira/.apis", "ticket")
+        with pytest.raises(ValueError, match="metadata path"):
+            api_path("/.vfs/jira/__meta__/apis", "ticket")
 
 
 # =========================================================================
@@ -472,19 +477,23 @@ class TestApiPath:
 
 
 class TestConstants:
-    def test_metadata_markers_derived_from_map(self):
-        for name, kind in METADATA_KIND_MAP.items():
-            marker = f"/{name}/"
-            assert marker in METADATA_MARKERS
-            assert MARKER_KINDS[marker] == kind
+    def test_metadata_kind_map_uses_canonical_families(self):
+        assert METADATA_KIND_MAP == {
+            "chunks": "chunk",
+            "versions": "version",
+            "edges": "edge",
+            "apis": "api",
+        }
 
-    def test_marker_count_matches_map(self):
-        assert len(METADATA_MARKERS) == len(METADATA_KIND_MAP)
-        assert len(MARKER_KINDS) == len(METADATA_KIND_MAP)
+    def test_marker_kinds_cover_projected_metadata_markers(self):
+        assert MARKER_KINDS["/__meta__/chunks/"] == "chunk"
+        assert MARKER_KINDS["/__meta__/versions/"] == "version"
+        assert MARKER_KINDS["/__meta__/edges/out/"] == "edge"
+        assert MARKER_KINDS["/__meta__/edges/in/"] == "edge"
+        assert MARKER_KINDS["/__meta__/apis/"] == "api"
 
-    def test_apis_in_markers(self):
-        assert "/.apis/" in METADATA_MARKERS
-        assert "/.api/" not in METADATA_MARKERS
+    def test_metadata_markers_match_marker_keys(self):
+        assert METADATA_MARKERS == tuple(MARKER_KINDS.keys())
 
 
 # =========================================================================

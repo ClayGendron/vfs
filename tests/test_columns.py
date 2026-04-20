@@ -46,7 +46,7 @@ class TestDefaultColumns:
             "vector_search", "semantic_search", "lexical_search",
             "pagerank", "betweenness_centrality", "closeness_centrality",
             "degree_centrality", "in_degree_centrality", "out_degree_centrality", "hits",
-            "write", "delete", "edit", "move", "copy", "mkdir", "mkconn",
+            "write", "delete", "edit", "move", "copy", "mkdir", "mkedge",
             "predecessors", "successors", "ancestors", "descendants", "neighborhood",
             "meeting_subgraph", "min_meeting_subgraph",
             "hybrid",

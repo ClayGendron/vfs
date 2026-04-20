@@ -106,14 +106,8 @@ class TestPathEdgeCases:
             VFSObject(path=long_path, content="x")
 
     async def test_path_at_exact_limit(self, db: DatabaseFileSystem):
-        """A long path should be accepted if it and its version suffix fit.
-
-        Writes create a version record at ``{path}/.versions/1`` (13 extra
-        chars), so the file path must leave room within the 4096-char
-        column limit.
-        """
-        # Target: 4096 - len("/.versions/1") == 4084
-        target = 4096 - len("/.versions/1")
+        """A long path should be accepted if its projected metadata fits."""
+        target = 4096 - len("/.txt")
         # Build with 16-char segments: "/aaaa.../aaaa.../file.txt"
         prefix = "/a" * (target // 2)  # each "/a" is 2 chars
         path = prefix[: target - 4] + ".txt"
@@ -264,7 +258,7 @@ class TestBatchAdversarial:
 
         # A version path should be rejected
         async with db._use_session() as s:
-            r = await db._write_impl("/x.txt/.versions/1", "nope", session=s)
+            r = await db._write_impl("/.vfs/x.txt/__meta__/versions/1", "nope", session=s)
         assert not r.success
 
     async def test_batch_all_duplicate_paths(self, db: DatabaseFileSystem):
@@ -323,7 +317,7 @@ class TestVersionStress:
 
         # Spot-check version 1 exists
         async with db._use_session() as s:
-            v1 = await db._get_object("/versioned.txt/.versions/1", s)
+            v1 = await db._get_object("/.vfs/versioned.txt/__meta__/versions/1", s)
         assert v1 is not None
         assert v1.kind == "version"
 
@@ -333,8 +327,8 @@ class TestVersionStress:
         await db.write("/stable.txt", "same")
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/stable.txt/.versions/1", s)
-            v2 = await db._get_object("/stable.txt/.versions/2", s)
+            v1 = await db._get_object("/.vfs/stable.txt/__meta__/versions/1", s)
+            v2 = await db._get_object("/.vfs/stable.txt/__meta__/versions/2", s)
         assert v1 is not None
         assert v2 is None, "Identical content should not create an additional version"
 
@@ -376,7 +370,7 @@ class TestChunkEdgeCases:
     async def test_chunk_parent_in_same_batch_after_chunk(self, db: DatabaseFileSystem):
         """Chunk appears BEFORE its parent file in the objects list."""
         objects = [
-            VFSObject(path="/src/module.py/.chunks/func", content="def func(): pass"),
+            VFSObject(path="/.vfs/src/module.py/__meta__/chunks/func", content="def func(): pass"),
             VFSObject(path="/src/module.py", content="full module"),
         ]
         r = await db.write(objects=objects)
@@ -386,14 +380,14 @@ class TestChunkEdgeCases:
     async def test_chunk_without_parent_file(self, db: DatabaseFileSystem):
         """Chunk with no parent file in DB or batch — must fail."""
         async with db._use_session() as s:
-            r = await db._write_impl("/ghost.py/.chunks/orphan", "orphan", session=s)
+            r = await db._write_impl("/.vfs/ghost.py/__meta__/chunks/orphan", "orphan", session=s)
         assert not r.success
         assert "parent" in r.error_message.lower()
 
     async def test_deeply_nested_chunk_path(self, db: DatabaseFileSystem):
         """Chunk path with a deep parent."""
         parent = "/a/b/c/d/e/f/g.py"
-        chunk = "/a/b/c/d/e/f/g.py/.chunks/deep"
+        chunk = "/.vfs/a/b/c/d/e/f/g.py/__meta__/chunks/deep"
         await db.write(parent, "content")
         r = await db.write(chunk, "chunk content")
         assert r.success
@@ -401,21 +395,21 @@ class TestChunkEdgeCases:
     async def test_chunk_overwrite(self, db: DatabaseFileSystem):
         """Overwriting a chunk should NOT create a version."""
         await db.write("/mod.py", "module")
-        await db.write("/mod.py/.chunks/fn", "original")
-        r = await db.write("/mod.py/.chunks/fn", "updated")
+        await db.write("/.vfs/mod.py/__meta__/chunks/fn", "original")
+        r = await db.write("/.vfs/mod.py/__meta__/chunks/fn", "updated")
         assert r.success
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/mod.py/.chunks/fn/.versions/1", s)
+            v1 = await db._get_object("/.vfs/.vfs/mod.py/__meta__/chunks/fn/__meta__/versions/1", s)
         assert v1 is None
 
     async def test_multiple_chunks_same_parent(self, db: DatabaseFileSystem):
         """Multiple chunks for the same parent in one batch."""
         objects = [
             VFSObject(path="/multi.py", content="multi"),
-            VFSObject(path="/multi.py/.chunks/a", content="chunk a"),
-            VFSObject(path="/multi.py/.chunks/b", content="chunk b"),
-            VFSObject(path="/multi.py/.chunks/c", content="chunk c"),
+            VFSObject(path="/.vfs/multi.py/__meta__/chunks/a", content="chunk a"),
+            VFSObject(path="/.vfs/multi.py/__meta__/chunks/b", content="chunk b"),
+            VFSObject(path="/.vfs/multi.py/__meta__/chunks/c", content="chunk c"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -593,14 +587,14 @@ class TestTypeConfusion:
 
     async def test_version_kind_rejected(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/f.txt/.versions/1", "nope", session=s)
+            r = await db._write_impl("/.vfs/f.txt/__meta__/versions/1", "nope", session=s)
         assert not r.success
 
     async def test_connection_kind_accepted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/a.py/.connections/imports/b.py", "nope", session=s)
+            r = await db._write_impl("/.vfs/a.py/__meta__/edges/out/imports/b.py", "nope", session=s)
         assert r.success
-        assert require_file(r).kind == "connection"
+        assert require_file(r).kind == "edge"
 
     async def test_object_with_mismatched_content_hash(self, db: DatabaseFileSystem):
         """Object with pre-set content_hash that doesn't match content.
@@ -618,8 +612,8 @@ class TestTypeConfusion:
         async with db._use_session() as s:
             r = await db._write_impl(
                 objects=[
-                    VFSObject(path="/v1.txt/.versions/1", content="v"),
-                    VFSObject(path="/v2.txt/.versions/2", content="v"),
+                    VFSObject(path="/.vfs/v1.txt/__meta__/versions/1", content="v"),
+                    VFSObject(path="/.vfs/v2.txt/__meta__/versions/2", content="v"),
                 ],
                 session=s,
             )
@@ -888,7 +882,7 @@ class TestSessionEdgeCases:
         """A failed write should not corrupt session for next write."""
         async with db._use_session() as s:
             # This should fail (version path)
-            r1 = await db._write_impl("/x.txt/.versions/1", "bad", session=s)
+            r1 = await db._write_impl("/.vfs/x.txt/__meta__/versions/1", "bad", session=s)
             assert not r1.success
 
             # This should succeed
@@ -921,7 +915,7 @@ class TestLargeBatchVersionCombo:
         assert r.content == f"v2_{mid}"
 
         async with db._use_session() as s:
-            v1 = await db._get_object(f"/scale/f{mid:06d}.txt/.versions/1", s)
+            v1 = await db._get_object(f"/.vfs/scale/f{mid:06d}.txt/__meta__/versions/1", s)
         assert v1 is not None
 
     async def test_triple_overwrite_verifies_chain(self, db: DatabaseFileSystem):
@@ -931,8 +925,8 @@ class TestLargeBatchVersionCombo:
         await db.write("/chain.txt", "v3")
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/chain.txt/.versions/1", s)
-            v2 = await db._get_object("/chain.txt/.versions/2", s)
+            v1 = await db._get_object("/.vfs/chain.txt/__meta__/versions/1", s)
+            v2 = await db._get_object("/.vfs/chain.txt/__meta__/versions/2", s)
         v1 = require_object(v1)
         v2 = require_object(v2)
         assert v1.is_snapshot is not None
@@ -1102,8 +1096,8 @@ class TestBatchOrderingGuarantees:
         objects = [
             VFSObject(path="/mix.py", content="module"),
             VFSObject(path="/other.py", content="other"),
-            VFSObject(path="/mix.py/.chunks/fn_a", content="fn a"),
-            VFSObject(path="/other.py/.chunks/fn_b", content="fn b"),
+            VFSObject(path="/.vfs/mix.py/__meta__/chunks/fn_a", content="fn a"),
+            VFSObject(path="/.vfs/other.py/__meta__/chunks/fn_b", content="fn b"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -1126,8 +1120,8 @@ class TestSameHashDifferentMetadata:
         assert r2.success
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/dup_id.txt/.versions/1", s)
-            v2 = await db._get_object("/dup_id.txt/.versions/2", s)
+            v1 = await db._get_object("/.vfs/dup_id.txt/__meta__/versions/1", s)
+            v2 = await db._get_object("/.vfs/dup_id.txt/__meta__/versions/2", s)
         assert v1 is not None
         assert v2 is None, "Identical content should not create an additional version"
 
@@ -1149,7 +1143,7 @@ class TestDiffLikeContent:
         assert r.success
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/diff.txt/.versions/1", s)
+            v1 = await db._get_object("/.vfs/diff.txt/__meta__/versions/1", s)
         assert v1 is not None
 
     async def test_content_with_at_at_markers(self, db: DatabaseFileSystem):
@@ -1264,7 +1258,7 @@ class TestCorruptedVersionChains:
         # at a path that doesn't collide with any real version
         async with db._use_session() as s:
             corrupt_v = VFSObject(
-                path="/corrupt_chain.txt/.versions/999",
+                path="/.vfs/corrupt_chain.txt/__meta__/versions/999",
                 content="corrupt",
                 version_number=None,
                 is_snapshot=None,
@@ -1294,8 +1288,8 @@ class TestIdempotency:
         await db.write("/idem.txt", "constant")
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/idem.txt/.versions/1", s)
-            v2 = await db._get_object("/idem.txt/.versions/2", s)
+            v1 = await db._get_object("/.vfs/idem.txt/__meta__/versions/1", s)
+            v2 = await db._get_object("/.vfs/idem.txt/__meta__/versions/2", s)
         assert v1 is not None
         assert v2 is None
 
@@ -1314,8 +1308,8 @@ class TestIdempotency:
         assert r2.success
 
         async with db._use_session() as s:
-            v1 = await db._get_object("/idem_batch/f.txt/.versions/1", s)
-            v2 = await db._get_object("/idem_batch/f.txt/.versions/2", s)
+            v1 = await db._get_object("/.vfs/idem_batch/f.txt/__meta__/versions/1", s)
+            v2 = await db._get_object("/.vfs/idem_batch/f.txt/__meta__/versions/2", s)
         assert v1 is not None
         assert v2 is None
 
@@ -1512,7 +1506,7 @@ class TestChunkValidationWithTinyBudget:
         """
         set_parameter_budget(db, 1)
         objects = [
-            VFSObject(path="/tiny_batch.py/.chunks/fn", content="def fn(): pass"),
+            VFSObject(path="/.vfs/tiny_batch.py/__meta__/chunks/fn", content="def fn(): pass"),
             VFSObject(path="/tiny_batch.py", content="module content"),
         ]
         r = await db.write(objects=objects)
@@ -1524,10 +1518,10 @@ class TestChunkValidationWithTinyBudget:
         set_parameter_budget(db, 1)
         objects = [
             VFSObject(path="/multi_chunk.py", content="module"),
-            VFSObject(path="/multi_chunk.py/.chunks/a", content="a"),
-            VFSObject(path="/multi_chunk.py/.chunks/b", content="b"),
-            VFSObject(path="/multi_chunk.py/.chunks/c", content="c"),
-            VFSObject(path="/multi_chunk.py/.chunks/d", content="d"),
+            VFSObject(path="/.vfs/multi_chunk.py/__meta__/chunks/a", content="a"),
+            VFSObject(path="/.vfs/multi_chunk.py/__meta__/chunks/b", content="b"),
+            VFSObject(path="/.vfs/multi_chunk.py/__meta__/chunks/c", content="c"),
+            VFSObject(path="/.vfs/multi_chunk.py/__meta__/chunks/d", content="d"),
         ]
         r = await db.write(objects=objects)
         assert r.success
@@ -1665,7 +1659,7 @@ class TestLargeWriteAndDelete:
         objects = []
         for i in range(n):
             objects.append(VFSObject(path=f"/code/f_{i:05d}.py", content=f"code {i}"))
-            objects.append(VFSObject(path=f"/code/f_{i:05d}.py/.chunks/main", content=f"def main_{i}():"))
+            objects.append(VFSObject(path=f"/.vfs/code/f_{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():"))
         r = await db.write(objects=objects)
         assert r.success
         assert len(r.entries) == n * 2
@@ -1678,8 +1672,8 @@ class TestLargeWriteAndDelete:
         mid = n // 2
         async with db._use_session() as s:
             f = await db._get_object(f"/code/f_{mid:05d}.py", s, include_deleted=True)
-            c = await db._get_object(f"/code/f_{mid:05d}.py/.chunks/main", s, include_deleted=True)
-            v = await db._get_object(f"/code/f_{mid:05d}.py/.versions/1", s, include_deleted=True)
+            c = await db._get_object(f"/.vfs/code/f_{mid:05d}.py/__meta__/chunks/main", s, include_deleted=True)
+            v = await db._get_object(f"/.vfs/code/f_{mid:05d}.py/__meta__/versions/1", s, include_deleted=True)
         assert f is None
         assert c is None
         assert v is None
@@ -1693,11 +1687,11 @@ class TestLargeWriteAndDelete:
 
         conns = [
             VFSObject(
-                path=f"/graph/node_{i:05d}.py/.connections/calls/graph/node_{i + 1:05d}.py",
-                kind="connection",
+                path=f"/.vfs/graph/node_{i:05d}.py/__meta__/edges/out/calls/graph/node_{i + 1:05d}.py",
+                kind="edge",
                 source_path=f"/graph/node_{i:05d}.py",
                 target_path=f"/graph/node_{i + 1:05d}.py",
-                connection_type="calls",
+                edge_type="calls",
             )
             for i in range(n - 1)
         ]
@@ -1793,7 +1787,7 @@ class TestLargeWriteAndDelete:
         # Add a chunk per file
         chunk_objects = [
             VFSObject(
-                path=f"{obj.path}/.chunks/main",
+                path=f"/.vfs{obj.path}/__meta__/chunks/main",
                 content=f"def main_{i}():",
             )
             for i, obj in enumerate(file_objects)
@@ -1804,11 +1798,14 @@ class TestLargeWriteAndDelete:
         # Add connections: each file → next file (circular)
         conn_objects = [
             VFSObject(
-                path=f"{file_objects[i].path}/.connections/calls/{file_objects[(i + 1) % n].path.lstrip('/')}",
-                kind="connection",
+                path=(
+                    f"/.vfs{file_objects[i].path}/__meta__/edges/out/"
+                    f"calls/{file_objects[(i + 1) % n].path.lstrip('/')}"
+                ),
+                kind="edge",
                 source_path=file_objects[i].path,
                 target_path=file_objects[(i + 1) % n].path,
-                connection_type="calls",
+                edge_type="calls",
             )
             for i in range(n)
         ]
@@ -1831,7 +1828,7 @@ class TestLargeWriteAndDelete:
         mid = n // 2
         async with db._use_session() as s:
             f = await db._get_object(file_objects[mid].path, s, include_deleted=True)
-            c = await db._get_object(f"{file_objects[mid].path}/.chunks/main", s, include_deleted=True)
+            c = await db._get_object(f"/.vfs{file_objects[mid].path}/__meta__/chunks/main", s, include_deleted=True)
         assert f is None
         assert c is None
 
@@ -1857,7 +1854,7 @@ class TestLargeWriteAndDelete:
                 )
                 all_objects.append(
                     VFSObject(
-                        path=f"/batch/d{d:04d}/f{f:03d}.py/.chunks/main",
+                        path=f"/.vfs/batch/d{d:04d}/f{f:03d}.py/__meta__/chunks/main",
                         content=f"def main_{d}_{f}():",
                     )
                 )
@@ -1894,7 +1891,7 @@ class TestLargeWriteAndDelete:
         all_objects: list[VFSObject] = []
         for i in range(n):
             all_objects.append(VFSObject(path=f"/flat/f{i:05d}.py", content=f"code {i}"))
-            all_objects.append(VFSObject(path=f"/flat/f{i:05d}.py/.chunks/main", content=f"def main_{i}():"))
+            all_objects.append(VFSObject(path=f"/.vfs/flat/f{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():"))
 
         r = await db.write(objects=all_objects)
         assert r.success, r.error_message

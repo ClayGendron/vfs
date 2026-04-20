@@ -159,7 +159,7 @@ class TestActionMode:
             ("move", "Moved"),
             ("copy", "Copied"),
             ("mkdir", "Created"),
-            ("mkconn", "Connected"),
+            ("mkedge", "Connected"),
         ]:
             result = VFSResult(function=op, entries=[_entry("/x")])
             output = render_query_result(result, _plan())

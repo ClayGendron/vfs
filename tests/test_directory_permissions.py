@@ -371,11 +371,11 @@ class TestWritableHoleAllows:
         finally:
             await router.close()
 
-    async def test_mkconn_source_in_hole_target_outside(self):
-        """Connections live on the source side — writable source is enough."""
+    async def test_mkedge_source_in_hole_target_outside(self):
+        """Edges live on the source side — writable source is enough."""
         router, _wiki = await _make_wiki_router()
         try:
-            r = await router.mkconn(
+            r = await router.mkedge(
                 "/wiki/synthesis/page.md",
                 "/wiki/raw/rfc.pdf",
                 "references",
@@ -423,10 +423,10 @@ class TestWritableHoleBlocks:
         finally:
             await router.close()
 
-    async def test_mkconn_source_outside_hole(self):
+    async def test_mkedge_source_outside_hole(self):
         router, _wiki = await _make_wiki_router()
         try:
-            r = await router.mkconn(
+            r = await router.mkedge(
                 "/wiki/raw/rfc.pdf",
                 "/wiki/synthesis/page.md",
                 "references",
@@ -591,19 +591,19 @@ class TestCascadeDeleteRespectsNestedRules:
             await router.close()
 
 
-class TestMkconnChecksConnectionWritePath:
-    """`mkconn` must check the actual connection metadata path it writes,
+class TestMkedgeChecksEdgeWritePath:
+    """`mkedge` must check the actual edge metadata path it writes,
     not just the source file path.  A rule placed on
-    `<source>/.connections` (or any ancestor of the connection write
+    `/.vfs/<source>/__meta__/edges/out` (or any ancestor of the edge write
     path) must fire just like it would for a direct write."""
 
-    async def test_mkconn_blocked_when_connections_subpath_frozen(self):
+    async def test_mkedge_blocked_when_edge_subpath_frozen(self):
         engine = await _sqlite_engine()
         fs = DatabaseFileSystem(
             engine=engine,
             permissions=PermissionMap(
                 default="read_write",
-                overrides=(("/page.md/.connections", "read"),),
+                overrides=(("/.vfs/page.md/__meta__/edges/out", "read"),),
             ),
         )
         await _seed(fs, "/page.md", "page")
@@ -611,7 +611,7 @@ class TestMkconnChecksConnectionWritePath:
         router = VFSClientAsync()
         await router.add_mount("wiki", fs)
         try:
-            r = await router.mkconn(
+            r = await router.mkedge(
                 "/wiki/page.md",
                 "/wiki/other.md",
                 "references",
@@ -619,19 +619,19 @@ class TestMkconnChecksConnectionWritePath:
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
             # And no row should have been written under the frozen namespace.
-            stat = await router.stat("/wiki/page.md/.connections/references/other.md")
+            stat = await router.stat("/wiki/.vfs/page.md/__meta__/edges/out/references/other.md")
             assert not stat.success
         finally:
             await router.close()
 
-    async def test_mkconn_blocked_when_specific_connection_type_frozen(self):
-        """Even narrower: freeze just one connection type under one file."""
+    async def test_mkedge_blocked_when_specific_edge_type_frozen(self):
+        """Even narrower: freeze just one edge type under one file."""
         engine = await _sqlite_engine()
         fs = DatabaseFileSystem(
             engine=engine,
             permissions=PermissionMap(
                 default="read_write",
-                overrides=(("/page.md/.connections/references", "read"),),
+                overrides=(("/.vfs/page.md/__meta__/edges/out/references", "read"),),
             ),
         )
         await _seed(fs, "/page.md", "page")
@@ -640,14 +640,14 @@ class TestMkconnChecksConnectionWritePath:
         await router.add_mount("wiki", fs)
         try:
             # The frozen connection type is rejected.
-            r = await router.mkconn(
+            r = await router.mkedge(
                 "/wiki/page.md",
                 "/wiki/other.md",
                 "references",
             )
             assert not r.success
             # A different connection type still succeeds.
-            r2 = await router.mkconn(
+            r2 = await router.mkedge(
                 "/wiki/page.md",
                 "/wiki/other.md",
                 "imports",
@@ -813,9 +813,9 @@ class TestMetadataInheritance:
         router = VFSClientAsync()
         await router.add_mount("wiki", wiki)
         try:
-            # Writes targeted at the .chunks namespace under a read-only file
+            # Writes targeted at the projected chunk namespace under a read-only file
             # should be blocked just like the file itself.
-            chunk_path = "/wiki/raw/rfc.pdf/.chunks/section1"
+            chunk_path = "/wiki/.vfs/raw/rfc.pdf/__meta__/chunks/section1"
             r = await router.write(chunk_path, "chunk-content")
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message

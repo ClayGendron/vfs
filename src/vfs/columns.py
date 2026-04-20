@@ -63,7 +63,7 @@ DEFAULT_COLUMNS: dict[str, frozenset[str]] = {
     "move": _PATH_KIND_ONLY,
     "copy": _PATH_KIND_ONLY,
     "mkdir": _PATH_KIND_ONLY,
-    "mkconn": _PATH_KIND_ONLY,
+    "mkedge": _PATH_KIND_ONLY,
     # Graph traversals
     "predecessors": _PATH_KIND_ONLY,
     "successors": _PATH_KIND_ONLY,

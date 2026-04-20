@@ -60,19 +60,19 @@ class TestKindInference:
         assert obj.kind == "directory"
 
     def test_chunk(self):
-        obj = VFSObject(path="/src/auth.py/.chunks/login")
+        obj = VFSObject(path="/.vfs/src/auth.py/__meta__/chunks/login")
         assert obj.kind == "chunk"
 
     def test_version(self):
-        obj = VFSObject(path="/src/auth.py/.versions/3")
+        obj = VFSObject(path="/.vfs/src/auth.py/__meta__/versions/3")
         assert obj.kind == "version"
 
     def test_connection(self):
-        obj = VFSObject(path="/a.py/.connections/imports/b.py")
-        assert obj.kind == "connection"
+        obj = VFSObject(path="/.vfs/a.py/__meta__/edges/out/imports/b.py")
+        assert obj.kind == "edge"
 
     def test_api(self):
-        obj = VFSObject(path="/jira/.apis/ticket")
+        obj = VFSObject(path="/.vfs/jira/__meta__/apis/ticket")
         assert obj.kind == "api"
 
     def test_dotfile(self):
@@ -122,24 +122,24 @@ class TestExtensionDerivation:
         assert obj.ext is None
 
     def test_chunk_has_null_ext_even_if_name_has_dot(self):
-        obj = VFSObject(path="/src/auth.py/.chunks/login")
+        obj = VFSObject(path="/.vfs/src/auth.py/__meta__/chunks/login")
         assert obj.kind == "chunk"
         assert obj.ext is None
 
     def test_version_has_null_ext(self):
-        obj = VFSObject(path="/src/auth.py/.versions/3")
+        obj = VFSObject(path="/.vfs/src/auth.py/__meta__/versions/3")
         assert obj.kind == "version"
         assert obj.ext is None
 
     def test_connection_has_null_ext_despite_py_suffix(self):
         """Connection paths end in a target like `/b.py` but are not files —
         the index must not pollute with non-file rows."""
-        obj = VFSObject(path="/a.py/.connections/imports/b.py")
-        assert obj.kind == "connection"
+        obj = VFSObject(path="/.vfs/a.py/__meta__/edges/out/imports/b.py")
+        assert obj.kind == "edge"
         assert obj.ext is None
 
     def test_api_has_null_ext(self):
-        obj = VFSObject(path="/jira/.apis/ticket")
+        obj = VFSObject(path="/.vfs/jira/__meta__/apis/ticket")
         assert obj.kind == "api"
         assert obj.ext is None
 
@@ -181,19 +181,19 @@ class TestName:
         assert obj.name == ""
 
     def test_chunk(self):
-        obj = VFSObject(path="/src/auth.py/.chunks/login")
+        obj = VFSObject(path="/.vfs/src/auth.py/__meta__/chunks/login")
         assert obj.name == "login"
 
     def test_version(self):
-        obj = VFSObject(path="/src/auth.py/.versions/3")
+        obj = VFSObject(path="/.vfs/src/auth.py/__meta__/versions/3")
         assert obj.name == "3"
 
     def test_connection(self):
-        obj = VFSObject(path="/a.py/.connections/imports/src/utils.py")
+        obj = VFSObject(path="/.vfs/a.py/__meta__/edges/out/imports/src/utils.py")
         assert obj.name == "utils.py"
 
     def test_api(self):
-        obj = VFSObject(path="/jira/.apis/ticket")
+        obj = VFSObject(path="/.vfs/jira/__meta__/apis/ticket")
         assert obj.name == "ticket"
 
     def test_explicit_name_preserved(self):
@@ -215,12 +215,12 @@ class TestParentPath:
         assert obj.parent_path == "/"
 
     def test_chunk_parent_is_owning_file(self):
-        obj = VFSObject(path="/src/auth.py/.chunks/login")
-        assert obj.parent_path == "/src/auth.py"
+        obj = VFSObject(path="/.vfs/src/auth.py/__meta__/chunks/login")
+        assert obj.parent_path == "/.vfs/src/auth.py/__meta__/chunks"
 
-    def test_connection_parent_is_owning_file(self):
-        obj = VFSObject(path="/a.py/.connections/imports/b.py")
-        assert obj.parent_path == "/a.py"
+    def test_edge_parent_uses_literal_projected_parent(self):
+        obj = VFSObject(path="/.vfs/a.py/__meta__/edges/out/imports/b.py")
+        assert obj.parent_path == "/.vfs/a.py/__meta__/edges/out/imports"
 
     def test_explicit_parent_preserved(self):
         obj = VFSObject(path="/src/auth.py", parent_path="/custom")
@@ -228,37 +228,37 @@ class TestParentPath:
 
 
 # =========================================================================
-# Connection decomposition
+# Edge decomposition
 # =========================================================================
 
 
-class TestConnectionDecomposition:
+class TestEdgeDecomposition:
     def test_fields_extracted(self):
-        obj = VFSObject(path="/src/auth.py/.connections/imports/src/utils.py")
+        obj = VFSObject(path="/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
         assert obj.source_path == "/src/auth.py"
         assert obj.target_path == "/src/utils.py"
-        assert obj.connection_type == "imports"
+        assert obj.edge_type == "imports"
 
     def test_deep_target(self):
-        obj = VFSObject(path="/a.py/.connections/calls/deep/nested/path.py")
+        obj = VFSObject(path="/.vfs/a.py/__meta__/edges/out/calls/deep/nested/path.py")
         assert obj.target_path == "/deep/nested/path.py"
 
-    def test_explicit_connection_fields_preserved(self):
+    def test_explicit_edge_fields_preserved(self):
         obj = VFSObject(
-            path="/a.py/.connections/imports/b.py",
+            path="/.vfs/a.py/__meta__/edges/out/imports/b.py",
             source_path="/custom",
             target_path="/custom-target",
-            connection_type="custom-type",
+            edge_type="custom-type",
         )
         assert obj.source_path == "/custom"
         assert obj.target_path == "/custom-target"
-        assert obj.connection_type == "custom-type"
+        assert obj.edge_type == "custom-type"
 
-    def test_non_connection_path_no_decomposition(self):
+    def test_non_edge_path_has_no_decomposition(self):
         obj = VFSObject(path="/src/auth.py")
         assert obj.source_path is None
         assert obj.target_path is None
-        assert obj.connection_type is None
+        assert obj.edge_type is None
 
 
 # =========================================================================
@@ -322,7 +322,7 @@ class TestContentMetrics:
 
     def test_version_row_preserves_explicit_metadata(self):
         obj = VFSObject(
-            path="/a.py/.versions/2",
+            path="/.vfs/a.py/__meta__/versions/2",
             kind="version",
             content=None,
             version_diff="diff payload",
@@ -489,11 +489,11 @@ class TestAddStripPrefix:
         assert obj.strip_prefix("/m") is obj
 
     def test_chunk_kind_preserved(self):
-        obj = VFSObject(path="/src/mod.py/.chunks/fn", content="def fn(): pass")
-        obj.strip_prefix("/src")
-        assert obj.path == "/mod.py/.chunks/fn"
+        obj = VFSObject(path="/.vfs/src/mod.py/__meta__/chunks/fn", content="def fn(): pass")
+        obj.strip_prefix("/.vfs/src")
+        assert obj.path == "/mod.py/__meta__/chunks/fn"
         assert obj.kind == "chunk"
-        assert obj.parent_path == "/mod.py"
+        assert obj.parent_path == "/mod.py/__meta__/chunks"
 
     # -- add_prefix normalization ------------------------------------------
 
@@ -595,17 +595,17 @@ class TestDBRoundTrip:
             assert list(loaded.embedding) == [0.1, 0.2, 0.3]
 
     def test_connection_round_trip(self, engine):
-        obj = VFSObject(path="/a.py/.connections/imports/b.py")
+        obj = VFSObject(path="/.vfs/a.py/__meta__/edges/out/imports/b.py")
         with Session(engine) as s:
             s.add(obj)
             s.commit()
 
         with Session(engine) as s:
-            loaded = s.exec(select(VFSObject).where(VFSObject.path == "/a.py/.connections/imports/b.py")).one()
-            assert loaded.kind == "connection"
+            loaded = s.exec(select(VFSObject).where(VFSObject.path == "/.vfs/a.py/__meta__/edges/out/imports/b.py")).one()
+            assert loaded.kind == "edge"
             assert loaded.source_path == "/a.py"
             assert loaded.target_path == "/b.py"
-            assert loaded.connection_type == "imports"
+            assert loaded.edge_type == "imports"
 
     def test_postgres_native_model_uses_portable_round_trip_on_sqlite(self, engine):
         native_model = postgres_native_vfs_object_model(dimension=3)

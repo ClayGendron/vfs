@@ -17,7 +17,7 @@ async def query_fs(db: DatabaseFileSystem):
         await db._write_impl("/src/api.py", "import auth\nimport utils", session=session)
         await db._write_impl("/src/config.py", "DEBUG = True", session=session)
 
-    for source, target, connection_type in [
+    for source, target, edge_type in [
         ("/src/auth.py", "/src/utils.py", "imports"),
         ("/src/auth.py", "/src/db.py", "calls"),
         ("/src/utils.py", "/src/db.py", "imports"),
@@ -25,7 +25,7 @@ async def query_fs(db: DatabaseFileSystem):
         ("/src/api.py", "/src/utils.py", "imports"),
     ]:
         async with db._use_session() as session:
-            await db._mkconn_impl(source, target, connection_type, session=session)
+            await db._mkedge_impl(source, target, edge_type, session=session)
 
     return db
 

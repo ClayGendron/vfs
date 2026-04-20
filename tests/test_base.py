@@ -40,7 +40,7 @@ class _FullRoutingFS(VirtualFileSystem):
         "mkdir",
         "move",
         "copy",
-        "mkconn",
+        "mkedge",
         "tree",
         "glob",
         "grep",
@@ -909,37 +909,37 @@ class TestPublicTwoPath:
 
 
 # =========================================================================
-# Public methods — mkconn
+# Public methods — mkedge
 # =========================================================================
 
 
-class TestPublicMkconn:
-    async def test_mkconn_same_mount(self):
+class TestPublicMkedge:
+    async def test_mkedge_same_mount(self):
         root = _FullRoutingFS("root")
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        child.mkconn_mock.return_value = VFSResult(function="mkconn", entries=[_entry("/a.py")])
-        result = await root.mkconn("/data/a.py", "/data/b.py", "imports")
-        child.mkconn_mock.assert_awaited_once()
+        child.mkedge_mock.return_value = VFSResult(function="mkedge", entries=[_entry("/a.py")])
+        result = await root.mkedge("/data/a.py", "/data/b.py", "imports")
+        child.mkedge_mock.assert_awaited_once()
         assert result.success is True
 
-    async def test_mkconn_cross_mount_returns_error(self):
+    async def test_mkedge_cross_mount_returns_error(self):
         root = _FullRoutingFS("root")
         m1 = _FullRoutingFS("m1")
         m2 = _FullRoutingFS("m2")
         await root.add_mount("/m1", m1)
         await root.add_mount("/m2", m2)
 
-        result = await root.mkconn("/m1/a.py", "/m2/b.py", "imports")
+        result = await root.mkedge("/m1/a.py", "/m2/b.py", "imports")
         assert result.success is False
         assert "Cross-mount" in result.errors[0]
 
-    async def test_mkconn_on_root_filesystem(self):
+    async def test_mkedge_on_root_filesystem(self):
         fs = _FullRoutingFS()
-        fs.mkconn_mock.return_value = VFSResult(function="mkconn", entries=[_entry("/a.py")])
-        result = await fs.mkconn("/a.py", "/b.py", "imports")
-        fs.mkconn_mock.assert_awaited_once()
+        fs.mkedge_mock.return_value = VFSResult(function="mkedge", entries=[_entry("/a.py")])
+        result = await fs.mkedge("/a.py", "/b.py", "imports")
+        fs.mkedge_mock.assert_awaited_once()
         assert result.success is True
 
 

@@ -102,8 +102,8 @@ class CopyCommand(StageNode):
 
 
 @dataclass(frozen=True)
-class MkconnCommand(StageNode):
-    connection_type: str
+class MkedgeCommand(StageNode):
+    edge_type: str
     target: str
     source: str | None = None
 

@@ -146,7 +146,7 @@ class TestCheckWritable:
         assert "edit" in MUTATING_OPS
         assert "delete" in MUTATING_OPS
         assert "mkdir" in MUTATING_OPS
-        assert "mkconn" in MUTATING_OPS
+        assert "mkedge" in MUTATING_OPS
         assert "move" in MUTATING_OPS
         assert "copy" in MUTATING_OPS
         # Read ops must not be in the set
@@ -226,12 +226,12 @@ class TestReadOnlyBlocksMutations:
         finally:
             await router.close()
 
-    async def test_mkconn_rejected(self):
+    async def test_mkedge_rejected(self):
         router, ro, _rw = await _make_router(ro_seed=None)
         try:
             await _seed(ro, "/a.md", "a")
             await _seed(ro, "/b.md", "b")
-            result = await router.mkconn("/ro/a.md", "/ro/b.md", "references")
+            result = await router.mkedge("/ro/a.md", "/ro/b.md", "references")
             assert not result.success
             assert "Cannot write to read-only path" in result.error_message
         finally:

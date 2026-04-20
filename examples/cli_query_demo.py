@@ -33,7 +33,7 @@ async def build_demo_fs() -> DatabaseFileSystem:
         await fs._write_impl("/src/config.py", "DEBUG = True", session=session)
         await fs._write_impl("/docs/notes.md", "# Notes\n\nAuthentication design notes.", session=session)
 
-    for source, target, connection_type in [
+    for source, target, edge_type in [
         ("/src/auth.py", "/src/utils.py", "imports"),
         ("/src/auth.py", "/src/db.py", "calls"),
         ("/src/utils.py", "/src/db.py", "imports"),
@@ -41,7 +41,7 @@ async def build_demo_fs() -> DatabaseFileSystem:
         ("/src/api.py", "/src/utils.py", "imports"),
     ]:
         async with fs._use_session() as session:
-            await fs._mkconn_impl(source, target, connection_type, session=session)
+            await fs._mkedge_impl(source, target, edge_type, session=session)
 
     return fs
 
