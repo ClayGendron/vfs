@@ -18,6 +18,7 @@ from vfs.backends.postgres import (
     _quote_tsquery_term,
 )
 from vfs.models import postgres_native_vfs_object_model, postgres_vector_column_spec
+from vfs.paths import edge_out_path, decompose_edge
 from vfs.results import Entry, VFSResult
 from vfs.vector import Vector
 
@@ -73,6 +74,23 @@ async def _seed_native_embeddings(db: PostgresFileSystem, rows: dict[str, list[f
             ],
             session=session,
         )
+
+
+async def _seed_graph(
+    db: PostgresFileSystem,
+    *,
+    nodes: tuple[str, ...],
+    edges: tuple[tuple[str, str, str], ...],
+) -> None:
+    async with db._use_session() as session:
+        for path in nodes:
+            await db._write_impl(path, path, session=session)
+        for source, target, edge_type in edges:
+            await db._mkedge_impl(source, target, edge_type, session=session)
+
+
+def _node_paths(result: VFSResult) -> set[str]:
+    return {entry.path for entry in result.entries if decompose_edge(entry.path) is None}
 
 
 class TestTsqueryHelpers:
@@ -415,3 +433,74 @@ class TestLegacyMigrationPath:
         await migrated.verify_native_search_schema()
         result = await migrated.vector_search([1.0, 0.0, 0.0, 0.0], k=1)
         assert result.paths == ("/legacy.py",)
+
+
+class TestMeetingSubgraphSpecCompatibility:
+    async def test_current_database_backed_path_already_strips_dangling_spurs(self, postgres_legacy_db):
+        await _seed_graph(
+            postgres_legacy_db,
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/c.py", "imports"),
+                ("/a.py", "/d.py", "imports"),
+            ),
+        )
+
+        result = await postgres_legacy_db.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
+        )
+
+        assert result.success
+        assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
+        assert "/d.py" not in _node_paths(result)
+
+    async def test_live_connection_rows_remain_authoritative_for_graph_topology(self, postgres_legacy_db):
+        conn = postgres_legacy_db._model(
+            path=edge_out_path("/ghost/a.py", "/ghost/b.py", "imports"),
+            kind="edge",
+            source_path="/ghost/a.py",
+            target_path="/ghost/b.py",
+            edge_type="imports",
+        )
+
+        async with postgres_legacy_db._use_session() as session:
+            session.add(conn)
+
+        result = await postgres_legacy_db.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/ghost/a.py"), Entry(path="/ghost/b.py")])
+        )
+
+        assert result.success
+        assert _node_paths(result) == {"/ghost/a.py", "/ghost/b.py"}
+        assert edge_out_path("/ghost/a.py", "/ghost/b.py", "imports") in result.paths
+
+
+class TestMeetingSubgraphNativeContract:
+    @pytest.mark.xfail(strict=True, reason="Native Postgres graph schema hooks are not implemented yet.")
+    async def test_exposes_explicit_native_graph_schema_hooks(self, postgres_legacy_db):
+        assert hasattr(postgres_legacy_db, "verify_native_graph_schema")
+        assert hasattr(postgres_legacy_db, "install_native_graph_schema")
+
+    @pytest.mark.xfail(strict=True, reason="Postgres meeting_subgraph still delegates to the Rustworkx cache.")
+    async def test_does_not_delegate_to_cached_rustworkx_graph(self, postgres_legacy_db, monkeypatch):
+        await _seed_graph(
+            postgres_legacy_db,
+            nodes=("/a.py", "/b.py", "/c.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/c.py", "imports"),
+            ),
+        )
+
+        async def _boom(*args, **kwargs):
+            raise AssertionError("delegated to cached RustworkxGraph")
+
+        monkeypatch.setattr(postgres_legacy_db._graph, "meeting_subgraph", _boom)
+
+        result = await postgres_legacy_db.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
+        )
+
+        assert result.success
+        assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
