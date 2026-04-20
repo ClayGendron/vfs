@@ -19,7 +19,7 @@ Requires Python 3.12+.
 ```bash
 uvx ruff check src/ tests/
 uvx ruff format --check src/ tests/
-uvx ty check src/
+uvx --refresh ty check src/
 uv run pytest
 uv run mkdocs build --clean
 ```

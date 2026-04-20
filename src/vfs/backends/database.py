@@ -189,6 +189,11 @@ def _unchecked_select(*entities: Any) -> Any:
     return cast("Any", select)(*entities)
 
 
+def _unchecked_clause(expression: object) -> Any:
+    """Pass SQLAlchemy clauses through Any to sidestep stub precision gaps."""
+    return cast("Any", expression)
+
+
 class DatabaseFileSystem(VirtualFileSystem):
     """SQL-backed filesystem — portable baseline using SQLAlchemy.
 
@@ -379,7 +384,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         include_deleted: bool = False,
     ) -> VFSObjectBase | None:
         """Fetch a single object by exact path."""
-        stmt = select(self._model).where(self._model.path == path)
+        stmt = select(self._model).where(_unchecked_clause(self._model.path == path))
         if not include_deleted:
             stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
         result = await session.execute(stmt)
@@ -789,7 +794,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
-                self._model.kind == required_kind,
+                _unchecked_clause(self._model.kind == required_kind),
             )
             if not include_deleted:
                 stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
@@ -1956,15 +1961,17 @@ class DatabaseFileSystem(VirtualFileSystem):
             # only need to find incoming edges from other files
             # whose target_path points into the moved subtree.
             conn_stmt = select(self._model).where(
-                self._model.kind == "edge",
+                _unchecked_clause(self._model.kind == "edge"),
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 or_(
-                    self._model.target_path == op.src,  # ty: ignore[invalid-argument-type]
+                    _unchecked_clause(self._model.target_path == op.src),
                     self._model.target_path.like(_escape_like(op.src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
                 ),
             )
             conn_result = await session.execute(conn_stmt)
             for conn in conn_result.scalars().all():
+                if conn.source_path is None or conn.target_path is None or conn.edge_type is None:
+                    continue
                 conn.target_path = op.dest + conn.target_path[len(op.src) :]
                 conn.path = edge_out_path(
                     conn.source_path,

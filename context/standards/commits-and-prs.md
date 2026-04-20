@@ -48,7 +48,7 @@ In order:
 
 1. `uvx ruff format src/ tests/`
 2. `uvx ruff check src/ tests/`
-3. `uvx ty check src/`
+3. `uvx --refresh ty check src/`
 4. `uv run pytest`
 5. `git push`
 

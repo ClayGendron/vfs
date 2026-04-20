@@ -12,7 +12,7 @@ database.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from sqlalchemy import Text, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -220,7 +220,7 @@ class PostgresFileSystem(DatabaseFileSystem):
                     "  AND opc.opcname = :opclass "
                     "LIMIT 1"
                 ).bindparams(
-                    bindparam("methods", type_=ARRAY(Text())),
+                    bindparam("methods", type_=cast("Any", ARRAY(Text()))),
                 ),
                 {
                     "oid": object_id,
@@ -381,7 +381,7 @@ class PostgresFileSystem(DatabaseFileSystem):
                     FROM {table}
                     WHERE path = ANY(:paths)
                       AND deleted_at IS NULL
-                """).bindparams(bindparam("paths", type_=ARRAY(Text()))),
+                """).bindparams(bindparam("paths", type_=cast("Any", ARRAY(Text())))),
                 {"paths": top_paths},
             )
         ).all()
@@ -691,7 +691,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         """)
         bind_params = [bindparam("query_vector", type_=vector_type.pgvector_sqlalchemy_type())]
         if candidates is not None:
-            bind_params.append(bindparam("candidate_paths", type_=ARRAY(Text())))
+            bind_params.append(bindparam("candidate_paths", type_=cast("Any", ARRAY(Text()))))
         sql = sql.bindparams(*bind_params)
         rows = (await session.execute(sql, params)).all()
         result = VFSResult(

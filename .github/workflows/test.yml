@@ -40,7 +40,7 @@ jobs:
 
       - name: Type check
         if: matrix.python-version == '3.13'
-        run: uvx ty check src/
+        run: uvx --refresh ty check src/
 
       - name: Tests
         run: >-
