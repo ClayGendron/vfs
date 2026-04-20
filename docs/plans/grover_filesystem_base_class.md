@@ -63,7 +63,7 @@ This is the only synthetic namespace behavior in the base plan. Everything else 
 ### No cross-mount connections — enforced at routing layer
 
 Validation lives in the public routing methods, not the storage layer:
-- **`mkconn()`** validates source and target resolve to the same terminal filesystem.
+- **`mkedge()`** validates source and target resolve to the same terminal filesystem.
 - **`write()`** checks if the path is a connection kind (via `parse_kind()`). If so, decomposes the connection path and validates source/target are same-mount.
 
 If validation fails, returns `success=False`. The `_*_impl` layer does not validate mounts — it trusts its caller. This keeps the enforcement centralized in one place (the routing layer) rather than scattered across `_mkconn_impl`, `_write_impl`, and model validators.
@@ -219,7 +219,7 @@ Note: individual candidate failures are tracked in `Detail.success` on each cand
 
 ## 4 Routing Patterns in Public Methods
 
-### Case 1: Single-path ops (read, stat, write, edit, delete, mkdir, mkconn)
+### Case 1: Single-path ops (read, stat, write, edit, delete, mkdir, mkedge)
 
 ```python
 async def read(self, path: str | None = None, candidates: GroverResult | None = None,
@@ -361,10 +361,10 @@ Instead, the base SQL implementation should be split into lower-level helpers fo
 | `_lexical_search_impl` | FTS query | empty result | inherited |
 | graph ops | graph provider query | empty result | inherited |
 
-### mkconn cross-mount validation
+### mkedge cross-mount validation
 
 ```python
-async def mkconn(self, source: str, target: str, connection_type: str,
+async def mkedge(self, source: str, target: str, edge_type: str,
                  *, session: AsyncSession | None = None) -> GroverResult:
     src_fs, src_rel, src_pfx = self._resolve_terminal(source)
     tgt_fs, tgt_rel, tgt_pfx = self._resolve_terminal(target)
@@ -375,7 +375,7 @@ async def mkconn(self, source: str, target: str, connection_type: str,
         return result
     use_session = session if src_fs is self else None
     async with src_fs._use_session(use_session) as s:
-        result = await src_fs._mkconn_impl(src_rel, tgt_rel, connection_type, session=s)
+        result = await src_fs._mkconn_impl(src_rel, tgt_rel, edge_type, session=s)
     result = self._rebase_result(result, src_pfx)
     result._grover = self
     return result
@@ -398,7 +398,7 @@ Rewrite `src/grover/protocol.py` — Protocol → concrete base class.
 - `_merge_batch()` — all success = True (for candidate CRUD)
 - `_group_by_terminal()`, `_dispatch_candidates()`
 - All public methods (4 routing patterns) calling `_*_impl`
-- Connection validation in `mkconn()` and `write()` — cross-mount check at routing layer
+- Connection validation in `mkedge()` and `write()` — cross-mount check at routing layer
 - All `_*_impl(path, *, session: AsyncSession | None)` and `_*_batch_impl` — raise `NotImplementedError`
 
 ### Phase 2: AsyncGrover + DatabaseFileSystem + Grover
@@ -436,7 +436,7 @@ Graph and search `_impl` depend on providers (rustworkx, vector stores) — stub
 13. Candidate session reuse when all resolve to self
 14. Two-path same mount → fast path
 15. Two-path cross mount → content transfer
-16. mkconn cross-mount → `success=False`
+16. mkedge cross-mount → `success=False`
 17. `_grover` stamped on all results, points to outermost caller
 18. Partial fan-out failure: one mount fails, merged result still `success=True`
 19. Async `_grover` chaining: chain stub returns awaitable
@@ -449,7 +449,7 @@ Graph and search `_impl` depend on providers (rustworkx, vector stores) — stub
 24. Write + grep matches content
 25. ls returns children (metadata hidden by default)
 26. delete soft-deletes
-27. mkconn creates connection with correct kind/source/target
+27. mkedge creates connection with correct kind/source/target
 28. Batch read `WHERE IN`
 29. stat returns metadata without content
 
@@ -467,8 +467,8 @@ Graph and search `_impl` depend on providers (rustworkx, vector stores) — stub
 
 - `paths.py:normalize_path()` (line 157) — mount path normalization
 - `paths.py:parse_kind()` (line 238) — LocalFileSystem dispatch
-- `paths.py:connection_path()` (line 389) — mkconn path building
-- `paths.py:decompose_connection()` (line 426) — connection parsing
+- `paths.py:edge_out_path()` (line 389) — mkedge path building
+- `paths.py:decompose_edge()` (line 426) — connection parsing
 - `results.py:GroverResult._with_candidates()` (line 259) — rebasing
 - `results.py:GroverResult.__or__()` (line 227) — merging
 - `results.py:GroverResult._grover` (line 134) — binding

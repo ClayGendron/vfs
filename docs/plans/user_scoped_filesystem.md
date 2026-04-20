@@ -45,17 +45,17 @@ Add at the bottom:
 - **`unscope_path(path: str, user_id: str) -> str`** — reverse. Raises if prefix doesn't match
 
 **Connection paths have scoped targets** — both source and target are prefixed:
-- `/123/src/main.py/.connections/imports/123/src/auth.py`
-- `decompose_connection()` naturally gives `source=/123/src/main.py`, `target=/123/src/auth.py` — matches DB columns exactly
-- Unscoping uses `decompose_connection()` → `unscope_path()` both parts → `connection_path()` to reconstruct
+- `/.vfs/123/src/main.py/__meta__/edges/out/imports/123/src/auth.py`
+- `decompose_edge()` naturally gives `source=/123/src/main.py`, `target=/123/src/auth.py` — matches DB columns exactly
+- Unscoping uses `decompose_edge()` → `unscope_path()` both parts → `edge_out_path()` to reconstruct
 
 ---
 
 ## Phase 2: Result Unscoping (`results.py`)
 
 Add `GroverResult.strip_user_scope(user_id: str) -> GroverResult`:
-- For each candidate, check if path is a connection path via `decompose_connection()`
-- If connection: unscope source and target separately, reconstruct with `connection_path()`
+- For each candidate, check if path is a connection path via `decompose_edge()`
+- If connection: unscope source and target separately, reconstruct with `edge_out_path()`
 - Otherwise: call `unscope_path(c.path, user_id)`
 - Returns new `GroverResult` with unscoped paths (mirrors `add_prefix()` pattern)
 
@@ -114,12 +114,12 @@ async def run_query(self, query, *, user_id=None, initial=None):
 | `path` | Yes | Scoped by `_*_impl` before object creation |
 | `parent_path` | Auto | Derived from `path` by `_rederive_path_fields()` / `_normalize_and_derive()` |
 | `name` | No | Derived from `path`, not affected by prefix |
-| `source_path` | Yes | For connections: scoped source. Derived naturally by `decompose_connection()` from the scoped connection path |
-| `target_path` | Yes | For connections: scoped target (`/123/src/auth.py`). Derived naturally by `decompose_connection()` — no override needed |
+| `source_path` | Yes | For connections: scoped source. Derived naturally by `decompose_edge()` from the scoped connection path |
+| `target_path` | Yes | For connections: scoped target (`/123/src/auth.py`). Derived naturally by `decompose_edge()` — no override needed |
 | `original_path` | No change | Currently unused, no scoping needed |
 | `owner_id` | Set | Set to `user_id` on writes in user-scoped FS |
 
-**`_normalize_and_derive`** (line 472): The validator derives `source_path` and `target_path` from `decompose_connection(path)`. With Option B (scoped target in path), `decompose_connection("/123/src/main.py/.connections/imports/123/src/auth.py")` naturally gives `target="/123/src/auth.py"` — matching the scoped value. No explicit override needed. The validator works correctly without modification.
+**`_normalize_and_derive`** (line 472): The validator derives `source_path` and `target_path` from `decompose_edge(path)`. With Option B (scoped target in path), `decompose_edge("/.vfs/123/src/main.py/__meta__/edges/out/imports/123/src/auth.py")` naturally gives `target="/123/src/auth.py"` — matching the scoped value. No explicit override needed. The validator works correctly without modification.
 
 ---
 
@@ -182,26 +182,26 @@ In a user-scoped FS, connections can ONLY connect files within the same user's n
 
 **Connection path format:** both source and target are scoped:
 ```
-/123/src/main.py/.connections/imports/123/src/auth.py
+/.vfs/123/src/main.py/__meta__/edges/out/imports/123/src/auth.py
 ```
 
-**DB columns — all derived naturally by `decompose_connection()` from the path:**
+**DB columns — all derived naturally by `decompose_edge()` from the path:**
 - `source_path` = `/123/src/main.py` (scoped)
 - `target_path` = `/123/src/auth.py` (scoped)
 
 ```python
-async def _mkconn_impl(self, source=None, target=None, connection_type=None, *, user_id=None, session):
+async def _mkconn_impl(self, source=None, target=None, edge_type=None, *, user_id=None, session):
     if self._user_scoped and user_id:
         source = scope_path(source, user_id)
         target = scope_path(target, user_id)
         # Verify both exist as user's files
-    # connection_path(source, target, conn_type) builds the full path
+    # edge_out_path(source, target, conn_type) builds the full path
     # _normalize_and_derive decomposes it → source_path, target_path match
     ...
 ```
 
-**Unscoping connection results:** `strip_user_scope()` uses `decompose_connection()` to parse, `unscope_path()` both source and target, then `connection_path()` to reconstruct:
-- `/123/src/main.py/.connections/imports/123/src/auth.py` → `/src/main.py/.connections/imports/src/auth.py`
+**Unscoping connection results:** `strip_user_scope()` uses `decompose_edge()` to parse, `unscope_path()` both source and target, then `edge_out_path()` to reconstruct:
+- `/.vfs/123/src/main.py/__meta__/edges/out/imports/123/src/auth.py` → `/.vfs/src/main.py/__meta__/edges/out/imports/src/auth.py`
 
 ### 5e. Write — scope objects and set `owner_id`
 
@@ -332,7 +332,7 @@ async def ensure_fresh(self, session, *, user_id=None):
 **`_load(session, *, user_id=None)`** — add path prefix filter:
 ```python
 stmt = select(self._model).where(
-    self._model.kind == "connection",
+    self._model.kind == "edge",
     self._model.deleted_at.is_(None),
 )
 if self._user_scoped and user_id:
@@ -396,7 +396,7 @@ This is mechanical but must be done for ALL overridden `_*_impl` methods in test
 - Two users write same logical path — read isolation verified
 - `ls`, `glob`, `grep`, `tree` — only user's files returned
 - `delete`, `move`, `copy`, `edit` — scoped correctly
-- `mkconn` — source/target verified as user's files, connection path has scoped source AND target, `decompose_connection()` matches DB columns, unscoping strips both
+- `mkedge` — source/target verified as user's files, connection path has scoped source AND target, `decompose_edge()` matches DB columns, unscoping strips both
 - `owner_id` set on writes
 - `user_id=None` on scoped FS raises `ValueError`
 - `user_id` on non-scoped FS is ignored

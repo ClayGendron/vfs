@@ -260,7 +260,7 @@ Filesystem verbs:
 
 ```
 read  stat  ls  tree
-write edit  rm  mv  cp  mkdir  mkconn
+write edit  rm  mv  cp  mkdir  mkedge
 glob  grep  search  lsearch
 pred  succ  anc  desc  nbr  meet  pagerank
 call
@@ -407,7 +407,7 @@ atom        = access "contains" value
             | "(" expr ")"
 
 VERB        = "read" | "stat" | "ls" | "tree"
-            | "write" | "edit" | "rm" | "mv" | "cp" | "mkdir" | "mkconn"
+            | "write" | "edit" | "rm" | "mv" | "cp" | "mkdir" | "mkedge"
             | "glob" | "grep" | "search" | "lsearch"
             | "pred" | "succ" | "anc" | "desc" | "nbr" | "meet" | "pagerank"
             | "call"

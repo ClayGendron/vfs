@@ -39,7 +39,7 @@ The Wikipedia article on "Everything is a file" identifies three layers of the U
 Grover implements all three:
 
 - **Layer 1 (Uniform handle):** Every entity — document, chunk, version, connection — is a kinded object in the database. The `Ref` type wraps any path and can be passed to any operation (`read`, `write`, `delete`, `list`, `stat`).
-- **Layer 2 (Standard operations):** A small set of verbs (`read`, `write`, `delete`, `list`, `stat`, `edit`, `move`, `copy`, `mkdir`, `mkconn`, `glob`, `grep`, `search`) works on any path regardless of entity type. The path determines the semantics.
+- **Layer 2 (Standard operations):** A small set of verbs (`read`, `write`, `delete`, `list`, `stat`, `edit`, `move`, `copy`, `mkdir`, `mkedge`, `glob`, `grep`, `search`) works on any path regardless of entity type. The path determines the semantics.
 - **Layer 3 (Namespace):** All entities live in a single hierarchical namespace. Chunks are children of their file. Versions are children of their file. Connections are children of their source file. Discovery is `ls`. Search is `glob` and `grep`. Addressing is always a path.
 
 ## 3. The Namespace
@@ -117,15 +117,15 @@ Metadata children of a file use dot-prefixed directories, following the Unix con
 
 | Metadata type | Path pattern | Example |
 |---|---|---|
-| **Chunk** | `<file>/.chunks/<name>` | `/src/auth.py/.chunks/login` |
-| **Version** | `<file>/.versions/<N>` | `/src/auth.py/.versions/3` (cf. ext3cow's `@epoch` syntax) |
-| **Connection** | `<file>/.connections/<type>/<target>` | `/src/auth.py/.connections/imports/src/utils.py` |
+| **Chunk** | `<file>/.chunks/<name>` | `/.vfs/src/auth.py/__meta__/chunks/login` |
+| **Version** | `<file>/.versions/<N>` | `/.vfs/src/auth.py/__meta__/versions/3` (cf. ext3cow's `@epoch` syntax) |
+| **Connection** | `<file>/.connections/<type>/<target>` | `/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py` |
 | **API endpoint** | `<mount>/.api/<action>` | `/jira/.api/ticket` |
 
 This design has several properties:
 
 - **Standard path parsing.** No special sigils (`#`, `@`, `[]`). Every path is `/`-separated. Standard path libraries work unchanged.
-- **Glob works natively.** `glob("/src/**/.chunks/*")` finds all chunks. `glob("/**/.connections/imports/**")` finds all import edges. `glob("/**/.versions/*")` finds all versions.
+- **Glob works natively.** `glob("/src//.vfs/**/__meta__/chunks/*")` finds all chunks. `glob("//.vfs/**/__meta__/edges/out/imports/**")` finds all import edges. `glob("//.vfs/**/__meta__/versions/*")` finds all versions.
 - **`ls -a` semantics.** `ls /src/auth.py` hides metadata children by default. `ls -a /src/auth.py` reveals `.chunks/`, `.versions/`, `.connections/`. This matches Unix hidden file convention.
 - **No collision with user content.** Nobody creates source files or documents called `.chunks`.
 - **Prior art in versioning filesystems.** The `.versions/<N>` pattern follows ext3cow's `@epoch` syntax (`/path/to/file@1234567890`), which exposed historical versions as path-addressable entities in a real Linux filesystem. NILFS2 and the Elephant File System used similar approaches. Encoding version access in the path — rather than requiring a separate API — is a proven pattern for making time-travel discoverable and composable with standard tools.
@@ -138,12 +138,12 @@ This design has several properties:
 |---|---|---|
 | `/src/auth.py` | `/src` | Standard: split on `/`, drop last segment |
 | `/src` | `/` | Standard: split on `/`, drop last segment |
-| `/src/auth.py/.chunks/login` | `/src/auth.py` | Marker: everything before `/.chunks/` |
-| `/src/auth.py/.versions/3` | `/src/auth.py` | Marker: everything before `/.versions/` |
-| `/src/auth.py/.connections/imports/src/utils.py` | `/src/auth.py` | Marker: everything before `/.connections/` |
+| `/.vfs/src/auth.py/__meta__/chunks/login` | `/src/auth.py` | Marker: everything before `/.chunks/` |
+| `/.vfs/src/auth.py/__meta__/versions/3` | `/src/auth.py` | Marker: everything before `/.versions/` |
+| `/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py` | `/src/auth.py` | Marker: everything before `/.connections/` |
 | `/jira/.api/ticket` | `/jira` | Marker: everything before `/.api/` |
 
-Connection paths deserve special attention. The target path (`/src/utils.py`) can contain `/`, which means "split on `/`, drop last segment" would give `/src/auth.py/.connections/imports/src` — wrong. The correct parent is always derived using the `/.connections/` marker. This is handled by `Ref.base_path`:
+Connection paths deserve special attention. The target path (`/src/utils.py`) can contain `/`, which means "split on `/`, drop last segment" would give `/.vfs/src/auth.py/__meta__/edges/out/imports/src` — wrong. The correct parent is always derived using the `/.connections/` marker. This is handled by `Ref.base_path`:
 
 ```python
 @property
@@ -200,7 +200,7 @@ created_by      TEXT NULL
 -- Connection-specific
 source_path     TEXT NULL, INDEXED
 target_path     TEXT NULL, INDEXED
-connection_type TEXT NULL
+edge_type TEXT NULL
 weight          REAL DEFAULT 1.0
 
 -- Common
@@ -218,7 +218,7 @@ deleted_at      TIMESTAMP NULL
 - **Cascading deletes.** `DELETE FROM grover_objects WHERE parent_path = '/src/auth.py'` removes all chunks, versions, and connections in one query.
 - **Permission inheritance.** A share on `/src/auth.py` covers all its metadata children via path-prefix check.
 - **Unified search.** `grep` can search across file content, chunk content, and version content in one query.
-- **Unified glob.** `glob("/**/.connections/imports/**")` finds all import edges across the entire namespace.
+- **Unified glob.** `glob("//.vfs/**/__meta__/edges/out/imports/**")` finds all import edges across the entire namespace.
 
 **Why shares stay separate:**
 
@@ -280,7 +280,7 @@ class GroverFileSystem(Protocol):
     async def move(self, src, dest, *, session) -> GroverResult: ...
     async def copy(self, src, dest, *, session) -> GroverResult: ...
     async def mkdir(self, path, *, session) -> GroverResult: ...
-    async def mkconn(self, source, type, target, *, session) -> GroverResult: ...
+    async def mkedge(self, source, type, target, *, session) -> GroverResult: ...
 
     # Batch variants
     async def read_files(self, paths, *, session) -> GroverResult: ...
@@ -309,7 +309,7 @@ class GroverFileSystem(Protocol):
 
 **What disappeared:**
 
-- `add_connection` / `delete_connection` / `list_connections` → `mkconn()` / `delete()` / `list()`
+- `add_connection` / `delete_connection` / `list_connections` → `mkedge()` / `delete()` / `list()`
 - `replace_file_chunks` / `delete_file_chunks` / `list_file_chunks` / `write_chunks` → `write()` / `delete()` / `list()`
 - `search_add_batch` / `search_remove_file` → internal to the write/delete pipeline
 - `vector_search` / `lexical_search` → `search()` / `lsearch()`
@@ -341,11 +341,11 @@ Like Unix has `mkdir`, `mkfifo`, `mknod` — specialized creation commands for s
 
 ```bash
 grover mkdir  /documents/q1-reports/       # create directory
-grover mkconn /src/auth.py imports /src/utils.py  # create connection
-# creates: /src/auth.py/.connections/imports/src/utils.py
+grover mkedge /src/auth.py imports /src/utils.py  # create connection
+# creates: /.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py
 ```
 
-Under the hood, `mkconn` is `write()` with `kind=connection` — the same way `mkdir` is `mknod` with `S_IFDIR`. The named command is ergonomic sugar.
+Under the hood, `mkedge` is `write()` with `kind=connection` — the same way `mkdir` is `mknod` with `S_IFDIR`. The named command is ergonomic sugar.
 
 ### 5.4 Visibility Defaults: Files First, Metadata Opt-In
 
@@ -358,10 +358,10 @@ By default, operations return **files and directories only**. Metadata (chunks, 
 | `grep "pattern"` | Searches file content only | `grep "pattern" --chunks` includes chunk content |
 | `search "query"` | Matches files only (kind=file) | `search "query" --kinds chunk,version` includes metadata |
 | `tree /path` | Files and directories only | `tree -a /path` shows full tree including metadata |
-| `read /path/.chunks/foo` | Always works — explicit paths always resolve | N/A |
+| `read /.vfs/path/__meta__/chunks/foo` | Always works — explicit paths always resolve | N/A |
 | `predecessors`, `successors`, etc. | Returns files (traverses connections internally) | N/A |
 
-The principle: **if you name it explicitly, you get it. If you search broadly, you get files.** An agent doing `grep "timeout"` gets the 12 files that matter, not 500 chunk results for every function in the codebase. But `read /src/auth.py/.chunks/login` or `ls -a /src/auth.py` work exactly as expected when the agent specifically wants metadata.
+The principle: **if you name it explicitly, you get it. If you search broadly, you get files.** An agent doing `grep "timeout"` gets the 12 files that matter, not 500 chunk results for every function in the codebase. But `read /.vfs/src/auth.py/__meta__/chunks/login` or `ls -a /src/auth.py` work exactly as expected when the agent specifically wants metadata.
 
 `.api/` nodes follow stricter rules — they are **never** included in search results, never embedded, never versioned, never returned by graph traversal. They are control plane: discoverable via `ls -a` and `read`, actionable via `write`, but invisible to the knowledge layer.
 
@@ -393,7 +393,7 @@ That's ~40 tokens. The agent discovers capabilities progressively:
 
 ```bash
 $ grover --help
-Commands: read, write, edit, rm, mv, cp, mkdir, mkconn,
+Commands: read, write, edit, rm, mv, cp, mkdir, mkedge,
           ls, stat, tree, glob, grep, search, lsearch,
           pred, succ, anc, desc, nbr, meet, rank
 
@@ -430,7 +430,7 @@ grover rm     /documents/outdated.pdf
 grover mv     /documents/draft.md /documents/final.md
 grover cp     /src/auth.py /src/auth_backup.py
 grover mkdir  /documents/q1-reports/
-grover mkconn /src/auth.py imports /src/utils.py
+grover mkedge /src/auth.py imports /src/utils.py
 grover ls     /documents/quarterly-report-q4.pdf
 grover stat   /documents/quarterly-report-q4.pdf
 grover tree   /documents/
@@ -473,7 +473,7 @@ grover search "error handling" | grover glob "src/api/**" | grover nbr
 grover search "Q4 budget" | grover succ --type "authored-by"
 
 # "What tickets reference files that were recently changed?"
-grover glob "/**/.versions/[0-9]*" | grover pred --type "references"
+grover glob "/.vfs/**/__meta__/versions/[0-9]*" | grover pred --type "references"
 ```
 
 This is the Unix pipe model applied to enterprise search. Each stage refines or expands a set of paths. The `FileSearchResult` with its set algebra (`&`, `|`, `-`, `>>`) is the programmatic equivalent.
@@ -492,16 +492,16 @@ $ grover ls /documents/quarterly-report-q4.pdf
 .versions/
 .connections/
 
-$ grover ls /documents/quarterly-report-q4.pdf/.chunks/
+$ grover ls /.vfs/documents/quarterly-report-q4.pdf/__meta__/chunks/
 executive-summary
 revenue-analysis
 
-$ grover ls /documents/quarterly-report-q4.pdf/.connections/
+$ grover ls /.vfs/documents/quarterly-report-q4.pdf/__meta__/edges/out/
 references/
 authored-by/
 discussed-in/
 
-$ grover ls /documents/quarterly-report-q4.pdf/.connections/authored-by/
+$ grover ls /.vfs/documents/quarterly-report-q4.pdf/__meta__/edges/out/authored-by/
 people/jane-smith
 ```
 
@@ -647,7 +647,7 @@ class AnalysisResult:
     connections: list[ConnectionDescriptor]
 ```
 
-The `BackgroundWorker` calls the appropriate analyzer after a `write()`, then calls `write()` again for each chunk and `mkconn()` for each connection. The VFS doesn't care what kind of content triggered the analysis.
+The `BackgroundWorker` calls the appropriate analyzer after a `write()`, then calls `write()` again for each chunk and `mkedge()` for each connection. The VFS doesn't care what kind of content triggered the analysis.
 
 ### 9.2 Connection Types as a Vocabulary
 
@@ -669,7 +669,7 @@ Connection types are free-form strings, but a shared vocabulary emerges across a
 | `discussed-in` | Source was discussed in target | Cross-analyzer |
 | `contains` | Structural containment (in-memory only) | All analyzers |
 
-The connection type appears in the path: `/src/auth.py/.connections/imports/src/utils.py`. Glob patterns can query by type: `glob("/**/.connections/authored-by/**")` finds all authorship edges.
+The connection type appears in the path: `/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py`. Glob patterns can query by type: `glob("//.vfs/**/__meta__/edges/out/authored-by/**")` finds all authorship edges.
 
 ## 10. Mounts and Integration
 
@@ -701,24 +701,24 @@ Grover does not try to be an API gateway or a universal connector. Instead, it p
 for ticket in jira_client.search("project = PROJ"):
     g.write(f"/jira/{ticket.key}", ticket.description)
     for comment in ticket.comments:
-        g.write(f"/jira/{ticket.key}/.chunks/{comment.id}", comment.body)
-    g.mkconn(f"/jira/{ticket.key}", "assigned-to", f"/people/{ticket.assignee}")
+        g.write(f"/.vfs/jira/{ticket.key}/__meta__/chunks/{comment.id}", comment.body)
+    g.mkedge(f"/jira/{ticket.key}", "assigned-to", f"/people/{ticket.assignee}")
     if ticket.parent:
-        g.mkconn(f"/jira/{ticket.key}", "child-of", f"/jira/{ticket.parent}")
+        g.mkedge(f"/jira/{ticket.key}", "child-of", f"/jira/{ticket.parent}")
 
 # Sync Slack threads
 for msg in slack_client.conversations_history(channel="proj-discussion"):
-    g.write(f"/slack/proj-discussion/.chunks/{msg.ts}", msg.text)
+    g.write(f"/.vfs/slack/proj-discussion/__meta__/chunks/{msg.ts}", msg.text)
     if msg.thread_ts:
-        g.mkconn(f"/slack/proj-discussion/.chunks/{msg.ts}",
+        g.mkedge(f"/.vfs/slack/proj-discussion/__meta__/chunks/{msg.ts}",
                  "replies-to",
-                 f"/slack/proj-discussion/.chunks/{msg.thread_ts}")
+                 f"/.vfs/slack/proj-discussion/__meta__/chunks/{msg.thread_ts}")
 
 # Sync ADO work items
 for item in ado_client.get_work_items(project="MyProject"):
     g.write(f"/ado/{item.id}", item.description)
     for link in item.relations:
-        g.mkconn(f"/ado/{item.id}", link.type, f"/ado/{link.target_id}")
+        g.mkedge(f"/ado/{item.id}", link.type, f"/ado/{link.target_id}")
 ```
 
 Once content is written to Grover, the full pipeline activates automatically:
@@ -736,11 +736,11 @@ This means the integration surface is just the standard filesystem operations:
 |---|---|
 | Documents/tickets/pages | `write()` to create files |
 | Comments/messages/sections | `write()` to create chunks under the parent |
-| Relationships (blocks, assigned-to, references) | `mkconn()` to create connections |
+| Relationships (blocks, assigned-to, references) | `mkedge()` to create connections |
 | Deletions/archival | `delete()` to remove |
 | Updates | `write()` with `overwrite=True` or `edit()` for patches |
 
-No special ingest API. No bulk import format. No connector framework to learn. Just `write`, `mkconn`, and `delete` — the same operations an agent uses interactively.
+No special ingest API. No bulk import format. No connector framework to learn. Just `write`, `mkedge`, and `delete` — the same operations an agent uses interactively.
 
 ### 10.3 The `.api/` Directory: Data Plane and Control Plane
 
@@ -834,7 +834,7 @@ $ grover write /jira/.api/ticket --project PROJ --summary "Fix auth timeout" --t
 # Post a Slack message
 $ grover write /slack/.api/post --channel proj-discussion \
     --message "Filed PROJ-4524 for the auth timeout"
-/slack/proj-discussion/.chunks/msg-1710934200
+/.vfs/slack/proj-discussion/__meta__/chunks/msg-1710934200
 
 # Create a GitHub issue
 $ grover write /github/.api/issue --title "Fix auth timeout" --body "See PROJ-4524"
@@ -889,7 +889,7 @@ Each is just a path. `read` returns the schema. `write` triggers the action. The
 
 ### 10.5 Mount-Scoped Connections and Path Isolation
 
-Connections are scoped to a single mount. `mkconn` rejects source and target paths that resolve to different filesystems. Each mount has its own `RustworkxGraph` instance backed by its own database — files with identical relative paths in different mounts never collide because they live in completely separate graph and storage instances.
+Connections are scoped to a single mount. `mkedge` rejects source and target paths that resolve to different filesystems. Each mount has its own `RustworkxGraph` instance backed by its own database — files with identical relative paths in different mounts never collide because they live in completely separate graph and storage instances.
 
 #### How mount prefixes flow through the system
 
@@ -907,8 +907,8 @@ g.write("/beta/one.py", "def other(): ...")
 g.write("/beta/two.py", "import one")
 
 # Same relative paths, stored in separate databases and graphs
-g.mkconn("/alpha/two.py", "/alpha/one.py", "imports")
-g.mkconn("/beta/two.py", "/beta/one.py", "imports")
+g.mkedge("/alpha/two.py", "/alpha/one.py", "imports")
+g.mkedge("/beta/two.py", "/beta/one.py", "imports")
 
 # Queries route to the correct graph — no cross-mount bleed
 g.predecessors("/alpha/one.py")  # → ["/alpha/two.py"]
@@ -921,11 +921,11 @@ The path lifecycle for a connection:
 |-------|--------|--------|----------------|
 | **User calls** | `/alpha/two.py` | `/alpha/one.py` | — |
 | **After routing** (prefix stripped) | `/two.py` | `/one.py` | — |
-| **Database** | `/two.py` | `/one.py` | `/two.py/.connections/imports/one.py` |
+| **Database** | `/two.py` | `/one.py` | `/.vfs/two.py/__meta__/edges/out/imports/one.py` |
 | **Graph nodes** | `/two.py` | `/one.py` | — |
-| **Facade result** (prefix re-added) | `/alpha/two.py` | `/alpha/one.py` | `/alpha/two.py/.connections/imports/one.py` |
+| **Facade result** (prefix re-added) | `/alpha/two.py` | `/alpha/one.py` | `/.vfs/alpha/two.py/__meta__/edges/out/imports/one.py` |
 
-The embedded target in a connection path (e.g., `one.py` in `/alpha/two.py/.connections/imports/one.py`) is always mount-relative. Since connections cannot cross mounts, the target is unambiguous within its mount.
+The embedded target in a connection path (e.g., `one.py` in `/.vfs/alpha/two.py/__meta__/edges/out/imports/one.py`) is always mount-relative. Since connections cannot cross mounts, the target is unambiguous within its mount.
 
 #### Cross-mount search without cross-mount edges
 
@@ -946,7 +946,7 @@ grover grep "timeout" /jira/
 # 3. Trace the relationship chain across systems
 grover pred /src/auth.py
 # /jira/PROJ-4521 (references this file)
-# /slack/proj-discussion/.chunks/msg-001 (discusses this file)
+# /.vfs/slack/proj-discussion/__meta__/chunks/msg-001 (discusses this file)
 
 # 4. Fix the code (data plane — local file)
 grover edit /src/auth.py "timeout=30" "timeout=120"
@@ -957,7 +957,7 @@ grover write /jira/.api/ticket --project PROJ \
 # returns: /jira/PROJ-4524 (synced back to data plane)
 
 # 6. Connect the ticket to the code
-grover mkconn /jira/PROJ-4524 references /src/auth.py
+grover mkedge /jira/PROJ-4524 references /src/auth.py
 
 # 7. Notify the team (control plane — live API)
 grover write /slack/.api/post --channel proj-discussion \
@@ -967,10 +967,10 @@ grover write /slack/.api/post --channel proj-discussion \
 grover desc /src/auth.py
 # /jira/PROJ-4524 (references this file)
 # /jira/PROJ-4521 (references this file)
-# /slack/proj-discussion/.chunks/msg-001 (discusses this file)
+# /.vfs/slack/proj-discussion/__meta__/chunks/msg-001 (discusses this file)
 ```
 
-One tool. One namespace. The agent reads and searches the data plane (synced, fast, offline-capable) and takes actions through the control plane (`.api/`, live, real-time). Same verbs everywhere: `read`, `write`, `grep`, `search`, `pred`, `mkconn`.
+One tool. One namespace. The agent reads and searches the data plane (synced, fast, offline-capable) and takes actions through the control plane (`.api/`, live, real-time). Same verbs everywhere: `read`, `write`, `grep`, `search`, `pred`, `mkedge`.
 
 ## 11. Competitive Positioning
 
@@ -1016,7 +1016,7 @@ Or more concisely: **Knowledge as a filesystem.**
 2. **Kinded object model** — every entity has a path, a kind, and a parent. The kind determines operation semantics.
 3. **Files-first defaults** — queries return files by default. Metadata is accessible but opt-in.
 4. **Metadata as opt-in** — chunks, versions, and connections are always reachable by explicit path but hidden from broad queries.
-5. **Small universal API** — `read`, `write`, `delete`, `list`, `stat`, `glob`, `grep`, `search`, `mkconn` + graph traversal. That's the whole interface.
+5. **Small universal API** — `read`, `write`, `delete`, `list`, `stat`, `glob`, `grep`, `search`, `mkedge` + graph traversal. That's the whole interface.
 6. **CLI/MCP as the primary agent surface** — one tool, progressive discovery, Unix pipes for composition.
 
 ### 12.1 What Stays
@@ -1043,7 +1043,7 @@ Or more concisely: **Knowledge as a filesystem.**
 | `Ref` with regex/sigil parsing | `Ref` with simple segment matching |
 | `Ref.transform()` dispatching to 4 types | Unnecessary — backend dispatches by kind |
 | ChunkService, ConnectionService, VersionProvider | Unified in DatabaseFileSystem CRUD |
-| Separate graph loading (from_sql on connection table) | Same table, `WHERE kind = 'connection'` |
+| Separate graph loading (from_sql on connection table) | Same table, `WHERE kind = 'edge'` |
 | Code-only analyzers | Pluggable analyzer families (code, documents, communications, tickets) |
 | Python API only | CLI + MCP single-tool + Python API |
 
@@ -1051,11 +1051,11 @@ Or more concisely: **Knowledge as a filesystem.**
 
 - **CLI** — filesystem commands that compose via Unix pipes
 - **MCP single-tool interface** — one tool, progressive discovery via `--help`
-- **`mkconn`** — connection creation primitive (like `mkdir`)
+- **`mkedge`** — connection creation primitive (like `mkdir`)
 - **Kind-based dispatching** — `read()`, `write()`, `delete()` adapt behavior by entity kind
 - **Files-first defaults** — `ls`, `glob`, `grep`, `search` return files by default; metadata is opt-in (`-a`, `--chunks`, `--kinds`); `.api/` is never in search results
 - **Non-code analyzers** — PDF, Markdown, email, Slack, Jira, CSV/JSON
-- **Sync-first integration model** — users write their own sync pipelines using `write()` / `mkconn()` / `delete()` — no connector framework, no special ingest API
+- **Sync-first integration model** — users write their own sync pipelines using `write()` / `mkedge()` / `delete()` — no connector framework, no special ingest API
 - **`.api/` directories** — data plane (synced, searchable) and control plane (live API pass-through) coexist in the same namespace. `ls .api/` for discovery, `read .api/ticket` for schema, `write .api/ticket` for action
 - **Optional backend plugins** — for deeper integration (`.api/` endpoints, write-back), third parties implement `GroverFileSystem`
 
@@ -1065,13 +1065,13 @@ Or more concisely: **Knowledge as a filesystem.**
 
 **Decision:** The namespace is a virtual overlay. Paths are logical addresses, not filesystem locations. File content may live on disk (local mounts) or in the database (DB mounts). Metadata nodes (`.chunks/`, `.versions/`, `.connections/`, `.api/`) always live in the database, never as physical files on disk.
 
-**Rationale:** Grover's current `LocalFileSystem` stores real files on disk. A real file cannot literally have `/.chunks/` children on the physical filesystem. The solution is explicit: the namespace is virtual, and the backend determines where bytes live. For local mounts, `read("/src/auth.py")` reads from disk; `read("/src/auth.py/.chunks/login")` reads from SQLite. Both look identical to the agent. This is the same model as Linux's VFS layer — one namespace, multiple underlying storage systems.
+**Rationale:** Grover's current `LocalFileSystem` stores real files on disk. A real file cannot literally have `/.chunks/` children on the physical filesystem. The solution is explicit: the namespace is virtual, and the backend determines where bytes live. For local mounts, `read("/src/auth.py")` reads from disk; `read("/.vfs/src/auth.py/__meta__/chunks/login")` reads from SQLite. Both look identical to the agent. This is the same model as Linux's VFS layer — one namespace, multiple underlying storage systems.
 
 ### 13.2 `parent_path` is stored metadata, not derived from path
 
 **Decision:** `parent_path` is computed at write time using marker-aware parsing (`/.chunks/`, `/.versions/`, `/.connections/`, `/.api/`) and stored as an indexed column. It is not derived by splitting on `/` and dropping the last segment.
 
-**Rationale:** For files and directories, the filesystem parent and the logical parent are the same. For metadata nodes, they diverge. The parent of `/src/auth.py/.chunks/login` is `/src/auth.py`, not `/src/auth.py/.chunks`. The parent of `/src/auth.py/.connections/imports/src/utils.py` is `/src/auth.py`, not `/src/auth.py/.connections/imports/src`. Connection target paths can contain `/`, making naive path splitting ambiguous. Storing `parent_path` explicitly avoids this entirely and enables efficient tree queries via index.
+**Rationale:** For files and directories, the filesystem parent and the logical parent are the same. For metadata nodes, they diverge. The parent of `/.vfs/src/auth.py/__meta__/chunks/login` is `/src/auth.py`, not `/.vfs/src/auth.py/__meta__/chunks`. The parent of `/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py` is `/src/auth.py`, not `/.vfs/src/auth.py/__meta__/edges/out/imports/src`. Connection target paths can contain `/`, making naive path splitting ambiguous. Storing `parent_path` explicitly avoids this entirely and enables efficient tree queries via index.
 
 This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, Getting Dot-Dot Right."* In Unix, symbolic links turn the namespace from a tree into a directed graph, making `..` ambiguous (physical parent vs. the directory you "came from"). Plan 9 solved this by tracking a `Cname` (canonical name) on each open channel — the absolute pathname used to reach the file. When `..` is evaluated, the kernel lexically strips the last component from the Cname, then validates the result. Grover's metadata paths create an analogous problem: `/.connections/imports/src/utils.py` contains `/` characters that make naive parent derivation ambiguous. Grover's solution — marker-aware parsing stored at write time — is the same insight as Plan 9's Cname: the system records *how you got there* rather than trying to derive it from the path string after the fact.
 
@@ -1089,13 +1089,13 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 
 ### 13.5 Connections live under the source file
 
-**Decision:** `/src/auth.py/.connections/imports/src/utils.py` — connections are children of the source.
+**Decision:** `/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py` — connections are children of the source.
 
-**Rationale:** An edge has to live somewhere in a tree namespace. The source file is the natural owner because: (1) analyzers produce connections by analyzing the source file's content, (2) `delete("/src/auth.py")` should cascade to its outgoing connections, (3) `ls -a /src/auth.py/.connections/` answers "what does this file depend on?" which is the most common question. Incoming connections are found via `predecessors()` graph traversal, not namespace navigation.
+**Rationale:** An edge has to live somewhere in a tree namespace. The source file is the natural owner because: (1) analyzers produce connections by analyzing the source file's content, (2) `delete("/src/auth.py")` should cascade to its outgoing connections, (3) `ls -a /.vfs/src/auth.py/__meta__/edges/out/` answers "what does this file depend on?" which is the most common question. Incoming connections are found via `predecessors()` graph traversal, not namespace navigation.
 
 ### 13.6 Versions are read-only
 
-**Decision:** `write("/src/auth.py/.versions/3")` returns an error. Versions are created as a side effect of `write("/src/auth.py")`.
+**Decision:** `write("/.vfs/src/auth.py/__meta__/versions/3")` returns an error. Versions are created as a side effect of `write("/src/auth.py")`.
 
 **Rationale:** Versions are like `/proc/42/status` — generated by the system, not written by the user. They are an audit trail of what the file looked like at a point in time. Allowing writes to versions would create confusion about what "the current content" is and undermine the versioning guarantee.
 
@@ -1103,7 +1103,7 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 
 **Decision:** Store `kind` as an explicit column, not derived from path format.
 
-**Rationale:** An explicit kind column enables efficient queries (`WHERE kind = 'connection'` for graph loading), is self-documenting, and survives potential future path format changes. The model validator ensures path format and kind agree.
+**Rationale:** An explicit kind column enables efficient queries (`WHERE kind = 'edge'` for graph loading), is self-documenting, and survives potential future path format changes. The model validator ensures path format and kind agree.
 
 ### 13.8 Nullable kind-specific columns vs. JSON metadata
 
@@ -1115,7 +1115,7 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 
 ### 13.9 Sync pipelines as the primary integration model
 
-**Decision:** External data enters Grover through user-written sync pipelines that call `write()` / `mkconn()` / `delete()`. Backend plugins with write-back are optional, not required.
+**Decision:** External data enters Grover through user-written sync pipelines that call `write()` / `mkedge()` / `delete()`. Backend plugins with write-back are optional, not required.
 
 **Rationale:** Every enterprise has different data sources, different schemas, different sync requirements. Building a connector framework (like Glean or Airbyte) is a massive scope expansion that delays the core value. Instead, Grover's standard filesystem operations ARE the integration API. Users already write ETL pipelines — targeting Grover is just `g.write(path, content)` at the end. This keeps Grover focused on what it's good at (namespace, graph, search, versioning) and lets users own the data ingestion, which they need to customize anyway. Backend plugins remain available for teams that want deeper integration (write-back, live schema discovery), but they're a convenience layer, not a prerequisite.
 
@@ -1212,7 +1212,7 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 
 **Decision:** `Ref` (§4.2) will not be implemented in the initial build. Operations accept and return plain `str` paths. `Ref` can be introduced later as an ergonomic wrapper if needed.
 
-**Rationale:** The path utilities in `paths.py` already provide everything `Ref` would — `parse_kind()`, `base_path()`, `parent_path()`, `decompose_connection()`, and the path constructors. A frozen dataclass wrapping a string adds a layer of indirection without enabling anything new. If a uniform handle becomes valuable (e.g., for caching parsed properties or for type-safe API boundaries), it can be added without changing the data model or protocol — it's a presentation concern, not a storage or dispatch concern.
+**Rationale:** The path utilities in `paths.py` already provide everything `Ref` would — `parse_kind()`, `base_path()`, `parent_path()`, `decompose_edge()`, and the path constructors. A frozen dataclass wrapping a string adds a layer of indirection without enabling anything new. If a uniform handle becomes valuable (e.g., for caching parsed properties or for type-safe API boundaries), it can be added without changing the data model or protocol — it's a presentation concern, not a storage or dispatch concern.
 
 ### 15.2 Initial scaffolding — 2026-03-23
 
@@ -1220,7 +1220,7 @@ This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, 
 
 | File | What it implements |
 |------|-------------------|
-| `paths.py` | §3 — Path normalization, validation, kind detection, parent/base resolution, path constructors (`chunk_path`, `version_path`, `connection_path`, `api_path`), `decompose_connection` |
+| `paths.py` | §3 — Path normalization, validation, kind detection, parent/base resolution, path constructors (`chunk_path`, `version_path`, `edge_out_path`, `api_path`), `decompose_edge` |
 | `models.py` | §4 — `ValidatedSQLModel` base, `GroverObjectBase` with all kinded columns, `GroverObject` concrete table (`grover_objects`) with auto-derived `parent_path`, `kind`, `name`, content metrics, timestamps |
 | `vector.py` | Embedding column — `Vector` type with dimension/model-name enforcement, `VectorType` SQLAlchemy decorator (JSON serialization, dimension validation on read/write) |
 
@@ -1244,7 +1244,7 @@ One result type for everything. Every Grover operation returns `GroverResult`. C
 `read`, `stat`, `edit`, `ls`, `delete`
 
 **Path-only CRUD** (no chain use case today):
-`write` (with `overwrite`), `move`, `copy`, `mkdir`, `mkconn`
+`write` (with `overwrite`), `move`, `copy`, `mkdir`, `mkedge`
 
 **Search** — three explicit methods:
 `semantic_search`, `vector_search`, `lexical_search` (all with `k=15`)
@@ -1275,7 +1275,7 @@ All methods: `*, session: AsyncSession | None = None` keyword-only.
 
 **`ls` not `list`.** Avoids shadowing Python's `list` builtin, which Pydantic needs to resolve `list[Candidate]` annotations.
 
-**Connection fields removed from `Candidate`.** `source_path`, `target_path`, `connection_type` are derivable from the path via `decompose_connection()`. Connection metadata goes in `Detail.metadata`. `weight` and `distance` kept as graph metrics.
+**Connection fields removed from `Candidate`.** `source_path`, `target_path`, `edge_type` are derivable from the path via `decompose_edge()`. Connection metadata goes in `Detail.metadata`. `weight` and `distance` kept as graph metrics.
 
 **`Candidate.details` is `tuple[Detail, ...]`** not `list[Detail]`. Frozen model + immutable container = true immutability.
 
@@ -1347,13 +1347,13 @@ Sole implementation of `GraphProvider`. Stores topology as adjacency dicts (`_ou
 
 **Constructor:** Takes `model: type[GroverObjectBase]` (the mount's concrete table class) and optional `ttl` (default 1 hour).
 
-**Persistence:** `ensure_fresh()` checks `_loaded_at` against TTL (~117ns hot path). `_load()` queries `GroverObject` rows where `kind="connection"`, using `sqlmodel.select` for typed queries. Build-then-swap: assembles new state in local variables, assigns atomically.
+**Persistence:** `ensure_fresh()` checks `_loaded_at` against TTL (~117ns hot path). `_load()` queries `GroverObject` rows where `kind="edge"`, using `sqlmodel.select` for typed queries. Build-then-swap: assembles new state in local variables, assigns atomically.
 
 **Snapshot isolation:** `_snapshot()` returns `(frozenset, dict[str, frozenset])` for thread-safe reads via `asyncio.to_thread()`.
 
 **Result helpers:**
 - `_relationship_candidates()` — builds candidates from `{path: [related_paths]}` with `Detail(operation=..., metadata={"paths": [...]})`
-- `_subgraph_candidates()` — builds node + connection candidates (uses `connection_path()` for edge paths)
+- `_subgraph_candidates()` — builds node + connection candidates (uses `edge_out_path()` for edge paths)
 - `_score_candidates()` — builds scored candidates from `{path: score}`, sorted descending
 
 **Light reads:** `predecessors()` and `successors()` run inline (no thread overhead), wrapped in try/except returning `GroverResult(success=False)` on error.
@@ -1368,7 +1368,7 @@ Sole implementation of `GraphProvider`. Stores topology as adjacency dicts (`_ou
 
 **TTL-based freshness.** `_loaded_at` timestamp + `_ttl` checked via `time.monotonic()`. Default 1 hour. Avoids re-querying the database on every operation.
 
-**Model as constructor parameter.** `RustworkxGraph(model=GroverObject)` — each mount can have a different concrete table class. The `_load()` method uses `select(self._model).where(self._model.kind == "connection")`.
+**Model as constructor parameter.** `RustworkxGraph(model=GroverObject)` — each mount can have a different concrete table class. The `_load()` method uses `select(self._model).where(self._model.kind == "edge")`.
 
 **Base class wiring not yet done.** The `_*_impl` stubs in `base.py` for graph operations still raise `NotImplementedError`. Step 10 of the migration plan (adding `self._graph` attribute and delegation) is pending.
 
@@ -1447,7 +1447,7 @@ Implemented all 10 remaining graph algorithms on `RustworkxGraph`, migrated from
 
 **`min_meeting_subgraph` uses `_edge_types` directly.** Previously decomposed connection paths from the meeting result to recover edge topology. Now reads the authoritative `_edge_types` dict filtered to the meeting node set.
 
-**`min_meeting_subgraph` uses `decompose_connection()` to identify nodes.** Previously relied on `c.weight is None` convention. Now uses the intrinsic path structure (`/.connections/` marker) to distinguish nodes from edges.
+**`min_meeting_subgraph` uses `decompose_edge()` to identify nodes.** Previously relied on `c.weight is None` convention. Now uses the intrinsic path structure (`/.connections/` marker) to distinguish nodes from edges.
 
 #### Performance vs NetworkX (10K nodes, 30K edges)
 
@@ -1548,7 +1548,7 @@ glob "/src/*.py" | except (grep "deprecated")
 - `except(...)` — set difference stage
 
 **Command families currently supported:**
-- CRUD: `read`, `stat`, `rm`, `edit`, `write`, `mkdir`, `mv`, `cp`, `mkconn`
+- CRUD: `read`, `stat`, `rm`, `edit`, `write`, `mkdir`, `mv`, `cp`, `mkedge`
 - Navigation / query: `ls`, `tree`, `glob`, `grep`, `search`, `lsearch`, `vsearch`
 - Graph: `pred`, `succ`, `anc`, `desc`, `nbr`, `meetinggraph`, `meetinggraph --min`
 - Ranking: `pagerank`, `betweenness`, `closeness`, `degree`, `indegree`, `outdegree`, `hits`
@@ -1592,7 +1592,7 @@ grover search "auth" | grover meetinggraph --min | grover pagerank
 - `... | rm` soft-deletes every candidate
 - `... | cp /destroot` copies each candidate under `/destroot`, preserving relative paths
 - `... | mv /destroot` moves each candidate under `/destroot`, preserving relative paths
-- `... | mkconn imports /target` creates one connection per input candidate to the target
+- `... | mkedge imports /target` creates one connection per input candidate to the target
 - `write` and `mkdir` remain standalone commands for now
 
 **The parser was refactored to a command registry.** After the initial implementation proved the language shape, the parser was reorganized around declarative `CommandSpec` records: aliases, allowed flags, and AST builders live in one table. Adding new args like `--k`, `--depth`, or `--include` is now a registry change instead of another parser branch.
@@ -1602,7 +1602,7 @@ grover search "auth" | grover meetinggraph --min | grover pagerank
 `cli(query)` currently selects a default text renderer from the final stage:
 
 - `read` — file content view
-- `write` / `edit` / `rm` / `mv` / `cp` / `mkdir` / `mkconn` — mutation summary
+- `write` / `edit` / `rm` / `mv` / `cp` / `mkdir` / `mkedge` — mutation summary
 - `ls` — flat list
 - `tree` — tree view
 - `stat` — metadata block
@@ -1624,7 +1624,7 @@ Between the `write` implementation (§15.8) and the CLI query engine (§15.9), t
 
 #### CRUD operations (`database.py`, grew to ~1800 lines)
 
-**Commit `2ba55fa` — ls, delete, mkconn, mkdir:**
+**Commit `2ba55fa` — ls, delete, mkedge, mkdir:**
 - `_ls_impl` — kind-aware: directories list files/dirs children, files list metadata children (`.chunks/`, `.versions/`, `.connections/`)
 - `_delete_impl` — soft-delete (`deleted_at` timestamp) and permanent delete with cascading via `_cascade_delete` / `_cascade_delete_permanent`. Batched cascade queries replace N+1 per-item pattern.
 - `_mkconn_impl` — connection creation with source validation, constructs `<source>/.connections/<type>/<target>` path, delegates to `_write_impl`
@@ -1657,7 +1657,7 @@ Between the `write` implementation (§15.8) and the CLI query engine (§15.9), t
 
 **Commit `3ad8565` — graph operations + versioning tests:**
 - All 14 graph `_*_impl` methods in `DatabaseFileSystem` now delegate to the internal `RustworkxGraph` instance
-- Graph cache invalidated (`self._graph.invalidate()`) after connection mutations (`mkconn`, `delete`, `move`, `write`) for immediate consistency
+- Graph cache invalidated (`self._graph.invalidate()`) after connection mutations (`mkedge`, `delete`, `move`, `write`) for immediate consistency
 - `RustworkxGraph._load()` fixed to exclude soft-deleted connections (`WHERE deleted_at IS NULL`)
 - Versioning module got dedicated unit tests covering `compute_diff`, `apply_diff`, `reconstruct_version`, `create_version` — coverage from 88% to 100%
 
@@ -1809,7 +1809,7 @@ The API contract is strict: **all public methods and `_*_impl` calls always rece
 
 **Terminal methods** (read, write, ls, delete, stat, tree, move, glob, grep, search, graph ops) — scope inputs at top, unscope result at bottom.
 
-**Delegating methods** (edit→read+write, copy→read+write, mkdir→write, mkconn→write) — NO scoping. Pass unscoped paths + `user_id` to inner `_*_impl` calls. Each inner call handles its own scope cycle. Intermediate results use unscoped paths throughout.
+**Delegating methods** (edit→read+write, copy→read+write, mkdir→write, mkedge→write) — NO scoping. Pass unscoped paths + `user_id` to inner `_*_impl` calls. Each inner call handles its own scope cycle. Intermediate results use unscoped paths throughout.
 
 #### Mount topology
 
@@ -1838,18 +1838,18 @@ Non-scoped filesystems ignore `user_id` harmlessly. Scoped filesystems raise `Va
 
 - `validate_user_id(user_id)` — rejects empty, `/`, `\\`, `@`, `\0`, `..`, >255 chars
 - `scope_path(path, user_id)` — always prepends (not idempotent): `/docs/README` + `"123"` → `/123/docs/README`
-- `unscope_path(path, user_id)` — always strips (raises on mismatch). For connection paths, uses `decompose_connection()` to parse, strips prefix from both source and target, reconstructs with `connection_path()`
+- `unscope_path(path, user_id)` — always strips (raises on mismatch). For connection paths, uses `decompose_edge()` to parse, strips prefix from both source and target, reconstructs with `edge_out_path()`
 
 #### Connection paths — scoped source AND target
 
 Both endpoints are scoped in the connection path:
 ```
-/123/src/main.py/.connections/imports/123/src/auth.py
+/.vfs/123/src/main.py/__meta__/edges/out/imports/123/src/auth.py
 ```
 
-`decompose_connection()` naturally gives `source="/123/src/main.py"`, `target="/123/src/auth.py"` — matches DB columns exactly. No special-casing needed in `_normalize_and_derive`. Unscoping strips both:
+`decompose_edge()` naturally gives `source="/123/src/main.py"`, `target="/123/src/auth.py"` — matches DB columns exactly. No special-casing needed in `_normalize_and_derive`. Unscoping strips both:
 ```
-/src/main.py/.connections/imports/src/auth.py
+/.vfs/src/main.py/__meta__/edges/out/imports/src/auth.py
 ```
 
 `_scope_objects()` rebuilds connection paths from scoped `source_path` + `target_path` to keep the `path`, `source_path`, and `target_path` fields consistent.
@@ -1906,7 +1906,7 @@ Both `_fetch_lexical_docs()` and `_fetch_corpus_stats()` add `WHERE path LIKE '/
 - `owner_id` set on writes
 - `user_id` required when scoped, ignored when not scoped
 - `ls`, `glob`, `grep`, `tree`, `delete`, `move`, `copy`, `edit` — all scoped
-- `mkconn` — connection path scoping, source/target verification
+- `mkedge` — connection path scoping, source/target verification
 - Graph isolation — predecessors, pagerank stay within user namespace
 - BM25 lexical search — per-user corpus
 
@@ -2015,7 +2015,7 @@ class Grover:
 Since `raise_on_error=True` cascades to all mounted filesystems, errors raise inside the async code and propagate through `_run()`. No post-hoc checking needed.
 
 **Return types:**
-- Single-path ops (`read`, `write`, `edit`, `delete`, `stat`, `mkdir`, `mkconn`) return `Candidate` (unwrapped via `.file`)
+- Single-path ops (`read`, `write`, `edit`, `delete`, `stat`, `mkdir`, `mkedge`) return `Candidate` (unwrapped via `.file`)
 - Multi-result ops (search, graph, listing, move, copy) return `GroverResult` (set algebra preserved)
 - `cli` returns `str`, `parse_query` returns `QueryPlan`
 
@@ -2058,8 +2058,8 @@ Removed unreachable defensive guards that duplicated guarantees from `normalize_
 
 #### New test files (4)
 
-- `tests/test_query_parser.py` — 67 tests: tokenizer (quoted strings, escapes, unterminated, pipe/amp/paren tokens), parser syntax (empty query, unexpected tokens, grouped expressions, intersect/except subqueries), all builder commands (stat, delete, edit, write, mkdir, move, copy, mkconn, glob, grep, search, lsearch, vsearch, meetinggraph, graph traversal, sort, top, kinds), visibility/overwrite/kind-name parsing, flag splitting edge cases, `_render_mode` for every AST node type
-- `tests/test_query_executor.py` — 48 tests: every `_execute_stage` branch (stat, delete, edit, write, mkdir, move, copy, mkconn, ls, tree, glob, grep, semantic/vector/lexical search, graph traversal, meeting graph, rank, sort, top, kinds, intersect, except), transfer with piped empty/non-empty candidates, visibility filtering, grep reading non-file candidates, union node merging
+- `tests/test_query_parser.py` — 67 tests: tokenizer (quoted strings, escapes, unterminated, pipe/amp/paren tokens), parser syntax (empty query, unexpected tokens, grouped expressions, intersect/except subqueries), all builder commands (stat, delete, edit, write, mkdir, move, copy, mkedge, glob, grep, search, lsearch, vsearch, meetinggraph, graph traversal, sort, top, kinds), visibility/overwrite/kind-name parsing, flag splitting edge cases, `_render_mode` for every AST node type
+- `tests/test_query_executor.py` — 48 tests: every `_execute_stage` branch (stat, delete, edit, write, mkdir, move, copy, mkedge, ls, tree, glob, grep, semantic/vector/lexical search, graph traversal, meeting graph, rank, sort, top, kinds, intersect, except), transfer with piped empty/non-empty candidates, visibility filtering, grep reading non-file candidates, union node merging
 - `tests/test_query_render.py` — 16 tests: every render mode (content, action, stat, query_list, ls, tree), error rendering, multi-file content headers, all action verbs, ranked vs unranked list, stat metadata fields, unhandled mode assertion
 - `tests/test_databricks_store.py` — 4 tests: ImportError guard when SDK missing, user_id filter injection, connect with host/token kwargs
 
@@ -2070,7 +2070,7 @@ Removed unreachable defensive guards that duplicated guarantees from `normalize_
 - `tests/test_base.py` — empty write batch, edit/move/copy without required args
 - `tests/test_bm25_comparison.py` — BM25Scorer edge cases: empty IDF, zero-length doc, empty query terms, mismatched lengths, BM25Index with empty documents
 - `tests/test_graph.py` — user-scoped neighborhood/meeting_subgraph, min_meeting_subgraph pruning and error handling
-- `tests/test_grover_sync.py` — move, copy, mkconn, all graph methods (predecessors through hits), lexical_search, semantic/vector search error paths
+- `tests/test_grover_sync.py` — move, copy, mkedge, all graph methods (predecessors through hits), lexical_search, semantic/vector search error paths
 - `tests/test_models.py` — `_stored_version_payload` error paths, `_reconstruct_file_version` (missing snapshot/version/hash mismatch), plan_file_write on directory, update_content on directory, null bytes in version_diff, both content+version_diff rejected, explicit content_hash
 - `tests/test_client.py` — vector_store injection on existing filesystem
 
@@ -2105,7 +2105,7 @@ Directory-level and file-level permissions are explicitly deferred to a future i
 #### New module (`permissions.py`)
 
 - `Permission = Literal["read", "read_write"]` type alias
-- `MUTATING_OPS` frozenset — `write`, `edit`, `delete`, `mkdir`, `mkconn`, `move`, `copy`
+- `MUTATING_OPS` frozenset — `write`, `edit`, `delete`, `mkdir`, `mkedge`, `move`, `copy`
 - `validate_permission(value)` — exhaustive branch-based validation (returns narrowed literals from explicit `if` branches so the type checker needs no cast or ignore)
 - `check_writable(fs, op, path)` — returns a classified error result if *op* would mutate a read-only mount, otherwise `None`. Uses the error prefix `"Cannot write to read-only mount"` so the existing `_classify_error` substring rule maps it to `WriteConflictError` without a new exception class
 
@@ -2117,7 +2117,7 @@ Directory-level and file-level permissions are explicitly deferred to a future i
 - **`_route_write_batch`** — walks the grouped-by-terminal objects and fails fast before any group is dispatched
 - **`_route_two_path`** — checks `dst_fs` always; for `move`, also checks `src_fs` (because move deletes the source after writing the destination). The check runs **before** the same-mount vs cross-mount branch, so both paths share the same enforcement point and cross-mount transfers are covered for free
 - **`_dispatch_candidates`** — walks the grouped-by-terminal candidates and fails fast before any group runs, covering candidate-based `edit`/`delete`
-- **`mkconn`** — after the cross-mount guard, checks the source filesystem (same as the target, per the existing `mkconn` constraint)
+- **`mkedge`** — after the cross-mount guard, checks the source filesystem (same as the target, per the existing `mkedge` constraint)
 
 **Copy from a read-only source to a writable destination is allowed by design.** Reads are not mutations, so `copy("/ro/src", "/rw/dst")` succeeds; only the destination is checked for `copy`. Mixed-mount batches (heterogeneous `moves=[...]` / `copies=[...]` or `write(objects=[...])` spanning read-only and writable terminals) fail fast on the first read-only group — no partial writes.
 
@@ -2169,14 +2169,14 @@ A sub-agent attempted to bypass the permission model through every vector we cou
 - Path normalization tricks: `/ro//x`, `/ro/x/`, `/rw/../ro/x`, `/ro/./x`, RTL unicode paths
 - Nested mounts (ro-inside-rw and rw-inside-ro both honor the terminal filesystem's `_permissions`)
 - Double-mounting the same ro instance at two router paths
-- Cross-mount `mkconn` (rejected as "Cross-mount connections not supported" before the writability check, but no mutation lands either way)
+- Cross-mount `mkedge` (rejected as "Cross-mount connections not supported" before the writability check, but no mutation lands either way)
 - Monkey-patching `ro._permissions` to `"read_write"` and back — the check reads the live attribute every call, no stale cache
 
 **Real bypass found (and documented):** shared-engine sibling mount — see the per-instance model section above.
 
 **Integrity findings, noted for future work** (not fixed as part of this change):
 
-1. **Forged connection objects in batch write.** `write(objects=[GroverObject(path="/rw/...", kind="connection", source_path="/ro/a.md", target_path="/ro/b.md")])` succeeds. The connection row lands in the writable backend but references paths inside a different mount. Not a permission bypass (the read-only mount's storage is untouched) but a data-integrity hole in `_write_impl` — it should reject `kind="connection"` objects whose `source_path`/`target_path` are not inside the same terminal mount as `path`.
+1. **Forged connection objects in batch write.** `write(objects=[GroverObject(path="/rw/...", kind="edge", source_path="/ro/a.md", target_path="/ro/b.md")])` succeeds. The connection row lands in the writable backend but references paths inside a different mount. Not a permission bypass (the read-only mount's storage is untouched) but a data-integrity hole in `_write_impl` — it should reject `kind="edge"` objects whose `source_path`/`target_path` are not inside the same terminal mount as `path`.
 
 2. **`//ro/new.md`** (two leading slashes). POSIX preserves exactly-two leading slashes, so `posixpath.normpath` does not collapse them. `_match_mount` then misses `/ro` entirely and returns `"No mount found"`. Safe today (the mutation is rejected, just for the wrong reason and with the wrong error class), but would become a real bypass if mount matching is ever relaxed to accept `//x` as `/x`.
 
@@ -2188,7 +2188,7 @@ A sub-agent attempted to bypass the permission model through every vector we cou
 
 - **Construction and validation** — default is `"read_write"`, explicit `"read"` and `"read_write"` store correctly, invalid values (`"readonly"`, `""`, `"write"`) raise `ValueError` at construction, base-class default and explicit constructor paths
 - **`check_writable` unit tests** — `MUTATING_OPS` membership, returns `None` for writable mounts, returns `None` for read ops on read-only mounts, returns classified error for mutations on read-only mounts
-- **Per-op rejection on a read-only mount** — `write`, `edit`, soft + permanent `delete`, `mkdir`, `mkconn`, same-mount `move` / `copy`, batch `write(objects=[...])`
+- **Per-op rejection on a read-only mount** — `write`, `edit`, soft + permanent `delete`, `mkdir`, `mkedge`, same-mount `move` / `copy`, batch `write(objects=[...])`
 - **Reads succeed on a read-only mount** — `read`, `stat`, `ls`, `tree`, `glob`, `grep`
 - **Cross-mount semantics** — `copy("/ro", "/rw")` succeeds (the designed asymmetry), `copy("/rw", "/ro")` fails, `move` both directions fail
 - **Candidate-based dispatch** — `delete(candidates=...)` with candidates spanning both mounts fails fast; `/rw` side verified untouched

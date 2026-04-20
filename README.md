@@ -63,7 +63,7 @@ The main class of this library is `VirtualFileSystem`. It handles mounting and r
 
 | Category | Methods |
 |----------|---------|
-| **CRUD** | `read`, `write`, `edit`, `delete`, `move`, `copy`, `mkdir`, `mkconn` |
+| **CRUD** | `read`, `write`, `edit`, `delete`, `move`, `copy`, `mkdir`, `mkedge` |
 | **Navigation** | `ls`, `tree`, `stat` |
 | **Pattern Search** | `glob`, `grep` |
 | **Retrieval** | `semantic_search`, `lexical_search`, `vector_search` |
@@ -80,28 +80,34 @@ The main class of this library is `VirtualFileSystem`. It handles mounting and r
 
 ## How It Works
 
-Everything in `vfs` is addressable by path. Files, chunks, versions, and connections all live in a single namespace:
+Everything in `vfs` is addressable by path. Files live in the user namespace, and metadata lives under the reserved `/.vfs/.../__meta__/...` tree:
 
 ```
-/workspace/
-├── auth.py                                           File
-│   ├── .chunks/
-│   │   ├── login                                     Chunk (function)
-│   │   └── AuthService                               Chunk (class)
-│   ├── .versions/
-│   │   ├── 1                                         Version (snapshot)
-│   │   └── 2                                         Version (diff)
-│   └── .connections/
-│       └── imports/
-│           └── workspace/utils.py                    Connection (dependency)
-├── utils.py                                          File
-└── main.py                                           File
-/enterprise/
-├── onboarding.md                                     File
-└── security-policy.md                                File
+/
+├── workspace/
+│   ├── auth.py                                       File
+│   ├── utils.py                                      File
+│   └── main.py                                       File
+├── enterprise/
+│   ├── onboarding.md                                 File
+│   └── security-policy.md                            File
+└── .vfs/
+    └── workspace/
+        └── auth.py/
+            └── __meta__/
+                ├── chunks/
+                │   ├── login                         Chunk (function)
+                │   └── AuthService                   Chunk (class)
+                ├── versions/
+                │   ├── 1                             Version (snapshot)
+                │   └── 2                             Version (diff)
+                └── edges/
+                    └── out/
+                        └── imports/
+                            └── workspace/utils.py    Edge (dependency)
 ```
 
-Metadata directories (`.chunks/`, `.versions/`, `.connections/`) follow the Unix dotfile convention — hidden by default, always accessible by explicit path. `ls` shows files. `ls -a` reveals metadata. Search returns files by default. Metadata is opt-in.
+Metadata is explicit and opt-in. Ordinary `ls`, `glob`, and search operate on user paths. To inspect chunks, versions, or edges, browse canonical paths such as `/.vfs/workspace/auth.py/__meta__/chunks` or `/.vfs/workspace/auth.py/__meta__/edges/out`.
 
 ### Composable Results
 

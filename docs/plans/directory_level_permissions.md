@@ -87,13 +87,13 @@ A critical question: when a user mounts `DatabaseFileSystem` at `/wiki`, are the
 - It mirrors how the existing storage works: `_*_impl` methods receive the rebased `rel` path, not the full `path`. Rules should live in the same coordinate system.
 - It mirrors Unix: the permissions on `/etc/passwd` say `"/etc/passwd"` regardless of which mountpoint the rootfs happens to be mounted under in a chroot.
 
-This means the routing layer must call `check_writable(fs, op, rel)` — the rebased relative path — not the full virtual path. This is a one-call-site change in `_route_single`, `_route_two_path`, and `mkconn`. (`_route_write_batch` and `_dispatch_candidates` already need restructuring per §6.3 anyway.)
+This means the routing layer must call `check_writable(fs, op, rel)` — the rebased relative path — not the full virtual path. This is a one-call-site change in `_route_single`, `_route_two_path`, and `mkedge`. (`_route_write_batch` and `_dispatch_candidates` already need restructuring per §6.3 anyway.)
 
 ### 3.5 Rules apply to descendants by prefix containment
 
 `/synthesis` matches `/synthesis`, `/synthesis/foo.md`, and `/synthesis/2026/draft.md`, but not `/synthesis-archive` (no shared segment boundary). Match is `path == prefix` or `path.startswith(prefix + "/")` — same form as `_match_mount`.
 
-Metadata children (`/file.py/.chunks/x`, `/file.py/.versions/3`, `/file.py/.connections/imports/util.py`) are matched as descendants of the file, which is the desired behavior — chunking and versioning of a read-only file are themselves mutations and should be rejected.
+Metadata children (`/.vfs/file.py/__meta__/chunks/x`, `/.vfs/file.py/__meta__/versions/3`, `/.vfs/file.py/__meta__/edges/out/imports/util.py`) are matched as descendants of the file, which is the desired behavior — chunking and versioning of a read-only file are themselves mutations and should be rejected.
 
 ### 3.6 Backwards compatibility
 
@@ -262,7 +262,7 @@ await g.add_mount("/wiki", wiki)
 
 # These succeed:
 await g.write("/wiki/synthesis/auth-overview.md", "...")
-await g.mkconn("/wiki/synthesis/auth-overview.md", "/wiki/raw/rfc-7519.pdf", "references")
+await g.mkedge("/wiki/synthesis/auth-overview.md", "/wiki/raw/rfc-7519.pdf", "references")
 await g.edit("/wiki/index.md", old="- old", new="- new")
 
 # These fail with WriteConflictError:
@@ -271,7 +271,7 @@ await g.delete("/wiki/raw/rfc-7519.pdf")
 await g.mkdir("/wiki/raw/new-dir")
 ```
 
-Note that `mkconn` from a writable synthesis page **to** a read-only raw page is allowed because the connection physically lives on the source side (the source's `.connections/` namespace is what gets mutated). This matches the existing `mkconn` chokepoint, which checks the source filesystem.
+Note that `mkedge` from a writable synthesis page **to** a read-only raw page is allowed because the connection physically lives on the source side (the source's `.connections/` namespace is what gets mutated). This matches the existing `mkedge` chokepoint, which checks the source filesystem.
 
 ---
 
@@ -293,7 +293,7 @@ Note that `mkconn` from a writable synthesis page **to** a read-only raw page is
 - Change `permissions: Permission = "read_write"` to `permissions: Permission | PermissionMap | dict[str, Any] = "read_write"` on `GroverFileSystem.__init__`.
 - Run the value through `coerce_permissions` and store as `self._permission_map: PermissionMap`. Keep a `self._permissions` property that returns `self._permission_map.default` for any code that still wants the simple form (and to ease the diff for tests that read it).
 - In `_route_single` (line 275), pass `rel` to `check_writable` instead of `path`. This is the relative path inside the terminal filesystem, which is the coordinate system the rules use.
-- In `mkconn` (line 731), pass `src_rel` instead of `source`.
+- In `mkedge` (line 731), pass `src_rel` instead of `source`.
 - In `_route_two_path` (lines 325 / 329), the current code only checks `ops[0].dest` and `ops[0].src`. Replace with a per-op loop that calls `check_writable(dst_fs, op, dst_resolved[i][1])` for every destination, and for `move`, also for every source. Fail fast on the first rejection. (This was already a latent bug for path-aware permissions; for the mount-level case it happens to be sound because all ops in a batch resolve to the same mount, so checking one is checking all.)
 - In `_dispatch_candidates` (lines 225–228), the current per-group check uses `prefix or "/"`. Replace with a per-candidate loop: walk the rebased candidates inside each group and call `check_writable(fs, op, candidate.path)` on each. Fail fast.
 - In `_route_write_batch` (lines 465–468), same change: walk each object in each group and check the rebased object's path.
@@ -331,7 +331,7 @@ This is the only backend change. `LocalFileSystem` and `UserScopedFileSystem` ei
 | `path == override_prefix` exactly | Matches. |
 | `path == override_prefix + "/"` | Matches via `startswith(prefix + "/")`. |
 | `path == override_prefix + "x"` (no boundary) | Does **not** match — `/synthesis-archive` does not match `/synthesis`. |
-| Override on a metadata path (`/file.py/.chunks/x`) | Allowed but unusual. Rules normally live on regular files/directories. The match is purely structural. |
+| Override on a metadata path (`/.vfs/file.py/__meta__/chunks/x`) | Allowed but unusual. Rules normally live on regular files/directories. The match is purely structural. |
 | Cross-mount move where some destinations land in writable regions and some don't | Per-op check fails fast on the first rejected destination. No partial writes. |
 | Cross-mount copy from a fully readable source mount to a destination mount where some destinations are read-only | Same — fail fast on the first rejected destination. |
 | User mounts the same FS instance at two router paths | Rules apply identically at both — they live on the FS, not on the mount. |
@@ -371,15 +371,15 @@ A new file, `tests/test_directory_permissions.py`, mirroring the structure of `t
 - Constructor accepts `Permission`, `PermissionMap`, dict (if §5.2 form C is included).
 - Read-only mount with one writable subtree: write inside subtree succeeds, write outside fails.
 - Read-write mount with one read-only subtree: write outside subtree succeeds, write inside fails.
-- All seven mutating ops (`write`, `edit`, `delete`, `mkdir`, `mkconn`, `move`, `copy`) tested in both directions for the writable hole and for the frozen hole.
+- All seven mutating ops (`write`, `edit`, `delete`, `mkdir`, `mkedge`, `move`, `copy`) tested in both directions for the writable hole and for the frozen hole.
 - Soft and permanent `delete`.
 - Batch object writes spanning a writable region and a frozen region — fail fast, no partial writes.
 - Candidate-based dispatch (`delete(candidates=...)`, `edit(candidates=...)`) where candidates straddle a permission boundary — fail fast.
 - Cross-mount `move` from a read-only mount to a partially-writable mount where the destination lands in a read-only subtree — fails.
 - `copy` source from a read-only subtree of a writable mount → still allowed (reads are not mutations).
-- `mkconn` with source in a writable subtree and target in a read-only subtree — succeeds (the connection lives on source).
-- `mkconn` with source in a read-only subtree — fails.
-- Metadata path mutations (`/file.py/.chunks/...`) inherit from the file's permission via prefix matching.
+- `mkedge` with source in a writable subtree and target in a read-only subtree — succeeds (the connection lives on source).
+- `mkedge` with source in a read-only subtree — fails.
+- Metadata path mutations (`/.vfs/file.py/__meta__/chunks/...`) inherit from the file's permission via prefix matching.
 - Nested overrides resolve correctly.
 - Same FS instance mounted at two router paths — rules apply identically at both, verified by writing through one mount and confirming the rule fired against the FS-relative path.
 - User-scoped filesystem combined with permissions: rules are checked against unscoped paths.

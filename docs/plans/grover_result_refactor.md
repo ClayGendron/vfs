@@ -143,7 +143,7 @@ Projecting `lines` on its own just dumps the list. Grep's default arrangement us
 | `pagerank`, `*_centrality`, `hits` | `["path", "score", "in_degree", "out_degree"]` | one line per entry, `\t`-joined |
 | `read` | `["content"]` | dumps `entry.content` verbatim; multiple entries separated by `==> path <==` |
 | `stat` | `["path", "kind", "size_bytes", "updated_at", "in_degree", "out_degree"]` | block format, same as ranked search |
-| `write`, `delete`, `edit`, `move`, `copy`, `mkdir`, `mkconn` | `["path"]` | action one-liner (reuse current `_render_action`/`_verb_for`) |
+| `write`, `delete`, `edit`, `move`, `copy`, `mkdir`, `mkedge` | `["path"]` | action one-liner (reuse current `_render_action`/`_verb_for`) |
 | `hybrid` | `["path"]` | one path per line |
 
 **Grep arrangement, concretely:**

@@ -16,7 +16,7 @@ The base class defines 34 `_*_impl` async stubs. DatabaseFileSystem overrides th
 
 - `src/grover/base.py` — parent class, calling conventions
 - `src/grover/models.py` — `GroverObject`, `GroverObjectBase`, validator
-- `src/grover/paths.py` — `parse_kind`, `parent_path`, `connection_path`, `decompose_connection`, `version_path`
+- `src/grover/paths.py` — `parse_kind`, `parent_path`, `edge_out_path`, `decompose_edge`, `version_path`
 - `src/grover/results.py` — `GroverResult`, `Candidate`, `Detail`, `EditOperation`, `TwoPathOperation`
 - `src/grover/graph/rustworkx.py` — `RustworkxGraph` constructor and API
 
@@ -81,7 +81,7 @@ All CRUD path/candidates impls handle this via their signature: `(self, path=Non
 | `_mkdir_impl` | Create directory object, idempotent. Force `kind="directory"` | `_ensure_parent_dirs` |
 | `_move_impl` | Batch `TwoPathOperation`. Reparent children via SQL string replace | `UPDATE path = REPLACE(path, old, new)` for children |
 | `_copy_impl` | Copy content only, no metadata children | New object at dest |
-| `_mkconn_impl` | Create/update connection object + graph edge | Uses `connection_path()` from paths.py |
+| `_mkconn_impl` | Create/update connection object + graph edge | Uses `edge_out_path()` from paths.py |
 | `_tree_impl` | Recursive ls via `WHERE path LIKE :path/%` | Optional `max_depth` via slash counting |
 
 ### Search Implementations (5 methods)
@@ -133,7 +133,7 @@ Only change: import `normalize_path` from `grover.paths` instead of `grover.util
 7. Move + Copy
 8. Mkconn (connection creation + graph sync)
 9. Glob + Grep + Lexical search
-10. Graph delegation (add connections via mkconn, query via predecessors/successors/etc.)
+10. Graph delegation (add connections via mkedge, query via predecessors/successors/etc.)
 
 ### Test fixture:
 
