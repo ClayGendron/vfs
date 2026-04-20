@@ -12,8 +12,8 @@ from vfs.paths import (
     api_path,
     base_path,
     chunk_path,
-    edge_out_path,
     decompose_edge,
+    edge_out_path,
     extract_extension,
     normalize_path,
     parent_path,
@@ -493,7 +493,7 @@ class TestConstants:
         assert MARKER_KINDS["/__meta__/apis/"] == "api"
 
     def test_metadata_markers_match_marker_keys(self):
-        assert METADATA_MARKERS == tuple(MARKER_KINDS.keys())
+        assert tuple(MARKER_KINDS.keys()) == METADATA_MARKERS
 
 
 # =========================================================================

@@ -97,11 +97,7 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         content_column_exists = (
             await session.execute(
-                text(
-                    "SELECT 1 "
-                    "FROM pg_attribute "
-                    "WHERE attrelid = :oid AND attname = 'content' AND NOT attisdropped"
-                ),
+                text("SELECT 1 FROM pg_attribute WHERE attrelid = :oid AND attname = 'content' AND NOT attisdropped"),
                 {"oid": object_id},
             )
         ).scalar()

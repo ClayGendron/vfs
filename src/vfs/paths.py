@@ -24,6 +24,7 @@ class EdgeParts(NamedTuple):
     edge_type: str
     direction: Literal["out", "in"]
 
+
 ObjectKind = Literal["file", "directory", "chunk", "version", "edge", "api"]
 MetadataKind = Literal["chunks", "versions", "edges", "apis"]
 

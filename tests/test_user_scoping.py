@@ -12,8 +12,8 @@ from sqlmodel import select
 from vfs.backends.database import DatabaseFileSystem
 from vfs.models import VFSObject
 from vfs.paths import (
-    edge_out_path,
     decompose_edge,
+    edge_out_path,
     scope_path,
     unscope_path,
     validate_user_id,

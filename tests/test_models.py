@@ -601,7 +601,9 @@ class TestDBRoundTrip:
             s.commit()
 
         with Session(engine) as s:
-            loaded = s.exec(select(VFSObject).where(VFSObject.path == "/.vfs/a.py/__meta__/edges/out/imports/b.py")).one()
+            loaded = s.exec(
+                select(VFSObject).where(VFSObject.path == "/.vfs/a.py/__meta__/edges/out/imports/b.py")
+            ).one()
             assert loaded.kind == "edge"
             assert loaded.source_path == "/a.py"
             assert loaded.target_path == "/b.py"

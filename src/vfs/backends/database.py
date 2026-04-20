@@ -392,7 +392,11 @@ class DatabaseFileSystem(VirtualFileSystem):
         if idx < 0:
             return None
         owner_root = path[:idx]
-        target_path = owner_root if "/__meta__/chunks/" in owner_root or "/__meta__/versions/" in owner_root else base_path(owner_root)
+        target_path = (
+            owner_root
+            if "/__meta__/chunks/" in owner_root or "/__meta__/versions/" in owner_root
+            else base_path(owner_root)
+        )
         rest = path[idx + len(marker) :]
         if not rest:
             return _InverseEdgeSpec(owner_root=owner_root, target_path=target_path, edge_type=None, source_prefix=None)
@@ -422,12 +426,12 @@ class DatabaseFileSystem(VirtualFileSystem):
         if await self._get_object(spec.target_path, session) is None:
             return spec, []
         stmt = select(
-            self._model.source_path,
-            self._model.edge_type,
+            cast("Any", self._model.source_path),
+            cast("Any", self._model.edge_type),
         ).where(
             self._model.kind == "edge",
             self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
-            self._model.target_path == spec.target_path,  # ty: ignore[invalid-argument-type]
+            self._model.target_path == spec.target_path,
         )
         result = await session.execute(stmt)
         rows = [
@@ -461,10 +465,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             return Entry(path=path, kind=kind)
 
         exact = any(row.source_path == spec.source_prefix for row in matching)
-        has_descendants = any(
-            row.source_path.startswith(spec.source_prefix.rstrip("/") + "/")
-            for row in matching
-        )
+        has_descendants = any(row.source_path.startswith(spec.source_prefix.rstrip("/") + "/") for row in matching)
         if exact:
             return Entry(path=path, kind="edge" if "kind" in cols else None)
         if has_descendants:
@@ -490,7 +491,9 @@ class DatabaseFileSystem(VirtualFileSystem):
         if spec.edge_type is None:
             for row in rows:
                 child_kinds.setdefault(f"{base}/{row.edge_type}", "directory")
-            return [Entry(path=child, kind=kind if "kind" in cols else None) for child, kind in sorted(child_kinds.items())]
+            return [
+                Entry(path=child, kind=kind if "kind" in cols else None) for child, kind in sorted(child_kinds.items())
+            ]
 
         matching = [row for row in rows if row.edge_type == spec.edge_type]
         if not matching:
@@ -882,7 +885,9 @@ class DatabaseFileSystem(VirtualFileSystem):
         session: AsyncSession,
     ) -> tuple[set[str], list[str]]:
         """Reject chunk writes whose companion file is absent from DB and batch."""
-        chunk_writes = [obj for obj in write_map.values() if obj.kind == "chunk" and base_path(obj.path) not in write_map]
+        chunk_writes = [
+            obj for obj in write_map.values() if obj.kind == "chunk" and base_path(obj.path) not in write_map
+        ]
         if not chunk_writes:
             return set(), []
 
@@ -936,7 +941,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 ]
                 for p in batch:
                     rooted = meta_root(p)
-                    conditions.append(self._model.path == rooted)  # ty: ignore[invalid-argument-type]
+                    conditions.append(self._model.path == rooted)
                     conditions.append(
                         self._model.path.like(_escape_like(rooted) + "/%", escape="\\")  # ty: ignore[unresolved-attribute]
                     )

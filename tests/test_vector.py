@@ -13,6 +13,7 @@ class _FakeDialect:
     def __init__(self, name: str) -> None:
         self.name = name
 
+
 # =========================================================================
 # Vector — construction and subscript forms
 # =========================================================================

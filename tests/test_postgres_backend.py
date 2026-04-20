@@ -18,7 +18,7 @@ from vfs.backends.postgres import (
     _quote_tsquery_term,
 )
 from vfs.models import postgres_native_vfs_object_model, postgres_vector_column_spec
-from vfs.paths import edge_out_path, decompose_edge
+from vfs.paths import decompose_edge, edge_out_path
 from vfs.results import Entry, VFSResult
 from vfs.vector import Vector
 
@@ -291,9 +291,7 @@ class TestVectorSearch:
         )
 
         async with engine.connect() as conn:
-            row = (
-                await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))
-            ).first()
+            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))).first()
         assert row is not None
         assert _parse_vector_text(row[0]) == [1.0, 0.0, 0.0, 0.0]
 
@@ -343,9 +341,7 @@ class TestWriteAndDelete:
             )
 
         async with engine.connect() as conn:
-            row = (
-                await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))
-            ).first()
+            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))).first()
         assert row is not None
         assert _parse_vector_text(row[0]) == [0.1, 0.2, 0.3, 0.4]
 
@@ -362,9 +358,7 @@ class TestWriteAndDelete:
             )
 
         async with engine.connect() as conn:
-            row = (
-                await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))
-            ).first()
+            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))).first()
         assert row is not None
         assert _parse_vector_text(row[0]) == [0.4, 0.3, 0.2, 0.1]
 
@@ -378,9 +372,7 @@ class TestWriteAndDelete:
             await postgres_native_db._write_impl("/a.py", "v2", session=session)
 
         async with engine.connect() as conn:
-            row = (
-                await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))
-            ).first()
+            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))).first()
         assert row is not None
         assert _parse_vector_text(row[0]) == [0.1, 0.2, 0.3, 0.4]
 
@@ -412,9 +404,7 @@ class TestLegacyMigrationPath:
             await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.execute(sql_text("ALTER TABLE vfs_objects ADD COLUMN embedding_native vector(4)"))
             await conn.execute(
-                sql_text(
-                    "UPDATE vfs_objects SET embedding_native = embedding::vector(4) WHERE embedding IS NOT NULL"
-                )
+                sql_text("UPDATE vfs_objects SET embedding_native = embedding::vector(4) WHERE embedding IS NOT NULL")
             )
             await conn.execute(sql_text("ALTER TABLE vfs_objects DROP COLUMN embedding"))
             await conn.execute(sql_text("ALTER TABLE vfs_objects RENAME COLUMN embedding_native TO embedding"))

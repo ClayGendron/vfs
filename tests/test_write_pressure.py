@@ -1799,8 +1799,7 @@ class TestLargeWriteAndDelete:
         conn_objects = [
             VFSObject(
                 path=(
-                    f"/.vfs{file_objects[i].path}/__meta__/edges/out/"
-                    f"calls/{file_objects[(i + 1) % n].path.lstrip('/')}"
+                    f"/.vfs{file_objects[i].path}/__meta__/edges/out/calls/{file_objects[(i + 1) % n].path.lstrip('/')}"
                 ),
                 kind="edge",
                 source_path=file_objects[i].path,
@@ -1891,7 +1890,9 @@ class TestLargeWriteAndDelete:
         all_objects: list[VFSObject] = []
         for i in range(n):
             all_objects.append(VFSObject(path=f"/flat/f{i:05d}.py", content=f"code {i}"))
-            all_objects.append(VFSObject(path=f"/.vfs/flat/f{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():"))
+            all_objects.append(
+                VFSObject(path=f"/.vfs/flat/f{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():")
+            )
 
         r = await db.write(objects=all_objects)
         assert r.success, r.error_message
