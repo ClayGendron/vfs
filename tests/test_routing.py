@@ -45,7 +45,18 @@ class _RoutingFS(VirtualFileSystem):
             session=session,
         )
 
-    async def _glob_impl(self, pattern="", candidates=None, *, user_id=None, session):
+    async def _glob_impl(
+        self,
+        pattern: str = "",
+        *,
+        paths: tuple[str, ...] = (),
+        ext: tuple[str, ...] = (),
+        max_count: int | None = None,
+        columns: frozenset[str] | None = None,
+        candidates: VFSResult | None = None,
+        user_id=None,
+        session=None,
+    ):
         return await self.glob_mock(pattern=pattern, candidates=candidates, session=session)
 
 

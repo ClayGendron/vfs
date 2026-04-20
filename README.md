@@ -12,10 +12,17 @@
 pip install vfs-py
 ```
 
+For PostgreSQL-native full-text search and pgvector support, install the Postgres extra:
+
+```bash
+pip install 'vfs-py[postgres]'
+```
+
 `vfs` is an in-process file system that mounts data from multiple sources to enable agentic search and operations through a Unix-like interface.
 
 ```python
 from vfs import VFSClient, LocalFileSystem, DatabaseFileSystem
+from vfs.backends import PostgresFileSystem
 
 g = VFSClient()
 
@@ -32,6 +39,8 @@ g.cli('grep "authenticate" | pagerank | top 15')
 
 g.close()
 ```
+
+`PostgresFileSystem` is the explicit PostgreSQL-native backend. It keeps the same public VFS API as `DatabaseFileSystem`, but pushes lexical search, grep, glob, and native pgvector search into Postgres. If you pass `vector_store=`, that override still wins for vector and semantic search.
 
 > Every CLI command maps directly to a Python method. 
 >

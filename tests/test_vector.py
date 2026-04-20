@@ -8,6 +8,11 @@ import pytest
 
 from vfs.vector import Vector, VectorType
 
+
+class _FakeDialect:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
 # =========================================================================
 # Vector — construction and subscript forms
 # =========================================================================
@@ -140,6 +145,7 @@ class TestVectorTypeBind:
     def test_serializes_to_json(self):
         vt = VectorType()
         result = vt.process_bind_param([1.0, 2.0, 3.0], None)  # type: ignore[arg-type]
+        assert isinstance(result, str)
         assert result == "[1.0, 2.0, 3.0]"
         assert json.loads(result) == [1.0, 2.0, 3.0]
 
@@ -170,6 +176,11 @@ class TestVectorTypeBind:
         v = Vector([1.0, 2.0])  # no model name on vector
         result = vt.process_bind_param(v, None)  # type: ignore[arg-type]
         assert result is not None
+
+    def test_postgres_native_binds_plain_list_for_pgvector(self):
+        vt = VectorType(dimension=3, postgres_native=True)
+        result = vt.process_bind_param([1.0, 2.0, 3.0], _FakeDialect("postgresql"))  # type: ignore[arg-type]
+        assert result == [1.0, 2.0, 3.0]
 
 
 class TestVectorTypeResult:
@@ -207,6 +218,13 @@ class TestVectorTypeResult:
         assert result.dimension == 2
         assert result.model_name == "my-model"
 
+    def test_postgres_native_wraps_runtime_vector(self):
+        vt = VectorType(dimension=3, postgres_native=True)
+        result = vt.process_result_value([1.0, 2.0, 3.0], _FakeDialect("postgresql"))  # type: ignore[arg-type]
+        assert isinstance(result, Vector)
+        assert result.dimension == 3
+        assert list(result) == [1.0, 2.0, 3.0]
+
 
 class TestVectorTypeRoundTrip:
     def test_unconstrained(self):
@@ -230,3 +248,22 @@ class TestVectorTypeRoundTrip:
         serialized = vt.process_bind_param(v, None)  # type: ignore[arg-type]
         result = vt.process_result_value(serialized, None)  # type: ignore[arg-type]
         assert result.model_name == "my-model"  # type: ignore[union-attr]
+
+
+class TestVectorTypePostgresConfig:
+    def test_dimensionless_native_postgres_rejected(self):
+        with pytest.raises(ValueError, match="requires a fixed dimension"):
+            VectorType(postgres_native=True)
+
+    def test_copy_preserves_postgres_metadata(self):
+        vt = VectorType(
+            dimension=1536,
+            postgres_native=True,
+            postgres_index_method="ivfflat",
+            postgres_operator_class="vector_cosine_ops",
+        )
+        copied = vt.copy()
+        assert copied.dimension == 1536
+        assert copied.postgres_native is True
+        assert copied.postgres_index_method == "ivfflat"
+        assert copied.postgres_operator_class == "vector_cosine_ops"

@@ -8,11 +8,12 @@ Usage:
     ./scripts/postgres_repo_cli_probe.sh --keep-scratch
 
 The script assumes the repository content is already loaded into a
-``DatabaseFileSystem``-compatible PostgreSQL database. It mounts that
-database at ``/repo`` by default, then drives correctness, edge-case,
-and performance probes through the public CLI query surface.
+PostgreSQL database compatible with ``PostgresFileSystem``. It mounts that
+database at ``/repo`` by default, then drives correctness, edge-case, and
+performance probes through the public CLI query surface.
 
-Vector search and graph connections are intentionally out of scope here.
+When the corpus already contains native pgvector embeddings, the script also
+executes a direct vector-search smoke check through the public client API.
 """
 
 from __future__ import annotations
@@ -25,13 +26,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from vfs.backends.database import DatabaseFileSystem
+from vfs.backends.postgres import PostgresFileSystem, _parse_vector_dimension
 from vfs.client import VFSClient
 from vfs.exceptions import NotFoundError, VFSError, WriteConflictError
 from vfs.query import QuerySyntaxError
@@ -94,6 +95,10 @@ def _format_duration(duration_ms: float | None) -> str:
 
 def _banner(title: str) -> None:
     print(f"\n{BOLD}{title}{RESET}")
+
+
+def _parse_vector_literal(value: str) -> list[float]:
+    return [float(part) for part in value.strip("[]").split(",") if part]
 
 
 class ProbeRunner:
@@ -389,14 +394,52 @@ def build_parser() -> argparse.ArgumentParser:
 def open_client(db_url: str, mount: str) -> VFSClient:
     client = VFSClient()
 
-    async def _build_filesystem() -> DatabaseFileSystem:
+    async def _build_filesystem() -> tuple[PostgresFileSystem, tuple[str, list[float]] | None]:
         engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-        return DatabaseFileSystem(engine=engine)
+        async with engine.connect() as conn:
+            type_row = (
+                await conn.execute(
+                    sql_text(
+                        """
+                        SELECT format_type(a.atttypid, a.atttypmod)
+                        FROM pg_attribute AS a
+                        JOIN pg_class AS c ON c.oid = a.attrelid
+                        WHERE c.relname = 'vfs_objects'
+                          AND a.attname = 'embedding'
+                          AND NOT a.attisdropped
+                        """
+                    )
+                )
+            ).first()
+            native_dimension = _parse_vector_dimension(type_row[0]) if type_row is not None else None
 
-    filesystem = client._run(_build_filesystem())
+            native_vector_sample: tuple[str, list[float]] | None = None
+            if native_dimension is not None:
+                sample_row = (
+                    await conn.execute(
+                        sql_text(
+                            """
+                            SELECT path, embedding::text
+                            FROM vfs_objects
+                            WHERE embedding IS NOT NULL
+                            LIMIT 1
+                            """
+                        )
+                    )
+                ).first()
+                if sample_row is not None:
+                    native_vector_sample = (sample_row[0], _parse_vector_literal(sample_row[1]))
+
+        filesystem = (
+            PostgresFileSystem(engine=engine, embedding_dimension=native_dimension)
+            if native_dimension is not None
+            else PostgresFileSystem(engine=engine)
+        )
+        return filesystem, native_vector_sample
+
+    filesystem, native_vector_sample = client._run(_build_filesystem())
     client.add_mount(mount, filesystem)
+    client._native_vector_sample = native_vector_sample  # type: ignore[attr-defined]
     return client
 
 
@@ -611,6 +654,34 @@ def run_negative_suite(runner: ProbeRunner) -> None:
     )
 
 
+def run_native_vector_suite(runner: ProbeRunner) -> None:
+    _banner("Native Vector")
+
+    sample = getattr(runner.client, "_native_vector_sample", None)
+    if sample is None:
+        runner._record(
+            label="native vector probe",
+            status="WARN",
+            detail="no native pgvector embeddings found; skipped vector_search smoke check",
+        )
+        return
+
+    sample_path, sample_vector = sample
+    mounted_sample_path = _mount_path(runner.mount, sample_path)
+
+    def _check() -> str:
+        result = runner.client.vector_search(sample_vector, k=5)
+        if mounted_sample_path not in result.paths:
+            raise AssertionError(
+                f"Expected native vector_search to include {mounted_sample_path}, got {result.paths}"
+            )
+        if any(entry.content is not None for entry in result.entries):
+            raise AssertionError("vector_search returned content; expected path + score only")
+        return f"top hit set contains {mounted_sample_path}"
+
+    runner.custom_check("native vector_search returns embedded row", _check)
+
+
 def run_performance_suite(
     runner: ProbeRunner,
     *,
@@ -702,6 +773,7 @@ def main() -> int:
 
         run_correctness_suite(runner, read_path=args.read_path)
         run_negative_suite(runner)
+        run_native_vector_suite(runner)
         if not args.skip_perf:
             run_performance_suite(
                 runner,

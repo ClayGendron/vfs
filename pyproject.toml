@@ -52,7 +52,7 @@ treesitter = [
 openai = ["openai>=1.0"]
 pinecone = ["pinecone[asyncio]>=5.0"]
 databricks = ["databricks-vectorsearch>=0.40"]
-postgres = ["asyncpg>=0.29"]
+postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
 mssql = ["aioodbc>=0.5", "pyodbc>=5.0"]
 deepagents = ["deepagents>=0.4"]
 langchain = ["langchain-core>=0.3"]
@@ -142,6 +142,9 @@ omit = [
     # counted — covering the CONTAINSTABLE / REGEXP_LIKE / LIKE pushdown
     # bodies would require wiring an MSSQL service container into CI.
     "src/vfs/backends/mssql.py",
+    # Integration-only backend: exercised by tests/test_postgres_backend.py
+    # under --postgres against a real PostgreSQL + pgvector instance.
+    "src/vfs/backends/postgres.py",
 ]
 
 [tool.coverage.report]

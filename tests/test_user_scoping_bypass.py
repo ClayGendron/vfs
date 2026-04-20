@@ -46,6 +46,7 @@ def candidate_paths(result: VFSResult) -> set[str]:
 
 
 async def raw_object(fs: DatabaseFileSystem, path: str) -> VFSObject | None:
+    assert fs._session_factory is not None
     async with fs._session_factory() as session:
         stmt = select(VFSObject).where(VFSObject.path == path)
         result = await session.execute(stmt)

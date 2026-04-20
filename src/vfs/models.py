@@ -12,12 +12,14 @@ import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from pydantic import model_validator
-from sqlalchemy import DateTime, Index
+from pydantic import PrivateAttr, model_validator
+from sqlalchemy import DateTime, Index, MetaData
 from sqlalchemy.orm import InstanceState
 from sqlmodel import Field, SQLModel
 from sqlmodel._compat import finish_init
+from sqlmodel.main import SQLModelMetaclass
 
 from vfs.bm25 import tokenize as lexical_tokenize
 from vfs.paths import (
@@ -50,11 +52,16 @@ class ValidatedSQLModel(SQLModel):
     ``model_validate()`` calls.
     """
 
+    _explicit_fields: frozenset[str] = PrivateAttr(default_factory=frozenset)
+
     def __init__(self, **data: object) -> None:
+        explicit_fields = frozenset(data)
         super().__init__(**data)
         if not self.__class__.model_config.get("table", False):
+            self._explicit_fields = explicit_fields
             return
         if not finish_init.get():
+            self._explicit_fields = explicit_fields
             return
         sa_state = self.__dict__.get("_sa_instance_state")
         field_values = {}
@@ -64,6 +71,7 @@ class ValidatedSQLModel(SQLModel):
         self.__pydantic_validator__.validate_python(field_values, self_instance=self)
         if sa_state is not None:
             self.__dict__["_sa_instance_state"] = sa_state
+        self._explicit_fields = explicit_fields
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +90,17 @@ class VersionWritePlan:
     final_lines: int
     final_version_number: int
     chain_verified: bool = True
+
+
+@dataclass(frozen=True)
+class PostgresVectorColumnSpec:
+    """Schema metadata for a model-declared native Postgres vector column."""
+
+    column_name: str
+    dimension: int
+    index_method: str
+    operator_class: str
+    index_name: str
 
 
 class VFSObjectBase(ValidatedSQLModel):
@@ -600,3 +619,85 @@ class VFSObject(VFSObjectBase, table=True):
 
     __tablename__ = "vfs_objects"
     __table_args__ = (Index("ix_vfs_objects_ext_kind", "ext", "kind"),)
+
+
+_POSTGRES_NATIVE_MODEL_CACHE: dict[tuple[int, str | None, str, str], type[VFSObjectBase]] = {}
+
+
+def resolve_embedding_vector_type(model: type[VFSObjectBase]) -> VectorType:
+    """Return the model-declared ``VectorType`` for ``embedding``."""
+    table = getattr(model, "__table__", None)
+    if table is None or "embedding" not in table.c:
+        msg = f"Model {model.__name__} does not declare an 'embedding' column"
+        raise ValueError(msg)
+    vector_type = table.c.embedding.type
+    if not isinstance(vector_type, VectorType):
+        msg = f"Model {model.__name__}.embedding must use VectorType"
+        raise ValueError(msg)
+    return vector_type
+
+
+def postgres_vector_column_spec(model: type[VFSObjectBase]) -> PostgresVectorColumnSpec:
+    """Return the native Postgres vector-index contract declared on *model*."""
+    vector_type = resolve_embedding_vector_type(model)
+    if not vector_type.postgres_native or vector_type.dimension is None:
+        msg = (
+            f"Model {model.__name__}.embedding must be declared with "
+            "VectorType(dimension=<N>, postgres_native=True) for native Postgres vector search"
+        )
+        raise ValueError(msg)
+
+    table_name = str(model.__tablename__)
+    column_name = "embedding"
+    metric = vector_type.postgres_operator_class.removesuffix("_ops")
+    index_name = f"ix_{table_name}_{column_name}_{metric}_{vector_type.postgres_index_method}"
+    return PostgresVectorColumnSpec(
+        column_name=column_name,
+        dimension=vector_type.dimension,
+        index_method=vector_type.postgres_index_method,
+        operator_class=vector_type.postgres_operator_class,
+        index_name=index_name,
+    )
+
+
+def postgres_native_vfs_object_model(
+    *,
+    dimension: int,
+    model_name: str | None = None,
+    index_method: str = "hnsw",
+    operator_class: str = "vector_cosine_ops",
+) -> type[VFSObjectBase]:
+    """Build or reuse a ``VFSObject`` table model with native pgvector embedding."""
+    key = (dimension, model_name, index_method, operator_class)
+    cached = _POSTGRES_NATIVE_MODEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    class_name = f"PostgresNativeVFSObject{dimension}"
+    embedding_sa_type = cast(
+        "Any",
+        VectorType(
+            dimension=dimension,
+            model_name=model_name,
+            postgres_native=True,
+            postgres_index_method=index_method,
+            postgres_operator_class=operator_class,
+        ),
+    )
+    attrs: dict[str, object] = {
+        "__module__": __name__,
+        "__tablename__": "vfs_objects",
+        "__table_args__": (Index("ix_vfs_objects_ext_kind", "ext", "kind"),),
+        "metadata": MetaData(),
+        "__annotations__": {"embedding": Vector | None},
+        "embedding": Field(
+            default=None,
+            sa_type=embedding_sa_type,
+        ),
+    }
+    postgres_native_model = cast(
+        "type[VFSObjectBase]",
+        SQLModelMetaclass(class_name, (VFSObjectBase,), attrs, table=True),
+    )
+    _POSTGRES_NATIVE_MODEL_CACHE[key] = postgres_native_model
+    return postgres_native_model

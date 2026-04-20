@@ -42,7 +42,7 @@ After this story:
 - Add `tests/test_postgres_backend.py`
 - Update `tests/test_models.py`
 - Extend `tests/conftest.py` Postgres provisioning helpers
-- Update `scripts/postgres_repo_cli_probe.py` and `scripts/postgres_repo_cli_probe.sh`
+- Update `scripts/postgres_repo_cli_probe.py` (and the shell wrapper only if its interface needs to change)
 - Update PostgreSQL-facing docs/examples (`docs/index.md`, `docs/architecture.md`, and any backend listing that currently mentions only `DatabaseFileSystem` + `MSSQLFileSystem`)
 
 ## Scope
@@ -98,7 +98,7 @@ After this story:
    - `VectorType` must compile to Postgres `vector(<N>)` when native pgvector mode is active
    - native pgvector mode requires a fixed dimension; a dimensionless `VectorType()` is invalid for native Postgres vector search unless the caller supplies an explicit external `vector_store`
    - the fixed dimension belongs to the model declaration, not only to mount/runtime config
-   - `PostgresFileSystem` may accept a convenience argument such as `embedding_dimension=<N>`, but that argument is only allowed as a shortcut for building/selecting a dimensioned model declaration; it is not the schema source of truth
+   - `PostgresFileSystem` does not carry a separate runtime `embedding_dimension` source of truth; native vector shape comes from the resolved model declaration itself
    - the portable base model may remain dimensionless for non-native backends, but native Postgres mode must run against a model whose `embedding` field is declared with `VectorType(dimension=<N>, postgres_native=True, ...)`
    - `VectorType` must expose enough Postgres-specific metadata for provisioning code to know:
      - this column is the vector-index target
@@ -109,7 +109,8 @@ After this story:
    Required backend/model-construction contract:
 
    - callers may provide a predeclared Postgres-native model explicitly
-   - if the backend offers a convenience constructor path, it should build or select a Postgres-native model from the requested dimension rather than storing that dimension only on the filesystem instance
+   - callers that want native pgvector must select/build the right Postgres-native model up front; the backend constructor should not keep separate dimension state
+   - `PostgresFileSystem` should not need a custom constructor beyond what `DatabaseFileSystem` already provides
    - `verify_native_search_schema()` compares the live database schema to the resolved model declaration and raises on mismatch
    - if an existing table was created under the old serialized `embedding` storage, the backend must not automatically alter that column during normal initialization or schema verification; it must raise and require an explicit migration step instead
 
@@ -129,16 +130,18 @@ After this story:
 
    Exact keyword names may differ, but the contract is fixed: the `embedding` column and its `VectorType` are what tell the Postgres provisioning path where to create the vector index.
 
-   Recommended convenience-model shape:
+   Recommended explicit-model shape:
 
    ```python
+   model = postgres_native_vfs_object_model(dimension=1536)
+
    fs = PostgresFileSystem(
        engine=engine,
-       embedding_dimension=1536,
+       model=model,
    )
    ```
 
-   Where `embedding_dimension=1536` means "resolve/build the Postgres-native model whose `embedding` column is declared as `vector(1536)`", not "keep using a dimensionless model and remember `1536` separately on the backend".
+   The model declaration is the schema contract. `PostgresFileSystem` consumes that model; it does not remember a second dimension value on the filesystem instance.
 
    Canonical shape for a correctly provisioned native Postgres table:
 
@@ -513,7 +516,7 @@ The probe script should include at least one native vector-search check when emb
 
 - **Explicit vector-store override wins.** Native pgvector is the default for `PostgresFileSystem`, but a caller-provided `vector_store` takes precedence for vector/semantic search.
 - **Native vector storage lives on `VFSObject.embedding`.** `VectorType` and the model field are the source of truth for where Postgres native vector indexing happens.
-- **Native vector dimension is model-declared.** Any convenience `embedding_dimension=` constructor path exists only to resolve/build the right model declaration; schema verification compares the live column to that model and raises on mismatch.
+- **Native vector dimension is model-declared.** Schema verification compares the live column to the resolved model and raises on mismatch. `PostgresFileSystem` does not carry a separate `embedding_dimension=` constructor surface.
 - **Native grep/lexical/glob are part of the backend.** `PostgresFileSystem` is not “vector only”; it is the Postgres-native search backend analogous to `MSSQLFileSystem`.
 - **No auto-embedding generation.** The backend owns native search execution and native storage on `embedding`, not content analysis or embedding production.
 - **Legacy `embedding` columns are not auto-rewritten at runtime.** Verification raises; migration is explicit.

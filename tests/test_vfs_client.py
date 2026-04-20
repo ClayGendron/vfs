@@ -244,6 +244,7 @@ class TestVFSClientMount:
 class TestVFSClientCRUD:
     def test_write_and_read_roundtrip(self, g: VFSClient):
         result = g.write("/data/hello.txt", "hello world")
+        assert result.file is not None
         assert result.file.path == "/data/hello.txt"
 
         result = g.read("/data/hello.txt")

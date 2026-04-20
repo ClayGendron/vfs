@@ -34,6 +34,7 @@ from vfs.backends.database import (
     DatabaseFileSystem,
     _compile_grep_regex,
     _escape_like,
+    _extract_literal_terms,
     _regex_flags_for_mode,
 )
 from vfs.bm25 import tokenize_query
@@ -45,56 +46,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.query.ast import CaseMode, GrepOutputMode
-
-
-# ---------------------------------------------------------------------------
-# Literal-term extraction for grep pre-filter
-# ---------------------------------------------------------------------------
-
-
-def _extract_literal_terms(pattern: str) -> list[str]:
-    """Extract guaranteed-literal alphanumeric runs from a regex.
-
-    Used to coarse-pre-filter via SQL Server Full-Text ``CONTAINS`` before
-    running ``REGEXP_LIKE`` on the narrowed result set.  Conservative —
-    bails out (returns ``[]``) for patterns where extraction would be
-    unsound, namely:
-
-    - any quantified group: ``(...)?``, ``(...)*``, ``(...)+``, ``(...){…}``
-    - any top-level alternation: ``foo|bar`` (the literal "foo" is not
-      guaranteed to appear in matches; an alternation cannot become an
-      AND-of-CONTAINS pre-filter without changing semantics)
-
-    For acceptable patterns, strips escapes, character classes, group
-    parens, and quantified word-chars, then returns up to 8 unique runs
-    of length ≥ 3.  These are AND'd into a CONTAINS expression.
-    """
-    # Bail on quantified groups: (...)?  (...)*  (...)+  (...){...}
-    if re.search(r"\)[*+?{]", pattern):
-        return []
-    # Bail on alternation outside a character class.
-    stripped_for_alt = re.sub(r"\\.", "", pattern)
-    stripped_for_alt = re.sub(r"\[[^\]]*\]", "", stripped_for_alt)
-    if "|" in stripped_for_alt:
-        return []
-
-    cleaned = re.sub(r"\\.", " ", pattern)  # drop escapes (incl. \w \d \( etc.)
-    cleaned = re.sub(r"\[[^\]]*\]", " ", cleaned)  # drop character classes
-    cleaned = cleaned.replace("(", " ").replace(")", " ")  # drop bare group parens
-    cleaned = re.sub(r"\w[*+?]", " ", cleaned)  # drop quantified single chars
-    cleaned = re.sub(r"\w\{[^}]*\}", " ", cleaned)  # drop {n,m}-quantified chars
-    cleaned = re.sub(r"[.^$]", " ", cleaned)  # drop anchors and dot
-
-    runs = re.findall(r"[A-Za-z0-9_]{3,}", cleaned)
-    seen: set[str] = set()
-    out: list[str] = []
-    for run in runs:
-        if run not in seen:
-            seen.add(run)
-            out.append(run)
-            if len(out) >= 8:
-                break
-    return out
 
 
 def _quote_contains_term(term: str) -> str:

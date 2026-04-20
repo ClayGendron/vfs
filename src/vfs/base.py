@@ -16,7 +16,8 @@ Subclasses override ``_*_impl`` for their storage backend:
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import TYPE_CHECKING, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -38,6 +39,8 @@ from vfs.routing import (
     rewrite_path_for_mount,
 )
 
+SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
 if TYPE_CHECKING:
     import re
     from collections.abc import AsyncIterator, Sequence
@@ -54,7 +57,7 @@ class VirtualFileSystem:
         self,
         *,
         engine: AsyncEngine | None = None,
-        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        session_factory: SessionFactory | None = None,
         storage: bool = True,
         raise_on_error: bool = False,
         permissions: Permission | PermissionMap = "read_write",
@@ -66,7 +69,7 @@ class VirtualFileSystem:
         self._engine = engine
         self._schema = schema
         if session_factory is not None:
-            self._session_factory: async_sessionmaker[AsyncSession] | None = session_factory
+            self._session_factory: SessionFactory | None = session_factory
         elif engine is not None:
             self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
         elif storage:

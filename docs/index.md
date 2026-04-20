@@ -109,7 +109,7 @@ graph TD
     A --> E["BackgroundWorker"]
 
     B --> F["LocalFileSystem<br/><i>disk + SQLite</i>"]
-    B --> G["DatabaseFileSystem<br/><i>PostgreSQL · MSSQL · SQLite</i>"]
+    B --> G["DatabaseFileSystem / PostgresFileSystem / MSSQLFileSystem<br/><i>SQLite · PostgreSQL · SQL Server</i>"]
 
     F --> H["GraphProvider<br/><i>rustworkx DiGraph</i>"]
     F --> J["SearchProvider<br/><i>Local · Pinecone · Databricks</i>"]
@@ -136,13 +136,18 @@ graph TD
 
 ## Backends
 
-Grover supports two storage backends through a common protocol:
+Grover supports three database-oriented backends through one public VFS contract:
 
 **LocalFileSystem** — for desktop development and code editing. Files live on disk where your IDE, git, and other tools can see them. Metadata and version history are stored in a local SQLite database. This is the default for local projects.
 
-**DatabaseFileSystem** — for web applications and shared knowledge bases. All content lives in the database (PostgreSQL, MSSQL, or SQLite). There are no physical files. This is ideal for multi-tenant platforms, enterprise document stores, or any environment where state should be centralized.
+**DatabaseFileSystem** — the portable SQL backend. All content lives in `vfs_objects`, and search uses the cross-dialect baseline path.
 
-Both backends support versioning and trash. You can mount them side by side:
+**PostgresFileSystem** — the PostgreSQL-native backend. `lexical_search`, `grep`, and `glob` run in Postgres, and pgvector is the default vector path when the mounted model declares a native `embedding` column. Passing `vector_store=` still overrides pgvector for vector and semantic search.
+Legacy Postgres tables that still store `embedding` as serialized text must be migrated explicitly: add a new `vector(<N>)` column, backfill from the old `embedding` values, swap the columns, then create the ANN index on the native column. Runtime initialization and schema verification do not rewrite the column in place.
+
+**MSSQLFileSystem** — the SQL Server / Azure SQL native backend with full-text and regex pushdown.
+
+All three support the same public VFS API, versioning, and trash. You can mount them side by side:
 
 ```python
 from grover import EngineConfig

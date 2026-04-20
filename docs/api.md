@@ -619,6 +619,14 @@ Pure-database storage. All content lives in the `File.content` column. Stateless
 
 Implements: `GroverFileSystem`.
 
+### PostgresFileSystem
+
+```python
+PostgresFileSystem(...)
+```
+
+PostgreSQL-native backend. `lexical_search`, `grep`, and `glob` run inside Postgres; `vector_search` and `semantic_search` default to pgvector when the configured model declares `embedding` as a native `vector(<N>)` column. The vector dimension and index contract live on the `VFSObject` model declaration, not on the backend constructor. Passing `vector_store=` keeps the same external-store path as the portable backend for vector and semantic search, while lexical / grep / glob remain Postgres-native.
+
 ### Permission
 
 ```python

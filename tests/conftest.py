@@ -10,14 +10,16 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import event
+from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
 from vfs.backends.database import DatabaseFileSystem
 from vfs.backends.mssql import MSSQLFileSystem
+from vfs.backends.postgres import PostgresFileSystem
 from vfs.base import VirtualFileSystem
-from vfs.models import VFSObjectBase
+from vfs.models import VFSObjectBase, postgres_native_vfs_object_model, postgres_vector_column_spec
 from vfs.results import Entry
 
 if TYPE_CHECKING:
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
 
 _PG_DB = "vfs_test"
 _PG_URL = f"postgresql+asyncpg://localhost/{_PG_DB}"
+_PG_NATIVE_VECTOR_DIM = 4
 
 _MSSQL_DEFAULT_URL = (
     "mssql+aioodbc://sa:Strong!Passw0rd@localhost:1433/vfs_test"
@@ -130,6 +133,47 @@ async def _provision_mssql_fulltext(eng) -> None:
         )
 
 
+async def _provision_postgres_fulltext(eng, *, table: str = "vfs_objects") -> None:
+    """Test-only: provision the GIN FTS index required by PostgresFileSystem."""
+    async with eng.begin() as conn:
+        await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{table}_content_tsv_gin
+                ON {table} USING GIN (to_tsvector('simple', coalesce(content, '')))
+                """
+            )
+        )
+
+
+async def _provision_postgres_native_search(eng, model: type[VFSObjectBase]) -> None:
+    """Recreate ``vfs_objects`` with a native vector column and indexes."""
+    spec = postgres_vector_column_spec(model)
+    async with eng.begin() as conn:
+        await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.execute(sql_text(f"DROP TABLE IF EXISTS {model.__tablename__} CASCADE"))
+        await conn.run_sync(model.metadata.create_all)
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{model.__tablename__}_content_tsv_gin
+                ON {model.__tablename__} USING GIN (to_tsvector('simple', coalesce(content, '')))
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS {spec.index_name}
+                ON {model.__tablename__} USING {spec.index_method}
+                ({spec.column_name} {spec.operator_class})
+                WHERE {spec.column_name} IS NOT NULL
+                """
+            )
+        )
+
+
 @pytest.fixture
 async def engine(request: pytest.FixtureRequest):
     use_pg = request.config.getoption("--postgres")
@@ -155,6 +199,8 @@ async def engine(request: pytest.FixtureRequest):
         await conn.run_sync(SQLModel.metadata.drop_all)
         await conn.run_sync(SQLModel.metadata.create_all)
 
+    if use_pg:
+        await _provision_postgres_fulltext(eng)
     if use_mssql:
         await _provision_mssql_fulltext(eng)
 
@@ -172,6 +218,28 @@ async def db(request: pytest.FixtureRequest, engine):
     if request.config.getoption("--mssql"):
         return MSSQLFileSystem(engine=engine)
     return DatabaseFileSystem(engine=engine)
+
+
+@pytest.fixture
+def postgres_vector_dimension() -> int:
+    return _PG_NATIVE_VECTOR_DIM
+
+
+@pytest.fixture
+async def postgres_native_db(request: pytest.FixtureRequest, engine, postgres_vector_dimension: int):
+    if not request.config.getoption("--postgres"):
+        pytest.skip("requires --postgres flag and a running PostgreSQL instance")
+    model = postgres_native_vfs_object_model(dimension=postgres_vector_dimension)
+    await _provision_postgres_native_search(engine, model)
+    return PostgresFileSystem(engine=engine, model=model)
+
+
+@pytest.fixture
+async def postgres_legacy_db(request: pytest.FixtureRequest, engine):
+    if not request.config.getoption("--postgres"):
+        pytest.skip("requires --postgres flag and a running PostgreSQL instance")
+    await _provision_postgres_fulltext(engine)
+    return PostgresFileSystem(engine=engine)
 
 
 @pytest.fixture

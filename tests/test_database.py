@@ -14,6 +14,7 @@ from vfs.backends.database import DatabaseFileSystem
 from vfs.base import VirtualFileSystem
 from vfs.models import VFSObject, VFSObjectBase
 from vfs.results import EditOperation, Entry, TwoPathOperation, VFSResult
+from vfs.vector import Vector
 
 
 def _stored_payload(obj: VFSObjectBase) -> str:
@@ -68,6 +69,49 @@ class TestWriteAndRead:
         async with db._use_session() as s:
             r = await db._read_impl("/file.txt", session=s)
         assert r.content == "v2"
+
+    async def test_write_with_embedding_persists_on_insert(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            result = await db._write_impl(
+                objects=[VFSObject(path="/embed.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+                session=s,
+            )
+        assert result.success
+
+        async with db._use_session() as s:
+            obj = require_object(await db._get_object("/embed.txt", s))
+        assert obj.embedding is not None
+        assert list(obj.embedding) == [0.1, 0.2, 0.3]
+
+    async def test_write_without_embedding_preserves_existing_value(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl(
+                objects=[VFSObject(path="/preserve.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+                session=s,
+            )
+        async with db._use_session() as s:
+            await db._write_impl("/preserve.txt", "v2", session=s)
+
+        async with db._use_session() as s:
+            obj = require_object(await db._get_object("/preserve.txt", s))
+        assert obj.embedding is not None
+        assert list(obj.embedding) == [0.1, 0.2, 0.3]
+
+    async def test_write_with_embedding_none_clears_existing_value(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl(
+                objects=[VFSObject(path="/clear.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+                session=s,
+            )
+        async with db._use_session() as s:
+            await db._write_impl(
+                objects=[VFSObject(path="/clear.txt", content="v2", embedding=None)],
+                session=s,
+            )
+
+        async with db._use_session() as s:
+            obj = require_object(await db._get_object("/clear.txt", s))
+        assert obj.embedding is None
 
     async def test_write_chunk(self, db: DatabaseFileSystem):
         async with db._use_session() as s:

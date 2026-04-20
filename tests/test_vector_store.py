@@ -6,7 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import dummy_session_factory
 from vfs.backends.database import DatabaseFileSystem
+from vfs.backends.postgres import PostgresFileSystem
 from vfs.vector import Vector
 from vfs.vector_store import VectorHit, VectorItem, VectorStore
 
@@ -208,6 +210,36 @@ async def test_semantic_search_whitespace_query(db: DatabaseFileSystem):
 
     assert not result.success
     assert "requires a query" in result.errors[0]
+
+
+async def test_postgres_vector_store_override_wins_without_native_schema():
+    store = MockVectorStore([VectorHit(path="/a.py", score=0.9)])
+
+    fs = PostgresFileSystem(
+        session_factory=dummy_session_factory(),
+        vector_store=store,
+    )
+    result = await fs.vector_search([0.1, 0.2, 0.3, 0.4], k=5)
+
+    assert result.success
+    assert result.entries[0].path == "/a.py"
+    assert store.last_query_vector == [0.1, 0.2, 0.3, 0.4]
+
+
+async def test_postgres_semantic_search_override_uses_existing_store_path():
+    store = MockVectorStore([VectorHit(path="/a.py", score=0.9)])
+
+    fs = PostgresFileSystem(
+        session_factory=dummy_session_factory(),
+        vector_store=store,
+        embedding_provider=MockEmbeddingProvider(),
+    )
+    result = await fs.semantic_search("find auth code", k=5)
+
+    assert result.success
+    assert result.function == "semantic_search"
+    assert result.entries[0].path == "/a.py"
+    assert store.last_query_vector is not None
 
 
 # ---------------------------------------------------------------------------

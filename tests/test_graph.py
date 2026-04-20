@@ -1170,6 +1170,9 @@ class TestBetweennessCentrality:
 
         result = await g.betweenness_centrality(_result(), session=_mock_session)
         scores = {e.path: e.score for e in result.entries}
+        assert scores["/b.py"] is not None
+        assert scores["/a.py"] is not None
+        assert scores["/c.py"] is not None
         assert scores["/b.py"] >= scores["/a.py"]
         assert scores["/b.py"] >= scores["/c.py"]
 
@@ -1242,6 +1245,8 @@ class TestDegreeCentrality:
         result = await g.in_degree_centrality(_result(), session=_mock_session)
         scores = {e.path: e.score for e in result.entries}
         # B has 2 incoming edges, highest in-degree
+        assert scores["/b.py"] is not None
+        assert scores["/a.py"] is not None
         assert scores["/b.py"] > scores["/a.py"]
 
     async def test_out_degree_centrality(self):
@@ -1252,6 +1257,8 @@ class TestDegreeCentrality:
         result = await g.out_degree_centrality(_result(), session=_mock_session)
         scores = {e.path: e.score for e in result.entries}
         # A has 2 outgoing edges, highest out-degree
+        assert scores["/a.py"] is not None
+        assert scores["/b.py"] is not None
         assert scores["/a.py"] > scores["/b.py"]
 
     async def test_function_names(self):

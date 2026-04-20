@@ -10,7 +10,7 @@ backend shortcut; never ``select(self._model)``; never N calls.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -61,9 +61,9 @@ class TestHydrationRoutesThroughRead:
         fs.read.return_value = VFSResult(
             function="read",
             entries=[
-                Entry(path="/a.md", updated_at=datetime(2026, 1, 1)),
-                Entry(path="/b.md", updated_at=datetime(2026, 1, 2)),
-                Entry(path="/c.md", updated_at=datetime(2026, 1, 3)),
+                Entry(path="/a.md", updated_at=datetime(2026, 1, 1, tzinfo=UTC)),
+                Entry(path="/b.md", updated_at=datetime(2026, 1, 2, tzinfo=UTC)),
+                Entry(path="/c.md", updated_at=datetime(2026, 1, 3, tzinfo=UTC)),
             ],
         )
 
@@ -82,9 +82,9 @@ class TestHydrationRoutesThroughRead:
         # And it merged by path — every original entry should now carry updated_at.
         updated = {e.path: e.updated_at for e in result.entries}
         assert updated == {
-            "/a.md": datetime(2026, 1, 1),
-            "/b.md": datetime(2026, 1, 2),
-            "/c.md": datetime(2026, 1, 3),
+            "/a.md": datetime(2026, 1, 1, tzinfo=UTC),
+            "/b.md": datetime(2026, 1, 2, tzinfo=UTC),
+            "/c.md": datetime(2026, 1, 3, tzinfo=UTC),
         }
 
     async def test_one_call_for_many_paths(self):
@@ -97,7 +97,7 @@ class TestHydrationRoutesThroughRead:
         )
         fs.read.return_value = VFSResult(
             function="read",
-            entries=[Entry(path=p, updated_at=datetime(2026, 1, 1)) for p in paths],
+            entries=[Entry(path=p, updated_at=datetime(2026, 1, 1, tzinfo=UTC)) for p in paths],
         )
 
         await execute_query(
@@ -126,7 +126,7 @@ class TestHydrationIsNoopWhenNotNeeded:
         fs = _fs()
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md", kind="file", updated_at=datetime(2026, 1, 1))],
+            entries=[Entry(path="/a.md", kind="file", updated_at=datetime(2026, 1, 1, tzinfo=UTC))],
         )
         await execute_query(
             fs,
@@ -201,7 +201,7 @@ class TestHydrationNarrows:
         )
         fs.read.return_value = VFSResult(
             function="read",
-            entries=[Entry(path="/a.md", updated_at=datetime(2026, 1, 1))],
+            entries=[Entry(path="/a.md", updated_at=datetime(2026, 1, 1, tzinfo=UTC))],
         )
         await execute_query(
             fs,

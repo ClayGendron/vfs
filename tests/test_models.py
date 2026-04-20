@@ -7,7 +7,7 @@ import hashlib
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from vfs.models import VFSObject, VFSObjectBase
+from vfs.models import VFSObject, VFSObjectBase, postgres_native_vfs_object_model, postgres_vector_column_spec
 from vfs.vector import Vector
 
 # =========================================================================
@@ -408,6 +408,12 @@ class TestEmbedding:
         obj = VFSObject(path="/a.py", embedding=vec)
         assert obj.embedding is vec
 
+    def test_tracks_explicit_fields_for_write_semantics(self):
+        implicit = VFSObject(path="/a.py", content="x")
+        explicit = VFSObject(path="/a.py", content="x", embedding=None)
+        assert "embedding" not in implicit._explicit_fields
+        assert "embedding" in explicit._explicit_fields
+
 
 # =========================================================================
 # Base vs concrete class
@@ -600,6 +606,35 @@ class TestDBRoundTrip:
             assert loaded.source_path == "/a.py"
             assert loaded.target_path == "/b.py"
             assert loaded.connection_type == "imports"
+
+    def test_postgres_native_model_uses_portable_round_trip_on_sqlite(self, engine):
+        native_model = postgres_native_vfs_object_model(dimension=3)
+        native_model.metadata.create_all(engine)
+        obj = native_model(path="/native.py", embedding=Vector([0.1, 0.2, 0.3]))
+        with Session(engine) as s:
+            s.add(obj)
+            s.commit()
+
+        with Session(engine) as s:
+            loaded = s.exec(select(native_model).where(native_model.path == "/native.py")).one()
+            assert isinstance(loaded.embedding, Vector)
+            assert loaded.embedding.dimension == 3
+            assert list(loaded.embedding) == [0.1, 0.2, 0.3]
+
+
+class TestPostgresVectorModelHelpers:
+    def test_cached_model_factory_reuses_same_class(self):
+        first = postgres_native_vfs_object_model(dimension=1536)
+        second = postgres_native_vfs_object_model(dimension=1536)
+        assert first is second
+
+    def test_vector_spec_comes_from_model_declaration(self):
+        native_model = postgres_native_vfs_object_model(dimension=1536)
+        spec = postgres_vector_column_spec(native_model)
+        assert spec.column_name == "embedding"
+        assert spec.dimension == 1536
+        assert spec.index_method == "hnsw"
+        assert spec.operator_class == "vector_cosine_ops"
 
 
 # =========================================================================
@@ -882,7 +917,7 @@ class TestFinishInitFalse:
         try:
             # With finish_init=False, the validated init returns early.
             # This simulates what happens during ORM loads.
-            obj = VFSObject()
+            obj = VFSObject()  # ty: ignore[missing-argument]
             # Object exists but path was not set (no validation ran)
             assert obj is not None
         finally:

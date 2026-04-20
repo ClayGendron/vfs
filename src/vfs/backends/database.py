@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from sqlalchemy import case, func, or_, select
 
-from vfs.base import VirtualFileSystem
+from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
 from vfs.columns import ENTRY_BACKED_MODEL_COLUMNS, default_columns
 from vfs.graph import RustworkxGraph
@@ -31,7 +31,7 @@ from vfs.versioning import SNAPSHOT_INTERVAL
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from vfs.embedding import EmbeddingProvider
     from vfs.permissions import Permission, PermissionMap
@@ -86,6 +86,40 @@ def _compile_grep_regex(
         effective = rf"\b(?:{effective})\b"
     flags = _regex_flags_for_mode(case_mode, pattern)
     return re.compile(effective, flags)
+
+
+def _extract_literal_terms(pattern: str) -> list[str]:
+    """Extract guaranteed-literal alphanumeric runs from a regex.
+
+    Conservative by design: returns ``[]`` for quantified groups and
+    alternations where turning the literals into an AND prefilter would
+    be unsound.
+    """
+    if re.search(r"\)[*+?{]", pattern):
+        return []
+
+    stripped_for_alt = re.sub(r"\\.", "", pattern)
+    stripped_for_alt = re.sub(r"\[[^\]]*\]", "", stripped_for_alt)
+    if "|" in stripped_for_alt:
+        return []
+
+    cleaned = re.sub(r"\\.", " ", pattern)
+    cleaned = re.sub(r"\[[^\]]*\]", " ", cleaned)
+    cleaned = cleaned.replace("(", " ").replace(")", " ")
+    cleaned = re.sub(r"\w[*+?]", " ", cleaned)
+    cleaned = re.sub(r"\w\{[^}]*\}", " ", cleaned)
+    cleaned = re.sub(r"[.^$]", " ", cleaned)
+
+    runs = re.findall(r"[A-Za-z0-9_]{3,}", cleaned)
+    seen: set[str] = set()
+    out: list[str] = []
+    for run in runs:
+        if run not in seen:
+            seen.add(run)
+            out.append(run)
+            if len(out) >= 8:
+                break
+    return out
 
 
 def _build_line_matches_with_context(
@@ -158,7 +192,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         self,
         *,
         engine: AsyncEngine | None = None,
-        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        session_factory: SessionFactory | None = None,
         model: type[VFSObjectBase] = VFSObject,
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
@@ -302,6 +336,23 @@ class DatabaseFileSystem(VirtualFileSystem):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _field_was_explicitly_provided(obj: VFSObjectBase, field_name: str) -> bool:
+        """Return whether *field_name* was explicitly supplied on write input."""
+        explicit_fields = getattr(obj, "_explicit_fields", None)
+        if explicit_fields is None:
+            return bool(getattr(obj, field_name, None) is not None)
+        return field_name in explicit_fields
+
+    def _apply_explicit_embedding_update(
+        self,
+        existing: VFSObjectBase,
+        incoming: VFSObjectBase,
+    ) -> None:
+        """Persist explicit embedding writes without clobbering omissions."""
+        if self._field_was_explicitly_provided(incoming, "embedding"):
+            existing.embedding = incoming.embedding
 
     async def _get_object(
         self,
@@ -784,6 +835,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 session.add(version_row)
         else:
             existing.update_content(new_content)  # pragma: no cover — defensive: files always have content
+        self._apply_explicit_embedding_update(existing, incoming)
 
         return existing.to_entry()
 
@@ -2031,13 +2083,14 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         vector = await self._embedding_provider.embed(query)
 
-        return await self._vector_search_impl(
+        result = await self._vector_search_impl(
             vector=list(vector),
             k=k,
             candidates=candidates,
             user_id=user_id,
             session=session,
         )
+        return result.model_copy(update={"function": "semantic_search"})
 
     async def _vector_search_impl(
         self,

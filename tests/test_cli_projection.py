@@ -58,6 +58,21 @@ class TestOutputWidensStat:
         )
 
 
+class TestPostgresNativeProjection:
+    async def test_native_glob_output_still_avoids_embedding(self, postgres_native_db, sql_capture):
+        await _seed(postgres_native_db)
+        sql_capture.reset()
+        await execute_query(postgres_native_db, parse_query('glob "**/*.md" --output default,updated_at'))
+        statements = [
+            " ".join(statement.split()).lower()
+            for statement in sql_capture.statements
+            if statement.lstrip().upper().startswith("SELECT") and "from vfs_objects" in statement.lower()
+        ]
+        assert statements
+        assert any("updated_at" in statement for statement in statements)
+        assert all("embedding" not in statement for statement in statements)
+
+
 class TestUnknownFieldRejectedAtParseTime:
     def test_unknown_field_raises(self):
         from vfs.query.parser import QuerySyntaxError

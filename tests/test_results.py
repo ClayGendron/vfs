@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -563,21 +564,21 @@ class TestToStr:
                 Entry(
                     path="/docs/guide.md",
                     size_bytes=27,
-                    updated_at=datetime(2026, 4, 19, 19, 47, 15, 672705),
+                    updated_at=datetime(2026, 4, 19, 19, 47, 15, 672705, tzinfo=UTC),
                 ),
                 Entry(
                     path="/docs/intro.md",
                     size_bytes=34,
-                    updated_at=datetime(2026, 4, 19, 19, 47, 15, 668105),
+                    updated_at=datetime(2026, 4, 19, 19, 47, 15, 668105, tzinfo=UTC),
                 ),
             ],
         )
         rendered = r.to_str(projection=("path", "size_bytes", "updated_at"))
         expected = (
-            "| path           | size_bytes | updated_at                 |\n"
-            "| -------------- | ---------: | -------------------------- |\n"
-            "| /docs/guide.md |         27 | 2026-04-19 19:47:15.672705 |\n"
-            "| /docs/intro.md |         34 | 2026-04-19 19:47:15.668105 |"
+            "| path           | size_bytes | updated_at                       |\n"
+            "| -------------- | ---------: | -------------------------------- |\n"
+            "| /docs/guide.md |         27 | 2026-04-19 19:47:15.672705+00:00 |\n"
+            "| /docs/intro.md |         34 | 2026-04-19 19:47:15.668105+00:00 |"
         )
         assert rendered == expected
 
@@ -685,15 +686,13 @@ class TestToStr:
         separators (``hydrate downstream:27``), so the renderer falls
         back to the standard Markdown-table view — one row per entry.
         """
-        from datetime import datetime
-
         content = "a\nhit\nb\n"
         e = Entry(
             path="/a.py",
             content=content,
             lines=[LineMatch(start=1, end=3, match=2)],
             size_bytes=47,
-            updated_at=datetime(2026, 4, 19, 12, 0, 0),
+            updated_at=datetime(2026, 4, 19, 12, 0, 0, tzinfo=UTC),
         )
         r = VFSResult(function="grep", entries=[e])
         rendered = r.to_str(projection=("path", "size_bytes", "updated_at"))

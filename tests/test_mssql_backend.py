@@ -251,10 +251,10 @@ class TestGlobInMemoryCandidates:
                 Entry(path="/tests/foo.py", kind="file"),
             ]
         )
-        result = await fs._glob_impl(  # type: ignore[call-arg]
+        result = await fs._glob_impl(
             "**/*.py",
             candidates=candidates,
-            session=None,  # type: ignore[arg-type]
+            session=None,
         )
         assert sorted(result.paths) == ["/src/foo.py", "/tests/foo.py"]
         assert result.function == "glob"

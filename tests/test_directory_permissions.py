@@ -233,7 +233,7 @@ class TestCoercePermissions:
 
     def test_invalid_string(self):
         with pytest.raises(ValueError, match="'read' or 'read_write'"):
-            coerce_permissions("readonly")  # type: ignore[arg-type]
+            coerce_permissions("readonly")
 
     def test_invalid_type(self):
         with pytest.raises(TypeError, match="PermissionMap"):

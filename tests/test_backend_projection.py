@@ -193,6 +193,43 @@ class TestVectorSearchProjection:
         sql_capture.assert_no_column("content")
 
 
+class TestPostgresNativeVectorSearchProjection:
+    async def test_native_projection_keeps_embedding_out_of_select_list(
+        self,
+        postgres_native_db,
+        postgres_vector_dimension,
+        sql_capture,
+    ):
+        async with postgres_native_db._use_session() as s:
+            await postgres_native_db._write_impl(
+                objects=[
+                    postgres_native_db._model(
+                        path="/vec.py",
+                        content="vector row",
+                        embedding=[0.1] * postgres_vector_dimension,
+                    )
+                ],
+                session=s,
+            )
+
+        sql_capture.reset()
+        async with postgres_native_db._use_session() as s:
+            await postgres_native_db._vector_search_impl(
+                vector=[0.1] * postgres_vector_dimension,
+                k=5,
+                session=s,
+            )
+
+        selects = [
+            " ".join(statement.split())
+            for statement in sql_capture.statements
+            if statement.lstrip().upper().startswith("SELECT") and "FROM vfs_objects" in statement
+        ]
+        assert selects, "expected vector search to issue at least one SELECT against vfs_objects"
+        assert any("SELECT o.path, (1 - (o.embedding <=>" in stmt for stmt in selects)
+        assert all("SELECT o.embedding" not in stmt for stmt in selects)
+
+
 class TestLexicalSearchProjection:
     async def test_default_lexical_search_omits_embedding(self, db, sql_capture):
         await _seed(db)

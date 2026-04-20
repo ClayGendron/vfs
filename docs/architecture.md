@@ -20,7 +20,7 @@ This simplification keeps the three layers (filesystem, graph, search) naturally
 
 ## Filesystem-centric architecture
 
-Grover uses a **filesystem-centric** design where `DatabaseFileSystem` is the base class that owns all providers. `LocalFileSystem` is a thin subclass (~330 lines) that adds disk-specific overrides.
+Grover uses a **filesystem-centric** design where `DatabaseFileSystem` is the portable SQL baseline and dialect-specific subclasses add native search paths when the database can do better. `LocalFileSystem` remains a thin subclass for disk-specific overrides, and `PostgresFileSystem` / `MSSQLFileSystem` are explicit opt-in backends for native database search.
 
 **Provider composition**: Instead of separate graph and search objects on the mount, all capabilities are pluggable **providers** on the filesystem itself:
 
@@ -38,6 +38,8 @@ DatabaseFileSystem
 ```
 
 **LocalFileSystem** inherits from `DatabaseFileSystem` and passes a `DiskStorageProvider` to its parent. It only overrides lifecycle (`open`/`close`) and disk-specific operations (`read`, `delete`, `mkdir`, `restore`, `reconcile`). All other behavior — versioning, chunking, graph, search — comes from `DatabaseFileSystem` and its mixins.
+
+**PostgresFileSystem** keeps the same public API but overrides lexical search, grep, glob, vector search, and semantic search to run natively in PostgreSQL. Full-text ranking uses Postgres FTS, regex and path matching stay in Postgres, and pgvector is the default vector path when the model declares `embedding` as a native `vector(<N>)` column. A caller-provided `vector_store=` still wins for vector and semantic search.
 
 **Orchestration functions** in `operations.py` are pure functions that take services and callbacks as parameters. Both the base class and its subclass call the same functions.
 
