@@ -25,7 +25,7 @@ After this story:
 ## Why
 
 - **Chaining:** A uniform `Entry` shape removes the "which backend produced this row?" question from every downstream `.filter` / `|` / `.top` call. This is Article 5 (One result type, composable) made real.
-- **Performance:** `grover_objects` rows carry `vector` blobs and full chunk content. A `glob "**/*.md"` that only needs `path` should not scan those columns. First-order fix: `select(path, kind, size_bytes, updated_at, in_degree, out_degree)` instead of `select(self._model)`.
+- **Performance:** `grover_objects` rows carry `vector` blobs and full chunk content. A `glob "**/*.md"` that only needs `path` should not scan those columns. First-order fix: `select(path, kind, size_bytes, updated_at)` instead of `select(self._model)`.
 - **Extensibility:** Once projection controls what's fetched (not just what's rendered), adding new columns (content hash, mount, author) is additive — old CLI invocations keep their fast path; new invocations opt in by naming the column.
 
 ## Scope
@@ -33,7 +33,7 @@ After this story:
 ### In
 
 1. Adopt the `Entry` + envelope refactor specified in [`docs/plans/grover_result_refactor.md`](../../../docs/plans/grover_result_refactor.md). That plan is the schema contract for this story.
-2. **Persist graph degree on the object row.** Add `in_degree: int | None` and `out_degree: int | None` columns to `VFSObjectBase` (`src/vfs/models.py`) and index them if query patterns warrant. `to_entry()` reads them off the row directly, so every Entry — glob, grep, stat, read — can carry them without a graph round-trip. `pagerank`/centrality still override with freshly-computed values when producing their own results. Per Article 7 and the `no-migration-scripts` rule: no backfill script; existing rows hold `NULL` until the caller's graph-rebuild process populates them.
+2. **Do not persist graph degree on the object row.** `in_degree` and `out_degree` remain `Entry` fields for graph-derived results, but they are not stored on `VFSObjectBase` and are not treated as row-backed columns for ordinary `read` / `stat` / `glob` / search projections. Degree values come from edge-derived graph computations, not denormalized object-row counters.
 3. Introduce a `columns: frozenset[str]` (or equivalent) parameter threaded through every `_*_impl` in `src/vfs/backends/database.py` and `src/vfs/backends/mssql.py`. The parameter names which Entry fields the caller will read; the impl translates that into a narrowed `select(...)`.
 4. Define a per-function **default column set** — the minimum columns needed to populate the default projection from the refactor plan's arrangement table. Impls default to this set when no override is passed.
 5. CLI enrichment: the query executor / CLI pipeline computes `required_columns = default_columns(function) ∪ projection_columns(plan.projection)` and passes it to the impl before execution. If the result is produced upstream (e.g. piped from another stage) and is missing requested columns, the CLI hydrates the entries via `read` (see next bullet) before calling `to_str`.
@@ -42,7 +42,7 @@ After this story:
 
 ### Out
 
-- No migration script for `in_degree` / `out_degree` backfill (Article 7, and the `no-migration-scripts` rule).
+- No denormalized graph-degree persistence or backfill work as part of this story. Degree values remain derived from edge data, not stored on object rows.
 - No new backends. MSSQL and SQLite/Postgres paths both get the narrowed-select treatment; no new dialect work.
 - No MCP layer changes — serialization stays Pydantic.
 - Chunk line-range plumbing through the vector store / BM25 is still deferred (same non-goal as the refactor plan).
@@ -71,7 +71,7 @@ A reviewer can verify this story shipped by running the checks below. Each must 
 ### CLI projection
 
 - [ ] `vfs grep "hydrate" --output default,updated_at` includes `updated_at` in the impl's SELECT and renders a per-entry Markdown table, since projecting entry-level fields opts out of rg-style line output.
-- [ ] `vfs vector_search "auth" --output path,score,out_degree` renders `out_degree` without issuing a second `SELECT *`; the narrowed SELECT already covers it.
+- [ ] `vfs vector_search "auth" --output path,score,updated_at` renders `updated_at` without issuing a second `SELECT *`; the narrowed SELECT already covers it.
 - [ ] `vfs stat /docs/foo.md --output all` works and pulls exactly the columns needed to display every populated field.
 - [ ] `vfs grep "hydrate" --output bogus` raises `ValueError: unknown field 'bogus'` at parse time, before any query runs.
 - [ ] Piping a stage's output into a projection that needs columns it didn't fetch triggers **one** hydration call through `vfs.read(paths=[...], columns={...})` (not N, not a direct `select(self._model)` bypass), keyed on `path`, before rendering.
@@ -94,7 +94,7 @@ The acceptance criteria are the *what*. This section is the *how* — a test spe
 | Risk | What goes wrong if we miss it | Test that catches it |
 |---|---|---|
 | Vectors or full content leak into default reads | `glob`/`ls`/`stat`/`pagerank` stay slow; story shipped in name only | Per-impl SELECT-column assertions |
-| `--output` doesn't widen the SELECT | User adds `--output out_degree`, gets nulls, silently | CLI-projection → SELECT assertion |
+| `--output` doesn't widen the SELECT | User adds `--output updated_at`, gets nulls, silently | CLI-projection → SELECT assertion |
 | Hydration bypasses `read` | Two places to fix a column bug; divergence creeps in | Monkeypatched `read` spy; assert single call with `columns=` |
 | Stale `Candidate`/`Detail` references linger | Import errors; downstream consumer breakage | Source-tree text scan |
 | `to_str` drifts from documented arrangement | CLI output changes; agents trained on old shape break | Snapshot tests per function |
@@ -140,20 +140,20 @@ A separate **parametrized "declared-vs-actual" test** iterates over the `default
 - **`test_unknown_projection_field_rejected_at_parse_time`** — `--output bogus` raises `ValueError` with `"unknown field 'bogus'"` before any query executes.
 - **`test_default_sentinel_expands_to_function_default`** — `--output default,updated_at` on a `grep` plan produces the grep default column set plus `updated_at`.
 - **`test_all_sentinel_is_preserved_for_render_time_resolution`** — `--output all` stays symbolic on the plan; resolution to concrete columns happens when we know the populated fields.
-- **`test_projection_tuple_ordering_is_preserved`** — Order matters for `to_str` arrangement. `--output path,score,out_degree` differs from `--output out_degree,score,path`.
+- **`test_projection_tuple_ordering_is_preserved`** — Order matters for `to_str` arrangement. `--output path,score,updated_at` differs from `--output updated_at,score,path`.
 
 ### 5. CLI projection → narrowed SELECT
 
 Proves the `--output` flag reaches the impl's column-narrowing code, not just the renderer.
 
 - **`test_output_widens_select`** — Parametrized: `--output default,updated_at` on several functions. Captured SQL must include `grover_objects.updated_at`. Forbidden columns still absent.
-- **`test_output_does_not_trigger_secondary_query`** — `--output path,score,out_degree` on `vector_search` produces at most the baseline statement count for that function; no extra hydration round-trip fires when the column could have been included in the primary SELECT.
+- **`test_output_does_not_trigger_secondary_query`** — `--output path,score,updated_at` on `vector_search` produces at most the baseline statement count for that function; no extra hydration round-trip fires when the column could have been included in the primary SELECT.
 
 ### 6. Hydration via `read`
 
 Proves the hydration contract: when entries arrive missing a projected column, the executor calls `fs.read(paths=[...], columns={...})` exactly once, with the right columns.
 
-- **`test_hydration_routes_through_read_with_columns`** — Monkeypatches `fs.read` with a spy. Feeds an upstream result missing `out_degree`. Renders with projection requiring it. Asserts exactly one spy call whose `columns=` argument contains `out_degree`.
+- **`test_hydration_routes_through_read_with_columns`** — Monkeypatches `fs.read` with a spy. Feeds an upstream result missing `updated_at`. Renders with projection requiring it. Asserts exactly one spy call whose `columns=` argument contains `updated_at`.
 - **`test_hydration_single_batch_for_many_paths`** — Same setup, 500 upstream entries. Asserts exactly one `read` call (not 500). Catches per-entry-loop regressions.
 - **`test_hydration_does_not_emit_select_star`** — During hydration, captured SQL must not contain `grover_objects.vector` or `grover_objects.content` unless they were actually requested. Hydration inherits `read`'s narrowing discipline.
 - **`test_hydration_is_noop_when_columns_already_present`** — Upstream already has the requested columns populated. Spy asserts `read` is **not** called. Avoids the "always hydrate" footgun.

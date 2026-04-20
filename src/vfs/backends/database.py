@@ -295,8 +295,6 @@ class DatabaseFileSystem(VirtualFileSystem):
             content=row.content if "content" in cols else None,
             size_bytes=row.size_bytes if "size_bytes" in cols else None,
             updated_at=row.updated_at if "updated_at" in cols else None,
-            in_degree=row.in_degree if "in_degree" in cols else None,
-            out_degree=row.out_degree if "out_degree" in cols else None,
             score=score,
             lines=lines,
         )
@@ -1844,8 +1842,8 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         ``columns`` is the projection set the caller wants on each
         returned entry; ``content`` is force-included because the scan
-        needs it.  Anything else in ``columns`` (e.g. ``in_degree``,
-        ``updated_at``) rides along in the same SELECT and lands on the
+        needs it.  Anything else in ``columns`` (e.g. ``updated_at``)
+        rides along in the same SELECT and lands on the
         emitted entries — no second round-trip required.
         """
         cols = self._resolve_columns("grep", columns) | {"content"}

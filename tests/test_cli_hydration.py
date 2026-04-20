@@ -48,7 +48,7 @@ def _plan(node, projection: tuple[str, ...] | None) -> QueryPlan:
 class TestHydrationRoutesThroughRead:
     async def test_single_call_with_correct_columns(self):
         fs = _fs()
-        # glob returns entries missing out_degree across the board
+        # glob returns entries missing updated_at across the board
         fs.glob.return_value = VFSResult(
             function="glob",
             entries=[
@@ -57,31 +57,35 @@ class TestHydrationRoutesThroughRead:
                 Entry(path="/c.md", kind="file"),
             ],
         )
-        # read (the hydration target) fills in out_degree
+        # read (the hydration target) fills in updated_at
         fs.read.return_value = VFSResult(
             function="read",
             entries=[
-                Entry(path="/a.md", out_degree=1),
-                Entry(path="/b.md", out_degree=2),
-                Entry(path="/c.md", out_degree=3),
+                Entry(path="/a.md", updated_at=datetime(2026, 1, 1)),
+                Entry(path="/b.md", updated_at=datetime(2026, 1, 2)),
+                Entry(path="/c.md", updated_at=datetime(2026, 1, 3)),
             ],
         )
 
         result = await execute_query(
             fs,
-            _plan(GlobCommand(pattern="**/*.md"), projection=("path", "out_degree")),
+            _plan(GlobCommand(pattern="**/*.md"), projection=("path", "updated_at")),
         )
 
         fs.read.assert_called_once()
         kwargs = fs.read.call_args.kwargs
         assert "columns" in kwargs
-        assert "out_degree" in kwargs["columns"]
+        assert "updated_at" in kwargs["columns"]
         # Hydration should NOT pull the heavy columns unasked-for.
         assert "embedding" not in kwargs["columns"]
         assert "content" not in kwargs["columns"]
-        # And it merged by path — every original entry should now carry out_degree.
-        out_degrees = {e.path: e.out_degree for e in result.entries}
-        assert out_degrees == {"/a.md": 1, "/b.md": 2, "/c.md": 3}
+        # And it merged by path — every original entry should now carry updated_at.
+        updated = {e.path: e.updated_at for e in result.entries}
+        assert updated == {
+            "/a.md": datetime(2026, 1, 1),
+            "/b.md": datetime(2026, 1, 2),
+            "/c.md": datetime(2026, 1, 3),
+        }
 
     async def test_one_call_for_many_paths(self):
         """500 paths in → exactly one hydration call, not 500."""
@@ -122,11 +126,11 @@ class TestHydrationIsNoopWhenNotNeeded:
         fs = _fs()
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md", kind="file", out_degree=5)],
+            entries=[Entry(path="/a.md", kind="file", updated_at=datetime(2026, 1, 1))],
         )
         await execute_query(
             fs,
-            _plan(GlobCommand(pattern="**/*.md"), projection=("path", "out_degree")),
+            _plan(GlobCommand(pattern="**/*.md"), projection=("path", "updated_at")),
         )
         fs.read.assert_not_called()
 

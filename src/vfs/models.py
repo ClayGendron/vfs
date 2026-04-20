@@ -123,11 +123,6 @@ class VFSObjectBase(ValidatedSQLModel):
     tokens: int = Field(default=0)
     lexical_tokens: int = Field(default=0)
 
-    # --- Graph degree (persisted; populated by external graph-rebuild) ------
-
-    in_degree: int | None = Field(default=None, index=True)
-    out_degree: int | None = Field(default=None, index=True)
-
     # --- Chunk-specific -----------------------------------------------------
 
     line_start: int | None = Field(default=None)
@@ -231,8 +226,6 @@ class VFSObjectBase(ValidatedSQLModel):
             content=self.content if include_content else None,
             size_bytes=self.size_bytes,
             score=score,
-            in_degree=self.in_degree,
-            out_degree=self.out_degree,
             updated_at=self.updated_at,
         )
 

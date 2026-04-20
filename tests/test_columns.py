@@ -25,8 +25,12 @@ class TestEntryFieldMap:
         assert entry_field_columns("lines") == frozenset()
 
     def test_row_fields_map_to_matching_column(self):
-        for field in ("path", "kind", "content", "size_bytes", "updated_at", "in_degree", "out_degree"):
+        for field in ("path", "kind", "content", "size_bytes", "updated_at"):
             assert entry_field_columns(field) == frozenset({field})
+
+    def test_degree_fields_are_computed(self):
+        assert entry_field_columns("in_degree") == frozenset()
+        assert entry_field_columns("out_degree") == frozenset()
 
     def test_unknown_field_raises(self):
         with pytest.raises(KeyError):
@@ -70,8 +74,7 @@ class TestDefaultColumns:
         for fn in ("vector_search", "semantic_search", "lexical_search", "bm25"):
             cols = default_columns(fn)
             assert "path" in cols
-            assert "in_degree" in cols
-            assert "out_degree" in cols
+            assert "updated_at" in cols
 
     def test_unknown_function_falls_back_to_path_only(self):
         assert default_columns("nonsense_function") == frozenset({"path"})
@@ -88,7 +91,7 @@ class TestRequiredModelColumns:
     def test_all_sentinel_widens_to_every_row_backed_field(self):
         cols = required_model_columns("glob", ("all",))
         # score and lines are computed — not in model columns
-        assert cols >= {"path", "kind", "content", "size_bytes", "updated_at", "in_degree", "out_degree"}
+        assert cols >= {"path", "kind", "content", "size_bytes", "updated_at"}
 
     def test_projection_adds_column(self):
         # ls default is {path, kind}; asking for updated_at must widen the SELECT.

@@ -47,14 +47,14 @@ class TestOutputWidensGlob:
         sql_capture.assert_no_column("embedding")
 
 
-class TestOutputWidensRead:
-    async def test_read_with_output_adds_in_degree(self, db, sql_capture):
+class TestOutputWidensStat:
+    async def test_stat_with_output_adds_content(self, db, sql_capture):
         await _seed(db)
         sql_capture.reset()
-        await execute_query(db, parse_query("read /docs/intro.md --output content,in_degree"))
+        await execute_query(db, parse_query("stat /docs/intro.md --output default,content"))
         reads = sql_capture.reads_against_objects()
-        assert any("vfs_objects.in_degree" in s for s in reads), (
-            "Expected vfs_objects.in_degree in the SELECT after --output in_degree"
+        assert any("vfs_objects.content" in s for s in reads), (
+            "Expected vfs_objects.content in the SELECT after --output content"
         )
 
 
@@ -68,11 +68,11 @@ class TestUnknownFieldRejectedAtParseTime:
 
 class TestProjectionOrderPreserved:
     def test_projection_tuple_ordering_is_preserved(self):
-        plan = parse_query("stat /a --output path,score,in_degree")
-        assert plan.projection == ("path", "score", "in_degree")
+        plan = parse_query("stat /a --output path,score,updated_at")
+        assert plan.projection == ("path", "score", "updated_at")
 
-        plan = parse_query("stat /a --output in_degree,score,path")
-        assert plan.projection == ("in_degree", "score", "path")
+        plan = parse_query("stat /a --output updated_at,score,path")
+        assert plan.projection == ("updated_at", "score", "path")
 
     def test_default_sentinel_kept_symbolic(self):
         plan = parse_query("grep hydrate --output default,updated_at")

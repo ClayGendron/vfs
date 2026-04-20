@@ -951,14 +951,14 @@ class TestProjectionThreading:
         fs.glob.return_value = VFSResult(function="glob", entries=[Entry(path="/a.md", kind="file")])
         plan = _plan_with_projection(
             GlobCommand(pattern="**/*.md"),
-            projection=("path", "kind", "in_degree"),
+            projection=("path", "kind", "updated_at"),
         )
         await execute_query(fs, plan)
         kwargs = fs.glob.call_args.kwargs
         assert "columns" in kwargs
         cols = kwargs["columns"]
-        # default(glob) | {in_degree backing column} -> at minimum these
-        assert {"path", "kind", "in_degree"} <= set(cols)
+        # default(glob) | {updated_at backing column} -> at minimum these
+        assert {"path", "kind", "updated_at"} <= set(cols)
 
     async def test_no_projection_passes_no_columns_kwarg(self):
         fs = _fs()

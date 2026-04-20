@@ -157,7 +157,7 @@ _DEFAULT_PROJECTION: dict[str, tuple[str, ...]] = {
     "ls": ("path",),
     "tree": ("path",),
     "read": ("content",),
-    "stat": ("path", "kind", "size_bytes", "updated_at", "in_degree", "out_degree"),
+    "stat": ("path", "kind", "size_bytes", "updated_at"),
     "hybrid": ("path",),
 }
 for _fn in _RANKED_SEARCH_FUNCTIONS:

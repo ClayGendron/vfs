@@ -3,7 +3,7 @@
 Two vocabularies are at play:
 
 - **Entry fields** — what :class:`vfs.results.Entry` carries. Users express
-  projection in this vocabulary (``--output path,score,out_degree``).
+  projection in this vocabulary (``--output path,score,updated_at``).
 - **Model columns** — actual ``VFSObjectBase`` column names that end up in
   the ``SELECT``. Backends use this vocabulary to narrow queries.
 """
@@ -18,8 +18,8 @@ ENTRY_FIELD_TO_MODEL_COLUMNS: dict[str, frozenset[str]] = {
     "content": frozenset({"content"}),
     "size_bytes": frozenset({"size_bytes"}),
     "updated_at": frozenset({"updated_at"}),
-    "in_degree": frozenset({"in_degree"}),
-    "out_degree": frozenset({"out_degree"}),
+    "in_degree": frozenset(),
+    "out_degree": frozenset(),
     "score": frozenset(),
     "lines": frozenset(),
 }
@@ -28,7 +28,7 @@ ENTRY_FIELD_TO_MODEL_COLUMNS: dict[str, frozenset[str]] = {
 ENTRY_BACKED_MODEL_COLUMNS: frozenset[str] = frozenset().union(*ENTRY_FIELD_TO_MODEL_COLUMNS.values())
 
 _METADATA_COLUMNS: frozenset[str] = frozenset(
-    {"path", "kind", "size_bytes", "updated_at", "in_degree", "out_degree"},
+    {"path", "kind", "size_bytes", "updated_at"},
 )
 _PATH_KIND_ONLY: frozenset[str] = frozenset({"path", "kind"})
 
