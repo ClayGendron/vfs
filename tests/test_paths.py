@@ -8,17 +8,29 @@ from vfs.paths import (
     MARKER_KINDS,
     METADATA_KIND_MAP,
     METADATA_MARKERS,
+    METADATA_ROOT,
     EdgeParts,
+    _canonical_endpoint_path,
+    _split_edge_path,
+    _split_nested_endpoint,
+    _strip_user_prefix,
     api_path,
     base_path,
     chunk_path,
     decompose_edge,
+    edge_in_path,
     edge_out_path,
+    endpoint_root,
     extract_extension,
+    meta_root,
     normalize_path,
+    owning_file_path,
     parent_path,
     parse_kind,
+    scope_path,
     split_path,
+    unscope_path,
+    validate_mutation_path,
     validate_path,
     version_path,
 )
@@ -260,6 +272,9 @@ class TestBasePath:
     def test_root(self):
         assert base_path("/") == "/"
 
+    def test_metadata_root_maps_back_to_root(self):
+        assert base_path(METADATA_ROOT) == "/"
+
     def test_bare_metadata_dir(self):
         assert base_path("/.vfs/src/auth.py/__meta__/chunks") == "/src/auth.py"
         assert base_path("/.vfs/src/auth.py/__meta__/versions") == "/src/auth.py"
@@ -268,6 +283,42 @@ class TestBasePath:
 
     def test_first_marker_wins(self):
         assert base_path("/.vfs/.vfs/foo/__meta__/chunks/__meta__/versions/1") == "/.vfs/foo"
+
+
+# =========================================================================
+# meta_root + endpoint_root + owning_file_path
+# =========================================================================
+
+
+class TestNamespaceRoots:
+    def test_meta_root_prefixes_user_paths(self):
+        assert meta_root("/src/auth.py") == "/.vfs/src/auth.py"
+
+    def test_meta_root_rejects_reserved_root(self):
+        with pytest.raises(ValueError, match="Reserved path"):
+            meta_root(METADATA_ROOT)
+
+    def test_meta_root_rejects_projected_edge_paths(self):
+        with pytest.raises(ValueError, match="Projected edge paths"):
+            meta_root("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
+
+    def test_meta_root_rejects_reserved_metadata_directories(self):
+        with pytest.raises(ValueError, match="Reserved metadata directory"):
+            meta_root("/.vfs/src/auth.py/__meta__/chunks")
+
+    def test_endpoint_root_returns_owner_for_projected_edges(self):
+        assert endpoint_root("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py") == "/.vfs/src/auth.py"
+
+    def test_endpoint_root_collapses_nested_chunk_children(self):
+        assert endpoint_root("/.vfs/src/auth.py/__meta__/chunks/login/body.txt") == (
+            "/.vfs/src/auth.py/__meta__/chunks/login"
+        )
+
+    def test_endpoint_root_leaves_non_nested_metadata_paths_alone(self):
+        assert endpoint_root("/.vfs/src/auth.py") == "/.vfs/src/auth.py"
+
+    def test_owning_file_path_aliases_base_path(self):
+        assert owning_file_path("/.vfs/src/auth.py/__meta__/chunks/login") == "/src/auth.py"
 
 
 # =========================================================================
@@ -472,6 +523,35 @@ class TestApiPath:
 
 
 # =========================================================================
+# validate_mutation_path
+# =========================================================================
+
+
+class TestValidateMutationPath:
+    def test_root_is_not_mutable(self):
+        assert validate_mutation_path("/") == (False, "Cannot mutate root path")
+
+    def test_reserved_metadata_root_is_not_mutable(self):
+        assert validate_mutation_path(METADATA_ROOT) == (False, "Cannot mutate reserved metadata root '/.vfs'")
+
+    def test_inverse_edge_paths_are_read_only(self):
+        valid, err = validate_mutation_path(edge_in_path("/src/a.py", "/src/b.py", "imports"))
+        assert valid is False
+        assert "inverse edge paths" in err
+
+    def test_reserved_metadata_directories_are_allowed(self):
+        assert validate_mutation_path("/.vfs/src/auth.py/__meta__/chunks") == (True, "")
+
+    def test_meta_segment_directory_is_allowed(self):
+        assert validate_mutation_path("/.vfs/src/auth.py/__meta__") == (True, "")
+
+    def test_arbitrary_content_in_reserved_metadata_space_is_rejected(self):
+        valid, err = validate_mutation_path("/.vfs/src/auth.py/random.txt")
+        assert valid is False
+        assert "reserved metadata space" in err
+
+
+# =========================================================================
 # Derived constants
 # =========================================================================
 
@@ -546,3 +626,69 @@ class TestExtractExtension:
 
     def test_path_normalized_first(self):
         assert extract_extension("/src//auth.py") == "py"
+
+
+# =========================================================================
+# Scope / unscope helpers
+# =========================================================================
+
+
+class TestScopedPaths:
+    def test_scope_root_returns_user_root(self):
+        assert scope_path("/", "alice") == "/alice"
+
+    def test_unscope_exact_user_root_returns_root(self):
+        assert unscope_path("/alice", "alice") == "/"
+
+    def test_unscope_inverse_edge_rewrites_both_endpoints(self):
+        scoped = edge_in_path("/alice/src/a.py", "/alice/target.py", "imports")
+        assert unscope_path(scoped, "alice") == edge_in_path("/src/a.py", "/target.py", "imports")
+
+    def test_unscope_metadata_paths_rewrites_nested_endpoint(self):
+        scoped = "/.vfs/alice/src/auth.py/__meta__/chunks/login"
+        assert unscope_path(scoped, "alice") == "/.vfs/src/auth.py/__meta__/chunks/login"
+
+    def test_strip_user_prefix_rejects_mismatched_paths(self):
+        with pytest.raises(ValueError, match="does not start with user prefix"):
+            _strip_user_prefix("/bob/file.txt", "/alice")
+
+
+# =========================================================================
+# Internal helper coverage
+# =========================================================================
+
+
+class TestPathInternals:
+    def test_metadata_root_is_classified_as_directory(self):
+        assert parse_kind(METADATA_ROOT) == "directory"
+
+    def test_metadata_tree_paths_are_classified_as_directories(self):
+        assert parse_kind("/.vfs/src/auth.py") == "directory"
+
+    def test_edge_path_split_requires_embedded_path(self):
+        assert _split_edge_path("/.vfs/a.py/__meta__/edges/out/imports") is None
+
+    def test_edge_path_split_requires_edge_type(self):
+        assert _split_edge_path("/.vfs/a.py/__meta__/edges/out//b.py") is None
+
+    def test_canonical_endpoint_leaves_user_paths_unchanged(self):
+        assert _canonical_endpoint_path("/src/auth.py") == "/src/auth.py"
+
+    def test_canonical_endpoint_rejects_reserved_metadata_root(self):
+        with pytest.raises(ValueError, match="not a canonical endpoint"):
+            _canonical_endpoint_path(METADATA_ROOT)
+
+    def test_canonical_endpoint_strips_metadata_root_prefix(self):
+        assert _canonical_endpoint_path("/.vfs/src/auth.py") == "/src/auth.py"
+
+    def test_split_nested_endpoint_returns_endpoint_when_path_stops_at_version(self):
+        path = "/.vfs/src/auth.py/__meta__/versions/3"
+        assert _split_nested_endpoint(path) == path
+
+    def test_split_nested_endpoint_collapses_descendant_to_nested_root(self):
+        assert _split_nested_endpoint("/.vfs/src/auth.py/__meta__/versions/3/body.txt") == (
+            "/.vfs/src/auth.py/__meta__/versions/3"
+        )
+
+    def test_reserved_metadata_directory_check_is_false_for_user_paths(self):
+        assert endpoint_root("/src/auth.py") == "/src/auth.py"

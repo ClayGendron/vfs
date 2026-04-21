@@ -13,6 +13,7 @@ from tests.conftest import make_fs as _make_fs
 from vfs.base import VirtualFileSystem
 from vfs.models import VFSObject
 from vfs.results import VFSResult
+from vfs.routing import first_segment, glob_segment_matches, rewrite_glob_for_mount, rewrite_path_for_mount
 
 
 class _RoutingFS(VirtualFileSystem):
@@ -428,3 +429,31 @@ class TestCrossMountTransfers:
 
         assert result.success is False
         assert result.paths == ("/dst/file.txt",)
+
+
+# =========================================================================
+# Pure routing helpers
+# =========================================================================
+
+
+class TestRoutingHelpers:
+    def test_first_segment_returns_original_for_non_absolute_paths(self):
+        assert first_segment("src/file.py") == ("", "src/file.py")
+
+    def test_first_segment_returns_root_tail_for_single_segment_paths(self):
+        assert first_segment("/data") == ("data", "/")
+
+    def test_glob_segment_rejects_double_star(self):
+        assert glob_segment_matches("**", "data") is False
+
+    def test_glob_segment_rejects_invalid_glob_regexes(self):
+        assert glob_segment_matches("[z-a]", "data") is False
+
+    def test_rewrite_glob_exact_mount_returns_root_relative_pattern(self):
+        assert rewrite_glob_for_mount("/data", "/data") == ("/", False)
+
+    def test_rewrite_glob_root_pattern_skips_specific_mount(self):
+        assert rewrite_glob_for_mount("/", "/data") == (None, False)
+
+    def test_rewrite_path_leaves_relative_paths_unchanged(self):
+        assert rewrite_path_for_mount("src/file.py", "/data") == "src/file.py"

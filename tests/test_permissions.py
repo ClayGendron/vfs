@@ -14,6 +14,7 @@ from vfs.exceptions import WriteConflictError
 from vfs.models import VFSObject
 from vfs.permissions import (
     MUTATING_OPS,
+    _join,
     check_writable,
     validate_permission,
 )
@@ -512,3 +513,8 @@ class TestSharedEngineIsNotIsolated:
                 await router.close()
         finally:
             await shared_engine.dispose()
+
+
+class TestPermissionHelpers:
+    def test_join_returns_mount_prefix_for_root_relative_paths(self):
+        assert _join("/docs", "/") == "/docs"

@@ -5,10 +5,16 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Field, Session, SQLModel, create_engine, select
 
-from vfs.models import VFSObject, VFSObjectBase, postgres_native_vfs_object_model, postgres_vector_column_spec
-from vfs.vector import Vector
+from vfs.models import (
+    VFSObject,
+    VFSObjectBase,
+    postgres_native_vfs_object_model,
+    postgres_vector_column_spec,
+    resolve_embedding_vector_type,
+)
+from vfs.vector import Vector, VectorType
 
 # =========================================================================
 # Path normalization and validation in the model
@@ -935,3 +941,68 @@ class TestFinishInitFalse:
             assert obj is not None
         finally:
             finish_init.reset(token)
+
+
+# ==================================================================
+# Additional helper/error coverage
+# ==================================================================
+
+
+class TestModelHelperErrors:
+    def test_unknown_kind_rejected(self):
+        with pytest.raises(ValueError, match="Unknown kind"):
+            VFSObject(path="/mystery", kind="mystery")
+
+    def test_version_diff_null_bytes_rejected(self):
+        with pytest.raises(ValueError, match="version_diff contains null bytes"):
+            VFSObject(
+                path="/.vfs/a.py/__meta__/versions/1",
+                kind="version",
+                version_diff="bad\x00diff",
+            )
+
+    def test_version_rows_cannot_set_both_snapshot_and_diff(self):
+        with pytest.raises(ValueError, match="must not set both content and version_diff"):
+            VFSObject(
+                path="/.vfs/a.py/__meta__/versions/1",
+                kind="version",
+                content="snapshot",
+                version_diff="delta",
+            )
+
+    def test_resolve_embedding_vector_type_requires_embedding_column(self):
+        with pytest.raises(ValueError, match="does not declare an 'embedding' column"):
+            resolve_embedding_vector_type(VFSObjectBase)
+
+    def test_resolve_embedding_vector_type_requires_vector_type(self):
+        class PlainEmbeddingModel(SQLModel, table=True):
+            __tablename__ = "plain_embedding_model_coverage"
+
+            id: int | None = Field(default=None, primary_key=True)
+            embedding: str | None = None
+
+        with pytest.raises(ValueError, match="must use VectorType"):
+            resolve_embedding_vector_type(PlainEmbeddingModel)
+
+    def test_postgres_vector_column_spec_requires_native_pgvector_model(self):
+        with pytest.raises(ValueError, match="postgres_native=True"):
+            postgres_vector_column_spec(VFSObject)
+
+    def test_native_model_name_participates_in_generated_class_name(self):
+        native_model = postgres_native_vfs_object_model(
+            dimension=3,
+            model_name="text-embedding-3-small",
+            operator_class="vector_ip_ops",
+        )
+        assert native_model.__name__.endswith("VectorIpOpsTextEmbedding3Small")
+
+    def test_resolve_embedding_vector_type_returns_vector_metadata(self):
+        class NativeEmbeddingModel(SQLModel, table=True):
+            __tablename__ = "native_embedding_model_coverage"
+
+            id: int | None = Field(default=None, primary_key=True)
+            embedding: Vector | None = Field(default=None, sa_type=VectorType(dimension=4))
+
+        vector_type = resolve_embedding_vector_type(NativeEmbeddingModel)
+        assert isinstance(vector_type, VectorType)
+        assert vector_type.dimension == 4

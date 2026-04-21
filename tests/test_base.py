@@ -1151,3 +1151,11 @@ class TestEdgeCaseMissingArgs:
         result = await fs.copy()
         assert result.success is False
         assert "copy requires" in result.errors[0]
+
+
+class TestNamespaceRoutingEdgeCases:
+    async def test_namespace_operation_returns_empty_result_when_storage_and_mounts_are_absent(self):
+        fs = _FullRoutingFS()
+        fs._storage = False
+        result = await fs.glob("*.py")
+        assert result == VFSResult(function="glob", success=True, entries=[])

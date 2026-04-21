@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from vfs.query.parser import QuerySyntaxError, parse_query, tokenize
+from vfs.query.ast import MkedgeCommand
+from vfs.query.parser import QuerySyntaxError, _build_mkedge, parse_query, tokenize
 
 # ===========================================================================
 # Tokenizer
@@ -707,3 +708,11 @@ class TestOutputFlag:
         assert isinstance(cmd, GrepCommand)
         assert cmd.case_mode == "insensitive"
         assert plan.projection == ("path",)
+
+
+class TestMkedgeBuilder:
+    def test_two_positionals_treat_path_like_first_argument_as_target(self):
+        command = _build_mkedge(["/target.py", "imports"], {})
+        assert isinstance(command, MkedgeCommand)
+        assert command.target == "/target.py"
+        assert command.edge_type == "imports"

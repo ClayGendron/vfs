@@ -10,9 +10,14 @@ import pytest
 from sqlalchemy import text
 
 from tests.conftest import require_file, require_object, require_text, set_parameter_budget
-from vfs.backends.database import DatabaseFileSystem
+from vfs.backends.database import (
+    DatabaseFileSystem,
+    _build_line_matches_with_context,
+    _extract_literal_terms,
+)
 from vfs.base import VirtualFileSystem
 from vfs.models import VFSObject, VFSObjectBase
+from vfs.paths import METADATA_ROOT, edge_out_path
 from vfs.results import EditOperation, Entry, TwoPathOperation, VFSResult
 from vfs.vector import Vector
 
@@ -2652,3 +2657,155 @@ class TestGlobEmptyPattern:
             r = await db._glob_impl("", session=s)
         assert not r.success
         assert "glob requires a pattern" in r.error_message
+
+
+class TestDatabaseHelperCoverage:
+    def test_extract_literal_terms_rejects_negative_lookbehind(self):
+        assert _extract_literal_terms(r"foo(?<!bar)") == []
+
+    def test_build_line_matches_with_context_handles_empty_match_lists(self):
+        assert _build_line_matches_with_context(["one", "two"], [], before=1, after=1) == []
+
+    def test_field_was_explicitly_provided_falls_back_to_attribute_presence(self):
+        holder = type("EmbeddingHolder", (), {"embedding": [0.1, 0.2]})()
+        assert DatabaseFileSystem._field_was_explicitly_provided(holder, "embedding") is True
+
+    def test_parse_inverse_edge_path_variants(self):
+        root = DatabaseFileSystem._parse_inverse_edge_path("/.vfs/target.py/__meta__/edges/in")
+        assert root is not None
+        assert root.owner_root == "/.vfs/target.py"
+        assert root.target_path == "/target.py"
+        assert root.edge_type is None
+        assert root.source_prefix is None
+
+        assert DatabaseFileSystem._parse_inverse_edge_path("/.vfs/target.py/__meta__/edges/inimports") is None
+
+        trailing = DatabaseFileSystem._parse_inverse_edge_path("/.vfs/target.py/__meta__/edges/in/")
+        assert trailing is not None
+        assert trailing.edge_type is None
+        assert trailing.source_prefix is None
+
+        typed = DatabaseFileSystem._parse_inverse_edge_path("/.vfs/target.py/__meta__/edges/in/imports")
+        assert typed is not None
+        assert typed.edge_type == "imports"
+        assert typed.source_prefix is None
+
+    def test_parse_inverse_edge_path_preserves_chunk_endpoint_targets(self):
+        chunk_inverse = DatabaseFileSystem._parse_inverse_edge_path(
+            "/.vfs/src/auth.py/__meta__/chunks/login/__meta__/edges/in/imports/src/caller.py"
+        )
+        assert chunk_inverse is not None
+        assert chunk_inverse.owner_root == "/.vfs/src/auth.py/__meta__/chunks/login"
+        assert chunk_inverse.target_path == "/.vfs/src/auth.py/__meta__/chunks/login"
+        assert chunk_inverse.edge_type == "imports"
+        assert chunk_inverse.source_prefix == "/src/caller.py"
+
+
+class TestInverseEdgeProjectedPaths:
+    @staticmethod
+    async def _seed_inverse_edges(db: DatabaseFileSystem) -> None:
+        async with db._use_session() as s:
+            await db._write_impl("/target.py", "target", session=s)
+            await db._write_impl("/src/a.py", "a", session=s)
+            await db._write_impl("/src/nested/b.py", "b", session=s)
+            await db._write_impl("/lib/c.py", "c", session=s)
+            await db._write_impl("/single.py", "single", session=s)
+            for source in ("/src/a.py", "/src/nested/b.py", "/lib/c.py", "/single.py"):
+                await db._write_impl(edge_out_path(source, "/target.py", "imports"), "", session=s)
+            await db._write_impl(edge_out_path("/other.py", "/target.py", "calls"), "", session=s)
+
+    async def test_stat_inverse_edge_paths_distinguish_directories_and_leaf_edges(self, db: DatabaseFileSystem):
+        await self._seed_inverse_edges(db)
+
+        async with db._use_session() as s:
+            root = await db._stat_impl("/.vfs/target.py/__meta__/edges/in", session=s)
+            prefix = await db._stat_impl("/.vfs/target.py/__meta__/edges/in/imports/src", session=s)
+            leaf = await db._stat_impl("/.vfs/target.py/__meta__/edges/in/imports/single.py", session=s)
+            missing = await db._stat_impl("/.vfs/target.py/__meta__/edges/in/uses", session=s)
+
+        assert root.entries[0].kind == "directory"
+        assert prefix.entries[0].kind == "directory"
+        assert leaf.entries[0].kind == "edge"
+        assert missing.success is False
+        assert "Not found" in missing.error_message
+
+    async def test_ls_inverse_edge_paths_list_edge_types_and_source_segments(self, db: DatabaseFileSystem):
+        await self._seed_inverse_edges(db)
+
+        async with db._use_session() as s:
+            root = await db._ls_impl("/.vfs/target.py/__meta__/edges/in", session=s)
+            typed = await db._ls_impl("/.vfs/target.py/__meta__/edges/in/imports", session=s)
+            nested = await db._ls_impl("/.vfs/target.py/__meta__/edges/in/imports/src", session=s)
+            missing = await db._ls_impl("/.vfs/target.py/__meta__/edges/in/uses", session=s)
+
+        assert root.paths == (
+            "/.vfs/target.py/__meta__/edges/in/calls",
+            "/.vfs/target.py/__meta__/edges/in/imports",
+        )
+        assert typed.paths == (
+            "/.vfs/target.py/__meta__/edges/in/imports/lib",
+            "/.vfs/target.py/__meta__/edges/in/imports/single.py",
+            "/.vfs/target.py/__meta__/edges/in/imports/src",
+        )
+        assert nested.paths == (
+            "/.vfs/target.py/__meta__/edges/in/imports/src/a.py",
+            "/.vfs/target.py/__meta__/edges/in/imports/src/nested",
+        )
+        assert missing.entries == []
+
+    async def test_tree_inverse_edge_paths_walk_directory_nodes(self, db: DatabaseFileSystem):
+        await self._seed_inverse_edges(db)
+
+        async with db._use_session() as s:
+            tree = await db._tree_impl("/.vfs/target.py/__meta__/edges/in/imports", session=s)
+            not_found = await db._tree_impl("/.vfs/target.py/__meta__/edges/in/uses", session=s)
+            not_directory = await db._tree_impl("/.vfs/target.py/__meta__/edges/in/imports/single.py", session=s)
+
+        assert tree.success is True
+        assert set(tree.paths) == {
+            "/.vfs/target.py/__meta__/edges/in/imports/lib",
+            "/.vfs/target.py/__meta__/edges/in/imports/lib/c.py",
+            "/.vfs/target.py/__meta__/edges/in/imports/single.py",
+            "/.vfs/target.py/__meta__/edges/in/imports/src",
+            "/.vfs/target.py/__meta__/edges/in/imports/src/a.py",
+            "/.vfs/target.py/__meta__/edges/in/imports/src/nested",
+            "/.vfs/target.py/__meta__/edges/in/imports/src/nested/b.py",
+        }
+        assert not_found.success is False
+        assert "Not found" in not_found.error_message
+        assert not_directory.success is False
+        assert "Not a directory" in not_directory.error_message
+
+    async def test_inverse_edges_require_existing_target_but_allow_empty_results(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/orphan-target.py", "target", session=s)
+            empty = await db._ls_impl("/.vfs/orphan-target.py/__meta__/edges/in", session=s)
+        assert empty.success is True
+        assert empty.entries == []
+
+
+class TestMetadataRootHelpers:
+    async def test_ensure_metadata_root_revives_soft_deleted_root(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            root = VFSObject(path=METADATA_ROOT, kind="directory")
+            root.deleted_at = datetime.now(UTC)
+            s.add(root)
+            await s.flush()
+
+            await db._ensure_metadata_root(s)
+            refreshed = await db._get_object(METADATA_ROOT, s, include_deleted=True)
+
+        revived = require_object(refreshed)
+        assert revived.deleted_at is None
+
+    async def test_fetch_children_batched_matches_non_file_metadata_descendants(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            api_root = VFSObject(path="/.vfs/jira/__meta__/apis/ticket", kind="api")
+            api_child = VFSObject(path="/.vfs/jira/__meta__/apis/ticket/create", kind="api")
+            s.add(api_root)
+            s.add(api_child)
+            await s.flush()
+
+            children = await db._fetch_children_batched({api_root.path: api_root}, s)
+
+        assert tuple(obj.path for obj in children[api_root.path]) == (api_child.path,)

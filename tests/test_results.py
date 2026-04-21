@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from tests.conftest import entry as _e
-from vfs.results import Entry, LineMatch, VFSResult
+from vfs.results import Entry, LineMatch, VFSResult, _format_field, _verb_for
 
 # ---------------------------------------------------------------------------
 # Entry
@@ -832,3 +832,24 @@ class TestFirstSet:
 
     def test_preserves_zero_float(self):
         assert VFSResult._first_set(0.0, 1.0) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Rendering helpers
+# ---------------------------------------------------------------------------
+
+
+class TestResultHelpers:
+    def test_merged_function_keeps_left_when_other_is_empty(self):
+        left = VFSResult(function="glob")
+        right = VFSResult(function="")
+        assert left._merged_function(right) == "glob"
+
+    def test_format_field_joins_list_values(self):
+        assert _format_field("lines", [1, "two", 3]) == "1,two,3"
+
+    def test_unknown_action_verbs_are_titleized(self):
+        assert _verb_for("sync_all") == "Sync all"
+
+    def test_empty_action_name_falls_back_to_completed(self):
+        assert _verb_for("") == "Completed"

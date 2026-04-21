@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 
 import pytest
@@ -12,6 +13,11 @@ from vfs.vector import Vector, VectorType
 class _FakeDialect:
     def __init__(self, name: str) -> None:
         self.name = name
+
+
+class _DescriptorDialect(_FakeDialect):
+    def type_descriptor(self, type_: object) -> object:
+        return type_
 
 
 # =========================================================================
@@ -226,6 +232,26 @@ class TestVectorTypeResult:
         assert result.dimension == 3
         assert list(result) == [1.0, 2.0, 3.0]
 
+    def test_postgres_native_requires_iterable_result(self):
+        vt = VectorType(dimension=3, postgres_native=True)
+        with pytest.raises(ValueError, match="expected iterable pgvector value"):
+            vt.process_result_value("not-a-list", _FakeDialect("postgresql"))  # type: ignore[arg-type]
+
+    def test_json_result_requires_text(self):
+        vt = VectorType()
+        with pytest.raises(ValueError, match="expected JSON text"):
+            vt.process_result_value(123, None)  # type: ignore[arg-type]
+
+    def test_json_result_requires_array(self):
+        vt = VectorType()
+        with pytest.raises(ValueError, match="expected JSON array"):
+            vt.process_result_value('{"x": 1}', None)  # type: ignore[arg-type]
+
+    def test_json_result_requires_numeric_elements(self):
+        vt = VectorType()
+        with pytest.raises(ValueError, match="expected numeric vector element"):
+            vt.process_result_value("[1, {}]", None)  # type: ignore[arg-type]
+
 
 class TestVectorTypeRoundTrip:
     def test_unconstrained(self):
@@ -268,3 +294,25 @@ class TestVectorTypePostgresConfig:
         assert copied.postgres_native is True
         assert copied.postgres_index_method == "ivfflat"
         assert copied.postgres_operator_class == "vector_cosine_ops"
+
+    def test_load_dialect_impl_uses_pgvector_type_for_native_postgres(self, monkeypatch: pytest.MonkeyPatch):
+        vt = VectorType(dimension=3, postgres_native=True)
+        sentinel = object()
+        monkeypatch.setattr(vt, "pgvector_sqlalchemy_type", lambda: sentinel)
+        assert vt.load_dialect_impl(_DescriptorDialect("postgresql")) is sentinel
+
+    def test_pgvector_sqlalchemy_type_requires_dimension(self):
+        with pytest.raises(ValueError, match="require a fixed dimension"):
+            VectorType().pgvector_sqlalchemy_type()
+
+    def test_pgvector_sqlalchemy_type_wraps_import_error(self, monkeypatch: pytest.MonkeyPatch):
+        real_import = builtins.__import__
+
+        def fake_import(name: str, globalns=None, localns=None, fromlist=(), level: int = 0):  # type: ignore[no-untyped-def]
+            if name == "pgvector.sqlalchemy":
+                raise ImportError("boom")
+            return real_import(name, globalns, localns, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        with pytest.raises(RuntimeError, match="Native Postgres vectors require the 'pgvector' package"):
+            VectorType(dimension=3, postgres_native=True).pgvector_sqlalchemy_type()
