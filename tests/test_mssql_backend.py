@@ -278,13 +278,13 @@ class TestBuildGrepStructuralSql:
 
     def test_empty_returns_empty_clause(self):
         fs = self._fs()
-        sql, params = fs._build_grep_structural_sql(ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None)
+        sql, params = fs._build_structural_sql(ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None)
         assert sql == ""
         assert params == {}
 
     def test_ext_pushdown_uses_in_list(self):
         fs = self._fs()
-        sql, params = fs._build_grep_structural_sql(
+        sql, params = fs._build_structural_sql(
             ext=("py", "pyi"), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None
         )
         assert "o.ext IN (:gext0, :gext1)" in sql
@@ -292,7 +292,7 @@ class TestBuildGrepStructuralSql:
 
     def test_ext_not_pushdown(self):
         fs = self._fs()
-        sql, params = fs._build_grep_structural_sql(
+        sql, params = fs._build_structural_sql(
             ext=(), ext_not=("md",), paths=(), globs=(), globs_not=(), user_id=None
         )
         assert "o.ext NOT IN (:gextn0)" in sql
@@ -300,7 +300,7 @@ class TestBuildGrepStructuralSql:
 
     def test_positional_paths_eq_or_prefix(self):
         fs = self._fs()
-        sql, params = fs._build_grep_structural_sql(
+        sql, params = fs._build_structural_sql(
             ext=(),
             ext_not=(),
             paths=("/src", "lib"),
@@ -318,7 +318,7 @@ class TestBuildGrepStructuralSql:
 
     def test_glob_positive_has_like_and_regex(self):
         fs = self._fs()
-        sql, params = fs._build_grep_structural_sql(
+        sql, params = fs._build_structural_sql(
             ext=(),
             ext_not=(),
             paths=(),
@@ -333,7 +333,7 @@ class TestBuildGrepStructuralSql:
 
     def test_glob_negative_is_not_regexp_like(self):
         fs = self._fs()
-        sql, params = fs._build_grep_structural_sql(
+        sql, params = fs._build_structural_sql(
             ext=(),
             ext_not=(),
             paths=(),
@@ -341,12 +341,12 @@ class TestBuildGrepStructuralSql:
             globs_not=("**/vendor/**",),
             user_id=None,
         )
-        assert "NOT REGEXP_LIKE(o.path, :ggnr0, 'c')" in sql
+        assert "NOT (REGEXP_LIKE(o.path, :ggnr0, 'c'))" in sql
         assert "ggnr0" in params
 
     def test_user_scope_appends_like_clause(self):
         fs = self._fs(user_scoped=True)
-        sql, params = fs._build_grep_structural_sql(
+        sql, params = fs._build_structural_sql(
             ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id="alice"
         )
         assert "o.path LIKE :user_scope ESCAPE '\\'" in sql
@@ -354,7 +354,7 @@ class TestBuildGrepStructuralSql:
 
     def test_user_scope_scopes_positional_paths(self):
         fs = self._fs(user_scoped=True)
-        _sql, params = fs._build_grep_structural_sql(
+        _sql, params = fs._build_structural_sql(
             ext=(),
             ext_not=(),
             paths=("/src",),
@@ -368,7 +368,7 @@ class TestBuildGrepStructuralSql:
     def test_empty_alias_drops_table_prefix(self):
         """``_glob_impl`` passes ``alias=""`` since its SQL has no table alias."""
         fs = self._fs()
-        sql, params = fs._build_grep_structural_sql(
+        sql, params = fs._build_structural_sql(
             ext=("py",),
             ext_not=(),
             paths=("/src",),
@@ -386,12 +386,12 @@ class TestBuildGrepStructuralSql:
 
     def test_clauses_joined_with_leading_and(self):
         fs = self._fs()
-        sql, _ = fs._build_grep_structural_sql(ext=("py",), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None)
+        sql, _ = fs._build_structural_sql(ext=("py",), ext_not=(), paths=(), globs=(), globs_not=(), user_id=None)
         assert sql.startswith(" AND ")
 
     def test_all_filters_compose_with_and(self):
         fs = self._fs()
-        sql, _ = fs._build_grep_structural_sql(
+        sql, _ = fs._build_structural_sql(
             ext=("py",),
             ext_not=("pyc",),
             paths=("/src",),

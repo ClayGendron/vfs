@@ -14,6 +14,8 @@ from vfs.backends.postgres import (
     PostgresFileSystem,
     _build_tsquery,
     _parse_vector_dimension,
+    _pgvector_distance_operator,
+    _pgvector_distance_to_score,
     _python_regex_to_postgres,
     _quote_tsquery_term,
 )
@@ -76,6 +78,34 @@ async def _seed_native_embeddings(db: PostgresFileSystem, rows: dict[str, list[f
         )
 
 
+async def _make_native_metric_db(engine, *, operator_class: str) -> PostgresFileSystem:
+    model = postgres_native_vfs_object_model(dimension=4, operator_class=operator_class)
+    spec = postgres_vector_column_spec(model)
+    async with engine.begin() as conn:
+        await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.execute(sql_text(f"DROP TABLE IF EXISTS {model.__tablename__} CASCADE"))
+        await conn.run_sync(model.metadata.create_all)
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{model.__tablename__}_content_tsv_gin
+                ON {model.__tablename__} USING GIN (to_tsvector('simple', coalesce(content, '')))
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS {spec.index_name}
+                ON {model.__tablename__} USING {spec.index_method}
+                ({spec.column_name} {spec.operator_class})
+                WHERE {spec.column_name} IS NOT NULL
+                """
+            )
+        )
+    return PostgresFileSystem(engine=engine, model=model)
+
+
 async def _seed_graph(
     db: PostgresFileSystem,
     *,
@@ -132,6 +162,34 @@ class TestParseVectorDimension:
 
     def test_rejects_non_vector(self):
         assert _parse_vector_dimension("text") is None
+
+
+class TestPgvectorMetricHelpers:
+    @pytest.mark.parametrize(
+        ("operator_class", "sql_operator"),
+        [
+            ("vector_cosine_ops", "<=>"),
+            ("vector_ip_ops", "<#>"),
+            ("vector_l2_ops", "<->"),
+        ],
+    )
+    def test_distance_operator_matches_operator_class(self, operator_class: str, sql_operator: str):
+        assert _pgvector_distance_operator(operator_class) == sql_operator
+
+    @pytest.mark.parametrize(
+        ("operator_class", "distance", "score"),
+        [
+            ("vector_cosine_ops", 0.0, 1.0),
+            ("vector_ip_ops", -2.5, 2.5),
+            ("vector_l2_ops", 3.0, 0.25),
+        ],
+    )
+    def test_distance_to_score_matches_metric(self, operator_class: str, distance: float, score: float):
+        assert _pgvector_distance_to_score(operator_class, distance) == pytest.approx(score)
+
+    def test_unknown_operator_class_rejected(self):
+        with pytest.raises(RuntimeError, match="only supports pgvector operator classes"):
+            _pgvector_distance_operator("vector_weird_ops")
 
 
 class TestVerifyNativeSearchSchema:
@@ -330,6 +388,68 @@ class TestVectorSearch:
 
         result = await scoped_fs.vector_search([1.0, 0.0, 0.0, 0.0], k=5, user_id="alice")
         assert result.paths == ("/doc.txt",)
+
+    @pytest.mark.parametrize(
+        ("operator_class", "query_vector", "rows", "expected_operator", "expected_score"),
+        [
+            (
+                "vector_cosine_ops",
+                [1.0, 0.0, 0.0, 0.0],
+                {
+                    "/a.py": [1.0, 0.0, 0.0, 0.0],
+                    "/b.py": [0.0, 1.0, 0.0, 0.0],
+                },
+                "<=>",
+                1.0,
+            ),
+            (
+                "vector_ip_ops",
+                [1.0, 0.0, 0.0, 0.0],
+                {
+                    "/a.py": [1.0, 0.0, 0.0, 0.0],
+                    "/b.py": [0.4, 0.0, 0.0, 0.0],
+                },
+                "<#>",
+                1.0,
+            ),
+            (
+                "vector_l2_ops",
+                [1.0, 0.0, 0.0, 0.0],
+                {
+                    "/a.py": [1.0, 0.0, 0.0, 0.0],
+                    "/b.py": [4.0, 0.0, 0.0, 0.0],
+                },
+                "<->",
+                1.0,
+            ),
+        ],
+    )
+    async def test_honors_model_declared_operator_class(
+        self,
+        engine,
+        sql_capture,
+        operator_class: str,
+        query_vector: list[float],
+        rows: dict[str, list[float]],
+        expected_operator: str,
+        expected_score: float,
+    ):
+        fs = await _make_native_metric_db(engine, operator_class=operator_class)
+        await fs.verify_native_search_schema()
+        await _seed_native_embeddings(fs, rows)
+
+        sql_capture.reset()
+        async with fs._use_session() as session:
+            result = await fs._vector_search_impl(vector=query_vector, k=2, session=session)
+
+        assert result.paths[0] == "/a.py"
+        assert result.entries[0].score == pytest.approx(expected_score)
+        selects = [
+            _normalize_sql(statement)
+            for statement in sql_capture.statements
+            if statement.lstrip().upper().startswith("SELECT") and "from vfs_objects" in statement.lower()
+        ]
+        assert any(f"o.embedding {expected_operator}" in stmt and "as distance" in stmt for stmt in selects)
 
 
 class TestWriteAndDelete:

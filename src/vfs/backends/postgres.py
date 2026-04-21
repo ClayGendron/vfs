@@ -20,7 +20,6 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from vfs.backends.database import (
     DatabaseFileSystem,
     _compile_grep_regex,
-    _escape_like,
     _extract_literal_terms,
     _regex_flags_for_mode,
 )
@@ -47,11 +46,49 @@ def _build_tsquery(terms: list[str] | tuple[str, ...], *, operator: str) -> str:
 
 
 def _python_regex_to_postgres(pattern: str) -> str:
-    """Translate the small regex subset we synthesize into Postgres ARE syntax."""
-    translated = pattern.replace(r"\b", r"\y")
-    translated = translated.replace(r"\A", "^").replace(r"\Z", "$")
-    translated = translated.replace("(?:", "(")
-    return translated
+    """Translate the small regex subset we synthesize into Postgres ARE syntax.
+
+    Walks the pattern respecting escape pairs and character-class context so
+    that ``\\b``/``\\A``/``\\Z`` inside an escaped-backslash run or ``(?:`` inside
+    ``[...]`` are not mangled — both shapes are silent false-negative sources
+    for the grep pre-filter if translated naively.
+    """
+    out: list[str] = []
+    i = 0
+    length = len(pattern)
+    in_class = False
+    while i < length:
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < length:
+            nxt = pattern[i + 1]
+            if not in_class and nxt == "b":
+                out.append(r"\y")
+            elif not in_class and nxt == "A":
+                out.append("^")
+            elif not in_class and nxt == "Z":
+                out.append("$")
+            else:
+                out.append(ch + nxt)
+            i += 2
+            continue
+        if in_class:
+            if ch == "]":
+                in_class = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "[":
+            in_class = True
+            out.append(ch)
+            i += 1
+            continue
+        if pattern.startswith("(?:", i):
+            out.append("(")
+            i += 3
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _parse_vector_dimension(formatted_type: str | None) -> int | None:
@@ -62,6 +99,38 @@ def _parse_vector_dimension(formatted_type: str | None) -> int | None:
     if match is None:
         return None
     return int(match.group(1))
+
+
+def _pgvector_distance_operator(operator_class: str) -> str:
+    """Return the pgvector SQL operator for a declared operator class."""
+    if operator_class == "vector_cosine_ops":
+        return "<=>"
+    if operator_class == "vector_ip_ops":
+        return "<#>"
+    if operator_class == "vector_l2_ops":
+        return "<->"
+    msg = (
+        "PostgresFileSystem only supports pgvector operator classes "
+        f"'vector_cosine_ops', 'vector_ip_ops', and 'vector_l2_ops'; got {operator_class!r}"
+    )
+    raise RuntimeError(msg)
+
+
+def _pgvector_distance_to_score(operator_class: str, distance: float) -> float:
+    """Translate a pgvector distance/order key into Entry.score semantics."""
+    if operator_class == "vector_cosine_ops":
+        return 1.0 - distance
+    if operator_class == "vector_ip_ops":
+        # ``<#>`` returns negative inner product so ASC ordering still works.
+        return -distance
+    if operator_class == "vector_l2_ops":
+        # Convert non-negative Euclidean distance into a bounded similarity.
+        return 1.0 / (1.0 + distance)
+    msg = (
+        "PostgresFileSystem only supports pgvector operator classes "
+        f"'vector_cosine_ops', 'vector_ip_ops', and 'vector_l2_ops'; got {operator_class!r}"
+    )
+    raise RuntimeError(msg)
 
 
 class PostgresFileSystem(DatabaseFileSystem):
@@ -106,33 +175,33 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         fulltext_index_exists = (
             await session.execute(
-                text(
-                    "SELECT 1 "
-                    "FROM pg_index AS i "
-                    "JOIN pg_class AS idx ON idx.oid = i.indexrelid "
-                    "JOIN pg_am AS am ON am.oid = idx.relam "
-                    "LEFT JOIN pg_attribute AS att "
-                    "  ON att.attrelid = i.indrelid AND att.attnum = ANY(i.indkey) "
-                    "LEFT JOIN pg_attrdef AS def "
-                    "  ON def.adrelid = att.attrelid AND def.adnum = att.attnum "
-                    "WHERE i.indrelid = :oid "
-                    "  AND am.amname = 'gin' "
-                    "  AND ("
-                    "    ("
-                    "      coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%to_tsvector%' "
-                    "      AND coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%content%' "
-                    "      AND coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%simple%'"
-                    "    ) "
-                    "    OR ("
-                    "      att.attgenerated = 's' "
-                    "      AND format_type(att.atttypid, att.atttypmod) = 'tsvector' "
-                    "      AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%to_tsvector%' "
-                    "      AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%content%' "
-                    "      AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%simple%'"
-                    "    )"
-                    "  ) "
-                    "LIMIT 1"
-                ),
+                text("""
+                    SELECT 1
+                    FROM pg_index AS i
+                    JOIN pg_class AS idx ON idx.oid = i.indexrelid
+                    JOIN pg_am AS am ON am.oid = idx.relam
+                    LEFT JOIN pg_attribute AS att
+                      ON att.attrelid = i.indrelid AND att.attnum = ANY(i.indkey)
+                    LEFT JOIN pg_attrdef AS def
+                      ON def.adrelid = att.attrelid AND def.adnum = att.attnum
+                    WHERE i.indrelid = :oid
+                      AND am.amname = 'gin'
+                      AND (
+                        (
+                          coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%to_tsvector%'
+                          AND coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%content%'
+                          AND coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%simple%'
+                        )
+                        OR (
+                          att.attgenerated = 's'
+                          AND format_type(att.atttypid, att.atttypmod) = 'tsvector'
+                          AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%to_tsvector%'
+                          AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%content%'
+                          AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%simple%'
+                        )
+                      )
+                    LIMIT 1
+                """),
                 {"oid": object_id},
             )
         ).scalar()
@@ -176,11 +245,11 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         type_row = (
             await session.execute(
-                text(
-                    "SELECT format_type(atttypid, atttypmod) "
-                    "FROM pg_attribute "
-                    "WHERE attrelid = :oid AND attname = :column AND NOT attisdropped"
-                ),
+                text("""
+                    SELECT format_type(atttypid, atttypmod)
+                    FROM pg_attribute
+                    WHERE attrelid = :oid AND attname = :column AND NOT attisdropped
+                """),
                 {"oid": object_id, "column": vector_spec.column_name},
             )
         ).first()
@@ -207,19 +276,19 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         vector_index_exists = (
             await session.execute(
-                text(
-                    "SELECT 1 "
-                    "FROM pg_index AS i "
-                    "JOIN pg_class AS idx ON idx.oid = i.indexrelid "
-                    "JOIN pg_am AS am ON am.oid = idx.relam "
-                    "JOIN pg_attribute AS att ON att.attrelid = i.indrelid AND att.attnum = ANY(i.indkey) "
-                    "JOIN pg_opclass AS opc ON opc.oid = ANY(i.indclass) "
-                    "WHERE i.indrelid = :oid "
-                    "  AND att.attname = :column "
-                    "  AND am.amname = ANY(:methods) "
-                    "  AND opc.opcname = :opclass "
-                    "LIMIT 1"
-                ).bindparams(
+                text("""
+                    SELECT 1
+                    FROM pg_index AS i
+                    JOIN pg_class AS idx ON idx.oid = i.indexrelid
+                    JOIN pg_am AS am ON am.oid = idx.relam
+                    JOIN pg_attribute AS att ON att.attrelid = i.indrelid AND att.attnum = ANY(i.indkey)
+                    JOIN pg_opclass AS opc ON opc.oid = ANY(i.indclass)
+                    WHERE i.indrelid = :oid
+                      AND att.attname = :column
+                      AND am.amname = ANY(:methods)
+                      AND opc.opcname = :opclass
+                    LIMIT 1
+                """).bindparams(
                     bindparam("methods", type_=cast("Any", ARRAY(Text()))),
                 ),
                 {
@@ -242,78 +311,10 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         self._native_vector_verified = True
 
-    def _build_structural_sql(
-        self,
-        *,
-        ext: tuple[str, ...],
-        ext_not: tuple[str, ...],
-        paths: tuple[str, ...],
-        globs: tuple[str, ...],
-        globs_not: tuple[str, ...],
-        user_id: str | None,
-        alias: str = "o",
-    ) -> tuple[str, dict[str, object]]:
-        """Compose rg-style structural filters for Postgres text SQL."""
-        clauses: list[str] = []
-        params: dict[str, object] = {}
-        col = f"{alias}.path" if alias else "path"
-        ext_col = f"{alias}.ext" if alias else "ext"
-
-        if self._user_scoped and user_id:
-            clauses.append(f"{col} LIKE :user_scope ESCAPE '\\'")
-            params["user_scope"] = f"/{user_id}/%"
-
-        if ext:
-            in_list = ", ".join(f":gext{i}" for i in range(len(ext)))
-            clauses.append(f"{ext_col} IN ({in_list})")
-            for i, value in enumerate(ext):
-                params[f"gext{i}"] = value
-
-        if ext_not:
-            in_list = ", ".join(f":gextn{i}" for i in range(len(ext_not)))
-            clauses.append(f"{ext_col} NOT IN ({in_list})")
-            for i, value in enumerate(ext_not):
-                params[f"gextn{i}"] = value
-
-        if paths:
-            path_or: list[str] = []
-            for i, raw in enumerate(paths):
-                prefix = self._scope_filter_prefix(raw, user_id).rstrip("/") or "/"
-                path_or.append(f"{col} = :gpeq{i} OR {col} LIKE :gppre{i} ESCAPE '\\'")
-                params[f"gpeq{i}"] = prefix
-                params[f"gppre{i}"] = _escape_like(prefix) + "/%"
-            clauses.append("(" + " OR ".join(path_or) + ")")
-
-        if globs:
-            glob_or: list[str] = []
-            for i, raw in enumerate(globs):
-                scoped = self._scope_filter_prefix(raw, user_id)
-                regex = compile_glob(scoped)
-                if regex is None:
-                    continue
-                pg_regex = _python_regex_to_postgres(regex.pattern)
-                like = glob_to_sql_like(scoped)
-                if like is not None:
-                    glob_or.append(f"({col} LIKE :ggl{i} ESCAPE '\\' AND {col} ~ :ggr{i})")
-                    params[f"ggl{i}"] = like
-                else:
-                    glob_or.append(f"{col} ~ :ggr{i}")
-                params[f"ggr{i}"] = pg_regex
-            if glob_or:
-                clauses.append("(" + " OR ".join(glob_or) + ")")
-
-        if globs_not:
-            for i, raw in enumerate(globs_not):
-                scoped = self._scope_filter_prefix(raw, user_id)
-                regex = compile_glob(scoped)
-                if regex is None:
-                    continue
-                clauses.append(f"NOT ({col} ~ :ggnr{i})")
-                params[f"ggnr{i}"] = _python_regex_to_postgres(regex.pattern)
-
-        if not clauses:
-            return "", params
-        return " AND " + " AND ".join(clauses), params
+    def _structural_regex_clause(
+        self, col: str, param_name: str, regex_pattern: str
+    ) -> tuple[str, str]:
+        return f"{col} ~ {param_name}", _python_regex_to_postgres(regex_pattern)
 
     async def _lexical_search_impl(
         self,
@@ -334,7 +335,6 @@ class PostgresFileSystem(DatabaseFileSystem):
             )
 
         self._require_user_id(user_id)
-        await self._verify_fulltext_schema(session)
         if not query or not query.strip():
             return self._error("lexical_search requires a query")
 
@@ -447,7 +447,6 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         cols = self._resolve_columns("grep", columns) | {"content"}
         self._require_user_id(user_id)
-        await self._verify_fulltext_schema(session)
         if not pattern:
             return self._error("grep requires a pattern")
 
@@ -589,9 +588,6 @@ class PostgresFileSystem(DatabaseFileSystem):
             merged_paths = ()
 
         table = self._resolve_table()
-        like_pattern = glob_to_sql_like(pattern)
-        like_clause = "AND path LIKE :like_pattern ESCAPE '\\'" if like_pattern is not None else ""
-
         filter_clause, filter_params = self._build_structural_sql(
             ext=merged_ext,
             ext_not=(),
@@ -603,12 +599,16 @@ class PostgresFileSystem(DatabaseFileSystem):
         )
 
         params: dict[str, object] = dict(filter_params)
+        like_clause = ""
+        like_pattern = glob_to_sql_like(pattern)
+        if like_pattern is not None:
+            like_clause = "AND path LIKE :like_pattern ESCAPE '\\'"
+            params["like_pattern"] = like_pattern
+
         limit_clause = ""
         if max_count is not None:
             limit_clause = "LIMIT :max_count"
             params["max_count"] = max_count
-        if like_pattern is not None:
-            params["like_pattern"] = like_pattern
 
         params["glob_regex"] = _python_regex_to_postgres(regex.pattern)
         regex_clause = "AND path ~ :glob_regex"
@@ -655,9 +655,9 @@ class PostgresFileSystem(DatabaseFileSystem):
         if candidates is not None and not candidates.entries:
             return VFSResult(function="vector_search", entries=[])
 
-        await self._verify_vector_schema(session)
         vector_spec = postgres_vector_column_spec(self._model)
         vector_type = resolve_embedding_vector_type(self._model)
+        distance_operator = _pgvector_distance_operator(vector_spec.operator_class)
         if len(vector) != vector_spec.dimension:
             return self._error(
                 "vector_search requires a "
@@ -680,13 +680,13 @@ class PostgresFileSystem(DatabaseFileSystem):
             params["user_scope"] = f"/{user_id}/%"
 
         sql = text(f"""
-            SELECT o.path, (1 - (o.{vector_spec.column_name} <=> :query_vector)) AS score
+            SELECT o.path, o.{vector_spec.column_name} {distance_operator} :query_vector AS distance
             FROM {table} AS o
             WHERE o.deleted_at IS NULL
               AND o.{vector_spec.column_name} IS NOT NULL
               {candidate_clause}
               {user_scope_clause}
-            ORDER BY o.{vector_spec.column_name} <=> :query_vector, o.path
+            ORDER BY o.{vector_spec.column_name} {distance_operator} :query_vector, o.path
             LIMIT :k
         """)
         bind_params = [bindparam("query_vector", type_=vector_type.pgvector_sqlalchemy_type())]
@@ -696,7 +696,13 @@ class PostgresFileSystem(DatabaseFileSystem):
         rows = (await session.execute(sql, params)).all()
         result = VFSResult(
             function="vector_search",
-            entries=[Entry(path=row.path, score=float(row.score)) for row in rows],
+            entries=[
+                Entry(
+                    path=row.path,
+                    score=_pgvector_distance_to_score(vector_spec.operator_class, float(row.distance)),
+                )
+                for row in rows
+            ],
         )
         return self._unscope_result(result, user_id)
 

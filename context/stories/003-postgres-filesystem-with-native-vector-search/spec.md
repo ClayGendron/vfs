@@ -20,6 +20,7 @@ After this story:
 - `PostgresFileSystem` exists as an opt-in backend under `src/vfs/backends/postgres.py`.
 - `lexical_search`, `grep`, and `glob` are PostgreSQL-native: full-text ranking and regex/path matching run in Postgres, with Python only doing the result-shaping work that must remain local (for example, line-window reconstruction for grep).
 - `vector_search` and `semantic_search` default to native pgvector search inside Postgres.
+- The model-declared pgvector operator class and ANN index method are honored end-to-end. Cosine + HNSW remain the defaults, not hard-coded invariants.
 - If the caller explicitly passes `vector_store=` to `PostgresFileSystem`, that override wins for vector and semantic search. Native pgvector is the default, not an exclusive mode.
 - The result envelope, path semantics, candidate filtering, user scoping, and error behavior remain compatible with the rest of VFS.
 
@@ -28,6 +29,7 @@ After this story:
 - **Parity with MSSQL:** PostgreSQL should have the same “native backend, same public contract” path that MSSQL now has.
 - **Single-database operating model:** for the common SaaS / shared knowledge-base deployment, Postgres should be able to own rows, full-text search, and vector search without forcing a second search system by default.
 - **Performance:** the portable `DatabaseFileSystem` search path leaves obvious performance on the table for Postgres deployments that already have FTS, regex, and pgvector available server-side.
+- **Metric correctness:** pgvector's query operator must match the declared operator class. Hard-coding cosine into the SQL path would make `vector_ip_ops` / `vector_l2_ops` declarations lie.
 - **Pluggability remains load-bearing:** external vector stores are still valuable for large or remote corpora. `PostgresFileSystem` must not make that route impossible.
 - **Constitution fit:** this is an Article 4 backend swap, not a public-contract rewrite. The backend grows capabilities; the caller keeps the same filesystem API.
 
@@ -80,7 +82,7 @@ After this story:
      - the `vfs_objects.embedding` column exists
      - the `embedding` column is a native `vector(<N>)` column, not the portable JSON/text storage form
      - the vector dimension is declared and matches the database column
-     - a usable ANN index exists for cosine search on `vfs_objects.embedding`
+     - a usable ANN index exists for the model-declared distance metric on `vfs_objects.embedding`
 
    Verification must raise clear, actionable `RuntimeError`s analogous to `MSSQLFileSystem.verify_fulltext_schema()`.
 
@@ -102,8 +104,8 @@ After this story:
    - the portable base model may remain dimensionless for non-native backends, but native Postgres mode must run against a model whose `embedding` field is declared with `VectorType(dimension=<N>, postgres_native=True, ...)`
    - `VectorType` must expose enough Postgres-specific metadata for provisioning code to know:
      - this column is the vector-index target
-     - which ANN index method to create (`hnsw` preferred)
-     - which operator class to use (`vector_cosine_ops`)
+     - which ANN index method to create (`hnsw` default, `ivfflat` acceptable)
+     - which operator class / metric to use (`vector_cosine_ops`, `vector_ip_ops`, `vector_l2_ops`)
    - the backend and provisioning helpers should discover the index target from the model/type metadata rather than hard-coding a separate sidecar schema
 
    Required backend/model-construction contract:
@@ -143,6 +145,14 @@ After this story:
 
    The model declaration is the schema contract. `PostgresFileSystem` consumes that model; it does not remember a second dimension value on the filesystem instance.
 
+   The query contract follows from that same declaration:
+
+   - `vector_cosine_ops` -> cosine-distance operator `<=>`
+   - `vector_ip_ops` -> inner-product operator `<#>`
+   - `vector_l2_ops` -> Euclidean-distance operator `<->`
+
+   The backend may not hard-code `<=>` when the model declares another operator class.
+
    Canonical shape for a correctly provisioned native Postgres table:
 
    ```sql
@@ -158,8 +168,9 @@ After this story:
    Required indexing contract:
 
    - full-text: GIN index over an equivalent of `to_tsvector('simple', coalesce(content, ''))`
-   - vector: ANN index using cosine ops on `vfs_objects.embedding`
-   - `hnsw` is preferred; `ivfflat` is acceptable
+   - vector: ANN index using the model-declared pgvector operator class on `vfs_objects.embedding`
+   - `hnsw` is the default and preferred choice; `ivfflat` is acceptable
+   - ordinary B-tree indexes on scope/filter columns remain load-bearing for filtered ANN workloads; the vector index does not replace them
 
    The verification method may accept either:
 
@@ -224,7 +235,7 @@ After this story:
       - exclude soft-deleted rows
       - exclude rows where `embedding IS NULL`
       - preserve candidate filtering and user scoping
-      - rank by cosine distance in Postgres
+      - rank by the operator implied by the model-declared pgvector operator class in Postgres
       - translate distance into the VFS `score` field in descending-similarity order
       - return only `path` + `score` on the result rows
 
@@ -233,6 +244,7 @@ After this story:
     - Candidate filtering should use a Postgres-native array bind (`path = ANY(:paths)` or equivalent), not thousands of scalar placeholders.
     - The vector ranking query may touch `vfs_objects.embedding`, but the projected result rows must not expose raw embedding blobs through `Entry`.
     - Native vector search must work for direct `vector_search([...])` calls even when no `embedding_provider` is configured.
+    - The SQL operator must be derived from model metadata rather than hard-coded in `PostgresFileSystem`.
 
 11. `_semantic_search_impl` must be overridden as well.
 
@@ -327,7 +339,8 @@ After this story:
 - No background worker or indexer integration in this story
 - No auto-selection of `PostgresFileSystem` for every Postgres engine/dialect in the generic mount path
 - No simultaneous dual-write or dual-query behavior across pgvector and an explicit external `vector_store`
-- No metric-selection surface beyond one default similarity metric for native pgvector search
+- No public runtime tuning surface for `hnsw.ef_search`, `ivfflat.probes`, iterative scans, or exact-vs-ANN switching
+- No partitioning/sharding strategy in this story; filtered vector search still depends on ordinary filter indexes and future follow-up work
 - No attempt to change the public `VectorStore` protocol
 - No separate Postgres-only sidecar vector table; native pgvector lives on `vfs_objects.embedding`
 
@@ -347,13 +360,13 @@ This story does **not** add a public constructor/config surface for alternate FT
 
 ### Vector similarity metric
 
-Use cosine similarity for the native pgvector path.
+Cosine similarity is the default for the native pgvector path, but the backend must honor the model-declared operator class.
 
 Why:
 
-- it is the least surprising default for modern embedding vectors
-- it aligns with the repo’s existing “higher score is better” search result shape
-- pgvector supports cosine operator classes directly
+- cosine is the least surprising default for modern embedding vectors
+- the schema already carries the operator-class metadata, so the backend should use it instead of pretending every deployment is cosine
+- this keeps the model declaration, the verified ANN index, and the SQL query operator aligned
 
 `Entry.score` should be documented as a backend-local similarity score that is comparable within one result set, not a globally stable absolute measure across all backends.
 
@@ -404,6 +417,8 @@ No backend-specific result envelope or Postgres-only row type is allowed.
 - [ ] With an explicit `vector_store`, `semantic_search()` delegates to the existing external-store behavior instead of requiring pgvector.
 - [ ] Candidate filtering and user scoping work in both native and override vector paths.
 - [ ] Native vector result rows do not project raw `embedding` data into `Entry`.
+- [ ] The native vector query operator matches the model-declared operator class; the backend does not hard-code cosine distance.
+- [ ] `vector_cosine_ops`, `vector_ip_ops`, and `vector_l2_ops` models each verify and query with the matching pgvector operator.
 
 ### Native vector column / migration
 
@@ -510,6 +525,7 @@ The probe script should include at least one native vector-search check when emb
 - Current embedding model field: `src/vfs/models.py`
 - Postgres deployment direction: `docs/plans/cloud_architecture_research.md`
 - Background research: `context/learnings/2026-02-17-database-vfs-patterns.md`
+- Vector-scale follow-up: [`context/learnings/2026-04-20-pgvectorscale.md`](../../learnings/2026-04-20-pgvectorscale.md)
 - Constitution articles: 2 (agent-first contract), 4 (backend-agnostic contract), 5 (operational discipline)
 
 ## Decisions resolved by this spec
@@ -517,10 +533,11 @@ The probe script should include at least one native vector-search check when emb
 - **Explicit vector-store override wins.** Native pgvector is the default for `PostgresFileSystem`, but a caller-provided `vector_store` takes precedence for vector/semantic search.
 - **Native vector storage lives on `VFSObject.embedding`.** `VectorType` and the model field are the source of truth for where Postgres native vector indexing happens.
 - **Native vector dimension is model-declared.** Schema verification compares the live column to the resolved model and raises on mismatch. `PostgresFileSystem` does not carry a separate `embedding_dimension=` constructor surface.
+- **The SQL distance operator is model-declared too.** Operator class metadata drives both the verified ANN index and the query operator used at runtime.
 - **Native grep/lexical/glob are part of the backend.** `PostgresFileSystem` is not “vector only”; it is the Postgres-native search backend analogous to `MSSQLFileSystem`.
 - **No auto-embedding generation.** The backend owns native search execution and native storage on `embedding`, not content analysis or embedding production.
 - **Legacy `embedding` columns are not auto-rewritten at runtime.** Verification raises; migration is explicit.
-- **`simple` FTS config and cosine similarity are the defaults.** No public tuning surface ships in this story.
+- **`simple` FTS config, cosine, and HNSW are the defaults.** No public ANN tuning surface ships in this story.
 
 ## Non-goals made explicit
 

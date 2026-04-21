@@ -116,6 +116,9 @@ def _extract_literal_terms(pattern: str) -> list[str]:
     if re.search(r"\)[*+?{]", pattern):
         return []
 
+    if "(?!" in pattern or "(?<!" in pattern:
+        return []
+
     stripped_for_alt = re.sub(r"\\.", "", pattern)
     stripped_for_alt = re.sub(r"\[[^\]]*\]", "", stripped_for_alt)
     if "|" in stripped_for_alt:
@@ -2059,6 +2062,104 @@ class DatabaseFileSystem(VirtualFileSystem):
                     stmt = stmt.where(~self._model.path.like(like, escape="\\"))  # ty: ignore[unresolved-attribute]
 
         return stmt
+
+    def _structural_regex_clause(
+        self, col: str, param_name: str, regex_pattern: str
+    ) -> tuple[str, str]:
+        """Return ``(sql_fragment, param_value)`` for matching *col* against *regex_pattern*.
+
+        Subclasses that use :meth:`_build_structural_sql` must override to
+        produce dialect SQL and any required regex-source translation.
+        """
+        raise NotImplementedError
+
+    def _build_structural_sql(
+        self,
+        *,
+        ext: tuple[str, ...],
+        ext_not: tuple[str, ...],
+        paths: tuple[str, ...],
+        globs: tuple[str, ...],
+        globs_not: tuple[str, ...],
+        user_id: str | None,
+        alias: str = "o",
+    ) -> tuple[str, dict[str, object]]:
+        """Compose rg-style structural filter clauses for raw-SQL grep/glob.
+
+        Returns ``(clause_sql, params)`` where *clause_sql* is ready to be
+        appended after an existing ``WHERE …`` — each clause is AND-joined
+        and the whole string starts with a leading ``AND `` when non-empty.
+        Column references use the supplied *alias* (empty string drops the
+        prefix for SQL without a table alias).
+
+        Positive ``globs`` emit a sargable ``LIKE`` pre-filter alongside the
+        authoritative dialect regex match so the engine can still seek on a
+        literal prefix. ``globs_not`` uses the regex match only — there is
+        no sargable form for negation. Subclasses supply the dialect regex
+        match via :meth:`_structural_regex_match_sql` and any pattern
+        translation via :meth:`_structural_regex_param_value`.
+        """
+        clauses: list[str] = []
+        params: dict[str, object] = {}
+        col = f"{alias}.path" if alias else "path"
+        ext_col = f"{alias}.ext" if alias else "ext"
+
+        if self._user_scoped and user_id:
+            clauses.append(f"{col} LIKE :user_scope ESCAPE '\\'")
+            params["user_scope"] = f"/{user_id}/%"
+
+        if ext:
+            in_list = ", ".join(f":gext{i}" for i in range(len(ext)))
+            clauses.append(f"{ext_col} IN ({in_list})")
+            for i, value in enumerate(ext):
+                params[f"gext{i}"] = value
+
+        if ext_not:
+            in_list = ", ".join(f":gextn{i}" for i in range(len(ext_not)))
+            clauses.append(f"{ext_col} NOT IN ({in_list})")
+            for i, value in enumerate(ext_not):
+                params[f"gextn{i}"] = value
+
+        if paths:
+            path_or: list[str] = []
+            for i, raw in enumerate(paths):
+                prefix = self._scope_filter_prefix(raw, user_id).rstrip("/") or "/"
+                path_or.append(f"{col} = :gpeq{i} OR {col} LIKE :gppre{i} ESCAPE '\\'")
+                params[f"gpeq{i}"] = prefix
+                params[f"gppre{i}"] = _escape_like(prefix) + "/%"
+            clauses.append("(" + " OR ".join(path_or) + ")")
+
+        if globs:
+            glob_or: list[str] = []
+            for i, raw in enumerate(globs):
+                scoped = self._scope_filter_prefix(raw, user_id)
+                regex = compile_glob(scoped)
+                if regex is None:
+                    continue
+                match_sql, param_value = self._structural_regex_clause(col, f":ggr{i}", regex.pattern)
+                like = glob_to_sql_like(scoped)
+                if like is not None:
+                    glob_or.append(f"({col} LIKE :ggl{i} ESCAPE '\\' AND {match_sql})")
+                    params[f"ggl{i}"] = like
+                else:
+                    glob_or.append(match_sql)
+                params[f"ggr{i}"] = param_value
+            if glob_or:
+                clauses.append("(" + " OR ".join(glob_or) + ")")
+
+        if globs_not:
+            for i, raw in enumerate(globs_not):
+                scoped = self._scope_filter_prefix(raw, user_id)
+                regex = compile_glob(scoped)
+                if regex is None:
+                    continue
+                match_sql, param_value = self._structural_regex_clause(col, f":ggnr{i}", regex.pattern)
+                clauses.append(f"NOT ({match_sql})")
+                params[f"ggnr{i}"] = param_value
+
+        if not clauses:
+            return "", params
+        return " AND " + " AND ".join(clauses), params
 
     async def _glob_impl(
         self,

@@ -33,7 +33,6 @@ from sqlalchemy import text
 from vfs.backends.database import (
     DatabaseFileSystem,
     _compile_grep_regex,
-    _escape_like,
     _extract_literal_terms,
     _regex_flags_for_mode,
 )
@@ -269,90 +268,10 @@ class MSSQLFileSystem(DatabaseFileSystem):
     # Grep — REGEXP_LIKE pushdown with optional CONTAINS pre-filter
     # ------------------------------------------------------------------
 
-    def _build_grep_structural_sql(
-        self,
-        *,
-        ext: tuple[str, ...],
-        ext_not: tuple[str, ...],
-        paths: tuple[str, ...],
-        globs: tuple[str, ...],
-        globs_not: tuple[str, ...],
-        user_id: str | None,
-        alias: str = "o",
-    ) -> tuple[str, dict[str, object]]:
-        """Compose the rg-structural filter clauses for grep/glob SQL.
-
-        Returns ``(clause_sql, params)`` where *clause_sql* is a string
-        ready to be appended after an existing ``WHERE …`` (each clause
-        is pre-joined with ``AND`` and the whole string starts with a
-        leading ``AND `` when non-empty).  All column references use the
-        supplied *alias*.
-
-        Positive ``globs`` push an authoritative ``REGEXP_LIKE(path, …)``
-        alongside the sargable ``LIKE`` pre-filter so the engine can
-        seek on a literal prefix and still reject LIKE over-matches
-        server-side.  ``globs_not`` uses ``NOT REGEXP_LIKE`` only —
-        there is no sargable form for negation.
-        """
-        clauses: list[str] = []
-        params: dict[str, object] = {}
-        col = f"{alias}.path" if alias else "path"
-        ext_col = f"{alias}.ext" if alias else "ext"
-
-        if self._user_scoped and user_id:
-            clauses.append(f"{col} LIKE :user_scope ESCAPE '\\'")
-            params["user_scope"] = f"/{user_id}/%"
-
-        if ext:
-            in_list = ", ".join(f":gext{i}" for i in range(len(ext)))
-            clauses.append(f"{ext_col} IN ({in_list})")
-            for i, e in enumerate(ext):
-                params[f"gext{i}"] = e
-
-        if ext_not:
-            in_list = ", ".join(f":gextn{i}" for i in range(len(ext_not)))
-            clauses.append(f"{ext_col} NOT IN ({in_list})")
-            for i, e in enumerate(ext_not):
-                params[f"gextn{i}"] = e
-
-        if paths:
-            path_or: list[str] = []
-            for i, raw in enumerate(paths):
-                prefix = self._scope_filter_prefix(raw, user_id).rstrip("/") or "/"
-                path_or.append(f"{col} = :gpeq{i} OR {col} LIKE :gppre{i} ESCAPE '\\'")
-                params[f"gpeq{i}"] = prefix
-                params[f"gppre{i}"] = _escape_like(prefix) + "/%"
-            clauses.append("(" + " OR ".join(path_or) + ")")
-
-        if globs:
-            glob_or: list[str] = []
-            for i, raw in enumerate(globs):
-                scoped = self._scope_filter_prefix(raw, user_id)
-                regex = compile_glob(scoped)
-                if regex is None:
-                    continue
-                like = glob_to_sql_like(scoped)
-                if like is not None:
-                    glob_or.append(f"({col} LIKE :ggl{i} ESCAPE '\\' AND REGEXP_LIKE({col}, :ggr{i}, 'c'))")
-                    params[f"ggl{i}"] = like
-                else:
-                    glob_or.append(f"REGEXP_LIKE({col}, :ggr{i}, 'c')")
-                params[f"ggr{i}"] = regex.pattern
-            if glob_or:
-                clauses.append("(" + " OR ".join(glob_or) + ")")
-
-        if globs_not:
-            for i, raw in enumerate(globs_not):
-                scoped = self._scope_filter_prefix(raw, user_id)
-                regex = compile_glob(scoped)
-                if regex is None:
-                    continue
-                clauses.append(f"NOT REGEXP_LIKE({col}, :ggnr{i}, 'c')")
-                params[f"ggnr{i}"] = regex.pattern
-
-        if not clauses:
-            return "", params
-        return " AND " + " AND ".join(clauses), params
+    def _structural_regex_clause(
+        self, col: str, param_name: str, regex_pattern: str
+    ) -> tuple[str, str]:
+        return f"REGEXP_LIKE({col}, {param_name}, 'c')", regex_pattern
 
     async def _grep_impl(
         self,
@@ -394,7 +313,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         4. **Direct + files** — same direct path, path-only projection.
 
         Structural filters (``ext``, ``paths``, ``globs`` / ``globs_not``)
-        compose onto all four via :meth:`_build_grep_structural_sql`.
+        compose onto all four via :meth:`_build_structural_sql`.
         ``ext`` seeks the ``ix_vfs_objects_ext_kind`` composite
         index, so ``-t py`` on a 1M-row corpus narrows before the
         regex engine runs.
@@ -458,7 +377,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         sql_flags = "im" if flags & re.IGNORECASE else "cm"
         table = self._resolve_table()
 
-        filter_clause, filter_params = self._build_grep_structural_sql(
+        filter_clause, filter_params = self._build_structural_sql(
             ext=ext,
             ext_not=ext_not,
             paths=paths,
@@ -575,7 +494,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         Extends the base-class signature with rg-style ``ext`` and
         positional ``paths`` pushdowns composed via
-        :meth:`_build_grep_structural_sql`.  ``compile_glob`` produces
+        :meth:`_build_structural_sql`.  ``compile_glob`` produces
         plain POSIX-style regexes so the regex source passes straight
         into ``REGEXP_LIKE``.  The 2 MB LOB ceiling does not apply to
         the ``path`` column.
@@ -608,7 +527,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             return self._error(f"Invalid glob pattern: {pattern}")
 
         # Decompose the *unscoped* pattern: merged_paths flows through
-        # _build_grep_structural_sql which re-scopes via
+        # _build_structural_sql which re-scopes via
         # _scope_filter_prefix, so passing a pre-scoped prefix would
         # double-scope.
         decomposition = decompose_glob(unscoped_pattern)
@@ -640,7 +559,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         like_pattern = glob_to_sql_like(pattern)
         like_clause = "AND path LIKE :like_pattern ESCAPE '\\'" if like_pattern is not None else ""
 
-        filter_clause, filter_params = self._build_grep_structural_sql(
+        filter_clause, filter_params = self._build_structural_sql(
             ext=merged_ext,
             ext_not=(),
             paths=merged_paths,

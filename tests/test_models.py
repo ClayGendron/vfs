@@ -638,6 +638,17 @@ class TestPostgresVectorModelHelpers:
         assert spec.index_method == "hnsw"
         assert spec.operator_class == "vector_cosine_ops"
 
+    def test_vector_spec_preserves_nondefault_metric_and_index_method(self):
+        native_model = postgres_native_vfs_object_model(
+            dimension=1536,
+            index_method="ivfflat",
+            operator_class="vector_ip_ops",
+        )
+        spec = postgres_vector_column_spec(native_model)
+        assert spec.index_method == "ivfflat"
+        assert spec.operator_class == "vector_ip_ops"
+        assert spec.index_name == "ix_vfs_objects_embedding_vector_ip_ivfflat"
+
 
 # =========================================================================
 # plan_file_write

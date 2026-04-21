@@ -226,7 +226,7 @@ class TestPostgresNativeVectorSearchProjection:
             if statement.lstrip().upper().startswith("SELECT") and "FROM vfs_objects" in statement
         ]
         assert selects, "expected vector search to issue at least one SELECT against vfs_objects"
-        assert any("SELECT o.path, (1 - (o.embedding <=>" in stmt for stmt in selects)
+        assert any("o.embedding <=>" in stmt and "AS distance" in stmt for stmt in selects)
         assert all("SELECT o.embedding" not in stmt for stmt in selects)
 
 
