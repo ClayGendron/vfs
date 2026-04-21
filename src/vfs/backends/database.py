@@ -2063,9 +2063,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         return stmt
 
-    def _structural_regex_clause(
-        self, col: str, param_name: str, regex_pattern: str
-    ) -> tuple[str, str]:
+    def _structural_regex_clause(self, col: str, param_name: str, regex_pattern: str) -> tuple[str, str]:
         """Return ``(sql_fragment, param_value)`` for matching *col* against *regex_pattern*.
 
         Subclasses that use :meth:`_build_structural_sql` must override to

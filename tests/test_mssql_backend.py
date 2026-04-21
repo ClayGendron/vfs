@@ -292,9 +292,7 @@ class TestBuildGrepStructuralSql:
 
     def test_ext_not_pushdown(self):
         fs = self._fs()
-        sql, params = fs._build_structural_sql(
-            ext=(), ext_not=("md",), paths=(), globs=(), globs_not=(), user_id=None
-        )
+        sql, params = fs._build_structural_sql(ext=(), ext_not=("md",), paths=(), globs=(), globs_not=(), user_id=None)
         assert "o.ext NOT IN (:gextn0)" in sql
         assert params == {"gextn0": "md"}
 
@@ -346,9 +344,7 @@ class TestBuildGrepStructuralSql:
 
     def test_user_scope_appends_like_clause(self):
         fs = self._fs(user_scoped=True)
-        sql, params = fs._build_structural_sql(
-            ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id="alice"
-        )
+        sql, params = fs._build_structural_sql(ext=(), ext_not=(), paths=(), globs=(), globs_not=(), user_id="alice")
         assert "o.path LIKE :user_scope ESCAPE '\\'" in sql
         assert params["user_scope"] == "/alice/%"
 

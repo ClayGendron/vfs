@@ -683,11 +683,7 @@ def postgres_native_vfs_object_model(
     def _class_token(value: str) -> str:
         return "".join(part.capitalize() for part in value.replace("-", "_").split("_") if part)
 
-    class_name = (
-        f"PostgresNativeVFSObject{dimension}"
-        f"{_class_token(index_method)}"
-        f"{_class_token(operator_class)}"
-    )
+    class_name = f"PostgresNativeVFSObject{dimension}{_class_token(index_method)}{_class_token(operator_class)}"
     if model_name:
         class_name += _class_token(model_name)
     embedding_sa_type = cast(

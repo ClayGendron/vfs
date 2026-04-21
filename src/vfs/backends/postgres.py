@@ -311,9 +311,7 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         self._native_vector_verified = True
 
-    def _structural_regex_clause(
-        self, col: str, param_name: str, regex_pattern: str
-    ) -> tuple[str, str]:
+    def _structural_regex_clause(self, col: str, param_name: str, regex_pattern: str) -> tuple[str, str]:
         return f"{col} ~ {param_name}", _python_regex_to_postgres(regex_pattern)
 
     async def _lexical_search_impl(

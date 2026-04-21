@@ -268,9 +268,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
     # Grep — REGEXP_LIKE pushdown with optional CONTAINS pre-filter
     # ------------------------------------------------------------------
 
-    def _structural_regex_clause(
-        self, col: str, param_name: str, regex_pattern: str
-    ) -> tuple[str, str]:
+    def _structural_regex_clause(self, col: str, param_name: str, regex_pattern: str) -> tuple[str, str]:
         return f"REGEXP_LIKE({col}, {param_name}, 'c')", regex_pattern
 
     async def _grep_impl(

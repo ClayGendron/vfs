@@ -79,6 +79,8 @@ async def _seed_native_embeddings(db: PostgresFileSystem, rows: dict[str, list[f
 
 
 async def _make_native_metric_db(engine, *, operator_class: str) -> PostgresFileSystem:
+    if engine.dialect.name != "postgresql":
+        pytest.skip("requires --postgres flag and a running PostgreSQL instance")
     model = postgres_native_vfs_object_model(dimension=4, operator_class=operator_class)
     spec = postgres_vector_column_spec(model)
     async with engine.begin() as conn:
