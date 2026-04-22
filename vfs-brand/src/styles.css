@@ -1,0 +1,652 @@
+/* ─── reset ─── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-body, "Space Grotesk"), system-ui, sans-serif;
+  background: var(--bg, #eeeae0);
+  color: var(--fg, #1d1c18);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+  font-feature-settings: "ss01", "cv11";
+}
+img, svg { display: block; max-width: 100%; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; cursor: pointer; }
+
+/* ─── shared app chrome ─── */
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.chrome {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  background: color-mix(in oklab, var(--bg, #eeeae0) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(1.05);
+  -webkit-backdrop-filter: blur(14px) saturate(1.05);
+  border-bottom: 1px solid var(--rule, rgba(29, 28, 24, 0.10));
+  font-family: "Geist Mono", "JetBrains Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.chrome-brand {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 20px;
+  letter-spacing: 0.06em;
+  color: var(--fg, #1d1c18);
+}
+.chrome-brand .dot {
+  display: inline-block;
+  width: 4px; height: 4px;
+  background: currentColor;
+  border-radius: 50%;
+  margin: 0 7px 4px 7px;
+  vertical-align: middle;
+  opacity: 0.5;
+}
+
+.chrome-nav {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--rule, rgba(29, 28, 24, 0.12));
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--bg, #eeeae0) 60%, transparent);
+}
+.chrome-nav button {
+  border: 0;
+  background: transparent;
+  color: color-mix(in oklab, var(--fg, #1d1c18) 55%, transparent);
+  padding: 7px 14px;
+  border-radius: 999px;
+  transition: all 0.18s;
+  font-family: "Geist Mono", "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.chrome-nav button:hover { color: var(--fg, #1d1c18); }
+.chrome-nav button.active {
+  background: var(--fg, #1d1c18);
+  color: var(--bg, #eeeae0);
+}
+
+.chrome-meta {
+  color: color-mix(in oklab, var(--fg, #1d1c18) 48%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 10px;
+}
+
+/* ─── direction shell ─── */
+.direction {
+  flex: 1;
+  display: block;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.section {
+  padding: 112px 8vw;
+  border-bottom: 1px solid var(--rule, rgba(29, 28, 24, 0.10));
+}
+.section:last-of-type { border-bottom: 0; }
+.section-tight { padding: 72px 8vw; }
+
+.section-label {
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--quiet, var(--muted));
+  margin-bottom: 36px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.section-label::before {
+  content: "";
+  width: 32px;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+/* ─── hero (legacy shared, not used by rewritten directions) ─── */
+.hero {
+  min-height: 86vh;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  padding: 80px 8vw 60px;
+  position: relative;
+  overflow: hidden;
+}
+.hero-lockup {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: clamp(90px, 17vw, 260px);
+  line-height: 0.88;
+  letter-spacing: -0.01em;
+  color: var(--hero-fg, var(--fg));
+  align-self: center;
+}
+.hero-sub {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 40px;
+  flex-wrap: wrap;
+}
+.hero-statement {
+  max-width: 640px;
+  font-size: clamp(18px, 1.6vw, 22px);
+  line-height: 1.5;
+  color: var(--fg);
+}
+.hero-meta {
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: right;
+  line-height: 1.8;
+}
+
+/* ─── spec hero (Protocol-style, used by all three directions) ─── */
+.spec-hero {
+  min-height: 92vh;
+  padding: 48px 8vw 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.spec-hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.spec-hero-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 48px;
+}
+.spec-hero-mark {
+  font-family: "Saira", system-ui, sans-serif;
+  font-weight: 500;
+  font-size: clamp(72px, 12vw, 176px);
+  line-height: 0.9;
+  letter-spacing: 0;
+  color: var(--fg);
+  margin: 0;
+}
+.spec-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 48px;
+  align-items: end;
+}
+@media (max-width: 820px) {
+  .spec-hero-grid { grid-template-columns: 1fr; gap: 28px; }
+}
+.spec-hero-lede {
+  font-family: var(--font-display, "Space Grotesk");
+  font-size: clamp(20px, 1.7vw, 24px);
+  font-weight: 300;
+  letter-spacing: -0.005em;
+  line-height: 1.45;
+  color: var(--fg);
+  max-width: 640px;
+}
+.spec-hero-meta {
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--quiet);
+  text-align: right;
+  line-height: 1.9;
+}
+
+/* ─── install bar ─── */
+.install-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 720px;
+}
+.install-bar .install-label {
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--quiet);
+  white-space: nowrap;
+}
+.install-btn {
+  flex: 1;
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 22px;
+  background: var(--card-strong, #1d1c18);
+  color: var(--bg);
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+  justify-content: space-between;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--fg) 10%, transparent);
+}
+.install-btn:hover {
+  transform: translateX(2px);
+  box-shadow: 0 2px 0 color-mix(in oklab, var(--fg) 14%, transparent);
+}
+.install-btn .sigil { color: var(--accent); font-weight: 500; }
+.install-btn .copy-flag {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--bg) 70%, transparent);
+  transition: color 0.15s;
+}
+.install-btn .copy-flag.copied { color: var(--accent); }
+
+/* ─── positioning block ─── */
+.positioning {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 80px;
+}
+@media (max-width: 900px) {
+  .positioning { grid-template-columns: 1fr; gap: 32px; }
+}
+.positioning-name {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(56px, 8vw, 112px);
+  line-height: 0.9;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+}
+.positioning-body { font-size: 17px; line-height: 1.7; }
+.positioning-body p + p { margin-top: 1em; }
+.positioning-body .tagline {
+  font-family: var(--font-display, "Space Grotesk");
+  font-size: clamp(22px, 2.2vw, 30px);
+  font-weight: 500;
+  letter-spacing: -0.012em;
+  line-height: 1.25;
+  margin-bottom: 1.2em;
+  color: var(--fg);
+}
+.positioning-body strong { font-weight: 600; }
+.positioning-body em { font-style: italic; color: var(--fg); }
+.positioning-body code,
+.positioning-body .mono { font-family: var(--font-mono); font-size: 0.93em; }
+
+/* ─── value cards ─── */
+.values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+.value {
+  border: 1px solid var(--rule);
+  padding: 28px 24px 24px;
+  background: var(--card);
+  transition: border-color 0.2s;
+}
+.value:hover { border-color: color-mix(in oklab, var(--accent) 50%, var(--rule)); }
+.value-label {
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--quiet, var(--muted));
+  margin-bottom: 18px;
+}
+.value-title {
+  font-family: var(--font-display, "Space Grotesk");
+  font-weight: 500;
+  font-size: 22px;
+  letter-spacing: -0.012em;
+  margin: 0 0 10px;
+  color: var(--fg);
+}
+.value-body { font-size: 14px; line-height: 1.6; color: var(--muted); }
+
+/* ─── color swatches ─── */
+.palette {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.swatch {
+  aspect-ratio: 1 / 1.15;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px;
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  border: 1px solid color-mix(in oklab, currentColor 18%, transparent);
+  border-radius: 2px;
+}
+.swatch .name { text-transform: uppercase; letter-spacing: 0.2em; font-weight: 500; font-size: 10px; }
+.swatch .hex { opacity: 0.82; font-size: 10px; }
+
+/* ─── type specimens ─── */
+.type-stack > * + * { margin-top: 44px; }
+.type-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 32px;
+  padding-bottom: 36px;
+  border-bottom: 1px dashed var(--rule);
+  align-items: baseline;
+}
+.type-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.type-meta {
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--quiet, var(--muted));
+  line-height: 1.7;
+}
+.type-meta .name-line { color: var(--fg); font-weight: 500; margin-top: 6px; letter-spacing: 0.14em; }
+.type-meta .use-line { margin-top: 6px; text-transform: none; letter-spacing: 0.04em; }
+.type-sample { color: var(--fg); }
+
+/* ─── voice grid ─── */
+.voice {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-bottom: 0;
+  border-right: 0;
+}
+.voice-cell {
+  padding: 28px 26px;
+  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: var(--card);
+}
+.voice-cell.bad { background: transparent; }
+.voice-label {
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--quiet, var(--muted));
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.voice-label .mark { color: var(--accent); }
+.voice-line {
+  font-family: var(--font-display, "Space Grotesk");
+  font-size: 17px;
+  line-height: 1.45;
+  font-weight: 400;
+  letter-spacing: -0.008em;
+  color: var(--fg);
+}
+.voice-cell.bad .voice-line {
+  color: color-mix(in oklab, var(--fg) 40%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  text-decoration-thickness: 1px;
+}
+
+/* ─── sample UI ─── */
+.sample {
+  border: 1px solid var(--rule);
+  background: var(--card-strong);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.sample-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 18px;
+  border-bottom: 1px solid color-mix(in oklab, var(--bg) 12%, transparent);
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--bg) 60%, transparent);
+  background: color-mix(in oklab, var(--card-strong) 85%, var(--fg));
+}
+.sample-body {
+  padding: 24px 26px;
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+  color: color-mix(in oklab, var(--bg) 88%, white);
+}
+.sample-body .prompt { color: var(--accent); user-select: none; margin-right: 10px; }
+.sample-body .comment { color: color-mix(in oklab, var(--bg) 50%, transparent); font-style: italic; }
+.sample-body .path { color: var(--bg); }
+.sample-body .out { color: color-mix(in oklab, var(--bg) 55%, transparent); }
+.sample-body .hit { background: color-mix(in oklab, var(--accent) 25%, transparent); color: var(--bg); padding: 1px 4px; border-radius: 1px; }
+
+/* ─── tradeoff block ─── */
+.tradeoff-grid { display: grid; gap: 10px; }
+.tradeoff {
+  border-left: 2px solid var(--accent);
+  padding: 22px 28px;
+  background: var(--card);
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 24px;
+}
+@media (max-width: 760px) { .tradeoff { grid-template-columns: 1fr; } }
+.tradeoff-label {
+  font-family: var(--font-mono, "Geist Mono");
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--quiet, var(--muted));
+}
+.tradeoff-body { font-size: 15px; line-height: 1.65; color: var(--fg); }
+.tradeoff-body .yes { color: var(--fg); }
+.tradeoff.cost { border-left-color: color-mix(in oklab, var(--accent) 40%, var(--rule)); }
+
+/* ─── notes ─── */
+.notes-grid {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--muted);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+}
+@media (max-width: 800px) { .notes-grid { grid-template-columns: 1fr; gap: 24px; } }
+.notes-grid .label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  color: var(--quiet);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+.notes-grid em { color: var(--fg); font-style: italic; }
+
+/* ─── index page ─── */
+body.intro {
+  background: #e9e4d7;
+  color: #1d1c18;
+}
+.index-page {
+  padding: 72px 8vw 96px;
+  max-width: 1240px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.index-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  font-family: "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(29, 28, 24, 0.5);
+}
+.index-top .right { text-align: right; line-height: 1.9; }
+.index-head {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(96px, 16vw, 220px);
+  line-height: 0.88;
+  letter-spacing: 0.01em;
+  margin: 56px 0 40px;
+  color: #1d1c18;
+}
+.index-head .dot-sep { opacity: 0.3; margin: 0 0.15em; }
+.index-lede {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(20px, 2vw, 26px);
+  line-height: 1.4;
+  letter-spacing: -0.008em;
+  max-width: 680px;
+  color: rgba(29, 28, 24, 0.82);
+  margin-bottom: 80px;
+}
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+.index-card {
+  padding: 28px 26px 24px;
+  border: 1px solid rgba(29, 28, 24, 0.14);
+  background: #f0ece0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+  color: inherit;
+  transition: background 0.22s ease, border-color 0.22s ease, transform 0.22s ease;
+  cursor: pointer;
+  position: relative;
+  border-radius: 2px;
+}
+.index-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, color-mix(in oklab, var(--card-accent, transparent) 4%, transparent) 100%);
+  transition: background 0.22s;
+}
+.index-card:hover {
+  background: #f5f1e4;
+  border-color: rgba(29, 28, 24, 0.24);
+  transform: translateY(-2px);
+}
+.index-card .n {
+  font-family: "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: rgba(29, 28, 24, 0.5);
+  text-transform: uppercase;
+}
+.index-card .t {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 52px;
+  line-height: 0.95;
+  letter-spacing: 0.01em;
+  margin-top: 4px;
+}
+.index-card .s {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(29, 28, 24, 0.72);
+}
+.index-card .cta {
+  font-family: "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: rgba(29, 28, 24, 0.55);
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.index-card:hover .cta { color: #1d1c18; }
+.index-footer {
+  margin-top: 96px;
+  color: rgba(29, 28, 24, 0.58);
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 14px;
+  line-height: 1.7;
+  max-width: 680px;
+}
+.index-footer p + p { margin-top: 14px; }
+.index-footer em { color: #1d1c18; font-style: italic; }
+.index-footer .mono { font-family: "Geist Mono", monospace; font-size: 13px; }
+
+/* ─── direction body fallback ─── */
+body.direction-body { background: var(--bg, #eeeae0); color: var(--fg, #1d1c18); }
+
+/* ─── utility ─── */
+.mono { font-family: var(--font-mono, "Geist Mono"), monospace; }
+.display { font-family: var(--font-display, "Space Grotesk"), system-ui, sans-serif; }
+.stencil {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+.stencil-thin {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  letter-spacing: 0.02em;
+}
+.mute { color: var(--muted); }
+.quiet { color: var(--quiet, var(--muted)); }
+.accent { color: var(--accent); }
+
+/* ─── selection ─── */
+.direction ::selection {
+  background: color-mix(in oklab, var(--accent) 75%, transparent);
+  color: var(--bg);
+}
+body.intro ::selection {
+  background: rgba(29, 28, 24, 0.85);
+  color: #e9e4d7;
+}

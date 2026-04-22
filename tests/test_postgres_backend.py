@@ -10,9 +10,12 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text as sql_text
 
+from vfs.backends.database import DatabaseFileSystem
 from vfs.backends.postgres import (
     PostgresFileSystem,
+    _build_plainto_tsquery,
     _build_tsquery,
+    _contains_unescaped_anchor,
     _parse_vector_dimension,
     _pgvector_distance_operator,
     _pgvector_distance_to_score,
@@ -63,6 +66,14 @@ def _normalize_sql(statement: str) -> str:
     return " ".join(statement.split()).lower()
 
 
+def _read_statements_against_objects(statements: list[str]) -> list[str]:
+    return [
+        _normalize_sql(statement)
+        for statement in statements
+        if statement.lstrip().upper().startswith(("SELECT", "WITH")) and "from vfs_objects" in statement.lower()
+    ]
+
+
 def _parse_vector_text(value: str) -> list[float]:
     return [float(part) for part in value.strip("[]").split(",") if part]
 
@@ -90,8 +101,51 @@ async def _make_native_metric_db(engine, *, operator_class: str) -> PostgresFile
         await conn.execute(
             sql_text(
                 f"""
-                CREATE INDEX IF NOT EXISTS ix_{model.__tablename__}_content_tsv_gin
-                ON {model.__tablename__} USING GIN (to_tsvector('simple', coalesce(content, '')))
+                ALTER TABLE {model.__tablename__}
+                ADD COLUMN IF NOT EXISTS search_tsv tsvector GENERATED ALWAYS AS (
+                    to_tsvector('simple', coalesce(content, ''))
+                ) STORED
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{model.__tablename__}_search_tsv_gin
+                ON {model.__tablename__} USING GIN (search_tsv)
+                WHERE content IS NOT NULL
+                  AND deleted_at IS NULL
+                  AND kind != 'version'
+                """
+            )
+        )
+        await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{model.__tablename__}_path_pattern
+                ON {model.__tablename__} (path text_pattern_ops)
+                WHERE deleted_at IS NULL
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{model.__tablename__}_path_trgm_gin
+                ON {model.__tablename__} USING GIN (path gin_trgm_ops)
+                WHERE deleted_at IS NULL
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{model.__tablename__}_content_trgm_gin
+                ON {model.__tablename__} USING GIN (content gin_trgm_ops)
+                WHERE kind = 'file'
+                  AND content IS NOT NULL
+                  AND deleted_at IS NULL
                 """
             )
         )
@@ -125,6 +179,37 @@ def _node_paths(result: VFSResult) -> set[str]:
     return {entry.path for entry in result.entries if decompose_edge(entry.path) is None}
 
 
+def _collect_index_names(plan_node: object) -> set[str]:
+    names: set[str] = set()
+    if isinstance(plan_node, dict):
+        index_name = plan_node.get("Index Name")
+        if isinstance(index_name, str):
+            names.add(index_name)
+        for value in plan_node.values():
+            names |= _collect_index_names(value)
+    elif isinstance(plan_node, list):
+        for item in plan_node:
+            names |= _collect_index_names(item)
+    return names
+
+
+async def _explain_index_names(
+    engine,
+    sql: str,
+    params: dict[str, object] | None = None,
+    *,
+    prefer_bitmap: bool = False,
+) -> set[str]:
+    params = params or {}
+    async with engine.connect() as conn:
+        await conn.execute(sql_text("SET enable_seqscan = off"))
+        if prefer_bitmap:
+            await conn.execute(sql_text("SET enable_indexscan = off"))
+            await conn.execute(sql_text("SET enable_indexonlyscan = off"))
+        plan_row = (await conn.execute(sql_text(f"EXPLAIN (FORMAT JSON) {sql}"), params)).scalar_one()
+    return _collect_index_names(plan_row)
+
+
 class TestTsqueryHelpers:
     def test_quote_tsquery_term_escapes_single_quote(self):
         assert _quote_tsquery_term("don't") == "'don''t'"
@@ -134,6 +219,16 @@ class TestTsqueryHelpers:
 
     def test_build_tsquery_and(self):
         assert _build_tsquery(("auth", "timeout"), operator="&") == "'auth' & 'timeout'"
+
+    def test_build_plainto_tsquery_single_term(self):
+        sql, params = _build_plainto_tsquery(["auth"], config="simple")
+        assert sql == "plainto_tsquery('simple', :t0)"
+        assert params == {"t0": "auth"}
+
+    def test_build_plainto_tsquery_multiple_terms(self):
+        sql, params = _build_plainto_tsquery(["auth", "timeout"], config="simple")
+        assert sql == "plainto_tsquery('simple', :t0) || plainto_tsquery('simple', :t1)"
+        assert params == {"t0": "auth", "t1": "timeout"}
 
 
 class TestResolveTable:
@@ -156,6 +251,19 @@ class TestRegexTranslation:
 
     def test_non_capturing_group_downgraded_to_plain_group(self):
         assert _python_regex_to_postgres(r"(?:foo|bar)") == r"(foo|bar)"
+
+
+class TestRegexPushdownSafety:
+    def test_detects_line_anchor_tokens(self):
+        assert _contains_unescaped_anchor("^todo")
+        assert _contains_unescaped_anchor(r"todo$")
+        assert _contains_unescaped_anchor(r"\A.todo")
+        assert _contains_unescaped_anchor(r"todo\Z")
+
+    def test_ignores_escaped_and_character_class_tokens(self):
+        assert not _contains_unescaped_anchor(r"\^todo\$")
+        assert not _contains_unescaped_anchor(r"[$^]")
+        assert not _contains_unescaped_anchor(r"\bTODO\b")
 
 
 class TestParseVectorDimension:
@@ -198,6 +306,12 @@ class TestVerifyNativeSearchSchema:
     async def test_success(self, postgres_native_db):
         await postgres_native_db.verify_native_search_schema()
 
+    async def test_missing_pg_trgm_extension(self, postgres_native_db, engine):
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("DROP EXTENSION IF EXISTS pg_trgm CASCADE"))
+        with pytest.raises(RuntimeError, match="pg_trgm extension"):
+            await postgres_native_db.verify_native_search_schema()
+
     async def test_missing_vector_extension(self, postgres_legacy_db):
         engine = postgres_legacy_db._engine
         assert engine is not None
@@ -229,10 +343,64 @@ class TestVerifyNativeSearchSchema:
         with pytest.raises(RuntimeError, match="dimension mismatch"):
             await fs.verify_native_search_schema()
 
+    async def test_missing_search_tsv_column(self, postgres_native_db, engine):
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("ALTER TABLE vfs_objects DROP COLUMN IF EXISTS search_tsv CASCADE"))
+        with pytest.raises(RuntimeError, match="search_tsv"):
+            await postgres_native_db.verify_native_search_schema()
+
     async def test_missing_fts_index(self, postgres_native_db, engine):
         async with engine.begin() as conn:
-            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_content_tsv_gin"))
-        with pytest.raises(RuntimeError, match="full-text index"):
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_search_tsv_gin"))
+        with pytest.raises(RuntimeError, match=r"GIN index on 'vfs_objects\.search_tsv'"):
+            await postgres_native_db.verify_native_search_schema()
+
+    async def test_missing_path_pattern_index(self, postgres_native_db, engine):
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_path_pattern"))
+        with pytest.raises(RuntimeError, match=r"text_pattern_ops index on 'vfs_objects\.path'"):
+            await postgres_native_db.verify_native_search_schema()
+
+    async def test_missing_path_trgm_index(self, postgres_native_db, engine):
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_path_trgm_gin"))
+        with pytest.raises(RuntimeError, match=r"trigram GIN index on 'vfs_objects\.path'"):
+            await postgres_native_db.verify_native_search_schema()
+
+    async def test_missing_content_trgm_index(self, postgres_native_db, engine):
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_content_trgm_gin"))
+        with pytest.raises(RuntimeError, match=r"trigram GIN index on 'vfs_objects\.content'"):
+            await postgres_native_db.verify_native_search_schema()
+
+    async def test_rejects_wrong_partial_predicate(self, postgres_native_db, engine):
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_search_tsv_gin"))
+            await conn.execute(
+                sql_text("""
+                    CREATE INDEX ix_vfs_objects_search_tsv_gin
+                    ON vfs_objects USING GIN (search_tsv)
+                    WHERE deleted_at IS NULL
+                """)
+            )
+        with pytest.raises(RuntimeError, match="live-search predicate"):
+            await postgres_native_db.verify_native_search_schema()
+
+    async def test_rejects_non_generated_search_tsv_column(self, postgres_native_db, engine):
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_search_tsv_gin"))
+            await conn.execute(sql_text("ALTER TABLE vfs_objects DROP COLUMN IF EXISTS search_tsv CASCADE"))
+            await conn.execute(sql_text("ALTER TABLE vfs_objects ADD COLUMN search_tsv tsvector"))
+            await conn.execute(
+                sql_text("""
+                    CREATE INDEX ix_vfs_objects_search_tsv_gin
+                    ON vfs_objects USING GIN (search_tsv)
+                    WHERE content IS NOT NULL
+                      AND deleted_at IS NULL
+                      AND kind != 'version'
+                """)
+            )
+        with pytest.raises(RuntimeError, match="GENERATED ALWAYS"):
             await postgres_native_db.verify_native_search_schema()
 
     async def test_missing_vector_index(self, postgres_native_db, engine):
@@ -250,23 +418,79 @@ class TestVerifyNativeSearchSchema:
 
 
 class TestLexicalSearch:
-    async def test_ranks_in_postgres_and_hydrates_top_k_only(self, postgres_native_db, sql_capture):
+    async def test_uses_single_native_fts_query_with_bounded_scores(self, postgres_native_db, sql_capture):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/both.py", "authentication timeout handler", session=session)
-            await postgres_native_db._write_impl("/one.py", "authentication only", session=session)
+            await postgres_native_db._write_impl("/dense.py", "authentication timeout", session=session)
+            await postgres_native_db._write_impl(
+                "/bm25.py",
+                "authentication authentication authentication timeout handler",
+                session=session,
+            )
             await postgres_native_db._write_impl("/none.py", "unrelated", session=session)
 
         sql_capture.reset()
         async with postgres_native_db._use_session() as session:
-            result = await postgres_native_db._lexical_search_impl("authentication timeout", k=1, session=session)
-        assert result.paths == ("/both.py",)
-        assert result.entries[0].content == "authentication timeout handler"
-        selects = [
-            _normalize_sql(statement)
-            for statement in sql_capture.statements
-            if statement.lstrip().upper().startswith("SELECT") and "from vfs_objects" in statement.lower()
-        ]
-        assert any("select path, content from vfs_objects where path = any" in statement for statement in selects)
+            result = await postgres_native_db._lexical_search_impl("authentication timeout", k=2, session=session)
+
+        assert result.paths == ("/bm25.py", "/dense.py")
+        assert result.entries[0].content == "authentication authentication authentication timeout handler"
+        assert all(entry.score is not None and 0.0 <= entry.score < 1.0 for entry in result.entries)
+        assert result.entries[0].score is not None
+        assert result.entries[1].score is not None
+        assert result.entries[0].score >= result.entries[1].score
+        selects = _read_statements_against_objects(sql_capture.statements)
+        assert any("search_tsv" in statement and "@@" in statement for statement in selects)
+        assert any("ts_rank_cd(" in statement and "as score" in statement for statement in selects)
+        assert len(selects) == 1
+
+    async def test_multi_term_query_uses_bound_plainto_tsquery_or(self, postgres_native_db, sql_capture):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/focus.py", "authentication timeout", session=session)
+
+        sql_capture.reset()
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._lexical_search_impl("authentication timeout", k=1, session=session)
+
+        selects = _read_statements_against_objects(sql_capture.statements)
+        assert any(
+            statement.count("plainto_tsquery('simple',") == 2 and "||" in statement.partition("as q")[0]
+            for statement in selects
+        )
+
+    async def test_single_term_query_uses_single_plainto_tsquery(self, postgres_native_db, sql_capture):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/focus.py", "authentication timeout", session=session)
+
+        sql_capture.reset()
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._lexical_search_impl("authentication", k=1, session=session)
+
+        selects = _read_statements_against_objects(sql_capture.statements)
+        assert any(
+            statement.count("plainto_tsquery('simple',") == 1 and "||" not in statement.partition("as q")[0]
+            for statement in selects
+        )
+
+    async def test_candidates_path_stays_on_base_python_bm25(self, postgres_native_db, sql_capture):
+        candidates = VFSResult(
+            function="grep",
+            entries=[
+                Entry(path="/a.py", kind="file", content="authentication timeout"),
+                Entry(path="/b.py", kind="file", content="authentication"),
+            ],
+        )
+
+        sql_capture.reset()
+        async with postgres_native_db._use_session() as session:
+            result = await postgres_native_db._lexical_search_impl(
+                "authentication timeout",
+                k=1,
+                candidates=candidates,
+                session=session,
+            )
+
+        assert result.paths == ("/a.py",)
+        assert all("search_tsv @@ query.q" not in _normalize_sql(statement) for statement in sql_capture.statements)
 
 
 class TestGrep:
@@ -290,6 +514,48 @@ class TestGrep:
             result = await postgres_native_db._grep_impl("beta", invert_match=True, session=session)
         assert result.entries[0].score == 2.0
         assert all("regexp_split_to_table" not in _normalize_sql(statement) for statement in sql_capture.statements)
+        assert all(" o.content ~ " not in _normalize_sql(statement) for statement in sql_capture.statements)
+
+    async def test_anchored_regex_skips_whole_content_regex_pushdown(self, postgres_native_db, sql_capture):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/a.py", "skip\nTODO now\nlater", session=session)
+
+        sql_capture.reset()
+        async with postgres_native_db._use_session() as session:
+            result = await postgres_native_db._grep_impl("^TODO", session=session)
+
+        assert result.paths == ("/a.py",)
+        assert result.entries[0].lines is not None
+        assert [line.match for line in result.entries[0].lines] == [2]
+        assert all(" o.content ~ " not in _normalize_sql(statement) for statement in sql_capture.statements)
+        assert all(" o.content ~* " not in _normalize_sql(statement) for statement in sql_capture.statements)
+
+    async def test_fixed_string_uses_content_like_narrowing(self, postgres_native_db, sql_capture):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/a.py", "100% ready", session=session)
+
+        sql_capture.reset()
+        async with postgres_native_db._use_session() as session:
+            result = await postgres_native_db._grep_impl("100%", fixed_strings=True, session=session)
+
+        assert result.paths == ("/a.py",)
+        assert any("o.content like" in _normalize_sql(statement) for statement in sql_capture.statements)
+
+    async def test_hard_regex_matches_database_authoritative_python_result(self, postgres_native_db):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/src/foo.py", "alpha\nbeta\ngamma", session=session)
+            await postgres_native_db._write_impl("/src/bar.py", "delta\nepsilon", session=session)
+            native = await postgres_native_db._grep_impl(r"^(alpha|beta)$", paths=("/src",), session=session)
+            baseline = await DatabaseFileSystem._grep_impl(
+                postgres_native_db,
+                r"^(alpha|beta)$",
+                paths=("/src",),
+                session=session,
+            )
+
+        assert native.paths == baseline.paths
+        assert [entry.score for entry in native.entries] == [entry.score for entry in baseline.entries]
+        assert [entry.lines for entry in native.entries] == [entry.lines for entry in baseline.entries]
 
 
 class TestGlob:
@@ -312,6 +578,82 @@ class TestGlob:
             result = await postgres_native_db._glob_impl("**/*.py", session=session)
         assert "/src/lower.py" in result.paths
         assert "/src/upper.PY" not in result.paths
+
+    async def test_character_class_glob_matches_database_authoritative_python_result(self, postgres_native_db):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
+            await postgres_native_db._write_impl("/src/boo.py", "y", session=session)
+            await postgres_native_db._write_impl("/src/zoo.py", "z", session=session)
+            native = await postgres_native_db._glob_impl("/src/[fb]oo.py", session=session)
+            baseline = await DatabaseFileSystem._glob_impl(postgres_native_db, "/src/[fb]oo.py", session=session)
+
+        assert native.paths == baseline.paths
+
+    async def test_max_count_applies_after_authoritative_filter(self, postgres_native_db):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
+            await postgres_native_db._write_impl("/src/bar.py", "y", session=session)
+            await postgres_native_db._write_impl("/src/baz.ts", "z", session=session)
+
+        async with postgres_native_db._use_session() as session:
+            result = await postgres_native_db._glob_impl("/src/[fb]*.py", max_count=1, session=session)
+
+        assert result.paths == ("/src/bar.py",)
+
+
+class TestPatternSearchPlans:
+    async def test_prefix_path_like_uses_path_pattern_index(self, postgres_native_db, engine):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
+
+        index_names = await _explain_index_names(
+            engine,
+            """
+            SELECT path
+            FROM vfs_objects
+            WHERE deleted_at IS NULL
+              AND path LIKE :pattern ESCAPE '\\'
+            ORDER BY path
+            """,
+            {"pattern": "/src/%"},
+        )
+        assert "ix_vfs_objects_path_pattern" in index_names
+
+    async def test_path_ilike_gets_an_indexed_plan(self, postgres_native_db, engine):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
+            await postgres_native_db._write_impl("/tests/bar.py", "y", session=session)
+
+        index_names = await _explain_index_names(
+            engine,
+            """
+            SELECT path
+            FROM vfs_objects
+            WHERE deleted_at IS NULL
+              AND path ILIKE :pattern ESCAPE '\\'
+            """,
+            {"pattern": "%FOO.PY"},
+        )
+        assert index_names
+
+    async def test_content_ilike_gets_an_indexed_plan(self, postgres_native_db, engine):
+        async with postgres_native_db._use_session() as session:
+            await postgres_native_db._write_impl("/a.py", "TODO item", session=session)
+            await postgres_native_db._write_impl("/b.py", "unrelated", session=session)
+
+        index_names = await _explain_index_names(
+            engine,
+            """
+            SELECT content
+            FROM vfs_objects
+            WHERE kind = 'file'
+              AND content IS NOT NULL
+              AND deleted_at IS NULL
+              AND content ILIKE :pattern ESCAPE '\\'
+            """,
+            {"pattern": "%todo%"},
+        )
+        assert index_names
 
 
 class TestVectorSearch:

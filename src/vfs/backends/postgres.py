@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from vfs.backends.database import (
     DatabaseFileSystem,
     _compile_grep_regex,
+    _escape_like,
     _extract_literal_terms,
     _regex_flags_for_mode,
 )
@@ -43,6 +44,21 @@ def _quote_tsquery_term(term: str) -> str:
 def _build_tsquery(terms: list[str] | tuple[str, ...], *, operator: str) -> str:
     """Join tokenized terms into a Postgres tsquery string."""
     return f" {operator} ".join(_quote_tsquery_term(term) for term in terms)
+
+
+def _build_plainto_tsquery(terms: list[str] | tuple[str, ...], *, config: str) -> tuple[str, dict[str, str]]:
+    """Return a parameterized OR tsquery expression built from bound terms."""
+    if not terms:
+        msg = "terms must not be empty"
+        raise ValueError(msg)
+
+    fragments: list[str] = []
+    params: dict[str, str] = {}
+    for idx, term in enumerate(terms):
+        param_name = f"t{idx}"
+        fragments.append(f"plainto_tsquery('{config}', :{param_name})")
+        params[param_name] = term
+    return " || ".join(fragments), params
 
 
 def _python_regex_to_postgres(pattern: str) -> str:
@@ -101,6 +117,40 @@ def _parse_vector_dimension(formatted_type: str | None) -> int | None:
     return int(match.group(1))
 
 
+def _contains_unescaped_anchor(pattern: str) -> bool:
+    """Return whether *pattern* contains a line/stream anchor token.
+
+    Grep's authoritative matcher runs line-by-line in Python. A whole-file
+    Postgres regex predicate is only a sound pre-filter when any line hit
+    also implies a whole-content hit. ``^``, ``$``, ``\\A``, and ``\\Z`` break
+    that implication for non-first/non-last lines, so anchored patterns skip
+    regex pushdown and rely on structural/literal narrowing only.
+    """
+    in_class = False
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < len(pattern):
+            nxt = pattern[i + 1]
+            if not in_class and nxt in {"A", "Z"}:
+                return True
+            i += 2
+            continue
+        if in_class:
+            if ch == "]":
+                in_class = False
+            i += 1
+            continue
+        if ch == "[":
+            in_class = True
+            i += 1
+            continue
+        if ch in {"^", "$"}:
+            return True
+        i += 1
+    return False
+
+
 def _pgvector_distance_operator(operator_class: str) -> str:
     """Return the pgvector SQL operator for a declared operator class."""
     if operator_class == "vector_cosine_ops":
@@ -139,6 +189,81 @@ class PostgresFileSystem(DatabaseFileSystem):
     FULLTEXT_CONFIG: ClassVar[str] = "simple"
     VECTOR_INDEX_METHODS: ClassVar[tuple[str, ...]] = ("hnsw", "ivfflat")
 
+    def _pattern_schema_hint(self) -> str:
+        """Return the required pg_trgm/path-index DDL contract."""
+        table = self._resolve_table()
+        bare_table = str(self._model.__tablename__)
+        return (
+            "Provision the native Postgres pattern-search artifacts outside the application, for example:\n"
+            "  CREATE EXTENSION IF NOT EXISTS pg_trgm;\n"
+            f"  CREATE INDEX ix_{bare_table}_path_pattern\n"
+            f"  ON {table} (path text_pattern_ops)\n"
+            "  WHERE deleted_at IS NULL;\n"
+            f"  CREATE INDEX ix_{bare_table}_path_trgm_gin\n"
+            f"  ON {table} USING GIN (path gin_trgm_ops)\n"
+            "  WHERE deleted_at IS NULL;\n"
+            f"  CREATE INDEX ix_{bare_table}_content_trgm_gin\n"
+            f"  ON {table} USING GIN (content gin_trgm_ops)\n"
+            "  WHERE kind = 'file'\n"
+            "    AND content IS NOT NULL\n"
+            "    AND deleted_at IS NULL;"
+        )
+
+    def _fulltext_schema_hint(self) -> str:
+        """Return the required native FTS DDL contract for this backend."""
+        table = self._resolve_table()
+        bare_table = str(self._model.__tablename__)
+        return (
+            "Provision the native FTS artifacts outside the application, for example:\n"
+            f"  ALTER TABLE {table}\n"
+            "  ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (\n"
+            f"      to_tsvector('{self.FULLTEXT_CONFIG}', coalesce(content, ''))\n"
+            "  ) STORED;\n"
+            f"  CREATE INDEX ix_{bare_table}_search_tsv_gin\n"
+            f"  ON {table} USING GIN (search_tsv)\n"
+            "  WHERE content IS NOT NULL\n"
+            "    AND deleted_at IS NULL\n"
+            "    AND kind != 'version';"
+        )
+
+    @staticmethod
+    def _normalize_catalog_sql(value: str | None) -> str:
+        """Canonicalize catalog SQL snippets for tolerant substring/regex checks."""
+        if not value:
+            return ""
+        normalized = " ".join(value.lower().split())
+        return normalized.replace("!=", "<>")
+
+    @classmethod
+    def _has_live_search_predicate(cls, predicate: str | None) -> bool:
+        """Return whether *predicate* matches the live search partial-index contract."""
+        normalized = cls._normalize_catalog_sql(predicate)
+        if not normalized:
+            return False
+        return (
+            "content is not null" in normalized
+            and "deleted_at is null" in normalized
+            and "kind" in normalized
+            and "'version'" in normalized
+            and "<>" in normalized
+        )
+
+    @classmethod
+    def _has_live_path_predicate(cls, predicate: str | None) -> bool:
+        normalized = cls._normalize_catalog_sql(predicate)
+        return bool(normalized) and "deleted_at is null" in normalized
+
+    @classmethod
+    def _has_live_file_content_predicate(cls, predicate: str | None) -> bool:
+        normalized = cls._normalize_catalog_sql(predicate)
+        return (
+            bool(normalized)
+            and "content is not null" in normalized
+            and "deleted_at is null" in normalized
+            and "kind" in normalized
+            and "'file'" in normalized
+        )
+
     def _resolve_table(self) -> str:
         """Return the schema-qualified table name for raw ``text()`` SQL."""
         table = str(self._model.__tablename__)
@@ -148,15 +273,96 @@ class PostgresFileSystem(DatabaseFileSystem):
         """Confirm the database has the native artifacts required by this backend."""
         async with self._use_session() as session:
             await self._verify_fulltext_schema(session)
+            await self._verify_pattern_schema(session)
             if self._vector_store is None:
                 await self._verify_vector_schema(session)
+
+    async def _verify_pattern_schema(self, session: AsyncSession) -> None:
+        if getattr(self, "_native_pattern_verified", False):
+            return
+
+        table = self._resolve_table()
+        object_id = (await session.execute(text("SELECT to_regclass(:table)::oid"), {"table": table})).scalar()
+        if object_id is None:
+            raise RuntimeError(
+                f"PostgresFileSystem requires table '{table}' to exist. Run "
+                f"SQLModel.metadata.create_all first or grant access to the existing table."
+            )
+
+        extension_exists = (
+            await session.execute(
+                text("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'"),
+            )
+        ).scalar()
+        if extension_exists is None:
+            raise RuntimeError(
+                "PostgresFileSystem requires the pg_trgm extension for native pattern search. "
+                "Provision it outside the application with:\n"
+                "  CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+            )
+
+        index_rows = (
+            await session.execute(
+                text("""
+                    SELECT
+                        idx.relname AS index_name,
+                        pg_get_indexdef(i.indexrelid) AS indexdef,
+                        pg_get_expr(i.indpred, i.indrelid) AS predicate
+                    FROM pg_index AS i
+                    JOIN pg_class AS idx ON idx.oid = i.indexrelid
+                    WHERE i.indrelid = :oid
+                """),
+                {"oid": object_id},
+            )
+        ).all()
+
+        normalized_defs = [
+            (row.index_name, self._normalize_catalog_sql(row.indexdef), row.predicate) for row in index_rows
+        ]
+
+        path_pattern_indexes = [
+            (name, predicate)
+            for name, indexdef, predicate in normalized_defs
+            if re.search(r"using\s+btree\s*\(\s*path\s+text_pattern_ops\s*\)", indexdef) is not None
+        ]
+        if not any(self._has_live_path_predicate(predicate) for _, predicate in path_pattern_indexes):
+            raise RuntimeError(
+                f"PostgresFileSystem requires a partial B-tree text_pattern_ops index on '{table}.path' "
+                "with predicate `deleted_at IS NULL`. "
+                f"{self._pattern_schema_hint()}"
+            )
+
+        path_trgm_indexes = [
+            (name, predicate)
+            for name, indexdef, predicate in normalized_defs
+            if re.search(r"using\s+gin\s*\(\s*path\s+gin_trgm_ops\s*\)", indexdef) is not None
+        ]
+        if not any(self._has_live_path_predicate(predicate) for _, predicate in path_trgm_indexes):
+            raise RuntimeError(
+                f"PostgresFileSystem requires a partial trigram GIN index on '{table}.path' "
+                "with predicate `deleted_at IS NULL`. "
+                f"{self._pattern_schema_hint()}"
+            )
+
+        content_trgm_indexes = [
+            (name, predicate)
+            for name, indexdef, predicate in normalized_defs
+            if re.search(r"using\s+gin\s*\(\s*content\s+gin_trgm_ops\s*\)", indexdef) is not None
+        ]
+        if not any(self._has_live_file_content_predicate(predicate) for _, predicate in content_trgm_indexes):
+            raise RuntimeError(
+                f"PostgresFileSystem requires a partial trigram GIN index on '{table}.content' "
+                "with predicate `kind = 'file' AND content IS NOT NULL AND deleted_at IS NULL`. "
+                f"{self._pattern_schema_hint()}"
+            )
+
+        self._native_pattern_verified = True
 
     async def _verify_fulltext_schema(self, session: AsyncSession) -> None:
         if getattr(self, "_native_fulltext_verified", False):
             return
 
         table = self._resolve_table()
-        bare_table = str(self._model.__tablename__)
         object_id = (await session.execute(text("SELECT to_regclass(:table)::oid"), {"table": table})).scalar()
         if object_id is None:
             raise RuntimeError(
@@ -173,44 +379,89 @@ class PostgresFileSystem(DatabaseFileSystem):
         if content_column_exists is None:
             raise RuntimeError(f"PostgresFileSystem requires a 'content' column on '{table}'.")
 
-        fulltext_index_exists = (
+        search_tsv_row = (
             await session.execute(
                 text("""
-                    SELECT 1
-                    FROM pg_index AS i
-                    JOIN pg_class AS idx ON idx.oid = i.indexrelid
-                    JOIN pg_am AS am ON am.oid = idx.relam
-                    LEFT JOIN pg_attribute AS att
-                      ON att.attrelid = i.indrelid AND att.attnum = ANY(i.indkey)
+                    SELECT
+                        format_type(att.atttypid, att.atttypmod) AS formatted_type,
+                        att.attgenerated,
+                        pg_get_expr(def.adbin, def.adrelid) AS generation_expr
+                    FROM pg_attribute AS att
                     LEFT JOIN pg_attrdef AS def
                       ON def.adrelid = att.attrelid AND def.adnum = att.attnum
-                    WHERE i.indrelid = :oid
-                      AND am.amname = 'gin'
-                      AND (
-                        (
-                          coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%to_tsvector%'
-                          AND coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%content%'
-                          AND coalesce(pg_get_expr(i.indexprs, i.indrelid), '') ILIKE '%simple%'
-                        )
-                        OR (
-                          att.attgenerated = 's'
-                          AND format_type(att.atttypid, att.atttypmod) = 'tsvector'
-                          AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%to_tsvector%'
-                          AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%content%'
-                          AND coalesce(pg_get_expr(def.adbin, def.adrelid), '') ILIKE '%simple%'
-                        )
-                      )
-                    LIMIT 1
+                    WHERE att.attrelid = :oid
+                      AND att.attname = 'search_tsv'
+                      AND NOT att.attisdropped
                 """),
                 {"oid": object_id},
             )
-        ).scalar()
-        if fulltext_index_exists is None:
+        ).first()
+        if search_tsv_row is None:
             raise RuntimeError(
-                f"PostgresFileSystem requires a GIN full-text index on '{table}.content'. "
-                "Provision one outside the application, for example:\n"
-                f"  CREATE INDEX ix_{bare_table}_content_tsv_gin\n"
-                f"  ON {table} USING GIN (to_tsvector('{self.FULLTEXT_CONFIG}', coalesce(content, '')));"
+                f"PostgresFileSystem requires a stored generated 'search_tsv' column on '{table}'. "
+                f"{self._fulltext_schema_hint()}"
+            )
+
+        formatted_type, generated_flag, generation_expr = search_tsv_row
+        if formatted_type != "tsvector":
+            raise RuntimeError(
+                f"PostgresFileSystem requires '{table}.search_tsv' to be tsvector; found {formatted_type!r}. "
+                f"{self._fulltext_schema_hint()}"
+            )
+        if generated_flag != "s" and not generation_expr:
+            raise RuntimeError(
+                f"PostgresFileSystem requires '{table}.search_tsv' to be GENERATED ALWAYS ... STORED. "
+                f"{self._fulltext_schema_hint()}"
+            )
+
+        normalized_expr = self._normalize_catalog_sql(generation_expr)
+        if (
+            "to_tsvector" not in normalized_expr
+            or "content" not in normalized_expr
+            or self.FULLTEXT_CONFIG.lower() not in normalized_expr
+        ):
+            raise RuntimeError(
+                f"PostgresFileSystem requires '{table}.search_tsv' to be generated from "
+                f"to_tsvector('{self.FULLTEXT_CONFIG}', coalesce(content, '')). "
+                f"{self._fulltext_schema_hint()}"
+            )
+
+        index_rows = (
+            await session.execute(
+                text("""
+                    SELECT
+                        idx.relname AS index_name,
+                        pg_get_indexdef(i.indexrelid) AS indexdef,
+                        pg_get_expr(i.indpred, i.indrelid) AS predicate
+                    FROM pg_index AS i
+                    JOIN pg_class AS idx ON idx.oid = i.indexrelid
+                    JOIN pg_am AS am ON am.oid = idx.relam
+                    WHERE i.indrelid = :oid
+                      AND am.amname = 'gin'
+                """),
+                {"oid": object_id},
+            )
+        ).all()
+
+        search_tsv_indexes = [
+            row
+            for row in index_rows
+            if re.search(
+                r"using\s+gin\s*\(\s*search_tsv\s*\)",
+                self._normalize_catalog_sql(row.indexdef),
+            )
+            is not None
+        ]
+        if not search_tsv_indexes:
+            raise RuntimeError(
+                f"PostgresFileSystem requires a GIN index on '{table}.search_tsv'. {self._fulltext_schema_hint()}"
+            )
+
+        if not any(self._has_live_search_predicate(row.predicate) for row in search_tsv_indexes):
+            raise RuntimeError(
+                f"PostgresFileSystem requires at least one partial GIN index on '{table}.search_tsv' with the "
+                "live-search predicate `content IS NOT NULL AND deleted_at IS NULL AND kind != 'version'`. "
+                f"{self._fulltext_schema_hint()}"
             )
 
         self._native_fulltext_verified = True
@@ -341,8 +592,9 @@ class PostgresFileSystem(DatabaseFileSystem):
             return self._error("lexical_search: no searchable terms in query")
 
         table = self._resolve_table()
-        tsquery = _build_tsquery(list(dict.fromkeys(terms)), operator="|")
-        params: dict[str, object] = {"tsquery": tsquery, "k": k}
+        unique_terms = list(dict.fromkeys(terms))
+        tsquery_sql, tsquery_params = _build_plainto_tsquery(unique_terms, config=self.FULLTEXT_CONFIG)
+        params: dict[str, object] = {"k": k, **tsquery_params}
         user_scope_clause = ""
         if self._user_scoped and user_id:
             user_scope_clause = "AND o.path LIKE :user_scope ESCAPE '\\'"
@@ -350,18 +602,19 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         ranking_sql = text(f"""
             WITH query AS (
-                SELECT to_tsquery('{self.FULLTEXT_CONFIG}', :tsquery) AS q
+                SELECT {tsquery_sql} AS q
             )
-            SELECT o.path, o.kind, ts_rank_cd(
-                to_tsvector('{self.FULLTEXT_CONFIG}', coalesce(o.content, '')),
-                query.q
-            ) AS score
+            SELECT
+                o.path,
+                o.kind,
+                o.content,
+                ts_rank_cd(o.search_tsv, query.q, 1|32) AS score
             FROM {table} AS o
             CROSS JOIN query
             WHERE o.kind != 'version'
               AND o.deleted_at IS NULL
               AND o.content IS NOT NULL
-              AND to_tsvector('{self.FULLTEXT_CONFIG}', coalesce(o.content, '')) @@ query.q
+              AND o.search_tsv @@ query.q
               {user_scope_clause}
             ORDER BY score DESC, o.path
             LIMIT :k
@@ -370,31 +623,16 @@ class PostgresFileSystem(DatabaseFileSystem):
         if not rows:
             return VFSResult(function="lexical_search", entries=[])
 
-        scored_paths = [(row.path, row.kind, float(row.score)) for row in rows]
-        top_paths = [path for path, _kind, _score in scored_paths]
-        content_rows = (
-            await session.execute(
-                text(f"""
-                    SELECT path, content
-                    FROM {table}
-                    WHERE path = ANY(:paths)
-                      AND deleted_at IS NULL
-                """).bindparams(bindparam("paths", type_=cast("Any", ARRAY(Text())))),
-                {"paths": top_paths},
-            )
-        ).all()
-        content_by_path = {row.path: row.content for row in content_rows}
-
         result = VFSResult(
             function="lexical_search",
             entries=[
                 Entry(
-                    path=path,
-                    kind=kind,
-                    content=content_by_path.get(path),
-                    score=score,
+                    path=row.path,
+                    kind=row.kind,
+                    content=row.content,
+                    score=float(row.score),
                 )
-                for path, kind, score in scored_paths
+                for row in rows
             ],
         )
         return self._unscope_result(result, user_id)
@@ -443,6 +681,7 @@ class PostgresFileSystem(DatabaseFileSystem):
                 session=session,
             )
 
+        await self._verify_pattern_schema(session)
         cols = self._resolve_columns("grep", columns) | {"content"}
         self._require_user_id(user_id)
         if not pattern:
@@ -470,34 +709,28 @@ class PostgresFileSystem(DatabaseFileSystem):
         )
 
         files_only = output_mode == "files" and not invert_match
-        select_set = frozenset({"path"}) if files_only else cols | {"content"}
+        select_set = cols | {"content"}
         select_cols = ", ".join(f"o.{column}" for column in sorted(select_set))
 
         params: dict[str, object] = dict(filter_params)
         regex_clause = ""
-        literal_clause = ""
+        literal_clauses: list[str] = []
         if not invert_match:
-            regex_operator = "~*" if _regex_flags_for_mode(case_mode, pattern) & re.IGNORECASE else "~"
-            params["pattern"] = _python_regex_to_postgres(regex.pattern)
-            regex_clause = (
-                "AND EXISTS ("
-                "  SELECT 1 "
-                "  FROM regexp_split_to_table(o.content, E'\\n') AS line "
-                f"  WHERE line {regex_operator} :pattern"
-                ")"
-            )
+            case_insensitive = bool(_regex_flags_for_mode(case_mode, pattern) & re.IGNORECASE)
+            if fixed_strings:
+                operator = "ILIKE" if case_insensitive else "LIKE"
+                params["fixed_like"] = "%" + _escape_like(pattern) + "%"
+                literal_clauses.append(f"o.content {operator} :fixed_like ESCAPE '\\'")
             literal_terms = _extract_literal_terms(regex.pattern)
-            if literal_terms:
-                params["literal_query"] = _build_tsquery(literal_terms, operator="&")
-                literal_clause = (
-                    f"AND to_tsvector('{self.FULLTEXT_CONFIG}', coalesce(o.content, '')) "
-                    f"@@ to_tsquery('{self.FULLTEXT_CONFIG}', :literal_query)"
-                )
-
-        limit_clause = ""
-        if files_only and max_count is not None:
-            limit_clause = "LIMIT :max_count"
-            params["max_count"] = max_count
+            operator = "ILIKE" if case_insensitive else "LIKE"
+            for idx, term in enumerate(literal_terms):
+                key = f"literal_like_{idx}"
+                params[key] = "%" + _escape_like(term) + "%"
+                literal_clauses.append(f"o.content {operator} :{key} ESCAPE '\\'")
+            if not _contains_unescaped_anchor(regex.pattern):
+                regex_operator = "~*" if case_insensitive else "~"
+                params["pattern"] = _python_regex_to_postgres(regex.pattern)
+                regex_clause = f"AND o.content {regex_operator} :pattern"
 
         sql = text(f"""
             SELECT {select_cols}
@@ -505,19 +738,12 @@ class PostgresFileSystem(DatabaseFileSystem):
             WHERE o.kind = 'file'
               AND o.deleted_at IS NULL
               AND o.content IS NOT NULL
-              {literal_clause}
+              {"AND " + " AND ".join(literal_clauses) if literal_clauses else ""}
               {regex_clause}
               {filter_clause}
             ORDER BY o.path
-            {limit_clause}
         """)
         rows = (await session.execute(sql, params)).all()
-
-        if files_only:
-            return self._unscope_result(
-                VFSResult(function="grep", entries=[Entry(path=row.path, kind="file") for row in rows]),
-                user_id,
-            )
 
         rows_by_path = {row.path: row for row in rows if row.content}
         matched = self._collect_line_matches(
@@ -530,6 +756,8 @@ class PostgresFileSystem(DatabaseFileSystem):
             after_context=after_context,
             invert_match=invert_match,
         )
+        if files_only:
+            matched = [Entry(path=entry.path, kind="file") for entry in matched]
         return self._unscope_result(VFSResult(function="grep", entries=matched), user_id)
 
     async def _glob_impl(
@@ -556,6 +784,7 @@ class PostgresFileSystem(DatabaseFileSystem):
                 session=session,
             )
 
+        await self._verify_pattern_schema(session)
         cols = self._resolve_columns("glob", columns)
         self._require_user_id(user_id)
         unscoped_pattern = pattern
@@ -578,12 +807,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         else:
             merged_ext = ext
 
-        if paths:
-            merged_paths = paths
-        elif decomposition.prefix is not None:
-            merged_paths = (decomposition.prefix,)
-        else:
-            merged_paths = ()
+        merged_paths = paths or ()
 
         table = self._resolve_table()
         filter_clause, filter_params = self._build_structural_sql(
@@ -595,18 +819,26 @@ class PostgresFileSystem(DatabaseFileSystem):
             user_id=user_id,
             alias="",
         )
+        prefix_clause = ""
+        prefix_params: dict[str, object] = {}
+        if decomposition.prefix is not None:
+            prefix_clause, prefix_params = self._build_structural_sql(
+                ext=(),
+                ext_not=(),
+                paths=(decomposition.prefix,),
+                globs=(),
+                globs_not=(),
+                user_id=user_id,
+                alias="",
+            )
 
         params: dict[str, object] = dict(filter_params)
+        params.update(prefix_params)
         like_clause = ""
         like_pattern = glob_to_sql_like(pattern)
         if like_pattern is not None:
             like_clause = "AND path LIKE :like_pattern ESCAPE '\\'"
             params["like_pattern"] = like_pattern
-
-        limit_clause = ""
-        if max_count is not None:
-            limit_clause = "LIMIT :max_count"
-            params["max_count"] = max_count
 
         params["glob_regex"] = _python_regex_to_postgres(regex.pattern)
         regex_clause = "AND path ~ :glob_regex"
@@ -620,12 +852,18 @@ class PostgresFileSystem(DatabaseFileSystem):
               AND deleted_at IS NULL
               {like_clause}
               {regex_clause}
+              {prefix_clause}
               {filter_clause}
             ORDER BY path
-            {limit_clause}
         """)
         rows = (await session.execute(sql, params)).all()
-        matched = [self._row_to_entry(row, cols) for row in rows]
+        matched: list[Entry] = []
+        for row in rows:
+            if regex.match(row.path) is None:
+                continue
+            matched.append(self._row_to_entry(row, cols))
+            if max_count is not None and len(matched) >= max_count:
+                break
         return self._unscope_result(VFSResult(function="glob", entries=matched), user_id)
 
     async def _vector_search_impl(

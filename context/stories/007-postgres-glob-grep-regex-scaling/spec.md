@@ -1,94 +1,87 @@
-# 007 — Postgres glob / grep / regex scaling
+# 007 — Postgres-native glob / grep with sound pushdown
 
 - **Status:** draft
-- **Date:** 2026-04-20
+- **Date:** 2026-04-21
 - **Owner:** Clay Gendron
 - **Kind:** feature + backend
 
 ## Intent
 
-Harden `PostgresFileSystem`'s glob / grep / regex paths for large Postgres corpora by making the pattern-search schema contract explicit, routing simple cases through cheaper operators, and bounding pathological regex execution.
+Make `PostgresFileSystem` pattern matching behave like a good `vfs` product surface:
+
+- any valid `glob()` / `grep()` pattern should work
+- PostgreSQL should do as much sound narrowing as it can
+- Python remains the authoritative final matcher when SQL can only produce a safe superset
+- false negatives are never acceptable
+
+For full-corpus Postgres `glob()` and `grep()`, the backend should aggressively use native indexes and operators to reduce the working set, but it must not reject valid patterns merely because they are hard to index. The contract is "best available native narrowing, then exact final filtering," which is the same product shape MSSQL already follows even though the specific database primitives differ.
 
 Today:
 
 - `PostgresFileSystem._glob_impl` uses `LIKE` as a coarse pre-filter and `~` as the authoritative path match.
-- `PostgresFileSystem._grep_impl` pushes some regex narrowing into Postgres and optionally uses native FTS for token-like literal pre-filtering, but it still depends heavily on general regex execution over `content`.
-- `verify_native_search_schema()` validates full-text and vector artifacts, but it does not validate any path-pattern or trigram indexes.
-- The resulting performance story is opportunistic. Prefix-heavy path queries can be fine, but behavior depends on locale, planner choices, and the specific regex shape. Untrusted regex also has no backend-level timeout guard.
+- `PostgresFileSystem._grep_impl` optionally adds an FTS literal pre-filter, but general regex qualification still depends on database regex over `content`.
+- `verify_native_search_schema()` validates full-text and vector artifacts, but it does not validate the pattern-search schema required for scalable path and content narrowing.
+- The resulting behavior is opportunistic rather than deliberate: some queries push down well, some do not, and the product contract is not stated clearly.
 
 After this story:
 
-- `PostgresFileSystem` supports a `pattern_backend` selector with values `"baseline"` and `"trigram"` (default `"baseline"` for backward compatibility).
-- When `pattern_backend="trigram"`, `verify_native_search_schema()` fail-fast-validates the pattern-search artifacts needed for scalable glob / grep / regex execution.
-- `glob()` keeps the same user-visible semantics, but it gains a predictable indexed path for prefix-heavy patterns and a second indexed path for non-prefix path regex/glob cases.
-- `grep()` keeps the same user-visible semantics, but it routes fixed-string and safe literal cases through cheaper row-level operators before any Python line reconstruction.
-- Regex execution in the database runs under a local timeout guard so untrusted patterns cannot tie up the backend indefinitely.
-- Public VFS result shapes, case behavior, invert-match semantics, user scoping, candidate filtering, and Python-authoritative line grouping remain unchanged.
+- `PostgresFileSystem` always requires the pattern-search schema (`pg_trgm`, path prefix index, path trigram index, content trigram index).
+- `verify_native_search_schema()` fail-fast-validates those artifacts.
+- Full-corpus `glob()` and `grep()` push down every sound narrowing step available for the query shape.
+- SQL may over-select, but the backend must not leave out true matches.
+- Python remains the authoritative final matcher whenever PostgreSQL cannot express the exact semantics without risking false negatives.
+- Candidate-scoped operations (`candidates is not None`) continue to run in process; that is already the right bounded behavior for pipelines.
 
 ## Why
 
-- **Scale.** PostgreSQL's best-practice access paths differ by query shape: B-tree for prefix tests, trigram indexes for contains / regex-like search, and raw regex only when necessary.
-- **Planner predictability.** The current backend has the right SQL shape in places, but it does not declare the schema artifacts that make those shapes reliably fast across deployments and collations.
-- **Safety.** PostgreSQL explicitly warns that regex and `SIMILAR TO` patterns can consume arbitrary time and memory. Grover should not run unbounded regex against shared databases.
-- **Explicit rollout.** As with pgvector and `pg_textsearch`, extension-backed acceleration should be deployment-managed and opt-in, not silently assumed.
-- **Constitution fit.** Article 4 backend swap. The backend gets stricter and faster; the public VFS API stays the same.
+- **Product correctness.** `vfs grep` and `vfs glob` are user-facing query primitives. Users care first that valid patterns work and results are correct. Missing hits because the backend refused a hard pattern is the worse product failure.
+- **Pushdown still matters.** PostgreSQL can materially reduce work with `text_pattern_ops`, `pg_trgm`, and literal-term/FTS narrowing. We should use those aggressively even when they only produce a superset.
+- **Pipeline fit.** The query language naturally produces bounded candidate sets through pipelines. That means the backend should support both modes well: aggressive SQL narrowing for full-corpus search, pure in-process filtering for bounded candidate sets.
+- **MSSQL parity in product behavior.** SQL Server is more capable at server-side regex qualification, but the important product lesson is not "reject what the engine cannot index." It is "push down what you can, preserve correctness, and finish authoritatively in process when needed."
+- **Constitution fit.** Article 4 backend swap. The Postgres backend becomes more explicit and more scalable without changing the public query language.
 
 ## Expected touch points
 
-- Update [`src/vfs/backends/postgres.py`](../../../src/vfs/backends/postgres.py)
-- Update shared pattern helpers in [`src/vfs/backends/database.py`](../../../src/vfs/backends/database.py) only where Postgres needs a common seam
-- Extend [`tests/conftest.py`](../../../tests/conftest.py) with trigram/pattern provisioning helpers
-- Extend [`tests/test_postgres_backend.py`](../../../tests/test_postgres_backend.py) or add `tests/test_postgres_patterns.py`
-- Update [`scripts/postgres_repo_cli_probe.py`](../../../scripts/postgres_repo_cli_probe.py) if it exercises grep / glob under the Postgres-native backend
-- Update [`docs/architecture.md`](../../../docs/architecture.md) and [`docs/index.md`](../../../docs/index.md)
+- [`src/vfs/backends/postgres.py`](../../../src/vfs/backends/postgres.py) — replace opportunistic pattern pushdown with an explicit "sound narrowing + authoritative final filter" strategy for full-corpus `glob()` / `grep()`
+- [`src/vfs/backends/database.py`](../../../src/vfs/backends/database.py) — only if a small shared helper seam is useful for authoritative post-filtering or literal extraction
+- [`tests/conftest.py`](../../../tests/conftest.py) — provision the required Postgres pattern-search schema
+- [`tests/test_postgres_backend.py`](../../../tests/test_postgres_backend.py) or a dedicated `tests/test_postgres_patterns.py` — verification, plan-shape, and no-false-negative tests
+- [`scripts/postgres_repo_cli_probe.py`](../../../scripts/postgres_repo_cli_probe.py) — probe the accelerated path and verify correctness on hard patterns
+- [`docs/architecture.md`](../../../docs/architecture.md), [`docs/index.md`](../../../docs/index.md) — document the Postgres pattern backend as sound pushdown plus authoritative final filtering
 
 ## Scope
 
 ### In
 
-1. **Add a `pattern_backend` selector to `PostgresFileSystem`.**
+1. **Remove the pattern backend selector.**
+
+   There is one Postgres-native pattern backend. Delete the `pattern_backend` split from the story design.
+
+   Keep only:
 
    ```python
-   from typing import Literal
-
-   PatternBackend = Literal["baseline", "trigram"]
-
    class PostgresFileSystem(DatabaseFileSystem):
-       def __init__(
-           self,
-           *,
-           pattern_backend: PatternBackend = "baseline",
-           regex_statement_timeout_ms: int | None = 2000,
-           **kwargs,
-       ) -> None:
+       def __init__(self, **kwargs) -> None:
            super().__init__(**kwargs)
-           self._pattern_backend = pattern_backend
-           self._regex_statement_timeout_ms = regex_statement_timeout_ms
    ```
 
    Notes:
 
-   - `"baseline"` preserves current behavior and current schema requirements.
-   - `"trigram"` enables the scaled path described by this story and requires explicit schema provisioning.
-   - `regex_statement_timeout_ms=None` disables the local timeout guard, but the default should be safe for shared deployments.
-   - Composes with `bm25_backend` from story 006 on the same `PostgresFileSystem.__init__`; whichever story lands first, the other must add its kwarg alongside rather than replace.
+   - There is no `"baseline"` mode and no `"trigram"` mode.
+   - If the required schema is missing, `PostgresFileSystem` is misconfigured for native pattern search and must raise.
 
-2. **Extend `verify_native_search_schema()` to validate the trigram profile.**
+2. **Make pattern-schema verification mandatory.**
 
-   When `pattern_backend == "trigram"`:
+   `verify_native_search_schema()` must validate all of the following for Postgres native pattern search:
 
-   - verify the `pg_trgm` extension is installed
-   - verify a `text_pattern_ops` B-tree index exists for `path` so left-anchored `LIKE '/prefix/%'` remains indexable across collations
-   - verify a trigram index exists for `path` so non-prefix glob / regex on paths can use `pg_trgm`
-   - verify a partial trigram index exists for live file content so fixed-string / regex grep pre-filters can use `pg_trgm`
-   - raise clear `RuntimeError`s with actionable `CREATE EXTENSION` / `CREATE INDEX` statements if any requirement is missing
+   - `pg_trgm` extension installed
+   - a partial B-tree `text_pattern_ops` index for `path`
+   - a partial trigram index for `path`
+   - a partial trigram index for live file `content`
 
-   When `pattern_backend == "baseline"`:
+   Missing any artifact is a hard `RuntimeError` with actionable `CREATE EXTENSION` / `CREATE INDEX` statements.
 
-   - existing verification behavior is unchanged
-   - missing `pg_trgm` does not block the baseline backend
-
-3. **Define the required scaled pattern-search schema.**
+3. **Define the required schema.**
 
    Canonical shape:
 
@@ -112,178 +105,186 @@ After this story:
 
    Notes:
 
-   - The existing unique B-tree on `path` remains useful for equality lookups. The `text_pattern_ops` index exists specifically for predictable prefix matching.
-   - GIN is the default trigram index family in this story because the workload is read-heavy and does not need ordered similarity retrieval.
-   - Partial predicates should mirror the runtime filters so the planner can use the indexes directly.
+   - `text_pattern_ops` exists so left-anchored `LIKE '/prefix/%'` stays predictably indexable across non-`C` collations.
+   - `pg_trgm` indexes support `LIKE`, `ILIKE`, `~`, and `~*`. Some patterns still produce weak selectivity or full-index scans; that is a performance concern, not a correctness reason to reject a valid user pattern.
+   - GIN is the default index family here because the workload is read-heavy and does not require ordered similarity retrieval.
+   - Partial predicates should stay aligned with the runtime `WHERE` clauses so the planner can use the indexes directly.
 
-4. **Keep `glob()` semantically identical, but make the fast path explicit.**
+4. **Glob uses sound narrowing first, Python as the source of truth.**
 
-   Required behavior:
+   Full-corpus `glob()` must:
 
    - preserve current case-sensitive glob semantics
-   - preserve candidate filtering, `paths`, `ext`, `max_count`, user scoping, and file/directory visibility behavior
-   - continue using literal-prefix decomposition as the first optimization
-   - under the trigram profile, route prefix-heavy patterns through the path-pattern index and allow non-prefix path regex/glob cases to use the path trigram index
-   - keep the regex/glob matcher authoritative after any SQL pre-filter; no lossy glob approximation is allowed
+   - preserve `paths`, `ext`, `max_count`, candidate filtering, and user scoping behavior
+   - use literal-prefix decomposition first
+   - use the `path text_pattern_ops` index for left-anchored prefixes where available
+   - use the `path gin_trgm_ops` index for residual path regex narrowing where useful
+   - allow SQL to over-select, then apply the authoritative glob matcher before returning results
 
-5. **Route `grep()` through the cheapest sound row-level operator before Python line reconstruction.**
+   Required product rule:
 
-   Required behavior:
+   - if PostgreSQL can narrow the pattern soundly, do so
+   - if PostgreSQL cannot narrow much, the query still works
+   - final returned rows must match the exact glob semantics
 
-   - `fixed_strings=True` uses `LIKE` / `ILIKE`-style row pre-filters on `content` before Python line matching
-   - safe literal extraction remains allowed as a complementary pre-filter
-   - token-like literals may continue to use the native FTS pre-filter when that is sound
-   - `invert_match=True` remains Python-authoritative; do not replace it with row-level SQL negation
-   - line grouping, context windows, counts, and final result shaping remain in Python
+   The backend must never rely on an approximation that can drop a true hit.
 
-   The existing FTS literal-term pre-filter in `_grep_impl` already guards against unsoundness from negative lookarounds (via `_extract_literal_terms`) and the Postgres regex translator already respects escape pairs and char-class boundaries (via `_python_regex_to_postgres`). Trigram pre-filters composed by this story must compose with — not replace — those guards; any trigram narrowing must be intersectable with the existing sound pre-filter without widening the false-negative surface.
+5. **Grep uses sound row narrowing first, Python as the source of truth.**
 
-6. **Only use whole-row regex pre-filters when they are safe for grep's line semantics.**
+   Full-corpus `grep()` must:
 
-   This story does **not** promise that every regex gets a trigram-accelerated SQL pre-filter.
+   - preserve `case_mode`, `fixed_strings`, `word_regexp`, `invert_match`, `output_mode`, `before_context`, `after_context`, `max_count`, structural filters, and user scoping
+   - use PostgreSQL to narrow the candidate row set as much as soundly possible
+   - keep Python authoritative for final line reconstruction and exact line-oriented match semantics
 
-   Required behavior:
+   Required execution shape:
 
-   - if pattern analysis can prove a row-level pre-filter cannot introduce false negatives relative to line-oriented grep semantics, it may be used
-   - if that proof is not available, skip the row-level regex pre-filter and fall back to the safer baseline path
-   - correctness wins over speed for anchored, multiline-sensitive, or otherwise tricky patterns
+   - `fixed_strings=True` uses `LIKE` / `ILIKE` over `content`, relying on the content trigram index when useful
+   - regex search may use `content ~ :pattern` or `content ~* :pattern` as a narrowing predicate when that is a sound superset relative to final line matching
+   - extracted literal runs may be added as conjunctive pre-filters (`LIKE` / `ILIKE` and/or FTS literal-term narrowing) when they cannot introduce false negatives
+   - the query must keep the live-row predicates (`kind = 'file'`, `content IS NOT NULL`, `deleted_at IS NULL`) aligned with the partial trigram index
 
-7. **Bound database regex execution with a local timeout.**
+   Product rule:
 
-   Required behavior:
+   - SQL narrowing is an optimization
+   - Python matching is authoritative
+   - no valid grep hit may be lost because a pre-filter was too aggressive
 
-   - regex-backed SQL issued by `_grep_impl` and regex-backed glob narrowing run under `SET LOCAL statement_timeout` or an equivalent transaction-local mechanism
-   - timeout failures surface as clear, user-actionable errors instead of hanging the request
-   - the timeout guard must not leak outside the current transaction / session scope
+6. **Candidate-scoped grep and glob remain in-process.**
 
-8. **Document the scaled-pattern rollout clearly.**
+   When `candidates is not None`, continue to use the bounded in-memory path. This is already the right product behavior for pipelines because:
+
+   - the candidate set is caller-bounded
+   - correctness is simpler
+   - the user intent is already "filter these results further," not "search the whole corpus efficiently"
+
+7. **Document the contract clearly.**
 
    Minimum:
 
-   - [`docs/architecture.md`](../../../docs/architecture.md) explains the `pattern_backend` selector, the required indexes, and why prefix and non-prefix path search use different index families
-   - [`docs/index.md`](../../../docs/index.md) distinguishes baseline native regex support from the trigram-accelerated profile
-   - operator-facing docs call out the write/storage cost of the extra trigram indexes
+   - [`docs/architecture.md`](../../../docs/architecture.md) explains that Postgres pattern search uses native narrowing where possible and authoritative Python filtering for exact semantics
+   - [`docs/index.md`](../../../docs/index.md) explains that the trigram/pattern indexes improve narrowing and throughput but do not redefine the meaning of valid patterns
+   - operator-facing docs include the required schema and the write/storage cost of the trigram indexes
 
 ### Out
 
-- Changing grep or glob semantics
-- Adding fuzzy ranking, similarity search UX, or user-facing typo tolerance
-- Guaranteeing that every regex is index-accelerated
-- Replacing Python-authoritative line reconstruction for grep
+- Rejecting valid full-corpus patterns purely because they are hard to index
+- Any SQL pre-filter that can introduce false negatives
 - Automatic `CREATE EXTENSION pg_trgm` at runtime
-- Partitioning, sharding, or regex workload isolation beyond the local timeout guard
-- Collation redesign or a broader case-folding strategy outside the existing grep flags
+- Replacing Python final matching for exact grep/glob semantics
+- Fuzzy ranking or typo-tolerant UX
+- Partitioning or sharding work beyond this backend contract
 
 ## Native behavior contract
 
-### Rollout mode
+### Backend mode
 
-`pattern_backend="baseline"` remains the compatibility path. `pattern_backend="trigram"` is the explicit scaled profile. There is no silent auto-upgrade based on extension presence.
+There is one Postgres-native pattern backend. It requires the pattern-search schema and uses sound pushdown plus authoritative final filtering.
 
 ### Case behavior
 
 - `glob()` stays case-sensitive
-- `grep()` case behavior continues to be controlled by `case_mode`
-- no nondeterministic-collation dependency is introduced by this story
+- `grep()` case behavior continues to follow `case_mode`
+- no new collation-dependent semantics are introduced
 
-### Safety
+### Correctness contract
 
-Regex timeout is a backend safety feature, not a semantic feature. A timed-out query should fail clearly; it must not return partial matches or silently retry without the timeout guard.
+For Postgres `glob()` / `grep()`:
 
-### Write-path cost
+- SQL may return a safe superset
+- Python is allowed to do the final exact filtering
+- no true match may be dropped by backend pushdown
 
-The trigram profile adds real database-side cost:
+### Performance contract
 
-- more disk for `path` and `content` trigram indexes
-- more write amplification on `content` updates
-- more maintenance overhead for autovacuum / index cleanup
+For full-corpus Postgres `glob()` / `grep()`:
 
-That cost is intentional. The scaled profile is for deployments that need it.
+- the backend should use every sound native narrowing step available
+- prefix-, literal-, and trigram-friendly patterns should become materially faster than the current opportunistic path
+- hard patterns may still require broader over-selection, but they must remain correct
+
+### Semantics
+
+This story intentionally prefers correctness over strict admission:
+
+- some hard patterns may still be expensive
+- that is acceptable if the backend has already applied every sound narrowing step it can
+- the product promise is correctness first, acceleration second
 
 ## Acceptance criteria
 
 ### Backend surface
 
-- [ ] `PostgresFileSystem(engine=engine, pattern_backend="baseline")` preserves existing behavior.
-- [ ] `PostgresFileSystem(engine=engine, pattern_backend="trigram")` constructs without error.
-- [ ] `regex_statement_timeout_ms` can be configured or disabled per backend instance.
+- [ ] `PostgresFileSystem(engine=engine)` exposes one native pattern backend only.
+- [ ] No `pattern_backend="baseline"` / `"trigram"` selector remains in the Postgres design.
 
 ### Schema verification
 
-- [ ] `verify_native_search_schema()` passes against a Postgres database with `pg_trgm` installed and the required pattern indexes present when `pattern_backend="trigram"`.
-- [ ] Missing `pg_trgm` produces a clear `RuntimeError` with a `CREATE EXTENSION` hint.
-- [ ] Missing path prefix / path trigram / content trigram indexes each produce clear `RuntimeError`s with actionable `CREATE INDEX` statements.
-- [ ] `pattern_backend="baseline"` does not require `pg_trgm`.
+- [ ] `verify_native_search_schema()` passes only when `pg_trgm`, the path prefix index, the path trigram index, and the content trigram index are all present.
+- [ ] Missing `pg_trgm` raises a clear `RuntimeError` with a `CREATE EXTENSION` hint.
+- [ ] Missing path prefix / path trigram / content trigram indexes each raise clear `RuntimeError`s with actionable `CREATE INDEX` statements.
 
 ### Glob
 
-- [ ] `glob()` results are identical between `pattern_backend="baseline"` and `pattern_backend="trigram"` for the same inputs.
-- [ ] Prefix-heavy glob patterns continue to use SQL prefix narrowing before authoritative regex matching.
-- [ ] Non-prefix path glob patterns remain correct under the trigram profile.
+- [ ] `glob()` remains semantically correct for all valid patterns.
+- [ ] Prefix-anchored glob patterns use the `path text_pattern_ops` index path when available.
+- [ ] Non-prefix glob patterns use `path gin_trgm_ops` narrowing when useful.
+- [ ] SQL narrowing may over-select, but final results match exact glob semantics.
 - [ ] `glob()` remains case-sensitive.
 
 ### Grep
 
-- [ ] `grep()` results are identical between `pattern_backend="baseline"` and `pattern_backend="trigram"` for the same inputs across `case_mode`, `fixed_strings`, `word_regexp`, `invert_match`, `output_mode`, `max_count`, `paths`, `ext`, `ext_not`, `globs`, `globs_not`, and user scoping.
-- [ ] `fixed_strings=True` uses a cheaper row-level pre-filter than general regex execution.
-- [ ] `invert_match=True` remains Python-authoritative.
-- [ ] Regex patterns that are unsafe to pre-filter at row level fall back to the safer baseline path instead of risking false negatives.
+- [ ] `grep()` remains semantically correct for all valid patterns.
+- [ ] `fixed_strings=True` uses indexed `LIKE` / `ILIKE`-style narrowing when useful.
+- [ ] Regex grep adds literal/trigram/FTS narrowing when sound.
+- [ ] `invert_match=True` remains correct.
+- [ ] Python remains responsible for final line reconstruction and exact line-oriented matching after SQL narrowing.
+- [ ] No SQL pre-filter used by the Postgres backend can introduce false negatives.
 
-### Safety / docs
+### Safety / observability / docs
 
-- [ ] Pathological regex can time out with a clear error when the timeout guard is enabled.
-- [ ] The timeout guard is transaction-local and does not leak to unrelated queries.
-- [ ] `docs/architecture.md` and `docs/index.md` document the scaled pattern-search profile and its operational cost.
+- [ ] `docs/architecture.md` and `docs/index.md` document the Postgres backend as sound pushdown plus authoritative final filtering.
+- [ ] A Postgres integration test runs `EXPLAIN (FORMAT JSON)` for representative supported `glob()` / `grep()` shapes and asserts the expected path/content indexes appear in the plan.
+- [ ] Tests cover hard patterns that are only weakly narrowed in SQL and verify they still return the same results as authoritative in-process matching.
 
 ## Test plan
 
-### 1. Pure unit tests
+### 1. Unit tests
 
-Add unit coverage for backend-local helpers such as:
+Add unit coverage for:
 
-- pattern-backend selector validation
-- timeout configuration handling
-- safe vs unsafe whole-row regex pre-filter classification
-- any path-index / trigram index detection helper split out for verification
+- glob narrowing classification
+- grep literal extraction / narrowing composition
+- no-false-negative behavior of SQL pre-filters
 
 ### 2. Postgres integration tests
 
 Add Postgres-gated coverage for:
 
-- successful trigram-profile schema verification
+- successful schema verification
 - missing `pg_trgm`
-- missing path pattern index
+- missing path prefix index
 - missing path trigram index
 - missing content trigram index
-- glob parity between baseline and trigram profiles
-- grep parity between baseline and trigram profiles
-- fixed-string grep using the cheaper row-level pre-filter
-- regex timeout behavior
-- timeout disabled behavior
+- supported prefix glob uses the prefix access path
+- supported non-prefix glob uses trigram narrowing when useful
+- supported grep uses content trigram narrowing when useful
+- hard regex patterns still return correct results
+- `invert_match=True` remains correct
 
 ### 3. Fixture provisioning
 
-Extend [`tests/conftest.py`](../../../tests/conftest.py) with trigram provisioning helpers that:
+Extend [`tests/conftest.py`](../../../tests/conftest.py) with helpers that:
 
 - install `pg_trgm`
 - create the path prefix index
 - create the path trigram index
 - create the content trigram index
 
-This is test/development infrastructure, not request-time runtime behavior.
+This is deployment/test setup, not runtime request handling.
 
 ### 4. Manual smoke
-
-Reviewer smoke checks:
 
 - `uv run pytest --postgres tests/test_postgres_backend.py`
 - `uv run pytest --postgres tests/test_postgres_patterns.py`
 - `uv run python scripts/postgres_repo_cli_probe.py`
-
-## References
-
-- Existing Postgres backend: [`src/vfs/backends/postgres.py`](../../../src/vfs/backends/postgres.py)
-- Shared pattern semantics: [`src/vfs/backends/database.py`](../../../src/vfs/backends/database.py)
-- PostgreSQL pattern matching docs: [postgresql.org/docs/current/functions-matching.html](https://www.postgresql.org/docs/current/functions-matching.html)
-- PostgreSQL trigram docs: [postgresql.org/docs/current/pgtrgm.html](https://www.postgresql.org/docs/current/pgtrgm.html)
-- PostgreSQL operator-class docs: [postgresql.org/docs/current/indexes-opclass.html](https://www.postgresql.org/docs/current/indexes-opclass.html)

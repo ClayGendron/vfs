@@ -35,6 +35,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from vfs.backends.postgres import PostgresFileSystem, _parse_vector_dimension
 from vfs.client import VFSClient
 from vfs.exceptions import NotFoundError, VFSError, WriteConflictError
+from vfs.models import postgres_native_vfs_object_model
 from vfs.query import QuerySyntaxError
 
 if TYPE_CHECKING:
@@ -177,9 +178,7 @@ class ProbeRunner:
         try:
             rendered, duration_ms = self._run_cli(query)
             if rendered != expected:
-                msg = (
-                    f"Expected exact output {expected!r}, got {rendered!r}"
-                )
+                msg = f"Expected exact output {expected!r}, got {rendered!r}"
                 raise AssertionError(msg)
         except Exception as exc:
             self._record(label=label, status="FAIL", detail=str(exc), query=query)
@@ -334,9 +333,7 @@ class ProbeRunner:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Probe an existing repo snapshot in Postgres through VFSClient.cli()."
-    )
+    parser = argparse.ArgumentParser(description="Probe an existing repo snapshot in Postgres through VFSClient.cli().")
     parser.add_argument("--db-url", default=DEFAULT_DB_URL, help="Async SQLAlchemy URL for the loaded PostgreSQL DB.")
     parser.add_argument("--mount", default=DEFAULT_MOUNT, help="Single mount segment to expose the DB at.")
     parser.add_argument(
@@ -431,10 +428,13 @@ def open_client(db_url: str, mount: str) -> VFSClient:
                     native_vector_sample = (sample_row[0], _parse_vector_literal(sample_row[1]))
 
         filesystem = (
-            PostgresFileSystem(engine=engine, embedding_dimension=native_dimension)
+            PostgresFileSystem(engine=engine, model=postgres_native_vfs_object_model(dimension=native_dimension))
             if native_dimension is not None
             else PostgresFileSystem(engine=engine)
         )
+        async with filesystem._use_session() as session:
+            await filesystem._verify_fulltext_schema(session)
+            await filesystem._verify_pattern_schema(session)
         return filesystem, native_vector_sample
 
     filesystem, native_vector_sample = client._run(_build_filesystem())
@@ -463,7 +463,7 @@ def run_correctness_suite(
 
     runner.expect_nonempty(
         "mounted repo snapshot is non-empty",
-        f'glob {_quote(f"{runner.mount_root}/**/*")} --max-count 3',
+        f"glob {_quote(f'{runner.mount_root}/**/*')} --max-count 3",
     )
     runner.expect_contains(
         "root listing exposes expected top-level directories",
@@ -481,14 +481,7 @@ def run_correctness_suite(
         read_expected,
     )
 
-    initial_notes = (
-        "alpha first\n"
-        "alpha second\n"
-        "ALPHA third\n"
-        "beta_beta token\n"
-        "100% literal\n"
-        'quoted "value"\n'
-    )
+    initial_notes = 'alpha first\nalpha second\nALPHA third\nbeta_beta token\n100% literal\nquoted "value"\n'
     after_unique_edit = initial_notes.replace("alpha first", "omega first")
     after_all_edit = after_unique_edit.replace("alpha", "omega")
 
@@ -564,6 +557,12 @@ def run_correctness_suite(
         f"grep {_quote('beta_beta')} {notes_path} --fixed-strings",
         must_contain=("beta_beta token",),
     )
+    runner.expect_contains(
+        "anchored grep still matches non-first lines",
+        f"grep {_quote('^omega')} {notes_path}",
+        must_contain=(f"{notes_path}:2:omega second",),
+        must_not_contain=(f"{notes_path}:1:omega first",),
+    )
 
     runner.expect_exact(
         "write percent-escaped path",
@@ -592,24 +591,30 @@ def run_correctness_suite(
     )
     runner.expect_contains(
         "glob escapes percent correctly",
-        f'glob {_quote(f"{runner.scratch_root}/100%/*.txt")}',
+        f"glob {_quote(f'{runner.scratch_root}/100%/*.txt')}",
         must_contain=(percent_path,),
         must_not_contain=(secret_path,),
     )
     runner.expect_contains(
         "glob escapes underscore correctly",
-        f'glob {_quote(f"{runner.scratch_root}/a_/*.py")}',
+        f"glob {_quote(f'{runner.scratch_root}/a_/*.py')}",
+        must_contain=(underscore_path,),
+        must_not_contain=(bystander_path,),
+    )
+    runner.expect_contains(
+        "glob character classes stay correct",
+        f"glob {_quote(f'{runner.scratch_root}/[a][_]/*.py')}",
         must_contain=(underscore_path,),
         must_not_contain=(bystander_path,),
     )
     runner.expect_exact(
         "chain glob | grep | read resolves a single DB-only file",
-        f'glob {_quote(f"{runner.scratch_root}/100%/*.txt")} | grep {_quote("percent target")} | read',
+        f"glob {_quote(f'{runner.scratch_root}/100%/*.txt')} | grep {_quote('percent target')} | read",
         "percent target",
     )
     runner.expect_contains(
         "chain against the loaded repo finds and reads real content",
-        f'glob {_quote(f"{runner.mount_root}/src/**/*.py")} | grep {_quote("class VFSClient")} | read',
+        f"glob {_quote(f'{runner.mount_root}/src/**/*.py')} | grep {_quote('class VFSClient')} | read",
         must_contain=("class VFSClient",),
     )
     runner.custom_check(
@@ -654,6 +659,47 @@ def run_negative_suite(runner: ProbeRunner) -> None:
     )
 
 
+def run_lexical_suite(runner: ProbeRunner) -> None:
+    _banner("Lexical Search")
+
+    focus_path = runner.scratch_path("lexical/focus.md")
+    support_path = runner.scratch_path("lexical/support.md")
+    noise_path = runner.scratch_path("lexical/noise.md")
+
+    runner.expect_exact(
+        "write lexical focus file",
+        f"write {focus_path} {_quote('authentication authentication timeout playbook')}",
+        f"Wrote {focus_path}",
+    )
+    runner.expect_exact(
+        "write lexical support file",
+        f"write {support_path} {_quote('authentication timeout notes')}",
+        f"Wrote {support_path}",
+    )
+    runner.expect_exact(
+        "write lexical noise file",
+        f"write {noise_path} {_quote('completely unrelated content')}",
+        f"Wrote {noise_path}",
+    )
+
+    def _check() -> str:
+        result = runner.client.lexical_search("authentication timeout", k=2)
+        if result.function != "lexical_search":
+            raise AssertionError(f"Expected lexical_search result envelope, got {result.function!r}")
+        if not result.entries:
+            raise AssertionError("Expected lexical_search to return at least one match")
+        top = result.entries[0]
+        if top.path != focus_path:
+            raise AssertionError(f"Expected top lexical hit {focus_path}, got {top.path}")
+        if top.content is None or "authentication" not in top.content:
+            raise AssertionError("Expected lexical_search top hit to hydrate content")
+        if top.score is None or not (0.0 <= top.score < 1.0):
+            raise AssertionError(f"Expected a bounded ts_rank_cd score in [0, 1), got {top.score!r}")
+        return f"top hit {top.path} scored {top.score:.4f} via native FTS"
+
+    runner.custom_check("lexical_search returns hydrated native-FTS-ranked results", _check)
+
+
 def run_native_vector_suite(runner: ProbeRunner) -> None:
     _banner("Native Vector")
 
@@ -672,9 +718,7 @@ def run_native_vector_suite(runner: ProbeRunner) -> None:
     def _check() -> str:
         result = runner.client.vector_search(sample_vector, k=5)
         if mounted_sample_path not in result.paths:
-            raise AssertionError(
-                f"Expected native vector_search to include {mounted_sample_path}, got {result.paths}"
-            )
+            raise AssertionError(f"Expected native vector_search to include {mounted_sample_path}, got {result.paths}")
         if any(entry.content is not None for entry in result.entries):
             raise AssertionError("vector_search returned content; expected path + score only")
         return f"top hit set contains {mounted_sample_path}"
@@ -695,19 +739,19 @@ def run_performance_suite(
     targets = [
         PerfTarget(
             label="glob over the loaded repo",
-            query=f'glob {_quote(f"{runner.mount_root}/**/*.py")} --max-count {perf_max_count}',
+            query=f"glob {_quote(f'{runner.mount_root}/**/*.py')} --max-count {perf_max_count}",
             soft_budget_ms=perf_budget_ms,
         ),
         PerfTarget(
             label="grep over src/ for definitions",
-            query=f'grep {_quote("def ")} {runner.mount_root}/src --max-count {perf_max_count}',
+            query=f"grep {_quote('def ')} {runner.mount_root}/src --max-count {perf_max_count}",
             soft_budget_ms=perf_budget_ms,
         ),
         PerfTarget(
             label="grep count over tests/ with projected score",
             query=(
-                f'grep {_quote("async def|def ")} {runner.mount_root}/tests --ignore-case '
-                f'--count --output path,score --max-count {perf_max_count}'
+                f"grep {_quote('async def|def ')} {runner.mount_root}/tests --ignore-case "
+                f"--count --output path,score --max-count {perf_max_count}"
             ),
             soft_budget_ms=perf_budget_ms,
         ),
@@ -718,7 +762,7 @@ def run_performance_suite(
         ),
         PerfTarget(
             label="chain glob | grep | read on repo code",
-            query=f'glob {_quote(f"{runner.mount_root}/src/**/*.py")} | grep {_quote("class ")} | top 20',
+            query=f"glob {_quote(f'{runner.mount_root}/src/**/*.py')} | grep {_quote('class ')} | top 20",
             soft_budget_ms=perf_budget_ms * 1.5,
         ),
     ]
@@ -772,6 +816,7 @@ def main() -> int:
         )
 
         run_correctness_suite(runner, read_path=args.read_path)
+        run_lexical_suite(runner)
         run_negative_suite(runner)
         run_native_vector_suite(runner)
         if not args.skip_perf:

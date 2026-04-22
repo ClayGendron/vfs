@@ -134,14 +134,57 @@ async def _provision_mssql_fulltext(eng) -> None:
 
 
 async def _provision_postgres_fulltext(eng, *, table: str = "vfs_objects") -> None:
-    """Test-only: provision the GIN FTS index required by PostgresFileSystem."""
+    """Test-only: provision the native Postgres search artifacts."""
     async with eng.begin() as conn:
         await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         await conn.execute(
             sql_text(
                 f"""
-                CREATE INDEX IF NOT EXISTS ix_{table}_content_tsv_gin
-                ON {table} USING GIN (to_tsvector('simple', coalesce(content, '')))
+                ALTER TABLE {table}
+                ADD COLUMN IF NOT EXISTS search_tsv tsvector GENERATED ALWAYS AS (
+                    to_tsvector('simple', coalesce(content, ''))
+                ) STORED
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{table}_search_tsv_gin
+                ON {table} USING GIN (search_tsv)
+                WHERE content IS NOT NULL
+                  AND deleted_at IS NULL
+                  AND kind != 'version'
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{table}_path_pattern
+                ON {table} (path text_pattern_ops)
+                WHERE deleted_at IS NULL
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{table}_path_trgm_gin
+                ON {table} USING GIN (path gin_trgm_ops)
+                WHERE deleted_at IS NULL
+                """
+            )
+        )
+        await conn.execute(
+            sql_text(
+                f"""
+                CREATE INDEX IF NOT EXISTS ix_{table}_content_trgm_gin
+                ON {table} USING GIN (content gin_trgm_ops)
+                WHERE kind = 'file'
+                  AND content IS NOT NULL
+                  AND deleted_at IS NULL
                 """
             )
         )
@@ -154,14 +197,8 @@ async def _provision_postgres_native_search(eng, model: type[VFSObjectBase]) -> 
         await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.execute(sql_text(f"DROP TABLE IF EXISTS {model.__tablename__} CASCADE"))
         await conn.run_sync(model.metadata.create_all)
-        await conn.execute(
-            sql_text(
-                f"""
-                CREATE INDEX IF NOT EXISTS ix_{model.__tablename__}_content_tsv_gin
-                ON {model.__tablename__} USING GIN (to_tsvector('simple', coalesce(content, '')))
-                """
-            )
-        )
+    await _provision_postgres_fulltext(eng, table=model.__tablename__)
+    async with eng.begin() as conn:
         await conn.execute(
             sql_text(
                 f"""

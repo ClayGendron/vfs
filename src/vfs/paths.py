@@ -227,9 +227,6 @@ def meta_root(path: str) -> str:
         msg = f"Reserved path is not a valid metadata endpoint: {path}"
         raise ValueError(msg)
     if is_meta_root_path(normalized):
-        if normalized == METADATA_ROOT:
-            msg = f"Reserved path is not a valid metadata endpoint: {path}"
-            raise ValueError(msg)
         if _is_projected_edge_path(normalized):
             msg = f"Projected edge paths are not valid metadata endpoints: {path}"
             raise ValueError(msg)
@@ -268,9 +265,6 @@ def base_path(path: str) -> str:
         return normalized
 
     stripped = normalized[len(METADATA_ROOT) :]
-    if not stripped:
-        return "/"
-
     marker = stripped.find(f"/{META_SEGMENT}")
     if marker < 0:
         return stripped
@@ -310,9 +304,6 @@ def validate_mutation_path(path: str, *, kind: str | None = None) -> tuple[bool,
         return False, "Cannot write directly to inverse edge paths; write the canonical edges/out path instead"
 
     if _is_reserved_metadata_directory(normalized):
-        return True, ""
-
-    if normalized.endswith(f"/{META_SEGMENT}"):
         return True, ""
 
     if normalized.startswith(METADATA_ROOT + "/") and f"/{META_SEGMENT}/" not in normalized:
@@ -602,9 +593,6 @@ def _canonical_endpoint_path(path: str) -> str:
         return nested
 
     stripped = normalized[len(METADATA_ROOT) :]
-    if not stripped:
-        msg = "Reserved metadata root is not a canonical endpoint"
-        raise ValueError(msg)
     return stripped
 
 

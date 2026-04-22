@@ -52,6 +52,73 @@ The explicit namespace is a design choice, not an implementation leak. It makes 
 
 The portable baseline still defines the semantics. Backend-native implementations are pushdown optimizations, not separate products.
 
+For lexical search, the native backends share the same public `lexical_search()` envelope but not the same scoring primitive.
+
+`MSSQLFileSystem` gets BM25-style server ranks directly from `CONTAINSTABLE`.
+`PostgresFileSystem` runs one native PostgreSQL full-text query against a stored
+`search_tsv` column and matching partial `GIN` index:
+
+- `search_tsv @@ q` owns recall
+- `ts_rank_cd(search_tsv, q, 1|32)` owns ranking
+- the query projects `path`, `kind`, `content`, and `score` in one round-trip
+
+The final `Entry.score` values returned from Postgres lexical search are native
+`ts_rank_cd` cover-density scores in `[0, 1)`, not BM25 values.
+
+That Postgres path assumes the database already exposes a stored generated `search_tsv tsvector` column plus a matching partial `GIN` index:
+
+```sql
+ALTER TABLE vfs_objects
+ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (
+    to_tsvector('simple', coalesce(content, ''))
+) STORED;
+
+CREATE INDEX ix_vfs_objects_search_tsv_gin
+    ON vfs_objects USING GIN (search_tsv)
+    WHERE content IS NOT NULL
+      AND deleted_at IS NULL
+      AND kind != 'version';
+```
+
+`PostgresFileSystem.verify_native_search_schema()` fail-fast validates that
+`search_tsv` exists as a stored generated `tsvector` column using
+`to_tsvector('simple', coalesce(content, ''))` and that at least one partial
+`GIN` index on `search_tsv` uses the live-search predicate above. It does not
+silently fall back to the portable SQL `LIKE` prefilter path.
+
+For pattern search, `PostgresFileSystem` uses the same public `glob()` /
+`grep()` contract as the baseline backend but changes where the work happens:
+
+- PostgreSQL does every sound narrowing step it can with `text_pattern_ops`,
+  `pg_trgm`, `LIKE` / `ILIKE`, and regex predicates
+- Python remains the authoritative final matcher for exact glob semantics and
+  line-oriented grep semantics
+- SQL is allowed to over-select, but it must never drop a true hit
+
+That pattern path assumes these additional artifacts already exist:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX ix_vfs_objects_path_pattern
+    ON vfs_objects (path text_pattern_ops)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX ix_vfs_objects_path_trgm_gin
+    ON vfs_objects USING GIN (path gin_trgm_ops)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX ix_vfs_objects_content_trgm_gin
+    ON vfs_objects USING GIN (content gin_trgm_ops)
+    WHERE kind = 'file'
+      AND content IS NOT NULL
+      AND deleted_at IS NULL;
+```
+
+Those indexes are a deployment concern, not something `vfs` creates during
+request handling. `verify_native_search_schema()` fail-fast validates them
+alongside the full-text and pgvector artifacts.
+
 ## Graph as a Projection
 
 Each `DatabaseFileSystem` owns an internal `RustworkxGraph`. The graph is a projection over persisted paths:
