@@ -12,10 +12,13 @@ database.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from textwrap import dedent
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from sqlalchemy import Text, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.types import TypeEngine
 
 from vfs.backends.database import (
     DatabaseFileSystem,
@@ -34,6 +37,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.query.ast import CaseMode, GrepOutputMode
+
+
+_ARRAY_TEXT: TypeEngine[object] = cast("TypeEngine[object]", ARRAY(Text()))
 
 
 def _quote_tsquery_term(term: str) -> str:
@@ -61,50 +67,22 @@ def _build_plainto_tsquery(terms: list[str] | tuple[str, ...], *, config: str) -
     return " || ".join(fragments), params
 
 
+_REGEX_REWRITES = {r"\b": r"\y", r"\A": "^", r"\Z": "$", "(?:": "("}
+_REGEX_TOKEN = re.compile(r"\[(?:\\.|[^\]])*\]|\\.|\(\?:|.", re.DOTALL)
+
+
 def _python_regex_to_postgres(pattern: str) -> str:
     """Translate the small regex subset we synthesize into Postgres ARE syntax.
 
-    Walks the pattern respecting escape pairs and character-class context so
-    that ``\\b``/``\\A``/``\\Z`` inside an escaped-backslash run or ``(?:`` inside
-    ``[...]`` are not mangled — both shapes are silent false-negative sources
+    The tokenizer matches character classes and escape pairs as opaque units,
+    so ``\\b``/``\\A``/``\\Z`` inside an escaped-backslash run or ``(?:`` inside
+    ``[...]`` are left alone — both shapes are silent false-negative sources
     for the grep pre-filter if translated naively.
     """
-    out: list[str] = []
-    i = 0
-    length = len(pattern)
-    in_class = False
-    while i < length:
-        ch = pattern[i]
-        if ch == "\\" and i + 1 < length:
-            nxt = pattern[i + 1]
-            if not in_class and nxt == "b":
-                out.append(r"\y")
-            elif not in_class and nxt == "A":
-                out.append("^")
-            elif not in_class and nxt == "Z":
-                out.append("$")
-            else:
-                out.append(ch + nxt)
-            i += 2
-            continue
-        if in_class:
-            if ch == "]":
-                in_class = False
-            out.append(ch)
-            i += 1
-            continue
-        if ch == "[":
-            in_class = True
-            out.append(ch)
-            i += 1
-            continue
-        if pattern.startswith("(?:", i):
-            out.append("(")
-            i += 3
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
+    return "".join(
+        _REGEX_REWRITES.get(m.group(), m.group())
+        for m in _REGEX_TOKEN.finditer(pattern)
+    )
 
 
 def _parse_vector_dimension(formatted_type: str | None) -> int | None:
@@ -117,6 +95,9 @@ def _parse_vector_dimension(formatted_type: str | None) -> int | None:
     return int(match.group(1))
 
 
+_ANCHOR_TOKENS = {"^", "$", r"\A", r"\Z"}
+
+
 def _contains_unescaped_anchor(pattern: str) -> bool:
     """Return whether *pattern* contains a line/stream anchor token.
 
@@ -126,61 +107,402 @@ def _contains_unescaped_anchor(pattern: str) -> bool:
     that implication for non-first/non-last lines, so anchored patterns skip
     regex pushdown and rely on structural/literal narrowing only.
     """
-    in_class = False
-    i = 0
-    while i < len(pattern):
-        ch = pattern[i]
-        if ch == "\\" and i + 1 < len(pattern):
-            nxt = pattern[i + 1]
-            if not in_class and nxt in {"A", "Z"}:
-                return True
-            i += 2
-            continue
-        if in_class:
-            if ch == "]":
-                in_class = False
-            i += 1
-            continue
-        if ch == "[":
-            in_class = True
-            i += 1
-            continue
-        if ch in {"^", "$"}:
-            return True
-        i += 1
-    return False
+    return any(m.group() in _ANCHOR_TOKENS for m in _REGEX_TOKEN.finditer(pattern))
+
+
+_PGVECTOR_OPS: dict[str, tuple[str, Callable[[float], float]]] = {
+    "vector_cosine_ops": ("<=>", lambda d: 1.0 - d),
+    # ``<#>`` returns negative inner product so ASC ordering still works.
+    "vector_ip_ops": ("<#>", lambda d: -d),
+    # Convert non-negative Euclidean distance into a bounded similarity.
+    "vector_l2_ops": ("<->", lambda d: 1.0 / (1.0 + d)),
+}
+
+
+def _pgvector_ops(operator_class: str) -> tuple[str, Callable[[float], float]]:
+    try:
+        return _PGVECTOR_OPS[operator_class]
+    except KeyError:
+        msg = (
+            f"PostgresFileSystem only supports pgvector operator classes "
+            f"{sorted(_PGVECTOR_OPS)}; got {operator_class!r}"
+        )
+        raise RuntimeError(msg) from None
 
 
 def _pgvector_distance_operator(operator_class: str) -> str:
-    """Return the pgvector SQL operator for a declared operator class."""
-    if operator_class == "vector_cosine_ops":
-        return "<=>"
-    if operator_class == "vector_ip_ops":
-        return "<#>"
-    if operator_class == "vector_l2_ops":
-        return "<->"
-    msg = (
-        "PostgresFileSystem only supports pgvector operator classes "
-        f"'vector_cosine_ops', 'vector_ip_ops', and 'vector_l2_ops'; got {operator_class!r}"
-    )
-    raise RuntimeError(msg)
+    return _pgvector_ops(operator_class)[0]
 
 
 def _pgvector_distance_to_score(operator_class: str, distance: float) -> float:
-    """Translate a pgvector distance/order key into Entry.score semantics."""
-    if operator_class == "vector_cosine_ops":
-        return 1.0 - distance
-    if operator_class == "vector_ip_ops":
-        # ``<#>`` returns negative inner product so ASC ordering still works.
-        return -distance
-    if operator_class == "vector_l2_ops":
-        # Convert non-negative Euclidean distance into a bounded similarity.
-        return 1.0 / (1.0 + distance)
-    msg = (
-        "PostgresFileSystem only supports pgvector operator classes "
-        f"'vector_cosine_ops', 'vector_ip_ops', and 'vector_l2_ops'; got {operator_class!r}"
+    return _pgvector_ops(operator_class)[1](distance)
+
+
+_NATIVE_MEETING_SUBGRAPH_SQL = """
+CREATE OR REPLACE FUNCTION {function_name}(
+    p_seeds text[],
+    p_scope_prefix text DEFAULT NULL
+)
+RETURNS TABLE(path text)
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+    v_node text;
+    v_origin text;
+    v_neighbor text;
+    v_neighbor_origin text;
+    v_origin_component text;
+    v_neighbor_component text;
+    v_endpoint text;
+    v_pred text;
+    v_components integer;
+    v_deleted integer;
+BEGIN
+    CREATE TEMP TABLE IF NOT EXISTS _gm_seed(seed text PRIMARY KEY, ord integer NOT NULL) ON COMMIT DROP;
+    TRUNCATE _gm_seed;
+
+    CREATE TEMP TABLE IF NOT EXISTS _gm_edge(
+        source text NOT NULL,
+        target text NOT NULL,
+        edge_type text NOT NULL,
+        PRIMARY KEY (source, target, edge_type)
+    ) ON COMMIT DROP;
+    TRUNCATE _gm_edge;
+
+    CREATE TEMP TABLE IF NOT EXISTS _gm_adj(
+        node text NOT NULL,
+        neighbor text NOT NULL,
+        PRIMARY KEY (node, neighbor)
+    ) ON COMMIT DROP;
+    TRUNCATE _gm_adj;
+
+    CREATE TEMP TABLE IF NOT EXISTS _gm_component(
+        seed text PRIMARY KEY,
+        component text NOT NULL
+    ) ON COMMIT DROP;
+    TRUNCATE _gm_component;
+
+    CREATE TEMP TABLE IF NOT EXISTS _gm_visited(
+        node text PRIMARY KEY,
+        origin text NOT NULL,
+        pred text NOT NULL,
+        ord integer NOT NULL
+    ) ON COMMIT DROP;
+    TRUNCATE _gm_visited;
+
+    CREATE TEMP TABLE IF NOT EXISTS _gm_queue(
+        seq bigserial PRIMARY KEY,
+        node text NOT NULL UNIQUE
+    ) ON COMMIT DROP;
+    TRUNCATE _gm_queue RESTART IDENTITY;
+
+    CREATE TEMP TABLE IF NOT EXISTS _gm_bridge(
+        a text NOT NULL,
+        b text NOT NULL,
+        PRIMARY KEY (a, b)
+    ) ON COMMIT DROP;
+    TRUNCATE _gm_bridge;
+
+    CREATE TEMP TABLE IF NOT EXISTS _gm_kept(node text PRIMARY KEY) ON COMMIT DROP;
+    TRUNCATE _gm_kept;
+
+    INSERT INTO _gm_edge(source, target, edge_type)
+    SELECT o.source_path, o.target_path, o.edge_type
+    FROM {table} AS o
+    WHERE o.kind = 'edge'
+      AND o.deleted_at IS NULL
+      AND o.source_path IS NOT NULL
+      AND o.target_path IS NOT NULL
+      AND o.edge_type IS NOT NULL
+      AND (
+          p_scope_prefix IS NULL
+          OR (
+              o.source_path LIKE p_scope_prefix || '%'
+              AND o.target_path LIKE p_scope_prefix || '%'
+          )
+      );
+
+    INSERT INTO _gm_adj(node, neighbor)
+    SELECT source, target FROM _gm_edge
+    UNION
+    SELECT target, source FROM _gm_edge;
+
+    INSERT INTO _gm_seed(seed, ord)
+    SELECT u.seed, MIN(u.ord)::integer
+    FROM unnest(coalesce(p_seeds, ARRAY[]::text[])) WITH ORDINALITY AS u(seed, ord)
+    WHERE EXISTS (
+        SELECT 1
+        FROM _gm_adj a
+        WHERE a.node = u.seed OR a.neighbor = u.seed
     )
-    raise RuntimeError(msg)
+    GROUP BY u.seed;
+
+    SELECT count(*) INTO v_components FROM _gm_seed;
+    IF v_components = 0 THEN
+        RETURN;
+    END IF;
+
+    IF v_components = 1 THEN
+        RETURN QUERY
+        SELECT s.seed
+        FROM _gm_seed s
+        ORDER BY s.ord;
+        RETURN;
+    END IF;
+
+    INSERT INTO _gm_component(seed, component)
+    SELECT seed, seed
+    FROM _gm_seed;
+
+    INSERT INTO _gm_visited(node, origin, pred, ord)
+    SELECT seed, seed, seed, ord
+    FROM _gm_seed
+    ORDER BY ord;
+
+    INSERT INTO _gm_queue(node)
+    SELECT seed
+    FROM _gm_seed
+    ORDER BY ord;
+
+    LOOP
+        SELECT count(DISTINCT component) INTO v_components
+        FROM _gm_component;
+        EXIT WHEN v_components <= 1;
+
+        v_node := NULL;
+        v_origin := NULL;
+
+        SELECT q.node, v.origin
+        INTO v_node, v_origin
+        FROM _gm_queue q
+        JOIN _gm_visited v ON v.node = q.node
+        ORDER BY q.seq
+        LIMIT 1;
+
+        EXIT WHEN v_node IS NULL;
+
+        DELETE FROM _gm_queue WHERE node = v_node;
+
+        SELECT c.component
+        INTO v_origin_component
+        FROM _gm_component c
+        WHERE c.seed = v_origin;
+
+        FOR v_neighbor IN
+            SELECT a.neighbor
+            FROM _gm_adj a
+            WHERE a.node = v_node
+            ORDER BY a.neighbor
+        LOOP
+            v_neighbor_origin := NULL;
+
+            SELECT v.origin
+            INTO v_neighbor_origin
+            FROM _gm_visited v
+            WHERE v.node = v_neighbor;
+
+            IF v_neighbor_origin IS NULL THEN
+                INSERT INTO _gm_visited(node, origin, pred, ord)
+                SELECT v_neighbor, v_origin, v_node, s.ord
+                FROM _gm_seed s
+                WHERE s.seed = v_origin
+                ON CONFLICT (node) DO NOTHING;
+
+                INSERT INTO _gm_queue(node)
+                VALUES (v_neighbor)
+                ON CONFLICT (node) DO NOTHING;
+            ELSE
+                SELECT c.component
+                INTO v_neighbor_component
+                FROM _gm_component c
+                WHERE c.seed = v_neighbor_origin;
+
+                IF v_neighbor_component <> v_origin_component THEN
+                    INSERT INTO _gm_bridge(a, b)
+                    VALUES (LEAST(v_node, v_neighbor), GREATEST(v_node, v_neighbor))
+                    ON CONFLICT (a, b) DO NOTHING;
+
+                    UPDATE _gm_component
+                    SET component = LEAST(v_origin_component, v_neighbor_component)
+                    WHERE component IN (v_origin_component, v_neighbor_component);
+
+                    SELECT c.component
+                    INTO v_origin_component
+                    FROM _gm_component c
+                    WHERE c.seed = v_origin;
+                END IF;
+            END IF;
+        END LOOP;
+    END LOOP;
+
+    INSERT INTO _gm_kept(node)
+    SELECT seed
+    FROM _gm_seed;
+
+    FOR v_endpoint IN
+        SELECT x.endpoint
+        FROM (
+            SELECT a AS endpoint FROM _gm_bridge
+            UNION
+            SELECT b AS endpoint FROM _gm_bridge
+        ) AS x
+    LOOP
+        v_node := v_endpoint;
+        LOOP
+            INSERT INTO _gm_kept(node)
+            VALUES (v_node)
+            ON CONFLICT (node) DO NOTHING;
+
+            EXIT WHEN EXISTS (
+                SELECT 1 FROM _gm_seed s WHERE s.seed = v_node
+            );
+
+            v_pred := NULL;
+            SELECT v.pred INTO v_pred
+            FROM _gm_visited v
+            WHERE v.node = v_node;
+
+            EXIT WHEN v_pred IS NULL OR v_pred = v_node;
+            v_node := v_pred;
+        END LOOP;
+    END LOOP;
+
+    LOOP
+        WITH removable AS (
+            SELECT k.node
+            FROM _gm_kept k
+            LEFT JOIN _gm_seed s ON s.seed = k.node
+            WHERE s.seed IS NULL
+              AND (
+                  NOT EXISTS (
+                      SELECT 1
+                      FROM _gm_edge e
+                      JOIN _gm_kept kt ON kt.node = e.target
+                      WHERE e.source = k.node
+                  )
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM _gm_edge e
+                      JOIN _gm_kept ks ON ks.node = e.source
+                      WHERE e.target = k.node
+                  )
+              )
+        )
+        DELETE FROM _gm_kept k
+        USING removable r
+        WHERE k.node = r.node;
+
+        GET DIAGNOSTICS v_deleted = ROW_COUNT;
+        EXIT WHEN v_deleted = 0;
+    END LOOP;
+
+    RETURN QUERY
+    SELECT k.node
+    FROM _gm_kept k
+
+    UNION ALL
+
+    SELECT
+        '/.vfs'
+        || e.source
+        || '/__meta__/edges/out/'
+        || e.edge_type
+        || '/'
+        || ltrim(e.target, '/')
+    FROM _gm_edge e
+    JOIN _gm_kept ks ON ks.node = e.source
+    JOIN _gm_kept kt ON kt.node = e.target
+
+    ORDER BY 1;
+END;
+$fn$;
+"""
+
+_PREDECESSORS_SQL = """
+    SELECT DISTINCT o.source_path AS path
+    FROM {table} AS o
+    WHERE {where}
+      AND o.target_path = ANY(:seed_paths)
+      AND o.source_path <> ALL(:seed_paths)
+    ORDER BY o.source_path
+"""
+
+_SUCCESSORS_SQL = """
+    SELECT DISTINCT o.target_path AS path
+    FROM {table} AS o
+    WHERE {where}
+      AND o.source_path = ANY(:seed_paths)
+      AND o.target_path <> ALL(:seed_paths)
+    ORDER BY o.target_path
+"""
+
+_ANCESTORS_SQL = """
+    WITH RECURSIVE walk(node) AS (
+        SELECT DISTINCT o.source_path
+        FROM {table} AS o
+        WHERE {where}
+          AND o.target_path = ANY(:seed_paths)
+        UNION
+        SELECT DISTINCT o.source_path
+        FROM {table} AS o
+        JOIN walk AS w ON o.target_path = w.node
+        WHERE {where}
+    )
+    SELECT node AS path
+    FROM walk
+    WHERE node <> ALL(:seed_paths)
+    ORDER BY node
+"""
+
+_DESCENDANTS_SQL = """
+    WITH RECURSIVE walk(node) AS (
+        SELECT DISTINCT o.target_path
+        FROM {table} AS o
+        WHERE {where}
+          AND o.source_path = ANY(:seed_paths)
+        UNION
+        SELECT DISTINCT o.target_path
+        FROM {table} AS o
+        JOIN walk AS w ON o.source_path = w.node
+        WHERE {where}
+    )
+    SELECT node AS path
+    FROM walk
+    WHERE node <> ALL(:seed_paths)
+    ORDER BY node
+"""
+
+_NEIGHBORHOOD_SQL = """
+    WITH RECURSIVE valid_seeds(seed) AS (
+        SELECT DISTINCT seed
+        FROM unnest(:seed_paths) AS seed
+        WHERE EXISTS (
+            SELECT 1
+            FROM {table} AS o
+            WHERE {where}
+              AND (o.source_path = seed OR o.target_path = seed)
+        )
+    ),
+    walk(node, depth) AS (
+        SELECT seed, 0
+        FROM valid_seeds
+        UNION
+        SELECT
+            CASE
+                WHEN o.source_path = w.node THEN o.target_path
+                ELSE o.source_path
+            END,
+            w.depth + 1
+        FROM walk AS w
+        JOIN {table} AS o
+          ON {where}
+         AND (o.source_path = w.node OR o.target_path = w.node)
+        WHERE w.depth < :depth
+    )
+    SELECT DISTINCT node AS path
+    FROM walk
+    ORDER BY node
+"""
 
 
 class PostgresFileSystem(DatabaseFileSystem):
@@ -189,42 +511,45 @@ class PostgresFileSystem(DatabaseFileSystem):
     FULLTEXT_CONFIG: ClassVar[str] = "simple"
     VECTOR_INDEX_METHODS: ClassVar[tuple[str, ...]] = ("hnsw", "ivfflat")
 
+    _native_graph_verified: bool = False
+    _native_pattern_verified: bool = False
+    _native_fulltext_verified: bool = False
+    _native_vector_verified: bool = False
+
     def _pattern_schema_hint(self) -> str:
         """Return the required pg_trgm/path-index DDL contract."""
         table = self._resolve_table()
-        bare_table = str(self._model.__tablename__)
-        return (
-            "Provision the native Postgres pattern-search artifacts outside the application, for example:\n"
-            "  CREATE EXTENSION IF NOT EXISTS pg_trgm;\n"
-            f"  CREATE INDEX ix_{bare_table}_path_pattern\n"
-            f"  ON {table} (path text_pattern_ops)\n"
-            "  WHERE deleted_at IS NULL;\n"
-            f"  CREATE INDEX ix_{bare_table}_path_trgm_gin\n"
-            f"  ON {table} USING GIN (path gin_trgm_ops)\n"
-            "  WHERE deleted_at IS NULL;\n"
-            f"  CREATE INDEX ix_{bare_table}_content_trgm_gin\n"
-            f"  ON {table} USING GIN (content gin_trgm_ops)\n"
-            "  WHERE kind = 'file'\n"
-            "    AND content IS NOT NULL\n"
-            "    AND deleted_at IS NULL;"
-        )
+        bare = str(self._model.__tablename__)
+        return dedent(f"""\
+            Provision the native Postgres pattern-search artifacts outside the application, for example:
+              CREATE EXTENSION IF NOT EXISTS pg_trgm;
+              CREATE INDEX ix_{bare}_path_pattern
+              ON {table} (path text_pattern_ops)
+              WHERE deleted_at IS NULL;
+              CREATE INDEX ix_{bare}_path_trgm_gin
+              ON {table} USING GIN (path gin_trgm_ops)
+              WHERE deleted_at IS NULL;
+              CREATE INDEX ix_{bare}_content_trgm_gin
+              ON {table} USING GIN (content gin_trgm_ops)
+              WHERE kind = 'file'
+                AND content IS NOT NULL
+                AND deleted_at IS NULL;""")
 
     def _fulltext_schema_hint(self) -> str:
         """Return the required native FTS DDL contract for this backend."""
         table = self._resolve_table()
-        bare_table = str(self._model.__tablename__)
-        return (
-            "Provision the native FTS artifacts outside the application, for example:\n"
-            f"  ALTER TABLE {table}\n"
-            "  ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (\n"
-            f"      to_tsvector('{self.FULLTEXT_CONFIG}', coalesce(content, ''))\n"
-            "  ) STORED;\n"
-            f"  CREATE INDEX ix_{bare_table}_search_tsv_gin\n"
-            f"  ON {table} USING GIN (search_tsv)\n"
-            "  WHERE content IS NOT NULL\n"
-            "    AND deleted_at IS NULL\n"
-            "    AND kind != 'version';"
-        )
+        bare = str(self._model.__tablename__)
+        return dedent(f"""\
+            Provision the native FTS artifacts outside the application, for example:
+              ALTER TABLE {table}
+              ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (
+                  to_tsvector('{self.FULLTEXT_CONFIG}', coalesce(content, ''))
+              ) STORED;
+              CREATE INDEX ix_{bare}_search_tsv_gin
+              ON {table} USING GIN (search_tsv)
+              WHERE content IS NOT NULL
+                AND deleted_at IS NULL
+                AND kind != 'version';""")
 
     @staticmethod
     def _normalize_catalog_sql(value: str | None) -> str:
@@ -235,39 +560,185 @@ class PostgresFileSystem(DatabaseFileSystem):
         return normalized.replace("!=", "<>")
 
     @classmethod
-    def _has_live_search_predicate(cls, predicate: str | None) -> bool:
-        """Return whether *predicate* matches the live search partial-index contract."""
+    def _predicate_has_all(cls, predicate: str | None, *needed: str) -> bool:
         normalized = cls._normalize_catalog_sql(predicate)
-        if not normalized:
-            return False
-        return (
-            "content is not null" in normalized
-            and "deleted_at is null" in normalized
-            and "kind" in normalized
-            and "'version'" in normalized
-            and "<>" in normalized
+        return bool(normalized) and all(token in normalized for token in needed)
+
+    @staticmethod
+    def _require_index(
+        normalized_defs: list[tuple[str, str, str | None]],
+        using_pattern: str,
+        predicate_check: Callable[[str | None], bool],
+        requirement: str,
+        hint: str,
+    ) -> None:
+        matching = (pred for _, ixdef, pred in normalized_defs if re.search(using_pattern, ixdef))
+        if not any(predicate_check(pred) for pred in matching):
+            raise RuntimeError(f"{requirement} {hint}")
+
+    @classmethod
+    def _has_live_search_predicate(cls, predicate: str | None) -> bool:
+        return cls._predicate_has_all(
+            predicate, "content is not null", "deleted_at is null", "kind", "'version'", "<>"
         )
 
     @classmethod
     def _has_live_path_predicate(cls, predicate: str | None) -> bool:
-        normalized = cls._normalize_catalog_sql(predicate)
-        return bool(normalized) and "deleted_at is null" in normalized
+        return cls._predicate_has_all(predicate, "deleted_at is null")
 
     @classmethod
     def _has_live_file_content_predicate(cls, predicate: str | None) -> bool:
-        normalized = cls._normalize_catalog_sql(predicate)
-        return (
-            bool(normalized)
-            and "content is not null" in normalized
-            and "deleted_at is null" in normalized
-            and "kind" in normalized
-            and "'file'" in normalized
+        return cls._predicate_has_all(
+            predicate, "content is not null", "deleted_at is null", "kind", "'file'"
         )
 
     def _resolve_table(self) -> str:
         """Return the schema-qualified table name for raw ``text()`` SQL."""
         table = str(self._model.__tablename__)
         return f"{self._schema}.{table}" if self._schema else table
+
+    def _native_graph_function_name(self) -> str:
+        """Return the schema-qualified native meeting-subgraph function name."""
+        name = "grover_meeting_subgraph"
+        return f"{self._schema}.{name}" if self._schema else name
+
+    def _graph_schema_hint(self) -> str:
+        """Return the explicit provisioning contract for native graph traversal."""
+        return (
+            "Provision the native Postgres graph artifacts outside request handling by calling "
+            "PostgresFileSystem.install_native_graph_schema() during setup, or by installing the "
+            f"function '{self._native_graph_function_name()}(text[], text)' against '{self._resolve_table()}'."
+        )
+
+    def _graph_scope_prefix(self, user_id: str | None) -> str | None:
+        """Return the scoped path prefix used by native graph SQL."""
+        if self._user_scoped and user_id:
+            return f"/{user_id}/"
+        return None
+
+    def _apply_user_scope(self, params: dict[str, object], user_id: str | None) -> str:
+        """Return a ``WHERE``-ready LIKE clause and bind ``:user_scope`` in *params*."""
+        if not (self._user_scoped and user_id):
+            return ""
+        params["user_scope"] = f"/{user_id}/%"
+        return "AND o.path LIKE :user_scope ESCAPE '\\'"
+
+    def _live_graph_where(self, alias: str, *, user_id: str | None) -> tuple[str, dict[str, object]]:
+        """Return the common live-edge predicate and bound params."""
+        params: dict[str, object] = {}
+        scope_clause = ""
+        scope_prefix = self._graph_scope_prefix(user_id)
+        if scope_prefix is not None:
+            params["scope_prefix"] = scope_prefix
+            scope_clause = (
+                f"AND {alias}.source_path LIKE :scope_prefix || '%'\n"
+                f"              AND {alias}.target_path LIKE :scope_prefix || '%'"
+            )
+        return (
+            f"""{alias}.kind = 'edge'
+              AND {alias}.deleted_at IS NULL
+              AND {alias}.source_path IS NOT NULL
+              AND {alias}.target_path IS NOT NULL
+              AND {alias}.edge_type IS NOT NULL
+              {scope_clause}""",
+            params,
+        )
+
+    def _candidate_paths(
+        self,
+        path: str | None,
+        candidates: VFSResult | None,
+    ) -> list[str]:
+        """Return de-duplicated candidate paths in stable input order."""
+        seed_result = self._to_candidates(path, candidates)
+        return list(dict.fromkeys(entry.path for entry in seed_result.entries))
+
+    async def install_native_graph_schema(self) -> None:
+        """Install the explicit native graph function required by this backend."""
+        sql = _NATIVE_MEETING_SUBGRAPH_SQL.format(
+            function_name=self._native_graph_function_name(),
+            table=self._resolve_table(),
+        )
+        async with self._use_session() as session:
+            await session.execute(text(sql))
+        self._native_graph_verified = False
+
+    async def verify_native_graph_schema(self) -> None:
+        """Confirm the database has the native graph artifacts required by this backend."""
+        async with self._use_session() as session:
+            await self._verify_graph_schema(session)
+
+    async def _verify_graph_schema(self, session: AsyncSession) -> None:
+        if self._native_graph_verified:
+            return
+
+        table = self._resolve_table()
+        object_id = (await session.execute(text("SELECT to_regclass(:table)::oid"), {"table": table})).scalar()
+        if object_id is None:
+            raise RuntimeError(
+                f"PostgresFileSystem requires table '{table}' to exist before native graph traversal can run."
+            )
+
+        signature = f"{self._native_graph_function_name()}(text[],text)"
+        function_exists = (
+            await session.execute(
+                text("SELECT to_regprocedure(:signature)"),
+                {"signature": signature},
+            )
+        ).scalar()
+        if function_exists is None:
+            raise RuntimeError(
+                "PostgresFileSystem requires the native graph traversal function "
+                f"'{self._native_graph_function_name()}(text[], text)'. {self._graph_schema_hint()}"
+            )
+
+        self._native_graph_verified = True
+
+    async def _run_native_graph_node_query(
+        self,
+        *,
+        function: str,
+        sql: str,
+        params: dict[str, object],
+        user_id: str | None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        rows = (
+            await session.execute(
+                text(sql).bindparams(bindparam("seed_paths", type_=_ARRAY_TEXT)),
+                params,
+            )
+        ).scalars()
+        result = VFSResult(function=function, entries=[Entry(path=path) for path in rows])
+        return self._unscope_result(result, user_id)
+
+    async def _run_graph_traversal(
+        self,
+        *,
+        function: str,
+        sql_template: str,
+        path: str | None,
+        candidates: VFSResult | None,
+        user_id: str | None,
+        session: AsyncSession,
+        extra_params: dict[str, object] | None = None,
+    ) -> VFSResult:
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        seed_paths = self._candidate_paths(path, candidates)
+        if not seed_paths:
+            return VFSResult(function=function, entries=[])
+
+        graph_where, params = self._live_graph_where("o", user_id=user_id)
+        params["seed_paths"] = seed_paths
+        if extra_params:
+            params.update(extra_params)
+
+        sql = sql_template.format(table=self._resolve_table(), where=graph_where)
+        return await self._run_native_graph_node_query(
+            function=function, sql=sql, params=params, user_id=user_id, session=session,
+        )
 
     async def verify_native_search_schema(self) -> None:
         """Confirm the database has the native artifacts required by this backend."""
@@ -278,7 +749,7 @@ class PostgresFileSystem(DatabaseFileSystem):
                 await self._verify_vector_schema(session)
 
     async def _verify_pattern_schema(self, session: AsyncSession) -> None:
-        if getattr(self, "_native_pattern_verified", False):
+        if self._native_pattern_verified:
             return
 
         table = self._resolve_table()
@@ -320,46 +791,36 @@ class PostgresFileSystem(DatabaseFileSystem):
             (row.index_name, self._normalize_catalog_sql(row.indexdef), row.predicate) for row in index_rows
         ]
 
-        path_pattern_indexes = [
-            (name, predicate)
-            for name, indexdef, predicate in normalized_defs
-            if re.search(r"using\s+btree\s*\(\s*path\s+text_pattern_ops\s*\)", indexdef) is not None
-        ]
-        if not any(self._has_live_path_predicate(predicate) for _, predicate in path_pattern_indexes):
-            raise RuntimeError(
-                f"PostgresFileSystem requires a partial B-tree text_pattern_ops index on '{table}.path' "
-                "with predicate `deleted_at IS NULL`. "
-                f"{self._pattern_schema_hint()}"
-            )
-
-        path_trgm_indexes = [
-            (name, predicate)
-            for name, indexdef, predicate in normalized_defs
-            if re.search(r"using\s+gin\s*\(\s*path\s+gin_trgm_ops\s*\)", indexdef) is not None
-        ]
-        if not any(self._has_live_path_predicate(predicate) for _, predicate in path_trgm_indexes):
-            raise RuntimeError(
-                f"PostgresFileSystem requires a partial trigram GIN index on '{table}.path' "
-                "with predicate `deleted_at IS NULL`. "
-                f"{self._pattern_schema_hint()}"
-            )
-
-        content_trgm_indexes = [
-            (name, predicate)
-            for name, indexdef, predicate in normalized_defs
-            if re.search(r"using\s+gin\s*\(\s*content\s+gin_trgm_ops\s*\)", indexdef) is not None
-        ]
-        if not any(self._has_live_file_content_predicate(predicate) for _, predicate in content_trgm_indexes):
-            raise RuntimeError(
-                f"PostgresFileSystem requires a partial trigram GIN index on '{table}.content' "
-                "with predicate `kind = 'file' AND content IS NOT NULL AND deleted_at IS NULL`. "
-                f"{self._pattern_schema_hint()}"
-            )
+        hint = self._pattern_schema_hint()
+        self._require_index(
+            normalized_defs,
+            r"using\s+btree\s*\(\s*path\s+text_pattern_ops\s*\)",
+            self._has_live_path_predicate,
+            f"PostgresFileSystem requires a partial B-tree text_pattern_ops index on '{table}.path' "
+            "with predicate `deleted_at IS NULL`.",
+            hint,
+        )
+        self._require_index(
+            normalized_defs,
+            r"using\s+gin\s*\(\s*path\s+gin_trgm_ops\s*\)",
+            self._has_live_path_predicate,
+            f"PostgresFileSystem requires a partial trigram GIN index on '{table}.path' "
+            "with predicate `deleted_at IS NULL`.",
+            hint,
+        )
+        self._require_index(
+            normalized_defs,
+            r"using\s+gin\s*\(\s*content\s+gin_trgm_ops\s*\)",
+            self._has_live_file_content_predicate,
+            f"PostgresFileSystem requires a partial trigram GIN index on '{table}.content' "
+            "with predicate `kind = 'file' AND content IS NOT NULL AND deleted_at IS NULL`.",
+            hint,
+        )
 
         self._native_pattern_verified = True
 
     async def _verify_fulltext_schema(self, session: AsyncSession) -> None:
-        if getattr(self, "_native_fulltext_verified", False):
+        if self._native_fulltext_verified:
             return
 
         table = self._resolve_table()
@@ -467,7 +928,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         self._native_fulltext_verified = True
 
     async def _verify_vector_schema(self, session: AsyncSession) -> None:
-        if getattr(self, "_native_vector_verified", False):
+        if self._native_vector_verified:
             return
 
         table = self._resolve_table()
@@ -540,7 +1001,7 @@ class PostgresFileSystem(DatabaseFileSystem):
                       AND opc.opcname = :opclass
                     LIMIT 1
                 """).bindparams(
-                    bindparam("methods", type_=cast("Any", ARRAY(Text()))),
+                    bindparam("methods", type_=_ARRAY_TEXT),
                 ),
                 {
                     "oid": object_id,
@@ -564,6 +1025,108 @@ class PostgresFileSystem(DatabaseFileSystem):
 
     def _structural_regex_clause(self, col: str, param_name: str, regex_pattern: str) -> tuple[str, str]:
         return f"{col} ~ {param_name}", _python_regex_to_postgres(regex_pattern)
+
+    async def _predecessors_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="predecessors",
+            sql_template=_PREDECESSORS_SQL,
+            path=path, candidates=candidates, user_id=user_id, session=session,
+        )
+
+    async def _successors_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="successors",
+            sql_template=_SUCCESSORS_SQL,
+            path=path, candidates=candidates, user_id=user_id, session=session,
+        )
+
+    async def _ancestors_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="ancestors",
+            sql_template=_ANCESTORS_SQL,
+            path=path, candidates=candidates, user_id=user_id, session=session,
+        )
+
+    async def _descendants_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="descendants",
+            sql_template=_DESCENDANTS_SQL,
+            path=path, candidates=candidates, user_id=user_id, session=session,
+        )
+
+    async def _neighborhood_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        depth: int = 2,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="neighborhood",
+            sql_template=_NEIGHBORHOOD_SQL,
+            path=path, candidates=candidates, user_id=user_id, session=session,
+            extra_params={"depth": depth},
+        )
+
+    async def _meeting_subgraph_impl(
+        self,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        seed_paths = self._candidate_paths(None, candidates)
+        if not seed_paths:
+            return VFSResult(function="meeting_subgraph", entries=[])
+
+        sql = f"""
+            SELECT path
+            FROM {self._native_graph_function_name()}(:seed_paths, :scope_prefix)
+            ORDER BY path
+        """
+        rows = (
+            await session.execute(
+                text(sql).bindparams(bindparam("seed_paths", type_=_ARRAY_TEXT)),
+                {
+                    "seed_paths": seed_paths,
+                    "scope_prefix": self._graph_scope_prefix(user_id),
+                },
+            )
+        ).scalars()
+        result = VFSResult(function="meeting_subgraph", entries=[Entry(path=path) for path in rows])
+        return self._unscope_result(result, user_id)
 
     async def _lexical_search_impl(
         self,
@@ -595,10 +1158,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         unique_terms = list(dict.fromkeys(terms))
         tsquery_sql, tsquery_params = _build_plainto_tsquery(unique_terms, config=self.FULLTEXT_CONFIG)
         params: dict[str, object] = {"k": k, **tsquery_params}
-        user_scope_clause = ""
-        if self._user_scoped and user_id:
-            user_scope_clause = "AND o.path LIKE :user_scope ESCAPE '\\'"
-            params["user_scope"] = f"/{user_id}/%"
+        user_scope_clause = self._apply_user_scope(params, user_id)
 
         ranking_sql = text(f"""
             WITH query AS (
@@ -910,10 +1470,7 @@ class PostgresFileSystem(DatabaseFileSystem):
             params["candidate_paths"] = [entry.path for entry in candidates.entries]
             candidate_clause = "AND o.path = ANY(:candidate_paths)"
 
-        user_scope_clause = ""
-        if self._user_scoped and user_id:
-            user_scope_clause = "AND o.path LIKE :user_scope ESCAPE '\\'"
-            params["user_scope"] = f"/{user_id}/%"
+        user_scope_clause = self._apply_user_scope(params, user_id)
 
         sql = text(f"""
             SELECT o.path, o.{vector_spec.column_name} {distance_operator} :query_vector AS distance
@@ -927,7 +1484,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         """)
         bind_params = [bindparam("query_vector", type_=vector_type.pgvector_sqlalchemy_type())]
         if candidates is not None:
-            bind_params.append(bindparam("candidate_paths", type_=cast("Any", ARRAY(Text()))))
+            bind_params.append(bindparam("candidate_paths", type_=_ARRAY_TEXT))
         sql = sql.bindparams(*bind_params)
         rows = (await session.execute(sql, params)).all()
         result = VFSResult(

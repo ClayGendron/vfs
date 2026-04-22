@@ -40,7 +40,7 @@ g.cli('grep "authenticate" | pagerank | top 15')
 g.close()
 ```
 
-`PostgresFileSystem` is the explicit PostgreSQL-native backend. It keeps the same public VFS API as `DatabaseFileSystem`, but pushes lexical search, grep, glob, and native pgvector search into Postgres. If you pass `vector_store=`, that override still wins for vector and semantic search.
+`PostgresFileSystem` is the explicit PostgreSQL-native backend. It keeps the same public VFS API as `DatabaseFileSystem`, but pushes lexical search, grep, glob, graph traversal, and native pgvector search into Postgres. If you pass `vector_store=`, that override still wins for vector and semantic search.
 
 > Every CLI command maps directly to a Python method. 
 >

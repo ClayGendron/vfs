@@ -333,6 +333,28 @@ button { font: inherit; cursor: pointer; }
 }
 .value-body { font-size: 14px; line-height: 1.6; color: var(--muted); }
 
+/* ─── palette-mode label (protocol page) ─── */
+.palette-mode-label {
+  font-family: var(--font-mono, "Geist Mono"), monospace;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--quiet, var(--muted));
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.palette-mode-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+}
+.palette-mode-dot.light { background: var(--bg); }
+.palette-mode-dot.dark { background: var(--fg); border-color: var(--fg); }
+
 /* ─── color swatches ─── */
 .palette {
   display: grid;
@@ -623,6 +645,7 @@ body.intro {
 
 /* ─── direction body fallback ─── */
 body.direction-body { background: var(--bg, #eeeae0); color: var(--fg, #1d1c18); }
+body.direction-body.protocol { background: #f1f1ee; color: #0b0b0d; }
 
 /* ─── utility ─── */
 .mono { font-family: var(--font-mono, "Geist Mono"), monospace; }
@@ -640,6 +663,407 @@ body.direction-body { background: var(--bg, #eeeae0); color: var(--fg, #1d1c18);
 .mute { color: var(--muted); }
 .quiet { color: var(--quiet, var(--muted)); }
 .accent { color: var(--accent); }
+
+/* ─── /colors · specimen sheet ────────────────────────────────── */
+body.colors {
+  background: #0f0f12;
+  color: #e8e3d6;
+}
+
+.direction.colors {
+  background: #0f0f12;
+  color: #e8e3d6;
+}
+
+.colors-page {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  --gutter: 9vw;
+}
+
+/* ── header ─────────────────────────────────────────────────────── */
+.colors-header {
+  padding: 64px var(--gutter) 88px;
+  background: #0f0f12;
+  color: #e8e3d6;
+  border-bottom: 1px solid rgba(232, 227, 214, 0.16);
+  position: relative;
+  overflow: hidden;
+}
+.colors-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(232, 227, 214, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232, 227, 214, 0.04) 1px, transparent 1px);
+  background-size: 56px 56px;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse at 30% 40%, black 10%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse at 30% 40%, black 10%, transparent 75%);
+}
+.colors-header > * { position: relative; }
+
+.colors-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  font-family: "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(232, 227, 214, 0.5);
+}
+.colors-header-top .colors-header-right {
+  text-align: right;
+  line-height: 1.9;
+}
+.colors-header-top .colors-header-tag { color: #e8e3d6; }
+.colors-header-top .colors-header-date {
+  margin-top: 4px;
+  color: rgba(232, 227, 214, 0.42);
+}
+
+.colors-title {
+  font-family: "Saira", "Space Grotesk", system-ui, sans-serif;
+  font-weight: 500;
+  font-size: clamp(96px, 18vw, 260px);
+  line-height: 0.88;
+  letter-spacing: -0.01em;
+  margin: 56px 0 48px;
+  color: #e8e3d6;
+}
+.colors-title-dot {
+  color: #d97706;
+  margin: 0 0.1em;
+  font-weight: 300;
+}
+
+.colors-header-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 48px;
+  align-items: end;
+}
+@media (max-width: 820px) {
+  .colors-header-grid { grid-template-columns: 1fr; gap: 28px; }
+}
+.colors-header-lede {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(19px, 1.7vw, 23px);
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  color: rgba(232, 227, 214, 0.86);
+  margin: 0;
+  max-width: 640px;
+}
+.colors-header-lede em { color: #e8e3d6; font-style: italic; font-weight: 400; }
+.colors-header-lede strong { color: #e8e3d6; font-weight: 500; }
+
+.colors-header-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 28px;
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: rgba(232, 227, 214, 0.58);
+}
+.colors-header-legend > div {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.colors-header-legend span {
+  color: #e8e3d6;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+/* ── sheet: shared chrome over each palette ─────────────────────── */
+.colors-sheet {
+  background: #0f0f12;
+  color: #e8e3d6;
+  padding: 72px var(--gutter) 0;
+  position: relative;
+  border-bottom: 1px solid rgba(232, 227, 214, 0.10);
+}
+.colors-sheet:last-of-type { border-bottom: 0; }
+
+.colors-sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(232, 227, 214, 0.5);
+  margin-bottom: 28px;
+}
+.colors-catalogue {
+  display: flex;
+  gap: 18px;
+  align-items: baseline;
+}
+.colors-num {
+  color: #e8e3d6;
+  font-weight: 500;
+}
+.colors-name {
+  font-size: 11px;
+  letter-spacing: 0.36em;
+  color: #e8e3d6;
+}
+.colors-reg {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  opacity: 0.62;
+}
+.colors-regmark {
+  color: #e8e3d6;
+  opacity: 0.55;
+}
+
+.colors-sheet-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 56px;
+  align-items: start;
+  padding-bottom: 56px;
+  border-bottom: 1px solid rgba(232, 227, 214, 0.10);
+  margin-bottom: 56px;
+}
+@media (max-width: 900px) {
+  .colors-sheet-meta { grid-template-columns: 1fr; gap: 24px; }
+}
+.colors-sheet-mood {
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: rgba(232, 227, 214, 0.62);
+}
+.colors-sheet-lede {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(20px, 1.7vw, 26px);
+  line-height: 1.45;
+  letter-spacing: -0.008em;
+  color: #e8e3d6;
+  margin: 0;
+  max-width: 640px;
+}
+.colors-sheet-notes {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
+  color: rgba(232, 227, 214, 0.64);
+  max-width: 480px;
+  grid-column: 2;
+  margin-top: 16px;
+}
+@media (max-width: 900px) { .colors-sheet-notes { grid-column: 1; } }
+
+/* ── paired mode cards (light + dark) ───────────────────────────── */
+.colors-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 0 calc(-1 * var(--gutter));
+  border-top: 1px solid rgba(232, 227, 214, 0.10);
+}
+@media (max-width: 1000px) {
+  .colors-pair { grid-template-columns: 1fr; }
+}
+
+.colors-mode {
+  padding: 56px 6vw 72px;
+  position: relative;
+  transition: background 0.3s;
+  min-height: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+.colors-mode + .colors-mode {
+  border-left: 1px solid var(--rule);
+}
+@media (max-width: 1000px) {
+  .colors-mode + .colors-mode {
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+  }
+}
+
+.colors-mode-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+.colors-mode-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg);
+  font-weight: 500;
+  letter-spacing: 0.34em;
+}
+.colors-mode-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+.colors-mode-meta { color: var(--muted); letter-spacing: 0.28em; }
+
+.colors-mode-wordmark {
+  font-family: "Saira", "Space Grotesk", system-ui, sans-serif;
+  font-weight: 500;
+  font-size: clamp(96px, 13vw, 180px);
+  line-height: 0.82;
+  letter-spacing: -0.025em;
+  color: var(--fg);
+  position: relative;
+  display: inline-block;
+  align-self: flex-start;
+}
+.colors-mode-wordmark::after {
+  content: "";
+  display: inline-block;
+  width: 0.14em;
+  height: 0.14em;
+  background: var(--accent);
+  border-radius: 50%;
+  vertical-align: baseline;
+  margin-left: 0.08em;
+  margin-bottom: 0.06em;
+}
+
+/* chips: three per row inside each mode card */
+.colors-chips {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+@media (max-width: 520px) {
+  .colors-chips { grid-template-columns: repeat(2, 1fr); }
+}
+
+.colors-chip {
+  aspect-ratio: 1 / 1.18;
+  padding: 14px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-family: "Geist Mono", monospace;
+  border-radius: 2px;
+  position: relative;
+  transition: transform 0.25s ease;
+  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
+}
+.colors-chip:hover { transform: translateY(-3px); }
+
+.colors-chip-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+.colors-chip-reg { opacity: 0.42; font-size: 13px; line-height: 1; }
+
+.colors-chip-bottom { display: flex; flex-direction: column; gap: 4px; }
+.colors-chip-name {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 20px;
+  letter-spacing: -0.012em;
+  font-weight: 500;
+  line-height: 1.05;
+}
+.colors-chip-hex {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  opacity: 0.82;
+}
+
+/* in-mode demo: install + sample side by side or stacked */
+.colors-mode-demo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin-top: auto;
+}
+
+.colors-install {
+  all: unset;
+  font-family: "Geist Mono", monospace;
+  font-size: 14px;
+  padding: 18px 22px;
+  background: var(--ink-sample);
+  color: var(--bg);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: transform 0.18s ease;
+  box-sizing: border-box;
+}
+.colors-install:hover { transform: translateX(2px); }
+.colors-install-sigil { color: var(--accent); font-weight: 500; }
+.colors-install-cmd { flex: 1; }
+.colors-install-flag {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--bg) 60%, transparent);
+}
+
+.colors-sample {
+  margin: 0;
+  padding: 18px 22px;
+  background: var(--ink-sample);
+  color: color-mix(in oklab, var(--bg) 92%, white);
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+  border-radius: 2px;
+}
+
+/* ── page footer ────────────────────────────────────────────────── */
+.colors-footer {
+  padding: 48px var(--gutter);
+  background: #0f0f12;
+  color: rgba(232, 227, 214, 0.5);
+  font-family: "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid rgba(232, 227, 214, 0.16);
+}
+
+/* colors selection (no accent-tinted halo, just high contrast) */
+.direction.colors ::selection {
+  background: color-mix(in oklab, var(--accent) 70%, transparent);
+  color: var(--bg);
+}
 
 /* ─── selection ─── */
 .direction ::selection {

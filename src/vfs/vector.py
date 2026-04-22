@@ -32,7 +32,7 @@ Usage::
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_core import core_schema
 from sqlalchemy import Text
@@ -214,9 +214,14 @@ class VectorType(TypeDecorator[Vector]):
         if self.postgres_native and getattr(dialect, "name", None) == "postgresql":
             if isinstance(value, (list, tuple)):
                 raw_items = cast("list[object] | tuple[object, ...]", value)
+            elif hasattr(value, "tolist"):
+                raw_items = cast("list[object]", cast("Any", value).tolist())
             else:
-                msg = f"Vector read: expected iterable pgvector value, got {type(value).__name__}"
-                raise ValueError(msg)
+                try:
+                    raw_items = list(cast("Any", value))
+                except TypeError as exc:
+                    msg = f"Vector read: expected iterable pgvector value, got {type(value).__name__}"
+                    raise ValueError(msg) from exc
         else:
             if not isinstance(value, (str, bytes, bytearray)):
                 msg = f"Vector read: expected JSON text, got {type(value).__name__}"

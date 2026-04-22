@@ -176,7 +176,19 @@ async def _seed_graph(
 
 
 def _node_paths(result: VFSResult) -> set[str]:
-    return {entry.path for entry in result.entries if decompose_edge(entry.path) is None}
+    return {entry.path for entry in result.entries if not _is_connection_path(entry.path)}
+
+
+def _edge_paths(result: VFSResult) -> set[str]:
+    return {entry.path for entry in result.entries if _is_connection_path(entry.path)}
+
+
+def _is_connection_path(path: str) -> bool:
+    return decompose_edge(path) is not None
+
+
+def _connection_path(source: str, target: str, edge_type: str) -> str:
+    return edge_out_path(source, target, edge_type)
 
 
 def _collect_index_names(plan_node: object) -> set[str]:
@@ -927,30 +939,69 @@ class TestMeetingSubgraphSpecCompatibility:
 
         assert result.success
         assert _node_paths(result) == {"/ghost/a.py", "/ghost/b.py"}
-        assert edge_out_path("/ghost/a.py", "/ghost/b.py", "imports") in result.paths
+        assert _connection_path("/ghost/a.py", "/ghost/b.py", "imports") in result.paths
 
 
-class TestMeetingSubgraphNativeContract:
-    @pytest.mark.xfail(strict=True, reason="Native Postgres graph schema hooks are not implemented yet.")
-    async def test_exposes_explicit_native_graph_schema_hooks(self, postgres_legacy_db):
-        assert hasattr(postgres_legacy_db, "verify_native_graph_schema")
-        assert hasattr(postgres_legacy_db, "install_native_graph_schema")
+class TestVerifyNativeGraphSchema:
+    async def test_success(self, postgres_legacy_db):
+        await postgres_legacy_db.verify_native_graph_schema()
 
-    @pytest.mark.xfail(strict=True, reason="Postgres meeting_subgraph still delegates to the Rustworkx cache.")
-    async def test_does_not_delegate_to_cached_rustworkx_graph(self, postgres_legacy_db, monkeypatch):
+    async def test_missing_function(self, postgres_legacy_db, engine):
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("DROP FUNCTION IF EXISTS grover_meeting_subgraph(text[], text)"))
+        with pytest.raises(RuntimeError, match="native graph traversal function"):
+            await postgres_legacy_db.verify_native_graph_schema()
+
+
+class TestNativeGraphTraversal:
+    async def test_predecessors_successors_ancestors_and_descendants(self, postgres_legacy_db):
         await _seed_graph(
             postgres_legacy_db,
-            nodes=("/a.py", "/b.py", "/c.py"),
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py", "/isolated.py"),
             edges=(
                 ("/a.py", "/b.py", "imports"),
                 ("/b.py", "/c.py", "imports"),
+                ("/d.py", "/b.py", "calls"),
             ),
         )
 
-        async def _boom(*args, **kwargs):
-            raise AssertionError("delegated to cached RustworkxGraph")
+        assert (await postgres_legacy_db.predecessors(path="/b.py")).paths == ("/a.py", "/d.py")
+        assert (await postgres_legacy_db.successors(path="/b.py")).paths == ("/c.py",)
+        assert (await postgres_legacy_db.ancestors(path="/c.py")).paths == ("/a.py", "/b.py", "/d.py")
+        assert (await postgres_legacy_db.descendants(path="/a.py")).paths == ("/b.py", "/c.py")
+        assert (await postgres_legacy_db.neighborhood(path="/isolated.py", depth=2)).paths == ()
 
-        monkeypatch.setattr(postgres_legacy_db._graph, "meeting_subgraph", _boom)
+    async def test_neighborhood_returns_nodes_only_with_bounded_undirected_expansion(self, postgres_legacy_db):
+        await _seed_graph(
+            postgres_legacy_db,
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py", "/e.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/c.py", "imports"),
+                ("/d.py", "/b.py", "calls"),
+                ("/c.py", "/e.py", "imports"),
+            ),
+        )
+
+        result = await postgres_legacy_db.neighborhood(
+            candidates=VFSResult(entries=[Entry(path="/b.py")]),
+            depth=1,
+        )
+
+        assert result.success
+        assert _node_paths(result) == {"/a.py", "/b.py", "/c.py", "/d.py"}
+        assert not _edge_paths(result)
+
+    async def test_meeting_subgraph_returns_nodes_and_edge_entries(self, postgres_legacy_db):
+        await _seed_graph(
+            postgres_legacy_db,
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/c.py", "imports"),
+                ("/a.py", "/d.py", "imports"),
+            ),
+        )
 
         result = await postgres_legacy_db.meeting_subgraph(
             VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
@@ -958,3 +1009,90 @@ class TestMeetingSubgraphNativeContract:
 
         assert result.success
         assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
+        assert _edge_paths(result) == {
+            _connection_path("/a.py", "/b.py", "imports"),
+            _connection_path("/b.py", "/c.py", "imports"),
+        }
+
+    async def test_meeting_subgraph_is_deterministic_for_tie_case(self, postgres_legacy_db):
+        await _seed_graph(
+            postgres_legacy_db,
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/d.py", "imports"),
+                ("/a.py", "/c.py", "imports"),
+                ("/c.py", "/d.py", "imports"),
+            ),
+        )
+
+        result = await postgres_legacy_db.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/d.py")])
+        )
+
+        assert result.success
+        assert _node_paths(result) == {"/a.py", "/b.py", "/d.py"}
+        assert _edge_paths(result) == {
+            _connection_path("/a.py", "/b.py", "imports"),
+            _connection_path("/b.py", "/d.py", "imports"),
+        }
+
+    async def test_filters_other_users_in_native_graph_queries(self, postgres_legacy_db):
+        engine = postgres_legacy_db._engine
+        assert engine is not None
+        scoped_fs = PostgresFileSystem(engine=engine, user_scoped=True)
+        async with scoped_fs._use_session() as session:
+            await scoped_fs._write_impl("/a.py", "alice", user_id="alice", session=session)
+            await scoped_fs._write_impl("/b.py", "alice", user_id="alice", session=session)
+            await scoped_fs._write_impl("/a.py", "bob", user_id="bob", session=session)
+            await scoped_fs._write_impl("/b.py", "bob", user_id="bob", session=session)
+            await scoped_fs._mkedge_impl("/a.py", "/b.py", "imports", user_id="alice", session=session)
+            await scoped_fs._mkedge_impl("/a.py", "/b.py", "imports", user_id="bob", session=session)
+
+        result = await scoped_fs.successors(path="/a.py", user_id="alice")
+        assert result.paths == ("/b.py",)
+
+        result = await scoped_fs.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/b.py")]),
+            user_id="alice",
+        )
+        assert _node_paths(result) == {"/a.py", "/b.py"}
+        assert _edge_paths(result) == {_connection_path("/a.py", "/b.py", "imports")}
+
+    async def test_does_not_delegate_to_cached_rustworkx_graph(self, postgres_legacy_db, monkeypatch):
+        await _seed_graph(
+            postgres_legacy_db,
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/c.py", "imports"),
+                ("/d.py", "/b.py", "calls"),
+            ),
+        )
+
+        async def _boom(*args, **kwargs):
+            raise AssertionError("delegated to cached RustworkxGraph")
+
+        for method_name in (
+            "predecessors",
+            "successors",
+            "ancestors",
+            "descendants",
+            "neighborhood",
+            "meeting_subgraph",
+        ):
+            monkeypatch.setattr(postgres_legacy_db._graph, method_name, _boom)
+
+        assert (await postgres_legacy_db.predecessors(path="/b.py")).paths == ("/a.py", "/d.py")
+        assert (await postgres_legacy_db.successors(path="/b.py")).paths == ("/c.py",)
+        assert (await postgres_legacy_db.ancestors(path="/c.py")).paths == ("/a.py", "/b.py", "/d.py")
+        assert (await postgres_legacy_db.descendants(path="/a.py")).paths == ("/b.py", "/c.py")
+        assert set((await postgres_legacy_db.neighborhood(path="/b.py", depth=1)).paths) == {
+            "/a.py",
+            "/b.py",
+            "/c.py",
+            "/d.py",
+        }
+        assert _node_paths(
+            await postgres_legacy_db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")]))
+        ) == {"/a.py", "/b.py", "/c.py"}

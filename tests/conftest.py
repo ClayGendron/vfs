@@ -268,7 +268,9 @@ async def postgres_native_db(request: pytest.FixtureRequest, engine, postgres_ve
         pytest.skip("requires --postgres flag and a running PostgreSQL instance")
     model = postgres_native_vfs_object_model(dimension=postgres_vector_dimension)
     await _provision_postgres_native_search(engine, model)
-    return PostgresFileSystem(engine=engine, model=model)
+    fs = PostgresFileSystem(engine=engine, model=model)
+    await fs.install_native_graph_schema()
+    return fs
 
 
 @pytest.fixture
@@ -276,7 +278,9 @@ async def postgres_legacy_db(request: pytest.FixtureRequest, engine):
     if not request.config.getoption("--postgres"):
         pytest.skip("requires --postgres flag and a running PostgreSQL instance")
     await _provision_postgres_fulltext(engine)
-    return PostgresFileSystem(engine=engine)
+    fs = PostgresFileSystem(engine=engine)
+    await fs.install_native_graph_schema()
+    return fs
 
 
 @pytest.fixture

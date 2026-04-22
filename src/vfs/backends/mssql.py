@@ -410,30 +410,28 @@ class MSSQLFileSystem(DatabaseFileSystem):
             params["pattern"] = effective_pattern
             params["flags"] = sql_flags
 
+        where_body = f"""
+            o.kind = 'file'
+              AND o.deleted_at IS NULL
+              {content_not_null}
+              {regex_clause}
+              {filter_clause}
+        """
         literal_terms = _extract_literal_terms(effective_pattern) if not invert_match else []
         if literal_terms:
-            contains_expr = " AND ".join(_quote_contains_term(t) for t in literal_terms)
-            params["expr"] = contains_expr
+            params["expr"] = " AND ".join(_quote_contains_term(t) for t in literal_terms)
             sql = text(f"""
                 SELECT {top_clause}{select_cols}
                 FROM CONTAINSTABLE({table}, content, :expr) AS ct
                 INNER JOIN {table} AS o ON o.id = ct.[KEY]
-                WHERE o.kind = 'file'
-                  AND o.deleted_at IS NULL
-                  {content_not_null}
-                  {regex_clause}
-                  {filter_clause}
+                WHERE {where_body}
                 ORDER BY ct.[RANK] DESC
             """)
         else:
             sql = text(f"""
                 SELECT {top_clause}{select_cols}
                 FROM {table} AS o
-                WHERE o.kind = 'file'
-                  AND o.deleted_at IS NULL
-                  {content_not_null}
-                  {regex_clause}
-                  {filter_clause}
+                WHERE {where_body}
                 ORDER BY o.path
                 OPTION (MAXDOP 1)
             """)

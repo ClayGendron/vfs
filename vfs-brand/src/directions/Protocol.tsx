@@ -1,35 +1,29 @@
 import type { CSSProperties } from "react";
-import {
-  Section,
-  Palette,
-  TypeSystem,
-  Values,
-  Voice,
-  Tradeoff,
-  SpecHero,
-  NotesBlock,
-} from "../components/Shared";
+import { Section, Palette, TypeSystem, Values, Voice, SpecHero } from "../components/Shared";
 
-// Protocol — agent-era substrate. Soft bone paper, muted sage-teal signal.
-// Palette is pitched toward depot.dev softness: cream + olive + slate.
-const protocolVars: CSSProperties = {
-  ["--bg" as any]: "#eeeae0",
-  ["--fg" as any]: "#1d1c18",
-  ["--muted" as any]: "rgba(29, 28, 24, 0.68)",
-  ["--quiet" as any]: "rgba(29, 28, 24, 0.46)",
-  ["--rule" as any]: "rgba(29, 28, 24, 0.12)",
-  ["--card" as any]: "#e5e0d1",
-  ["--card-strong" as any]: "#1f1e1a",
-  ["--accent" as any]: "#5f8374",
+// Pluto — the ninth planet, in homage to Plan 9 from Bell Labs.
+// Pure grayscale with a single cobalt signal. No warmth, no tint.
+const plutoVars: CSSProperties = {
+  ["--bg" as any]: "#f1f1ee",
+  ["--fg" as any]: "#0b0b0d",
+  ["--muted" as any]: "rgba(11,11,13,0.70)",
+  ["--quiet" as any]: "rgba(11,11,13,0.46)",
+  ["--rule" as any]: "rgba(11,11,13,0.14)",
+  ["--card" as any]: "#e4e4df",
+  ["--card-strong" as any]: "#0f1012",
+  ["--accent" as any]: "#2f58cf",
   ["--font-body" as any]: "'Space Grotesk', system-ui, sans-serif",
   ["--font-mono" as any]: "'Geist Mono', 'JetBrains Mono', monospace",
   ["--font-display" as any]: "'Space Grotesk', system-ui, sans-serif",
-  ["--hero-fg" as any]: "#1d1c18",
+  ["--hero-fg" as any]: "#0b0b0d",
+  background: "#f1f1ee",
+  color: "#0b0b0d",
+  minHeight: "100vh",
 };
 
 export function Protocol() {
   return (
-    <div style={protocolVars}>
+    <div style={plutoVars}>
       <SpecHero
         topLeft={
           <>
@@ -48,7 +42,7 @@ export function Protocol() {
         version={"v0.0.21 · build 0442 · sha 6e2fc9e"}
         lede={
           <>
-            The filesystem layer for agent loops. One protocol, any backend. Read, write, grep,
+            Everything is a file. One protocol, any backend. Read, write, grep,
             walk — over Postgres, MSSQL, SQLite, and eventually every API you run.
           </>
         }
@@ -71,17 +65,19 @@ export function Protocol() {
               The filesystem layer for the agent era. MCP-native. Spec-first.
             </div>
             <p>
-              <strong>Protocol</strong> positions <span className="mono">vfs</span> as substrate, not
-              product. The stencil reads as a callsign on a flight strip — a designation, not a
-              billboard. The language is RFC-2119: a <span className="mono">vfs</span> server{" "}
-              <em>must</em> implement read, write, list, stat; it <em>should</em> implement watch.
-              The homepage is a spec table of contents.
+              <strong>vfs</strong> takes its central claim from Plan 9 from Bell
+              Labs: <em>everything is a file</em>. One <span className="mono">Entry</span> type,
+              one <span className="mono">VFSResult</span> envelope, one path grammar
+              across every backend you mount. The language is RFC-2119: a{" "}
+              <span className="mono">vfs</span> server <em>must</em> implement read,
+              write, list, stat; it <em>should</em> implement watch.
             </p>
             <p>
-              The bone-paper, warm-charcoal, muted-sage palette is the whitespace the teardowns
-              identified: no Vercel-school dark mesh, no purple auth-startup accent, no "for the AI
-              era" subhead. This is the lane an infrastructure standard would take in 2026 if it
-              wanted to be taken seriously for the next ten years, not the next quarter.
+              The grayscale page with one cobalt signal is the whitespace the
+              teardowns identified: no Vercel-school dark mesh, no purple
+              auth-startup accent, no "for the AI era" subhead. This is the lane
+              an infrastructure standard would take in 2026 if it wanted to be
+              taken seriously for the next ten years, not the next quarter.
             </p>
           </div>
         </div>
@@ -111,20 +107,36 @@ export function Protocol() {
         />
       </Section>
 
-      {/* ─── COLOR ─── */}
-      <Section label="spec / 03 · palette · signal">
+      {/* ─── PALETTE ─── */}
+      <Section label="spec / 03 · palette · pluto">
+        <div className="palette-mode-label">
+          <span className="palette-mode-dot light" /> light · paper mode
+        </div>
         <Palette
           swatches={[
-            { name: "Bone", hex: "#eeeae0", role: "paper", fg: "#1d1c18" },
-            { name: "Chalk", hex: "#e5e0d1", role: "surface", fg: "#1d1c18" },
-            { name: "Slate", hex: "#1d1c18", role: "ink", fg: "#eeeae0" },
-            { name: "Sage", hex: "#5f8374", role: "signal", fg: "#eeeae0" },
-            { name: "Moss", hex: "#465c52", role: "pressed", fg: "#eeeae0" },
-            { name: "Pulse", hex: "#8aa27c", role: "ok", fg: "#1d1c18" },
-            { name: "Clay", hex: "#b0644c", role: "fault", fg: "#eeeae0" },
-            { name: "Halftone", hex: "#8f887a", role: "secondary", fg: "#eeeae0" },
+            { name: "Frost", hex: "#f1f1ee", role: "paper", fg: "#0b0b0d" },
+            { name: "Plain", hex: "#e4e4df", role: "surface", fg: "#0b0b0d" },
+            { name: "Night", hex: "#0b0b0d", role: "ink", fg: "#f1f1ee" },
+            { name: "Cobalt", hex: "#2f58cf", role: "signal", fg: "#f1f1ee" },
+            { name: "Indigo", hex: "#183988", role: "pressed", fg: "#f1f1ee" },
+            { name: "Charon", hex: "#3d7d3f", role: "ok", fg: "#f1f1ee" },
           ]}
         />
+
+        <div className="palette-mode-label" style={{ marginTop: 32 }}>
+          <span className="palette-mode-dot dark" /> dark · ink mode
+        </div>
+        <Palette
+          swatches={[
+            { name: "Night", hex: "#0f1012", role: "paper", fg: "#e7e7e8" },
+            { name: "Shadow", hex: "#18191c", role: "surface", fg: "#e7e7e8" },
+            { name: "Ice", hex: "#e7e7e8", role: "ink", fg: "#0f1012" },
+            { name: "Cobalt", hex: "#4d7cf3", role: "signal", fg: "#0f1012" },
+            { name: "Azurite", hex: "#2c54be", role: "pressed", fg: "#e7e7e8" },
+            { name: "Charon", hex: "#86c17a", role: "ok", fg: "#0f1012" },
+          ]}
+        />
+
         <div
           className="mono"
           style={{
@@ -135,8 +147,10 @@ export function Protocol() {
             color: "var(--quiet)",
           }}
         >
-          Bone paper inverts the dark-mesh default. One muted accent. Pulse and Clay used only in
-          status — never decoration.
+          Fully desaturated grayscale, one cobalt wire — shifted one step
+          between modes to hold contrast on paper and in the ink pool. Full
+          specimen study at{" "}
+          <a href="/colors" style={{ color: "var(--accent)" }}>/colors</a>.
         </div>
       </Section>
 
@@ -144,19 +158,6 @@ export function Protocol() {
       <Section label="spec / 04 · typography">
         <TypeSystem
           faces={[
-            {
-              role: "CALLSIGN",
-              name: "Big Shoulders Stencil",
-              use: "wordmark · version tags · section headers",
-              sample: (
-                <div
-                  className="stencil stencil-thin"
-                  style={{ fontSize: 96, lineHeight: 0.95, color: "var(--accent)", letterSpacing: "0.01em" }}
-                >
-                  vfs · 0442
-                </div>
-              ),
-            },
             {
               role: "DISPLAY",
               name: "Space Grotesk",
@@ -167,7 +168,7 @@ export function Protocol() {
                     className="display"
                     style={{ fontSize: 44, lineHeight: 1.1, fontWeight: 500, letterSpacing: "-0.015em" }}
                   >
-                    One protocol.<br />Any backend.
+                    Everything<br />is a file.
                   </div>
                   <div
                     className="display"
@@ -290,24 +291,6 @@ export function Protocol() {
             </div>
           </div>
         </div>
-
-        <div className="sample" style={{ marginTop: 16 }}>
-          <div className="sample-head">
-            <span>mount topology</span>
-            <span>fs.mount.list</span>
-          </div>
-          <div className="sample-body">
-{`/
-├── workspace/        [postgres://local/vfs_main]      fs.read fs.write fs.grep fs.glob fs.search.lexical fs.search.vector
-├── docs/             [postgres://local/vfs_docs]      fs.read fs.write fs.grep fs.glob fs.search.lexical
-├── memory/           [sqlite:///agent.db]             fs.read fs.write fs.grep fs.glob
-└── .vfs/             [internal]                       fs.read fs.mount.list
-    └── __meta__/
-        ├── chunks/   — addressable chunks per path
-        ├── versions/ — revision history
-        └── edges/    — out/{type}/{target}, in/{type}/{source}`}
-          </div>
-        </div>
       </Section>
 
       {/* ─── SIGNATURE MOVE ─── */}
@@ -331,11 +314,7 @@ export function Protocol() {
               <code className="mono">$ curl vfs.dev | sh</code> — followed by the actual output: a
               directory listing of the spec. Nav is the filesystem. Docs are mounts. The spec TOC is
               at <code className="mono">/spec/</code>. Clients live at <code className="mono">/clients/</code>.
-              No feature grid, no logo wall, no conic gradient.
-            </p>
-            <p style={{ fontSize: 16, lineHeight: 1.7, color: "var(--muted)", marginTop: 16 }}>
-              One gag, executed seriously. Nobody else in the agent-infra landscape can do this
-              without cosplaying vfs.
+              The color study lives at <code className="mono"><a href="/colors" style={{ color: "var(--accent)" }}>/colors</a></code>.
             </p>
           </div>
           <div className="sample">
@@ -352,6 +331,7 @@ alpha · v0.0.21 · 2026-Q2
 /spec/            the protocol (fsp-001)
 /clients/         python · ts · mcp
 /backends/        postgres · mssql · sqlite
+/colors/          brand · palette study
 /changelog/       every revision, every commit
 /install.sh       pip install vfs-py
 /contact/         github · mastodon
@@ -360,34 +340,6 @@ $ _`}
             </div>
           </div>
         </div>
-      </Section>
-
-      {/* ─── TRADEOFF ─── */}
-      <Section label="spec / 08 · trade-off">
-        <Tradeoff
-          keeps="Legibility to the audience that matters most — people who've used MCP, LSP, 9P, and know what a protocol brand looks like. The mono-for-headings move and the bone/sage palette place vfs visually adjacent to nobody, which is the entire point."
-          risks="Calling yourself a protocol is a strong claim; it has to be earned by a reference spec (fsp-001), not by marketing. Without that artefact shipping, the direction reads as aspiration. Single-weight stencil over Swiss-grid layout requires disciplined typesetting — one wrong margin and it collapses to generic dev-tool."
-        />
-      </Section>
-
-      {/* ─── NOTES ─── */}
-      <Section label="spec / 09 · notes" tight>
-        <NotesBlock
-          left={
-            <>
-              Stencil as callsign. Mono-for-headings is the single strongest differentiator against
-              the Vercel-school consensus. Muted sage on bone softens the protocol tone without
-              losing signal. Zero gradient. Zero illustration. ASCII diagrams are the brand.
-            </>
-          }
-          right={
-            <>
-              modelcontextprotocol.io (Mintlify-restrained) · Turbopuffer's essay homepage · depot.dev
-              (soft sage-on-paper) · the 9P protocol · IETF RFC layout · Geist typeface ·
-              Swiss-grid sports livery.
-            </>
-          }
-        />
       </Section>
     </div>
   );

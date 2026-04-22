@@ -23,8 +23,8 @@ BEGIN
     CREATE TEMP TABLE IF NOT EXISTS _gm_edge(
         source text NOT NULL,
         target text NOT NULL,
-        connection_type text NOT NULL,
-        PRIMARY KEY (source, target, connection_type)
+        edge_type text NOT NULL,
+        PRIMARY KEY (source, target, edge_type)
     ) ON COMMIT DROP;
     TRUNCATE _gm_edge;
 
@@ -65,14 +65,14 @@ BEGIN
     CREATE TEMP TABLE IF NOT EXISTS _gm_kept(node text PRIMARY KEY) ON COMMIT DROP;
     TRUNCATE _gm_kept;
 
-    INSERT INTO _gm_edge(source, target, connection_type)
-    SELECT o.source_path, o.target_path, o.connection_type
+    INSERT INTO _gm_edge(source, target, edge_type)
+    SELECT o.source_path, o.target_path, o.edge_type
     FROM vfs_objects AS o
-    WHERE o.kind = 'connection'
+    WHERE o.kind = 'edge'
       AND o.deleted_at IS NULL
       AND o.source_path IS NOT NULL
       AND o.target_path IS NOT NULL
-      AND o.connection_type IS NOT NULL
+      AND o.edge_type IS NOT NULL
       AND (
           p_scope_prefix IS NULL
           OR (
@@ -262,7 +262,12 @@ BEGIN
     UNION ALL
 
     SELECT
-        e.source || '/.connections/' || e.connection_type || '/' || ltrim(e.target, '/')
+        '/.vfs'
+        || e.source
+        || '/__meta__/edges/out/'
+        || e.edge_type
+        || '/'
+        || ltrim(e.target, '/')
     FROM _gm_edge e
     JOIN _gm_kept ks ON ks.node = e.source
     JOIN _gm_kept kt ON kt.node = e.target

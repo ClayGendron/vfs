@@ -21,6 +21,7 @@ Prefer one topic per file. Good names:
 
 ```
 standards/
+  contributing.md
   python-style.md
   testing-approach.md
   error-handling.md

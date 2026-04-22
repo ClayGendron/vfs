@@ -9,6 +9,7 @@ Bun.serve({
     "/depot": index,
     "/archive": index,
     "/protocol": index,
+    "/colors": index,
   },
   development: process.env.NODE_ENV !== "production",
   fetch() {
