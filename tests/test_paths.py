@@ -11,6 +11,7 @@ from vfs.paths import (
     METADATA_ROOT,
     EdgeParts,
     _canonical_endpoint_path,
+    _is_reserved_metadata_directory,
     _split_edge_path,
     _split_nested_endpoint,
     _strip_user_prefix,
@@ -31,11 +32,10 @@ from vfs.paths import (
     scope_path,
     split_path,
     unscope_path,
-    validate_user_id,
     validate_mutation_path,
     validate_path,
+    validate_user_id,
     version_path,
-    _is_reserved_metadata_directory,
 )
 
 # =========================================================================
