@@ -106,10 +106,11 @@ class TestPathEdgeCases:
             VFSObject(path=long_path, content="x")
 
     async def test_path_at_exact_limit(self, db: DatabaseFileSystem):
-        """A long path should be accepted if its projected metadata fits."""
-        target = 4096 - len("/.txt")
-        # Build with 16-char segments: "/aaaa.../aaaa.../file.txt"
-        prefix = "/a" * (target // 2)  # each "/a" is 2 chars
+        """A long path should be accepted if its deepest sidecar still fits in 4096."""
+        # Backend auto-creates /.vfs/<path>/__meta__/versions on write.
+        sidecar_overhead = len("/.vfs") + len("/__meta__/versions")
+        target = 4096 - sidecar_overhead - len("/.txt")
+        prefix = "/a" * (target // 2)
         path = prefix[: target - 4] + ".txt"
         assert len(path) <= target
         r = await db.write(path, "hi")

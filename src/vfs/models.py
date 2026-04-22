@@ -122,10 +122,10 @@ class VFSObjectBase(ValidatedSQLModel):
         max_length=36,
         primary_key=True,
     )
-    path: str = Field(max_length=8192, unique=True, index=True)
+    path: str = Field(max_length=4096, unique=True, index=True)
     external_id: str | None = Field(default=None, max_length=4096)
     name: str = Field(default="", max_length=255)
-    parent_path: str = Field(default="", max_length=8192, index=True)
+    parent_path: str = Field(default="", max_length=4096, index=True)
     kind: str = Field(default="", max_length=32, index=True)
 
     # --- Content ------------------------------------------------------------

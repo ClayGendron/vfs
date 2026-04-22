@@ -253,7 +253,9 @@ async def engine(request: pytest.FixtureRequest):
 @pytest.fixture
 async def db(request: pytest.FixtureRequest, engine):
     if request.config.getoption("--mssql"):
-        return MSSQLFileSystem(engine=engine)
+        fs = MSSQLFileSystem(engine=engine)
+        await fs.install_native_graph_schema()
+        return fs
     return DatabaseFileSystem(engine=engine)
 
 

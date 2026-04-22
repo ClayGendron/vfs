@@ -25,7 +25,29 @@ from vfs.backends.mssql import (
     _extract_literal_terms,
     _quote_contains_term,
 )
+from vfs.paths import decompose_edge, edge_out_path
 from vfs.results import Entry, VFSResult
+
+
+def _node_paths(result: VFSResult) -> set[str]:
+    return {e.path for e in result.entries if decompose_edge(e.path) is None}
+
+
+def _edge_paths(result: VFSResult) -> set[str]:
+    return {e.path for e in result.entries if decompose_edge(e.path) is not None}
+
+
+async def _seed_graph(
+    db: MSSQLFileSystem,
+    *,
+    nodes: tuple[str, ...],
+    edges: tuple[tuple[str, str, str], ...],
+) -> None:
+    async with db._use_session() as session:
+        for path in nodes:
+            await db._write_impl(path, path, session=session)
+        for source, target, edge_type in edges:
+            await db._mkedge_impl(source, target, edge_type, session=session)
 
 # ---------------------------------------------------------------------------
 # Unit tests — pure Python, no DB
@@ -895,3 +917,112 @@ class TestGlobPushdown:
         async with db._use_session() as s:
             r = await db._glob_impl("src/*.py", session=s)
         assert set(r.paths) == {"/src/a.py"}
+
+
+class TestVerifyNativeGraphSchema:
+    async def test_passes_when_installed(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await db.verify_native_graph_schema()
+
+    async def test_missing_proc(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        async with db._use_session() as s:
+            await s.execute(
+                text(f"DROP PROCEDURE IF EXISTS {db._native_graph_proc_name()}")
+            )
+        db._native_graph_verified = False
+        with pytest.raises(RuntimeError, match="native graph traversal procedure"):
+            await db.verify_native_graph_schema()
+
+
+class TestMeetingSubgraphNative:
+    async def test_empty_seeds_returns_empty(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        result = await db.meeting_subgraph(VFSResult(entries=[]))
+        assert result.success
+        assert result.entries == []
+
+    async def test_single_seed_returns_seed_only(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed_graph(
+            db,
+            nodes=("/a.py", "/b.py"),
+            edges=(("/a.py", "/b.py", "imports"),),
+        )
+        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py")]))
+        assert result.success
+        assert _node_paths(result) == {"/a.py"}
+        assert _edge_paths(result) == set()
+
+    async def test_returns_nodes_and_edge_entries(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed_graph(
+            db,
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/c.py", "imports"),
+                ("/a.py", "/d.py", "imports"),
+            ),
+        )
+        result = await db.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
+        )
+        assert result.success
+        assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
+        assert _edge_paths(result) == {
+            edge_out_path("/a.py", "/b.py", "imports"),
+            edge_out_path("/b.py", "/c.py", "imports"),
+        }
+
+    async def test_strips_dangling_spurs(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed_graph(
+            db,
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py", "/e.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/c.py", "imports"),
+                ("/a.py", "/d.py", "imports"),
+                ("/c.py", "/e.py", "imports"),
+            ),
+        )
+        result = await db.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
+        )
+        assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
+
+    async def test_seeds_not_in_graph_yield_empty(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed_graph(
+            db,
+            nodes=("/a.py", "/b.py"),
+            edges=(("/a.py", "/b.py", "imports"),),
+        )
+        result = await db.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/ghost.py"), Entry(path="/phantom.py")])
+        )
+        assert result.success
+        assert result.entries == []
+
+    async def test_deterministic_for_tie_case(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        await _seed_graph(
+            db,
+            nodes=("/a.py", "/b.py", "/c.py", "/d.py"),
+            edges=(
+                ("/a.py", "/b.py", "imports"),
+                ("/b.py", "/d.py", "imports"),
+                ("/a.py", "/c.py", "imports"),
+                ("/c.py", "/d.py", "imports"),
+            ),
+        )
+        result = await db.meeting_subgraph(
+            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/d.py")])
+        )
+        assert result.success
+        assert _node_paths(result) == {"/a.py", "/b.py", "/d.py"}
+        assert _edge_paths(result) == {
+            edge_out_path("/a.py", "/b.py", "imports"),
+            edge_out_path("/b.py", "/d.py", "imports"),
+        }

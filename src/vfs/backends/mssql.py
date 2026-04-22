@@ -52,6 +52,299 @@ def _quote_contains_term(term: str) -> str:
     return '"' + term.replace('"', '""') + '"'
 
 
+_NATIVE_SEED_LIST_TYPE_SQL = """
+CREATE TYPE {type_name} AS TABLE (
+    seed NVARCHAR(450) NOT NULL PRIMARY KEY,
+    ord  INT NOT NULL
+)
+"""
+
+_NATIVE_MEETING_SUBGRAPH_SQL = """
+CREATE OR ALTER PROCEDURE {proc_name}
+    @p_seeds         {type_name} READONLY,
+    @p_scope_prefix  NVARCHAR(450) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    CREATE TABLE #_gm_edge (
+        source    NVARCHAR(450) NOT NULL,
+        target    NVARCHAR(450) NOT NULL,
+        edge_type NVARCHAR(450) NOT NULL,
+        PRIMARY KEY (source, target, edge_type)
+    );
+
+    INSERT INTO #_gm_edge (source, target, edge_type)
+    SELECT o.source_path, o.target_path, o.edge_type
+    FROM {table} AS o
+    WHERE o.kind = 'edge'
+      AND o.deleted_at IS NULL
+      AND o.source_path IS NOT NULL
+      AND o.target_path IS NOT NULL
+      AND o.edge_type IS NOT NULL
+      AND (
+          @p_scope_prefix IS NULL
+          OR (
+              o.source_path LIKE @p_scope_prefix + N'%'
+              AND o.target_path LIKE @p_scope_prefix + N'%'
+          )
+      );
+
+    CREATE TABLE #_gm_adj (
+        node     NVARCHAR(450) NOT NULL,
+        neighbor NVARCHAR(450) NOT NULL,
+        PRIMARY KEY (node, neighbor)
+    );
+    INSERT INTO #_gm_adj (node, neighbor)
+    SELECT source, target FROM #_gm_edge
+    UNION
+    SELECT target, source FROM #_gm_edge;
+
+    CREATE TABLE #_gm_seed (
+        seed NVARCHAR(450) NOT NULL PRIMARY KEY,
+        ord  INT NOT NULL
+    );
+    INSERT INTO #_gm_seed (seed, ord)
+    SELECT u.seed, MIN(u.ord)
+    FROM @p_seeds AS u
+    WHERE EXISTS (
+        SELECT 1 FROM #_gm_adj a
+        WHERE a.node = u.seed OR a.neighbor = u.seed
+    )
+    GROUP BY u.seed;
+
+    DECLARE @v_components INT = (SELECT COUNT(*) FROM #_gm_seed);
+    IF @v_components = 0
+    BEGIN
+        SELECT CAST(NULL AS NVARCHAR(450)) AS path WHERE 1 = 0;
+        RETURN;
+    END;
+
+    IF @v_components = 1
+    BEGIN
+        SELECT seed AS path
+        FROM #_gm_seed
+        ORDER BY ord;
+        RETURN;
+    END;
+
+    CREATE TABLE #_gm_component (
+        seed      NVARCHAR(450) NOT NULL PRIMARY KEY,
+        component NVARCHAR(450) NOT NULL
+    );
+    INSERT INTO #_gm_component (seed, component)
+    SELECT seed, seed FROM #_gm_seed;
+
+    CREATE TABLE #_gm_visited (
+        node   NVARCHAR(450) NOT NULL PRIMARY KEY,
+        origin NVARCHAR(450) NOT NULL,
+        pred   NVARCHAR(450) NOT NULL,
+        ord    INT NOT NULL
+    );
+    INSERT INTO #_gm_visited (node, origin, pred, ord)
+    SELECT seed, seed, seed, ord
+    FROM #_gm_seed;
+
+    CREATE TABLE #_gm_queue (
+        seq  BIGINT IDENTITY(1,1) PRIMARY KEY,
+        node NVARCHAR(450) NOT NULL UNIQUE
+    );
+    INSERT INTO #_gm_queue (node)
+    SELECT seed FROM #_gm_seed ORDER BY ord;
+
+    CREATE TABLE #_gm_bridge (
+        a NVARCHAR(450) NOT NULL,
+        b NVARCHAR(450) NOT NULL,
+        PRIMARY KEY (a, b)
+    );
+
+    DECLARE
+        @v_node               NVARCHAR(450),
+        @v_origin             NVARCHAR(450),
+        @v_origin_component   NVARCHAR(450),
+        @v_winner             NVARCHAR(450);
+
+    WHILE 1 = 1
+    BEGIN
+        SET @v_components = (SELECT COUNT(DISTINCT component) FROM #_gm_component);
+        IF @v_components <= 1 BREAK;
+
+        SET @v_node = NULL;
+        SET @v_origin = NULL;
+        SELECT TOP 1
+            @v_node   = q.node,
+            @v_origin = v.origin
+        FROM #_gm_queue q
+        JOIN #_gm_visited v ON v.node = q.node
+        ORDER BY q.seq;
+
+        IF @v_node IS NULL BREAK;
+
+        DELETE FROM #_gm_queue WHERE node = @v_node;
+
+        SET @v_origin_component = (
+            SELECT component FROM #_gm_component WHERE seed = @v_origin
+        );
+
+        INSERT INTO #_gm_visited (node, origin, pred, ord)
+        SELECT a.neighbor, @v_origin, @v_node, s.ord
+        FROM #_gm_adj AS a
+        JOIN #_gm_seed AS s ON s.seed = @v_origin
+        LEFT JOIN #_gm_visited AS v ON v.node = a.neighbor
+        WHERE a.node = @v_node
+          AND v.node IS NULL;
+
+        INSERT INTO #_gm_queue (node)
+        SELECT a.neighbor
+        FROM #_gm_adj AS a
+        LEFT JOIN #_gm_queue AS q ON q.node = a.neighbor
+        JOIN #_gm_visited AS v ON v.node = a.neighbor AND v.pred = @v_node
+        WHERE a.node = @v_node
+          AND q.node IS NULL
+        ORDER BY a.neighbor;
+
+        ;WITH cross_hits AS (
+            SELECT
+                a.neighbor,
+                co.component AS other_component,
+                ROW_NUMBER() OVER (PARTITION BY co.component ORDER BY a.neighbor) AS rk
+            FROM #_gm_adj AS a
+            JOIN #_gm_visited AS v ON v.node = a.neighbor
+            JOIN #_gm_component AS co ON co.seed = v.origin
+            WHERE a.node = @v_node
+              AND co.component <> @v_origin_component
+              AND v.origin <> @v_origin
+        )
+        INSERT INTO #_gm_bridge (a, b)
+        SELECT
+            LEAST(@v_node, c.neighbor),
+            GREATEST(@v_node, c.neighbor)
+        FROM cross_hits AS c
+        WHERE c.rk = 1
+          AND NOT EXISTS (
+              SELECT 1 FROM #_gm_bridge AS b
+              WHERE b.a = LEAST(@v_node, c.neighbor)
+                AND b.b = GREATEST(@v_node, c.neighbor)
+          );
+
+        SELECT @v_winner = MIN(component)
+        FROM (
+            SELECT @v_origin_component AS component
+            UNION
+            SELECT DISTINCT co.component
+            FROM #_gm_adj AS a
+            JOIN #_gm_visited AS v ON v.node = a.neighbor
+            JOIN #_gm_component AS co ON co.seed = v.origin
+            WHERE a.node = @v_node
+              AND co.component <> @v_origin_component
+        ) AS c;
+
+        IF @v_winner IS NOT NULL AND @v_winner <> @v_origin_component
+        BEGIN
+            UPDATE #_gm_component
+            SET component = @v_winner
+            WHERE component IN (
+                SELECT @v_origin_component
+                UNION
+                SELECT co.component
+                FROM #_gm_adj AS a
+                JOIN #_gm_visited AS v ON v.node = a.neighbor
+                JOIN #_gm_component AS co ON co.seed = v.origin
+                WHERE a.node = @v_node
+                  AND co.component <> @v_origin_component
+            );
+            SET @v_origin_component = @v_winner;
+        END;
+    END;
+
+    CREATE TABLE #_gm_kept (node NVARCHAR(450) NOT NULL PRIMARY KEY);
+    INSERT INTO #_gm_kept (node)
+    SELECT seed FROM #_gm_seed;
+
+    DECLARE @v_endpoint NVARCHAR(450);
+    DECLARE @v_pred     NVARCHAR(450);
+    DECLARE endpoint_cur CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
+        SELECT endpoint
+        FROM (
+            SELECT a AS endpoint FROM #_gm_bridge
+            UNION
+            SELECT b AS endpoint FROM #_gm_bridge
+        ) AS x;
+
+    OPEN endpoint_cur;
+    FETCH NEXT FROM endpoint_cur INTO @v_endpoint;
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        SET @v_node = @v_endpoint;
+        WHILE 1 = 1
+        BEGIN
+            INSERT INTO #_gm_kept (node)
+            SELECT @v_node
+            WHERE NOT EXISTS (SELECT 1 FROM #_gm_kept WHERE node = @v_node);
+
+            IF EXISTS (SELECT 1 FROM #_gm_seed WHERE seed = @v_node) BREAK;
+
+            SET @v_pred = NULL;
+            SELECT @v_pred = pred FROM #_gm_visited WHERE node = @v_node;
+            IF @v_pred IS NULL OR @v_pred = @v_node BREAK;
+            SET @v_node = @v_pred;
+        END;
+        FETCH NEXT FROM endpoint_cur INTO @v_endpoint;
+    END;
+    CLOSE endpoint_cur;
+    DEALLOCATE endpoint_cur;
+
+    DECLARE @v_deleted INT;
+    WHILE 1 = 1
+    BEGIN
+        ;WITH removable AS (
+            SELECT k.node
+            FROM #_gm_kept AS k
+            LEFT JOIN #_gm_seed AS s ON s.seed = k.node
+            WHERE s.seed IS NULL
+              AND (
+                  NOT EXISTS (
+                      SELECT 1 FROM #_gm_edge AS e
+                      JOIN #_gm_kept AS kt ON kt.node = e.target
+                      WHERE e.source = k.node
+                  )
+                  OR NOT EXISTS (
+                      SELECT 1 FROM #_gm_edge AS e
+                      JOIN #_gm_kept AS ks ON ks.node = e.source
+                      WHERE e.target = k.node
+                  )
+              )
+        )
+        DELETE k
+        FROM #_gm_kept AS k
+        INNER JOIN removable AS r ON r.node = k.node;
+
+        SET @v_deleted = @@ROWCOUNT;
+        IF @v_deleted = 0 BREAK;
+    END;
+
+    SELECT path
+    FROM (
+        SELECT k.node AS path
+        FROM #_gm_kept AS k
+        UNION ALL
+        SELECT CONCAT(
+            N'/.vfs',
+            e.source,
+            N'/__meta__/edges/out/',
+            e.edge_type,
+            N'/',
+            LTRIM(e.target, N'/')
+        ) AS path
+        FROM #_gm_edge AS e
+        JOIN #_gm_kept AS ks ON ks.node = e.source
+        JOIN #_gm_kept AS kt ON kt.node = e.target
+    ) AS x
+    ORDER BY path;
+END
+"""
+
+
 class MSSQLFileSystem(DatabaseFileSystem):
     """SQL Server / Azure SQL backend with full-text search and native regex pushdown.
 
@@ -153,6 +446,116 @@ class MSSQLFileSystem(DatabaseFileSystem):
                     f"  KEY INDEX ux_{bare_table}_id\n"
                     f"  ON vfs_ftcat WITH CHANGE_TRACKING AUTO;"
                 )
+
+    # ------------------------------------------------------------------
+    # Native graph schema (meeting_subgraph)
+    # ------------------------------------------------------------------
+
+    _native_graph_verified: bool = False
+
+    def _qualify(self, name: str) -> str:
+        return f"{self._schema}.{name}" if self._schema else f"dbo.{name}"
+
+    def _native_graph_proc_name(self) -> str:
+        return self._qualify("grover_meeting_subgraph")
+
+    def _native_graph_seed_type_name(self) -> str:
+        return self._qualify("GroverSeedList")
+
+    def _graph_schema_hint(self) -> str:
+        return (
+            "Provision the native SQL Server graph artifacts outside request handling by calling "
+            "MSSQLFileSystem.install_native_graph_schema() during setup, or by installing the "
+            f"type '{self._native_graph_seed_type_name()}' and procedure "
+            f"'{self._native_graph_proc_name()}' against '{self._resolve_table()}'."
+        )
+
+    async def install_native_graph_schema(self) -> None:
+        """Install the TVP type and stored procedure that ``meeting_subgraph`` depends on."""
+        proc_name = self._native_graph_proc_name()
+        type_name = self._native_graph_seed_type_name()
+        async with self._use_session() as session:
+            await session.execute(
+                text(f"IF OBJECT_ID('{proc_name}', 'P') IS NOT NULL DROP PROCEDURE {proc_name}")
+            )
+            await session.execute(
+                text(f"IF TYPE_ID('{type_name}') IS NOT NULL DROP TYPE {type_name}")
+            )
+            await session.execute(text(_NATIVE_SEED_LIST_TYPE_SQL.format(type_name=type_name)))
+            await session.execute(
+                text(
+                    _NATIVE_MEETING_SUBGRAPH_SQL.format(
+                        proc_name=proc_name,
+                        type_name=type_name,
+                        table=self._resolve_table(),
+                    )
+                )
+            )
+        self._native_graph_verified = False
+
+    async def verify_native_graph_schema(self) -> None:
+        async with self._use_session() as session:
+            await self._verify_graph_schema(session)
+
+    async def _verify_graph_schema(self, session: AsyncSession) -> None:
+        if self._native_graph_verified:
+            return
+
+        table = self._resolve_table()
+        table_id = (await session.execute(text(f"SELECT OBJECT_ID(N'{table}') AS oid"))).scalar()
+        if table_id is None:
+            raise RuntimeError(
+                f"MSSQLFileSystem requires table '{table}' to exist before native graph traversal can run."
+            )
+
+        proc_name = self._native_graph_proc_name()
+        type_name = self._native_graph_seed_type_name()
+        proc_exists = (
+            await session.execute(text(f"SELECT OBJECT_ID('{proc_name}', 'P')"))
+        ).scalar()
+        type_exists = (await session.execute(text(f"SELECT TYPE_ID('{type_name}')"))).scalar()
+        if proc_exists is None or type_exists is None:
+            raise RuntimeError(
+                f"MSSQLFileSystem requires the native graph traversal procedure "
+                f"'{proc_name}' and type '{type_name}'. {self._graph_schema_hint()}"
+            )
+
+        self._native_graph_verified = True
+
+    async def _meeting_subgraph_impl(
+        self,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        await self._verify_graph_schema(session)
+        self._require_user_id(user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        seed_result = self._to_candidates(None, candidates)
+        seed_paths = list(dict.fromkeys(entry.path for entry in seed_result.entries))
+        if not seed_paths:
+            return VFSResult(function="meeting_subgraph", entries=[])
+
+        scope_prefix = f"/{user_id}/" if (self._user_scoped and user_id) else None
+        seed_tvp = [(seed, idx + 1) for idx, seed in enumerate(seed_paths)]
+
+        conn = await session.connection()
+        dbapi_conn = (await conn.get_raw_connection()).driver_connection
+        async with dbapi_conn.cursor() as cursor:
+            await cursor.execute(
+                f"{{CALL {self._native_graph_proc_name()}(?, ?)}}",
+                (seed_tvp, scope_prefix),
+            )
+            rows = await cursor.fetchall()
+            while await cursor.nextset():
+                pass
+
+        result = VFSResult(
+            function="meeting_subgraph",
+            entries=[Entry(path=row[0]) for row in rows],
+        )
+        return self._unscope_result(result, user_id)
 
     # ------------------------------------------------------------------
     # Lexical search — CONTAINSTABLE pushdown (files only)
