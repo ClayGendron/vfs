@@ -15,7 +15,7 @@ This guide describes the current `vfs` architecture as implemented in `src/vfs`.
 
 ## Storage Model
 
-`DatabaseFileSystem` is the portable baseline backend. It stores every persisted entity in one `vfs_objects` table:
+`DatabaseFileSystem` is the portable baseline backend. It stores every persisted entity in one `vfs_entries` table:
 
 - files and directories
 - chunk rows
@@ -69,8 +69,8 @@ collisions resolve to a stable, test-friendly order.
 - `ts_rank_cd(search_tsv, q, 1|32)` owns ranking
 - the query projects `path`, `kind`, `content`, and `score` in one round-trip
 
-The final `Entry.score` values returned from Postgres lexical search are native
-`ts_rank_cd` cover-density scores in `[0, 1)`. MSSQL `Entry.score` values are
+The final `Candidate.score` values returned from Postgres lexical search are native
+`ts_rank_cd` cover-density scores in `[0, 1)`. MSSQL `Candidate.score` values are
 `FREETEXTTABLE` ranks — BM25-derived, integer-valued on the wire, returned as
 `float`, unbounded on the positive side. The two scales are architecturally
 different rankers and are not comparable across backends.
@@ -78,13 +78,13 @@ different rankers and are not comparable across backends.
 That Postgres path assumes the database already exposes a stored generated `search_tsv tsvector` column plus a matching partial `GIN` index:
 
 ```sql
-ALTER TABLE vfs_objects
+ALTER TABLE vfs_entries
 ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (
     to_tsvector('simple', coalesce(content, ''))
 ) STORED;
 
-CREATE INDEX ix_vfs_objects_search_tsv_gin
-    ON vfs_objects USING GIN (search_tsv)
+CREATE INDEX ix_vfs_entries_search_tsv_gin
+    ON vfs_entries USING GIN (search_tsv)
     WHERE content IS NOT NULL
       AND deleted_at IS NULL
       AND kind != 'version';
@@ -110,16 +110,16 @@ That pattern path assumes these additional artifacts already exist:
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
-CREATE INDEX ix_vfs_objects_path_pattern
-    ON vfs_objects (path text_pattern_ops)
+CREATE INDEX ix_vfs_entries_path_pattern
+    ON vfs_entries (path text_pattern_ops)
     WHERE deleted_at IS NULL;
 
-CREATE INDEX ix_vfs_objects_path_trgm_gin
-    ON vfs_objects USING GIN (path gin_trgm_ops)
+CREATE INDEX ix_vfs_entries_path_trgm_gin
+    ON vfs_entries USING GIN (path gin_trgm_ops)
     WHERE deleted_at IS NULL;
 
-CREATE INDEX ix_vfs_objects_content_trgm_gin
-    ON vfs_objects USING GIN (content gin_trgm_ops)
+CREATE INDEX ix_vfs_entries_content_trgm_gin
+    ON vfs_entries USING GIN (content gin_trgm_ops)
     WHERE kind = 'file'
       AND content IS NOT NULL
       AND deleted_at IS NULL;
@@ -151,11 +151,11 @@ Because every stage returns `VFSResult`, the same envelope flows through grep, s
 
 ## Result Model
 
-`VFSResult` and `Entry` are the common output vocabulary:
+`VFSResult` and `Candidate` are the common output vocabulary:
 
 - `VFSResult.function` records how the rows were produced
-- `VFSResult.entries` is the flat row list
-- `Entry` fields such as `path`, `content`, `lines`, `score`, `in_degree`, and `out_degree` are populated as needed
+- `VFSResult.candidates` is the flat row list
+- `Candidate` fields such as `path`, `content`, `lines`, `score`, `in_degree`, and `out_degree` are populated as needed
 
 This flattened result model is what makes set algebra and multi-stage query execution practical. Search output, graph output, and filesystem listings all share the same row type.
 
@@ -167,7 +167,7 @@ Sessions are owned by the router, not by the backend instance:
 - backends call `flush()` when needed but do not own `commit()` / `rollback()`
 - the router commits on success and rolls back on error
 
-That separation keeps `DatabaseFileSystem` effectively stateless apart from its configured engine, model, permissions, and optional providers.
+That separation keeps `DatabaseFileSystem` effectively stateless apart from its configured engine, table name, permissions, and optional providers.
 
 ## Permissions and User Scoping
 

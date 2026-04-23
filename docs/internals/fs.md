@@ -26,7 +26,7 @@ This matters because `DatabaseFileSystem` is designed to stay mostly stateless. 
 
 ## Storage Layout
 
-`DatabaseFileSystem` persists everything in `vfs_objects`. The object kind is inferred from the path itself.
+`DatabaseFileSystem` persists everything in `vfs_entries`. The object kind is inferred from the path itself.
 
 Examples:
 
@@ -94,7 +94,7 @@ When `user_scoped=True`, storage paths are rewritten through `scope_path()` and 
 - caller path: `/notes/today.md`
 - stored path for `user_id="alice"`: `/alice/notes/today.md`
 
-Returned entries are unscoped again before they leave the mounted filesystem, so callers do not need to know the storage prefixing rules.
+Returned candidates are unscoped again before they leave the mounted filesystem, so callers do not need to know the storage prefixing rules.
 
 ## Failure Model
 

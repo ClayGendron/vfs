@@ -4,12 +4,21 @@ All notable changes to vfs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [Unreleased]
+
+### Breaking
+
+- **Storage primitive rename `VFSObject` → `VFSEntry`** (story 010) — `VFSObject` and `VFSObjectBase` collapse into a single `VFSEntry(SQLModel, table=False)`. `VFSEntry` is the durable record (Constitution Article 1.2); there is no base/concrete split. See [`context/stories/010-align-primitives-vfsentry-and-candidate/spec.md`](context/stories/010-align-primitives-vfsentry-and-candidate/spec.md).
+- **Per-mount `table=True` class** — `DatabaseFileSystem.__init__` mints a private `table=True` subclass of `VFSEntry` scoped to `(table_name, schema, native_embedding)`. The minted class is never exposed on the public surface.
+- **`model=` kwarg removed** from `DatabaseFileSystem`, `MSSQLFileSystem`, `PostgresFileSystem`, `VFSClient*`, and `RustworkxGraph`. Storage shape is no longer a deployment knob. Callers passing `model=...` now get `TypeError`.
+- **`table_name: str = "vfs_entries"` and `native_embedding: NativeEmbeddingConfig | None = None`** added to `DatabaseFileSystem.__init__`. The default `__tablename__` is now `vfs_entries` and the default index is `ix_vfs_entries_ext_kind`. Callers preserving an existing `vfs_objects` table pass `table_name="vfs_objects"` explicitly.
+- **Result-row rename `Entry` → `Candidate`** — the query-time partial view is `Candidate` (Constitution Article 1.5). `VFSResult.entries` becomes `VFSResult.candidates`, `ENTRY_FIELDS` becomes `CANDIDATE_FIELDS`, and `VFSEntry.to_entry()` becomes `VFSEntry.to_candidate()`. The storage-write kwarg `entries=` on `write()` / `_write_impl()` / `_mkedge_impl()` still takes a `Sequence[VFSEntry]` and stays named `entries=`.
+- **Envelope field rename in JSON output** — `result.to_json()` emits `"candidates"`; the `"entries"` key no longer appears.
 
 ### Changed
 
 - **`MSSQLFileSystem._lexical_search_impl`** (story 012) — rewritten as a single `FREETEXTTABLE` query that projects `path`, `kind`, `content`, and `ct.[RANK] AS score` in one round-trip, ordered by `ct.[RANK] DESC, o.id` for deterministic ranking across calls. Tokenization, stemming, stoplist handling, and thesaurus expansion now run server-side; the Python `tokenize_query` + OR-of-literal-terms CONTAINS expression is gone. `_grep_impl` still uses `CONTAINSTABLE` and `_quote_contains_term` for its literal-AND pre-filter and is unchanged.
-- **MSSQL `Entry.score` scale change** — lexical-search scores are now `FREETEXTTABLE` BM25-derived ranks (unbounded positive, integer on the wire, returned as `float`), not the previous `CONTAINSTABLE` rank formula. Still `float`, different magnitude, still not comparable to Postgres `ts_rank_cd`. Callers thresholding on the old value must re-tune.
+- **MSSQL `Candidate.score` scale change** — lexical-search scores are now `FREETEXTTABLE` BM25-derived ranks (unbounded positive, integer on the wire, returned as `float`), not the previous `CONTAINSTABLE` rank formula. Still `float`, different magnitude, still not comparable to Postgres `ts_rank_cd`. Callers thresholding on the old value must re-tune.
 
 ## [0.0.22] — 2026-04-22
 

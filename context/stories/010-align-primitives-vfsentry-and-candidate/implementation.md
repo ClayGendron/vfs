@@ -361,3 +361,23 @@ Grep gate targets for C2 sign-off:
    affected files kept their local `_sqlite_engine()` helpers because
    their call patterns wanted an `engine`, not a filesystem. Either
    pattern is fine; consolidating is a cleanup PR, not a blocker.
+
+## Migration for existing deployments
+
+Per `feedback_no_migration_scripts.md`, vfs does not ship a migration
+script. Deployments with an existing `vfs_objects` table have two
+options:
+
+1. **Rename in place.** Run once against the live database:
+
+   ```sql
+   ALTER TABLE vfs_objects RENAME TO vfs_entries;
+   ALTER INDEX ix_vfs_objects_ext_kind RENAME TO ix_vfs_entries_ext_kind;
+   ```
+
+   Any additional indexes named `ix_vfs_objects_*` (pgvector, tsvector,
+   trigram) should be renamed to `ix_vfs_entries_*` in the same session.
+
+2. **Keep the old table name.** Pass `table_name="vfs_objects"`
+   explicitly to the filesystem constructor; the default of
+   `"vfs_entries"` is the only thing that changed.

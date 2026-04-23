@@ -22,7 +22,7 @@ from vfs.backends import DatabaseFileSystem, MSSQLFileSystem, PostgresFileSystem
 
 | Backend | Purpose |
 |---------|---------|
-| `DatabaseFileSystem` | Portable SQL-backed filesystem using a single `vfs_objects` table. |
+| `DatabaseFileSystem` | Portable SQL-backed filesystem using a single `vfs_entries` table. |
 | `PostgresFileSystem` | PostgreSQL-native overrides for grep, glob, lexical search, and pgvector-backed vector search. |
 | `MSSQLFileSystem` | SQL Server / Azure SQL backend with native full-text and regex pushdown. |
 
@@ -33,7 +33,8 @@ DatabaseFileSystem(
     *,
     engine=None,
     session_factory=None,
-    model=VFSObject,
+    table_name="vfs_entries",
+    native_embedding=None,
     embedding_provider=None,
     vector_store=None,
     user_scoped=False,
@@ -42,7 +43,7 @@ DatabaseFileSystem(
 )
 ```
 
-`engine` and `session_factory` are mutually interchangeable entry points for SQLAlchemy async sessions. `user_scoped=True` enables per-user path namespacing when `user_id` is supplied on operations.
+`engine` and `session_factory` are mutually interchangeable entry points for SQLAlchemy async sessions. `user_scoped=True` enables per-user path namespacing when `user_id` is supplied on operations. `table_name` and `schema` compose orthogonally for multi-tenant deployments; deployments preserving a pre-story-010 table name pass its literal name via `table_name=` (see the story-010 migration note). `native_embedding` accepts a `NativeEmbeddingConfig` (from `vfs.vector`) to mint a native pgvector column on Postgres engines; it is a no-op on other dialects.
 
 ## Mounting
 
@@ -69,7 +70,7 @@ All client methods return `VFSResult` on success. The async and sync facades exp
 | Method | Notes |
 |--------|-------|
 | `read(path=None, candidates=None, *, user_id=None)` | Read file content. |
-| `write(path=None, content=None, objects=None, overwrite=True, *, user_id=None)` | Write one path or batch-write model objects. |
+| `write(path=None, content=None, entries=None, overwrite=True, *, user_id=None)` | Write one path or batch-write `VFSEntry` rows. |
 | `edit(path=None, old=None, new=None, edits=None, candidates=None, replace_all=False, *, user_id=None)` | Single or multi-edit replacement. |
 | `delete(path=None, candidates=None, permanent=False, cascade=True, *, user_id=None)` | Soft or permanent delete. |
 | `stat(path=None, candidates=None, *, user_id=None)` | Metadata lookup for one path. |
@@ -122,13 +123,13 @@ The query parser lives in `vfs.query` and supports stage aliases such as `search
 ## Results
 
 ```python
-from vfs.results import EditOperation, Entry, LineMatch, TwoPathOperation, VFSResult
+from vfs.results import Candidate, EditOperation, LineMatch, TwoPathOperation, VFSResult
 ```
 
 | Type | Purpose |
 |------|---------|
-| `VFSResult` | Unified envelope with `function`, `entries`, `success`, and `errors`. |
-| `Entry` | Flat row shape used by every function. Fields are populated opportunistically by the producing operation. |
+| `VFSResult` | Unified envelope with `function`, `candidates`, `success`, and `errors`. |
+| `Candidate` | Flat row shape used by every function. Fields are populated opportunistically by the producing operation. |
 | `EditOperation` | Immutable batch edit descriptor for `edit()`. |
 | `TwoPathOperation` | Immutable `(src, dest)` pair for `move()` and `copy()`. |
 | `LineMatch` | `(start, end, match)` tuple for grep output with context windows. |
@@ -141,7 +142,7 @@ result.content
 result.file
 result.top(10)
 result.sort("score", reverse=True)
-result.filter(lambda entry: entry.kind == "file")
+result.filter(lambda candidate: candidate.kind == "file")
 result.to_json()
 result.to_str()
 
@@ -187,5 +188,5 @@ from vfs import GraphError, MountError, NotFoundError, ValidationError, VFSError
 
 - `vfs.query` exposes `QueryPlan`, `parse_query`, `execute_query`, and `render_query_result`.
 - `vfs.permissions` exposes `PermissionMap` and the path-level permission helpers.
-- `vfs.models` defines `VFSObject` and backend-facing storage models.
+- `vfs.models` defines `VFSEntry` and backend-facing storage models.
 - `vfs.graph` exposes the in-memory graph provider used by `DatabaseFileSystem`.

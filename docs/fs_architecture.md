@@ -10,7 +10,7 @@ graph TD
     Mount["Mounted filesystem"]
     Graph["RustworkxGraph projection"]
     Search["Embedding provider / vector store"]
-    Table["vfs_objects table"]
+    Table["vfs_entries table"]
 
     Caller --> Client
     Client --> Router
