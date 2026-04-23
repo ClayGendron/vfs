@@ -7,7 +7,7 @@ packages = ["src/vfs"]
 
 [project]
 name = "vfs-py"
-version = "0.0.21"
+version = "0.0.22"
 description = "The agentic filesystem. Safe file operations, knowledge graphs, and semantic search — unified for AI agents."
 readme = "README.md"
 license = "Apache-2.0"

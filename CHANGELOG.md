@@ -4,6 +4,32 @@ All notable changes to vfs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.22] — 2026-04-22
+
+### Added
+
+- **`PostgresFileSystem`** (story 003) — native Postgres backend with pgvector-backed embeddings, native lexical (`tsvector` + `CONTAINSTABLE`-equivalent `plainto_tsquery`) and semantic search, regex pushdown, and explicit schema verification. Respects the model-declared pgvector operator class (`vector_cosine_ops`, `vector_ip_ops`, `vector_l2_ops`) for both distance operator selection (`<=>`, `<#>`, `<->`) and score normalization.
+- **Native Postgres pattern-search contract** — partial trigram GIN + B-tree `text_pattern_ops` indexes on `vfs_objects.path` and `.content`; `verify_native_search_schema` fails fast if the required artifacts are missing.
+- **Native Postgres `meeting_subgraph`** (story 004) — server-side PL/pgSQL Steiner-tree traversal installed via `install_native_graph_schema()` and verified at startup.
+- **Native MSSQL `meeting_subgraph`** — T-SQL stored procedure with a TVP (`GroverSeedList`) seed-list input; override routes through a raw `aioodbc` cursor since SQLAlchemy `bindparam` can't plumb TVPs.
+- **Native MSSQL pushdown for `predecessors`, `successors`, `ancestors`, `descendants`, `neighborhood`** — previously delegated to the in-memory rustworkx path. Seed/exclusion sets bind as JSON strings unpacked via `OPENJSON` with an explicit `NVARCHAR(450)` schema; multi-hop traversals drive a Python BFS loop over single-hop SQL queries to avoid MSSQL's recursive-CTE `UNION ALL` cycle hazard.
+- **`/.vfs` sidecar namespace** (story 002) — canonical `/.vfs/<path>/__meta__/...` layout for edge storage and metadata. Replaces the prior child-of-file metadata namespace; `mkconn` is removed.
+
+### Changed
+
+- **Result schema unified** — the `Candidate` / `Detail` chain is collapsed into a flat `Entry` row with operation metadata hoisted onto the envelope. Backends and the query executor now reason in terms of column projection instead of shape dispatch.
+- **Constitution rewritten** around four primitives (Namespace, Entry, Revision, Operation) with RFC 2119 precedence language.
+- **`in_degree` / `out_degree` dropped** from `VFSObjectBase`, `Entry` projection, and result defaults — graph degrees are no longer part of the entry payload.
+- **`path` / `parent_path` max length restored to 4096** so `SQLModel.metadata.create_all` targets SQL Server's `VARCHAR(8000)` ceiling; deepest sidecar paths (`/.vfs/<path>/__meta__/versions`) now have headroom.
+- **`MSSQLFileSystem._grep_impl`** — WHERE body extracted so the two FROM / ORDER BY branches no longer duplicate the filter body.
+- **`context/` workspace** — research/ migrated into `context/standards/`, `context/stories/`, `context/learnings/`; legacy docs and demo DB fixtures pruned.
+
+### Fixed
+
+- **`VectorType.process_result_value`** — reject `str` / `bytes` before the iterable fallback so the expected `ValueError("expected iterable pgvector value")` is raised instead of a downstream per-character float parse error.
+- **CI coverage** restored above the 99% gate with focused tests for Postgres inverse-edge projections, path/vector helper error handling, model/result rendering, and routing/parser/base/permission edge cases.
+- **CI lint / format / type-check regressions** from the native search backend work — touched files now pass `ruff check`, `ruff format --check`, and `ty check src/`.
+
 ## [0.0.21] — 2026-04-18
 
 ### Changed
