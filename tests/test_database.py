@@ -2797,9 +2797,7 @@ class TestInverseEdgeProjectedPaths:
         assert empty.success is True
         assert empty.candidates == []
 
-    async def test_stat_inverse_edge_path_with_unmatched_source_prefix_returns_not_found(
-        self, db: DatabaseFileSystem
-    ):
+    async def test_stat_inverse_edge_path_with_unmatched_source_prefix_returns_not_found(self, db: DatabaseFileSystem):
         """database.py:516 — _inverse_entry returns None when edge_type matches but no source aligns with prefix."""
         await self._seed_inverse_edges(db)
 
@@ -2823,9 +2821,7 @@ class TestInverseEdgeProjectedPaths:
         assert leaf.success is True
         assert leaf.candidates == []
 
-    async def test_ls_merges_inverse_children_when_candidate_has_directory_kind(
-        self, db: DatabaseFileSystem
-    ):
+    async def test_ls_merges_inverse_children_when_candidate_has_directory_kind(self, db: DatabaseFileSystem):
         """database.py:1568-1570 — ls merges inverse-edge children when a candidate is pre-classified as directory."""
         await self._seed_inverse_edges(db)
 
