@@ -12,13 +12,11 @@ database.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from sqlalchemy import Text, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.types import TypeEngine
 
 from vfs.backends.database import (
     DatabaseFileSystem,
@@ -34,7 +32,10 @@ from vfs.patterns import compile_glob, decompose_glob, glob_to_sql_like
 from vfs.results import Entry, VFSResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.types import TypeEngine
 
     from vfs.query.ast import CaseMode, GrepOutputMode
 
@@ -79,10 +80,7 @@ def _python_regex_to_postgres(pattern: str) -> str:
     ``[...]`` are left alone — both shapes are silent false-negative sources
     for the grep pre-filter if translated naively.
     """
-    return "".join(
-        _REGEX_REWRITES.get(m.group(), m.group())
-        for m in _REGEX_TOKEN.finditer(pattern)
-    )
+    return "".join(_REGEX_REWRITES.get(m.group(), m.group()) for m in _REGEX_TOKEN.finditer(pattern))
 
 
 def _parse_vector_dimension(formatted_type: str | None) -> int | None:
@@ -578,9 +576,7 @@ class PostgresFileSystem(DatabaseFileSystem):
 
     @classmethod
     def _has_live_search_predicate(cls, predicate: str | None) -> bool:
-        return cls._predicate_has_all(
-            predicate, "content is not null", "deleted_at is null", "kind", "'version'", "<>"
-        )
+        return cls._predicate_has_all(predicate, "content is not null", "deleted_at is null", "kind", "'version'", "<>")
 
     @classmethod
     def _has_live_path_predicate(cls, predicate: str | None) -> bool:
@@ -588,9 +584,7 @@ class PostgresFileSystem(DatabaseFileSystem):
 
     @classmethod
     def _has_live_file_content_predicate(cls, predicate: str | None) -> bool:
-        return cls._predicate_has_all(
-            predicate, "content is not null", "deleted_at is null", "kind", "'file'"
-        )
+        return cls._predicate_has_all(predicate, "content is not null", "deleted_at is null", "kind", "'file'")
 
     def _resolve_table(self) -> str:
         """Return the schema-qualified table name for raw ``text()`` SQL."""
@@ -737,7 +731,11 @@ class PostgresFileSystem(DatabaseFileSystem):
 
         sql = sql_template.format(table=self._resolve_table(), where=graph_where)
         return await self._run_native_graph_node_query(
-            function=function, sql=sql, params=params, user_id=user_id, session=session,
+            function=function,
+            sql=sql,
+            params=params,
+            user_id=user_id,
+            session=session,
         )
 
     async def verify_native_search_schema(self) -> None:
@@ -1037,7 +1035,10 @@ class PostgresFileSystem(DatabaseFileSystem):
         return await self._run_graph_traversal(
             function="predecessors",
             sql_template=_PREDECESSORS_SQL,
-            path=path, candidates=candidates, user_id=user_id, session=session,
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
         )
 
     async def _successors_impl(
@@ -1051,7 +1052,10 @@ class PostgresFileSystem(DatabaseFileSystem):
         return await self._run_graph_traversal(
             function="successors",
             sql_template=_SUCCESSORS_SQL,
-            path=path, candidates=candidates, user_id=user_id, session=session,
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
         )
 
     async def _ancestors_impl(
@@ -1065,7 +1069,10 @@ class PostgresFileSystem(DatabaseFileSystem):
         return await self._run_graph_traversal(
             function="ancestors",
             sql_template=_ANCESTORS_SQL,
-            path=path, candidates=candidates, user_id=user_id, session=session,
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
         )
 
     async def _descendants_impl(
@@ -1079,7 +1086,10 @@ class PostgresFileSystem(DatabaseFileSystem):
         return await self._run_graph_traversal(
             function="descendants",
             sql_template=_DESCENDANTS_SQL,
-            path=path, candidates=candidates, user_id=user_id, session=session,
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
         )
 
     async def _neighborhood_impl(
@@ -1094,7 +1104,10 @@ class PostgresFileSystem(DatabaseFileSystem):
         return await self._run_graph_traversal(
             function="neighborhood",
             sql_template=_NEIGHBORHOOD_SQL,
-            path=path, candidates=candidates, user_id=user_id, session=session,
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
             extra_params={"depth": depth},
         )
 

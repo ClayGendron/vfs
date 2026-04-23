@@ -49,6 +49,7 @@ async def _seed_graph(
         for source, target, edge_type in edges:
             await db._mkedge_impl(source, target, edge_type, session=session)
 
+
 # ---------------------------------------------------------------------------
 # Unit tests — pure Python, no DB
 # ---------------------------------------------------------------------------
@@ -927,9 +928,7 @@ class TestVerifyNativeGraphSchema:
     async def test_missing_proc(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         async with db._use_session() as s:
-            await s.execute(
-                text(f"DROP PROCEDURE IF EXISTS {db._native_graph_proc_name()}")
-            )
+            await s.execute(text(f"DROP PROCEDURE IF EXISTS {db._native_graph_proc_name()}"))
         db._native_graph_verified = False
         with pytest.raises(RuntimeError, match="native graph traversal procedure"):
             await db.verify_native_graph_schema()
@@ -965,9 +964,7 @@ class TestMeetingSubgraphNative:
                 ("/a.py", "/d.py", "imports"),
             ),
         )
-        result = await db.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
-        )
+        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")]))
         assert result.success
         assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
         assert _edge_paths(result) == {
@@ -987,9 +984,7 @@ class TestMeetingSubgraphNative:
                 ("/c.py", "/e.py", "imports"),
             ),
         )
-        result = await db.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
-        )
+        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")]))
         assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
 
     async def test_seeds_not_in_graph_yield_empty(self, request, db: MSSQLFileSystem):
@@ -999,9 +994,7 @@ class TestMeetingSubgraphNative:
             nodes=("/a.py", "/b.py"),
             edges=(("/a.py", "/b.py", "imports"),),
         )
-        result = await db.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/ghost.py"), Entry(path="/phantom.py")])
-        )
+        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/ghost.py"), Entry(path="/phantom.py")]))
         assert result.success
         assert result.entries == []
 
@@ -1017,9 +1010,7 @@ class TestMeetingSubgraphNative:
                 ("/c.py", "/d.py", "imports"),
             ),
         )
-        result = await db.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/d.py")])
-        )
+        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py"), Entry(path="/d.py")]))
         assert result.success
         assert _node_paths(result) == {"/a.py", "/b.py", "/d.py"}
         assert _edge_paths(result) == {
