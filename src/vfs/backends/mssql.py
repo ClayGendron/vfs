@@ -39,7 +39,7 @@ from vfs.backends.database import (
 )
 from vfs.paths import scope_path
 from vfs.patterns import compile_glob, decompose_glob, glob_to_sql_like
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -539,7 +539,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
     def _candidate_paths(self, path: str | None, candidates: VFSResult | None) -> list[str]:
         seed_result = self._to_candidates(path, candidates)
-        return list(dict.fromkeys(entry.path for entry in seed_result.entries))
+        return list(dict.fromkeys(entry.path for entry in seed_result.candidates))
 
     _ONE_HOP_OPENJSON = "(SELECT value FROM OPENJSON(:frontier) WITH (value NVARCHAR(450) '$'))"
     _EXCLUDE_OPENJSON = "(SELECT value FROM OPENJSON(:exclude) WITH (value NVARCHAR(450) '$'))"
@@ -617,7 +617,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         candidates = self._scope_candidates(candidates, user_id)
         seed_paths = self._candidate_paths(path, candidates)
         if not seed_paths:
-            return VFSResult(function=function, entries=[])
+            return VFSResult(function=function, candidates=[])
 
         visited: set[str] = set(seed_paths)
         collected: set[str] = set()
@@ -643,7 +643,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         result = VFSResult(
             function=function,
-            entries=[Entry(path=p) for p in sorted(collected)],
+            candidates=[Candidate(path=p) for p in sorted(collected)],
         )
         return self._unscope_result(result, user_id)
 
@@ -748,9 +748,9 @@ class MSSQLFileSystem(DatabaseFileSystem):
         self._require_user_id(user_id)
         candidates = self._scope_candidates(candidates, user_id)
         seed_result = self._to_candidates(None, candidates)
-        seed_paths = list(dict.fromkeys(entry.path for entry in seed_result.entries))
+        seed_paths = list(dict.fromkeys(entry.path for entry in seed_result.candidates))
         if not seed_paths:
-            return VFSResult(function="meeting_subgraph", entries=[])
+            return VFSResult(function="meeting_subgraph", candidates=[])
 
         scope_prefix = f"/{user_id}/" if (self._user_scoped and user_id) else None
         seed_tvp = [(seed, idx + 1) for idx, seed in enumerate(seed_paths)]
@@ -771,7 +771,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         result = VFSResult(
             function="meeting_subgraph",
-            entries=[Entry(path=row[0]) for row in rows],
+            candidates=[Candidate(path=row[0]) for row in rows],
         )
         return self._unscope_result(result, user_id)
 
@@ -838,8 +838,8 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         result = VFSResult(
             function="lexical_search",
-            entries=[
-                Entry(
+            candidates=[
+                Candidate(
                     path=row.path,
                     kind=row.kind,
                     content=row.content,
@@ -1030,12 +1030,12 @@ class MSSQLFileSystem(DatabaseFileSystem):
             # because the WHERE clause already filtered to ``kind='file'``);
             # any wider projection backfills via hydration since we didn't
             # SELECT it here.
-            matched = [Entry(path=row.path, kind="file") for row in rows]
-            return self._unscope_result(VFSResult(function="grep", entries=matched), user_id)
+            matched = [Candidate(path=row.path, kind="file") for row in rows]
+            return self._unscope_result(VFSResult(function="grep", candidates=matched), user_id)
 
         # Lines/count modes: rows carry content + every projected col, so
         # _collect_line_matches builds entries directly from real rows via
-        # _row_to_entry — no SimpleNamespace stand-ins, no hydration round
+        # _row_to_candidate — no SimpleNamespace stand-ins, no hydration round
         # trip for cols we already selected.
         rows_by_path = {row.path: row for row in rows if row.content}
         matched = self._collect_line_matches(
@@ -1048,7 +1048,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             after_context=after_context,
             invert_match=invert_match,
         )
-        return self._unscope_result(VFSResult(function="grep", entries=matched), user_id)
+        return self._unscope_result(VFSResult(function="grep", candidates=matched), user_id)
 
     # ------------------------------------------------------------------
     # Glob — REGEXP_LIKE pushdown on path
@@ -1121,7 +1121,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         if ext and decomposition.ext:
             merged_ext = tuple(e for e in ext if e in decomposition.ext)
             if not merged_ext:
-                return self._unscope_result(VFSResult(function="glob", entries=[]), user_id)
+                return self._unscope_result(VFSResult(function="glob", candidates=[]), user_id)
         elif decomposition.ext:
             merged_ext = decomposition.ext
         else:
@@ -1190,5 +1190,5 @@ class MSSQLFileSystem(DatabaseFileSystem):
         """)
 
         rows = (await session.execute(sql, params)).all()
-        matched = [self._row_to_entry(row, cols) for row in rows]
-        return self._unscope_result(VFSResult(function="glob", entries=matched), user_id)
+        matched = [self._row_to_candidate(row, cols) for row in rows]
+        return self._unscope_result(VFSResult(function="glob", candidates=matched), user_id)

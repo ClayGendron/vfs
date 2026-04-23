@@ -6,7 +6,7 @@ import asyncio
 from collections import deque
 from typing import TYPE_CHECKING
 
-from vfs.columns import ENTRY_FIELD_TO_MODEL_COLUMNS, required_model_columns
+from vfs.columns import CANDIDATE_FIELD_TO_MODEL_COLUMNS, required_model_columns
 from vfs.paths import normalize_path, parse_kind
 from vfs.query.ast import (
     CaseMode,
@@ -42,7 +42,7 @@ from vfs.query.ast import (
     Visibility,
     WriteCommand,
 )
-from vfs.results import ENTRY_FIELDS, PROJECTION_SENTINELS, Entry, TwoPathOperation, VFSResult
+from vfs.results import CANDIDATE_FIELDS, PROJECTION_SENTINELS, Candidate, TwoPathOperation, VFSResult
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -372,9 +372,9 @@ async def _execute_transfer(
             return await method(src=normalize_path(source), dest=normalized_dest, overwrite=overwrite, user_id=user_id)
         case (VFSResult(), str()):
             raise ValueError(f"{op} cannot combine piped input with an explicit source path")
-        case (VFSResult(entries=entries), None):
+        case (VFSResult(candidates=entries), None):
             if not entries:
-                return VFSResult(function=op, entries=[])
+                return VFSResult(function=op, candidates=[])
             ops = [
                 TwoPathOperation(src=entry.path, dest=_preserve_under_root(normalized_dest, entry.path))
                 for entry in entries
@@ -415,7 +415,7 @@ async def _execute_mkedge(
                 edge_type=edge_type,
                 user_id=user_id,
             )
-            for entry in current.entries
+            for entry in current.candidates
         )
     )
     return filesystem._merge_results(list(results))
@@ -435,7 +435,7 @@ async def _execute_tree(
         raise ValueError("tree cannot combine piped input with explicit paths")
 
     if current is not None:
-        roots = tuple(entry.path for entry in current.entries)
+        roots = tuple(entry.path for entry in current.candidates)
     elif not roots:
         roots = ("/",)
 
@@ -507,7 +507,7 @@ async def _execute_grep(
     if candidates is None and (visibility.include_all or visibility.include_kinds):
         candidates = await _collect_tree(filesystem, ("/",), max_depth=None, visibility=visibility, user_id=user_id)
     if candidates is not None and any(
-        _entry_kind(entry) != "file" and entry.content is None for entry in candidates.entries
+        _entry_kind(entry) != "file" and entry.content is None for entry in candidates.candidates
     ):
         candidates = await filesystem.read(candidates=candidates, user_id=user_id)
     return await filesystem.grep(
@@ -569,8 +569,8 @@ async def _execute_graph_traversal(
                 return await method(candidates=explicit, depth=depth, user_id=user_id)
             return await method(candidates=explicit, user_id=user_id)
         if method_name == "neighborhood":
-            return await method(path=explicit.entries[0].path, depth=depth, user_id=user_id)
-        return await method(path=explicit.entries[0].path, user_id=user_id)
+            return await method(path=explicit.candidates[0].path, depth=depth, user_id=user_id)
+        return await method(path=explicit.candidates[0].path, user_id=user_id)
     raise ValueError(f"{method_name} requires explicit paths when it is not used in a pipeline")
 
 
@@ -627,36 +627,36 @@ async def _hydrate_projection(
     public surface any caller uses — so it picks up mounts, scoping, and
     permission checks for free.  At most one extra query.
     """
-    if not projection or not result.entries:
+    if not projection or not result.candidates:
         return result
 
-    requested_fields = [name for name in projection if name not in PROJECTION_SENTINELS and name in ENTRY_FIELDS]
+    requested_fields = [name for name in projection if name not in PROJECTION_SENTINELS and name in CANDIDATE_FIELDS]
     if not requested_fields:
         return result
 
-    missing_fields = [name for name in requested_fields if all(getattr(e, name) is None for e in result.entries)]
+    missing_fields = [name for name in requested_fields if all(getattr(e, name) is None for e in result.candidates)]
     if not missing_fields:
         return result
 
     missing_cols: frozenset[str] = frozenset()
     for name in missing_fields:
-        missing_cols |= ENTRY_FIELD_TO_MODEL_COLUMNS.get(name, frozenset())
+        missing_cols |= CANDIDATE_FIELD_TO_MODEL_COLUMNS.get(name, frozenset())
     if not missing_cols:
         # Only computed fields requested (score / lines) — nothing to read.
         return result
 
     seed = VFSResult(
         function="read",
-        entries=[Entry(path=e.path) for e in result.entries],
+        candidates=[Candidate(path=e.path) for e in result.candidates],
     )
     hydrated = await filesystem.read(
         candidates=seed,
         columns=missing_cols,
         user_id=user_id,
     )
-    by_path = {e.path: e for e in hydrated.entries}
+    by_path = {e.path: e for e in hydrated.candidates}
     new_entries = []
-    for entry in result.entries:
+    for entry in result.candidates:
         fresh = by_path.get(entry.path)
         if fresh is None:
             new_entries.append(entry)
@@ -668,18 +668,18 @@ async def _hydrate_projection(
                 if value is not None:
                     update[name] = value
         new_entries.append(entry.model_copy(update=update) if update else entry)
-    return result._with_entries(new_entries)
+    return result._with_candidates(new_entries)
 
 
 def _paths_result(paths: tuple[str, ...], function: str = "") -> VFSResult:
     entries = []
     for path in paths:
         normalized = normalize_path(path)
-        entries.append(Entry(path=normalized, kind=parse_kind(normalized)))
-    return VFSResult(function=function, entries=entries)
+        entries.append(Candidate(path=normalized, kind=parse_kind(normalized)))
+    return VFSResult(function=function, candidates=entries)
 
 
-def _entry_kind(entry: Entry) -> str:
+def _entry_kind(entry: Candidate) -> str:
     return entry.kind or parse_kind(entry.path)
 
 
@@ -698,8 +698,8 @@ def _apply_visibility(
     if visibility.include_all:
         return result
     allowed = set(defaults) | set(visibility.include_kinds)
-    filtered = [entry for entry in result.entries if _entry_kind(entry) in allowed]
-    return result._with_entries(filtered)
+    filtered = [entry for entry in result.candidates if _entry_kind(entry) in allowed]
+    return result._with_candidates(filtered)
 
 
 async def _collect_tree(
@@ -713,7 +713,7 @@ async def _collect_tree(
 ) -> VFSResult:
     queue: deque[tuple[str, int]] = deque((normalize_path(root), 0) for root in roots)
     seen: set[str] = set()
-    collected: list[Entry] = []
+    collected: list[Candidate] = []
     while queue:
         path, depth = queue.popleft()
         if path in seen:
@@ -728,13 +728,13 @@ async def _collect_tree(
             return listing
 
         visible_listing = _apply_visibility(listing, visibility, {"file", "directory"})
-        collected.extend(visible_listing.entries)
+        collected.extend(visible_listing.candidates)
 
-        for entry in listing.entries:
+        for entry in listing.candidates:
             kind = _entry_kind(entry)
             if kind in {"file", "directory"}:
                 queue.append((entry.path, depth + 1))
 
-    deduped: dict[str, Entry] = {entry.path: entry for entry in collected}
+    deduped: dict[str, Candidate] = {entry.path: entry for entry in collected}
     ordered = [deduped[path] for path in sorted(deduped)]
-    return VFSResult(function=result_function, entries=ordered)
+    return VFSResult(function=result_function, candidates=ordered)

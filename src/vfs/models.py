@@ -39,7 +39,7 @@ from vfs.paths import (
 from vfs.paths import (
     parent_path as compute_parent_path,
 )
-from vfs.results import Entry
+from vfs.results import Candidate
 from vfs.vector import NativeEmbeddingConfig, Vector, VectorType
 from vfs.versioning import create_version as create_version_record
 from vfs.versioning import reconstruct_version
@@ -211,19 +211,19 @@ class VFSEntry(SQLModel):
         self._rederive_path_fields()
         return self
 
-    def to_entry(
+    def to_candidate(
         self,
         *,
         score: float | None = None,
         include_content: bool = False,
-    ) -> Entry:
-        """Project this object to an immutable ``Entry``.
+    ) -> Candidate:
+        """Project this object to an immutable ``Candidate``.
 
         Callers pass ``score`` for ranked results (vector/bm25/pagerank). By
         default ``content`` is omitted — set ``include_content=True`` for
         ``read`` / ``grep`` paths that genuinely need the text.
         """
-        return Entry(
+        return Candidate(
             path=self.path,
             kind=self.kind,
             content=self.content if include_content else None,

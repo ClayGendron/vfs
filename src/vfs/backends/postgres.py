@@ -29,7 +29,7 @@ from vfs.bm25 import tokenize_query
 from vfs.models import postgres_vector_column_spec, resolve_embedding_vector_type
 from vfs.paths import scope_path
 from vfs.patterns import compile_glob, decompose_glob, glob_to_sql_like
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -645,7 +645,7 @@ class PostgresFileSystem(DatabaseFileSystem):
     ) -> list[str]:
         """Return de-duplicated candidate paths in stable input order."""
         seed_result = self._to_candidates(path, candidates)
-        return list(dict.fromkeys(entry.path for entry in seed_result.entries))
+        return list(dict.fromkeys(entry.path for entry in seed_result.candidates))
 
     async def install_native_graph_schema(self) -> None:
         """Install the explicit native graph function required by this backend."""
@@ -703,7 +703,7 @@ class PostgresFileSystem(DatabaseFileSystem):
                 params,
             )
         ).scalars()
-        result = VFSResult(function=function, entries=[Entry(path=path) for path in rows])
+        result = VFSResult(function=function, candidates=[Candidate(path=path) for path in rows])
         return self._unscope_result(result, user_id)
 
     async def _run_graph_traversal(
@@ -722,7 +722,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         candidates = self._scope_candidates(candidates, user_id)
         seed_paths = self._candidate_paths(path, candidates)
         if not seed_paths:
-            return VFSResult(function=function, entries=[])
+            return VFSResult(function=function, candidates=[])
 
         graph_where, params = self._live_graph_where("o", user_id=user_id)
         params["seed_paths"] = seed_paths
@@ -1122,7 +1122,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         candidates = self._scope_candidates(candidates, user_id)
         seed_paths = self._candidate_paths(None, candidates)
         if not seed_paths:
-            return VFSResult(function="meeting_subgraph", entries=[])
+            return VFSResult(function="meeting_subgraph", candidates=[])
 
         sql = f"""
             SELECT path
@@ -1138,7 +1138,7 @@ class PostgresFileSystem(DatabaseFileSystem):
                 },
             )
         ).scalars()
-        result = VFSResult(function="meeting_subgraph", entries=[Entry(path=path) for path in rows])
+        result = VFSResult(function="meeting_subgraph", candidates=[Candidate(path=path) for path in rows])
         return self._unscope_result(result, user_id)
 
     async def _lexical_search_impl(
@@ -1194,12 +1194,12 @@ class PostgresFileSystem(DatabaseFileSystem):
         """)
         rows = (await session.execute(ranking_sql, params)).all()
         if not rows:
-            return VFSResult(function="lexical_search", entries=[])
+            return VFSResult(function="lexical_search", candidates=[])
 
         result = VFSResult(
             function="lexical_search",
-            entries=[
-                Entry(
+            candidates=[
+                Candidate(
                     path=row.path,
                     kind=row.kind,
                     content=row.content,
@@ -1330,8 +1330,8 @@ class PostgresFileSystem(DatabaseFileSystem):
             invert_match=invert_match,
         )
         if files_only:
-            matched = [Entry(path=entry.path, kind="file") for entry in matched]
-        return self._unscope_result(VFSResult(function="grep", entries=matched), user_id)
+            matched = [Candidate(path=entry.path, kind="file") for entry in matched]
+        return self._unscope_result(VFSResult(function="grep", candidates=matched), user_id)
 
     async def _glob_impl(
         self,
@@ -1374,7 +1374,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         if ext and decomposition.ext:
             merged_ext = tuple(value for value in ext if value in decomposition.ext)
             if not merged_ext:
-                return self._unscope_result(VFSResult(function="glob", entries=[]), user_id)
+                return self._unscope_result(VFSResult(function="glob", candidates=[]), user_id)
         elif decomposition.ext:
             merged_ext = decomposition.ext
         else:
@@ -1430,14 +1430,14 @@ class PostgresFileSystem(DatabaseFileSystem):
             ORDER BY path
         """)
         rows = (await session.execute(sql, params)).all()
-        matched: list[Entry] = []
+        matched: list[Candidate] = []
         for row in rows:
             if regex.match(row.path) is None:
                 continue
-            matched.append(self._row_to_entry(row, cols))
+            matched.append(self._row_to_candidate(row, cols))
             if max_count is not None and len(matched) >= max_count:
                 break
-        return self._unscope_result(VFSResult(function="glob", entries=matched), user_id)
+        return self._unscope_result(VFSResult(function="glob", candidates=matched), user_id)
 
     async def _vector_search_impl(
         self,
@@ -1461,8 +1461,8 @@ class PostgresFileSystem(DatabaseFileSystem):
         candidates = self._scope_candidates(candidates, user_id)
         if vector is None:
             return self._error("vector_search requires a vector")
-        if candidates is not None and not candidates.entries:
-            return VFSResult(function="vector_search", entries=[])
+        if candidates is not None and not candidates.candidates:
+            return VFSResult(function="vector_search", candidates=[])
 
         vector_spec = postgres_vector_column_spec(self._model)
         vector_type = resolve_embedding_vector_type(self._model)
@@ -1480,7 +1480,7 @@ class PostgresFileSystem(DatabaseFileSystem):
         }
         candidate_clause = ""
         if candidates is not None:
-            params["candidate_paths"] = [entry.path for entry in candidates.entries]
+            params["candidate_paths"] = [entry.path for entry in candidates.candidates]
             candidate_clause = "AND o.path = ANY(:candidate_paths)"
 
         user_scope_clause = self._apply_user_scope(params, user_id)
@@ -1502,8 +1502,8 @@ class PostgresFileSystem(DatabaseFileSystem):
         rows = (await session.execute(sql, params)).all()
         result = VFSResult(
             function="vector_search",
-            entries=[
-                Entry(
+            candidates=[
+                Candidate(
                     path=row.path,
                     score=_pgvector_distance_to_score(vector_spec.operator_class, float(row.distance)),
                 )

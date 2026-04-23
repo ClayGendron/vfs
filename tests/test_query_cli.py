@@ -134,14 +134,14 @@ class TestCliOutputFlag:
         # A projection that includes a non-default column triggers the
         # widened SELECT and entries carry the field directly.
         result = await query_fs.run_query('glob "/src/*.py" --output path,kind,updated_at')
-        assert result.entries
-        for entry in result.entries:
+        assert result.candidates
+        for entry in result.candidates:
             assert entry.updated_at is not None
 
     async def test_hydration_fills_grep_entries(self, query_fs: DatabaseFileSystem):
         # grep entries carry path+kind+content+score+lines by default;
         # asking for ``updated_at`` requires the hydration pass to backfill.
         result = await query_fs.run_query('grep "import" --output path,updated_at')
-        assert result.entries
-        for entry in result.entries:
+        assert result.candidates
+        for entry in result.candidates:
             assert entry.updated_at is not None

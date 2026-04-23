@@ -1,9 +1,9 @@
 """Composable result types for VFS.
 
-Every VFS operation returns ``VFSResult``. Results carry ``entries`` — a flat
-row shape uniform across grep, glob, bm25/vector/semantic search, pagerank,
-read/stat/ls, and write/delete. Chaining (set algebra, ``.sort``, ``.top``,
-``.filter``) operates in-memory:
+Every VFS operation returns ``VFSResult``. Results carry ``candidates`` — a
+flat row shape uniform across grep, glob, bm25/vector/semantic search,
+pagerank, read/stat/ls, and write/delete. Chaining (set algebra, ``.sort``,
+``.top``, ``.filter``) operates in-memory:
 
     result = await vfs.vector_search("auth", k=5)
     top_3 = result.top(3)
@@ -16,7 +16,7 @@ Serialization:
 
 - ``result.to_json(exclude_none=True)`` — Pydantic JSON for APIs / MCP.
 - ``result.to_str(projection=None)`` — text render. ``projection`` selects the
-  Entry columns to include; arrangement is function-specific.
+  Candidate columns to include; arrangement is function-specific.
 """
 
 from __future__ import annotations
@@ -80,13 +80,14 @@ class LineMatch(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
-# Entry — one row in a result set
+# Candidate — one row in a result set
 # ---------------------------------------------------------------------------
 
 
-class Entry(BaseModel):
+class Candidate(BaseModel):
     """Flat row shape — uniform across every VFS function.
 
+    One observation of a ``VFSEntry`` at the moment the operation returned.
     Fields are populated by the function that produced the row. A null field
     means "not populated for this function" (or "not known for this row"),
     never "this row has no such attribute." Projection controls which fields
@@ -111,8 +112,8 @@ class Entry(BaseModel):
         return split_path(self.path)[1]
 
 
-ENTRY_FIELDS: frozenset[str] = frozenset(Entry.model_fields.keys())
-"""Every field name on ``Entry`` — used to validate projection input."""
+CANDIDATE_FIELDS: frozenset[str] = frozenset(Candidate.model_fields.keys())
+"""Every field name on ``Candidate`` — used to validate projection input."""
 
 PROJECTION_SENTINELS: frozenset[str] = frozenset({"default", "all"})
 """Projection names that expand to a function-specific or result-derived set."""
@@ -187,7 +188,7 @@ def validate_projection(projection: tuple[str, ...] | list[str] | None) -> tuple
     ``None`` passes through. A bare string is rejected — ``projection=("path")``
     is a tuple-literal typo (needs a trailing comma) that would otherwise
     iterate character-by-character into an ``unknown field 'p'`` error.
-    Every name must be a known ``Entry`` field or a sentinel
+    Every name must be a known ``Candidate`` field or a sentinel
     (``default`` / ``all``); unknowns raise ``ValueError``.
     """
     if projection is None:
@@ -200,7 +201,7 @@ def validate_projection(projection: tuple[str, ...] | list[str] | None) -> tuple
         raise TypeError(msg)
     result: list[str] = []
     for name in projection:
-        if name not in ENTRY_FIELDS and name not in PROJECTION_SENTINELS:
+        if name not in CANDIDATE_FIELDS and name not in PROJECTION_SENTINELS:
             msg = f"unknown field {name!r}"
             raise ValueError(msg)
         result.append(name)
@@ -210,12 +211,12 @@ def validate_projection(projection: tuple[str, ...] | list[str] | None) -> tuple
 def resolve_projection(
     projection: tuple[str, ...] | None,
     function: str,
-    entries: list[Entry],
+    candidates: list[Candidate],
 ) -> tuple[str, ...]:
-    """Expand ``default`` / ``all`` sentinels into concrete Entry field names.
+    """Expand ``default`` / ``all`` sentinels into concrete Candidate field names.
 
     - ``default`` → ``default_projection(function)``
-    - ``all`` → every field that is non-null on at least one entry
+    - ``all`` → every field that is non-null on at least one candidate
     Order is preserved; duplicates are dropped (first-win).
     """
     if projection is None:
@@ -233,8 +234,8 @@ def resolve_projection(
             for field in default_projection(function):
                 _add(field)
         elif name == "all":
-            populated = {f for e in entries for f in ENTRY_FIELDS if getattr(e, f) is not None}
-            for field in Entry.model_fields:
+            populated = {f for c in candidates for f in CANDIDATE_FIELDS if getattr(c, f) is not None}
+            for field in Candidate.model_fields:
                 if field in populated:
                     _add(field)
         else:
@@ -252,7 +253,7 @@ class VFSResult(BaseModel):
 
     - **Envelope:** ``function`` identifies how the rows were produced; renderers
       and consumers dispatch on it.
-    - **Rows:** ``entries`` is the flat row list (``Entry``).
+    - **Rows:** ``candidates`` is the flat row list (``Candidate``).
     - **Errors:** ``success`` / ``errors`` carry status independent of the rows.
 
     Supports:
@@ -270,7 +271,7 @@ class VFSResult(BaseModel):
     success: bool = True
     errors: list[str] = []
     function: str = ""
-    entries: list[Entry] = []
+    candidates: list[Candidate] = []
 
     # -------------------------------------------------------------------
     # Data access
@@ -283,32 +284,32 @@ class VFSResult(BaseModel):
 
     @property
     def paths(self) -> tuple[str, ...]:
-        """All entry paths as a tuple."""
-        return tuple(e.path for e in self.entries)
+        """All candidate paths as a tuple."""
+        return tuple(c.path for c in self.candidates)
 
     @property
-    def file(self) -> Entry | None:
-        """First entry, or ``None`` if empty."""
-        return self.entries[0] if self.entries else None
+    def file(self) -> Candidate | None:
+        """First candidate, or ``None`` if empty."""
+        return self.candidates[0] if self.candidates else None
 
     @property
     def content(self) -> str | None:
-        """Content of the first entry, or ``None``."""
-        return self.entries[0].content if self.entries else None
+        """Content of the first candidate, or ``None``."""
+        return self.candidates[0].content if self.candidates else None
 
     # -------------------------------------------------------------------
     # Iteration / truthiness
     # -------------------------------------------------------------------
 
-    def iter_entries(self) -> Iterator[Entry]:
-        """Iterate over entries without overriding BaseModel iteration."""
-        return iter(self.entries)
+    def iter_candidates(self) -> Iterator[Candidate]:
+        """Iterate over candidates without overriding BaseModel iteration."""
+        return iter(self.candidates)
 
     def __len__(self) -> int:
-        return len(self.entries)
+        return len(self.candidates)
 
     def __bool__(self) -> bool:
-        return self.success and len(self.entries) > 0
+        return self.success and len(self.candidates) > 0
 
     def __contains__(self, path: str) -> bool:
         return path in self.paths
@@ -317,8 +318,8 @@ class VFSResult(BaseModel):
     # Set algebra — left-wins merge on overlap
     # -------------------------------------------------------------------
 
-    def _as_dict(self) -> dict[str, Entry]:
-        return {e.path: e for e in self.entries}
+    def _as_dict(self) -> dict[str, Candidate]:
+        return {c.path: c for c in self.candidates}
 
     @staticmethod
     def _first_set(a: _T | None, b: _T | None, default: _T | None = None) -> _T | None:
@@ -326,10 +327,10 @@ class VFSResult(BaseModel):
         return a if a is not None else (b if b is not None else default)
 
     @staticmethod
-    def _merge_entry(a: Entry, b: Entry) -> Entry:
-        """Left entry wins; fall back to right only where left is None."""
+    def _merge_candidate(a: Candidate, b: Candidate) -> Candidate:
+        """Left candidate wins; fall back to right only where left is None."""
         fs = VFSResult._first_set
-        return Entry(
+        return Candidate(
             path=a.path,
             kind=fs(a.kind, b.kind),
             lines=fs(a.lines, b.lines),
@@ -350,41 +351,41 @@ class VFSResult(BaseModel):
         return self.function if self.function == other.function else "hybrid"
 
     def __and__(self, other: VFSResult) -> VFSResult:
-        """Intersection — entries present on both sides, left wins on overlap."""
+        """Intersection — candidates present on both sides, left wins on overlap."""
         left = self._as_dict()
         right = other._as_dict()
-        merged = [self._merge_entry(left[p], right[p]) for p in left if p in right]
+        merged = [self._merge_candidate(left[p], right[p]) for p in left if p in right]
         return VFSResult(
             function=self._merged_function(other),
-            entries=merged,
+            candidates=merged,
             success=self.success and other.success,
             errors=self.errors + other.errors,
         )
 
     def __or__(self, other: VFSResult) -> VFSResult:
-        """Union — all entries; left wins on overlap."""
+        """Union — all candidates; left wins on overlap."""
         left = self._as_dict()
         right = other._as_dict()
-        merged: dict[str, Entry] = {}
-        for p, e in left.items():
-            merged[p] = self._merge_entry(e, right[p]) if p in right else e
-        for p, e in right.items():
+        merged: dict[str, Candidate] = {}
+        for p, c in left.items():
+            merged[p] = self._merge_candidate(c, right[p]) if p in right else c
+        for p, c in right.items():
             if p not in merged:
-                merged[p] = e
+                merged[p] = c
         return VFSResult(
             function=self._merged_function(other),
-            entries=list(merged.values()),
+            candidates=list(merged.values()),
             success=self.success and other.success,
             errors=self.errors + other.errors,
         )
 
     def __sub__(self, other: VFSResult) -> VFSResult:
-        """Difference — entries in left whose path is not in right."""
+        """Difference — candidates in left whose path is not in right."""
         right_paths = set(other.paths)
-        remaining = [e for e in self.entries if e.path not in right_paths]
+        remaining = [c for c in self.candidates if c.path not in right_paths]
         return VFSResult(
             function=self.function,
-            entries=remaining,
+            candidates=remaining,
             success=self.success,
             errors=self.errors,
         )
@@ -393,58 +394,60 @@ class VFSResult(BaseModel):
     # Enrichment chains (local, no backend call)
     # -------------------------------------------------------------------
 
-    def _with_entries(self, entries: list[Entry]) -> VFSResult:
-        """Return a new result with the given *entries*, preserving envelope."""
+    def _with_candidates(self, candidates: list[Candidate]) -> VFSResult:
+        """Return a new result with the given *candidates*, preserving envelope."""
         return VFSResult(
             function=self.function,
-            entries=entries,
+            candidates=candidates,
             success=self.success,
             errors=self.errors,
         )
 
     def add_prefix(self, prefix: str) -> VFSResult:
-        """Prepend *prefix* to every entry path, in place."""
+        """Prepend *prefix* to every candidate path, in place."""
         if not prefix:
             return self
-        self.entries = [
-            e.model_copy(update={"path": prefix + e.path if e.path != "/" else prefix}) for e in self.entries
+        self.candidates = [
+            c.model_copy(update={"path": prefix + c.path if c.path != "/" else prefix}) for c in self.candidates
         ]
         return self
 
     def strip_user_scope(self, user_id: str) -> VFSResult:
         """Strip the ``/{user_id}`` prefix (and any embedded target prefix) from paths."""
-        return self._with_entries([e.model_copy(update={"path": unscope_path(e.path, user_id)}) for e in self.entries])
+        return self._with_candidates(
+            [c.model_copy(update={"path": unscope_path(c.path, user_id)}) for c in self.candidates],
+        )
 
     def sort(
         self,
         *,
-        key: Callable[[Entry], Any] | None = None,
+        key: Callable[[Candidate], Any] | None = None,
         reverse: bool = True,
     ) -> VFSResult:
-        """Re-order entries. Default key is ``entry.score`` (None treated as ``-inf``)."""
+        """Re-order candidates. Default key is ``candidate.score`` (None treated as ``-inf``)."""
         if key is None:
 
-            def key(e: Entry) -> float:
-                return e.score if e.score is not None else float("-inf")
+            def key(c: Candidate) -> float:
+                return c.score if c.score is not None else float("-inf")
 
-        return self._with_entries(sorted(self.entries, key=key, reverse=reverse))
+        return self._with_candidates(sorted(self.candidates, key=key, reverse=reverse))
 
     def top(self, k: int) -> VFSResult:
-        """Top *k* entries by score. *k* must be >= 1."""
+        """Top *k* candidates by score. *k* must be >= 1."""
         if k < 1:
             msg = f"k must be >= 1, got {k}"
             raise ValueError(msg)
         sorted_result = self.sort()
-        return sorted_result._with_entries(sorted_result.entries[:k])
+        return sorted_result._with_candidates(sorted_result.candidates[:k])
 
-    def filter(self, fn: Callable[[Entry], bool]) -> VFSResult:
-        """Keep entries where *fn(entry)* is truthy."""
-        return self._with_entries([e for e in self.entries if fn(e)])
+    def filter(self, fn: Callable[[Candidate], bool]) -> VFSResult:
+        """Keep candidates where *fn(candidate)* is truthy."""
+        return self._with_candidates([c for c in self.candidates if fn(c)])
 
     def kinds(self, *kinds: str) -> VFSResult:
-        """Filter entries by kind."""
+        """Filter candidates by kind."""
         kind_set = set(kinds)
-        return self.filter(lambda e: e.kind in kind_set)
+        return self.filter(lambda c: c.kind in kind_set)
 
     # -------------------------------------------------------------------
     # Serialization
@@ -455,7 +458,7 @@ class VFSResult(BaseModel):
         return self.model_dump_json(exclude_none=exclude_none)
 
     def to_str(self, *, projection: tuple[str, ...] | list[str] | None = None) -> str:
-        """Render to text. *projection* selects Entry columns to show.
+        """Render to text. *projection* selects Candidate columns to show.
 
         - ``None`` → function's default projection.
         - Tuple/list of field names, possibly with ``default`` / ``all`` sentinels.
@@ -463,13 +466,13 @@ class VFSResult(BaseModel):
         - If the result has errors but ``success=True``, the error block is
           appended after the body.
         """
-        if not self.success and not self.entries:
+        if not self.success and not self.candidates:
             return _render_errors(self.errors)
 
         proj = validate_projection(projection)
-        resolved = resolve_projection(proj, self.function, self.entries)
+        resolved = resolve_projection(proj, self.function, self.candidates)
         body = _render_body(self, resolved)
-        note = _render_unpopulated_projection_note(proj, self.entries)
+        note = _render_unpopulated_projection_note(proj, self.candidates)
 
         blocks = [block for block in (body, note, _render_errors(self.errors)) if block]
         return "\n\n".join(blocks)
@@ -489,23 +492,23 @@ def _render_errors(errors: list[str]) -> str:
 
 def _render_unpopulated_projection_note(
     projection: tuple[str, ...] | None,
-    entries: list[Entry],
+    candidates: list[Candidate],
 ) -> str:
     """Return a note for explicitly projected fields that are null-for-all."""
-    if projection is None or not entries:
+    if projection is None or not candidates:
         return ""
 
     missing: list[str] = []
     seen: set[str] = set()
     for name in projection:
-        if name in ENTRY_FIELDS and name not in seen and all(getattr(entry, name) is None for entry in entries):
+        if name in CANDIDATE_FIELDS and name not in seen and all(getattr(c, name) is None for c in candidates):
             seen.add(name)
             missing.append(name)
     if not missing:
         return ""
 
     fields = ", ".join(missing)
-    return f"NOTE: {fields} not populated for any entries."
+    return f"NOTE: {fields} not populated for any candidates."
 
 
 def _render_body(result: VFSResult, projection: tuple[str, ...]) -> str:
@@ -525,7 +528,7 @@ def _render_body(result: VFSResult, projection: tuple[str, ...]) -> str:
 
 
 def _format_field(name: str, value: Any) -> str:
-    """Canonical text rendering for a single Entry field value."""
+    """Canonical text rendering for a single Candidate field value."""
     if value is None:
         return ""
     if isinstance(value, float):
@@ -548,12 +551,12 @@ def _render_path_list(result: VFSResult, projection: tuple[str, ...]) -> str:
     Column widths expand to fit the longest cell so pipes line up.
     """
     if projection == ("path",):
-        return "\n".join(sorted(e.path for e in result.entries))
-    if not result.entries:
+        return "\n".join(sorted(c.path for c in result.candidates))
+    if not result.candidates:
         return ""
     rows = [
-        [_format_field(f, getattr(e, f, None)) for f in projection]
-        for e in sorted(result.entries, key=lambda x: x.path)
+        [_format_field(f, getattr(c, f, None)) for f in projection]
+        for c in sorted(result.candidates, key=lambda x: x.path)
     ]
     return _markdown_table(list(projection), rows)
 
@@ -603,10 +606,10 @@ def _render_block(result: VFSResult, projection: tuple[str, ...]) -> str:
         return ""
     head, *rest = projection
     blocks = []
-    for e in sorted(result.entries, key=lambda x: x.path):
-        lines = [_format_field(head, getattr(e, head, None))]
+    for c in sorted(result.candidates, key=lambda x: x.path):
+        lines = [_format_field(head, getattr(c, head, None))]
         for field in rest:
-            value = getattr(e, field, None)
+            value = getattr(c, field, None)
             if value is not None:
                 lines.append(f"  {field}: {_format_field(field, value)}")
         blocks.append("\n".join(lines))
@@ -614,15 +617,15 @@ def _render_block(result: VFSResult, projection: tuple[str, ...]) -> str:
 
 
 def _render_read(result: VFSResult, projection: tuple[str, ...]) -> str:
-    """Dump content verbatim. Multi-entry gets ``==> path <==`` headers."""
-    if not result.entries:
+    """Dump content verbatim. Multi-candidate gets ``==> path <==`` headers."""
+    if not result.candidates:
         return ""
     if projection != ("content",):
         # If the caller asks for more than content, fall back to block format.
         return _render_block(result, projection)
-    if len(result.entries) == 1:
-        return result.entries[0].content or ""
-    blocks = [f"==> {e.path} <==\n{e.content or ''}" for e in sorted(result.entries, key=lambda x: x.path)]
+    if len(result.candidates) == 1:
+        return result.candidates[0].content or ""
+    blocks = [f"==> {c.path} <==\n{c.content or ''}" for c in sorted(result.candidates, key=lambda x: x.path)]
     return "\n\n".join(blocks)
 
 
@@ -631,7 +634,7 @@ _GREP_LINE_LEVEL_FIELDS: frozenset[str] = frozenset({"path", "lines", "content"}
 
 
 def _render_grep(result: VFSResult, projection: tuple[str, ...]) -> str:
-    """Ripgrep-style line output — or a Markdown table for entry-level fields.
+    """Ripgrep-style line output — or a Markdown table for candidate-level fields.
 
     When the projection contains only ``path`` / ``lines`` / ``content``
     (grep's native vocabulary), each source line in a match's context
@@ -640,14 +643,14 @@ def _render_grep(result: VFSResult, projection: tuple[str, ...]) -> str:
     - match lines use ``:`` separators (``path:N:text``).
     - context lines use ``-`` separators (``path-N-text``).
 
-    As soon as the projection asks for entry-level fields
+    As soon as the projection asks for candidate-level fields
     (``size_bytes``, ``updated_at``, degrees, …) we switch to the
     standard Markdown-table render — those fields are per-file, not
     per-line, and jamming them onto an rg-style line produces ambiguous
     mixed-separator output.  The caller traded line-level detail for a
-    tabular entry-level view when they projected metadata.
+    tabular candidate-level view when they projected metadata.
 
-    ``--files-with-matches`` / ``--count`` output modes produce entries
+    ``--files-with-matches`` / ``--count`` output modes produce candidates
     with no ``LineMatch`` segments; those render as one path per line.
     """
     if not set(projection).issubset(_GREP_LINE_LEVEL_FIELDS):
@@ -658,18 +661,18 @@ def _render_grep(result: VFSResult, projection: tuple[str, ...]) -> str:
     include_content = "content" in projection
 
     lines_out: list[str] = []
-    for e in result.entries:
-        segments = e.lines or []
+    for c in result.candidates:
+        segments = c.lines or []
         if not segments:
             if include_path:
-                lines_out.append(e.path)
+                lines_out.append(c.path)
             continue
 
         if not include_content:
             for seg in segments:
                 pieces = []
                 if include_path:
-                    pieces.append(e.path)
+                    pieces.append(c.path)
                 if include_lines:
                     pieces.append(str(seg.match))
                 lines_out.append(":".join(pieces))
@@ -681,7 +684,7 @@ def _render_grep(result: VFSResult, projection: tuple[str, ...]) -> str:
         for seg in segments:
             grouped_segments.setdefault((seg.start, seg.end), set()).add(seg.match)
 
-        text_lines = (e.content or "").splitlines()
+        text_lines = (c.content or "").splitlines()
         for (start, end), match_lines in grouped_segments.items():
             for lineno in range(start, end + 1):
                 if not (0 < lineno <= len(text_lines)):
@@ -690,7 +693,7 @@ def _render_grep(result: VFSResult, projection: tuple[str, ...]) -> str:
                 sep = ":" if is_match else "-"
                 pieces = []
                 if include_path:
-                    pieces.append(e.path)
+                    pieces.append(c.path)
                 if include_lines:
                     pieces.append(str(lineno))
                 pieces.append(text_lines[lineno - 1])
@@ -699,8 +702,8 @@ def _render_grep(result: VFSResult, projection: tuple[str, ...]) -> str:
 
 
 def _render_tree(result: VFSResult) -> str:
-    """ASCII tree of entry paths."""
-    paths = sorted(e.path.strip("/").split("/") for e in result.entries if e.path != "/")
+    """ASCII tree of candidate paths."""
+    paths = sorted(c.path.strip("/").split("/") for c in result.candidates if c.path != "/")
     tree: dict[str, dict] = {}
     for parts in paths:
         cursor = tree
@@ -723,12 +726,12 @@ def _render_tree(result: VFSResult) -> str:
 
 def _render_action(result: VFSResult) -> str:
     """Action one-liner — ``{Verb} {path}`` or ``{Verb} {N} paths``."""
-    count = len(result.entries)
+    count = len(result.candidates)
     verb = _verb_for(result.function)
     if count == 0:
         return "No changes"
     if count == 1:
-        return f"{verb} {result.entries[0].path}"
+        return f"{verb} {result.candidates[0].path}"
     return f"{verb} {count} paths"
 
 

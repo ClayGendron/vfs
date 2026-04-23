@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from vfs.backends.database import DatabaseFileSystem
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -19,17 +19,17 @@ from vfs.results import Entry, VFSResult
 
 def paths(result: VFSResult) -> set[str]:
     """Extract path set from a VFSResult."""
-    return {e.path for e in result.entries}
+    return {e.path for e in result.candidates}
 
 
 def scored_paths(result: VFSResult) -> dict[str, float | None]:
     """Extract {path: score} from a VFSResult."""
-    return {e.path: e.score for e in result.entries}
+    return {e.path: e.score for e in result.candidates}
 
 
 def cands(*ps: str) -> VFSResult:
     """Build a VFSResult from path strings."""
-    return VFSResult(entries=[Entry(path=p) for p in ps])
+    return VFSResult(candidates=[Candidate(path=p) for p in ps])
 
 
 # ------------------------------------------------------------------
@@ -102,13 +102,13 @@ class TestPredecessors:
         async with graph_db._use_session() as s:
             r = await graph_db._predecessors_impl("/src/api.py", session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
     async def test_predecessors_nonexistent_node(self, graph_db: DatabaseFileSystem):
         async with graph_db._use_session() as s:
             r = await graph_db._predecessors_impl("/nonexistent.py", session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
 
 class TestSuccessors:
@@ -131,7 +131,7 @@ class TestSuccessors:
         async with graph_db._use_session() as s:
             r = await graph_db._successors_impl("/src/db.py", session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
 
 # ------------------------------------------------------------------
@@ -151,7 +151,7 @@ class TestAncestors:
         async with graph_db._use_session() as s:
             r = await graph_db._ancestors_impl("/src/api.py", session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
 
 class TestDescendants:
@@ -166,7 +166,7 @@ class TestDescendants:
         async with graph_db._use_session() as s:
             r = await graph_db._descendants_impl("/src/db.py", session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
 
 # ------------------------------------------------------------------
@@ -215,7 +215,7 @@ class TestNeighborhood:
             )
         assert r.success
         # config.py has no edges — not even a graph node
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
 
 # ------------------------------------------------------------------
@@ -303,7 +303,7 @@ class TestClosenessCentrality:
         async with graph_db._use_session() as s:
             r = await graph_db._closeness_centrality_impl(session=s)
         assert r.success
-        assert len(r.entries) >= 4
+        assert len(r.candidates) >= 4
 
 
 class TestDegreeCentrality:
@@ -343,7 +343,7 @@ class TestHits:
         # In the new shape there are no per-entry details / metadata blocks.
         # The hits impl now writes the authority score onto entry.score;
         # just assert we got entries back.
-        assert len(r.entries) >= 1
+        assert len(r.candidates) >= 1
 
     async def test_hits_hub_scoring(self, graph_db: DatabaseFileSystem):
         async with graph_db._use_session() as s:
@@ -468,7 +468,7 @@ class TestPublicGraphRouting:
     async def test_pagerank_public(self, graph_db: DatabaseFileSystem):
         r = await graph_db.pagerank()
         assert r.success
-        assert len(r.entries) >= 4
+        assert len(r.candidates) >= 4
 
     async def test_meeting_subgraph_public(self, graph_db: DatabaseFileSystem):
         r = await graph_db.meeting_subgraph(cands("/src/api.py", "/src/db.py"))
@@ -480,7 +480,7 @@ class TestPublicGraphRouting:
     async def test_hits_public(self, graph_db: DatabaseFileSystem):
         r = await graph_db.hits()
         assert r.success
-        assert len(r.entries) >= 4
+        assert len(r.candidates) >= 4
 
 
 # ------------------------------------------------------------------
@@ -493,34 +493,34 @@ class TestEmptyGraph:
         async with db._use_session() as s:
             r = await db._predecessors_impl("/nonexistent", session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
     async def test_pagerank_empty(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._pagerank_impl(session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
     async def test_hits_empty(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._hits_impl(session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
     async def test_neighborhood_empty(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._neighborhood_impl("/x", depth=1, session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
     async def test_ancestors_empty(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._ancestors_impl("/x", session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
     async def test_descendants_empty(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._descendants_impl("/x", session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0

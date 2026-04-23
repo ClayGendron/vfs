@@ -35,7 +35,7 @@ from sqlalchemy.pool import StaticPool
 from vfs.backends.database import DatabaseFileSystem
 from vfs.base import VirtualFileSystem
 from vfs.client import VFSClientAsync
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -351,9 +351,9 @@ class TestCandidateBasedSearchUnderMount:
         router, _, _ = two_mounts
         seeds = VFSResult(
             function="glob",
-            entries=[
-                Entry(path="/data/src/app.py"),
-                Entry(path="/other/src/main.py"),
+            candidates=[
+                Candidate(path="/data/src/app.py"),
+                Candidate(path="/other/src/main.py"),
             ],
         )
         r = await router.glob("/data/**/*.py", candidates=seeds)
@@ -363,9 +363,9 @@ class TestCandidateBasedSearchUnderMount:
         router, _, _ = two_mounts
         seeds = VFSResult(
             function="glob",
-            entries=[
-                Entry(path="/data/src/app.py"),
-                Entry(path="/other/src/main.py"),
+            candidates=[
+                Candidate(path="/data/src/app.py"),
+                Candidate(path="/other/src/main.py"),
             ],
         )
         r = await router.grep("print", candidates=seeds, globs=("/data/**/*.py",))

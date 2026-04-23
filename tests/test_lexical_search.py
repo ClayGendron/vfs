@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from tests.conftest import require_file
 from vfs.backends.database import DatabaseFileSystem
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -60,11 +60,11 @@ class TestBasicBM25:
             )
         # a.py matches both terms, b.py matches one, c.py matches none
         assert len(r) == 2
-        assert r.entries[0].path == "/a.py"
-        assert r.entries[1].path == "/b.py"
-        assert r.entries[0].score is not None
-        assert r.entries[1].score is not None
-        assert r.entries[0].score > r.entries[1].score
+        assert r.candidates[0].path == "/a.py"
+        assert r.candidates[1].path == "/b.py"
+        assert r.candidates[0].score is not None
+        assert r.candidates[1].score is not None
+        assert r.candidates[0].score > r.candidates[1].score
 
     async def test_term_frequency_boosts_score(self, db: DatabaseFileSystem):
         await _seed(
@@ -77,10 +77,10 @@ class TestBasicBM25:
         async with db._use_session() as s:
             r = await db._lexical_search_impl("timeout", session=s)
         assert len(r) == 2
-        assert r.entries[0].path == "/many.py"
-        assert r.entries[0].score is not None
-        assert r.entries[1].score is not None
-        assert r.entries[0].score > r.entries[1].score
+        assert r.candidates[0].path == "/many.py"
+        assert r.candidates[0].score is not None
+        assert r.candidates[1].score is not None
+        assert r.candidates[0].score > r.candidates[1].score
 
     async def test_shorter_doc_ranks_higher_with_equal_tf(
         self,
@@ -97,7 +97,7 @@ class TestBasicBM25:
         async with db._use_session() as s:
             r = await db._lexical_search_impl("timeout", session=s)
         assert len(r) == 2
-        assert r.entries[0].path == "/short.py"
+        assert r.candidates[0].path == "/short.py"
 
     async def test_idf_weighting(self, db: DatabaseFileSystem):
         """Rare terms contribute more to the score than common terms."""
@@ -109,7 +109,7 @@ class TestBasicBM25:
         async with db._use_session() as s:
             r = await db._lexical_search_impl("authentication the", session=s)
         # /rare.py should rank first because "authentication" has high IDF
-        assert r.entries[0].path == "/rare.py"
+        assert r.candidates[0].path == "/rare.py"
 
 
 # ------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TestVersionExclusion:
         await _seed(db, {"/a.py": "authentication handler"})
         async with db._use_session() as s:
             r = await db._lexical_search_impl("authentication", session=s)
-        result_paths = {e.path for e in r.entries}
+        result_paths = {e.path for e in r.candidates}
         assert "/a.py" in result_paths
         assert not any("/__meta__/versions/" in p for p in result_paths)
 
@@ -131,13 +131,13 @@ class TestVersionExclusion:
         """Version candidates passed in should be skipped."""
         cands = VFSResult(
             function="lexical_search",
-            entries=[
-                Entry(
+            candidates=[
+                Candidate(
                     path="/.vfs/a.py/__meta__/versions/1",
                     kind="version",
                     content="authentication handler",
                 ),
-                Entry(
+                Candidate(
                     path="/a.py",
                     kind="file",
                     content="authentication handler",
@@ -213,7 +213,7 @@ class TestSearchesAllContent:
         async with db._use_session() as s:
             r = await db._lexical_search_impl("authentication", session=s)
         assert len(r) >= 1
-        chunk_paths = [e.path for e in r.entries]
+        chunk_paths = [e.path for e in r.candidates]
         assert "/.vfs/a.py/__meta__/chunks/login" in chunk_paths
 
     async def test_finds_files_and_chunks(self, db: DatabaseFileSystem):
@@ -226,7 +226,7 @@ class TestSearchesAllContent:
             )
         async with db._use_session() as s:
             r = await db._lexical_search_impl("authentication", session=s)
-        result_paths = {e.path for e in r.entries}
+        result_paths = {e.path for e in r.candidates}
         assert "/a.py" in result_paths
         assert "/.vfs/a.py/__meta__/chunks/login" in result_paths
 
@@ -251,9 +251,9 @@ class TestCandidateChaining:
         )
         cands = VFSResult(
             function="lexical_search",
-            entries=[
-                Entry(path="/a.py", content="authentication handler"),
-                Entry(path="/b.py", content="authentication module"),
+            candidates=[
+                Candidate(path="/a.py", content="authentication handler"),
+                Candidate(path="/b.py", content="authentication module"),
             ],
         )
         async with db._use_session() as s:
@@ -262,7 +262,7 @@ class TestCandidateChaining:
                 candidates=cands,
                 session=s,
             )
-        result_paths = {e.path for e in r.entries}
+        result_paths = {e.path for e in r.candidates}
         assert "/a.py" in result_paths
         assert "/b.py" in result_paths
         assert "/c.py" not in result_paths
@@ -275,8 +275,8 @@ class TestCandidateChaining:
         await _seed(db, {"/a.py": "authentication handler"})
         cands = VFSResult(
             function="lexical_search",
-            entries=[
-                Entry(path="/a.py"),
+            candidates=[
+                Candidate(path="/a.py"),
             ],
         )
         async with db._use_session() as s:
@@ -294,8 +294,8 @@ class TestCandidateChaining:
     ):
         cands = VFSResult(
             function="lexical_search",
-            entries=[
-                Entry(
+            candidates=[
+                Candidate(
                     path="/a.py",
                     kind="file",
                     content="authentication handler",
@@ -408,4 +408,4 @@ class TestPublicAPI:
         r = await root.lexical_search("authentication")
         assert r.success
         assert len(r) >= 1
-        assert any(e.path == "/code/a.py" for e in r.entries)
+        assert any(e.path == "/code/a.py" for e in r.candidates)

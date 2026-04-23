@@ -24,7 +24,7 @@ from vfs.backends.postgres import (
 )
 from vfs.models import _build_entry_table_class, postgres_vector_column_spec
 from vfs.paths import decompose_edge, edge_out_path
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 from vfs.vector import NativeEmbeddingConfig, Vector
 
 
@@ -177,11 +177,11 @@ async def _seed_graph(
 
 
 def _node_paths(result: VFSResult) -> set[str]:
-    return {entry.path for entry in result.entries if not _is_connection_path(entry.path)}
+    return {entry.path for entry in result.candidates if not _is_connection_path(entry.path)}
 
 
 def _edge_paths(result: VFSResult) -> set[str]:
-    return {entry.path for entry in result.entries if _is_connection_path(entry.path)}
+    return {entry.path for entry in result.candidates if _is_connection_path(entry.path)}
 
 
 def _is_connection_path(path: str) -> bool:
@@ -452,11 +452,11 @@ class TestLexicalSearch:
             result = await postgres_native_db._lexical_search_impl("authentication timeout", k=2, session=session)
 
         assert result.paths == ("/bm25.py", "/dense.py")
-        assert result.entries[0].content == "authentication authentication authentication timeout handler"
-        assert all(entry.score is not None and 0.0 <= entry.score < 1.0 for entry in result.entries)
-        assert result.entries[0].score is not None
-        assert result.entries[1].score is not None
-        assert result.entries[0].score >= result.entries[1].score
+        assert result.candidates[0].content == "authentication authentication authentication timeout handler"
+        assert all(entry.score is not None and 0.0 <= entry.score < 1.0 for entry in result.candidates)
+        assert result.candidates[0].score is not None
+        assert result.candidates[1].score is not None
+        assert result.candidates[0].score >= result.candidates[1].score
         selects = _read_statements_against_objects(sql_capture.statements)
         assert any("search_tsv" in statement and "@@" in statement for statement in selects)
         assert any("ts_rank_cd(" in statement and "as score" in statement for statement in selects)
@@ -493,9 +493,9 @@ class TestLexicalSearch:
     async def test_candidates_path_stays_on_base_python_bm25(self, postgres_native_db, sql_capture):
         candidates = VFSResult(
             function="grep",
-            entries=[
-                Entry(path="/a.py", kind="file", content="authentication timeout"),
-                Entry(path="/b.py", kind="file", content="authentication"),
+            candidates=[
+                Candidate(path="/a.py", kind="file", content="authentication timeout"),
+                Candidate(path="/b.py", kind="file", content="authentication"),
             ],
         )
 
@@ -520,9 +520,9 @@ class TestGrep:
         async with postgres_native_db._use_session() as session:
             result = await postgres_native_db._grep_impl("TODO", session=session)
         assert result.paths == ("/a.py",)
-        assert result.entries[0].score == 2.0
-        assert result.entries[0].lines is not None
-        assert [line.match for line in result.entries[0].lines] == [1, 3]
+        assert result.candidates[0].score == 2.0
+        assert result.candidates[0].lines is not None
+        assert [line.match for line in result.candidates[0].lines] == [1, 3]
 
     async def test_invert_match_stays_python_authoritative(self, postgres_native_db, sql_capture):
         async with postgres_native_db._use_session() as session:
@@ -531,7 +531,7 @@ class TestGrep:
         sql_capture.reset()
         async with postgres_native_db._use_session() as session:
             result = await postgres_native_db._grep_impl("beta", invert_match=True, session=session)
-        assert result.entries[0].score == 2.0
+        assert result.candidates[0].score == 2.0
         assert all("regexp_split_to_table" not in _normalize_sql(statement) for statement in sql_capture.statements)
         assert all(" o.content ~ " not in _normalize_sql(statement) for statement in sql_capture.statements)
 
@@ -544,8 +544,8 @@ class TestGrep:
             result = await postgres_native_db._grep_impl("^TODO", session=session)
 
         assert result.paths == ("/a.py",)
-        assert result.entries[0].lines is not None
-        assert [line.match for line in result.entries[0].lines] == [2]
+        assert result.candidates[0].lines is not None
+        assert [line.match for line in result.candidates[0].lines] == [2]
         assert all(" o.content ~ " not in _normalize_sql(statement) for statement in sql_capture.statements)
         assert all(" o.content ~* " not in _normalize_sql(statement) for statement in sql_capture.statements)
 
@@ -573,8 +573,8 @@ class TestGrep:
             )
 
         assert native.paths == baseline.paths
-        assert [entry.score for entry in native.entries] == [entry.score for entry in baseline.entries]
-        assert [entry.lines for entry in native.entries] == [entry.lines for entry in baseline.entries]
+        assert [entry.score for entry in native.candidates] == [entry.score for entry in baseline.candidates]
+        assert [entry.lines for entry in native.candidates] == [entry.lines for entry in baseline.candidates]
 
 
 class TestGlob:
@@ -688,7 +688,7 @@ class TestVectorSearch:
         result = await postgres_native_db.vector_search([1.0, 0.0, 0.0, 0.0], k=2)
         assert result.success
         assert result.paths[0] == "/a.py"
-        assert len(result.entries) == 2
+        assert len(result.candidates) == 2
 
     async def test_candidates_filter_with_native_pgvector(self, postgres_native_db):
         await _seed_native_embeddings(
@@ -699,7 +699,7 @@ class TestVectorSearch:
             },
         )
 
-        candidates = VFSResult(entries=[Entry(path="/b.py")])
+        candidates = VFSResult(candidates=[Candidate(path="/b.py")])
         result = await postgres_native_db.vector_search([1.0, 0.0, 0.0, 0.0], k=5, candidates=candidates)
         assert result.paths == ("/b.py",)
 
@@ -806,7 +806,7 @@ class TestVectorSearch:
             result = await fs._vector_search_impl(vector=query_vector, k=2, session=session)
 
         assert result.paths[0] == "/a.py"
-        assert result.entries[0].score == pytest.approx(expected_score)
+        assert result.candidates[0].score == pytest.approx(expected_score)
         selects = [
             _normalize_sql(statement)
             for statement in sql_capture.statements
@@ -922,7 +922,7 @@ class TestMeetingSubgraphSpecCompatibility:
         )
 
         result = await postgres_legacy_db.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
+            VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
         )
 
         assert result.success
@@ -942,7 +942,7 @@ class TestMeetingSubgraphSpecCompatibility:
             session.add(conn)
 
         result = await postgres_legacy_db.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/ghost/a.py"), Entry(path="/ghost/b.py")])
+            VFSResult(candidates=[Candidate(path="/ghost/a.py"), Candidate(path="/ghost/b.py")])
         )
 
         assert result.success
@@ -992,7 +992,7 @@ class TestNativeGraphTraversal:
         )
 
         result = await postgres_legacy_db.neighborhood(
-            candidates=VFSResult(entries=[Entry(path="/b.py")]),
+            candidates=VFSResult(candidates=[Candidate(path="/b.py")]),
             depth=1,
         )
 
@@ -1012,7 +1012,7 @@ class TestNativeGraphTraversal:
         )
 
         result = await postgres_legacy_db.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
+            VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
         )
 
         assert result.success
@@ -1035,7 +1035,7 @@ class TestNativeGraphTraversal:
         )
 
         result = await postgres_legacy_db.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/d.py")])
+            VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/d.py")])
         )
 
         assert result.success
@@ -1061,7 +1061,7 @@ class TestNativeGraphTraversal:
         assert result.paths == ("/b.py",)
 
         result = await scoped_fs.meeting_subgraph(
-            VFSResult(entries=[Entry(path="/a.py"), Entry(path="/b.py")]),
+            VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/b.py")]),
             user_id="alice",
         )
         assert _node_paths(result) == {"/a.py", "/b.py"}
@@ -1102,5 +1102,7 @@ class TestNativeGraphTraversal:
             "/d.py",
         }
         assert _node_paths(
-            await postgres_legacy_db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")]))
+            await postgres_legacy_db.meeting_subgraph(
+                VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
+            )
         ) == {"/a.py", "/b.py", "/c.py"}

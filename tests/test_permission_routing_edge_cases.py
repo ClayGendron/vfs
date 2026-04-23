@@ -110,9 +110,9 @@ async def test_route_two_path_empty_ops_is_noop():
     await router.add_mount("mnt", fs)
     try:
         r = await router.move(moves=[])
-        assert r.success and r.entries == []
+        assert r.success and r.candidates == []
         r = await router.copy(copies=[])
-        assert r.success and r.entries == []
+        assert r.success and r.candidates == []
     finally:
         await router.close()
 
@@ -123,7 +123,7 @@ async def test_empty_write_batch_is_noop_under_read_only():
     await router.add_mount("mnt", fs)
     try:
         r = await router.write(entries=[])
-        assert r.success and r.entries == []
+        assert r.success and r.candidates == []
     finally:
         await router.close()
 

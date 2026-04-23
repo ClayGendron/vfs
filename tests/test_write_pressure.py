@@ -16,7 +16,7 @@ import pytest
 from tests.conftest import require_file, require_object, set_parameter_budget
 from vfs.backends.database import DatabaseFileSystem
 from vfs.models import VFSEntry
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 # ------------------------------------------------------------------
 # 1. Unicode chaos
@@ -275,20 +275,20 @@ class TestBatchAdversarial:
         objects = [VFSEntry(path=f"/batch/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 50
+        assert len(r.candidates) == 50
 
     async def test_batch_of_one(self, db: DatabaseFileSystem):
         objects = [VFSEntry(path="/single.txt", content="alone")]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 1
+        assert len(r.candidates) == 1
 
     async def test_empty_objects_list(self, db: DatabaseFileSystem):
         """Empty objects list — should succeed vacuously."""
         async with db._use_session() as s:
             r = await db._write_impl(entries=[], session=s)
         assert r.success
-        assert len(r.entries) == 0
+        assert len(r.candidates) == 0
 
     async def test_no_path_no_objects(self, db: DatabaseFileSystem):
         """Neither path nor objects — should error."""
@@ -376,7 +376,7 @@ class TestChunkEdgeCases:
         ]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 2
+        assert len(r.candidates) == 2
 
     async def test_chunk_without_parent_file(self, db: DatabaseFileSystem):
         """Chunk with no parent file in DB or batch — must fail."""
@@ -414,7 +414,7 @@ class TestChunkEdgeCases:
         ]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 4
+        assert len(r.candidates) == 4
 
 
 # ------------------------------------------------------------------
@@ -494,14 +494,14 @@ class TestParameterBudgetAttacks:
         objects = [VFSEntry(path=f"/tiny/f{i:04d}.txt", content=f"c{i}") for i in range(100)]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 100
+        assert len(r.candidates) == 100
 
     async def test_large_batch_stays_within_budget(self, db: DatabaseFileSystem):
         """200 objects with default budget — batching keeps flushes safe."""
         objects = [VFSEntry(path=f"/huge/f{i:04d}.txt", content=f"c{i}") for i in range(200)]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 200
+        assert len(r.candidates) == 200
 
 
 # ------------------------------------------------------------------
@@ -1102,7 +1102,7 @@ class TestBatchOrderingGuarantees:
         ]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 4
+        assert len(r.candidates) == 4
 
 
 # ------------------------------------------------------------------
@@ -1369,7 +1369,7 @@ class TestExtremeBudgets:
         objects = [VFSEntry(path=f"/budget/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 50
+        assert len(r.candidates) == 50
 
     async def test_budget_exactly_model_width(self, db: DatabaseFileSystem):
         """Budget equal to one row of fields — one object per flush."""
@@ -1378,7 +1378,7 @@ class TestExtremeBudgets:
         objects = [VFSEntry(path=f"/fields/f{i:04d}.txt", content=f"c{i}") for i in range(field_count * 2)]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == field_count * 2
+        assert len(r.candidates) == field_count * 2
 
 
 # ------------------------------------------------------------------
@@ -1441,7 +1441,7 @@ class TestMassiveSingleSessionBatch:
         async with db._use_session() as s:
             r = await db._write_impl(entries=objects, session=s)
         assert r.success
-        assert len(r.entries) == n
+        assert len(r.candidates) == n
 
     async def test_overwrite_objects_single_impl_call(self, db: DatabaseFileSystem, scale: int):
         """Write N, then overwrite all N in one call."""
@@ -1454,7 +1454,7 @@ class TestMassiveSingleSessionBatch:
         async with db._use_session() as s:
             r = await db._write_impl(entries=objs_v2, session=s)
         assert r.success
-        assert len(r.entries) == n
+        assert len(r.candidates) == n
 
 
 # ------------------------------------------------------------------
@@ -1512,7 +1512,7 @@ class TestChunkValidationWithTinyBudget:
         ]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 2
+        assert len(r.candidates) == 2
 
     async def test_many_chunks_one_parent_tiny_budget(self, db: DatabaseFileSystem):
         """Many chunks + parent, tiny budget — splits across batches."""
@@ -1526,7 +1526,7 @@ class TestChunkValidationWithTinyBudget:
         ]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == 5
+        assert len(r.candidates) == 5
 
 
 # ------------------------------------------------------------------
@@ -1609,12 +1609,12 @@ class TestLargeWriteAndDelete:
         objects = [VFSEntry(path=f"/data/file_{i:06d}.txt", content=f"content {i}") for i in range(n)]
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == n
+        assert len(r.candidates) == n
 
         async with db._use_session() as s:
             ls_r = await db._ls_impl("/data", session=s)
         assert ls_r.success
-        assert len(ls_r.entries) == n
+        assert len(ls_r.candidates) == n
 
     async def test_large_batch_write_then_soft_delete_directory(self, db: DatabaseFileSystem, scale: int):
         """Write N files, soft-delete the parent dir, verify all cascaded."""
@@ -1627,13 +1627,13 @@ class TestLargeWriteAndDelete:
             del_r = await db._delete_impl("/src", session=s)
         assert del_r.success
         # Parent dir + N files + N version rows + /src dir itself
-        assert len(del_r.entries) > n
+        assert len(del_r.candidates) > n
 
         # ls should return nothing
         async with db._use_session() as s:
             ls_r = await db._ls_impl("/src", session=s)
         # /src is soft-deleted so ls finds nothing (unknown kind, not in DB)
-        assert len(ls_r.entries) == 0
+        assert len(ls_r.candidates) == 0
 
     async def test_large_batch_write_then_permanent_delete_directory(self, db: DatabaseFileSystem, scale: int):
         """Write N files, permanently delete the dir, verify all gone."""
@@ -1663,7 +1663,7 @@ class TestLargeWriteAndDelete:
             objects.append(VFSEntry(path=f"/.vfs/code/f_{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():"))
         r = await db.write(entries=objects)
         assert r.success
-        assert len(r.entries) == n * 2
+        assert len(r.candidates) == n * 2
 
         async with db._use_session() as s:
             del_r = await db._delete_impl("/code", permanent=True, session=s)
@@ -1698,7 +1698,7 @@ class TestLargeWriteAndDelete:
         ]
         r2 = await db.write(entries=conns)
         assert r2.success
-        assert len(r2.entries) == n - 1
+        assert len(r2.candidates) == n - 1
 
         # Delete the whole graph
         async with db._use_session() as s:
@@ -1783,7 +1783,7 @@ class TestLargeWriteAndDelete:
 
         r = await db.write(entries=file_objects)
         assert r.success, r.error_message
-        assert len(r.entries) == n
+        assert len(r.candidates) == n
 
         # Add a chunk per file
         chunk_objects = [
@@ -1817,7 +1817,7 @@ class TestLargeWriteAndDelete:
             del_r = await db._delete_impl("/tree", permanent=True, session=s)
         assert del_r.success
         # At minimum: dir + N files + N versions + N chunks + N connections
-        assert len(del_r.entries) >= n * 4
+        assert len(del_r.candidates) >= n * 4
 
         # Nothing left
         async with db._use_session() as s:
@@ -1865,7 +1865,7 @@ class TestLargeWriteAndDelete:
         # Build candidates for all N directories
         from vfs.results import VFSResult
 
-        candidates = VFSResult(entries=[Entry(path=f"/batch/d{d:04d}") for d in range(n_dirs)])
+        candidates = VFSResult(candidates=[Candidate(path=f"/batch/d{d:04d}") for d in range(n_dirs)])
 
         # Delete all directories in one batch call
         async with db._use_session() as s:
@@ -1873,7 +1873,7 @@ class TestLargeWriteAndDelete:
         assert del_r.success
         # Each dir has: files_per_dir files + files_per_dir chunks
         # + files_per_dir version rows + the dir itself
-        assert len(del_r.entries) >= n_dirs * (files_per_dir * 3 + 1)
+        assert len(del_r.candidates) >= n_dirs * (files_per_dir * 3 + 1)
 
         # Spot-check
         async with db._use_session() as s:
@@ -1901,13 +1901,13 @@ class TestLargeWriteAndDelete:
         # Delete all files (not the directory) in one batch
         from vfs.results import VFSResult
 
-        candidates = VFSResult(entries=[Entry(path=f"/flat/f{i:05d}.py") for i in range(n)])
+        candidates = VFSResult(candidates=[Candidate(path=f"/flat/f{i:05d}.py") for i in range(n)])
 
         async with db._use_session() as s:
             del_r = await db._delete_impl(candidates=candidates, permanent=True, session=s)
         assert del_r.success
         # Each file: itself + 1 version + 1 chunk = 3
-        assert len(del_r.entries) >= n * 3
+        assert len(del_r.candidates) >= n * 3
 
         # Files gone, directory still exists
         async with db._use_session() as s:

@@ -73,7 +73,7 @@ class TestSelectColumnsValidation:
                 columns=frozenset({"path", "size_bytes"}),
                 session=s,
             )
-            assert result.entries[0].size_bytes == 2
+            assert result.candidates[0].size_bytes == 2
 
 
 async def _seed(db: DatabaseFileSystem) -> None:
@@ -266,7 +266,7 @@ class TestPublicSurfaceColumnsKwarg:
         # Pick a column outside the default set: content.
         result = await db.glob("**/*.md", columns=frozenset({"path", "kind", "content"}))
         assert result.success
-        for entry in result.entries:
+        for entry in result.candidates:
             assert entry.content is not None, f"{entry.path} missing content"
 
     async def test_public_stat_default_excludes_content(self, db, sql_capture):

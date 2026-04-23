@@ -17,7 +17,7 @@ from vfs.paths import (
     unscope_path,
     validate_user_id,
 )
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 # ---------------------------------------------------------------------------
 # Path utility tests
@@ -127,20 +127,20 @@ class TestStripUserScope:
     def test_strips_file_paths(self):
         result = VFSResult(
             function="ls",
-            entries=[
-                Entry(path="/u1/docs/a.md"),
-                Entry(path="/u1/docs/b.md"),
+            candidates=[
+                Candidate(path="/u1/docs/a.md"),
+                Candidate(path="/u1/docs/b.md"),
             ],
         )
         stripped = result.strip_user_scope("u1")
-        assert [e.path for e in stripped.entries] == ["/docs/a.md", "/docs/b.md"]
+        assert [e.path for e in stripped.candidates] == ["/docs/a.md", "/docs/b.md"]
 
     def test_strips_edge_paths(self):
         conn = edge_out_path("/u1/a.py", "/u1/b.py", "imports")
-        result = VFSResult(function="ls", entries=[Entry(path=conn)])
+        result = VFSResult(function="ls", candidates=[Candidate(path=conn)])
         stripped = result.strip_user_scope("u1")
         expected = edge_out_path("/a.py", "/b.py", "imports")
-        assert stripped.entries[0].path == expected
+        assert stripped.candidates[0].path == expected
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ class TestUserScopedLs:
         await scoped_db.write(path="/b.txt", content="b", user_id="u2")
 
         result = await scoped_db.ls(path="/", user_id="u1")
-        paths = [e.path for e in result.entries]
+        paths = [e.path for e in result.candidates]
         assert "/a.txt" in paths
         assert "/b.txt" not in paths
 
@@ -213,7 +213,7 @@ class TestUserScopedGlob:
         await scoped_db.write(path="/src/b.py", content="b", user_id="u2")
 
         result = await scoped_db.glob(pattern="/src/*.py", user_id="u1")
-        paths = [e.path for e in result.entries]
+        paths = [e.path for e in result.candidates]
         assert "/src/a.py" in paths
         assert "/src/b.py" not in paths
 
@@ -224,7 +224,7 @@ class TestUserScopedGrep:
         await scoped_db.write(path="/b.py", content="def login():", user_id="u2")
 
         result = await scoped_db.grep(pattern="login", user_id="u1")
-        paths = [e.path for e in result.entries]
+        paths = [e.path for e in result.candidates]
         assert "/a.py" in paths
         assert "/b.py" not in paths
 
@@ -241,7 +241,7 @@ class TestUserScopedGrep:
         await scoped_db.write(path="/lib/b.py", content="hit here", user_id="u1")
 
         result = await scoped_db.grep(pattern="hit", paths=("src",), user_id="u1")
-        paths = [e.path for e in result.entries]
+        paths = [e.path for e in result.candidates]
         assert paths == ["/src/a.py"]
 
     async def test_glob_relative_positional_path_scoped(self, scoped_db):
@@ -251,7 +251,7 @@ class TestUserScopedGrep:
         await scoped_db.write(path="/lib/b.py", content="y", user_id="u1")
 
         result = await scoped_db.glob(pattern="**/*.py", paths=("src",), user_id="u1")
-        paths = [e.path for e in result.entries]
+        paths = [e.path for e in result.candidates]
         assert paths == ["/src/a.py"]
 
 
@@ -283,7 +283,7 @@ class TestUserScopedMkedge:
         )
         assert result.success
         # Edge path should be unscoped in result
-        conn = result.entries[0]
+        conn = result.candidates[0]
         parts = decompose_edge(conn.path)
         assert parts is not None
         assert parts.source == "/src/main.py"
@@ -304,7 +304,7 @@ class TestUserScopedGraph:
 
         # u1's predecessors of /b.py should only show u1's /a.py
         result = await scoped_db.predecessors(path="/b.py", user_id="u1")
-        paths = [e.path for e in result.entries]
+        paths = [e.path for e in result.candidates]
         assert "/a.py" in paths
 
     async def test_pagerank_scoped(self, scoped_db):
@@ -322,7 +322,7 @@ class TestUserScopedGraph:
 
         # u1's pagerank should only include u1's nodes
         result = await scoped_db.pagerank(user_id="u1")
-        paths = {e.path for e in result.entries}
+        paths = {e.path for e in result.candidates}
         assert paths <= {"/a.py", "/b.py"}
         # Should NOT include u2's nodes
         assert not paths & {"/x.py", "/y.py", "/z.py", "/w.py"}
@@ -350,7 +350,7 @@ class TestUserScopedTree:
         await scoped_db.write(path="/src/b.py", content="b", user_id="u2")
 
         result = await scoped_db.tree(path="/src", user_id="u1")
-        paths = [e.path for e in result.entries]
+        paths = [e.path for e in result.candidates]
         assert "/src/a.py" in paths
         assert "/src/b.py" not in paths
 
@@ -398,6 +398,6 @@ class TestUserScopedLexicalSearch:
         await scoped_db.write(path="/b.py", content="authentication login handler", user_id="u2")
 
         result = await scoped_db.lexical_search(query="authentication", user_id="u1")
-        paths = [e.path for e in result.entries]
+        paths = [e.path for e in result.candidates]
         assert "/a.py" in paths
         assert "/b.py" not in paths

@@ -26,15 +26,15 @@ from vfs.backends.mssql import (
     _quote_contains_term,
 )
 from vfs.paths import decompose_edge, edge_out_path
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 
 def _node_paths(result: VFSResult) -> set[str]:
-    return {e.path for e in result.entries if decompose_edge(e.path) is None}
+    return {e.path for e in result.candidates if decompose_edge(e.path) is None}
 
 
 def _edge_paths(result: VFSResult) -> set[str]:
-    return {e.path for e in result.entries if decompose_edge(e.path) is not None}
+    return {e.path for e in result.candidates if decompose_edge(e.path) is not None}
 
 
 async def _seed_graph(
@@ -268,10 +268,10 @@ class TestGlobInMemoryCandidates:
         fs._raise_on_error = False
 
         candidates = VFSResult(
-            entries=[
-                Entry(path="/src/foo.py", kind="file"),
-                Entry(path="/src/bar.ts", kind="file"),
-                Entry(path="/tests/foo.py", kind="file"),
+            candidates=[
+                Candidate(path="/src/foo.py", kind="file"),
+                Candidate(path="/src/bar.ts", kind="file"),
+                Candidate(path="/tests/foo.py", kind="file"),
             ]
         )
         result = await fs._glob_impl(
@@ -510,8 +510,8 @@ class TestLexicalSearchPushdown:
         await _seed(db, {"/a.py": "authentication is important"})
         async with db._use_session() as s:
             r = await db._lexical_search_impl("authentication", session=s)
-        assert r.entries, "expected at least one hit"
-        for entry in r.entries:
+        assert r.candidates, "expected at least one hit"
+        for entry in r.candidates:
             assert entry.content is not None
             assert entry.content != ""
 
@@ -527,7 +527,7 @@ class TestLexicalSearchPushdown:
         )
         async with db._use_session() as s:
             r = await db._lexical_search_impl("alpha", session=s)
-        for c in r.entries:
+        for c in r.candidates:
             assert c.kind == "file"
 
     async def test_multi_term_ranking(self, request, db: MSSQLFileSystem):
@@ -591,7 +591,7 @@ class TestLexicalSearchPushdown:
                 "/c.py": "auth logout",
             },
         )
-        candidates = VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
+        candidates = VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
         async with db._use_session() as s:
             r = await db._lexical_search_impl("auth", candidates=candidates, session=s)
         assert set(r.paths) == {"/a.py", "/c.py"}
@@ -620,7 +620,7 @@ class TestGrepPushdown:
             r = await db._grep_impl(r"def login\(", session=s)
         assert r.success
         assert set(r.paths) == {"/a.py"}
-        assert r.entries[0].score == 1.0
+        assert r.candidates[0].score == 1.0
 
     async def test_pure_regex(self, request, db: MSSQLFileSystem):
         """Patterns with no literals fall through to direct REGEXP_LIKE."""
@@ -656,7 +656,7 @@ class TestGrepPushdown:
         await _seed(db, {"/source.py": "needle in a haystack"})
         async with db._use_session() as s:
             r = await db._grep_impl("needle", session=s)
-        for c in r.entries:
+        for c in r.candidates:
             assert c.kind == "file"
 
     async def test_with_candidate_filter(self, request, db: MSSQLFileSystem):
@@ -669,7 +669,7 @@ class TestGrepPushdown:
                 "/c.py": "needle c",
             },
         )
-        candidates = VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")])
+        candidates = VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")])
         async with db._use_session() as s:
             r = await db._grep_impl("needle", candidates=candidates, session=s)
         assert set(r.paths) == {"/a.py", "/c.py"}
@@ -772,7 +772,7 @@ class TestGrepRipgrepFiltersMssql:
         async with db._use_session() as s:
             r = await db._grep_impl("grep", ext=("py",), output_mode="files", session=s)
         assert "/src/a.py" in r.paths
-        entry = r.entries[0]
+        entry = r.candidates[0]
         assert entry.lines is None
 
     async def test_output_mode_count_returns_counts(self, request, db: MSSQLFileSystem):
@@ -780,7 +780,7 @@ class TestGrepRipgrepFiltersMssql:
         await _seed(db, {"/a.py": "TODO\nok\nTODO\nTODO"})
         async with db._use_session() as s:
             r = await db._grep_impl("TODO", output_mode="count", session=s)
-        entry = r.entries[0]
+        entry = r.candidates[0]
         assert entry.score == 3.0
         assert entry.lines is None
 
@@ -789,7 +789,7 @@ class TestGrepRipgrepFiltersMssql:
         await _seed(db, {"/a.py": "l1\nl2 MATCH\nl3\nl4\nl5"})
         async with db._use_session() as s:
             r = await db._grep_impl("MATCH", after_context=2, session=s)
-        entry = r.entries[0]
+        entry = r.candidates[0]
         assert entry.lines is not None
         assert entry.lines[0].match == 2
         assert entry.lines[0].start == 2
@@ -800,28 +800,28 @@ class TestGrepRipgrepFiltersMssql:
         await _seed(db, {"/a.py": "foo.bar\nfooxbar"})
         async with db._use_session() as s:
             r = await db._grep_impl("foo.bar", fixed_strings=True, session=s)
-        assert r.entries[0].score == 1.0
+        assert r.candidates[0].score == 1.0
 
     async def test_word_regexp_boundaries(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "grep\ngrepper\nregrep"})
         async with db._use_session() as s:
             r = await db._grep_impl("grep", word_regexp=True, session=s)
-        assert r.entries[0].score == 1.0
+        assert r.candidates[0].score == 1.0
 
     async def test_invert_match_returns_non_matching_lines(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "alpha\nbeta\ngamma"})
         async with db._use_session() as s:
             r = await db._grep_impl("beta", invert_match=True, session=s)
-        assert r.entries[0].score == 2.0
+        assert r.candidates[0].score == 2.0
 
     async def test_smart_case_lowercase_matches_upper(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
         await _seed(db, {"/a.py": "FOO\nfoo"})
         async with db._use_session() as s:
             r = await db._grep_impl("foo", case_mode="smart", session=s)
-        assert r.entries[0].score == 2.0
+        assert r.candidates[0].score == 2.0
 
     async def test_combined_filters_and_together(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
@@ -980,9 +980,9 @@ class TestVerifyNativeGraphSchema:
 class TestMeetingSubgraphNative:
     async def test_empty_seeds_returns_empty(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
-        result = await db.meeting_subgraph(VFSResult(entries=[]))
+        result = await db.meeting_subgraph(VFSResult(candidates=[]))
         assert result.success
-        assert result.entries == []
+        assert result.candidates == []
 
     async def test_single_seed_returns_seed_only(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
@@ -991,7 +991,7 @@ class TestMeetingSubgraphNative:
             nodes=("/a.py", "/b.py"),
             edges=(("/a.py", "/b.py", "imports"),),
         )
-        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py")]))
+        result = await db.meeting_subgraph(VFSResult(candidates=[Candidate(path="/a.py")]))
         assert result.success
         assert _node_paths(result) == {"/a.py"}
         assert _edge_paths(result) == set()
@@ -1007,7 +1007,7 @@ class TestMeetingSubgraphNative:
                 ("/a.py", "/d.py", "imports"),
             ),
         )
-        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")]))
+        result = await db.meeting_subgraph(VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")]))
         assert result.success
         assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
         assert _edge_paths(result) == {
@@ -1027,7 +1027,7 @@ class TestMeetingSubgraphNative:
                 ("/c.py", "/e.py", "imports"),
             ),
         )
-        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py"), Entry(path="/c.py")]))
+        result = await db.meeting_subgraph(VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/c.py")]))
         assert _node_paths(result) == {"/a.py", "/b.py", "/c.py"}
 
     async def test_seeds_not_in_graph_yield_empty(self, request, db: MSSQLFileSystem):
@@ -1037,9 +1037,11 @@ class TestMeetingSubgraphNative:
             nodes=("/a.py", "/b.py"),
             edges=(("/a.py", "/b.py", "imports"),),
         )
-        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/ghost.py"), Entry(path="/phantom.py")]))
+        result = await db.meeting_subgraph(
+            VFSResult(candidates=[Candidate(path="/ghost.py"), Candidate(path="/phantom.py")])
+        )
         assert result.success
-        assert result.entries == []
+        assert result.candidates == []
 
     async def test_deterministic_for_tie_case(self, request, db: MSSQLFileSystem):
         _mssql_required(request)
@@ -1053,7 +1055,7 @@ class TestMeetingSubgraphNative:
                 ("/c.py", "/d.py", "imports"),
             ),
         )
-        result = await db.meeting_subgraph(VFSResult(entries=[Entry(path="/a.py"), Entry(path="/d.py")]))
+        result = await db.meeting_subgraph(VFSResult(candidates=[Candidate(path="/a.py"), Candidate(path="/d.py")]))
         assert result.success
         assert _node_paths(result) == {"/a.py", "/b.py", "/d.py"}
         assert _edge_paths(result) == {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from vfs.query.ast import QueryPlan, ReadCommand
 from vfs.query.render import render_query_result
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 
 def _plan(projection: tuple[str, ...] | None = None) -> QueryPlan:
@@ -31,8 +31,8 @@ def _entry(
     updated_at=None,
     in_degree: int | None = None,
     out_degree: int | None = None,
-) -> Entry:
-    return Entry(
+) -> Candidate:
+    return Candidate(
         path=path,
         content=content,
         kind=kind,
@@ -66,7 +66,7 @@ class TestErrorRendering:
         result = VFSResult(
             success=True,
             function="read",
-            entries=[_entry("/a.py", content="hello")],
+            candidates=[_entry("/a.py", content="hello")],
             errors=["warning: deprecated"],
         )
         output = render_query_result(result, _plan())
@@ -84,20 +84,20 @@ class TestContentMode:
     def test_single_file(self):
         result = VFSResult(
             function="read",
-            entries=[_entry("/a.py", content="hello")],
+            candidates=[_entry("/a.py", content="hello")],
         )
         output = render_query_result(result, _plan())
         assert output == "hello"
 
     def test_empty_candidates(self):
-        result = VFSResult(function="read", entries=[])
+        result = VFSResult(function="read", candidates=[])
         output = render_query_result(result, _plan())
         assert output == ""
 
     def test_multi_file_sorted_with_headers(self):
         result = VFSResult(
             function="read",
-            entries=[
+            candidates=[
                 _entry("/b.py", content="bravo"),
                 _entry("/a.py", content="alpha"),
             ],
@@ -116,14 +116,14 @@ class TestContentMode:
 
 class TestActionMode:
     def test_no_changes(self):
-        result = VFSResult(function="write", entries=[])
+        result = VFSResult(function="write", candidates=[])
         output = render_query_result(result, _plan())
         assert output == "No changes"
 
     def test_single_path(self):
         result = VFSResult(
             function="write",
-            entries=[_entry("/a.py")],
+            candidates=[_entry("/a.py")],
         )
         output = render_query_result(result, _plan())
         assert output == "Wrote /a.py"
@@ -131,7 +131,7 @@ class TestActionMode:
     def test_multi_path(self):
         result = VFSResult(
             function="delete",
-            entries=[
+            candidates=[
                 _entry("/a.py"),
                 _entry("/b.py"),
             ],
@@ -145,7 +145,7 @@ class TestActionMode:
             success=True,
             function="write",
             errors=["permission denied"],
-            entries=[],
+            candidates=[],
         )
         output = render_query_result(result, _plan())
         assert "permission denied" in output
@@ -161,7 +161,7 @@ class TestActionMode:
             ("mkdir", "Created"),
             ("mkedge", "Connected"),
         ]:
-            result = VFSResult(function=op, entries=[_entry("/x")])
+            result = VFSResult(function=op, candidates=[_entry("/x")])
             output = render_query_result(result, _plan())
             assert verb in output
 
@@ -175,7 +175,7 @@ class TestStatMode:
     def test_stat_with_metadata(self):
         result = VFSResult(
             function="stat",
-            entries=[
+            candidates=[
                 _entry(
                     "/a.py",
                     kind="file",
@@ -193,7 +193,7 @@ class TestStatMode:
     def test_stat_with_none_values(self):
         result = VFSResult(
             function="stat",
-            entries=[_entry("/a.py", kind="file")],
+            candidates=[_entry("/a.py", kind="file")],
         )
         output = render_query_result(result, _plan())
         assert "/a.py" in output
@@ -211,7 +211,7 @@ class TestQueryListMode:
     def test_unranked(self):
         result = VFSResult(
             function="glob",
-            entries=[
+            candidates=[
                 _entry("/b.py"),
                 _entry("/a.py"),
             ],
@@ -224,7 +224,7 @@ class TestQueryListMode:
         # Ranked-search function uses block rendering with score sub-line
         result = VFSResult(
             function="lexical_search",
-            entries=[
+            candidates=[
                 _entry("/a.py", score=0.95),
                 _entry("/b.py", score=0.80),
             ],

@@ -107,11 +107,11 @@ async def test_vector_search_returns_scored_candidates(db: DatabaseFileSystem):
     result = await db.vector_search([0.1, 0.2, 0.3, 0.4], k=5)
 
     assert result.success
-    assert len(result.entries) == 2
-    assert result.entries[0].path == "/a.py"
-    assert result.entries[0].score == pytest.approx(0.95)
-    assert result.entries[1].path == "/b.py"
-    assert result.entries[1].score == pytest.approx(0.80)
+    assert len(result.candidates) == 2
+    assert result.candidates[0].path == "/a.py"
+    assert result.candidates[0].score == pytest.approx(0.95)
+    assert result.candidates[1].path == "/b.py"
+    assert result.candidates[1].score == pytest.approx(0.80)
     assert result.function == "vector_search"
 
 
@@ -150,7 +150,7 @@ async def test_vector_search_empty_results(db: DatabaseFileSystem):
     result = await db.vector_search([0.1, 0.2], k=5)
 
     assert result.success
-    assert len(result.entries) == 0
+    assert len(result.candidates) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +167,8 @@ async def test_semantic_search_end_to_end(db: DatabaseFileSystem):
     result = await db.semantic_search("find auth code", k=5)
 
     assert result.success
-    assert len(result.entries) == 1
-    assert result.entries[0].path == "/a.py"
+    assert len(result.candidates) == 1
+    assert result.candidates[0].path == "/a.py"
     # Verify the embedding was passed to the store
     assert store.last_query_vector is not None
     assert len(store.last_query_vector) == MOCK_DIM
@@ -222,7 +222,7 @@ async def test_postgres_vector_store_override_wins_without_native_schema():
     result = await fs.vector_search([0.1, 0.2, 0.3, 0.4], k=5)
 
     assert result.success
-    assert result.entries[0].path == "/a.py"
+    assert result.candidates[0].path == "/a.py"
     assert store.last_query_vector == [0.1, 0.2, 0.3, 0.4]
 
 
@@ -238,7 +238,7 @@ async def test_postgres_semantic_search_override_uses_existing_store_path():
 
     assert result.success
     assert result.function == "semantic_search"
-    assert result.entries[0].path == "/a.py"
+    assert result.candidates[0].path == "/a.py"
     assert store.last_query_vector is not None
 
 

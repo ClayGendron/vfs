@@ -19,7 +19,7 @@ from vfs.backends.mssql import MSSQLFileSystem
 from vfs.backends.postgres import PostgresFileSystem
 from vfs.base import VirtualFileSystem
 from vfs.models import VFSEntry, postgres_vector_column_spec
-from vfs.results import Entry
+from vfs.results import Candidate
 from vfs.vector import NativeEmbeddingConfig
 
 if TYPE_CHECKING:
@@ -361,9 +361,9 @@ def tracking_session_factory():
     return _factory, sessions
 
 
-def entry(path: str, *, content: str | None = None) -> Entry:
-    """Create a minimal Entry for test assertions."""
-    return Entry(path=path, content=content)
+def entry(path: str, *, content: str | None = None) -> Candidate:
+    """Create a minimal Candidate for test assertions."""
+    return Candidate(path=path, content=content)
 
 
 def make_fs(name: str = "test") -> VirtualFileSystem:
@@ -375,7 +375,7 @@ def make_fs(name: str = "test") -> VirtualFileSystem:
     return fs
 
 
-def require_file(result: VFSResult) -> Entry:
+def require_file(result: VFSResult) -> Candidate:
     """Return the first entry, asserting it exists for type narrowing."""
     assert result.file is not None
     return result.file

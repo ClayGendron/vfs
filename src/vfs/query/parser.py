@@ -226,7 +226,7 @@ def parse_query(query: str) -> QueryPlan:
     """Parse *query* into an AST and an ordered execution plan.
 
     Recognizes a top-level ``--output`` flag — a comma-separated list of
-    Entry field names (or the ``default`` / ``all`` sentinels) that
+    Candidate field names (or the ``default`` / ``all`` sentinels) that
     selects what each returned entry should carry.  ``--output`` may
     appear anywhere in the query and applies to the whole pipeline.
     Unknown field names raise :class:`QuerySyntaxError` at parse time.

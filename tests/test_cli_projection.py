@@ -2,7 +2,7 @@
 
 Phase 8.3 acceptance: the top-level ``--output`` flag parsed at the
 query-planner boundary flows into every stage's ``columns=`` kwarg, so
-the backend SELECT list widens to cover the requested Entry fields.
+the backend SELECT list widens to cover the requested Candidate fields.
 
 Catches: the CLI flag reaching only the renderer (where it would render
 nulls) while the SELECT stays narrow — a silent miss.

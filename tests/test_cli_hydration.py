@@ -18,7 +18,7 @@ import pytest
 from vfs.base import VirtualFileSystem
 from vfs.query.ast import GlobCommand, QueryPlan
 from vfs.query.executor import execute_query
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 
 def _fs() -> MagicMock:
@@ -29,9 +29,9 @@ def _fs() -> MagicMock:
     an empty ``VFSResult`` by default to keep the pipeline alive.
     """
     fs = MagicMock(spec=VirtualFileSystem)
-    fs.read = AsyncMock(return_value=VFSResult(function="read", entries=[]))
-    fs.glob = AsyncMock(return_value=VFSResult(function="glob", entries=[]))
-    fs.stat = AsyncMock(return_value=VFSResult(function="stat", entries=[]))
+    fs.read = AsyncMock(return_value=VFSResult(function="read", candidates=[]))
+    fs.glob = AsyncMock(return_value=VFSResult(function="glob", candidates=[]))
+    fs.stat = AsyncMock(return_value=VFSResult(function="stat", candidates=[]))
     fs._merge_results = lambda results: results[0] if results else VFSResult()
     return fs
 
@@ -51,19 +51,19 @@ class TestHydrationRoutesThroughRead:
         # glob returns entries missing updated_at across the board
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[
-                Entry(path="/a.md", kind="file"),
-                Entry(path="/b.md", kind="file"),
-                Entry(path="/c.md", kind="file"),
+            candidates=[
+                Candidate(path="/a.md", kind="file"),
+                Candidate(path="/b.md", kind="file"),
+                Candidate(path="/c.md", kind="file"),
             ],
         )
         # read (the hydration target) fills in updated_at
         fs.read.return_value = VFSResult(
             function="read",
-            entries=[
-                Entry(path="/a.md", updated_at=datetime(2026, 1, 1, tzinfo=UTC)),
-                Entry(path="/b.md", updated_at=datetime(2026, 1, 2, tzinfo=UTC)),
-                Entry(path="/c.md", updated_at=datetime(2026, 1, 3, tzinfo=UTC)),
+            candidates=[
+                Candidate(path="/a.md", updated_at=datetime(2026, 1, 1, tzinfo=UTC)),
+                Candidate(path="/b.md", updated_at=datetime(2026, 1, 2, tzinfo=UTC)),
+                Candidate(path="/c.md", updated_at=datetime(2026, 1, 3, tzinfo=UTC)),
             ],
         )
 
@@ -80,7 +80,7 @@ class TestHydrationRoutesThroughRead:
         assert "embedding" not in kwargs["columns"]
         assert "content" not in kwargs["columns"]
         # And it merged by path — every original entry should now carry updated_at.
-        updated = {e.path: e.updated_at for e in result.entries}
+        updated = {e.path: e.updated_at for e in result.candidates}
         assert updated == {
             "/a.md": datetime(2026, 1, 1, tzinfo=UTC),
             "/b.md": datetime(2026, 1, 2, tzinfo=UTC),
@@ -93,11 +93,11 @@ class TestHydrationRoutesThroughRead:
         paths = [f"/docs/file_{i}.md" for i in range(500)]
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path=p, kind="file") for p in paths],
+            candidates=[Candidate(path=p, kind="file") for p in paths],
         )
         fs.read.return_value = VFSResult(
             function="read",
-            entries=[Entry(path=p, updated_at=datetime(2026, 1, 1, tzinfo=UTC)) for p in paths],
+            candidates=[Candidate(path=p, updated_at=datetime(2026, 1, 1, tzinfo=UTC)) for p in paths],
         )
 
         await execute_query(
@@ -117,7 +117,7 @@ class TestHydrationIsNoopWhenNotNeeded:
         fs = _fs()
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md", kind="file")],
+            candidates=[Candidate(path="/a.md", kind="file")],
         )
         await execute_query(fs, _plan(GlobCommand(pattern="**/*.md"), projection=None))
         fs.read.assert_not_called()
@@ -126,7 +126,7 @@ class TestHydrationIsNoopWhenNotNeeded:
         fs = _fs()
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md", kind="file", updated_at=datetime(2026, 1, 1, tzinfo=UTC))],
+            candidates=[Candidate(path="/a.md", kind="file", updated_at=datetime(2026, 1, 1, tzinfo=UTC))],
         )
         await execute_query(
             fs,
@@ -136,7 +136,7 @@ class TestHydrationIsNoopWhenNotNeeded:
 
     async def test_noop_when_result_is_empty(self):
         fs = _fs()
-        fs.glob.return_value = VFSResult(function="glob", entries=[])
+        fs.glob.return_value = VFSResult(function="glob", candidates=[])
         await execute_query(
             fs,
             _plan(GlobCommand(pattern="**/*.md"), projection=("path", "out_degree")),
@@ -148,7 +148,7 @@ class TestHydrationIsNoopWhenNotNeeded:
         fs = _fs()
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md", kind="file")],
+            candidates=[Candidate(path="/a.md", kind="file")],
         )
         await execute_query(
             fs,
@@ -172,7 +172,7 @@ class TestToStrIsPure:
         """
         result = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md")],
+            candidates=[Candidate(path="/a.md")],
         )
         # No fs available at render time — if to_str tried to hydrate, it
         # would need one.  Asking for a column the entry lacks must just
@@ -184,7 +184,7 @@ class TestToStrIsPure:
         data_row = next(line for line in rendered.splitlines() if "/a.md" in line)
         cells = [c.strip() for c in data_row.strip("|").split("|")]
         assert cells == ["/a.md", ""]
-        assert rendered.endswith("NOTE: out_degree not populated for any entries.")
+        assert rendered.endswith("NOTE: out_degree not populated for any candidates.")
 
 
 # ===========================================================================
@@ -197,11 +197,11 @@ class TestHydrationNarrows:
         fs = _fs()
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md", kind="file")],
+            candidates=[Candidate(path="/a.md", kind="file")],
         )
         fs.read.return_value = VFSResult(
             function="read",
-            entries=[Entry(path="/a.md", updated_at=datetime(2026, 1, 1, tzinfo=UTC))],
+            candidates=[Candidate(path="/a.md", updated_at=datetime(2026, 1, 1, tzinfo=UTC))],
         )
         await execute_query(
             fs,

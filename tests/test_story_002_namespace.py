@@ -77,7 +77,7 @@ async def test_story_002_file_write_materializes_vfs_namespace(db) -> None:
 
     stat = await db.stat("/.vfs/src/a.py")
     assert stat.success
-    assert stat.entries[0].kind == "directory"
+    assert stat.candidates[0].kind == "directory"
 
     listed = await db.ls("/.vfs/src/a.py")
     assert listed.paths == ("/.vfs/src/a.py/__meta__",)
@@ -91,7 +91,7 @@ async def test_story_002_chunk_write_uses_vfs_tree(db) -> None:
 
     listed = await db.ls("/.vfs/src/a.py/__meta__/chunks")
     assert listed.paths == ("/.vfs/src/a.py/__meta__/chunks/login",)
-    assert listed.entries[0].kind == "chunk"
+    assert listed.candidates[0].kind == "chunk"
 
 
 @pytest.mark.asyncio
@@ -103,7 +103,7 @@ async def test_story_002_mkedge_writes_canonical_out_projection(db) -> None:
     assert result.success
     assert result.function == "mkedge"
     assert result.paths == ("/.vfs/src/a.py/__meta__/edges/out/imports/src/b.py",)
-    assert result.entries[0].kind == "edge"
+    assert result.candidates[0].kind == "edge"
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,7 @@ async def test_story_002_inverse_projection_attaches_when_target_exists(db) -> N
 
     inverse = await db.stat("/.vfs/src/b.py/__meta__/edges/in/imports/src/a.py")
     assert inverse.success
-    assert inverse.entries[0].kind == "edge"
+    assert inverse.candidates[0].kind == "edge"
 
     listed = await db.ls("/.vfs/src/b.py/__meta__/edges/in/imports/src")
     assert listed.paths == ("/.vfs/src/b.py/__meta__/edges/in/imports/src/a.py",)

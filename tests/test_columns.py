@@ -5,36 +5,36 @@ from __future__ import annotations
 import pytest
 
 from vfs.columns import (
+    CANDIDATE_FIELD_TO_MODEL_COLUMNS,
     DEFAULT_COLUMNS,
-    ENTRY_FIELD_TO_MODEL_COLUMNS,
+    candidate_field_columns,
     default_columns,
-    entry_field_columns,
     required_model_columns,
 )
-from vfs.results import ENTRY_FIELDS
+from vfs.results import CANDIDATE_FIELDS
 
 
 class TestEntryFieldMap:
     def test_covers_every_entry_field(self):
-        assert set(ENTRY_FIELD_TO_MODEL_COLUMNS.keys()) == set(ENTRY_FIELDS)
+        assert set(CANDIDATE_FIELD_TO_MODEL_COLUMNS.keys()) == set(CANDIDATE_FIELDS)
 
     def test_score_is_computed(self):
-        assert entry_field_columns("score") == frozenset()
+        assert candidate_field_columns("score") == frozenset()
 
     def test_lines_is_computed(self):
-        assert entry_field_columns("lines") == frozenset()
+        assert candidate_field_columns("lines") == frozenset()
 
     def test_row_fields_map_to_matching_column(self):
         for field in ("path", "kind", "content", "size_bytes", "updated_at"):
-            assert entry_field_columns(field) == frozenset({field})
+            assert candidate_field_columns(field) == frozenset({field})
 
     def test_degree_fields_are_computed(self):
-        assert entry_field_columns("in_degree") == frozenset()
-        assert entry_field_columns("out_degree") == frozenset()
+        assert candidate_field_columns("in_degree") == frozenset()
+        assert candidate_field_columns("out_degree") == frozenset()
 
     def test_unknown_field_raises(self):
         with pytest.raises(KeyError):
-            entry_field_columns("bogus")
+            candidate_field_columns("bogus")
 
 
 class TestDefaultColumns:

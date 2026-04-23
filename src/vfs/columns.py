@@ -2,17 +2,17 @@
 
 Two vocabularies are at play:
 
-- **Entry fields** — what :class:`vfs.results.Entry` carries. Users express
-  projection in this vocabulary (``--output path,score,updated_at``).
+- **Candidate fields** — what :class:`vfs.results.Candidate` carries. Users
+  express projection in this vocabulary (``--output path,score,updated_at``).
 - **Model columns** — actual ``VFSEntry`` column names that end up in
   the ``SELECT``. Backends use this vocabulary to narrow queries.
 """
 
 from __future__ import annotations
 
-# Model columns that back each Entry field. Empty frozenset = computed,
+# Model columns that back each Candidate field. Empty frozenset = computed,
 # not read off the row (``score``, ``lines``).
-ENTRY_FIELD_TO_MODEL_COLUMNS: dict[str, frozenset[str]] = {
+CANDIDATE_FIELD_TO_MODEL_COLUMNS: dict[str, frozenset[str]] = {
     "path": frozenset({"path"}),
     "kind": frozenset({"kind"}),
     "content": frozenset({"content"}),
@@ -24,8 +24,8 @@ ENTRY_FIELD_TO_MODEL_COLUMNS: dict[str, frozenset[str]] = {
     "lines": frozenset(),
 }
 
-# Valid public ``columns=`` input — union of every Entry-backed model column.
-ENTRY_BACKED_MODEL_COLUMNS: frozenset[str] = frozenset().union(*ENTRY_FIELD_TO_MODEL_COLUMNS.values())
+# Valid public ``columns=`` input — union of every Candidate-backed model column.
+CANDIDATE_BACKED_MODEL_COLUMNS: frozenset[str] = frozenset().union(*CANDIDATE_FIELD_TO_MODEL_COLUMNS.values())
 
 _METADATA_COLUMNS: frozenset[str] = frozenset(
     {"path", "kind", "size_bytes", "updated_at"},
@@ -81,18 +81,18 @@ def default_columns(function: str) -> frozenset[str]:
     """Return the default model-column set for *function*.
 
     Unknown functions return ``{"path"}`` — path is the only column every
-    Entry must carry.
+    Candidate must carry.
     """
     return DEFAULT_COLUMNS.get(function, frozenset({"path"}))
 
 
-def entry_field_columns(name: str) -> frozenset[str]:
-    """Return the model columns that back Entry field *name*.
+def candidate_field_columns(name: str) -> frozenset[str]:
+    """Return the model columns that back Candidate field *name*.
 
     Raises ``KeyError`` on unknown names; callers should validate against
-    :data:`vfs.results.ENTRY_FIELDS` first.
+    :data:`vfs.results.CANDIDATE_FIELDS` first.
     """
-    return ENTRY_FIELD_TO_MODEL_COLUMNS[name]
+    return CANDIDATE_FIELD_TO_MODEL_COLUMNS[name]
 
 
 def required_model_columns(
@@ -103,7 +103,7 @@ def required_model_columns(
 
     ``projection=None`` returns just the function's default columns.
     ``default`` in projection is a no-op; ``all`` widens to every
-    model-backed Entry field; any other Entry field name adds its
+    model-backed Candidate field; any other Candidate field name adds its
     backing model columns.  Unknown names raise ``ValueError``.
     """
     cols: set[str] = set(default_columns(function))
@@ -113,10 +113,10 @@ def required_model_columns(
         if name == "default":
             continue
         if name == "all":
-            cols |= ENTRY_BACKED_MODEL_COLUMNS
+            cols |= CANDIDATE_BACKED_MODEL_COLUMNS
             continue
-        if name not in ENTRY_FIELD_TO_MODEL_COLUMNS:
+        if name not in CANDIDATE_FIELD_TO_MODEL_COLUMNS:
             msg = f"unknown field {name!r}"
             raise ValueError(msg)
-        cols |= ENTRY_FIELD_TO_MODEL_COLUMNS[name]
+        cols |= CANDIDATE_FIELD_TO_MODEL_COLUMNS[name]
     return frozenset(cols)

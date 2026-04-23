@@ -227,7 +227,7 @@ class ExceptStage(StageNode):
 class QueryPlan:
     """Parsed query plus the ordered method calls it lowers to.
 
-    ``projection`` carries the user's ``--output`` selection in the Entry
+    ``projection`` carries the user's ``--output`` selection in the Candidate
     vocabulary (e.g. ``("path", "score", "in_degree")``).  ``None`` means
     the caller didn't pass ``--output`` — the executor and renderer fall
     back to per-function defaults from :mod:`vfs.columns` and

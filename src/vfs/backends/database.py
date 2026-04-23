@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
-from vfs.columns import ENTRY_BACKED_MODEL_COLUMNS, default_columns
+from vfs.columns import CANDIDATE_BACKED_MODEL_COLUMNS, default_columns
 from vfs.graph import RustworkxGraph
 from vfs.models import VFSEntry, _build_entry_table_class
 from vfs.paths import (
@@ -36,7 +36,7 @@ from vfs.paths import parent_path as compute_parent_path
 from vfs.patterns import compile_glob, glob_to_sql_like
 from vfs.permissions import check_writable
 from vfs.replace import replace
-from vfs.results import EditOperation, Entry, LineMatch, TwoPathOperation, VFSResult
+from vfs.results import Candidate, EditOperation, LineMatch, TwoPathOperation, VFSResult
 from vfs.versioning import SNAPSHOT_INTERVAL
 
 if TYPE_CHECKING:
@@ -287,8 +287,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         """Scope all candidate paths if user_scoped is enabled."""
         if candidates is None or not self._user_scoped or user_id is None:
             return candidates
-        scoped = [e.model_copy(update={"path": scope_path(e.path, user_id)}) for e in candidates.entries]
-        return candidates._with_entries(scoped)
+        scoped = [e.model_copy(update={"path": scope_path(e.path, user_id)}) for e in candidates.candidates]
+        return candidates._with_candidates(scoped)
 
     def _scope_entries(self, entries: Sequence[VFSEntry], user_id: str | None) -> None:
         """Scope entry paths in place if user_scoped is enabled.
@@ -340,19 +340,19 @@ class DatabaseFileSystem(VirtualFileSystem):
         """Return the model columns to SELECT for *function*.
 
         ``columns=None`` falls through to ``default_columns(function)``.
-        ``path`` is force-included — every Entry must carry a path, and
+        ``path`` is force-included — every Candidate must carry a path, and
         downstream code (regex re-match, dedup, scoping) depends on it.
 
-        User-supplied ``columns`` must be Entry-backed model column names;
+        User-supplied ``columns`` must be Candidate-backed model column names;
         anything else (including typos like ``size`` for ``size_bytes``,
         or internal columns like ``parent_path``) raises ``ValueError``
         with the valid set — turning a cryptic ``AttributeError`` from
         SQLAlchemy into a clear contract violation at the boundary.
         """
         if columns is not None:
-            unknown = columns - ENTRY_BACKED_MODEL_COLUMNS
+            unknown = columns - CANDIDATE_BACKED_MODEL_COLUMNS
             if unknown:
-                valid = ", ".join(sorted(ENTRY_BACKED_MODEL_COLUMNS))
+                valid = ", ".join(sorted(CANDIDATE_BACKED_MODEL_COLUMNS))
                 bad = ", ".join(sorted(unknown))
                 msg = f"unknown column(s): {bad}. Valid columns: {valid}"
                 raise ValueError(msg)
@@ -370,21 +370,21 @@ class DatabaseFileSystem(VirtualFileSystem):
         ordered = ["path", *sorted(c for c in cols if c != "path")]
         return [getattr(self._model, c) for c in ordered]
 
-    def _row_to_entry(
+    def _row_to_candidate(
         self,
         row: Any,
         cols: frozenset[str],
         *,
         score: float | None = None,
         lines: list[LineMatch] | None = None,
-    ) -> Entry:
-        """Build an :class:`Entry` from a narrow-select row.
+    ) -> Candidate:
+        """Build an :class:`Candidate` from a narrow-select row.
 
         Only fields whose backing column is in *cols* are populated; the
         rest stay ``None``. ``score`` and ``lines`` are computed (no
         backing column) — pass them explicitly when relevant.
         """
-        return Entry(
+        return Candidate(
             path=row.path,
             kind=row.kind if "kind" in cols else None,
             content=row.content if "content" in cols else None,
@@ -489,7 +489,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         path: str,
         cols: frozenset[str],
         session: AsyncSession,
-    ) -> Entry | None:
+    ) -> Candidate | None:
         parsed = await self._incoming_edge_rows(path, session)
         if parsed is None:
             return None
@@ -498,21 +498,21 @@ class DatabaseFileSystem(VirtualFileSystem):
             return None
         kind: str | None = "directory" if "kind" in cols else None
         if spec.edge_type is None:
-            return Entry(path=path, kind=kind)
+            return Candidate(path=path, kind=kind)
 
         matching = [row for row in rows if row.edge_type == spec.edge_type]
         if not matching:
             return None
 
         if spec.source_prefix is None:
-            return Entry(path=path, kind=kind)
+            return Candidate(path=path, kind=kind)
 
         exact = any(row.source_path == spec.source_prefix for row in matching)
         has_descendants = any(row.source_path.startswith(spec.source_prefix.rstrip("/") + "/") for row in matching)
         if exact:
-            return Entry(path=path, kind="edge" if "kind" in cols else None)
+            return Candidate(path=path, kind="edge" if "kind" in cols else None)
         if has_descendants:
-            return Entry(path=path, kind=kind)
+            return Candidate(path=path, kind=kind)
         return None
 
     async def _inverse_children(
@@ -520,7 +520,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         path: str,
         cols: frozenset[str],
         session: AsyncSession,
-    ) -> list[Entry]:
+    ) -> list[Candidate]:
         parsed = await self._incoming_edge_rows(path, session)
         if parsed is None:
             return []
@@ -535,7 +535,8 @@ class DatabaseFileSystem(VirtualFileSystem):
             for row in rows:
                 child_kinds.setdefault(f"{base}/{row.edge_type}", "directory")
             return [
-                Entry(path=child, kind=kind if "kind" in cols else None) for child, kind in sorted(child_kinds.items())
+                Candidate(path=child, kind=kind if "kind" in cols else None)
+                for child, kind in sorted(child_kinds.items())
             ]
 
         matching = [row for row in rows if row.edge_type == spec.edge_type]
@@ -562,7 +563,10 @@ class DatabaseFileSystem(VirtualFileSystem):
             if child_kinds.get(child_path) != "directory":
                 child_kinds[child_path] = child_kind
 
-        return [Entry(path=child, kind=kind if "kind" in cols else None) for child, kind in sorted(child_kinds.items())]
+        return [
+            Candidate(path=child, kind=kind if "kind" in cols else None)
+            for child, kind in sorted(child_kinds.items())
+        ]
 
     def _parameter_budget(self, session: AsyncSession) -> int:
         """Return a conservative parameter budget for the current SQL dialect."""
@@ -673,7 +677,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         if candidates is not None:
             need_hydration: list[str] = []
-            for candidate in candidates.entries:
+            for candidate in candidates.candidates:
                 if candidate.kind == "version":
                     continue
                 if candidate.content is not None:
@@ -1051,7 +1055,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         new_content: str,
         latest_version_hash: str | None,
         session: AsyncSession,
-    ) -> Entry:
+    ) -> Candidate:
         """Update an existing (or soft-deleted) object with new content.
 
         Fast path: when the file hash and latest version hash agree,
@@ -1092,7 +1096,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             existing.update_content(new_content)  # pragma: no cover — defensive: files always have content
         self._apply_explicit_embedding_update(existing, incoming)
 
-        return existing.to_entry()
+        return existing.to_candidate()
 
     async def _fetch_version_chain(
         self,
@@ -1121,7 +1125,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         incoming: VFSEntry,
         new_content: str,
         session: AsyncSession,
-    ) -> Entry:
+    ) -> Candidate:
         """Insert a new file or chunk.
 
         New files get an initial v1 snapshot.  Chunks are added directly.
@@ -1139,7 +1143,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             incoming.update_content(new_content)
             session.add(version_obj)
         session.add(incoming)
-        return incoming.to_entry()
+        return incoming.to_candidate()
 
     # ------------------------------------------------------------------
     # CRUD
@@ -1176,15 +1180,15 @@ class DatabaseFileSystem(VirtualFileSystem):
         if candidates is None:
             if path is None:
                 return self._error("read requires a path or candidates")
-            candidates = VFSResult(function="read", entries=[Entry(path=path)])
+            candidates = VFSResult(function="read", candidates=[Candidate(path=path)])
         elif path is not None:
             return self._error("read requires a path or candidates, not both")
 
-        incoming = {c.path: c for c in candidates.entries}
+        incoming = {c.path: c for c in candidates.candidates}
         if not incoming:
-            return VFSResult(function="read", entries=[])
+            return VFSResult(function="read", candidates=[])
 
-        out: list[Entry] = []
+        out: list[Candidate] = []
         errors: list[str] = []
         gap_paths: list[str] = []
         for p, c in incoming.items():
@@ -1193,7 +1197,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             # entries carry exactly the requested fields.
             if not explicit_columns and c.content is not None:
                 out.append(
-                    Entry(
+                    Candidate(
                         path=c.path,
                         kind=c.kind,
                         content=c.content,
@@ -1214,7 +1218,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             rows_by_path = {row.path: row for row in result.all()}
             for p in batch:
                 if p in rows_by_path:
-                    out.append(self._row_to_entry(rows_by_path[p], cols))
+                    out.append(self._row_to_candidate(rows_by_path[p], cols))
                 else:
                     inverse = await self._inverse_entry(p, cols, session)
                     if inverse is not None:
@@ -1226,7 +1230,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             self._unscope_result(
                 VFSResult(
                     function="read",
-                    entries=out,
+                    candidates=out,
                     errors=errors,
                     success=len(errors) == 0,
                 ),
@@ -1403,7 +1407,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                     latest_version_hash[file_path] = content_hash
 
         # ── Step 5: Process each write ─────────────────────────────────
-        out: list[Entry] = []
+        out: list[Candidate] = []
         for obj_path, incoming in ((p, obj) for p, obj in write_map.items() if p not in invalid_chunk_paths):
             new_content = incoming.content or ""
             existing = existing_map.get(obj_path)
@@ -1417,10 +1421,10 @@ class DatabaseFileSystem(VirtualFileSystem):
                             existing.update_content(new_content)
                         else:
                             existing.updated_at = datetime.now(UTC)
-                        candidate = existing.to_entry()
+                        candidate = existing.to_candidate()
                     else:
                         session.add(incoming)
-                        candidate = incoming.to_entry()
+                        candidate = incoming.to_candidate()
                 elif existing is not None:
                     if existing.deleted_at is None and not overwrite:
                         errors.append(f"Already exists (overwrite=False): {obj_path}")
@@ -1459,7 +1463,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             self._graph.invalidate()
 
         result = self._unscope_result(
-            VFSResult(function="write", entries=out, errors=errors, success=len(errors) == 0),
+            VFSResult(function="write", candidates=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -1496,18 +1500,18 @@ class DatabaseFileSystem(VirtualFileSystem):
         if candidates is None:
             if path is None:
                 return self._error("ls requires a path or candidates")
-            candidates = VFSResult(function="ls", entries=[Entry(path=path)])
+            candidates = VFSResult(function="ls", candidates=[Candidate(path=path)])
         elif path is not None:
             return self._error("ls requires a path or candidates, not both")
 
-        if not candidates.entries:
-            return VFSResult(function="ls", entries=[])
+        if not candidates.candidates:
+            return VFSResult(function="ls", candidates=[])
 
         # Classify using candidate kind; query only unknowns
         dir_paths: list[str] = []
         file_paths: list[str] = []
         unknown_paths: list[str] = []
-        for c in candidates.entries:
+        for c in candidates.candidates:
             if c.path == "/" or c.kind == "directory":
                 dir_paths.append(c.path)
             elif c.kind is not None:
@@ -1532,18 +1536,18 @@ class DatabaseFileSystem(VirtualFileSystem):
         all_paths = dir_paths + file_paths
         if not all_paths:
             synthetic = []
-            for candidate in candidates.entries:
+            for candidate in candidates.candidates:
                 synthetic.extend(await self._inverse_children(candidate.path, cols, session))
             if synthetic:
-                return self._unscope_result(VFSResult(function="ls", entries=synthetic), user_id)
-            return VFSResult(function="ls", entries=[])
+                return self._unscope_result(VFSResult(function="ls", candidates=synthetic), user_id)
+            return VFSResult(function="ls", candidates=[])
 
         dir_set = set(dir_paths)
         # parent_path + kind are needed for the directory-metadata visibility
         # filter; widen the SELECT to include them even if not in the
         # projected columns.
         select_cols = self._select_columns(cols | {"parent_path", "kind"})
-        out: list[Entry] = []
+        out: list[Candidate] = []
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
             stmt = select(*select_cols).where(
                 self._model.parent_path.in_(batch),  # ty: ignore[unresolved-attribute]
@@ -1557,16 +1561,16 @@ class DatabaseFileSystem(VirtualFileSystem):
                     and not row.parent_path.startswith("/.vfs")
                 ):
                     continue
-                out.append(self._row_to_entry(row, cols))
+                out.append(self._row_to_candidate(row, cols))
 
         seen_paths = {entry.path for entry in out}
-        for candidate in candidates.entries:
+        for candidate in candidates.candidates:
             for entry in await self._inverse_children(candidate.path, cols, session):
                 if entry.path not in seen_paths:
                     out.append(entry)
                     seen_paths.add(entry.path)
 
-        return self._unscope_result(VFSResult(function="ls", entries=out), user_id)
+        return self._unscope_result(VFSResult(function="ls", candidates=out), user_id)
 
     async def _delete_impl(
         self,
@@ -1593,13 +1597,13 @@ class DatabaseFileSystem(VirtualFileSystem):
         if candidates is None:
             if path is None:
                 return self._error("delete requires a path or candidates")
-            candidates = VFSResult(function="delete", entries=[Entry(path=path)])
+            candidates = VFSResult(function="delete", candidates=[Candidate(path=path)])
         elif path is not None:
             return self._error("delete requires a path or candidates, not both")
 
-        paths = [c.path for c in candidates.entries]
+        paths = [c.path for c in candidates.candidates]
         if not paths:
-            return VFSResult(function="delete", entries=[])
+            return VFSResult(function="delete", candidates=[])
 
         if "/" in paths:
             return self._error("Cannot delete root path")
@@ -1615,7 +1619,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             result = await session.execute(stmt)
             objs.update({obj.path: obj for obj in result.scalars().all()})
 
-        out: list[Entry] = []
+        out: list[Candidate] = []
         errors: list[str] = []
 
         # Separate not-found errors
@@ -1669,17 +1673,17 @@ class DatabaseFileSystem(VirtualFileSystem):
             children = children_map.get(p, [])
             try:
                 if permanent:
-                    out.append(obj.to_entry())
+                    out.append(obj.to_candidate())
                     for child in children:
-                        out.append(child.to_entry())
+                        out.append(child.to_candidate())
                         await session.delete(child)
                     await session.delete(obj)
                 else:
                     obj.deleted_at = now
-                    out.append(obj.to_entry())
+                    out.append(obj.to_candidate())
                     for child in children:
                         child.deleted_at = now
-                        out.append(child.to_entry())
+                        out.append(child.to_candidate())
             except Exception as e:
                 errors.append(f"Delete failed for {p}: {e}")
 
@@ -1688,7 +1692,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         # files that are graph nodes.
         self._graph.invalidate()
         result = self._unscope_result(
-            VFSResult(function="delete", entries=out, errors=errors, success=len(errors) == 0),
+            VFSResult(function="delete", candidates=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -1796,7 +1800,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         to_write: list[VFSEntry] = []
         errors: list[str] = []
-        for c in read_result.entries:
+        for c in read_result.candidates:
             content = c.content
             if content is None:
                 errors.append(f"No content to edit: {c.path}")
@@ -1825,7 +1829,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             return self._error(
                 VFSResult(
                     function="edit",
-                    entries=write_result.entries,
+                    candidates=write_result.candidates,
                     errors=errors,
                     success=len(errors) == 0,
                 )
@@ -1854,12 +1858,12 @@ class DatabaseFileSystem(VirtualFileSystem):
         # Read sources — _read_impl scopes internally, returns unscoped
         src_paths = [op.src for op in ops]
         src_result = await self._read_impl(
-            candidates=VFSResult(function="read", entries=[Entry(path=p) for p in src_paths]),
+            candidates=VFSResult(function="read", candidates=[Candidate(path=p) for p in src_paths]),
             user_id=user_id,
             session=session,
         )
 
-        src_by_path = {c.path: c for c in src_result.entries}
+        src_by_path = {c.path: c for c in src_result.candidates}
         errors: list[str] = list(src_result.errors)
 
         # Build write objects with unscoped dest paths
@@ -1884,7 +1888,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         return self._error(
             VFSResult(
                 function="copy",
-                entries=write_result.entries,
+                candidates=write_result.candidates,
                 errors=errors,
                 success=len(errors) == 0,
             )
@@ -1920,7 +1924,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 for op in ops
             ]
 
-        out: list[Entry] = []
+        out: list[Candidate] = []
         errors: list[str] = []
 
         for op in ops:
@@ -2019,13 +2023,13 @@ class DatabaseFileSystem(VirtualFileSystem):
                 )
                 conn._rederive_path_fields()
 
-            out.append(src_obj.to_entry())
+            out.append(src_obj.to_candidate())
 
         await session.flush()
         # Moves may rename edges or rewrite target_path references.
         self._graph.invalidate()
         result = self._unscope_result(
-            VFSResult(function="move", entries=out, errors=errors, success=len(errors) == 0),
+            VFSResult(function="move", candidates=out, errors=errors, success=len(errors) == 0),
             user_id,
         )
         return self._error(result)
@@ -2227,10 +2231,10 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         # ── With candidates: filter in-memory ─────────────────────────
         if candidates is not None:
-            matched = [c for c in candidates.entries if regex.match(c.path) is not None]
+            matched = [c for c in candidates.candidates if regex.match(c.path) is not None]
             if max_count is not None:
                 matched = matched[:max_count]
-            return self._unscope_result(VFSResult(function="glob", entries=matched), user_id)
+            return self._unscope_result(VFSResult(function="glob", candidates=matched), user_id)
 
         # ── Without candidates: query DB ──────────────────────────────
         like_pattern = glob_to_sql_like(pattern)
@@ -2265,11 +2269,11 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         result = await session.execute(stmt)
 
-        matched = [self._row_to_entry(row, cols) for row in result.all() if regex.match(row.path) is not None]
+        matched = [self._row_to_candidate(row, cols) for row in result.all() if regex.match(row.path) is not None]
         matched.sort(key=lambda c: c.path)
         if max_count is not None:
             matched = matched[:max_count]
-        return self._unscope_result(VFSResult(function="glob", entries=matched), user_id)
+        return self._unscope_result(VFSResult(function="glob", candidates=matched), user_id)
 
     async def _grep_impl(
         self,
@@ -2332,7 +2336,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             # path is uniform — fields the candidate lacks stay None on the
             # emitted entry (Phase 6 hydration can backfill via fs.read).
             paths_to_fetch: list[str] = []
-            for c in candidates.entries:
+            for c in candidates.candidates:
                 if c.content is not None:
                     rows_by_path[c.path] = SimpleNamespace(
                         path=c.path,
@@ -2412,7 +2416,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             after_context=after_context,
             invert_match=invert_match,
         )
-        return self._unscope_result(VFSResult(function="grep", entries=matched), user_id)
+        return self._unscope_result(VFSResult(function="grep", candidates=matched), user_id)
 
     def _collect_line_matches(
         self,
@@ -2425,19 +2429,19 @@ class DatabaseFileSystem(VirtualFileSystem):
         before_context: int = 0,
         after_context: int = 0,
         invert_match: bool = False,
-    ) -> list[Entry]:
+    ) -> list[Candidate]:
         """Build grep entries from a ``{path: row}`` mapping.
 
         Iterates in sorted-path order, scans ``row.content`` line-by-line,
-        and emits one ``Entry`` per matched file.  Each entry is built via
-        :meth:`_row_to_entry` so it carries every column in *cols*, plus
+        and emits one ``Candidate`` per matched file.  Each entry is built via
+        :meth:`_row_to_candidate` so it carries every column in *cols*, plus
         the computed ``score`` (match count) and ``lines`` (per-match
         context spans, when ``output_mode == "lines"``).
 
         ``invert_match`` flips the per-line predicate (``-v``).  Stops at
         *max_count* matched files when set.
         """
-        matched: list[Entry] = []
+        matched: list[Candidate] = []
         for path in sorted(rows_by_path):
             row = rows_by_path[path]
             content = row.content
@@ -2460,7 +2464,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 )
 
             matched.append(
-                self._row_to_entry(
+                self._row_to_candidate(
                     row,
                     cols,
                     score=float(len(match_indices)),
@@ -2517,7 +2521,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         if vector is None:
             return self._error("vector_search requires a vector")
 
-        paths = [c.path for c in candidates.entries] if candidates else None
+        paths = [c.path for c in candidates.candidates] if candidates else None
         hits = await self._vector_store.query(
             vector,
             k=k,
@@ -2526,13 +2530,13 @@ class DatabaseFileSystem(VirtualFileSystem):
         )
 
         matched = [
-            Entry(
+            Candidate(
                 path=hit.path,
                 score=hit.score,
             )
             for hit in hits
         ]
-        return self._unscope_result(VFSResult(function="vector_search", entries=matched), user_id)
+        return self._unscope_result(VFSResult(function="vector_search", candidates=matched), user_id)
 
     async def _lexical_search_impl(
         self,
@@ -2572,7 +2576,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             session=session,
         )
         if not docs:
-            return VFSResult(function="lexical_search", entries=[])
+            return VFSResult(function="lexical_search", candidates=[])
 
         doc_lengths = [doc.doc_length for doc in docs]
         term_frequency_docs = [doc.term_freqs for doc in docs]
@@ -2608,7 +2612,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         )[:k]
 
         matched = [
-            Entry(
+            Candidate(
                 path=doc.path,
                 kind=doc.kind,
                 content=doc.content,
@@ -2617,7 +2621,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             for doc, score in scored
         ]
 
-        return self._unscope_result(VFSResult(function="lexical_search", entries=matched), user_id)
+        return self._unscope_result(VFSResult(function="lexical_search", candidates=matched), user_id)
 
     async def _tree_impl(
         self,
@@ -2653,7 +2657,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             if root_entry.kind != "directory":
                 return self._error(f"Not a directory: {path}")
 
-            entries: list[Entry] = []
+            entries: list[Candidate] = []
             queue: deque[tuple[str, int]] = deque([(path, 0)])
             while queue:
                 current, depth = queue.popleft()
@@ -2668,7 +2672,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                     if child.kind == "directory":
                         queue.append((child.path, depth + 1))
 
-            return self._unscope_result(VFSResult(function="tree", entries=entries), user_id)
+            return self._unscope_result(VFSResult(function="tree", candidates=entries), user_id)
 
         # Validate path exists and is a directory (skip for root)
         if path != "/":
@@ -2705,8 +2709,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         result = await session.execute(stmt)
         rows = sorted(result.all(), key=lambda r: r.path)
 
-        tree_entries = [self._row_to_entry(row, cols) for row in rows]
-        return self._unscope_result(VFSResult(function="tree", entries=tree_entries), user_id)
+        tree_entries = [self._row_to_candidate(row, cols) for row in rows]
+        return self._unscope_result(VFSResult(function="tree", candidates=tree_entries), user_id)
 
     # ------------------------------------------------------------------
     # Graph — delegate to self._graph (RustworkxGraph)
@@ -2721,8 +2725,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         if candidates is not None:
             return candidates
         if path is not None:
-            return VFSResult(entries=[Entry(path=path)])
-        return VFSResult(entries=[])
+            return VFSResult(candidates=[Candidate(path=path)])
+        return VFSResult(candidates=[])
 
     async def _predecessors_impl(
         self,

@@ -3,7 +3,7 @@
 Every public method that accepts ``candidates`` routes through
 ``_dispatch_candidates`` which filters the result set by the incoming
 candidate paths.  These tests verify that contract end-to-end — after
-the new ``Entry`` / ``VFSResult(function=, entries=)`` refactor, the
+the new ``Candidate`` / ``VFSResult(function=, candidates=)`` refactor, the
 per-step ``Detail`` chain is gone; instead we assert on the result's
 ``function`` envelope and the surviving paths.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from vfs.backends.database import DatabaseFileSystem
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -22,14 +22,14 @@ from vfs.results import Entry, VFSResult
 
 def _cands(*paths: str, function: str = "") -> VFSResult:
     """Build a result with plain path entries."""
-    return VFSResult(function=function, entries=[Entry(path=p) for p in paths])
+    return VFSResult(function=function, candidates=[Candidate(path=p) for p in paths])
 
 
 def _node_result(result: VFSResult) -> VFSResult:
     """Filter out edge entries from a subgraph result."""
     return VFSResult(
         function=result.function,
-        entries=[e for e in result.entries if "/__meta__/edges/" not in e.path],
+        candidates=[e for e in result.candidates if "/__meta__/edges/" not in e.path],
         success=result.success,
         errors=list(result.errors),
     )
@@ -87,7 +87,7 @@ class TestReadChaining:
         cands = _cands("/src/auth.py")
         result = await fs.read(candidates=cands)
         assert len(result) == 1
-        entry = result.entries[0]
+        entry = result.candidates[0]
         assert entry.path == "/src/auth.py"
         assert entry.content is not None
         assert result.function == "read"
@@ -96,7 +96,7 @@ class TestReadChaining:
         cands = _cands("/src/auth.py", "/src/utils.py")
         result = await fs.read(candidates=cands)
         assert len(result) == 2
-        assert {e.path for e in result.entries} == {"/src/auth.py", "/src/utils.py"}
+        assert {e.path for e in result.candidates} == {"/src/auth.py", "/src/utils.py"}
 
 
 class TestStatChaining:
@@ -104,7 +104,7 @@ class TestStatChaining:
         cands = _cands("/src/utils.py")
         result = await fs.stat(candidates=cands)
         assert len(result) == 1
-        assert result.entries[0].path == "/src/utils.py"
+        assert result.candidates[0].path == "/src/utils.py"
 
 
 class TestEditChaining:
@@ -117,7 +117,7 @@ class TestEditChaining:
         )
         assert result.success
         assert len(result) == 1
-        assert result.entries[0].path == "/src/config.py"
+        assert result.candidates[0].path == "/src/config.py"
 
 
 class TestDeleteChaining:
@@ -125,14 +125,14 @@ class TestDeleteChaining:
         cands = _cands("/src/config.py")
         result = await fs.delete(candidates=cands)
         assert result.success
-        assert any(e.path == "/src/config.py" for e in result.entries)
+        assert any(e.path == "/src/config.py" for e in result.candidates)
 
 
 class TestLsChaining:
     async def test_returns_children(self, fs: DatabaseFileSystem):
         """ls returns children — different paths from the seed."""
         cands = VFSResult(
-            entries=[Entry(path="/src", kind="directory")],
+            candidates=[Candidate(path="/src", kind="directory")],
         )
         result = await fs.ls(candidates=cands)
         assert len(result) > 0
@@ -151,14 +151,14 @@ class TestGlobChaining:
         assert len(result) >= 1
         assert result.function == "glob"
         # All surviving entries must be in the candidate set
-        surviving = {e.path for e in result.entries}
+        surviving = {e.path for e in result.candidates}
         assert surviving <= {"/src/auth.py", "/src/utils.py", "/src/config.py"}
 
     async def test_filtered_out_candidates_do_not_appear(self, fs: DatabaseFileSystem):
         cands = _cands("/src/auth.py", "/src/config.py")
         result = await fs.glob("/src/auth*", candidates=cands)
         assert len(result) == 1
-        assert result.entries[0].path == "/src/auth.py"
+        assert result.candidates[0].path == "/src/auth.py"
 
 
 class TestGrepChaining:
@@ -172,7 +172,7 @@ class TestGrepChaining:
         cands = _cands("/src/auth.py", "/src/config.py")
         result = await fs.grep("import", candidates=cands)
         assert len(result) == 1
-        assert result.entries[0].path == "/src/auth.py"
+        assert result.candidates[0].path == "/src/auth.py"
 
 
 # ------------------------------------------------------------------
@@ -184,14 +184,14 @@ class TestNeighborhoodChaining:
     async def test_seeds_appear_in_neighborhood(self, fs: DatabaseFileSystem):
         cands = _cands("/src/auth.py")
         result = await fs.neighborhood(candidates=cands, depth=1)
-        paths = {e.path for e in result.entries if "/__meta__/edges/" not in e.path}
+        paths = {e.path for e in result.candidates if "/__meta__/edges/" not in e.path}
         assert "/src/auth.py" in paths
         assert result.function == "neighborhood"
 
     async def test_discovers_neighbors(self, fs: DatabaseFileSystem):
         cands = _cands("/src/auth.py")
         result = await fs.neighborhood(candidates=cands, depth=1)
-        non_seeds = [e for e in result.entries if e.path != "/src/auth.py" and "/__meta__/edges/" not in e.path]
+        non_seeds = [e for e in result.candidates if e.path != "/src/auth.py" and "/__meta__/edges/" not in e.path]
         assert len(non_seeds) > 0
 
 
@@ -199,7 +199,7 @@ class TestMeetingSubgraphChaining:
     async def test_includes_seeds(self, fs: DatabaseFileSystem):
         cands = _cands("/src/auth.py", "/src/db.py")
         result = await fs.meeting_subgraph(candidates=cands)
-        node_paths = {e.path for e in result.entries if "/__meta__/edges/" not in e.path}
+        node_paths = {e.path for e in result.candidates if "/__meta__/edges/" not in e.path}
         assert "/src/auth.py" in node_paths
         assert "/src/db.py" in node_paths
         assert result.function == "meeting_subgraph"
@@ -209,7 +209,7 @@ class TestMinMeetingSubgraphChaining:
     async def test_includes_seeds(self, fs: DatabaseFileSystem):
         cands = _cands("/src/api.py", "/src/db.py")
         result = await fs.min_meeting_subgraph(candidates=cands)
-        node_paths = {e.path for e in result.entries if "/__meta__/edges/" not in e.path}
+        node_paths = {e.path for e in result.candidates if "/__meta__/edges/" not in e.path}
         assert "/src/api.py" in node_paths
         assert "/src/db.py" in node_paths
         assert result.function == "min_meeting_subgraph"
@@ -226,7 +226,7 @@ class TestPageRankChaining:
         result = await fs.pagerank(candidates=cands)
         assert len(result) == 2
         assert result.function == "pagerank"
-        for e in result.entries:
+        for e in result.candidates:
             assert e.score is not None
 
 
@@ -294,12 +294,12 @@ class TestMultiStepChains:
         assert len(r2) >= 1
         assert r2.function == "grep"
         # All grep survivors must have been in the glob set
-        assert {e.path for e in r2.entries} <= set(r1.paths)
+        assert {e.path for e in r2.candidates} <= set(r1.paths)
 
         r3 = await fs.read(candidates=r2)
         assert r3.function == "read"
-        assert {e.path for e in r3.entries} <= set(r2.paths)
-        for e in r3.entries:
+        assert {e.path for e in r3.candidates} <= set(r2.paths)
+        for e in r3.candidates:
             assert e.content is not None
 
     async def test_glob_pagerank(self, fs: DatabaseFileSystem):
@@ -308,8 +308,8 @@ class TestMultiStepChains:
         r2 = await fs.pagerank(candidates=r1)
         assert len(r2) >= 1
         assert r2.function == "pagerank"
-        assert {e.path for e in r2.entries} <= set(r1.paths)
-        for e in r2.entries:
+        assert {e.path for e in r2.candidates} <= set(r1.paths)
+        for e in r2.candidates:
             assert e.score is not None
 
     async def test_search_min_meeting_subgraph_pagerank(self, fs: DatabaseFileSystem):
@@ -333,9 +333,9 @@ class TestMultiStepChains:
         assert ranked.success
         assert ranked.function == "pagerank"
 
-        ranked_paths = {e.path for e in ranked.entries}
+        ranked_paths = {e.path for e in ranked.candidates}
         assert ranked_paths <= node_paths
-        for e in ranked.entries:
+        for e in ranked.candidates:
             assert e.score is not None
 
     async def test_grep_meeting_subgraph_hits(self, fs: DatabaseFileSystem):
@@ -348,12 +348,12 @@ class TestMultiStepChains:
         assert r2.function == "meeting_subgraph"
         r2_nodes = _node_result(r2)
         # Every grep seed should still be in the subgraph node set
-        assert seed_paths <= {e.path for e in r2_nodes.entries}
+        assert seed_paths <= {e.path for e in r2_nodes.candidates}
 
         r3 = await fs.hits(candidates=r2_nodes)
         assert r3.function == "hits"
         # All hits survivors were subgraph nodes
-        assert {e.path for e in r3.entries} <= {e.path for e in r2_nodes.entries}
+        assert {e.path for e in r3.candidates} <= {e.path for e in r2_nodes.candidates}
 
     async def test_four_step_chain(self, fs: DatabaseFileSystem):
         """glob → grep → read → pagerank: each step narrows the set."""
@@ -364,7 +364,7 @@ class TestMultiStepChains:
         assert len(r4) >= 1
         assert r4.function == "pagerank"
         # Final survivors were present at every prior stage
-        final_paths = {e.path for e in r4.entries}
+        final_paths = {e.path for e in r4.candidates}
         assert final_paths <= set(r3.paths)
         assert final_paths <= set(r2.paths)
         assert final_paths <= set(r1.paths)

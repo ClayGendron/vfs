@@ -35,7 +35,7 @@ from vfs.query.ast import (
     WriteCommand,
 )
 from vfs.query.executor import _apply_visibility, _preserve_under_root, execute_query
-from vfs.results import Entry, VFSResult
+from vfs.results import Candidate, VFSResult
 
 # ===========================================================================
 # Helpers
@@ -46,9 +46,9 @@ def _fs():
     """Build a mock VirtualFileSystem with default return values."""
     fs = AsyncMock()
     fs._merge_results = lambda results: VFSResult(
-        entries=[e for r in results for e in r.entries],
+        candidates=[e for r in results for e in r.candidates],
     )
-    empty = VFSResult(entries=[])
+    empty = VFSResult(candidates=[])
     for method in (
         "read",
         "stat",
@@ -90,7 +90,7 @@ def _plan(node) -> QueryPlan:
 
 
 def _result(*paths: str) -> VFSResult:
-    return VFSResult(entries=[Entry(path=p) for p in paths])
+    return VFSResult(candidates=[Candidate(path=p) for p in paths])
 
 
 NO_VIS = Visibility(include_all=False, include_kinds=())
@@ -110,7 +110,7 @@ class TestEditCommand:
             stages=(EditCommand(old="x", new="y", paths=(), replace_all=False),),
         )
         fs.read.return_value = piped
-        fs.edit.return_value = VFSResult(entries=[Entry(path="/a.py")])
+        fs.edit.return_value = VFSResult(candidates=[Candidate(path="/a.py")])
         await execute_query(fs, _plan(node))
         fs.edit.assert_called_once()
 
@@ -190,7 +190,7 @@ class TestTransferCommands:
     async def test_move_piped_with_candidates(self):
         fs = _fs()
         fs.read.return_value = _result("/a.py")
-        fs.move.return_value = VFSResult(entries=[Entry(path="/dest/a.py")])
+        fs.move.return_value = VFSResult(candidates=[Candidate(path="/dest/a.py")])
         node = PipelineNode(
             source=ReadCommand(paths=("/a.py",)),
             stages=(MoveCommand(dest="/dest", overwrite=True),),
@@ -200,13 +200,13 @@ class TestTransferCommands:
 
     async def test_move_piped_empty_candidates(self):
         fs = _fs()
-        fs.glob.return_value = VFSResult(entries=[])
+        fs.glob.return_value = VFSResult(candidates=[])
         node = PipelineNode(
             source=GlobCommand(pattern="*.xyz", visibility=NO_VIS),
             stages=(MoveCommand(dest="/dest", overwrite=True),),
         )
         result = await execute_query(fs, _plan(node))
-        assert result.entries == []
+        assert result.candidates == []
 
     async def test_copy_no_source_no_pipe_raises(self):
         fs = _fs()
@@ -240,7 +240,7 @@ class TestMkedgeCommand:
     async def test_mkedge_piped_multi_source(self):
         fs = _fs()
         fs.read.return_value = _result("/a.py", "/c.py")
-        fs.mkedge.return_value = VFSResult(entries=[Entry(path="/conn")])
+        fs.mkedge.return_value = VFSResult(candidates=[Candidate(path="/conn")])
         node = PipelineNode(
             source=ReadCommand(paths=("/a.py", "/c.py")),
             stages=(MkedgeCommand(edge_type="imports", target="/b.py"),),
@@ -258,7 +258,7 @@ class TestTreeGlobGrepVisibility:
     async def test_tree_piped_input(self):
         fs = _fs()
         fs.read.return_value = _result("/dir")
-        fs.tree.return_value = VFSResult(entries=[Entry(path="/dir/a.py")])
+        fs.tree.return_value = VFSResult(candidates=[Candidate(path="/dir/a.py")])
         node = PipelineNode(
             source=ReadCommand(paths=("/dir",)),
             stages=(TreeCommand(paths=(), max_depth=None, visibility=NO_VIS),),
@@ -271,8 +271,8 @@ class TestTreeGlobGrepVisibility:
         vis = Visibility(include_all=True, include_kinds=())
         node = TreeCommand(paths=(), max_depth=None, visibility=vis)
         fs.ls.return_value = VFSResult(
-            entries=[
-                Entry(path="/a.py", kind="file"),
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
             ]
         )
         result = await execute_query(fs, _plan(node))
@@ -282,7 +282,7 @@ class TestTreeGlobGrepVisibility:
     async def test_glob_piped(self):
         fs = _fs()
         fs.read.return_value = _result("/dir")
-        fs.glob.return_value = VFSResult(entries=[])
+        fs.glob.return_value = VFSResult(candidates=[])
         node = PipelineNode(
             source=ReadCommand(paths=("/dir",)),
             stages=(GlobCommand(pattern="*.py", visibility=NO_VIS),),
@@ -294,8 +294,8 @@ class TestTreeGlobGrepVisibility:
         fs = _fs()
         vis = Visibility(include_all=True, include_kinds=())
         node = GlobCommand(pattern="*.py", visibility=vis)
-        fs.ls.return_value = VFSResult(entries=[Entry(path="/a.py", kind="file")])
-        fs.glob.return_value = VFSResult(entries=[Entry(path="/a.py", kind="file")])
+        fs.ls.return_value = VFSResult(candidates=[Candidate(path="/a.py", kind="file")])
+        fs.glob.return_value = VFSResult(candidates=[Candidate(path="/a.py", kind="file")])
         await execute_query(fs, _plan(node))
         fs.ls.assert_called()
 
@@ -303,9 +303,9 @@ class TestTreeGlobGrepVisibility:
         fs = _fs()
         vis = Visibility(include_all=True, include_kinds=())
         node = GrepCommand(pattern="test", visibility=vis)
-        fs.ls.return_value = VFSResult(entries=[Entry(path="/a.py", kind="file")])
-        fs.read.return_value = VFSResult(entries=[Entry(path="/a.py", kind="file", content="test")])
-        fs.grep.return_value = VFSResult(entries=[])
+        fs.ls.return_value = VFSResult(candidates=[Candidate(path="/a.py", kind="file")])
+        fs.read.return_value = VFSResult(candidates=[Candidate(path="/a.py", kind="file", content="test")])
+        fs.grep.return_value = VFSResult(candidates=[])
         await execute_query(fs, _plan(node))
         fs.ls.assert_called()
 
@@ -326,7 +326,7 @@ class TestGrepRipgrepFieldForwarding:
 
     async def test_all_new_fields_forward_to_facade(self):
         fs = _fs()
-        fs.grep.return_value = VFSResult(entries=[])
+        fs.grep.return_value = VFSResult(candidates=[])
         node = GrepCommand(
             pattern="TODO",
             paths=("/src", "/lib"),
@@ -366,7 +366,7 @@ class TestGrepRipgrepFieldForwarding:
         """A bare ``GrepCommand(pattern=...)`` should hit the facade with
         every new kwarg at its rg-equivalent default — no silent drop."""
         fs = _fs()
-        fs.grep.return_value = VFSResult(entries=[])
+        fs.grep.return_value = VFSResult(candidates=[])
         await execute_query(fs, _plan(GrepCommand(pattern="foo", visibility=NO_VIS)))
         kwargs = fs.grep.call_args.kwargs
         assert kwargs["paths"] == ()
@@ -387,7 +387,7 @@ class TestGrepRipgrepFieldForwarding:
 class TestGlobRipgrepFieldForwarding:
     async def test_glob_new_fields_forward(self):
         fs = _fs()
-        fs.glob.return_value = VFSResult(entries=[])
+        fs.glob.return_value = VFSResult(candidates=[])
         node = GlobCommand(
             pattern="**/*.py",
             paths=("/src",),
@@ -415,7 +415,7 @@ class TestParserExecutorRoundTrip:
         from vfs.query.parser import parse_query
 
         fs = _fs()
-        fs.grep.return_value = VFSResult(entries=[])
+        fs.grep.return_value = VFSResult(candidates=[])
         plan = parse_query("grep 'def grep' /src -t python -i -C 2 -l")
         await execute_query(fs, plan)
         kwargs = fs.grep.call_args.kwargs
@@ -432,7 +432,7 @@ class TestParserExecutorRoundTrip:
         from vfs.query.parser import parse_query
 
         fs = _fs()
-        fs.grep.return_value = VFSResult(entries=[])
+        fs.grep.return_value = VFSResult(candidates=[])
         plan = parse_query("grep foo -t python -t js")
         await execute_query(fs, plan)
         kwargs = fs.grep.call_args.kwargs
@@ -443,7 +443,7 @@ class TestParserExecutorRoundTrip:
         from vfs.query.parser import parse_query
 
         fs = _fs()
-        fs.grep.return_value = VFSResult(entries=[])
+        fs.grep.return_value = VFSResult(candidates=[])
         plan = parse_query("grep foo -t weirdext")
         await execute_query(fs, plan)
         assert fs.grep.call_args.kwargs["ext"] == ("weirdext",)
@@ -452,7 +452,7 @@ class TestParserExecutorRoundTrip:
         from vfs.query.parser import parse_query
 
         fs = _fs()
-        fs.glob.return_value = VFSResult(entries=[])
+        fs.glob.return_value = VFSResult(candidates=[])
         plan = parse_query("glob '**/*.py' /src -t python")
         await execute_query(fs, plan)
         kwargs = fs.glob.call_args.kwargs
@@ -471,8 +471,8 @@ class TestLexicalSearchVisibility:
         fs = _fs()
         vis = Visibility(include_all=True, include_kinds=())
         node = LexicalSearchCommand(query="test", k=10, visibility=vis)
-        fs.ls.return_value = VFSResult(entries=[Entry(path="/a.py", kind="file")])
-        fs.lexical_search.return_value = VFSResult(entries=[])
+        fs.ls.return_value = VFSResult(candidates=[Candidate(path="/a.py", kind="file")])
+        fs.lexical_search.return_value = VFSResult(candidates=[])
         await execute_query(fs, _plan(node))
         fs.ls.assert_called()
 
@@ -485,14 +485,14 @@ class TestLexicalSearchVisibility:
 class TestGraphTraversal:
     async def test_single_path(self):
         fs = _fs()
-        fs.predecessors.return_value = VFSResult(entries=[Entry(path="/b.py")])
+        fs.predecessors.return_value = VFSResult(candidates=[Candidate(path="/b.py")])
         node = GraphTraversalCommand(method_name="predecessors", paths=("/a.py",), depth=2, visibility=NO_VIS)
         await execute_query(fs, _plan(node))
         fs.predecessors.assert_called_once()
 
     async def test_multi_path(self):
         fs = _fs()
-        fs.successors.return_value = VFSResult(entries=[])
+        fs.successors.return_value = VFSResult(candidates=[])
         node = GraphTraversalCommand(method_name="successors", paths=("/a.py", "/b.py"), depth=2, visibility=NO_VIS)
         await execute_query(fs, _plan(node))
         fs.successors.assert_called_once()
@@ -500,7 +500,7 @@ class TestGraphTraversal:
     async def test_piped_input(self):
         fs = _fs()
         fs.read.return_value = _result("/a.py")
-        fs.ancestors.return_value = VFSResult(entries=[])
+        fs.ancestors.return_value = VFSResult(candidates=[])
         node = PipelineNode(
             source=ReadCommand(paths=("/a.py",)),
             stages=(GraphTraversalCommand(method_name="ancestors", paths=(), depth=2, visibility=NO_VIS),),
@@ -510,7 +510,7 @@ class TestGraphTraversal:
 
     async def test_neighborhood_single_path_with_depth(self):
         fs = _fs()
-        fs.neighborhood.return_value = VFSResult(entries=[])
+        fs.neighborhood.return_value = VFSResult(candidates=[])
         node = GraphTraversalCommand(method_name="neighborhood", paths=("/a.py",), depth=3, visibility=NO_VIS)
         await execute_query(fs, _plan(node))
         call_kwargs = fs.neighborhood.call_args[1]
@@ -518,7 +518,7 @@ class TestGraphTraversal:
 
     async def test_neighborhood_multi_path(self):
         fs = _fs()
-        fs.neighborhood.return_value = VFSResult(entries=[])
+        fs.neighborhood.return_value = VFSResult(candidates=[])
         node = GraphTraversalCommand(
             method_name="neighborhood",
             paths=("/a.py", "/b.py"),
@@ -531,7 +531,7 @@ class TestGraphTraversal:
     async def test_neighborhood_piped(self):
         fs = _fs()
         fs.read.return_value = _result("/a.py")
-        fs.neighborhood.return_value = VFSResult(entries=[])
+        fs.neighborhood.return_value = VFSResult(candidates=[])
         node = PipelineNode(
             source=ReadCommand(paths=("/a.py",)),
             stages=(
@@ -563,7 +563,7 @@ class TestRankCommand:
     async def test_rank_piped(self):
         fs = _fs()
         fs.read.return_value = _result("/a.py")
-        fs.pagerank.return_value = VFSResult(entries=[Entry(path="/a.py", score=0.5)])
+        fs.pagerank.return_value = VFSResult(candidates=[Candidate(path="/a.py", score=0.5)])
         node = PipelineNode(
             source=ReadCommand(paths=("/a.py",)),
             stages=(RankCommand(method_name="pagerank", paths=(), visibility=NO_VIS),),
@@ -573,14 +573,14 @@ class TestRankCommand:
 
     async def test_rank_explicit_paths(self):
         fs = _fs()
-        fs.pagerank.return_value = VFSResult(entries=[])
+        fs.pagerank.return_value = VFSResult(candidates=[])
         node = RankCommand(method_name="pagerank", paths=("/a.py",), visibility=NO_VIS)
         await execute_query(fs, _plan(node))
         fs.pagerank.assert_called_once()
 
     async def test_rank_no_paths(self):
         fs = _fs()
-        fs.pagerank.return_value = VFSResult(entries=[])
+        fs.pagerank.return_value = VFSResult(candidates=[])
         node = RankCommand(method_name="pagerank", paths=(), visibility=NO_VIS)
         await execute_query(fs, _plan(node))
         fs.pagerank.assert_called_once()
@@ -642,14 +642,14 @@ class TestSetOperations:
 class TestMeetingGraphCommand:
     async def test_meeting_explicit_paths(self):
         fs = _fs()
-        fs.meeting_subgraph.return_value = VFSResult(entries=[])
+        fs.meeting_subgraph.return_value = VFSResult(candidates=[])
         node = MeetingGraphCommand(paths=("/a.py", "/b.py"), minimal=False, visibility=NO_VIS)
         await execute_query(fs, _plan(node))
         fs.meeting_subgraph.assert_called_once()
 
     async def test_min_meeting(self):
         fs = _fs()
-        fs.min_meeting_subgraph.return_value = VFSResult(entries=[])
+        fs.min_meeting_subgraph.return_value = VFSResult(candidates=[])
         node = MeetingGraphCommand(paths=("/a.py", "/b.py"), minimal=True, visibility=NO_VIS)
         await execute_query(fs, _plan(node))
         fs.min_meeting_subgraph.assert_called_once()
@@ -683,36 +683,36 @@ class TestApplyVisibility:
     def test_include_all_returns_unchanged(self):
         vis = Visibility(include_all=True, include_kinds=())
         result = VFSResult(
-            entries=[
-                Entry(path="/a.py", kind="file"),
-                Entry(path="/a.py@1", kind="version"),
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+                Candidate(path="/a.py@1", kind="version"),
             ]
         )
         filtered = _apply_visibility(result, vis, {"file"})
-        assert len(filtered.entries) == 2
+        assert len(filtered.candidates) == 2
 
     def test_default_kinds_filter(self):
         vis = Visibility(include_all=False, include_kinds=())
         result = VFSResult(
-            entries=[
-                Entry(path="/a.py", kind="file"),
-                Entry(path="/a.py@1", kind="version"),
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+                Candidate(path="/a.py@1", kind="version"),
             ]
         )
         filtered = _apply_visibility(result, vis, {"file"})
-        assert len(filtered.entries) == 1
-        assert filtered.entries[0].kind == "file"
+        assert len(filtered.candidates) == 1
+        assert filtered.candidates[0].kind == "file"
 
     def test_include_kinds_extends_defaults(self):
         vis = Visibility(include_all=False, include_kinds=("version",))
         result = VFSResult(
-            entries=[
-                Entry(path="/a.py", kind="file"),
-                Entry(path="/a.py@1", kind="version"),
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+                Candidate(path="/a.py@1", kind="version"),
             ]
         )
         filtered = _apply_visibility(result, vis, {"file"})
-        assert len(filtered.entries) == 2
+        assert len(filtered.candidates) == 2
 
 
 # ===========================================================================
@@ -731,7 +731,7 @@ class TestUnionNode:
             )
         )
         result = await execute_query(fs, _plan(node))
-        assert len(result.entries) == 2
+        assert len(result.candidates) == 2
 
 
 # ===========================================================================
@@ -753,7 +753,7 @@ class TestLsCommand:
     async def test_ls_piped_delegates(self):
         fs = _fs()
         fs.read.return_value = _result("/dir")
-        fs.ls.return_value = VFSResult(entries=[Entry(path="/dir/a.py")])
+        fs.ls.return_value = VFSResult(candidates=[Candidate(path="/dir/a.py")])
         node = PipelineNode(
             source=ReadCommand(paths=("/dir",)),
             stages=(LsCommand(paths=(), visibility=NO_VIS),),
@@ -764,7 +764,7 @@ class TestLsCommand:
 
     async def test_ls_no_paths_defaults_to_root(self):
         fs = _fs()
-        fs.ls.return_value = VFSResult(entries=[])
+        fs.ls.return_value = VFSResult(candidates=[])
         node = LsCommand(paths=(), visibility=NO_VIS)
         await execute_query(fs, _plan(node))
         call_kwargs = fs.ls.call_args[1]
@@ -781,7 +781,7 @@ class TestStatDeleteCommands:
         fs = _fs()
         from vfs.query.ast import StatCommand
 
-        fs.stat.return_value = VFSResult(entries=[Entry(path="/a.py")])
+        fs.stat.return_value = VFSResult(candidates=[Candidate(path="/a.py")])
         node = StatCommand(paths=("/a.py",))
         await execute_query(fs, _plan(node))
         fs.stat.assert_called_once()
@@ -790,7 +790,7 @@ class TestStatDeleteCommands:
         fs = _fs()
         from vfs.query.ast import DeleteCommand
 
-        fs.delete.return_value = VFSResult(entries=[Entry(path="/a.py")])
+        fs.delete.return_value = VFSResult(candidates=[Candidate(path="/a.py")])
         node = DeleteCommand(paths=("/a.py",))
         await execute_query(fs, _plan(node))
         fs.delete.assert_called_once()
@@ -804,7 +804,7 @@ class TestStatDeleteCommands:
 class TestMkdirExecution:
     async def test_mkdir_executes(self):
         fs = _fs()
-        fs.mkdir.return_value = VFSResult(entries=[Entry(path="/dir")])
+        fs.mkdir.return_value = VFSResult(candidates=[Candidate(path="/dir")])
         node = MkdirCommand(paths=("/dir", "/dir2"))
         await execute_query(fs, _plan(node))
         assert fs.mkdir.call_count == 2
@@ -819,9 +819,9 @@ class TestKindsExecution:
     async def test_kinds_filters(self):
         fs = _fs()
         fs.glob.return_value = VFSResult(
-            entries=[
-                Entry(path="/a.py", kind="file"),
-                Entry(path="/dir", kind="directory"),
+            candidates=[
+                Candidate(path="/a.py", kind="file"),
+                Candidate(path="/dir", kind="directory"),
             ]
         )
         node = PipelineNode(
@@ -829,7 +829,7 @@ class TestKindsExecution:
             stages=(KindsCommand(kinds=("file",)),),
         )
         result = await execute_query(fs, _plan(node))
-        assert all(c.kind == "file" for c in result.entries)
+        assert all(c.kind == "file" for c in result.candidates)
 
 
 # ===========================================================================
@@ -840,14 +840,14 @@ class TestKindsExecution:
 class TestExplicitTransfer:
     async def test_move_explicit_src_dest(self):
         fs = _fs()
-        fs.move.return_value = VFSResult(entries=[Entry(path="/b.py")])
+        fs.move.return_value = VFSResult(candidates=[Candidate(path="/b.py")])
         node = MoveCommand(src="/a.py", dest="/b.py", overwrite=True)
         await execute_query(fs, _plan(node))
         fs.move.assert_called_once()
 
     async def test_copy_explicit_src_dest(self):
         fs = _fs()
-        fs.copy.return_value = VFSResult(entries=[Entry(path="/b.py")])
+        fs.copy.return_value = VFSResult(candidates=[Candidate(path="/b.py")])
         node = CopyCommand(src="/a.py", dest="/b.py", overwrite=True)
         await execute_query(fs, _plan(node))
         fs.copy.assert_called_once()
@@ -855,7 +855,7 @@ class TestExplicitTransfer:
     async def test_copy_piped_with_candidates(self):
         fs = _fs()
         fs.glob.return_value = _result("/a.py")
-        fs.copy.return_value = VFSResult(entries=[Entry(path="/dest/a.py")])
+        fs.copy.return_value = VFSResult(candidates=[Candidate(path="/dest/a.py")])
         node = PipelineNode(
             source=GlobCommand(pattern="*.py", visibility=NO_VIS),
             stages=(CopyCommand(dest="/dest", overwrite=True),),
@@ -872,7 +872,7 @@ class TestExplicitTransfer:
 class TestMkedgeExplicitSource:
     async def test_mkedge_explicit_source(self):
         fs = _fs()
-        fs.mkedge.return_value = VFSResult(entries=[Entry(path="/conn")])
+        fs.mkedge.return_value = VFSResult(candidates=[Candidate(path="/conn")])
         node = MkedgeCommand(source="/a.py", edge_type="imports", target="/b.py")
         await execute_query(fs, _plan(node))
         fs.mkedge.assert_called_once()
@@ -887,17 +887,17 @@ class TestGrepNonFileRead:
     async def test_grep_reads_non_file_candidates_first(self):
         fs = _fs()
         piped = VFSResult(
-            entries=[
-                Entry(path="/dir", kind="directory", content=None),
+            candidates=[
+                Candidate(path="/dir", kind="directory", content=None),
             ]
         )
         fs.glob.return_value = piped
         fs.read.return_value = VFSResult(
-            entries=[
-                Entry(path="/dir", kind="directory", content="readme"),
+            candidates=[
+                Candidate(path="/dir", kind="directory", content="readme"),
             ]
         )
-        fs.grep.return_value = VFSResult(entries=[])
+        fs.grep.return_value = VFSResult(candidates=[])
         node = PipelineNode(
             source=GlobCommand(pattern="*", visibility=NO_VIS),
             stages=(GrepCommand(pattern="test", visibility=NO_VIS),),
@@ -915,7 +915,7 @@ class TestEditExplicitPaths:
     async def test_edit_with_explicit_paths_no_pipe(self):
         """Line 111: edit command with paths and no piped input calls edit."""
         fs = _fs()
-        fs.edit.return_value = VFSResult(entries=[Entry(path="/a.py")])
+        fs.edit.return_value = VFSResult(candidates=[Candidate(path="/a.py")])
         node = EditCommand(old="x", new="y", paths=("/a.py",), replace_all=False)
         await execute_query(fs, _plan(node))
         fs.edit.assert_called_once()
@@ -948,7 +948,7 @@ class TestProjectionThreading:
 
     async def test_glob_receives_columns_when_projection_set(self):
         fs = _fs()
-        fs.glob.return_value = VFSResult(function="glob", entries=[Entry(path="/a.md", kind="file")])
+        fs.glob.return_value = VFSResult(function="glob", candidates=[Candidate(path="/a.md", kind="file")])
         plan = _plan_with_projection(
             GlobCommand(pattern="**/*.md"),
             projection=("path", "kind", "updated_at"),
@@ -962,7 +962,7 @@ class TestProjectionThreading:
 
     async def test_no_projection_passes_no_columns_kwarg(self):
         fs = _fs()
-        fs.glob.return_value = VFSResult(function="glob", entries=[])
+        fs.glob.return_value = VFSResult(function="glob", candidates=[])
         plan = QueryPlan(ast=GlobCommand(pattern="**/*.md"), methods=())
         await execute_query(fs, plan)
         kwargs = fs.glob.call_args.kwargs
@@ -970,7 +970,7 @@ class TestProjectionThreading:
 
     async def test_read_receives_columns(self):
         fs = _fs()
-        fs.read.return_value = VFSResult(function="read", entries=[Entry(path="/a.md")])
+        fs.read.return_value = VFSResult(function="read", candidates=[Candidate(path="/a.md")])
         plan = _plan_with_projection(
             ReadCommand(paths=("/a.md",)),
             projection=("path", "content"),
@@ -986,7 +986,7 @@ class TestProjectionThreading:
         from vfs.query.ast import DeleteCommand
 
         fs = _fs()
-        fs.delete.return_value = VFSResult(function="delete", entries=[])
+        fs.delete.return_value = VFSResult(function="delete", candidates=[])
         plan = _plan_with_projection(
             DeleteCommand(paths=("/a.md",)),
             projection=("path",),
@@ -1004,7 +1004,7 @@ class TestProjectionHydration:
         fs = _fs()
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md", kind="file", in_degree=None)],
+            candidates=[Candidate(path="/a.md", kind="file", in_degree=None)],
         )
         plan = QueryPlan(ast=GlobCommand(pattern="**/*.md"), methods=())
         await execute_query(fs, plan)
@@ -1015,7 +1015,7 @@ class TestProjectionHydration:
         fs = _fs()
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[Entry(path="/a.md", kind="file", in_degree=3)],
+            candidates=[Candidate(path="/a.md", kind="file", in_degree=3)],
         )
         plan = _plan_with_projection(GlobCommand(pattern="**/*.md"), projection=("path", "in_degree"))
         await execute_query(fs, plan)
@@ -1026,9 +1026,9 @@ class TestProjectionHydration:
         # Glob produced entries without updated_at — hydration must backfill it
         fs.glob.return_value = VFSResult(
             function="glob",
-            entries=[
-                Entry(path="/a.md", kind="file", updated_at=None),
-                Entry(path="/b.md", kind="file", updated_at=None),
+            candidates=[
+                Candidate(path="/a.md", kind="file", updated_at=None),
+                Candidate(path="/b.md", kind="file", updated_at=None),
             ],
         )
         from datetime import UTC, datetime
@@ -1036,9 +1036,9 @@ class TestProjectionHydration:
         ts = datetime.now(UTC)
         fs.read.return_value = VFSResult(
             function="read",
-            entries=[
-                Entry(path="/a.md", updated_at=ts),
-                Entry(path="/b.md", updated_at=ts),
+            candidates=[
+                Candidate(path="/a.md", updated_at=ts),
+                Candidate(path="/b.md", updated_at=ts),
             ],
         )
         plan = _plan_with_projection(GlobCommand(pattern="**/*.md"), projection=("path", "updated_at"))
@@ -1048,12 +1048,12 @@ class TestProjectionHydration:
         kwargs = fs.read.call_args.kwargs
         assert "updated_at" in kwargs["columns"]
         # entries got backfilled
-        assert all(e.updated_at == ts for e in result.entries)
+        assert all(e.updated_at == ts for e in result.candidates)
 
     async def test_hydration_only_computed_field_skips_read(self):
         """``score`` and ``lines`` have no backing column — nothing to read."""
         fs = _fs()
-        fs.glob.return_value = VFSResult(function="glob", entries=[Entry(path="/a.md")])
+        fs.glob.return_value = VFSResult(function="glob", candidates=[Candidate(path="/a.md")])
         plan = _plan_with_projection(GlobCommand(pattern="**/*.md"), projection=("path", "score"))
         await execute_query(fs, plan)
         fs.read.assert_not_called()
