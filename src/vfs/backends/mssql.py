@@ -25,6 +25,7 @@ for older versions.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING, ClassVar
 
@@ -475,12 +476,8 @@ class MSSQLFileSystem(DatabaseFileSystem):
         proc_name = self._native_graph_proc_name()
         type_name = self._native_graph_seed_type_name()
         async with self._use_session() as session:
-            await session.execute(
-                text(f"IF OBJECT_ID('{proc_name}', 'P') IS NOT NULL DROP PROCEDURE {proc_name}")
-            )
-            await session.execute(
-                text(f"IF TYPE_ID('{type_name}') IS NOT NULL DROP TYPE {type_name}")
-            )
+            await session.execute(text(f"IF OBJECT_ID('{proc_name}', 'P') IS NOT NULL DROP PROCEDURE {proc_name}"))
+            await session.execute(text(f"IF TYPE_ID('{type_name}') IS NOT NULL DROP TYPE {type_name}"))
             await session.execute(text(_NATIVE_SEED_LIST_TYPE_SQL.format(type_name=type_name)))
             await session.execute(
                 text(
@@ -510,9 +507,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         proc_name = self._native_graph_proc_name()
         type_name = self._native_graph_seed_type_name()
-        proc_exists = (
-            await session.execute(text(f"SELECT OBJECT_ID('{proc_name}', 'P')"))
-        ).scalar()
+        proc_exists = (await session.execute(text(f"SELECT OBJECT_ID('{proc_name}', 'P')"))).scalar()
         type_exists = (await session.execute(text(f"SELECT TYPE_ID('{type_name}')"))).scalar()
         if proc_exists is None or type_exists is None:
             raise RuntimeError(
@@ -521,6 +516,225 @@ class MSSQLFileSystem(DatabaseFileSystem):
             )
 
         self._native_graph_verified = True
+
+    _LIVE_EDGE_PREDICATE = (
+        "{alias}.kind = 'edge'\n"
+        "              AND {alias}.deleted_at IS NULL\n"
+        "              AND {alias}.source_path IS NOT NULL\n"
+        "              AND {alias}.target_path IS NOT NULL\n"
+        "              AND {alias}.edge_type IS NOT NULL"
+    )
+
+    def _live_graph_where(self, alias: str, *, user_id: str | None) -> tuple[str, dict[str, object]]:
+        params: dict[str, object] = {}
+        clause = self._LIVE_EDGE_PREDICATE.format(alias=alias)
+        if self._user_scoped and user_id:
+            params["scope_pattern"] = f"/{user_id}/%"
+            clause += (
+                f"\n              AND {alias}.source_path LIKE :scope_pattern"
+                f"\n              AND {alias}.target_path LIKE :scope_pattern"
+            )
+        return clause, params
+
+    def _candidate_paths(self, path: str | None, candidates: VFSResult | None) -> list[str]:
+        seed_result = self._to_candidates(path, candidates)
+        return list(dict.fromkeys(entry.path for entry in seed_result.entries))
+
+    _ONE_HOP_OPENJSON = "(SELECT value FROM OPENJSON(:frontier) WITH (value NVARCHAR(450) '$'))"
+    _EXCLUDE_OPENJSON = "(SELECT value FROM OPENJSON(:exclude) WITH (value NVARCHAR(450) '$'))"
+
+    async def _one_hop(
+        self,
+        *,
+        session: AsyncSession,
+        direction: str,
+        frontier: list[str],
+        exclude: list[str],
+        user_id: str | None,
+    ) -> list[str]:
+        """Fetch the next BFS layer for ``direction`` ∈ {'backward','forward','both'}."""
+        graph_where, params = self._live_graph_where("o", user_id=user_id)
+        params["frontier"] = json.dumps(frontier)
+        params["exclude"] = json.dumps(exclude)
+        table = self._resolve_table()
+
+        if direction == "backward":
+            select_expr = "o.source_path"
+            match_expr = f"o.target_path IN {self._ONE_HOP_OPENJSON}"
+        elif direction == "forward":
+            select_expr = "o.target_path"
+            match_expr = f"o.source_path IN {self._ONE_HOP_OPENJSON}"
+        else:
+            select_expr = (
+                "CASE WHEN o.source_path IN " + self._ONE_HOP_OPENJSON + " THEN o.target_path ELSE o.source_path END"
+            )
+            match_expr = f"(o.source_path IN {self._ONE_HOP_OPENJSON} OR o.target_path IN {self._ONE_HOP_OPENJSON})"
+
+        sql = f"""
+            SELECT DISTINCT {select_expr} AS path
+            FROM {table} AS o
+            WHERE {graph_where}
+              AND {match_expr}
+              AND {select_expr} NOT IN {self._EXCLUDE_OPENJSON}
+            ORDER BY path
+            OPTION (RECOMPILE)
+        """
+        rows = (await session.execute(text(sql), params)).scalars()
+        return list(rows)
+
+    async def _filter_valid_seeds(self, seeds: list[str], user_id: str | None, session: AsyncSession) -> list[str]:
+        """Return *seeds* that touch at least one live edge (either endpoint)."""
+        graph_where, params = self._live_graph_where("o", user_id=user_id)
+        params["frontier"] = json.dumps(seeds)
+        sql = f"""
+            SELECT DISTINCT s.value AS path
+            FROM OPENJSON(:frontier) WITH (value NVARCHAR(450) '$') AS s
+            WHERE EXISTS (
+                SELECT 1 FROM {self._resolve_table()} AS o
+                WHERE {graph_where}
+                  AND (o.source_path = s.value OR o.target_path = s.value)
+            )
+            OPTION (RECOMPILE)
+        """
+        rows = (await session.execute(text(sql), params)).scalars()
+        return list(rows)
+
+    async def _run_graph_traversal(
+        self,
+        *,
+        function: str,
+        direction: str,
+        path: str | None,
+        candidates: VFSResult | None,
+        user_id: str | None,
+        session: AsyncSession,
+        depth: int | None = None,
+        include_seeds: bool = False,
+    ) -> VFSResult:
+        self._require_user_id(user_id)
+        path = self._scope_path(path, user_id)
+        candidates = self._scope_candidates(candidates, user_id)
+        seed_paths = self._candidate_paths(path, candidates)
+        if not seed_paths:
+            return VFSResult(function=function, entries=[])
+
+        visited: set[str] = set(seed_paths)
+        collected: set[str] = set()
+        frontier = seed_paths
+        steps = 0
+        while frontier and (depth is None or steps < depth):
+            next_layer = await self._one_hop(
+                session=session,
+                direction=direction,
+                frontier=frontier,
+                exclude=list(visited),
+                user_id=user_id,
+            )
+            if not next_layer:
+                break
+            collected.update(next_layer)
+            visited.update(next_layer)
+            steps += 1
+            frontier = next_layer
+
+        if include_seeds:
+            collected |= set(await self._filter_valid_seeds(seed_paths, user_id, session))
+
+        result = VFSResult(
+            function=function,
+            entries=[Entry(path=p) for p in sorted(collected)],
+        )
+        return self._unscope_result(result, user_id)
+
+    async def _predecessors_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="predecessors",
+            direction="backward",
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
+            depth=1,
+        )
+
+    async def _successors_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="successors",
+            direction="forward",
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
+            depth=1,
+        )
+
+    async def _ancestors_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="ancestors",
+            direction="backward",
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
+        )
+
+    async def _descendants_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="descendants",
+            direction="forward",
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
+        )
+
+    async def _neighborhood_impl(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        depth: int = 2,
+        user_id: str | None = None,
+        session: AsyncSession,
+    ) -> VFSResult:
+        return await self._run_graph_traversal(
+            function="neighborhood",
+            direction="both",
+            path=path,
+            candidates=candidates,
+            user_id=user_id,
+            session=session,
+            depth=depth,
+            include_seeds=True,
+        )
 
     async def _meeting_subgraph_impl(
         self,
@@ -542,6 +756,9 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         conn = await session.connection()
         dbapi_conn = (await conn.get_raw_connection()).driver_connection
+        if dbapi_conn is None:
+            msg = "meeting_subgraph requires an aioodbc driver connection"
+            raise RuntimeError(msg)
         async with dbapi_conn.cursor() as cursor:
             await cursor.execute(
                 f"{{CALL {self._native_graph_proc_name()}(?, ?)}}",
