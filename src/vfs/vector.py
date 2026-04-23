@@ -32,7 +32,8 @@ Usage::
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic_core import core_schema
 from sqlalchemy import Text
@@ -42,6 +43,22 @@ if TYPE_CHECKING:
     from pydantic import GetCoreSchemaHandler
     from pydantic_core import CoreSchema
     from sqlalchemy.engine.interfaces import Dialect
+
+
+@dataclass(frozen=True)
+class NativeEmbeddingConfig:
+    """Postgres-native pgvector column configuration for a filesystem mount.
+
+    Passed to :class:`vfs.backends.postgres.PostgresFileSystem` at
+    construction. The filesystem uses it to shape the ``embedding`` column
+    of its minted entry-table class so that the column is a true
+    ``vector(<N>)`` with the configured pgvector index.
+    """
+
+    dimension: int
+    index_method: Literal["hnsw", "ivfflat"] = "hnsw"
+    operator_class: str = "vector_cosine_ops"
+    model_name: str | None = None
 
 
 class Vector(list[float]):

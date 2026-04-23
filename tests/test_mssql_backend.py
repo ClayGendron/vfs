@@ -135,31 +135,31 @@ class TestResolveTable:
     """
 
     def _fs(self, schema: str | None) -> MSSQLFileSystem:
-        from vfs.models import VFSObject
+        from vfs.models import _build_entry_table_class
 
         fs = MSSQLFileSystem.__new__(MSSQLFileSystem)
         fs._schema = schema
-        fs._model = VFSObject
+        fs._model = _build_entry_table_class(table_name="vfs_entries", schema=schema)
         return fs
 
     def test_qualifies_with_schema(self):
         fs = self._fs("vfs")
-        assert fs._resolve_table() == "vfs.vfs_objects"
+        assert fs._resolve_table() == "vfs.vfs_entries"
 
     def test_bare_name_when_schema_none(self):
         fs = self._fs(None)
-        assert fs._resolve_table() == "vfs_objects"
+        assert fs._resolve_table() == "vfs_entries"
 
     def test_bare_name_when_schema_empty_string(self):
         # Empty string is falsy — fall through to bare table name.
         fs = self._fs("")
-        assert fs._resolve_table() == "vfs_objects"
+        assert fs._resolve_table() == "vfs_entries"
 
     def test_independent_instances_have_independent_schemas(self):
         fs_a = self._fs("tenant_a")
         fs_b = self._fs("tenant_b")
-        assert fs_a._resolve_table() == "tenant_a.vfs_objects"
-        assert fs_b._resolve_table() == "tenant_b.vfs_objects"
+        assert fs_a._resolve_table() == "tenant_a.vfs_entries"
+        assert fs_b._resolve_table() == "tenant_b.vfs_entries"
 
 
 class TestQuoteContainsTerm:
@@ -240,7 +240,7 @@ class TestSchemaConstructorPassthrough:
 
         fs = MSSQLFileSystem(session_factory=factory, schema="vfs")
         assert fs._schema == "vfs"
-        assert fs._resolve_table() == "vfs.vfs_objects"
+        assert fs._resolve_table() == "vfs.vfs_entries"
 
     def test_schema_defaults_to_none(self):
         from contextlib import asynccontextmanager
@@ -251,7 +251,7 @@ class TestSchemaConstructorPassthrough:
 
         fs = MSSQLFileSystem(session_factory=factory)
         assert fs._schema is None
-        assert fs._resolve_table() == "vfs_objects"
+        assert fs._resolve_table() == "vfs_entries"
 
 
 class TestGlobInMemoryCandidates:
@@ -504,6 +504,17 @@ class TestLexicalSearchPushdown:
         assert r.success
         assert "/a.py" in r.paths
 
+    async def test_content_hydrated_in_ranking_query(self, request, db: MSSQLFileSystem):
+        """Every returned entry carries content from the ranking row itself."""
+        _mssql_required(request)
+        await _seed(db, {"/a.py": "authentication is important"})
+        async with db._use_session() as s:
+            r = await db._lexical_search_impl("authentication", session=s)
+        assert r.entries, "expected at least one hit"
+        for entry in r.entries:
+            assert entry.content is not None
+            assert entry.content != ""
+
     async def test_excludes_chunks_and_versions(self, request, db: MSSQLFileSystem):
         """Lexical search returns only kind='file' rows."""
         _mssql_required(request)
@@ -516,7 +527,6 @@ class TestLexicalSearchPushdown:
         )
         async with db._use_session() as s:
             r = await db._lexical_search_impl("alpha", session=s)
-        # Even if chunk rows exist for /with_chunks.py, only file rows return.
         for c in r.entries:
             assert c.kind == "file"
 
@@ -532,11 +542,44 @@ class TestLexicalSearchPushdown:
         )
         async with db._use_session() as s:
             r = await db._lexical_search_impl("authentication timeout", session=s)
-        # /both.py should outrank /one.py
         paths = list(r.paths)
         assert "/both.py" in paths
         assert "/one.py" in paths
         assert paths.index("/both.py") < paths.index("/one.py")
+
+    async def test_inflectional_recall(self, request, db: MSSQLFileSystem):
+        """FREETEXTTABLE expands inflectional forms — 'plural' matches 'plurals'."""
+        _mssql_required(request)
+        await _seed(db, {"/forms.md": "grammar notes on plurals"})
+        async with db._use_session() as s:
+            r = await db._lexical_search_impl("plural", session=s)
+        assert "/forms.md" in r.paths
+
+    async def test_determinism_across_calls(self, request, db: MSSQLFileSystem):
+        """Same query + same committed state ⇒ byte-identical ordered result."""
+        _mssql_required(request)
+        await _seed(
+            db,
+            {f"/tie{i}.py": "shared term" for i in range(12)},
+        )
+        async with db._use_session() as s:
+            first = await db._lexical_search_impl("shared", k=10, session=s)
+            second = await db._lexical_search_impl("shared", k=10, session=s)
+        assert list(first.paths) == list(second.paths)
+
+    async def test_metacharacters_do_not_raise(self, request, db: MSSQLFileSystem):
+        """FTS metacharacters in the user query are bound as a parameter and tokenized server-side."""
+        _mssql_required(request)
+        await _seed(db, {"/safe.py": "login handler"})
+        async with db._use_session() as s:
+            r = await db._lexical_search_impl('login & "handler" | !<missing>', session=s)
+        assert r.success
+
+    async def test_empty_query_errors(self, request, db: MSSQLFileSystem):
+        _mssql_required(request)
+        async with db._use_session() as s:
+            r = await db._lexical_search_impl("   ", session=s)
+        assert not r.success
 
     async def test_with_candidate_intersection(self, request, db: MSSQLFileSystem):
         _mssql_required(request)

@@ -37,7 +37,6 @@ from vfs.backends.database import (
     _extract_literal_terms,
     _regex_flags_for_mode,
 )
-from vfs.bm25 import tokenize_query
 from vfs.paths import scope_path
 from vfs.patterns import compile_glob, decompose_glob, glob_to_sql_like
 from vfs.results import Entry, VFSResult
@@ -354,14 +353,15 @@ class MSSQLFileSystem(DatabaseFileSystem):
     search entry points are overridden.
 
     The class assumes the connection's default schema already contains
-    the ``VFSObject`` table and a full-text index on its ``content``
-    column.  Use :meth:`verify_fulltext_schema` at startup to confirm.
+    the entry table (by default ``vfs_entries``) and a full-text index
+    on its ``content`` column.  Use :meth:`verify_fulltext_schema` at
+    startup to confirm.
 
     Lexical search and grep operate on **files only** — versions and
     chunks are excluded.  Glob still includes directories.
     """
 
-    FULLTEXT_TOP_N: ClassVar[int] = 1_000  # CONTAINSTABLE top_n_by_rank cap
+    FULLTEXT_TOP_N: ClassVar[int] = 1_000
 
     # ------------------------------------------------------------------
     # Schema resolution
@@ -398,8 +398,9 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         Requirements:
 
-        1. The ``VFSObject`` table is resolvable in the connection's
-           default schema (i.e. ``OBJECT_ID(N'<tablename>')`` is non-null).
+        1. The configured entry table (``table_name``) is resolvable
+           in the connection's default schema (i.e.
+           ``OBJECT_ID(N'<tablename>')`` is non-null).
         2. A ``content`` column exists on the table.
         3. A full-text index exists on that ``content`` column.
         """
@@ -775,7 +776,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
         return self._unscope_result(result, user_id)
 
     # ------------------------------------------------------------------
-    # Lexical search — CONTAINSTABLE pushdown (files only)
+    # Lexical search — FREETEXTTABLE pushdown (files only)
     # ------------------------------------------------------------------
 
     async def _lexical_search_impl(
@@ -787,33 +788,23 @@ class MSSQLFileSystem(DatabaseFileSystem):
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:
-        """BM25-style lexical search via SQL Server Full-Text ``CONTAINSTABLE``.
+        """BM25 lexical search via SQL Server Full-Text ``FREETEXTTABLE``.
 
-        Replaces the base class's SQL-LIKE pre-filter + Python BM25 with
-        a single round trip:
+        One round trip: ``FREETEXTTABLE`` ranks with SQL Server's BM25
+        implementation (OKAPI ``k1=1.2, b=0.75, k3=8.0``) server-side,
+        joined back to the table to project ``path``, ``kind``,
+        ``content``, and the rank as ``score``.  The query string is
+        bound as a parameter and tokenized inside SQL Server — stemming,
+        stoplists, and thesaurus expansion all happen there.
 
-        - Tokenize *query* (capped at 50 terms by ``tokenize_query``).
-        - Build a ``("t1" OR "t2" OR …)`` CONTAINS expression.
-        - Issue ``CONTAINSTABLE(content, expr, top_n_by_rank)`` joined back
-          to the table for live files only.
-        - Sort by ``ct.[RANK]`` server-side, return top *k*.
+        ``ORDER BY ct.[RANK] DESC, o.id`` is a stable tie-breaker: BM25
+        rank collisions are common on short queries, and without a
+        secondary key the same query would reorder across calls.
 
-        Why this scales past 1M rows:
-
-        - Full-text inverted index (not a table scan) locates matches.
-        - ``top_n_by_rank`` caps the rows the engine ranks.
-        - Only ``path``, ``kind``, and ``RANK`` cross the wire — content
-          stays on the server.
-
-        Operates on files only; chunks and versions are excluded.
-
-        When *candidates* is passed, MSSQL has nothing to add — the
-        candidate set is already in Python and (after the hydration
-        changes) carries content, so the base class runs BM25 in Python
-        without any round trip.
+        Operates on files only; chunks and versions are excluded.  When
+        *candidates* is passed, delegates to the base-class Python BM25
+        over the already-hydrated candidate set.
         """
-        # Candidates path: delegate to base class so already-hydrated
-        # content drives BM25 in Python with zero SQL.
         if candidates is not None:
             return await super()._lexical_search_impl(
                 query,
@@ -827,59 +818,34 @@ class MSSQLFileSystem(DatabaseFileSystem):
         if not query or not query.strip():
             return self._error("lexical_search requires a query")
 
-        terms = tokenize_query(query)
-        if not terms:
-            return self._error("lexical_search: no searchable terms in query")
-        unique_terms = list(dict.fromkeys(terms))
-        contains_expr = " OR ".join(_quote_contains_term(t) for t in unique_terms)
-
         table = self._resolve_table()
-        top_n = max(k * 4, self.FULLTEXT_TOP_N)
         user_scope_clause = ""
-        params_base: dict[str, object] = {"expr": contains_expr, "top_n": top_n}
+        params: dict[str, object] = {"q": query, "top_n": self.FULLTEXT_TOP_N, "k": k}
         if self._user_scoped and user_id:
             user_scope_clause = " AND o.path LIKE :user_scope ESCAPE '\\'"
-            params_base["user_scope"] = f"/{user_id}/%"
+            params["user_scope"] = f"/{user_id}/%"
 
         sql = text(f"""
-            SELECT TOP (:k) o.path, o.kind, ct.[RANK] AS score
-            FROM CONTAINSTABLE({table}, content, :expr, :top_n) AS ct
+            SELECT TOP (:k) o.path, o.kind, o.content, ct.[RANK] AS score
+            FROM FREETEXTTABLE({table}, content, :q, :top_n) AS ct
             INNER JOIN {table} AS o ON o.id = ct.[KEY]
             WHERE o.kind = 'file'
               AND o.deleted_at IS NULL
               {user_scope_clause}
-            ORDER BY ct.[RANK] DESC
+            ORDER BY ct.[RANK] DESC, o.id
         """)
-        params = {**params_base, "k": k}
         rows = (await session.execute(sql, params)).all()
-
-        # Hydrate content for the (small) top-k result set so downstream
-        # stages don't have to re-query.  k is bounded (default 15), so
-        # this is a single small batched read.
-        scored_paths = [(row.path, row.kind, float(row.score)) for row in rows]
-        content_by_path: dict[str, str | None] = {}
-        if scored_paths:
-            top_paths = [path for path, _kind, _score in scored_paths]
-            content_sql = text(f"""
-                SELECT path, content
-                FROM {table}
-                WHERE path IN ({", ".join(f":p{i}" for i in range(len(top_paths)))})
-                  AND deleted_at IS NULL
-            """)
-            content_params: dict[str, object] = {f"p{i}": p for i, p in enumerate(top_paths)}
-            content_rows = (await session.execute(content_sql, content_params)).all()
-            content_by_path = {r.path: r.content for r in content_rows}
 
         result = VFSResult(
             function="lexical_search",
             entries=[
                 Entry(
-                    path=path,
-                    kind=kind,
-                    content=content_by_path.get(path),
-                    score=score,
+                    path=row.path,
+                    kind=row.kind,
+                    content=row.content,
+                    score=float(row.score),
                 )
-                for path, kind, score in scored_paths
+                for row in rows
             ],
         )
         return self._unscope_result(result, user_id)
@@ -932,7 +898,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
 
         Structural filters (``ext``, ``paths``, ``globs`` / ``globs_not``)
         compose onto all four via :meth:`_build_structural_sql`.
-        ``ext`` seeks the ``ix_vfs_objects_ext_kind`` composite
+        ``ext`` seeks the ``ix_<table_name>_ext_kind`` composite
         index, so ``-t py`` on a 1M-row corpus narrows before the
         regex engine runs.
 
@@ -1204,7 +1170,7 @@ class MSSQLFileSystem(DatabaseFileSystem):
             regex_clause = ""
             # ext IS NULL on directory rows, so ext IN (…) already excludes
             # directories — narrow kind explicitly to make the plan seek
-            # ix_vfs_objects_ext_kind rather than rely on a NULL side
+            # ix_<table_name>_ext_kind rather than rely on a NULL side
             # effect.
             kind_clause = "kind = 'file'" if decomposition.files_only else "kind IN ('file', 'directory')"
 

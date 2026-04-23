@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 from sqlmodel import select
 
+from tests.conftest import _create_schema
 from vfs.backends.database import DatabaseFileSystem
-from vfs.models import VFSObject
+from vfs.models import VFSEntry
 from vfs.paths import edge_out_path
 from vfs.results import Entry, VFSResult
 
@@ -18,7 +19,9 @@ ALICE_PAYLOAD = "alice-payload"
 
 @pytest.fixture
 async def scoped_db(engine):
-    return DatabaseFileSystem(engine=engine, user_scoped=True)
+    fs = DatabaseFileSystem(engine=engine, user_scoped=True)
+    await _create_schema(engine, fs._model)
+    return fs
 
 
 async def seed(scoped_db: DatabaseFileSystem) -> DatabaseFileSystem:
@@ -45,10 +48,10 @@ def candidate_paths(result: VFSResult) -> set[str]:
     return {entry.path for entry in result.entries}
 
 
-async def raw_object(fs: DatabaseFileSystem, path: str) -> VFSObject | None:
+async def raw_object(fs: DatabaseFileSystem, path: str) -> VFSEntry | None:
     assert fs._session_factory is not None
     async with fs._session_factory() as session:
-        stmt = select(VFSObject).where(VFSObject.path == path)
+        stmt = select(fs._model).where(fs._model.path == path)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -102,9 +105,9 @@ async def test_delete_other_user_prefixed_path_cannot_touch_other_user_row(seede
 
 
 async def test_batch_write_cannot_override_owner_or_prefix(seeded_scoped_db):
-    smuggled = VFSObject(path="/bob/stolen.txt", content="smuggled", owner_id=BOB)
+    smuggled = VFSEntry(path="/bob/stolen.txt", content="smuggled", owner_id=BOB)
 
-    result = await seeded_scoped_db.write(objects=[smuggled], user_id=ALICE)
+    result = await seeded_scoped_db.write(entries=[smuggled], user_id=ALICE)
 
     assert result.success
 

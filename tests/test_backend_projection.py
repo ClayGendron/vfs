@@ -29,8 +29,8 @@ class TestSqlCaptureFixture:
         sql_capture.reset()
         async with db._use_session() as s:
             await db._read_impl("/docs/intro.md", session=s)
-        reads = sql_capture.reads_against_objects()
-        assert reads, "expected at least one SELECT against vfs_objects"
+        reads = sql_capture.reads_against_entries()
+        assert reads, "expected at least one SELECT against vfs_entries"
 
     async def test_assert_no_column_passes_when_absent(self, db, sql_capture):
         await _seed(db)
@@ -171,7 +171,7 @@ class TestVectorSearchProjection:
     async def test_default_vector_search_omits_embedding_in_projection(self, db, sql_capture):
         """Vector search uses the embedding column for ranking but must not
         return the raw blob in its projected row set — the SELECT list itself
-        must omit ``vfs_objects.embedding``.
+        must omit ``vfs_entries.embedding``.
 
         DatabaseFileSystem in tests has no ``vector_store`` configured, so the
         impl returns an error envelope without issuing any SELECT — the
@@ -202,7 +202,7 @@ class TestPostgresNativeVectorSearchProjection:
     ):
         async with postgres_native_db._use_session() as s:
             await postgres_native_db._write_impl(
-                objects=[
+                entries=[
                     postgres_native_db._model(
                         path="/vec.py",
                         content="vector row",
@@ -223,9 +223,9 @@ class TestPostgresNativeVectorSearchProjection:
         selects = [
             " ".join(statement.split())
             for statement in sql_capture.statements
-            if statement.lstrip().upper().startswith("SELECT") and "FROM vfs_objects" in statement
+            if statement.lstrip().upper().startswith("SELECT") and "FROM vfs_entries" in statement
         ]
-        assert selects, "expected vector search to issue at least one SELECT against vfs_objects"
+        assert selects, "expected vector search to issue at least one SELECT against vfs_entries"
         assert any("o.embedding <=>" in stmt and "AS distance" in stmt for stmt in selects)
         assert all("SELECT o.embedding" not in stmt for stmt in selects)
 

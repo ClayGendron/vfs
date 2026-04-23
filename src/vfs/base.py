@@ -8,7 +8,7 @@ longest-prefix mount matching, delegate to ``_*_impl`` methods for actual
 storage work, then rebase paths before returning.
 
 Subclasses override ``_*_impl`` for their storage backend:
-- ``DatabaseFileSystem`` — SQL via ``VFSObject``
+- ``DatabaseFileSystem`` — SQL via ``VFSEntry``
 - ``LocalFileSystem`` — disk bytes + SQL metadata
 - ``VFSClientAsync`` — no storage, mount-only async router (``storage=False``)
 """
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     import re
     from collections.abc import AsyncIterator, Sequence
 
-    from vfs.models import VFSObjectBase
+    from vfs.models import VFSEntry
     from vfs.query import QueryPlan
     from vfs.query.ast import CaseMode, GrepOutputMode
 
@@ -191,18 +191,18 @@ class VirtualFileSystem:
             for ((_id, pfx), (fs, cands)) in groups.items()
         ]
 
-    def _group_objects_by_terminal(
+    def _group_entries_by_terminal(
         self,
-        objects: Sequence[VFSObjectBase],
-    ) -> list[tuple[VirtualFileSystem, str, list[VFSObjectBase]]]:
-        """Group objects by terminal filesystem, rebasing paths."""
-        groups: dict[tuple[int, str], tuple[VirtualFileSystem, str, list[VFSObjectBase]]] = {}
-        for obj in objects:
-            fs, _rel, prefix = self._resolve_terminal(obj.path)
+        entries: Sequence[VFSEntry],
+    ) -> list[tuple[VirtualFileSystem, str, list[VFSEntry]]]:
+        """Group entries by terminal filesystem, rebasing paths."""
+        groups: dict[tuple[int, str], tuple[VirtualFileSystem, str, list[VFSEntry]]] = {}
+        for entry in entries:
+            fs, _rel, prefix = self._resolve_terminal(entry.path)
             key = (id(fs), prefix)
             if key not in groups:
                 groups[key] = (fs, prefix, [])
-            rebased = obj.clone()
+            rebased = entry.clone()
             rebased.strip_prefix(prefix)
             groups[key][2].append(rebased)
         return list(groups.values())
@@ -999,30 +999,30 @@ class VirtualFileSystem:
 
     async def _route_write_batch(
         self,
-        objects: Sequence[VFSObjectBase],
+        entries: Sequence[VFSEntry],
         overwrite: bool = True,
         *,
         user_id: str | None = None,
     ) -> VFSResult:
-        """Route a batch of object writes to terminal filesystems in parallel."""
-        if not objects:
+        """Route a batch of entry writes to terminal filesystems in parallel."""
+        if not entries:
             return VFSResult(function="write", success=True, entries=[])
 
-        groups = self._group_objects_by_terminal(objects)
+        groups = self._group_entries_by_terminal(entries)
 
-        for fs, prefix, objs in groups:
-            for obj in objs:
-                err = check_writable(fs, "write", obj.path, mount_prefix=prefix)
+        for fs, prefix, group_entries in groups:
+            for entry in group_entries:
+                err = check_writable(fs, "write", entry.path, mount_prefix=prefix)
                 if err is not None:
                     return err
 
-        async def _write_group(fs: VirtualFileSystem, prefix: str, group_objs: list[VFSObjectBase]) -> VFSResult:
+        async def _write_group(fs: VirtualFileSystem, prefix: str, group_entries: list[VFSEntry]) -> VFSResult:
             async with fs._use_session() as s:
-                result = await fs._write_impl(objects=group_objs, overwrite=overwrite, user_id=user_id, session=s)
+                result = await fs._write_impl(entries=group_entries, overwrite=overwrite, user_id=user_id, session=s)
             return result.add_prefix(prefix)
 
         results = await asyncio.gather(
-            *(_write_group(fs, pfx, objs) for fs, pfx, objs in groups),
+            *(_write_group(fs, pfx, group_entries) for fs, pfx, group_entries in groups),
         )
         return self._merge_results(list(results))
 
@@ -1216,13 +1216,13 @@ class VirtualFileSystem:
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: Sequence[VFSObjectBase] | None = None,
+        entries: Sequence[VFSEntry] | None = None,
         overwrite: bool = True,
         *,
         user_id: str | None = None,
     ) -> VFSResult:
-        if objects is not None:
-            return await self._route_write_batch(objects, overwrite=overwrite, user_id=user_id)
+        if entries is not None:
+            return await self._route_write_batch(entries, overwrite=overwrite, user_id=user_id)
         return await self._route_single(
             "write",
             path,
@@ -1603,7 +1603,7 @@ class VirtualFileSystem:
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: Sequence[VFSObjectBase] | None = None,
+        entries: Sequence[VFSEntry] | None = None,
         overwrite: bool = True,
         *,
         user_id: str | None = None,
@@ -1645,7 +1645,7 @@ class VirtualFileSystem:
         source: str | None = None,
         target: str | None = None,
         edge_type: str | None = None,
-        objects: Sequence[VFSObjectBase] | None = None,
+        entries: Sequence[VFSEntry] | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,

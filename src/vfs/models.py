@@ -1,8 +1,13 @@
-"""VFSObject — unified kinded object model for the ``vfs_objects`` table.
+"""VFSEntry — unified kinded record for namespace rows.
 
 All entities in the VFS namespace (files, directories, chunks, versions,
-edges, api nodes) live in a single table.  The ``kind`` column determines
-which nullable fields are relevant and how operations dispatch.
+edges, api nodes) share a single record shape. The ``kind`` column
+determines which nullable fields are relevant and how operations dispatch.
+
+``VFSEntry`` itself is ``table=False``. Each filesystem instance mints its
+own ``table=True`` subclass at construction time via
+:func:`_build_entry_table_class`, scoped to the mount's ``table_name``,
+``schema``, and — on Postgres — ``NativeEmbeddingConfig``.
 """
 
 from __future__ import annotations
@@ -18,7 +23,6 @@ from pydantic import PrivateAttr, model_validator
 from sqlalchemy import DateTime, Index, MetaData
 from sqlalchemy.orm import InstanceState
 from sqlmodel import Field, SQLModel
-from sqlmodel._compat import finish_init
 from sqlmodel.main import SQLModelMetaclass
 
 from vfs.bm25 import tokenize as lexical_tokenize
@@ -36,44 +40,9 @@ from vfs.paths import (
     parent_path as compute_parent_path,
 )
 from vfs.results import Entry
-from vfs.vector import Vector, VectorType
+from vfs.vector import NativeEmbeddingConfig, Vector, VectorType
 from vfs.versioning import create_version as create_version_record
 from vfs.versioning import reconstruct_version
-
-# ---------------------------------------------------------------------------
-# Base class — adds Pydantic validation back to SQLModel table models
-# ---------------------------------------------------------------------------
-
-
-class ValidatedSQLModel(SQLModel):
-    """SQLModel base that runs Pydantic validation on explicit ``__init__``.
-
-    SQLModel ``table=True`` models normally skip validation.  This override
-    restores it while preserving no-validation for ORM loads and
-    ``model_validate()`` calls.
-    """
-
-    _explicit_fields: frozenset[str] = PrivateAttr(default_factory=frozenset)
-
-    def __init__(self, **data: object) -> None:
-        explicit_fields = frozenset(data)
-        super().__init__(**data)
-        if not self.__class__.model_config.get("table", False):
-            self._explicit_fields = explicit_fields
-            return
-        if not finish_init.get():
-            self._explicit_fields = explicit_fields
-            return
-        sa_state = self.__dict__.get("_sa_instance_state")
-        field_values = {}
-        for field_name in self.__class__.model_fields:
-            if hasattr(self, field_name):
-                field_values[field_name] = getattr(self, field_name)
-        self.__pydantic_validator__.validate_python(field_values, self_instance=self)
-        if sa_state is not None:
-            self.__dict__["_sa_instance_state"] = sa_state
-        self._explicit_fields = explicit_fields
-
 
 # ---------------------------------------------------------------------------
 # The unified object model
@@ -84,7 +53,7 @@ class ValidatedSQLModel(SQLModel):
 class VersionWritePlan:
     """Decision-complete write plan for a file mutation."""
 
-    version_rows: tuple[VFSObjectBase, ...]
+    version_rows: tuple[VFSEntry, ...]
     final_content: str
     final_content_hash: str
     final_size_bytes: int
@@ -104,16 +73,26 @@ class PostgresVectorColumnSpec:
     index_name: str
 
 
-class VFSObjectBase(ValidatedSQLModel):
-    """Base fields for a VFS namespace entity.
+class VFSEntry(SQLModel):
+    """The full record of one object in the VFS namespace (Constitution §1.2).
 
     Every entity — file, directory, chunk, version, edge, api node —
-    shares these fields.  The ``kind`` column determines which nullable
-    fields are relevant and how operations dispatch.
+    shares this record shape. The ``kind`` column determines which
+    nullable fields are relevant and how operations dispatch.
 
-    Subclass with ``table=True`` and a ``__tablename__`` to create a
-    concrete table model.
+    ``VFSEntry`` is ``table=False``: it carries fields, validators, and
+    pure-data methods but is not itself directly writeable. Each
+    filesystem mount mints a private ``table=True`` subclass via
+    :func:`_build_entry_table_class` at construction time. Developers
+    never subclass ``VFSEntry`` by hand.
     """
+
+    _explicit_fields: frozenset[str] = PrivateAttr(default_factory=frozenset)
+
+    def __init__(self, **data: object) -> None:
+        explicit = frozenset(data)
+        super().__init__(**data)
+        self._explicit_fields = explicit
 
     # --- Identity -----------------------------------------------------------
 
@@ -188,13 +167,17 @@ class VFSObjectBase(ValidatedSQLModel):
 
     # --- Copy / Path manipulation ---------------------------------------------
 
-    def clone(self) -> VFSObjectBase:
-        """Create a detached copy with independent SQLAlchemy state."""
+    def clone(self) -> VFSEntry:
+        """Create a detached copy with independent SQLAlchemy state.
+
+        ``VFSEntry`` itself is ``table=False`` and has no SQLAlchemy
+        instance manager — cloning a base entry skips the InstanceState
+        wiring. Minted ``table=True`` subclasses get the full SA state.
+        """
         c = _copy_mod.copy(self)
-        c.__dict__["_sa_instance_state"] = InstanceState(
-            c,
-            type(self)._sa_class_manager,  # ty: ignore[unresolved-attribute]
-        )
+        class_manager = getattr(type(self), "_sa_class_manager", None)
+        if class_manager is not None:
+            c.__dict__["_sa_instance_state"] = InstanceState(c, class_manager)
         return c
 
     def _rederive_path_fields(self) -> None:
@@ -204,7 +187,7 @@ class VFSObjectBase(ValidatedSQLModel):
         self.parent_path = compute_parent_path(self.path)
         self.ext = extract_extension(self.path) if self.kind == "file" else None
 
-    def add_prefix(self, prefix: str) -> VFSObjectBase:
+    def add_prefix(self, prefix: str) -> VFSEntry:
         """Prepend *prefix* to path in place, re-deriving name and parent."""
         if not prefix:
             return self
@@ -213,7 +196,7 @@ class VFSObjectBase(ValidatedSQLModel):
         self._rederive_path_fields()
         return self
 
-    def strip_prefix(self, prefix: str) -> VFSObjectBase:
+    def strip_prefix(self, prefix: str) -> VFSEntry:
         """Strip *prefix* from path in place, re-deriving name and parent."""
         if not prefix:
             return self
@@ -285,8 +268,15 @@ class VFSObjectBase(ValidatedSQLModel):
         prev_content: str | None,
         created_by: str,
         force_snapshot: bool = False,
-    ) -> VFSObjectBase:
-        """Construct a version row with explicit reconstructed-state metadata."""
+    ) -> VFSEntry:
+        """Construct a version row with explicit reconstructed-state metadata.
+
+        Data is normalized by constructing a throwaway :class:`VFSEntry`
+        (which runs the field validator), then re-materialized via
+        ``cls`` so callers on a minted ``table=True`` subclass get a
+        SQLAlchemy-mappable instance while still benefitting from
+        ``VFSEntry`` validation.
+        """
         content_hash, size_bytes, lines = cls._content_metadata(version_content)
         record = create_version_record(
             prev_content=prev_content,
@@ -295,7 +285,7 @@ class VFSObjectBase(ValidatedSQLModel):
             force_snapshot=force_snapshot,
         )
         now = datetime.now(UTC)
-        return cls(
+        entry = VFSEntry(
             path=version_path(file_path, version_number),
             kind="version",
             content=record.content,
@@ -310,11 +300,14 @@ class VFSObjectBase(ValidatedSQLModel):
             created_at=now,
             updated_at=now,
         )
+        if cls is VFSEntry:
+            return entry
+        return cls(**entry.model_dump())
 
     @classmethod
     def _reconstruct_file_version(
         cls,
-        version_rows: list[VFSObjectBase],
+        version_rows: list[VFSEntry],
         target_version: int,
     ) -> str:
         """Reconstruct the content for *target_version* from version rows."""
@@ -357,7 +350,7 @@ class VFSObjectBase(ValidatedSQLModel):
     def plan_file_write(
         self,
         new_content: str,
-        version_rows: list[VFSObjectBase] | None = None,
+        version_rows: list[VFSEntry] | None = None,
         *,
         latest_version_hash: str | None = None,
     ) -> VersionWritePlan:
@@ -376,7 +369,7 @@ class VFSObjectBase(ValidatedSQLModel):
             raise ValueError(msg)
         observed_content = self.content or ""
         observed_hash, observed_size, observed_lines = self._content_metadata(observed_content)
-        planned_rows: list[VFSObjectBase] = []
+        planned_rows: list[VFSEntry] = []
         current_content = observed_content
         current_version = self.version_number or 0
 
@@ -621,17 +614,7 @@ class VFSObjectBase(ValidatedSQLModel):
         return data
 
 
-class VFSObject(VFSObjectBase, table=True):
-    """Default concrete table — ``vfs_objects``."""
-
-    __tablename__ = "vfs_objects"
-    __table_args__ = (Index("ix_vfs_objects_ext_kind", "ext", "kind"),)
-
-
-_POSTGRES_NATIVE_MODEL_CACHE: dict[tuple[int, str | None, str, str], type[VFSObjectBase]] = {}
-
-
-def resolve_embedding_vector_type(model: type[VFSObjectBase]) -> VectorType:
+def resolve_embedding_vector_type(model: type[VFSEntry]) -> VectorType:
     """Return the model-declared ``VectorType`` for ``embedding``."""
     table = getattr(model, "__table__", None)
     if table is None or "embedding" not in table.c:
@@ -644,7 +627,7 @@ def resolve_embedding_vector_type(model: type[VFSObjectBase]) -> VectorType:
     return vector_type
 
 
-def postgres_vector_column_spec(model: type[VFSObjectBase]) -> PostgresVectorColumnSpec:
+def postgres_vector_column_spec(model: type[VFSEntry]) -> PostgresVectorColumnSpec:
     """Return the native Postgres vector-index contract declared on *model*."""
     vector_type = resolve_embedding_vector_type(model)
     if not vector_type.postgres_native or vector_type.dimension is None:
@@ -667,49 +650,51 @@ def postgres_vector_column_spec(model: type[VFSObjectBase]) -> PostgresVectorCol
     )
 
 
-def postgres_native_vfs_object_model(
+def _build_entry_table_class(
     *,
-    dimension: int,
-    model_name: str | None = None,
-    index_method: str = "hnsw",
-    operator_class: str = "vector_cosine_ops",
-) -> type[VFSObjectBase]:
-    """Build or reuse a ``VFSObject`` table model with native pgvector embedding."""
-    key = (dimension, model_name, index_method, operator_class)
-    cached = _POSTGRES_NATIVE_MODEL_CACHE.get(key)
-    if cached is not None:
-        return cached
+    table_name: str,
+    schema: str | None = None,
+    native_embedding: NativeEmbeddingConfig | None = None,
+) -> type[VFSEntry]:
+    """Mint a private ``table=True`` subclass of :class:`VFSEntry`.
 
-    def _class_token(value: str) -> str:
-        return "".join(part.capitalize() for part in value.replace("-", "_").split("_") if part)
+    Each filesystem instance calls this at construction to produce its
+    own concrete table model bound to ``(table_name, schema,
+    native_embedding)``. The generated class uses its own SQLAlchemy
+    :class:`MetaData` so two filesystems — same table name or not, same
+    engine or not — never share registry state.
 
-    class_name = f"PostgresNativeVFSObject{dimension}{_class_token(index_method)}{_class_token(operator_class)}"
-    if model_name:
-        class_name += _class_token(model_name)
-    embedding_sa_type = cast(
-        "Any",
-        VectorType(
-            dimension=dimension,
-            model_name=model_name,
-            postgres_native=True,
-            postgres_index_method=index_method,
-            postgres_operator_class=operator_class,
-        ),
-    )
+    The returned class is an implementation detail of the calling
+    filesystem. It MUST NOT leak onto the public surface: do not
+    re-export it, do not return it from public methods, and do not
+    accept it as an argument.
+    """
+
+    table_args: tuple[object, ...] = (Index(f"ix_{table_name}_ext_kind", "ext", "kind"),)
+    if schema is not None:
+        table_args = (*table_args, {"schema": schema})
+
     attrs: dict[str, object] = {
         "__module__": __name__,
-        "__tablename__": "vfs_objects",
-        "__table_args__": (Index("ix_vfs_objects_ext_kind", "ext", "kind"),),
+        "__tablename__": table_name,
+        "__table_args__": table_args,
         "metadata": MetaData(),
-        "__annotations__": {"embedding": Vector | None},
-        "embedding": Field(
-            default=None,
-            sa_type=embedding_sa_type,
-        ),
     }
-    postgres_native_model = cast(
-        "type[VFSObjectBase]",
-        SQLModelMetaclass(class_name, (VFSObjectBase,), attrs, table=True),
+    if native_embedding is not None:
+        embedding_sa_type = cast(
+            "Any",
+            VectorType(
+                dimension=native_embedding.dimension,
+                model_name=native_embedding.model_name,
+                postgres_native=True,
+                postgres_index_method=native_embedding.index_method,
+                postgres_operator_class=native_embedding.operator_class,
+            ),
+        )
+        attrs["__annotations__"] = {"embedding": Vector | None}
+        attrs["embedding"] = Field(default=None, sa_type=embedding_sa_type)
+
+    return cast(
+        "type[VFSEntry]",
+        SQLModelMetaclass("VFSEntryTable", (VFSEntry,), attrs, table=True),
     )
-    _POSTGRES_NATIVE_MODEL_CACHE[key] = postgres_native_model
-    return postgres_native_model

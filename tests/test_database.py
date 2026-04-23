@@ -16,13 +16,13 @@ from vfs.backends.database import (
     _extract_literal_terms,
 )
 from vfs.base import VirtualFileSystem
-from vfs.models import VFSObject, VFSObjectBase
+from vfs.models import VFSEntry
 from vfs.paths import METADATA_ROOT, edge_out_path
 from vfs.results import EditOperation, Entry, TwoPathOperation, VFSResult
 from vfs.vector import Vector
 
 
-def _stored_payload(obj: VFSObjectBase) -> str:
+def _stored_payload(obj: VFSEntry) -> str:
     if obj.is_snapshot:
         assert obj.content is not None
         return obj.content
@@ -78,7 +78,7 @@ class TestWriteAndRead:
     async def test_write_with_embedding_persists_on_insert(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             result = await db._write_impl(
-                objects=[VFSObject(path="/embed.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+                entries=[VFSEntry(path="/embed.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
                 session=s,
             )
         assert result.success
@@ -91,7 +91,7 @@ class TestWriteAndRead:
     async def test_write_without_embedding_preserves_existing_value(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl(
-                objects=[VFSObject(path="/preserve.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+                entries=[VFSEntry(path="/preserve.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
                 session=s,
             )
         async with db._use_session() as s:
@@ -105,12 +105,12 @@ class TestWriteAndRead:
     async def test_write_with_embedding_none_clears_existing_value(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl(
-                objects=[VFSObject(path="/clear.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+                entries=[VFSEntry(path="/clear.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
                 session=s,
             )
         async with db._use_session() as s:
             await db._write_impl(
-                objects=[VFSObject(path="/clear.txt", content="v2", embedding=None)],
+                entries=[VFSEntry(path="/clear.txt", content="v2", embedding=None)],
                 session=s,
             )
 
@@ -138,9 +138,9 @@ class TestWriteAndRead:
     async def test_write_chunk_allows_companion_file_in_same_batch(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._write_impl(
-                objects=[
-                    VFSObject(path="/src/auth.py", content="full content"),
-                    VFSObject(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
+                entries=[
+                    VFSEntry(path="/src/auth.py", content="full content"),
+                    VFSEntry(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
                 ],
                 session=s,
             )
@@ -157,9 +157,9 @@ class TestWriteAndRead:
         set_parameter_budget(db, 1)
 
         r = await db.write(
-            objects=[
-                VFSObject(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
-                VFSObject(path="/src/auth.py", content="full content"),
+            entries=[
+                VFSEntry(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
+                VFSEntry(path="/src/auth.py", content="full content"),
             ]
         )
         assert r.success
@@ -233,19 +233,19 @@ class TestWriteAndRead:
             await db._write_impl("/blocker.py", "file", session=s)
 
         objects = [
-            VFSObject(path="/blocker.py/sub/child.txt", content="bad"),
-            VFSObject(path="/safe/other.txt", content="good"),
+            VFSEntry(path="/blocker.py/sub/child.txt", content="bad"),
+            VFSEntry(path="/safe/other.txt", content="good"),
         ]
         async with db._use_session() as s:
-            r = await db._write_impl(objects=objects, session=s)
+            r = await db._write_impl(entries=objects, session=s)
         assert not r.success
         assert "not directory" in r.error_message.lower()
 
     async def test_write_revives_soft_deleted_ancestor_dirs(self, db: DatabaseFileSystem):
         deleted_at = datetime.now(UTC)
         async with db._use_session() as s:
-            s.add(VFSObject(path="/archive", kind="directory", deleted_at=deleted_at))
-            s.add(VFSObject(path="/archive/nested", kind="directory", deleted_at=deleted_at))
+            s.add(db._row(path="/archive", kind="directory", deleted_at=deleted_at))
+            s.add(db._row(path="/archive/nested", kind="directory", deleted_at=deleted_at))
 
         async with db._use_session() as s:
             r = await db._write_impl("/archive/nested/report.txt", "report", session=s)
@@ -263,12 +263,12 @@ class TestWriteAndRead:
         """P1 regression: if all writes fail, revived dirs must stay deleted."""
         deleted_at = datetime.now(UTC)
         async with db._use_session() as s:
-            s.add(VFSObject(path="/ghost", kind="directory", deleted_at=deleted_at))
-            s.add(VFSObject(path="/ghost/deep", kind="directory", deleted_at=deleted_at))
+            s.add(db._row(path="/ghost", kind="directory", deleted_at=deleted_at))
+            s.add(db._row(path="/ghost/deep", kind="directory", deleted_at=deleted_at))
 
         # Every write fails (overwrite=False on existing file)
         async with db._use_session() as s:
-            s.add(VFSObject(path="/ghost/deep/file.txt", content="existing"))
+            s.add(db._row(path="/ghost/deep/file.txt", content="existing"))
         async with db._use_session() as s:
             r = await db._write_impl(
                 "/ghost/deep/file.txt",
@@ -307,7 +307,7 @@ class TestWriteAndRead:
     async def test_write_overwrite_false_revives_soft_deleted_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             s.add(
-                VFSObject(
+                db._row(
                     path="/revive.txt",
                     content="old",
                     deleted_at=datetime.now(UTC),
@@ -564,7 +564,7 @@ class TestAutoVersioning:
 
         assert db._engine is not None
         async with db._engine.begin() as conn:
-            await conn.execute(text("UPDATE vfs_objects SET content='external' WHERE path='/app.py'"))
+            await conn.execute(text("UPDATE vfs_entries SET content='external' WHERE path='/app.py'"))
 
         r = await db.write("/app.py", "v2")
         assert r.success
@@ -630,15 +630,18 @@ class TestNestedMountPaths:
     """Write through a mount, read back — paths must be absolute."""
 
     async def test_write_and_read_through_nested_mount(self, engine):
+        from tests.conftest import _create_schema
+
         root = VirtualFileSystem(engine=engine)
         child = DatabaseFileSystem(engine=engine)
+        await _create_schema(engine, child._model)
         await root.add_mount("/data", child)
 
         # Write through the mount
         w = await root.write(
-            objects=[
-                VFSObject(path="/data/docs/readme.txt", content="hello"),
-                VFSObject(path="/data/src/app.py", content="import os"),
+            entries=[
+                VFSEntry(path="/data/docs/readme.txt", content="hello"),
+                VFSEntry(path="/data/src/app.py", content="import os"),
             ],
         )
         assert w.success
@@ -656,9 +659,12 @@ class TestNestedMountPaths:
         assert r2.content == "import os"
 
     async def test_write_and_read_through_two_level_mount(self, engine):
+        from tests.conftest import _create_schema
+
         root = VirtualFileSystem(engine=engine)
         mid = VirtualFileSystem(engine=engine)
         leaf = DatabaseFileSystem(engine=engine)
+        await _create_schema(engine, leaf._model)
         await root.add_mount("/org", mid)
         await mid.add_mount("/team", leaf)
 
@@ -677,9 +683,9 @@ class TestBatchWriteAtScale:
 
     async def test_batch_write_single_call(self, db: DatabaseFileSystem):
         n = 1_000
-        objects = [VFSObject(path=f"/data/file_{i:05d}.txt", content=f"content {i}") for i in range(n)]
+        objects = [VFSEntry(path=f"/data/file_{i:05d}.txt", content=f"content {i}") for i in range(n)]
 
-        r = await db.write(objects=objects)
+        r = await db.write(entries=objects)
 
         assert r.success, r.error_message
         assert len(r.entries) == n
@@ -707,14 +713,14 @@ class TestBatchWriteAtScale:
         dirs = [f"/d{i}/sub{j}" for i in range(10) for j in range(10)]
         n = 1_000
         objects = [
-            VFSObject(
+            VFSEntry(
                 path=f"{rng.choice(dirs)}/file_{i:05d}.txt",
                 content=f"content {i}",
             )
             for i in range(n)
         ]
 
-        r = await db.write(objects=objects)
+        r = await db.write(entries=objects)
 
         assert r.success, r.error_message
         assert len(r.entries) == n
@@ -733,12 +739,12 @@ class TestBatchWriteAtScale:
 
     async def test_batch_overwrites_creates_versions(self, db: DatabaseFileSystem):
         n = 1_000
-        objects_v1 = [VFSObject(path=f"/src/f_{i:05d}.py", content=f"v1_{i}") for i in range(n)]
-        r1 = await db.write(objects=objects_v1)
+        objects_v1 = [VFSEntry(path=f"/src/f_{i:05d}.py", content=f"v1_{i}") for i in range(n)]
+        r1 = await db.write(entries=objects_v1)
         assert r1.success, r1.error_message
 
-        objects_v2 = [VFSObject(path=f"/src/f_{i:05d}.py", content=f"v2_{i}") for i in range(n)]
-        r2 = await db.write(objects=objects_v2)
+        objects_v2 = [VFSEntry(path=f"/src/f_{i:05d}.py", content=f"v2_{i}") for i in range(n)]
+        r2 = await db.write(entries=objects_v2)
         assert r2.success, r2.error_message
 
         # Spot-check: current content is v2, version 1 exists
@@ -834,7 +840,7 @@ class TestFastPathVersioning:
 
         assert db._engine is not None
         async with db._engine.begin() as conn:
-            await conn.execute(text("UPDATE vfs_objects SET content='hacked' WHERE path='/ext.txt'"))
+            await conn.execute(text("UPDATE vfs_entries SET content='hacked' WHERE path='/ext.txt'"))
 
         r = await db.write("/ext.txt", "v2")
         assert r.success
@@ -936,7 +942,7 @@ class TestLs:
 
     async def test_ls_empty_directory(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            s.add(VFSObject(path="/empty", kind="directory"))
+            s.add(db._row(path="/empty", kind="directory"))
 
         async with db._use_session() as s:
             r = await db._ls_impl("/empty", session=s)
@@ -1358,7 +1364,7 @@ class TestMkedge:
                 "/a.py",
                 "/b.py",
                 "imports",
-                objects=[VFSObject(path="/.vfs/x.py/__meta__/edges/out/imports/y.py", kind="edge")],
+                entries=[VFSEntry(path="/.vfs/x.py/__meta__/edges/out/imports/y.py", kind="edge")],
                 session=s,
             )
         assert not r.success
@@ -1369,14 +1375,14 @@ class TestMkedge:
             await db._write_impl("/b.py", "b", session=s)
 
         conns = [
-            VFSObject(
+            VFSEntry(
                 path="/.vfs/a.py/__meta__/edges/out/imports/b.py",
                 kind="edge",
                 source_path="/a.py",
                 target_path="/b.py",
                 edge_type="imports",
             ),
-            VFSObject(
+            VFSEntry(
                 path="/.vfs/b.py/__meta__/edges/out/calls/a.py",
                 kind="edge",
                 source_path="/b.py",
@@ -1385,14 +1391,14 @@ class TestMkedge:
             ),
         ]
         async with db._use_session() as s:
-            r = await db._mkedge_impl(objects=conns, session=s)
+            r = await db._mkedge_impl(entries=conns, session=s)
         assert r.success
         assert len(r.entries) == 2
 
     async def test_mkedge_objects_validates_sources(self, db: DatabaseFileSystem):
         """Batch mkedge with objects rejects missing sources."""
         conns = [
-            VFSObject(
+            VFSEntry(
                 path="/.vfs/ghost.py/__meta__/edges/out/imports/b.py",
                 kind="edge",
                 source_path="/ghost.py",
@@ -1401,7 +1407,7 @@ class TestMkedge:
             ),
         ]
         async with db._use_session() as s:
-            r = await db._mkedge_impl(objects=conns, session=s)
+            r = await db._mkedge_impl(entries=conns, session=s)
         assert not r.success
         assert "Source not found" in r.error_message
 
@@ -2496,9 +2502,9 @@ class TestReadErrorPaths:
 class TestWriteErrorPaths:
     async def test_write_both_path_and_objects(self, db: DatabaseFileSystem):
         """database.py:817 — write with both path and objects returns error."""
-        obj = VFSObjectBase(path="/a.py", content="code")
+        obj = VFSEntry(path="/a.py", content="code")
         async with db._use_session() as s:
-            r = await db._write_impl(path="/a.py", objects=[obj], session=s)
+            r = await db._write_impl(path="/a.py", entries=[obj], session=s)
         assert not r.success
 
 
@@ -2541,7 +2547,7 @@ class TestLsFilterMetadataKinds:
             await db._write_impl("/src/auth.py", "code", session=s)
             # Insert a chunk whose parent_path == /src (normally chunks live
             # under files, but this exercises the filter guard).
-            chunk = VFSObject(path="/.vfs/src/__meta__/chunks/login", content="chunk body")
+            chunk = db._row(path="/.vfs/src/__meta__/chunks/login", content="chunk body")
             s.add(chunk)
             await s.flush()
         async with db._use_session() as s:
@@ -2787,8 +2793,7 @@ class TestInverseEdgeProjectedPaths:
 class TestMetadataRootHelpers:
     async def test_ensure_metadata_root_revives_soft_deleted_root(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            root = VFSObject(path=METADATA_ROOT, kind="directory")
-            root.deleted_at = datetime.now(UTC)
+            root = db._row(path=METADATA_ROOT, kind="directory", deleted_at=datetime.now(UTC))
             s.add(root)
             await s.flush()
 
@@ -2800,8 +2805,8 @@ class TestMetadataRootHelpers:
 
     async def test_fetch_children_batched_matches_non_file_metadata_descendants(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            api_root = VFSObject(path="/.vfs/jira/__meta__/apis/ticket", kind="api")
-            api_child = VFSObject(path="/.vfs/jira/__meta__/apis/ticket/create", kind="api")
+            api_root = db._row(path="/.vfs/jira/__meta__/apis/ticket", kind="api")
+            api_child = db._row(path="/.vfs/jira/__meta__/apis/ticket/create", kind="api")
             s.add(api_root)
             s.add(api_child)
             await s.flush()

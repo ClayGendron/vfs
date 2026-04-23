@@ -1,7 +1,7 @@
 """DatabaseFileSystem — SQL-backed implementation of VirtualFileSystem.
 
 All entities (files, directories, chunks, versions, edges) live in a
-single ``vfs_objects`` table. Operations dispatch by kind — the path
+single ``vfs_entries`` table. Operations dispatch by kind — the path
 determines the kind, and the kind determines the semantics.
 """
 
@@ -21,7 +21,7 @@ from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
 from vfs.columns import ENTRY_BACKED_MODEL_COLUMNS, default_columns
 from vfs.graph import RustworkxGraph
-from vfs.models import VFSObject, VFSObjectBase
+from vfs.models import VFSEntry, _build_entry_table_class
 from vfs.paths import (
     METADATA_ROOT,
     base_path,
@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from vfs.embedding import EmbeddingProvider
     from vfs.permissions import Permission, PermissionMap
     from vfs.query.ast import CaseMode, GrepOutputMode
+    from vfs.vector import NativeEmbeddingConfig
     from vfs.vector_store import VectorStore
 
 
@@ -200,9 +201,16 @@ def _unchecked_clause(expression: object) -> Any:
 class DatabaseFileSystem(VirtualFileSystem):
     """SQL-backed filesystem — portable baseline using SQLAlchemy.
 
-    Stores everything in ``vfs_objects``.  Glob, grep, and lexical search
-    use SQL LIKE for pre-filtering and Python for authoritative matching/scoring.
-    Graph operations delegate to an internal ``RustworkxGraph``.
+    Stores everything in the table named by ``table_name`` (default
+    ``vfs_entries``). Glob, grep, and lexical search use SQL LIKE for
+    pre-filtering and Python for authoritative matching/scoring. Graph
+    operations delegate to an internal ``RustworkxGraph``.
+
+    Each instance mints its own private ``table=True`` subclass of
+    :class:`VFSEntry`, bound to its ``(table_name, schema)``, via
+    :meth:`_mint_entry_table_class`. Subclasses that need a specialized
+    column shape (for example, native pgvector on Postgres) override
+    that hook.
     """
 
     DIALECT_PARAMETER_BUDGETS: ClassVar[dict[str, int]] = {
@@ -219,12 +227,13 @@ class DatabaseFileSystem(VirtualFileSystem):
         *,
         engine: AsyncEngine | None = None,
         session_factory: SessionFactory | None = None,
-        model: type[VFSObjectBase] = VFSObject,
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
         user_scoped: bool = False,
         permissions: Permission | PermissionMap = "read_write",
         schema: str | None = None,
+        table_name: str = "vfs_entries",
+        native_embedding: NativeEmbeddingConfig | None = None,
     ) -> None:
         super().__init__(
             engine=engine,
@@ -232,11 +241,37 @@ class DatabaseFileSystem(VirtualFileSystem):
             permissions=permissions,
             schema=schema,
         )
-        self._model = model
+        self._table_name = table_name
+        self._native_embedding = native_embedding
+        self._model = _build_entry_table_class(
+            table_name=self._table_name,
+            schema=self._schema,
+            native_embedding=self._native_embedding,
+        )
         self._user_scoped = user_scoped
-        self._graph = RustworkxGraph(model=model, user_scoped=user_scoped)
+        self._graph = RustworkxGraph(model=self._model, user_scoped=user_scoped)
         self._embedding_provider = embedding_provider
         self._vector_store = vector_store
+
+    def _row(self, **data: Any) -> VFSEntry:
+        """Mint a table-row instance from validated data.
+
+        Routes ``data`` through :class:`VFSEntry` so path normalization,
+        kind inference, content hashing, lexical tokenization, and
+        timestamp defaults are populated, then materializes the minted
+        ``table=True`` class for SQLAlchemy I/O. All internal row
+        construction inside ``DatabaseFileSystem`` goes through this
+        helper; public callers pass ``VFSEntry`` instances directly.
+
+        Caller intent (which kwargs were explicitly supplied) is
+        propagated onto the minted row so downstream write logic can
+        distinguish ``embedding=None`` (clear) from an omitted
+        ``embedding`` (preserve).
+        """
+        entry = VFSEntry(**data)
+        row = self._model(**entry.model_dump())
+        row._explicit_fields = entry._explicit_fields
+        return row
 
     # ------------------------------------------------------------------
     # User-scoping helpers
@@ -255,27 +290,27 @@ class DatabaseFileSystem(VirtualFileSystem):
         scoped = [e.model_copy(update={"path": scope_path(e.path, user_id)}) for e in candidates.entries]
         return candidates._with_entries(scoped)
 
-    def _scope_objects(self, objects: Sequence[VFSObjectBase], user_id: str | None) -> None:
-        """Scope object paths in place if user_scoped is enabled.
+    def _scope_entries(self, entries: Sequence[VFSEntry], user_id: str | None) -> None:
+        """Scope entry paths in place if user_scoped is enabled.
 
-        For edge objects, rebuild the canonical edge ``path`` from
+        For edge entries, rebuild the canonical edge ``path`` from
         the scoped ``source_path`` and ``target_path`` so all three
         fields are consistently scoped.
         """
         if not self._user_scoped or user_id is None:
             return
-        for obj in objects:
-            if obj.source_path:
-                obj.source_path = scope_path(obj.source_path, user_id)
-            if obj.target_path:
-                obj.target_path = scope_path(obj.target_path, user_id)
+        for entry in entries:
+            if entry.source_path:
+                entry.source_path = scope_path(entry.source_path, user_id)
+            if entry.target_path:
+                entry.target_path = scope_path(entry.target_path, user_id)
             # Rebuild the canonical out-edge path from the scoped endpoints.
-            if obj.kind == "edge" and obj.source_path and obj.target_path and obj.edge_type:
-                obj.path = edge_out_path(obj.source_path, obj.target_path, obj.edge_type)
+            if entry.kind == "edge" and entry.source_path and entry.target_path and entry.edge_type:
+                entry.path = edge_out_path(entry.source_path, entry.target_path, entry.edge_type)
             else:
-                obj.path = scope_path(obj.path, user_id)
-            obj.owner_id = user_id
-            obj._rederive_path_fields()
+                entry.path = scope_path(entry.path, user_id)
+            entry.owner_id = user_id
+            entry._rederive_path_fields()
 
     def _unscope_result(self, result: VFSResult, user_id: str | None) -> VFSResult:
         """Unscope all result paths if user_scoped is enabled."""
@@ -364,7 +399,7 @@ class DatabaseFileSystem(VirtualFileSystem):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _field_was_explicitly_provided(obj: VFSObjectBase, field_name: str) -> bool:
+    def _field_was_explicitly_provided(obj: VFSEntry, field_name: str) -> bool:
         """Return whether *field_name* was explicitly supplied on write input."""
         explicit_fields = getattr(obj, "_explicit_fields", None)
         if explicit_fields is None:
@@ -373,8 +408,8 @@ class DatabaseFileSystem(VirtualFileSystem):
 
     def _apply_explicit_embedding_update(
         self,
-        existing: VFSObjectBase,
-        incoming: VFSObjectBase,
+        existing: VFSEntry,
+        incoming: VFSEntry,
     ) -> None:
         """Persist explicit embedding writes without clobbering omissions."""
         if self._field_was_explicitly_provided(incoming, "embedding"):
@@ -385,7 +420,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         path: str,
         session: AsyncSession,
         include_deleted: bool = False,
-    ) -> VFSObjectBase | None:
+    ) -> VFSEntry | None:
         """Fetch a single object by exact path."""
         stmt = select(self._model).where(_unchecked_clause(self._model.path == path))
         if not include_deleted:
@@ -791,9 +826,9 @@ class DatabaseFileSystem(VirtualFileSystem):
         *,
         required_kind: str,
         include_deleted: bool,
-    ) -> dict[str, VFSObjectBase]:
+    ) -> dict[str, VFSEntry]:
         """Load required parent objects using a kind-specific policy."""
-        resolved: dict[str, VFSObjectBase] = {}
+        resolved: dict[str, VFSEntry] = {}
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
@@ -809,7 +844,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         self,
         paths: list[str],
         session: AsyncSession,
-    ) -> tuple[list[VFSObjectBase], list[str]]:
+    ) -> tuple[list[VFSEntry], list[str]]:
         """Identify ancestor directories that need creation or revival.
 
         Returns ``(dirs, errors)`` where *dirs* are directory objects
@@ -841,7 +876,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         # Load ALL existing objects at ancestor paths (any kind, including
         # soft-deleted) so we can detect non-directory ancestors.
-        existing: dict[str, VFSObjectBase] = {}
+        existing: dict[str, VFSEntry] = {}
         for batch in self._chunk_paths(session, sorted(all_ancestors), binds_per_item=1):
             stmt = select(self._model).where(self._model.path.in_(batch))  # ty: ignore[unresolved-attribute]
             result = await session.execute(stmt)
@@ -857,13 +892,13 @@ class DatabaseFileSystem(VirtualFileSystem):
             return [], errors
 
         # Collect soft-deleted dirs for revival (not mutated yet)
-        dirs: list[VFSObjectBase] = [
+        dirs: list[VFSEntry] = [
             existing[p] for p in sorted(existing, key=lambda p: p.count("/")) if existing[p].deleted_at is not None
         ]
 
         # Create missing directories (shallowest first)
         missing = sorted(all_ancestors - set(existing), key=lambda p: p.count("/"))
-        dirs.extend(self._model(path=ancestor, kind="directory") for ancestor in missing)
+        dirs.extend(self._row(path=ancestor, kind="directory") for ancestor in missing)
 
         return dirs, []
 
@@ -882,14 +917,14 @@ class DatabaseFileSystem(VirtualFileSystem):
             return
         try:
             async with session.begin_nested():
-                session.add(self._model(path=METADATA_ROOT, kind="directory"))
+                session.add(self._row(path=METADATA_ROOT, kind="directory"))
                 await session.flush()
         except IntegrityError:
             pass
 
     async def _validate_chunk_parents(
         self,
-        write_map: dict[str, VFSObjectBase],
+        write_map: dict[str, VFSEntry],
         session: AsyncSession,
     ) -> tuple[set[str], list[str]]:
         """Reject chunk writes whose companion file is absent from DB and batch."""
@@ -921,11 +956,11 @@ class DatabaseFileSystem(VirtualFileSystem):
 
     async def _fetch_children_batched(
         self,
-        objs: dict[str, VFSObjectBase],
+        objs: dict[str, VFSEntry],
         session: AsyncSession,
         *,
         include_deleted: bool = False,
-    ) -> dict[str, list[VFSObjectBase]]:
+    ) -> dict[str, list[VFSEntry]]:
         """Batch-fetch children for multiple objects in two queries.
 
         Directories use ``LIKE path/%`` (all descendants).
@@ -935,7 +970,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         """
         dirs = {p: o for p, o in objs.items() if o.kind == "directory"}
         files = {p: o for p, o in objs.items() if o.kind != "directory"}
-        result_map: dict[str, list[VFSObjectBase]] = {p: [] for p in objs}
+        result_map: dict[str, list[VFSEntry]] = {p: [] for p in objs}
         or_batch_size = min(self._query_chunk_size(session, binds_per_item=2), 200)
 
         # Directory cascade — batched OR of LIKE conditions
@@ -1011,8 +1046,8 @@ class DatabaseFileSystem(VirtualFileSystem):
 
     async def _update_existing(
         self,
-        existing: VFSObjectBase,
-        incoming: VFSObjectBase,
+        existing: VFSEntry,
+        incoming: VFSEntry,
         new_content: str,
         latest_version_hash: str | None,
         session: AsyncSession,
@@ -1064,7 +1099,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         file_path: str,
         current_version: int,
         session: AsyncSession,
-    ) -> list[VFSObjectBase]:
+    ) -> list[VFSEntry]:
         """Fetch the version chain needed for reconstruction.
 
         Loads versions from the nearest snapshot boundary (within
@@ -1072,7 +1107,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         """
         lower_bound = max(1, current_version - SNAPSHOT_INTERVAL + 1)
         version_paths = [version_path(file_path, v) for v in range(lower_bound, current_version + 1)]
-        rows: list[VFSObjectBase] = []
+        rows: list[VFSEntry] = []
         for batch in self._chunk_paths(session, version_paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
@@ -1083,7 +1118,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
     async def _insert_new(
         self,
-        incoming: VFSObjectBase,
+        incoming: VFSEntry,
         new_content: str,
         session: AsyncSession,
     ) -> Entry:
@@ -1227,30 +1262,30 @@ class DatabaseFileSystem(VirtualFileSystem):
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: Sequence[VFSObjectBase] | None = None,
+        entries: Sequence[VFSEntry] | None = None,
         overwrite: bool = True,
         *,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:
-        """Write one or more file/chunk objects to the database.
+        """Write one or more file/chunk entries to the database.
 
         Accepts either a single ``path``/``content`` pair or a list of
-        ``objects``.  Single writes are wrapped into a one-element list
+        ``entries``.  Single writes are wrapped into a one-element list
         so all writes follow the same batch path.
 
         Process:
 
         1.  **Validate** — reject non-file/chunk kinds, reject duplicate paths,
-            build a path→object map.
+            build a path→entry map.
         2.  **Validate chunk parents** — chunk writes whose companion file is
             not already in the database must include that file in the same batch.
             Fail fast if not.
         3.  **Ensure parent dirs** — identify ancestor directories for all
             file paths, reviving any soft-deleted directories instead and
-            creating new objects if they don't exist. These parent dir updates
-            are not added to session, they are only created as objects.
-        4.  **Fetch** — batch query retrieves existing objects (including
+            creating new entries if they don't exist. These parent dir updates
+            are not added to session, they are only created as entries.
+        4.  **Fetch** — batch query retrieves existing entries (including
             soft-deleted) and the bounded version chains needed for file writes.
         5.  **Process each write**:
             - *Soft-deleted file*: clear ``deleted_at`` to undelete.
@@ -1268,36 +1303,42 @@ class DatabaseFileSystem(VirtualFileSystem):
         """
         self._require_user_id(user_id)
         # ── Step 1: Validate ──────────────────────────────────────────
-        if objects is None:
+        if entries is None:
             if path is None:
-                return self._error("Write requires a path or objects")
+                return self._error("Write requires a path or entries")
             scoped_path = self._scope_path(path, user_id)
-            obj = self._model(path=scoped_path or path, content=content or "")
+            entry = self._row(path=scoped_path or path, content=content or "")
             if self._user_scoped and user_id:
-                obj.owner_id = user_id
-            objects = [obj]
+                entry.owner_id = user_id
+            entries = [entry]
 
         elif path is not None:
-            return self._error("Write requires a path or objects, not both")
+            return self._error("Write requires a path or entries, not both")
         else:
-            self._scope_objects(objects, user_id)
+            converted: list[VFSEntry] = []
+            for entry in entries:
+                row = self._model(**entry.model_dump()) if type(entry) is VFSEntry else self._row(**entry.model_dump())
+                row._explicit_fields = entry._explicit_fields
+                converted.append(row)
+            entries = converted
+            self._scope_entries(entries, user_id)
 
-        write_map: dict[str, VFSObjectBase] = {}
+        write_map: dict[str, VFSEntry] = {}
         errors: list[str] = []
-        for obj in objects:
-            if obj.path == "/":
+        for entry in entries:
+            if entry.path == "/":
                 errors.append("Cannot write to root path")
                 continue
-            ok, reserved_err = validate_mutation_path(obj.path, kind=obj.kind)
+            ok, reserved_err = validate_mutation_path(entry.path, kind=entry.kind)
             if not ok:
                 errors.append(reserved_err)
                 continue
-            if obj.kind not in ("file", "chunk", "edge", "directory"):
-                errors.append(f"Cannot write to {obj.kind} path: {obj.path}")
+            if entry.kind not in ("file", "chunk", "edge", "directory"):
+                errors.append(f"Cannot write to {entry.kind} path: {entry.path}")
                 continue
-            if obj.path in write_map:
-                return self._error(f"Duplicate path in write batch: {obj.path}")
-            write_map[obj.path] = obj
+            if entry.path in write_map:
+                return self._error(f"Duplicate path in write batch: {entry.path}")
+            write_map[entry.path] = entry
 
         if not write_map:
             return self._error(VFSResult(success=len(errors) == 0, errors=errors))
@@ -1312,7 +1353,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         await self._ensure_metadata_root(session)
         file_paths = list(write_map)
         file_paths.extend(version_path(path, 1) for path, obj in write_map.items() if obj.kind == "file")
-        parent_dirs: list[VFSObjectBase] = []
+        parent_dirs: list[VFSEntry] = []
         if file_paths:
             parent_dirs, dir_errors = await self._resolve_parent_dirs(file_paths, session)
             if dir_errors:
@@ -1320,12 +1361,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 return self._error(errors)
             # Brand-new ancestor directories are created without a
             # permission check — a writable carve-out (e.g. /a/b/c) inside
-            # a read-only mount needs reachable ancestors, so we let them
-            # be created on demand.  But REVIVAL of a previously
-            # soft-deleted ancestor in a read-only region must be blocked:
-            # the user explicitly deleted that path, then made it
-            # read-only, so silently un-deleting it as a side-effect of a
-            # nested write would violate both intentions.
+            # a read-only mount needs reachable ancestors.
             for d in parent_dirs:
                 if d.deleted_at is None:
                     continue  # creation — accepted
@@ -1335,7 +1371,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         # ── Step 4a: Fetch existing objects ──────────────────────────
         all_paths = list(write_map.keys())
-        existing_map: dict[str, VFSObjectBase] = {}
+        existing_map: dict[str, VFSEntry] = {}
 
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
             stmt = select(self._model).where(
@@ -1569,7 +1605,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             return self._error("Cannot delete root path")
 
         # ── Fetch targets ────────────────────────────────────────────
-        objs: dict[str, VFSObjectBase] = {}
+        objs: dict[str, VFSEntry] = {}
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
                 self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
@@ -1583,7 +1619,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         errors: list[str] = []
 
         # Separate not-found errors
-        found: dict[str, VFSObjectBase] = {}
+        found: dict[str, VFSEntry] = {}
         for p in paths:
             if p in objs:
                 found[p] = objs[p]
@@ -1668,7 +1704,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         self._require_user_id(user_id)
         # Pass unscoped path — _write_impl handles scoping
         result = await self._write_impl(
-            objects=[self._model(path=path, kind="directory")],
+            entries=[self._row(path=path, kind="directory")],
             overwrite=False,
             user_id=user_id,
             session=session,
@@ -1680,7 +1716,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         source: str | None = None,
         target: str | None = None,
         edge_type: str | None = None,
-        objects: Sequence[VFSObjectBase] | None = None,
+        entries: Sequence[VFSEntry] | None = None,
         *,
         user_id: str | None = None,
         session: AsyncSession,
@@ -1688,19 +1724,19 @@ class DatabaseFileSystem(VirtualFileSystem):
         """Create directed edge rows.
 
         Accepts either ``source``/``target``/``edge_type`` for a
-        single edge, or ``objects`` for a batch of pre-built edge
-        objects.  Validates that each source exists, then
-        delegates to ``_write_impl``.
+        single edge, or ``entries`` for a batch of pre-built edge
+        rows.  Validates that each source exists, then delegates to
+        ``_write_impl``.
 
         All paths are unscoped.  Scoping is applied only for the DB
         validation query; ``_write_impl`` handles its own scope cycle.
         """
         self._require_user_id(user_id)
-        if objects is None:
+        if entries is None:
             if not source or not target or not edge_type:
-                return self._error("mkedge requires source/target/type or objects")
-            objects = [
-                self._model(
+                return self._error("mkedge requires source/target/type or entries")
+            entries = [
+                self._row(
                     path=edge_out_path(source, target, edge_type),
                     kind="edge",
                     source_path=source,
@@ -1709,10 +1745,10 @@ class DatabaseFileSystem(VirtualFileSystem):
                 )
             ]
         elif source is not None or target is not None or edge_type is not None:
-            return self._error("mkedge requires source/target/type or objects, not both")
+            return self._error("mkedge requires source/target/type or entries, not both")
 
         # Validate all sources exist (query uses scoped paths)
-        unscoped_sources = sorted({obj.source_path for obj in objects if obj.source_path})
+        unscoped_sources = sorted({entry.source_path for entry in entries if entry.source_path})
         if unscoped_sources:
             scoped_sources = [self._scope_path(p, user_id) or p for p in unscoped_sources]
             existing_sources: set[str] = set()
@@ -1729,7 +1765,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 return self._error([f"Source not found: {p}" for p in missing])
 
         # _write_impl scopes internally, returns unscoped
-        result = await self._write_impl(objects=objects, user_id=user_id, session=session)
+        result = await self._write_impl(entries=entries, user_id=user_id, session=session)
         if result.success:
             self._graph.invalidate()
         return result.model_copy(update={"function": "mkedge"})
@@ -1758,7 +1794,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         if not read_result.success:
             return read_result
 
-        to_write: list[VFSObjectBase] = []
+        to_write: list[VFSEntry] = []
         errors: list[str] = []
         for c in read_result.entries:
             content = c.content
@@ -1779,11 +1815,11 @@ class DatabaseFileSystem(VirtualFileSystem):
                 updated_content = replacement_content
             else:
                 # c.path is unscoped — _write_impl will scope it
-                to_write.append(self._model(path=c.path, content=updated_content))
+                to_write.append(self._row(path=c.path, content=updated_content))
 
         if to_write:
             # _write_impl scopes internally, returns unscoped
-            write_result = await self._write_impl(objects=to_write, user_id=user_id, session=session)
+            write_result = await self._write_impl(entries=to_write, user_id=user_id, session=session)
             if not write_result.success:
                 errors.extend(write_result.errors)
             return self._error(
@@ -1827,19 +1863,19 @@ class DatabaseFileSystem(VirtualFileSystem):
         errors: list[str] = list(src_result.errors)
 
         # Build write objects with unscoped dest paths
-        to_write: list[VFSObjectBase] = []
+        to_write: list[VFSEntry] = []
         for op in ops:
             src = src_by_path.get(op.src)
             if src is None:
                 continue
-            to_write.append(self._model(path=op.dest, content=src.content or ""))
+            to_write.append(self._row(path=op.dest, content=src.content or ""))
 
         if not to_write:
             return self._error(VFSResult(function="copy", errors=errors, success=len(errors) == 0))
 
         # Write — _write_impl scopes internally, returns unscoped
         write_result = await self._write_impl(
-            objects=to_write,
+            entries=to_write,
             overwrite=overwrite,
             user_id=user_id,
             session=session,
@@ -1900,7 +1936,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 continue
 
             # ── 2. Fetch descendants ─────────────────────────────────
-            descendants: list[VFSObjectBase] = []
+            descendants: list[VFSEntry] = []
             if src_obj.kind == "directory":
                 stmt = select(self._model).where(
                     self._model.path.like(_escape_like(op.src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]

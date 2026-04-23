@@ -9,9 +9,11 @@ import pytest
 import rustworkx
 
 from vfs.graph import GraphProvider, RustworkxGraph, UnionFind
-from vfs.models import VFSObject
+from vfs.models import VFSEntry, _build_entry_table_class
 from vfs.paths import decompose_edge
 from vfs.results import Entry, VFSResult
+
+_TEST_TABLE = _build_entry_table_class(table_name="vfs_entries")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,7 +30,7 @@ def _fresh_mock_session():
 
 def _loaded_graph() -> RustworkxGraph:
     """Create a RustworkxGraph that skips DB loading (TTL already satisfied)."""
-    g = RustworkxGraph(model=VFSObject)
+    g = RustworkxGraph(model=_TEST_TABLE)
     g._loaded_at = time.monotonic()
     return g
 
@@ -120,20 +122,20 @@ class TestUnionFindFind:
 
 class TestRustworkxGraphInit:
     def test_empty_graph(self):
-        g = RustworkxGraph(model=VFSObject)
+        g = RustworkxGraph(model=_TEST_TABLE)
         assert len(g.nodes) == 0
         assert g._loaded_at is None
 
     def test_default_ttl(self):
-        g = RustworkxGraph(model=VFSObject)
+        g = RustworkxGraph(model=_TEST_TABLE)
         assert g._ttl == 3600
 
     def test_custom_ttl(self):
-        g = RustworkxGraph(model=VFSObject, ttl=60)
+        g = RustworkxGraph(model=_TEST_TABLE, ttl=60)
         assert g._ttl == 60
 
     def test_repr_empty(self):
-        g = RustworkxGraph(model=VFSObject)
+        g = RustworkxGraph(model=_TEST_TABLE)
         assert repr(g) == "RustworkxGraph(nodes=0, edges=0)"
 
     def test_repr_with_data(self):
@@ -345,7 +347,7 @@ class TestGraph:
 
 class TestEnsureFresh:
     async def test_loads_when_never_loaded(self):
-        g = RustworkxGraph(model=VFSObject)
+        g = RustworkxGraph(model=_TEST_TABLE)
         assert g._loaded_at is None
 
         mock_session = AsyncMock()
@@ -364,7 +366,7 @@ class TestEnsureFresh:
         mock_session.execute.assert_not_awaited()
 
     async def test_reloads_when_ttl_expired(self):
-        g = RustworkxGraph(model=VFSObject, ttl=0)
+        g = RustworkxGraph(model=_TEST_TABLE, ttl=0)
         g._loaded_at = time.monotonic() - 1  # expired
 
         mock_session = AsyncMock()
@@ -378,7 +380,7 @@ class TestEnsureFresh:
 
 class TestLoad:
     async def test_loads_connection_rows(self):
-        g = RustworkxGraph(model=VFSObject)
+        g = RustworkxGraph(model=_TEST_TABLE)
 
         row = MagicMock()
         row.source_path = "/a.py"
@@ -417,7 +419,7 @@ class TestLoad:
         assert g._out == {}
 
     async def test_skips_rows_without_source_or_target(self):
-        g = RustworkxGraph(model=VFSObject)
+        g = RustworkxGraph(model=_TEST_TABLE)
 
         row = MagicMock()
         row.source_path = None
@@ -435,7 +437,7 @@ class TestLoad:
         assert len(g.nodes) == 0
 
     async def test_falls_back_to_decomposed_type(self):
-        g = RustworkxGraph(model=VFSObject)
+        g = RustworkxGraph(model=_TEST_TABLE)
 
         row = MagicMock()
         row.source_path = "/a.py"
@@ -1398,7 +1400,7 @@ class TestHits:
 class TestNeighborhoodUserScoped:
     async def test_user_scoped_filters_snap_in(self):
         """Line 524-525: neighborhood builds filtered snap_in when user_scoped."""
-        g = RustworkxGraph(model=VFSObject, user_scoped=True)
+        g = RustworkxGraph(model=VFSEntry, user_scoped=True)
         g._loaded_at = time.monotonic()
         # User-scoped: only paths under /alice/ are visible to user_id="alice"
         await g.add_edge("/alice/a.py", "/alice/b.py", "imports", session=_mock_session)
@@ -1419,7 +1421,7 @@ class TestNeighborhoodUserScoped:
 class TestMeetingSubgraphUserScoped:
     async def test_user_scoped_filters_edges_in(self):
         """Line 583-584: meeting_subgraph builds filtered edges_in when user_scoped."""
-        g = RustworkxGraph(model=VFSObject, user_scoped=True)
+        g = RustworkxGraph(model=VFSEntry, user_scoped=True)
         g._loaded_at = time.monotonic()
         await g.add_edge("/alice/a.py", "/alice/mid.py", "imports", session=_mock_session)
         await g.add_edge("/alice/mid.py", "/alice/b.py", "calls", session=_mock_session)

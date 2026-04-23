@@ -11,14 +11,13 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
 
 from vfs import permissions as permissions_ns
 from vfs.backends.database import DatabaseFileSystem
 from vfs.base import VirtualFileSystem
 from vfs.client import VFSClient, VFSClientAsync
 from vfs.exceptions import WriteConflictError
-from vfs.models import VFSObject
+from vfs.models import VFSEntry
 from vfs.permissions import (
     PermissionMap,
     check_writable,
@@ -34,13 +33,21 @@ from vfs.results import TwoPathOperation
 
 
 async def _sqlite_engine():
+    """Return an engine whose ``vfs_entries`` schema is ready to use.
+
+    A throwaway :class:`DatabaseFileSystem` mints an entry-table class
+    to drive ``create_all``; subsequent filesystems constructed on the
+    same engine mint their own classes against the same physical table,
+    which is all SQLAlchemy DML needs.
+    """
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+    seed = DatabaseFileSystem(engine=engine)
     async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(seed._model.metadata.create_all)
     return engine
 
 
@@ -700,10 +707,10 @@ class TestBatchFailFast:
         await router.add_mount("ws", ws)
         try:
             objs = [
-                VFSObject(path="/ws/src/new.py", content="ok"),
-                VFSObject(path="/ws/.frozen/blocked.toml", content="nope"),
+                VFSEntry(path="/ws/src/new.py", content="ok"),
+                VFSEntry(path="/ws/.frozen/blocked.toml", content="nope"),
             ]
-            r = await router.write(objects=objs)
+            r = await router.write(entries=objs)
             assert not r.success
             assert "Cannot write to read-only path '/ws/.frozen/blocked.toml'" in r.error_message
             # Neither file should exist (fail-fast aborts before any impl call)

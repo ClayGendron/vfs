@@ -5,13 +5,12 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
 
 from vfs.backends.database import DatabaseFileSystem
 from vfs.base import VirtualFileSystem
 from vfs.client import VFSClient, VFSClientAsync
 from vfs.exceptions import WriteConflictError
-from vfs.models import VFSObject
+from vfs.models import VFSEntry
 from vfs.permissions import (
     MUTATING_OPS,
     _join,
@@ -30,8 +29,9 @@ async def _sqlite_engine():
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+    seed = DatabaseFileSystem(engine=engine)
     async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(seed._model.metadata.create_all)
     return engine
 
 
@@ -259,8 +259,8 @@ class TestReadOnlyBlocksMutations:
     async def test_batch_write_rejected(self):
         router, _ro, _rw = await _make_router(ro_seed=None)
         try:
-            objs = [VFSObject(path="/ro/batch.md", content="x")]
-            result = await router.write(objects=objs)
+            objs = [VFSEntry(path="/ro/batch.md", content="x")]
+            result = await router.write(entries=objs)
             assert not result.success
             assert "Cannot write to read-only path" in result.error_message
         finally:

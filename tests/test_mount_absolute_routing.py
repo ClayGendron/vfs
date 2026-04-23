@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
 
 from vfs.backends.database import DatabaseFileSystem
 from vfs.base import VirtualFileSystem
@@ -48,8 +47,9 @@ async def _sqlite_engine():
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+    seed = DatabaseFileSystem(engine=engine)
     async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(seed._model.metadata.create_all)
     return engine
 
 

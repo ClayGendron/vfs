@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
 
+from tests.conftest import make_sqlite_db
 from vfs.backends.database import DatabaseFileSystem
 from vfs.client import VFSClient
 from vfs.exceptions import (
@@ -26,24 +26,21 @@ from vfs.results import VFSResult
 
 
 async def _sqlite_engine():
+    """Return an engine whose entry table is ready to use."""
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+    seed = DatabaseFileSystem(engine=engine)
     async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(seed._model.metadata.create_all)
     return engine
 
 
 def _make_db_sync(vfs: VFSClient) -> DatabaseFileSystem:
     """Create a DatabaseFileSystem using the sync VFSClient's event loop."""
-
-    async def _setup():
-        engine = await _sqlite_engine()
-        return DatabaseFileSystem(engine=engine)
-
-    return vfs._run(_setup())
+    return vfs._run(make_sqlite_db())
 
 
 @pytest.fixture

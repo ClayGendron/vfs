@@ -10,7 +10,7 @@ Each principle below is a policy. Policies use RFC 2119 keywords: **MUST**, **MU
 
 ## Article 1 — Primitives
 
-VFS has four first-class primitives. Every feature in the system either manipulates one of them or composes them. Nothing else is first-class.
+VFS has five first-class primitives. Every feature in the system either manipulates one of them or composes them. Nothing else is first-class.
 
 **Everything is a file** means everything first-class in VFS must be addressable inside one canonical namespace. Files are not a special case; they are the governing metaphor for how the whole system is named, routed, and observed.
 
@@ -24,30 +24,47 @@ Paths are the addressing form of the namespace, not a separate primitive. A path
 
 ### 1.2 Entry
 
-An **Entry** is one row describing one observation of an object in the namespace. It is not the object — it is what an operation returned about it, at the moment it returned. (`src/vfs/results.py:87`.)
+An **Entry** is the full record of one object in the namespace. It is everything needed to compose that object in the namespace and to query against it. (`src/vfs/models.py:VFSEntry`.)
 
 An Entry is fully described by:
 
 - `path` — absolute, normalized, canonical identity. MUST be unique within its terminal filesystem.
 - `kind` — closed enum: `file | directory | chunk | version | edge | tool | api` (`src/vfs/paths.py:30`). A path's kind MUST be derivable from the path and namespace conventions, never from a hidden field.
-- `revision` — the coherence stamp for this Entry (see §1.4). MUST be populated on every Entry.
-- Zero or more populated fields (`content`, `lines`, `size_bytes`, `score`, `in_degree`, `out_degree`, `updated_at`).
+- `revision` — the coherence stamp for this Entry (see §1.5). MUST be populated on every Entry.
+- The remaining persisted fields that make the Entry queryable: content or content pointer, size, timestamps, embedding, edge endpoints (when `kind=edge`), and any other field required to reconstruct or query the row.
 
-**A null field means "not populated by this call," never "absent on the object."** A consumer MUST NOT infer the truth of an attribute from a null. Entry is frozen; enrichment returns a new Entry.
+An Entry is the *durable* shape — the authoritative state in the terminal filesystem. It is not the view returned by a query; that is a Candidate (§1.3). Storage representations of an Entry (SQL rows, object storage keys, graph nodes) are implementation details; the Entry is the logical primitive.
 
-New object kinds extend the enum; they MUST NOT live outside it.
+New object kinds extend the `kind` enum; they MUST NOT live outside it.
 
-### 1.3 Mount
+### 1.3 Candidate
+
+A **Candidate** is one row describing one observation of an Entry, as returned by an operation on the namespace. It is not the Entry — it is what an operation returned about it, at the moment it returned. (`src/vfs/results.py:Candidate`.)
+
+A Candidate is fully described by:
+
+- `path` — absolute, normalized. MUST reference a location in the caller's namespace.
+- `kind` — the same closed enum as Entry.
+- `revision` — the coherence stamp at the moment the Candidate was produced (see §1.5). MUST be populated on every Candidate.
+- Zero or more populated query-time fields (`content`, `lines`, `size_bytes`, `score`, `in_degree`, `out_degree`, `updated_at`).
+
+**A null field means "not populated by this call," never "absent on the Entry."** A consumer MUST NOT infer the truth of an attribute from a null. Candidates are frozen; enrichment returns a new Candidate.
+
+Hydrating a Candidate into its full Entry MUST be a path lookup in the terminal filesystem — never a hidden handle or opaque id. Every Candidate is addressable in the namespace; the path is sufficient to reach the Entry it observes.
+
+Candidates are the read-side counterpart of Entry: callers search, traverse, and rank against Candidates, and act on Entries when they read, write, or edit.
+
+### 1.4 Mount
 
 A **Mount** is a named attachment of one `VirtualFileSystem` inside another at a single-segment path (`/data`, never `/data/archive`; enforced at `src/vfs/base.py:86`). Resolution is longest-prefix: the terminal filesystem for a path is found by walking the mount chain and rebasing at each step (`src/vfs/base.py:140–167`).
 
-A Mount **composes** namespaces; it does not create a new world. Callers see one unified tree. A Mount MAY change which filesystem answers a subtree and which capabilities are supported there. A Mount MUST NOT change path semantics, `VFSResult`/`Entry` shape, or the error taxonomy (Article 2).
+A Mount **composes** namespaces; it does not create a new world. Callers see one unified tree. A Mount MAY change which filesystem answers a subtree and which capabilities are supported there. A Mount MUST NOT change path semantics, `VFSResult`/`Candidate` shape, or the error taxonomy (Article 2).
 
 Cross-mount operations (moves, copies, unions of searches) are NOT atomic. Any operation that crosses a mount boundary MUST either declare so in its result or raise `CrossMount`. Silent cross-mount behavior is forbidden.
 
 Composition is the only permitted form of backend combination. URL chaining, per-path backend hints, and side-channel routing tables are forbidden.
 
-### 1.4 Revision
+### 1.5 Revision
 
 A **revision** is a monotone coherence stamp attached to every Entry. It is the unit of cache invalidation and read consistency. The stamp answers two questions cheaply: "is my cached copy stale?" and "has anyone changed the public state of this Entry since I read it?"
 
@@ -56,7 +73,7 @@ A revision is:
 - **Monotone per path.** A later write MUST produce a stamp that sorts after every prior stamp for that path. Encoding is the backend's choice — an integer counter, a ULID, `updated_at || content_hash`, or anything else that sorts monotonically — but the ordering MUST be total and stable.
 - **Bumped on every material public-state change.** A write or mutation that would make a public operation on that path return materially different state MUST produce a new stamp. This includes more than content bytes: exposed metadata, directory membership, and other observable Entry state count. No-op writes and internal maintenance MAY keep the stamp.
 - **Usable for optimistic concurrency.** A caller MAY pass `if_revision=X` on a read or write; a mismatch MUST surface as `Conflict` in the error taxonomy (Article 2).
-- **Carried on every result.** Every Entry in every `VFSResult` MUST include its current stamp.
+- **Carried on every Entry and every Candidate.** Every Entry MUST expose its current stamp. Every Candidate in every `VFSResult` MUST carry the stamp that was current on the observed Entry at the moment the Candidate was produced.
 
 A revision is *not* stored history. The stamp tells you *that* the Entry changed, not *what it was before*. Retrieving prior content is an optional backend capability — the **version-history capability** — governed by Article 4 and reached through the reserved `/.vfs/path/to/file/__meta__/versions/N` namespace.
 

@@ -13,14 +13,14 @@ from sqlalchemy import event
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
 
 from vfs.backends.database import DatabaseFileSystem
 from vfs.backends.mssql import MSSQLFileSystem
 from vfs.backends.postgres import PostgresFileSystem
 from vfs.base import VirtualFileSystem
-from vfs.models import VFSObjectBase, postgres_native_vfs_object_model, postgres_vector_column_spec
+from vfs.models import VFSEntry, postgres_vector_column_spec
 from vfs.results import Entry
+from vfs.vector import NativeEmbeddingConfig
 
 if TYPE_CHECKING:
     from vfs.results import VFSResult
@@ -68,12 +68,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # ------------------------------------------------------------------
 
 
-async def _provision_mssql_fulltext(eng) -> None:
+async def _provision_mssql_fulltext(eng, *, table: str = "vfs_entries") -> None:
     """Test-only: provision the full-text index that ``MSSQLFileSystem`` requires.
 
     Production code never creates these — they're a deployment concern.
     Tests need them to exercise the CONTAINSTABLE / REGEXP_LIKE paths,
-    so the fixture provisions them after ``create_all``.
+    so the fixture provisions them after the filesystem's table exists.
 
     Idempotent and uses AUTOCOMMIT — full-text DDL on SQL Server cannot
     run inside a user transaction.
@@ -90,9 +90,6 @@ async def _provision_mssql_fulltext(eng) -> None:
     """
     from sqlalchemy import text
 
-    from vfs.models import VFSObject
-
-    table = VFSObject.__tablename__
     catalog = "vfs_test_ftcat"
 
     async with eng.connect() as conn:
@@ -133,7 +130,7 @@ async def _provision_mssql_fulltext(eng) -> None:
         )
 
 
-async def _provision_postgres_fulltext(eng, *, table: str = "vfs_objects") -> None:
+async def _provision_postgres_fulltext(eng, *, table: str = "vfs_entries") -> None:
     """Test-only: provision the native Postgres search artifacts."""
     async with eng.begin() as conn:
         await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -190,8 +187,8 @@ async def _provision_postgres_fulltext(eng, *, table: str = "vfs_objects") -> No
         )
 
 
-async def _provision_postgres_native_search(eng, model: type[VFSObjectBase]) -> None:
-    """Recreate ``vfs_objects`` with a native vector column and indexes."""
+async def _provision_postgres_native_search(eng, model: type[VFSEntry]) -> None:
+    """Recreate the entry table with a native vector column and indexes."""
     spec = postgres_vector_column_spec(model)
     async with eng.begin() as conn:
         await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -232,31 +229,64 @@ async def engine(request: pytest.FixtureRequest):
             connect_args={"check_same_thread": False},
         )
 
-    async with eng.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
-        await conn.run_sync(SQLModel.metadata.create_all)
-
-    if use_pg:
-        await _provision_postgres_fulltext(eng)
-    if use_mssql:
-        await _provision_mssql_fulltext(eng)
-
     yield eng
-    async with eng.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
     await eng.dispose()
 
     if use_pg:
         subprocess.run(["dropdb", _PG_DB], check=False)
 
 
+async def _create_schema(eng, model) -> None:
+    async with eng.begin() as conn:
+        await conn.run_sync(model.metadata.drop_all)
+        await conn.run_sync(model.metadata.create_all)
+
+
+async def _drop_schema(eng, model) -> None:
+    async with eng.begin() as conn:
+        await conn.run_sync(model.metadata.drop_all)
+
+
+async def make_sqlite_db(**kwargs) -> DatabaseFileSystem:
+    """Build an in-memory SQLite DatabaseFileSystem with its schema created.
+
+    Helper for ad-hoc fixtures that need a ready-to-use filesystem without
+    going through the ``db`` pytest fixture. Each minted entry class owns
+    its own SQLAlchemy ``MetaData``, so ``create_all`` must run against
+    ``fs._model.metadata`` — not the module-level ``SQLModel.metadata``,
+    which is empty after the primitives rename.
+    """
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    fs = DatabaseFileSystem(engine=engine, **kwargs)
+    await _create_schema(engine, fs._model)
+    return fs
+
+
 @pytest.fixture
 async def db(request: pytest.FixtureRequest, engine):
     if request.config.getoption("--mssql"):
         fs = MSSQLFileSystem(engine=engine)
+        await _create_schema(engine, fs._model)
+        await _provision_mssql_fulltext(engine, table=fs._model.__tablename__)
         await fs.install_native_graph_schema()
-        return fs
-    return DatabaseFileSystem(engine=engine)
+        yield fs
+        await _drop_schema(engine, fs._model)
+        return
+    if request.config.getoption("--postgres"):
+        fs = PostgresFileSystem(engine=engine)
+        await _create_schema(engine, fs._model)
+        await _provision_postgres_fulltext(engine, table=fs._model.__tablename__)
+        yield fs
+        await _drop_schema(engine, fs._model)
+        return
+    fs = DatabaseFileSystem(engine=engine)
+    await _create_schema(engine, fs._model)
+    yield fs
+    await _drop_schema(engine, fs._model)
 
 
 @pytest.fixture
@@ -268,21 +298,24 @@ def postgres_vector_dimension() -> int:
 async def postgres_native_db(request: pytest.FixtureRequest, engine, postgres_vector_dimension: int):
     if not request.config.getoption("--postgres"):
         pytest.skip("requires --postgres flag and a running PostgreSQL instance")
-    model = postgres_native_vfs_object_model(dimension=postgres_vector_dimension)
-    await _provision_postgres_native_search(engine, model)
-    fs = PostgresFileSystem(engine=engine, model=model)
+    native = NativeEmbeddingConfig(dimension=postgres_vector_dimension)
+    fs = PostgresFileSystem(engine=engine, native_embedding=native)
+    await _provision_postgres_native_search(engine, fs._model)
     await fs.install_native_graph_schema()
-    return fs
+    yield fs
+    await _drop_schema(engine, fs._model)
 
 
 @pytest.fixture
 async def postgres_legacy_db(request: pytest.FixtureRequest, engine):
     if not request.config.getoption("--postgres"):
         pytest.skip("requires --postgres flag and a running PostgreSQL instance")
-    await _provision_postgres_fulltext(engine)
     fs = PostgresFileSystem(engine=engine)
+    await _create_schema(engine, fs._model)
+    await _provision_postgres_fulltext(engine, table=fs._model.__tablename__)
     await fs.install_native_graph_schema()
-    return fs
+    yield fs
+    await _drop_schema(engine, fs._model)
 
 
 @pytest.fixture
@@ -348,7 +381,7 @@ def require_file(result: VFSResult) -> Entry:
     return result.file
 
 
-def require_object[T: VFSObjectBase](obj: T | None) -> T:
+def require_object[T: VFSEntry](obj: T | None) -> T:
     """Assert an object exists and return the narrowed value."""
     assert obj is not None
     return obj
@@ -365,12 +398,12 @@ class SQLCapture:
 
     Use as the value yielded by the ``sql_capture`` fixture. Statements land in
     ``self.statements`` in execution order. Helpers narrow the list to reads
-    against the ``vfs_objects`` table, which is the only thing Phase 4
+    against the ``vfs_entries`` table, which is the only thing Phase 4
     narrowing assertions care about.
     """
 
-    _SELECT_OBJECTS_RE = re.compile(
-        r"\bFROM\s+vfs_objects\b",
+    _SELECT_ENTRIES_RE = re.compile(
+        r"\bFROM\s+vfs_entries\b",
         re.IGNORECASE,
     )
 
@@ -380,22 +413,22 @@ class SQLCapture:
     def reset(self) -> None:
         self.statements.clear()
 
-    def reads_against_objects(self) -> list[str]:
+    def reads_against_entries(self) -> list[str]:
         return [
-            s for s in self.statements if s.lstrip().upper().startswith("SELECT") and self._SELECT_OBJECTS_RE.search(s)
+            s for s in self.statements if s.lstrip().upper().startswith("SELECT") and self._SELECT_ENTRIES_RE.search(s)
         ]
 
     def assert_no_column(self, column: str) -> None:
-        """Assert no read against ``vfs_objects`` selected the given column.
+        """Assert no read against ``vfs_entries`` selected the given column.
 
-        Matches the SQLAlchemy-rendered ``vfs_objects.<column>`` reference,
+        Matches the SQLAlchemy-rendered ``vfs_entries.<column>`` reference,
         which is how compiled SELECTs name projected columns regardless of
         dialect.
         """
-        needle = re.compile(rf"\bvfs_objects\.{re.escape(column)}\b", re.IGNORECASE)
-        offenders = [s for s in self.reads_against_objects() if needle.search(s)]
+        needle = re.compile(rf"\bvfs_entries\.{re.escape(column)}\b", re.IGNORECASE)
+        offenders = [s for s in self.reads_against_entries() if needle.search(s)]
         assert not offenders, (
-            f"Expected no SELECTs to project vfs_objects.{column!r} "
+            f"Expected no SELECTs to project vfs_entries.{column!r} "
             f"but found {len(offenders)}:\n" + "\n---\n".join(offenders)
         )
 

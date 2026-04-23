@@ -31,7 +31,7 @@ from vfs.base import VirtualFileSystem
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Sequence
 
-    from vfs.models import VFSObjectBase
+    from vfs.models import VFSEntry
     from vfs.query import QueryPlan
     from vfs.query.ast import CaseMode, GrepOutputMode
     from vfs.results import EditOperation, TwoPathOperation, VFSResult
@@ -136,13 +136,13 @@ class VFSClient:
         self,
         path: str | None = None,
         content: str | None = None,
-        objects: Sequence[VFSObjectBase] | None = None,
+        entries: Sequence[VFSEntry] | None = None,
         overwrite: bool = True,
         *,
         user_id: str | None = None,
     ) -> VFSResult:
         """Write content to *path*. Raises on conflict."""
-        return self._run(self._async.write(path, content, objects=objects, overwrite=overwrite, user_id=user_id))
+        return self._run(self._async.write(path, content, entries=entries, overwrite=overwrite, user_id=user_id))
 
     def edit(
         self,

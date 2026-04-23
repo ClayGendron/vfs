@@ -28,7 +28,7 @@ from vfs.results import Entry, VFSResult
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from vfs.models import VFSObjectBase
+    from vfs.models import VFSEntry
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ class RustworkxGraph:
 
     DEFAULT_TTL: float = 3600  # 1 hour
 
-    def __init__(self, model: type[VFSObjectBase], *, ttl: float | None = None, user_scoped: bool = False) -> None:
+    def __init__(self, model: type[VFSEntry], *, ttl: float | None = None, user_scoped: bool = False) -> None:
         self._model = model
         self._ttl = ttl if ttl is not None else self.DEFAULT_TTL
         self._user_scoped = user_scoped
@@ -246,7 +246,7 @@ class RustworkxGraph:
         await self._load(session)
 
     async def _load(self, session: AsyncSession) -> None:
-        """Load graph state from VFSObject edge rows.
+        """Load graph state from VFSEntry edge rows.
 
         Build-then-swap: new state is assembled in local variables and
         assigned atomically so concurrent readers never see an empty graph.

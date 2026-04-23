@@ -22,10 +22,10 @@ from vfs.backends.postgres import (
     _python_regex_to_postgres,
     _quote_tsquery_term,
 )
-from vfs.models import postgres_native_vfs_object_model, postgres_vector_column_spec
+from vfs.models import _build_entry_table_class, postgres_vector_column_spec
 from vfs.paths import decompose_edge, edge_out_path
 from vfs.results import Entry, VFSResult
-from vfs.vector import Vector
+from vfs.vector import NativeEmbeddingConfig, Vector
 
 
 class _MockEmbeddingProvider:
@@ -70,7 +70,7 @@ def _read_statements_against_objects(statements: list[str]) -> list[str]:
     return [
         _normalize_sql(statement)
         for statement in statements
-        if statement.lstrip().upper().startswith(("SELECT", "WITH")) and "from vfs_objects" in statement.lower()
+        if statement.lstrip().upper().startswith(("SELECT", "WITH")) and "from vfs_entries" in statement.lower()
     ]
 
 
@@ -81,7 +81,7 @@ def _parse_vector_text(value: str) -> list[float]:
 async def _seed_native_embeddings(db: PostgresFileSystem, rows: dict[str, list[float]]) -> None:
     async with db._use_session() as session:
         await db._write_impl(
-            objects=[
+            entries=[
                 db._model(path=path, content=path, embedding=Vector[len(vector)](vector))
                 for path, vector in rows.items()
             ],
@@ -92,7 +92,8 @@ async def _seed_native_embeddings(db: PostgresFileSystem, rows: dict[str, list[f
 async def _make_native_metric_db(engine, *, operator_class: str) -> PostgresFileSystem:
     if engine.dialect.name != "postgresql":
         pytest.skip("requires --postgres flag and a running PostgreSQL instance")
-    model = postgres_native_vfs_object_model(dimension=4, operator_class=operator_class)
+    native_embedding = NativeEmbeddingConfig(dimension=4, operator_class=operator_class)
+    model = _build_entry_table_class(table_name="vfs_entries", native_embedding=native_embedding)
     spec = postgres_vector_column_spec(model)
     async with engine.begin() as conn:
         await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -159,7 +160,7 @@ async def _make_native_metric_db(engine, *, operator_class: str) -> PostgresFile
                 """
             )
         )
-    return PostgresFileSystem(engine=engine, model=model)
+    return PostgresFileSystem(engine=engine, native_embedding=native_embedding)
 
 
 async def _seed_graph(
@@ -247,14 +248,20 @@ class TestResolveTable:
     def test_qualifies_schema(self):
         fs = PostgresFileSystem.__new__(PostgresFileSystem)
         fs._schema = "vfs"
-        fs._model = postgres_native_vfs_object_model(dimension=4)
-        assert fs._resolve_table() == "vfs.vfs_objects"
+        fs._model = _build_entry_table_class(
+            table_name="vfs_entries",
+            native_embedding=NativeEmbeddingConfig(dimension=4),
+        )
+        assert fs._resolve_table() == "vfs.vfs_entries"
 
     def test_bare_name_without_schema(self):
         fs = PostgresFileSystem.__new__(PostgresFileSystem)
         fs._schema = None
-        fs._model = postgres_native_vfs_object_model(dimension=4)
-        assert fs._resolve_table() == "vfs_objects"
+        fs._model = _build_entry_table_class(
+            table_name="vfs_entries",
+            native_embedding=NativeEmbeddingConfig(dimension=4),
+        )
+        assert fs._resolve_table() == "vfs_entries"
 
 
 class TestRegexTranslation:
@@ -332,7 +339,7 @@ class TestVerifyNativeSearchSchema:
 
         fs = PostgresFileSystem(
             engine=engine,
-            model=postgres_native_vfs_object_model(dimension=4),
+            native_embedding=NativeEmbeddingConfig(dimension=4),
         )
         with pytest.raises(RuntimeError, match="pgvector extension"):
             await fs.verify_native_search_schema()
@@ -342,7 +349,7 @@ class TestVerifyNativeSearchSchema:
         assert engine is not None
         fs = PostgresFileSystem(
             engine=engine,
-            model=postgres_native_vfs_object_model(dimension=4),
+            native_embedding=NativeEmbeddingConfig(dimension=4),
         )
         with pytest.raises(RuntimeError, match="non-native embedding column"):
             await fs.verify_native_search_schema()
@@ -350,48 +357,48 @@ class TestVerifyNativeSearchSchema:
     async def test_dimension_mismatch(self, postgres_native_db, engine):
         fs = PostgresFileSystem(
             engine=engine,
-            model=postgres_native_vfs_object_model(dimension=8),
+            native_embedding=NativeEmbeddingConfig(dimension=8),
         )
         with pytest.raises(RuntimeError, match="dimension mismatch"):
             await fs.verify_native_search_schema()
 
     async def test_missing_search_tsv_column(self, postgres_native_db, engine):
         async with engine.begin() as conn:
-            await conn.execute(sql_text("ALTER TABLE vfs_objects DROP COLUMN IF EXISTS search_tsv CASCADE"))
+            await conn.execute(sql_text("ALTER TABLE vfs_entries DROP COLUMN IF EXISTS search_tsv CASCADE"))
         with pytest.raises(RuntimeError, match="search_tsv"):
             await postgres_native_db.verify_native_search_schema()
 
     async def test_missing_fts_index(self, postgres_native_db, engine):
         async with engine.begin() as conn:
-            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_search_tsv_gin"))
-        with pytest.raises(RuntimeError, match=r"GIN index on 'vfs_objects\.search_tsv'"):
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_entries_search_tsv_gin"))
+        with pytest.raises(RuntimeError, match=r"GIN index on 'vfs_entries\.search_tsv'"):
             await postgres_native_db.verify_native_search_schema()
 
     async def test_missing_path_pattern_index(self, postgres_native_db, engine):
         async with engine.begin() as conn:
-            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_path_pattern"))
-        with pytest.raises(RuntimeError, match=r"text_pattern_ops index on 'vfs_objects\.path'"):
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_entries_path_pattern"))
+        with pytest.raises(RuntimeError, match=r"text_pattern_ops index on 'vfs_entries\.path'"):
             await postgres_native_db.verify_native_search_schema()
 
     async def test_missing_path_trgm_index(self, postgres_native_db, engine):
         async with engine.begin() as conn:
-            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_path_trgm_gin"))
-        with pytest.raises(RuntimeError, match=r"trigram GIN index on 'vfs_objects\.path'"):
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_entries_path_trgm_gin"))
+        with pytest.raises(RuntimeError, match=r"trigram GIN index on 'vfs_entries\.path'"):
             await postgres_native_db.verify_native_search_schema()
 
     async def test_missing_content_trgm_index(self, postgres_native_db, engine):
         async with engine.begin() as conn:
-            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_content_trgm_gin"))
-        with pytest.raises(RuntimeError, match=r"trigram GIN index on 'vfs_objects\.content'"):
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_entries_content_trgm_gin"))
+        with pytest.raises(RuntimeError, match=r"trigram GIN index on 'vfs_entries\.content'"):
             await postgres_native_db.verify_native_search_schema()
 
     async def test_rejects_wrong_partial_predicate(self, postgres_native_db, engine):
         async with engine.begin() as conn:
-            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_search_tsv_gin"))
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_entries_search_tsv_gin"))
             await conn.execute(
                 sql_text("""
-                    CREATE INDEX ix_vfs_objects_search_tsv_gin
-                    ON vfs_objects USING GIN (search_tsv)
+                    CREATE INDEX ix_vfs_entries_search_tsv_gin
+                    ON vfs_entries USING GIN (search_tsv)
                     WHERE deleted_at IS NULL
                 """)
             )
@@ -400,13 +407,13 @@ class TestVerifyNativeSearchSchema:
 
     async def test_rejects_non_generated_search_tsv_column(self, postgres_native_db, engine):
         async with engine.begin() as conn:
-            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_objects_search_tsv_gin"))
-            await conn.execute(sql_text("ALTER TABLE vfs_objects DROP COLUMN IF EXISTS search_tsv CASCADE"))
-            await conn.execute(sql_text("ALTER TABLE vfs_objects ADD COLUMN search_tsv tsvector"))
+            await conn.execute(sql_text("DROP INDEX IF EXISTS ix_vfs_entries_search_tsv_gin"))
+            await conn.execute(sql_text("ALTER TABLE vfs_entries DROP COLUMN IF EXISTS search_tsv CASCADE"))
+            await conn.execute(sql_text("ALTER TABLE vfs_entries ADD COLUMN search_tsv tsvector"))
             await conn.execute(
                 sql_text("""
-                    CREATE INDEX ix_vfs_objects_search_tsv_gin
-                    ON vfs_objects USING GIN (search_tsv)
+                    CREATE INDEX ix_vfs_entries_search_tsv_gin
+                    ON vfs_entries USING GIN (search_tsv)
                     WHERE content IS NOT NULL
                       AND deleted_at IS NULL
                       AND kind != 'version'
@@ -622,14 +629,14 @@ class TestPatternSearchPlans:
             engine,
             """
             SELECT path
-            FROM vfs_objects
+            FROM vfs_entries
             WHERE deleted_at IS NULL
               AND path LIKE :pattern ESCAPE '\\'
             ORDER BY path
             """,
             {"pattern": "/src/%"},
         )
-        assert "ix_vfs_objects_path_pattern" in index_names
+        assert "ix_vfs_entries_path_pattern" in index_names
 
     async def test_path_ilike_gets_an_indexed_plan(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
@@ -640,7 +647,7 @@ class TestPatternSearchPlans:
             engine,
             """
             SELECT path
-            FROM vfs_objects
+            FROM vfs_entries
             WHERE deleted_at IS NULL
               AND path ILIKE :pattern ESCAPE '\\'
             """,
@@ -657,7 +664,7 @@ class TestPatternSearchPlans:
             engine,
             """
             SELECT content
-            FROM vfs_objects
+            FROM vfs_entries
             WHERE kind = 'file'
               AND content IS NOT NULL
               AND deleted_at IS NULL
@@ -696,7 +703,7 @@ class TestVectorSearch:
         result = await postgres_native_db.vector_search([1.0, 0.0, 0.0, 0.0], k=5, candidates=candidates)
         assert result.paths == ("/b.py",)
 
-    async def test_reads_from_vfs_objects_embedding(self, postgres_native_db, engine):
+    async def test_reads_from_vfs_entries_embedding(self, postgres_native_db, engine):
         await _seed_native_embeddings(
             postgres_native_db,
             {
@@ -705,7 +712,7 @@ class TestVectorSearch:
         )
 
         async with engine.connect() as conn:
-            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))).first()
+            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_entries WHERE path = '/a.py'"))).first()
         assert row is not None
         assert _parse_vector_text(row[0]) == [1.0, 0.0, 0.0, 0.0]
 
@@ -732,12 +739,12 @@ class TestVectorSearch:
         scoped_fs = PostgresFileSystem(engine=engine, model=model, user_scoped=True)
         async with scoped_fs._use_session() as session:
             await scoped_fs._write_impl(
-                objects=[model(path="/doc.txt", content="alice", embedding=[1.0, 0.0, 0.0, 0.0])],
+                entries=[model(path="/doc.txt", content="alice", embedding=[1.0, 0.0, 0.0, 0.0])],
                 user_id="alice",
                 session=session,
             )
             await scoped_fs._write_impl(
-                objects=[model(path="/doc.txt", content="bob", embedding=[0.0, 1.0, 0.0, 0.0])],
+                entries=[model(path="/doc.txt", content="bob", embedding=[0.0, 1.0, 0.0, 0.0])],
                 user_id="bob",
                 session=session,
             )
@@ -803,7 +810,7 @@ class TestVectorSearch:
         selects = [
             _normalize_sql(statement)
             for statement in sql_capture.statements
-            if statement.lstrip().upper().startswith("SELECT") and "from vfs_objects" in statement.lower()
+            if statement.lstrip().upper().startswith("SELECT") and "from vfs_entries" in statement.lower()
         ]
         assert any(f"o.embedding {expected_operator}" in stmt and "as distance" in stmt for stmt in selects)
 
@@ -812,43 +819,43 @@ class TestWriteAndDelete:
     async def test_write_with_embedding_persists_native_vector_column(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl(
-                objects=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
+                entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
                 session=session,
             )
 
         async with engine.connect() as conn:
-            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))).first()
+            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_entries WHERE path = '/a.py'"))).first()
         assert row is not None
         assert _parse_vector_text(row[0]) == [0.1, 0.2, 0.3, 0.4]
 
     async def test_update_embedding_rewrites_native_vector_column(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl(
-                objects=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
+                entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
                 session=session,
             )
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl(
-                objects=[postgres_native_db._model(path="/a.py", content="v2", embedding=[0.4, 0.3, 0.2, 0.1])],
+                entries=[postgres_native_db._model(path="/a.py", content="v2", embedding=[0.4, 0.3, 0.2, 0.1])],
                 session=session,
             )
 
         async with engine.connect() as conn:
-            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))).first()
+            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_entries WHERE path = '/a.py'"))).first()
         assert row is not None
         assert _parse_vector_text(row[0]) == [0.4, 0.3, 0.2, 0.1]
 
     async def test_write_without_embedding_preserves_existing_embedding(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl(
-                objects=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
+                entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
                 session=session,
             )
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl("/a.py", "v2", session=session)
 
         async with engine.connect() as conn:
-            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_objects WHERE path = '/a.py'"))).first()
+            row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_entries WHERE path = '/a.py'"))).first()
         assert row is not None
         assert _parse_vector_text(row[0]) == [0.1, 0.2, 0.3, 0.4]
 
@@ -864,7 +871,7 @@ class TestLegacyMigrationPath:
     async def test_explicit_migration_path_preserves_existing_embeddings(self, postgres_legacy_db, engine):
         async with postgres_legacy_db._use_session() as session:
             await postgres_legacy_db._write_impl(
-                objects=[
+                entries=[
                     postgres_legacy_db._model(
                         path="/legacy.py",
                         content="legacy",
@@ -874,28 +881,29 @@ class TestLegacyMigrationPath:
                 session=session,
             )
 
-        native_model = postgres_native_vfs_object_model(dimension=4)
+        native_embedding = NativeEmbeddingConfig(dimension=4)
+        native_model = _build_entry_table_class(table_name="vfs_entries", native_embedding=native_embedding)
         spec = postgres_vector_column_spec(native_model)
         async with engine.begin() as conn:
             await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
-            await conn.execute(sql_text("ALTER TABLE vfs_objects ADD COLUMN embedding_native vector(4)"))
+            await conn.execute(sql_text("ALTER TABLE vfs_entries ADD COLUMN embedding_native vector(4)"))
             await conn.execute(
-                sql_text("UPDATE vfs_objects SET embedding_native = embedding::vector(4) WHERE embedding IS NOT NULL")
+                sql_text("UPDATE vfs_entries SET embedding_native = embedding::vector(4) WHERE embedding IS NOT NULL")
             )
-            await conn.execute(sql_text("ALTER TABLE vfs_objects DROP COLUMN embedding"))
-            await conn.execute(sql_text("ALTER TABLE vfs_objects RENAME COLUMN embedding_native TO embedding"))
+            await conn.execute(sql_text("ALTER TABLE vfs_entries DROP COLUMN embedding"))
+            await conn.execute(sql_text("ALTER TABLE vfs_entries RENAME COLUMN embedding_native TO embedding"))
             await conn.execute(
                 sql_text(
                     f"""
                     CREATE INDEX IF NOT EXISTS {spec.index_name}
-                    ON vfs_objects USING {spec.index_method}
+                    ON vfs_entries USING {spec.index_method}
                     ({spec.column_name} {spec.operator_class})
                     WHERE {spec.column_name} IS NOT NULL
                     """
                 )
             )
 
-        migrated = PostgresFileSystem(engine=engine, model=native_model)
+        migrated = PostgresFileSystem(engine=engine, native_embedding=native_embedding)
         await migrated.verify_native_search_schema()
         result = await migrated.vector_search([1.0, 0.0, 0.0, 0.0], k=1)
         assert result.paths == ("/legacy.py",)

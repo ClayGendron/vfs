@@ -11,7 +11,7 @@ from tests.conftest import dummy_session_factory
 from tests.conftest import entry as _entry
 from tests.conftest import make_fs as _make_fs
 from vfs.base import VirtualFileSystem
-from vfs.models import VFSObject
+from vfs.models import VFSEntry
 from vfs.results import VFSResult
 from vfs.routing import first_segment, glob_segment_matches, rewrite_glob_for_mount, rewrite_path_for_mount
 
@@ -28,11 +28,11 @@ class _RoutingFS(VirtualFileSystem):
     async def _read_impl(self, path=None, candidates=None, *, user_id=None, session):
         return await self.read_mock(path=path, candidates=candidates, session=session)
 
-    async def _write_impl(self, path=None, content=None, objects=None, overwrite=True, *, user_id=None, session):
+    async def _write_impl(self, path=None, content=None, entries=None, overwrite=True, *, user_id=None, session):
         return await self.write_mock(
             path=path,
             content=content,
-            objects=objects,
+            entries=entries,
             overwrite=overwrite,
             session=session,
         )
@@ -342,16 +342,16 @@ class TestWriteBatchRouting:
         await root.add_mount("/data", child)
 
         objects = [
-            VFSObject(path="/data/a.py", content="a"),
-            VFSObject(path="/data/b.py", content="b"),
+            VFSEntry(path="/data/a.py", content="a"),
+            VFSEntry(path="/data/b.py", content="b"),
         ]
 
-        result = await root.write(objects=objects)
+        result = await root.write(entries=objects)
 
         assert result.paths == ("/data/a.py", "/data/b.py")
         assert child.write_mock.await_count == 1
         await_args = cast("Any", child.write_mock.await_args)
-        assert [obj.path for obj in await_args.kwargs["objects"]] == ["/a.py", "/b.py"]
+        assert [entry.path for entry in await_args.kwargs["entries"]] == ["/a.py", "/b.py"]
 
 
 # =========================================================================

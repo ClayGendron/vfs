@@ -32,15 +32,15 @@ class TestOutputWidensGlob:
         sql_capture.assert_no_column("embedding")
         # `glob` default already pulls metadata — assert it is here so the
         # next test's widen has something to compare against.
-        assert any("vfs_objects.path" in s for s in sql_capture.reads_against_objects())
+        assert any("vfs_entries.path" in s for s in sql_capture.reads_against_entries())
 
     async def test_glob_with_output_updated_at_projects_it(self, db, sql_capture):
         await _seed(db)
         sql_capture.reset()
         await execute_query(db, parse_query('glob "**/*.md" --output default,updated_at'))
-        reads = sql_capture.reads_against_objects()
-        assert any("vfs_objects.updated_at" in s for s in reads), (
-            "Expected vfs_objects.updated_at in the compiled SELECT after --output widen. "
+        reads = sql_capture.reads_against_entries()
+        assert any("vfs_entries.updated_at" in s for s in reads), (
+            "Expected vfs_entries.updated_at in the compiled SELECT after --output widen. "
             "Statements observed:\n" + "\n---\n".join(reads)
         )
         # Widening must never pull the heavy columns unasked-for.
@@ -52,9 +52,9 @@ class TestOutputWidensStat:
         await _seed(db)
         sql_capture.reset()
         await execute_query(db, parse_query("stat /docs/intro.md --output default,content"))
-        reads = sql_capture.reads_against_objects()
-        assert any("vfs_objects.content" in s for s in reads), (
-            "Expected vfs_objects.content in the SELECT after --output content"
+        reads = sql_capture.reads_against_entries()
+        assert any("vfs_entries.content" in s for s in reads), (
+            "Expected vfs_entries.content in the SELECT after --output content"
         )
 
 
@@ -66,7 +66,7 @@ class TestPostgresNativeProjection:
         statements = [
             " ".join(statement.split()).lower()
             for statement in sql_capture.statements
-            if statement.lstrip().upper().startswith("SELECT") and "from vfs_objects" in statement.lower()
+            if statement.lstrip().upper().startswith("SELECT") and "from vfs_entries" in statement.lower()
         ]
         assert statements
         assert any("updated_at" in statement for statement in statements)

@@ -10,25 +10,12 @@ remove/re-add, and the rule against rebinding ``_permission_map``.
 
 from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, select
+from sqlmodel import select
 
+from tests.conftest import make_sqlite_db
 from vfs.backends.database import DatabaseFileSystem
 from vfs.client import VFSClientAsync
-from vfs.models import VFSObject
 from vfs.permissions import PermissionMap, read_only
-
-
-async def _sqlite_engine():
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    return engine
 
 
 async def _seed(fs: DatabaseFileSystem, path: str, content: str = "x") -> None:
@@ -39,7 +26,7 @@ async def _seed(fs: DatabaseFileSystem, path: str, content: str = "x") -> None:
 async def _raw_has_path(fs: DatabaseFileSystem, path: str) -> bool:
     assert fs._session_factory is not None
     async with fs._session_factory() as s:
-        stmt = select(VFSObject).where(VFSObject.path == path)
+        stmt = select(fs._model).where(fs._model.path == path)
         result = await s.execute(stmt)
         return result.scalar_one_or_none() is not None
 
@@ -47,7 +34,7 @@ async def _raw_has_path(fs: DatabaseFileSystem, path: str) -> bool:
 async def _raw_deleted_at(fs: DatabaseFileSystem, path: str):
     assert fs._session_factory is not None
     async with fs._session_factory() as s:
-        stmt = select(VFSObject).where(VFSObject.path == path)
+        stmt = select(fs._model).where(fs._model.path == path)
         result = await s.execute(stmt)
         obj = result.scalar_one_or_none()
         return obj.deleted_at if obj is not None else "missing"
@@ -65,9 +52,7 @@ async def test_writable_carve_out_creates_unrestricted_ancestors():
     ancestors IS checked — see
     :func:`test_parent_dir_revival_does_not_undelete_read_only_ancestors`.
     """
-    engine = await _sqlite_engine()
-    fs = DatabaseFileSystem(
-        engine=engine,
+    fs = await make_sqlite_db(
         permissions=PermissionMap(
             default="read",
             overrides=(("/wh/a/b/c", "read_write"),),
@@ -94,8 +79,7 @@ async def test_parent_dir_revival_does_not_undelete_read_only_ancestors():
     Brand-new ancestors get a free pass (the carve-out needs reachable
     parents) — but if the user explicitly deleted a path AND then made
     it read-only, silently un-deleting it would violate both intents."""
-    engine = await _sqlite_engine()
-    fs = DatabaseFileSystem(engine=engine, permissions="read_write")
+    fs = await make_sqlite_db(permissions="read_write")
     await _seed(fs, "/wh/a/b/c/sibling.md", "s")
     await fs.delete("/wh/a")
     # Now flip the rule so /wh/a/b/c is the only writable region.
@@ -121,8 +105,7 @@ async def test_parent_dir_revival_does_not_undelete_read_only_ancestors():
 
 
 async def test_route_two_path_empty_ops_is_noop():
-    engine = await _sqlite_engine()
-    fs = DatabaseFileSystem(engine=engine, permissions="read")
+    fs = await make_sqlite_db(permissions="read")
     router = VFSClientAsync()
     await router.add_mount("mnt", fs)
     try:
@@ -135,21 +118,18 @@ async def test_route_two_path_empty_ops_is_noop():
 
 
 async def test_empty_write_batch_is_noop_under_read_only():
-    engine = await _sqlite_engine()
-    fs = DatabaseFileSystem(engine=engine, permissions="read")
+    fs = await make_sqlite_db(permissions="read")
     router = VFSClientAsync()
     await router.add_mount("mnt", fs)
     try:
-        r = await router.write(objects=[])
+        r = await router.write(entries=[])
         assert r.success and r.entries == []
     finally:
         await router.close()
 
 
 async def test_user_scoped_pre_scoped_path_no_double_write():
-    engine = await _sqlite_engine()
-    fs = DatabaseFileSystem(
-        engine=engine,
+    fs = await make_sqlite_db(
         user_scoped=True,
         permissions=read_only(write=["/synthesis"]),
     )
@@ -176,9 +156,7 @@ async def test_user_scoped_rule_with_user_id_in_path_is_global_not_per_user():
     layer, not :class:`PermissionMap`.  See the "User scoping" section
     of :mod:`vfs.permissions`.
     """
-    engine = await _sqlite_engine()
-    fs = DatabaseFileSystem(
-        engine=engine,
+    fs = await make_sqlite_db(
         user_scoped=True,
         permissions=read_only(write=["/alice/synthesis"]),
     )
@@ -199,10 +177,8 @@ async def test_user_scoped_rule_with_user_id_in_path_is_global_not_per_user():
 
 
 async def test_remove_and_readd_uses_fresh_filesystem():
-    engine1 = await _sqlite_engine()
-    engine2 = await _sqlite_engine()
-    writable = DatabaseFileSystem(engine=engine1, permissions="read_write")
-    readonly = DatabaseFileSystem(engine=engine2, permissions="read")
+    writable = await make_sqlite_db(permissions="read_write")
+    readonly = await make_sqlite_db(permissions="read")
     router = VFSClientAsync()
     await router.add_mount("mnt", writable)
     r = await router.write("/mnt/ok.md", "ok")
@@ -218,9 +194,7 @@ async def test_remove_and_readd_uses_fresh_filesystem():
 
 
 async def test_self_storage_database_fs_checks_own_permissions():
-    engine = await _sqlite_engine()
-    fs = DatabaseFileSystem(
-        engine=engine,
+    fs = await make_sqlite_db(
         permissions=read_only(write=["/writable"]),
     )
     try:

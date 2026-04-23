@@ -10,7 +10,6 @@ import pytest
 from sqlmodel import select
 
 from vfs.backends.database import DatabaseFileSystem
-from vfs.models import VFSObject
 from vfs.paths import (
     decompose_edge,
     edge_out_path,
@@ -151,7 +150,11 @@ class TestStripUserScope:
 
 @pytest.fixture
 async def scoped_db(engine):
-    return DatabaseFileSystem(engine=engine, user_scoped=True)
+    from tests.conftest import _create_schema
+
+    fs = DatabaseFileSystem(engine=engine, user_scoped=True)
+    await _create_schema(engine, fs._model)
+    return fs
 
 
 class TestUserScopedWrite:
@@ -179,7 +182,7 @@ class TestUserScopedWrite:
         await scoped_db.write(path="/doc.txt", content="test", user_id="u1")
         # Read raw from DB to check owner_id
         async with scoped_db._session_factory() as session:
-            stmt = select(VFSObject).where(VFSObject.path == "/u1/doc.txt")
+            stmt = select(scoped_db._model).where(scoped_db._model.path == "/u1/doc.txt")
             result = await session.execute(stmt)
             obj = result.scalar_one()
             assert obj.owner_id == "u1"

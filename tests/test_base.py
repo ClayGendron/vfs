@@ -19,7 +19,7 @@ from tests.conftest import (
     entry as _entry,
 )
 from vfs.base import VirtualFileSystem
-from vfs.models import VFSObject
+from vfs.models import VFSEntry
 from vfs.results import EditOperation, TwoPathOperation, VFSResult
 
 # ---------------------------------------------------------------------------
@@ -437,35 +437,35 @@ class TestGroupByTerminal:
         assert groups == []
 
 
-class TestGroupObjectsByTerminal:
-    async def test_does_not_mutate_caller_objects(self):
+class TestGroupEntriesByTerminal:
+    async def test_does_not_mutate_caller_entries(self):
         root = _FullRoutingFS("root")
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        objs = [
-            VFSObject(path="/data/file.py", content="code"),
-            VFSObject(path="/local.py", content="local"),
+        entries = [
+            VFSEntry(path="/data/file.py", content="code"),
+            VFSEntry(path="/local.py", content="local"),
         ]
-        original_paths = [obj.path for obj in objs]
+        original_paths = [entry.path for entry in entries]
 
-        root._group_objects_by_terminal(objs)
+        root._group_entries_by_terminal(entries)
 
-        assert [obj.path for obj in objs] == original_paths
+        assert [entry.path for entry in entries] == original_paths
 
     async def test_rebases_copies(self):
         root = _FullRoutingFS("root")
         child = _FullRoutingFS("child")
         await root.add_mount("/data", child)
 
-        objs = [VFSObject(path="/data/file.py", content="code")]
-        groups = root._group_objects_by_terminal(objs)
+        entries = [VFSEntry(path="/data/file.py", content="code")]
+        groups = root._group_entries_by_terminal(entries)
 
         assert len(groups) == 1
-        fs, prefix, grouped_objs = groups[0]
+        fs, prefix, grouped_entries = groups[0]
         assert fs._name == "child"
         assert prefix == "/data"
-        assert grouped_objs[0].path == "/file.py"
+        assert grouped_entries[0].path == "/file.py"
 
 
 class TestDispatchCandidates:

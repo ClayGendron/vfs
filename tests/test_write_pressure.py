@@ -15,7 +15,7 @@ import pytest
 
 from tests.conftest import require_file, require_object, set_parameter_budget
 from vfs.backends.database import DatabaseFileSystem
-from vfs.models import VFSObject
+from vfs.models import VFSEntry
 from vfs.results import Entry, VFSResult
 
 # ------------------------------------------------------------------
@@ -41,7 +41,7 @@ class TestUnicodeChaos:
     async def test_null_byte_in_path_rejected(self, db: DatabaseFileSystem):
         """Null bytes in paths should be caught by validation."""
         with pytest.raises((ValueError, Exception)):
-            VFSObject(path="/file\x00evil.txt", content="x")
+            VFSEntry(path="/file\x00evil.txt", content="x")
 
     async def test_rtl_characters_in_path(self, db: DatabaseFileSystem):
         r = await db.write("/docs/\u202eevil.txt", "rtl content")
@@ -78,17 +78,17 @@ class TestUnicodeChaos:
     async def test_control_char_in_path_rejected(self, db: DatabaseFileSystem):
         """Control characters (0x01-0x1F) should be rejected."""
         with pytest.raises((ValueError, Exception)):
-            VFSObject(path="/file\x01.txt", content="x")
+            VFSEntry(path="/file\x01.txt", content="x")
 
     async def test_del_char_in_path_rejected(self, db: DatabaseFileSystem):
         """DEL (0x7F) should be rejected."""
         with pytest.raises((ValueError, Exception)):
-            VFSObject(path="/file\x7f.txt", content="x")
+            VFSEntry(path="/file\x7f.txt", content="x")
 
     async def test_c1_control_in_path_rejected(self, db: DatabaseFileSystem):
         """C1 control chars (0x80-0x9F) should be rejected."""
         with pytest.raises((ValueError, Exception)):
-            VFSObject(path="/file\x80.txt", content="x")
+            VFSEntry(path="/file\x80.txt", content="x")
 
 
 # ------------------------------------------------------------------
@@ -103,7 +103,7 @@ class TestPathEdgeCases:
         """Paths > 4096 chars should be rejected by validate_path."""
         long_path = "/" + "a" * 4096 + ".txt"
         with pytest.raises((ValueError, Exception)):
-            VFSObject(path=long_path, content="x")
+            VFSEntry(path=long_path, content="x")
 
     async def test_path_at_exact_limit(self, db: DatabaseFileSystem):
         """A long path should be accepted if its deepest sidecar still fits in 4096."""
@@ -164,7 +164,7 @@ class TestPathEdgeCases:
         """Segments > 255 chars should be rejected."""
         long_name = "a" * 256 + ".txt"
         with pytest.raises((ValueError, Exception)):
-            VFSObject(path=f"/{long_name}", content="x")
+            VFSEntry(path=f"/{long_name}", content="x")
 
     async def test_root_path_write(self, db: DatabaseFileSystem):
         """Writing to '/' should fail — it's a directory."""
@@ -219,7 +219,7 @@ class TestContentEdgeCases:
 
     async def test_content_with_sql_injection(self, db: DatabaseFileSystem):
         """SQL injection in content — parameterized queries should handle it."""
-        evil = "'; DROP TABLE vfs_objects; --"
+        evil = "'; DROP TABLE vfs_entries; --"
         r = await db.write("/evil.txt", evil)
         assert r.success
         r2 = await db.read("/evil.txt")
@@ -227,7 +227,7 @@ class TestContentEdgeCases:
 
     async def test_content_with_sql_injection_in_path(self, db: DatabaseFileSystem):
         """SQL injection in path."""
-        r = await db.write("/'; DROP TABLE vfs_objects; --.txt", "payload")
+        r = await db.write("/'; DROP TABLE vfs_entries; --.txt", "payload")
         assert r.success
 
     async def test_content_with_many_newlines(self, db: DatabaseFileSystem):
@@ -250,8 +250,8 @@ class TestBatchAdversarial:
         # Manually sneak in a version-kind object by constructing it explicitly
         async with db._use_session() as s:
             r = await db._write_impl(
-                objects=[
-                    VFSObject(path="/fine.txt", content="fine"),
+                entries=[
+                    VFSEntry(path="/fine.txt", content="fine"),
                 ],
                 session=s,
             )
@@ -264,29 +264,29 @@ class TestBatchAdversarial:
 
     async def test_batch_all_duplicate_paths(self, db: DatabaseFileSystem):
         """Every object has the same path — should fail on duplicate detection."""
-        objects = [VFSObject(path="/dup.txt", content=f"v{i}") for i in range(5)]
+        objects = [VFSEntry(path="/dup.txt", content=f"v{i}") for i in range(5)]
         async with db._use_session() as s:
-            r = await db._write_impl(objects=objects, session=s)
+            r = await db._write_impl(entries=objects, session=s)
         assert not r.success
         assert "Duplicate path" in r.error_message
 
     async def test_batch_larger_than_flush_threshold(self, db: DatabaseFileSystem):
         """Batch larger than the flush threshold succeeds across multiple flushes."""
-        objects = [VFSObject(path=f"/batch/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/batch/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 50
 
     async def test_batch_of_one(self, db: DatabaseFileSystem):
-        objects = [VFSObject(path="/single.txt", content="alone")]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path="/single.txt", content="alone")]
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 1
 
     async def test_empty_objects_list(self, db: DatabaseFileSystem):
         """Empty objects list — should succeed vacuously."""
         async with db._use_session() as s:
-            r = await db._write_impl(objects=[], session=s)
+            r = await db._write_impl(entries=[], session=s)
         assert r.success
         assert len(r.entries) == 0
 
@@ -371,10 +371,10 @@ class TestChunkEdgeCases:
     async def test_chunk_parent_in_same_batch_after_chunk(self, db: DatabaseFileSystem):
         """Chunk appears BEFORE its parent file in the objects list."""
         objects = [
-            VFSObject(path="/.vfs/src/module.py/__meta__/chunks/func", content="def func(): pass"),
-            VFSObject(path="/src/module.py", content="full module"),
+            VFSEntry(path="/.vfs/src/module.py/__meta__/chunks/func", content="def func(): pass"),
+            VFSEntry(path="/src/module.py", content="full module"),
         ]
-        r = await db.write(objects=objects)
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 2
 
@@ -407,12 +407,12 @@ class TestChunkEdgeCases:
     async def test_multiple_chunks_same_parent(self, db: DatabaseFileSystem):
         """Multiple chunks for the same parent in one batch."""
         objects = [
-            VFSObject(path="/multi.py", content="multi"),
-            VFSObject(path="/.vfs/multi.py/__meta__/chunks/a", content="chunk a"),
-            VFSObject(path="/.vfs/multi.py/__meta__/chunks/b", content="chunk b"),
-            VFSObject(path="/.vfs/multi.py/__meta__/chunks/c", content="chunk c"),
+            VFSEntry(path="/multi.py", content="multi"),
+            VFSEntry(path="/.vfs/multi.py/__meta__/chunks/a", content="chunk a"),
+            VFSEntry(path="/.vfs/multi.py/__meta__/chunks/b", content="chunk b"),
+            VFSEntry(path="/.vfs/multi.py/__meta__/chunks/c", content="chunk c"),
         ]
-        r = await db.write(objects=objects)
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 4
 
@@ -468,8 +468,8 @@ class TestConcurrentWrites:
         """Multiple batch writes concurrently to non-overlapping paths."""
 
         async def batch_write(prefix: str, n: int):
-            objects = [VFSObject(path=f"/{prefix}/f{i}.txt", content=f"c{i}") for i in range(n)]
-            return await db.write(objects=objects)
+            objects = [VFSEntry(path=f"/{prefix}/f{i}.txt", content=f"c{i}") for i in range(n)]
+            return await db.write(entries=objects)
 
         tasks = [batch_write(f"ns{i}", 50) for i in range(5)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -491,15 +491,15 @@ class TestParameterBudgetAttacks:
     async def test_tiny_budget_forces_max_batching(self, db: DatabaseFileSystem):
         """Budget of 1 forces one object per flush batch."""
         set_parameter_budget(db, 1)
-        objects = [VFSObject(path=f"/tiny/f{i:04d}.txt", content=f"c{i}") for i in range(100)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/tiny/f{i:04d}.txt", content=f"c{i}") for i in range(100)]
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 100
 
     async def test_large_batch_stays_within_budget(self, db: DatabaseFileSystem):
         """200 objects with default budget — batching keeps flushes safe."""
-        objects = [VFSObject(path=f"/huge/f{i:04d}.txt", content=f"c{i}") for i in range(200)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/huge/f{i:04d}.txt", content=f"c{i}") for i in range(200)]
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 200
 
@@ -545,10 +545,10 @@ class TestSoftDeleteResurrection:
 
         # Batch with revive + new
         objects = [
-            VFSObject(path="/mix_a.txt", content="a_revived"),
-            VFSObject(path="/mix_c.txt", content="c_new"),
+            VFSEntry(path="/mix_a.txt", content="a_revived"),
+            VFSEntry(path="/mix_c.txt", content="c_new"),
         ]
-        r = await db.write(objects=objects)
+        r = await db.write(entries=objects)
         assert r.success
 
         r_a = await db.read("/mix_a.txt")
@@ -560,7 +560,7 @@ class TestSoftDeleteResurrection:
         """Writing to a path whose ancestors are soft-deleted should revive them."""
         now = datetime.now(UTC)
         async with db._use_session() as s:
-            s.add(VFSObject(path="/dead_parent", kind="directory", deleted_at=now))
+            s.add(db._row(path="/dead_parent", kind="directory", deleted_at=now))
 
         r = await db.write("/dead_parent/child.txt", "alive")
         assert r.success
@@ -603,7 +603,7 @@ class TestTypeConfusion:
         The model validator recomputes content_hash from content, so the
         manual hash should be overridden.
         """
-        obj = VFSObject(path="/mismatch.txt", content="real content", content_hash="fakehash")
+        obj = VFSEntry(path="/mismatch.txt", content="real content", content_hash="fakehash")
         # Validator should have overridden
         expected_hash = hashlib.sha256(b"real content").hexdigest()
         assert obj.content_hash == expected_hash
@@ -612,9 +612,9 @@ class TestTypeConfusion:
         """A batch where every item is an invalid kind should fail."""
         async with db._use_session() as s:
             r = await db._write_impl(
-                objects=[
-                    VFSObject(path="/.vfs/v1.txt/__meta__/versions/1", content="v"),
-                    VFSObject(path="/.vfs/v2.txt/__meta__/versions/2", content="v"),
+                entries=[
+                    VFSEntry(path="/.vfs/v1.txt/__meta__/versions/1", content="v"),
+                    VFSEntry(path="/.vfs/v2.txt/__meta__/versions/2", content="v"),
                 ],
                 session=s,
             )
@@ -661,12 +661,12 @@ class TestInterleavedOperations:
 
     async def test_batch_write_then_partial_overwrite(self, db: DatabaseFileSystem):
         """Write a batch, then overwrite only some paths."""
-        objects = [VFSObject(path=f"/partial/f{i}.txt", content=f"v1_{i}") for i in range(10)]
-        await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/partial/f{i}.txt", content=f"v1_{i}") for i in range(10)]
+        await db.write(entries=objects)
 
         # Overwrite first 3
-        overwrite_objs = [VFSObject(path=f"/partial/f{i}.txt", content=f"v2_{i}") for i in range(3)]
-        r = await db.write(objects=overwrite_objs)
+        overwrite_objs = [VFSEntry(path=f"/partial/f{i}.txt", content=f"v2_{i}") for i in range(3)]
+        r = await db.write(entries=overwrite_objs)
         assert r.success
 
         # Check overwritten
@@ -728,7 +728,7 @@ class TestEmptyDegenerate:
         """Double slashes should be normalized.
 
         NOTE: The public write() path normalizes via _resolve_terminal, but
-        _write_impl constructs a VFSObject from the normalized path.
+        _write_impl constructs a VFSEntry from the normalized path.
         The ValidatedSQLModel double-validation may reject paths that the
         model_validator would normally normalize. This test documents the
         current behavior.
@@ -774,11 +774,11 @@ class TestOverwriteFalse:
         await db.write("/batch_ow_a.txt", "a")
 
         objects = [
-            VFSObject(path="/batch_ow_a.txt", content="a_new"),
-            VFSObject(path="/batch_ow_b.txt", content="b_new"),
+            VFSEntry(path="/batch_ow_a.txt", content="a_new"),
+            VFSEntry(path="/batch_ow_b.txt", content="b_new"),
         ]
         async with db._use_session() as s:
-            r = await db._write_impl(objects=objects, overwrite=False, session=s)
+            r = await db._write_impl(entries=objects, overwrite=False, session=s)
         # The existing file should cause an error but the new one should succeed
         assert not r.success  # at least one error
         # b should have been written
@@ -902,12 +902,12 @@ class TestLargeBatchVersionCombo:
     async def test_batch_overwrite_at_scale(self, db: DatabaseFileSystem, scale: int):
         """Write N files, then overwrite all N — creates N versions."""
         n = scale
-        objs_v1 = [VFSObject(path=f"/scale/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
-        r1 = await db.write(objects=objs_v1)
+        objs_v1 = [VFSEntry(path=f"/scale/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
+        r1 = await db.write(entries=objs_v1)
         assert r1.success
 
-        objs_v2 = [VFSObject(path=f"/scale/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
-        r2 = await db.write(objects=objs_v2)
+        objs_v2 = [VFSEntry(path=f"/scale/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
+        r2 = await db.write(entries=objs_v2)
         assert r2.success
 
         # Spot check middle file
@@ -1043,32 +1043,32 @@ class TestCreateDeleteCycles:
 
 
 class TestModelValidatorEdgeCases:
-    """Test VFSObject model_validator _normalize_and_derive."""
+    """Test VFSEntry model_validator _normalize_and_derive."""
 
     def test_object_with_no_path(self):
         """Object with no path — validator should handle gracefully."""
         # The validator checks if path is str, returns data unchanged if not
-        obj = VFSObject(path="/valid.txt", content="ok")
+        obj = VFSEntry(path="/valid.txt", content="ok")
         assert obj.kind == "file"
 
     def test_object_kind_inferred_from_path(self):
         """kind should be auto-inferred from path."""
-        obj = VFSObject(path="/dir/file.py", content="code")
+        obj = VFSEntry(path="/dir/file.py", content="code")
         assert obj.kind == "file"
         assert obj.parent_path == "/dir"
         assert obj.name == "file.py"
 
     def test_object_name_derived(self):
-        obj = VFSObject(path="/a/b/c.txt", content="x")
+        obj = VFSEntry(path="/a/b/c.txt", content="x")
         assert obj.name == "c.txt"
 
     def test_object_parent_path_derived(self):
-        obj = VFSObject(path="/a/b/c.txt", content="x")
+        obj = VFSEntry(path="/a/b/c.txt", content="x")
         assert obj.parent_path == "/a/b"
 
     def test_object_timestamps_auto_set(self):
         before = datetime.now(UTC)
-        obj = VFSObject(path="/ts.txt", content="x")
+        obj = VFSEntry(path="/ts.txt", content="x")
         after = datetime.now(UTC)
         assert obj.created_at is not None
         assert obj.updated_at is not None
@@ -1086,8 +1086,8 @@ class TestBatchOrderingGuarantees:
 
     async def test_candidate_order_matches_input_order(self, db: DatabaseFileSystem):
         """Candidates should come back in the same order as input objects."""
-        objects = [VFSObject(path=f"/order/f{i:03d}.txt", content=f"c{i}") for i in range(20)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/order/f{i:03d}.txt", content=f"c{i}") for i in range(20)]
+        r = await db.write(entries=objects)
         assert r.success
         expected_paths = tuple(f"/order/f{i:03d}.txt" for i in range(20))
         assert r.paths == expected_paths
@@ -1095,12 +1095,12 @@ class TestBatchOrderingGuarantees:
     async def test_batch_with_chunks_interleaved(self, db: DatabaseFileSystem):
         """Files and their chunks interleaved in a single batch."""
         objects = [
-            VFSObject(path="/mix.py", content="module"),
-            VFSObject(path="/other.py", content="other"),
-            VFSObject(path="/.vfs/mix.py/__meta__/chunks/fn_a", content="fn a"),
-            VFSObject(path="/.vfs/other.py/__meta__/chunks/fn_b", content="fn b"),
+            VFSEntry(path="/mix.py", content="module"),
+            VFSEntry(path="/other.py", content="other"),
+            VFSEntry(path="/.vfs/mix.py/__meta__/chunks/fn_a", content="fn a"),
+            VFSEntry(path="/.vfs/other.py/__meta__/chunks/fn_b", content="fn b"),
         ]
-        r = await db.write(objects=objects)
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 4
 
@@ -1165,8 +1165,8 @@ class TestParentDirectoryEdgeCases:
 
     async def test_100_files_share_same_parent(self, db: DatabaseFileSystem):
         """All 100 files in the same directory — parent created once."""
-        objects = [VFSObject(path=f"/same_dir/f{i:03d}.txt", content=f"c{i}") for i in range(100)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/same_dir/f{i:03d}.txt", content=f"c{i}") for i in range(100)]
+        r = await db.write(entries=objects)
         assert r.success
 
         async with db._use_session() as s:
@@ -1176,8 +1176,8 @@ class TestParentDirectoryEdgeCases:
 
     async def test_files_create_unique_deep_trees(self, db: DatabaseFileSystem):
         """Each file creates a unique deep path tree."""
-        objects = [VFSObject(path=f"/tree_{i}/a/b/c/d.txt", content=f"c{i}") for i in range(20)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/tree_{i}/a/b/c/d.txt", content=f"c{i}") for i in range(20)]
+        r = await db.write(entries=objects)
         assert r.success
 
         async with db._use_session() as s:
@@ -1258,7 +1258,7 @@ class TestCorruptedVersionChains:
         # Manually insert a corrupt version record with None version_number
         # at a path that doesn't collide with any real version
         async with db._use_session() as s:
-            corrupt_v = VFSObject(
+            corrupt_v = db._row(
                 path="/.vfs/corrupt_chain.txt/__meta__/versions/999",
                 content="corrupt",
                 version_number=None,
@@ -1297,15 +1297,15 @@ class TestIdempotency:
     async def test_batch_write_idempotent(self, db: DatabaseFileSystem):
         """Writing the same batch twice should update timestamps only."""
         objects = [
-            VFSObject(path="/idem_batch/f.txt", content="same"),
+            VFSEntry(path="/idem_batch/f.txt", content="same"),
         ]
-        r1 = await db.write(objects=objects)
+        r1 = await db.write(entries=objects)
         assert r1.success
 
         objects2 = [
-            VFSObject(path="/idem_batch/f.txt", content="same"),
+            VFSEntry(path="/idem_batch/f.txt", content="same"),
         ]
-        r2 = await db.write(objects=objects2)
+        r2 = await db.write(entries=objects2)
         assert r2.success
 
         async with db._use_session() as s:
@@ -1366,17 +1366,17 @@ class TestExtremeBudgets:
     async def test_budget_below_model_width(self, db: DatabaseFileSystem):
         """Budget smaller than one row of fields — batch_size floors to 1."""
         set_parameter_budget(db, 1)
-        objects = [VFSObject(path=f"/budget/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/budget/f{i:04d}.txt", content=f"c{i}") for i in range(50)]
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 50
 
     async def test_budget_exactly_model_width(self, db: DatabaseFileSystem):
         """Budget equal to one row of fields — one object per flush."""
-        field_count = len(VFSObject.model_fields)
+        field_count = len(VFSEntry.model_fields)
         set_parameter_budget(db, field_count + db.PARAMETER_RESERVE)
-        objects = [VFSObject(path=f"/fields/f{i:04d}.txt", content=f"c{i}") for i in range(field_count * 2)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/fields/f{i:04d}.txt", content=f"c{i}") for i in range(field_count * 2)]
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == field_count * 2
 
@@ -1392,25 +1392,25 @@ class TestTimestampManipulation:
     async def test_object_with_future_timestamps(self, db: DatabaseFileSystem):
         """Object with timestamps far in the future."""
         future = datetime(2099, 12, 31, tzinfo=UTC)
-        obj = VFSObject(
+        obj = VFSEntry(
             path="/future.txt",
             content="from the future",
             created_at=future,
             updated_at=future,
         )
-        r = await db.write(objects=[obj])
+        r = await db.write(entries=[obj])
         assert r.success
 
     async def test_object_with_epoch_timestamps(self, db: DatabaseFileSystem):
         """Object with Unix epoch timestamps."""
         epoch = datetime(1970, 1, 1, tzinfo=UTC)
-        obj = VFSObject(
+        obj = VFSEntry(
             path="/epoch.txt",
             content="old",
             created_at=epoch,
             updated_at=epoch,
         )
-        r = await db.write(objects=[obj])
+        r = await db.write(entries=[obj])
         assert r.success
 
     async def test_overwrite_preserves_created_at(self, db: DatabaseFileSystem):
@@ -1437,22 +1437,22 @@ class TestMassiveSingleSessionBatch:
     async def test_objects_single_impl_call(self, db: DatabaseFileSystem, scale: int):
         """N objects in one _write_impl call."""
         n = scale
-        objects = [VFSObject(path=f"/mass/f{i:06d}.txt", content=f"content {i}") for i in range(n)]
+        objects = [VFSEntry(path=f"/mass/f{i:06d}.txt", content=f"content {i}") for i in range(n)]
         async with db._use_session() as s:
-            r = await db._write_impl(objects=objects, session=s)
+            r = await db._write_impl(entries=objects, session=s)
         assert r.success
         assert len(r.entries) == n
 
     async def test_overwrite_objects_single_impl_call(self, db: DatabaseFileSystem, scale: int):
         """Write N, then overwrite all N in one call."""
         n = scale
-        objs_v1 = [VFSObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
+        objs_v1 = [VFSEntry(path=f"/mass_ow/f{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
         async with db._use_session() as s:
-            await db._write_impl(objects=objs_v1, session=s)
+            await db._write_impl(entries=objs_v1, session=s)
 
-        objs_v2 = [VFSObject(path=f"/mass_ow/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
+        objs_v2 = [VFSEntry(path=f"/mass_ow/f{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
         async with db._use_session() as s:
-            r = await db._write_impl(objects=objs_v2, session=s)
+            r = await db._write_impl(entries=objs_v2, session=s)
         assert r.success
         assert len(r.entries) == n
 
@@ -1507,10 +1507,10 @@ class TestChunkValidationWithTinyBudget:
         """
         set_parameter_budget(db, 1)
         objects = [
-            VFSObject(path="/.vfs/tiny_batch.py/__meta__/chunks/fn", content="def fn(): pass"),
-            VFSObject(path="/tiny_batch.py", content="module content"),
+            VFSEntry(path="/.vfs/tiny_batch.py/__meta__/chunks/fn", content="def fn(): pass"),
+            VFSEntry(path="/tiny_batch.py", content="module content"),
         ]
-        r = await db.write(objects=objects)
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 2
 
@@ -1518,13 +1518,13 @@ class TestChunkValidationWithTinyBudget:
         """Many chunks + parent, tiny budget — splits across batches."""
         set_parameter_budget(db, 1)
         objects = [
-            VFSObject(path="/multi_chunk.py", content="module"),
-            VFSObject(path="/.vfs/multi_chunk.py/__meta__/chunks/a", content="a"),
-            VFSObject(path="/.vfs/multi_chunk.py/__meta__/chunks/b", content="b"),
-            VFSObject(path="/.vfs/multi_chunk.py/__meta__/chunks/c", content="c"),
-            VFSObject(path="/.vfs/multi_chunk.py/__meta__/chunks/d", content="d"),
+            VFSEntry(path="/multi_chunk.py", content="module"),
+            VFSEntry(path="/.vfs/multi_chunk.py/__meta__/chunks/a", content="a"),
+            VFSEntry(path="/.vfs/multi_chunk.py/__meta__/chunks/b", content="b"),
+            VFSEntry(path="/.vfs/multi_chunk.py/__meta__/chunks/c", content="c"),
+            VFSEntry(path="/.vfs/multi_chunk.py/__meta__/chunks/d", content="d"),
         ]
-        r = await db.write(objects=objects)
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == 5
 
@@ -1544,22 +1544,22 @@ class TestExceptionRecovery:
         await db.write("/good.txt", "v1")
         await db.write("/bad.txt", "v1")
 
-        from vfs.models import VFSObjectBase
+        from vfs.models import VFSEntry
 
-        original_plan = VFSObjectBase.plan_file_write
+        original_plan = VFSEntry.plan_file_write
 
         def failing_plan(self, new_content, version_rows=None, *, latest_version_hash=None):
             if self.path == "/bad.txt":
                 raise RuntimeError("simulated version chain corruption")
             return original_plan(self, new_content, version_rows, latest_version_hash=latest_version_hash)
 
-        with patch.object(VFSObjectBase, "plan_file_write", failing_plan):
+        with patch.object(VFSEntry, "plan_file_write", failing_plan):
             objects = [
-                VFSObject(path="/good.txt", content="v2"),
-                VFSObject(path="/bad.txt", content="v2"),
+                VFSEntry(path="/good.txt", content="v2"),
+                VFSEntry(path="/bad.txt", content="v2"),
             ]
             async with db._use_session() as s:
-                r = await db._write_impl(objects=objects, session=s)
+                r = await db._write_impl(entries=objects, session=s)
 
         assert "/good.txt" in r.paths
         assert any("Write failed for /bad.txt" in e for e in r.errors)
@@ -1574,8 +1574,8 @@ class TestExceptionRecovery:
     async def test_flush_failure_rolls_back_entire_write(self, db: DatabaseFileSystem):
         """Without savepoints, a flush failure rolls back everything."""
         objects = [
-            VFSObject(path="/a.txt", content="a"),
-            VFSObject(path="/b.txt", content="b"),
+            VFSEntry(path="/a.txt", content="a"),
+            VFSEntry(path="/b.txt", content="b"),
         ]
 
         with pytest.raises(RuntimeError, match="simulated flush failure"):
@@ -1585,7 +1585,7 @@ class TestExceptionRecovery:
                     raise RuntimeError("simulated flush failure")
 
                 cast("Any", s).flush = failing_flush
-                await db._write_impl(objects=objects, session=s)
+                await db._write_impl(entries=objects, session=s)
 
         # Nothing persisted
         async with db._use_session() as s:
@@ -1606,8 +1606,8 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_ls(self, db: DatabaseFileSystem, scale: int):
         """Write N files under a directory, ls returns all of them."""
         n = scale
-        objects = [VFSObject(path=f"/data/file_{i:06d}.txt", content=f"content {i}") for i in range(n)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/data/file_{i:06d}.txt", content=f"content {i}") for i in range(n)]
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == n
 
@@ -1619,8 +1619,8 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_soft_delete_directory(self, db: DatabaseFileSystem, scale: int):
         """Write N files, soft-delete the parent dir, verify all cascaded."""
         n = scale
-        objects = [VFSObject(path=f"/src/file_{i:06d}.py", content=f"code {i}") for i in range(n)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/src/file_{i:06d}.py", content=f"code {i}") for i in range(n)]
+        r = await db.write(entries=objects)
         assert r.success
 
         async with db._use_session() as s:
@@ -1638,8 +1638,8 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_write_then_permanent_delete_directory(self, db: DatabaseFileSystem, scale: int):
         """Write N files, permanently delete the dir, verify all gone."""
         n = scale
-        objects = [VFSObject(path=f"/tmp/file_{i:06d}.txt", content=f"temp {i}") for i in range(n)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"/tmp/file_{i:06d}.txt", content=f"temp {i}") for i in range(n)]
+        r = await db.write(entries=objects)
         assert r.success
 
         async with db._use_session() as s:
@@ -1659,9 +1659,9 @@ class TestLargeWriteAndDelete:
         n = min(scale, 500)  # chunks double the object count
         objects = []
         for i in range(n):
-            objects.append(VFSObject(path=f"/code/f_{i:05d}.py", content=f"code {i}"))
-            objects.append(VFSObject(path=f"/.vfs/code/f_{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():"))
-        r = await db.write(objects=objects)
+            objects.append(VFSEntry(path=f"/code/f_{i:05d}.py", content=f"code {i}"))
+            objects.append(VFSEntry(path=f"/.vfs/code/f_{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():"))
+        r = await db.write(entries=objects)
         assert r.success
         assert len(r.entries) == n * 2
 
@@ -1682,12 +1682,12 @@ class TestLargeWriteAndDelete:
     async def test_large_batch_connections_write_and_delete(self, db: DatabaseFileSystem, scale: int):
         """Write N files with connections between consecutive pairs, then delete."""
         n = min(scale, 500)
-        files = [VFSObject(path=f"/graph/node_{i:05d}.py", content=f"node {i}") for i in range(n)]
-        r = await db.write(objects=files)
+        files = [VFSEntry(path=f"/graph/node_{i:05d}.py", content=f"node {i}") for i in range(n)]
+        r = await db.write(entries=files)
         assert r.success
 
         conns = [
-            VFSObject(
+            VFSEntry(
                 path=f"/.vfs/graph/node_{i:05d}.py/__meta__/edges/out/calls/graph/node_{i + 1:05d}.py",
                 kind="edge",
                 source_path=f"/graph/node_{i:05d}.py",
@@ -1696,7 +1696,7 @@ class TestLargeWriteAndDelete:
             )
             for i in range(n - 1)
         ]
-        r2 = await db.write(objects=conns)
+        r2 = await db.write(entries=conns)
         assert r2.success
         assert len(r2.entries) == n - 1
 
@@ -1712,8 +1712,8 @@ class TestLargeWriteAndDelete:
     async def test_write_delete_write_cycle_at_scale(self, db: DatabaseFileSystem, scale: int):
         """Write N files, soft-delete all, write N new files at same paths."""
         n = scale
-        objects_v1 = [VFSObject(path=f"/cycle/f_{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
-        r1 = await db.write(objects=objects_v1)
+        objects_v1 = [VFSEntry(path=f"/cycle/f_{i:06d}.txt", content=f"v1_{i}") for i in range(n)]
+        r1 = await db.write(entries=objects_v1)
         assert r1.success
 
         # Soft-delete the directory
@@ -1721,8 +1721,8 @@ class TestLargeWriteAndDelete:
             await db._delete_impl("/cycle", session=s)
 
         # Re-write same paths
-        objects_v2 = [VFSObject(path=f"/cycle/f_{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
-        r2 = await db.write(objects=objects_v2)
+        objects_v2 = [VFSEntry(path=f"/cycle/f_{i:06d}.txt", content=f"v2_{i}") for i in range(n)]
+        r2 = await db.write(entries=objects_v2)
         assert r2.success
 
         # Spot-check: content is v2
@@ -1737,8 +1737,8 @@ class TestLargeWriteAndDelete:
 
         rng = random.Random(42)
         dirs = [f"/deep/d{i}/sub{j}" for i in range(10) for j in range(10)]
-        objects = [VFSObject(path=f"{rng.choice(dirs)}/f_{i:05d}.txt", content=f"c{i}") for i in range(n)]
-        r = await db.write(objects=objects)
+        objects = [VFSEntry(path=f"{rng.choice(dirs)}/f_{i:05d}.txt", content=f"c{i}") for i in range(n)]
+        r = await db.write(entries=objects)
         assert r.success
 
         async with db._use_session() as s:
@@ -1779,26 +1779,26 @@ class TestLargeWriteAndDelete:
         file_objects = []
         for i in range(n):
             parent = rng.choice(dir_pool)
-            file_objects.append(VFSObject(path=f"{parent}/f_{i:06d}.py", content=f"code {i}"))
+            file_objects.append(VFSEntry(path=f"{parent}/f_{i:06d}.py", content=f"code {i}"))
 
-        r = await db.write(objects=file_objects)
+        r = await db.write(entries=file_objects)
         assert r.success, r.error_message
         assert len(r.entries) == n
 
         # Add a chunk per file
         chunk_objects = [
-            VFSObject(
+            VFSEntry(
                 path=f"/.vfs{obj.path}/__meta__/chunks/main",
                 content=f"def main_{i}():",
             )
             for i, obj in enumerate(file_objects)
         ]
-        r2 = await db.write(objects=chunk_objects)
+        r2 = await db.write(entries=chunk_objects)
         assert r2.success, r2.error_message
 
         # Add connections: each file → next file (circular)
         conn_objects = [
-            VFSObject(
+            VFSEntry(
                 path=(
                     f"/.vfs{file_objects[i].path}/__meta__/edges/out/calls/{file_objects[(i + 1) % n].path.lstrip('/')}"
                 ),
@@ -1809,7 +1809,7 @@ class TestLargeWriteAndDelete:
             )
             for i in range(n)
         ]
-        r3 = await db.write(objects=conn_objects)
+        r3 = await db.write(entries=conn_objects)
         assert r3.success, r3.error_message
 
         # Permanent delete the root — everything should cascade
@@ -1843,23 +1843,23 @@ class TestLargeWriteAndDelete:
         files_per_dir = 10
 
         # Create N directories, each with files_per_dir files + chunks
-        all_objects: list[VFSObject] = []
+        all_objects: list[VFSEntry] = []
         for d in range(n_dirs):
             for f in range(files_per_dir):
                 all_objects.append(
-                    VFSObject(
+                    VFSEntry(
                         path=f"/batch/d{d:04d}/f{f:03d}.py",
                         content=f"code d{d} f{f}",
                     )
                 )
                 all_objects.append(
-                    VFSObject(
+                    VFSEntry(
                         path=f"/.vfs/batch/d{d:04d}/f{f:03d}.py/__meta__/chunks/main",
                         content=f"def main_{d}_{f}():",
                     )
                 )
 
-        r = await db.write(objects=all_objects)
+        r = await db.write(entries=all_objects)
         assert r.success, r.error_message
 
         # Build candidates for all N directories
@@ -1888,14 +1888,14 @@ class TestLargeWriteAndDelete:
         """
         n = min(scale, 500)
 
-        all_objects: list[VFSObject] = []
+        all_objects: list[VFSEntry] = []
         for i in range(n):
-            all_objects.append(VFSObject(path=f"/flat/f{i:05d}.py", content=f"code {i}"))
+            all_objects.append(VFSEntry(path=f"/flat/f{i:05d}.py", content=f"code {i}"))
             all_objects.append(
-                VFSObject(path=f"/.vfs/flat/f{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():")
+                VFSEntry(path=f"/.vfs/flat/f{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():")
             )
 
-        r = await db.write(objects=all_objects)
+        r = await db.write(entries=all_objects)
         assert r.success, r.error_message
 
         # Delete all files (not the directory) in one batch

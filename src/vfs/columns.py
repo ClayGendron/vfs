@@ -4,7 +4,7 @@ Two vocabularies are at play:
 
 - **Entry fields** — what :class:`vfs.results.Entry` carries. Users express
   projection in this vocabulary (``--output path,score,updated_at``).
-- **Model columns** — actual ``VFSObjectBase`` column names that end up in
+- **Model columns** — actual ``VFSEntry`` column names that end up in
   the ``SELECT``. Backends use this vocabulary to narrow queries.
 """
 

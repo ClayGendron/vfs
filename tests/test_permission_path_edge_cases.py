@@ -11,41 +11,19 @@ any of them on accident should be loud.
 
 from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
-
+from tests.conftest import make_sqlite_db
 from vfs.backends.database import DatabaseFileSystem
 from vfs.client import VFSClientAsync
-from vfs.models import VFSObject
+from vfs.models import VFSEntry
 from vfs.permissions import PermissionMap, read_only, read_write
 
 
-async def _sqlite_engine():
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    return engine
-
-
 async def _wiki_fs() -> DatabaseFileSystem:
-    engine = await _sqlite_engine()
-    return DatabaseFileSystem(
-        engine=engine,
-        permissions=read_only(write=["/synthesis"]),
-    )
+    return await make_sqlite_db(permissions=read_only(write=["/synthesis"]))
 
 
 async def _workspace_fs() -> DatabaseFileSystem:
-    engine = await _sqlite_engine()
-    return DatabaseFileSystem(
-        engine=engine,
-        permissions=read_write(read=["/.frozen"]),
-    )
+    return await make_sqlite_db(permissions=read_write(read=["/.frozen"]))
 
 
 # ======================================================================
@@ -180,8 +158,8 @@ class TestIntegrationDirectDoubleSlash:
     async def test_direct_write_object_double_slash_evades_frozen(self):
         ws = await _workspace_fs()
         try:
-            obj = VFSObject(path="//.frozen/evil.toml", content="owned")
-            r = await ws.write(objects=[obj])
+            obj = VFSEntry(path="//.frozen/evil.toml", content="owned")
+            r = await ws.write(entries=[obj])
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
         finally:
