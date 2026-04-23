@@ -2507,6 +2507,14 @@ class TestWriteErrorPaths:
             r = await db._write_impl(path="/a.py", entries=[obj], session=s)
         assert not r.success
 
+    async def test_write_reserved_metadata_root_rejected(self, db: DatabaseFileSystem):
+        """database.py:1337-1338 — writes to reserved metadata space raise path validation error."""
+        obj = VFSEntry(path="/.vfs", kind="directory")
+        async with db._use_session() as s:
+            r = await db._write_impl(entries=[obj], session=s)
+        assert not r.success
+        assert any("reserved metadata root" in e for e in r.errors)
+
 
 class TestLsErrorPaths:
     async def test_ls_no_path_no_candidates(self, db: DatabaseFileSystem):
@@ -2788,6 +2796,73 @@ class TestInverseEdgeProjectedPaths:
             empty = await db._ls_impl("/.vfs/orphan-target.py/__meta__/edges/in", session=s)
         assert empty.success is True
         assert empty.candidates == []
+
+    async def test_stat_inverse_edge_path_with_unmatched_source_prefix_returns_not_found(
+        self, db: DatabaseFileSystem
+    ):
+        """database.py:516 — _inverse_entry returns None when edge_type matches but no source aligns with prefix."""
+        await self._seed_inverse_edges(db)
+
+        async with db._use_session() as s:
+            missing = await db._stat_impl(
+                "/.vfs/target.py/__meta__/edges/in/imports/nonexistent.py",
+                session=s,
+            )
+        assert missing.success is False
+        assert "Not found" in missing.error_message
+
+    async def test_ls_leaf_inverse_edge_path_returns_no_children(self, db: DatabaseFileSystem):
+        """database.py:553 — _inverse_children skips rows where source_path exactly equals the prefix."""
+        await self._seed_inverse_edges(db)
+
+        async with db._use_session() as s:
+            leaf = await db._ls_impl(
+                "/.vfs/target.py/__meta__/edges/in/imports/single.py",
+                session=s,
+            )
+        assert leaf.success is True
+        assert leaf.candidates == []
+
+    async def test_ls_merges_inverse_children_when_candidate_has_directory_kind(
+        self, db: DatabaseFileSystem
+    ):
+        """database.py:1568-1570 — ls merges inverse-edge children when a candidate is pre-classified as directory."""
+        await self._seed_inverse_edges(db)
+
+        candidates = VFSResult(
+            candidates=[
+                Candidate(
+                    path="/.vfs/target.py/__meta__/edges/in/imports",
+                    kind="directory",
+                ),
+            ],
+        )
+        async with db._use_session() as s:
+            r = await db._ls_impl(candidates=candidates, session=s)
+
+        assert r.success is True
+        assert {c.path for c in r.candidates} == {
+            "/.vfs/target.py/__meta__/edges/in/imports/lib",
+            "/.vfs/target.py/__meta__/edges/in/imports/single.py",
+            "/.vfs/target.py/__meta__/edges/in/imports/src",
+        }
+
+    async def test_tree_inverse_edge_paths_respect_max_depth(self, db: DatabaseFileSystem):
+        await self._seed_inverse_edges(db)
+
+        async with db._use_session() as s:
+            shallow = await db._tree_impl(
+                "/.vfs/target.py/__meta__/edges/in/imports",
+                max_depth=1,
+                session=s,
+            )
+
+        assert shallow.success is True
+        assert set(shallow.paths) == {
+            "/.vfs/target.py/__meta__/edges/in/imports/lib",
+            "/.vfs/target.py/__meta__/edges/in/imports/single.py",
+            "/.vfs/target.py/__meta__/edges/in/imports/src",
+        }
 
 
 class TestMetadataRootHelpers:

@@ -1811,11 +1811,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 if not r.success:
                     errors.append(f"{c.path}: {r.error}")
                     break
-                replacement_content = r.content
-                if replacement_content is None:
-                    errors.append(f"{c.path}: replace returned no content")
-                    break
-                updated_content = replacement_content
+                updated_content = cast("str", r.content)
             else:
                 # c.path is unscoped — _write_impl will scope it
                 to_write.append(self._row(path=c.path, content=updated_content))

@@ -438,6 +438,22 @@ class TestBaseVsMinted:
         assert entry.content_hash is not None
 
 
+class TestClone:
+    def test_base_clone_returns_detached_copy(self):
+        src = VFSEntry(path="/a.py", content="hello")
+        dup = src.clone()
+        assert dup.path == src.path
+        assert dup.content == src.content
+        assert dup is not src
+
+    def test_minted_clone_wires_fresh_instance_state(self):
+        table_class = _build_entry_table_class(table_name="vfs_clone_probe")
+        src = table_class(path="/a.py", content="hello")
+        dup = src.clone()
+        assert dup is not src
+        assert dup.__dict__["_sa_instance_state"] is not src.__dict__["_sa_instance_state"]
+
+
 class TestContentMutation:
     def test_update_content_recomputes_lexical_tokens(self):
         obj = VFSEntry(path="/a.py", content="hello")

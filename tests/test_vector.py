@@ -237,6 +237,30 @@ class TestVectorTypeResult:
         with pytest.raises(ValueError, match="expected iterable pgvector value"):
             vt.process_result_value("not-a-list", _FakeDialect("postgresql"))  # type: ignore[arg-type]
 
+    def test_postgres_native_unwraps_tolist_objects(self):
+        class _Arrayish:
+            def tolist(self) -> list[float]:
+                return [1.0, 2.0, 3.0]
+
+        vt = VectorType(dimension=3, postgres_native=True)
+        result = vt.process_result_value(_Arrayish(), _FakeDialect("postgresql"))  # type: ignore[arg-type]
+        assert isinstance(result, Vector)
+        assert list(result) == [1.0, 2.0, 3.0]
+
+    def test_postgres_native_rejects_non_iterable_object(self):
+        class _NotIterable:
+            pass
+
+        vt = VectorType(dimension=3, postgres_native=True)
+        with pytest.raises(ValueError, match="expected iterable pgvector value"):
+            vt.process_result_value(_NotIterable(), _FakeDialect("postgresql"))  # type: ignore[arg-type]
+
+    def test_pgvector_sqlalchemy_type_returns_pgvector_column(self):
+        from pgvector.sqlalchemy import Vector as PGVector
+
+        vt = VectorType(dimension=3, postgres_native=True)
+        assert isinstance(vt.pgvector_sqlalchemy_type(), PGVector)
+
     def test_json_result_requires_text(self):
         vt = VectorType()
         with pytest.raises(ValueError, match="expected JSON text"):

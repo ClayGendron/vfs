@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 from vfs.query.ast import (
     CaseMode,
@@ -704,9 +704,7 @@ def _split_flags(
             if _is_flag(value, spec):
                 raise QuerySyntaxError(f"Flag {current} requires a value")
             if is_repeatable:
-                existing = options.get(current, ())
-                if not isinstance(existing, tuple):
-                    existing = ()
+                existing = cast("tuple[str, ...]", options.get(current, ()))
                 options[current] = (*existing, value)
             else:
                 options[current] = value

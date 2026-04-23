@@ -29,7 +29,6 @@ from vfs.bm25 import tokenize as lexical_tokenize
 from vfs.paths import (
     decompose_edge,
     extract_extension,
-    is_meta_root_path,
     normalize_path,
     parse_kind,
     split_path,
@@ -518,19 +517,8 @@ class VFSEntry(SQLModel):
         # Validate and normalize path
         valid, err = validate_path(raw_path)
         if not valid:
-            allows_long_metadata_path = (
-                err == "Path too long (max 4096 characters)"
-                and (
-                    inferred_kind in {"chunk", "version", "edge", "api"}
-                    or (inferred_kind == "directory" and is_meta_root_path(path))
-                )
-                and len(path) <= 8192
-            )
-            if allows_long_metadata_path:
-                valid = True
-            else:
-                msg = f"Invalid path {raw_path!r}: {err}"
-                raise ValueError(msg)
+            msg = f"Invalid path {raw_path!r}: {err}"
+            raise ValueError(msg)
         data["path"] = path
 
         # Derive name and parent_path from path

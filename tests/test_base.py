@@ -1159,3 +1159,9 @@ class TestNamespaceRoutingEdgeCases:
         fs._storage = False
         result = await fs.glob("*.py")
         assert result == VFSResult(function="glob", success=True, candidates=[])
+
+    async def test_route_fanout_returns_empty_result_when_storage_and_mounts_are_absent(self):
+        fs = _FullRoutingFS()
+        fs._storage = False
+        result = await fs.pagerank()
+        assert result == VFSResult(function="pagerank", success=True, candidates=[])
