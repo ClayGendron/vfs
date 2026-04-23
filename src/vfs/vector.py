@@ -216,6 +216,9 @@ class VectorType(TypeDecorator[Vector]):
                 raw_items = cast("list[object] | tuple[object, ...]", value)
             elif hasattr(value, "tolist"):
                 raw_items = cast("list[object]", cast("Any", value).tolist())
+            elif isinstance(value, (str, bytes, bytearray)):
+                msg = f"Vector read: expected iterable pgvector value, got {type(value).__name__}"
+                raise ValueError(msg)
             else:
                 try:
                     raw_items = list(cast("Any", value))
