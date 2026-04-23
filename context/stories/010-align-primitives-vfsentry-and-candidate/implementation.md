@@ -4,27 +4,28 @@ Tracks the three-commit split of story 010 (`spec.md`) against the
 work landed. One section per commit; each section records what
 shipped, what's different from the spec, and what still needs doing.
 
-- **Status:** C1 landed · C2 pending · C3 pending
-- **Branch:** `main` (local, uncommitted)
+- **Status:** C1 landed · C2 landed · C3 landed — story complete
+- **Branch:** `main`
+- **Commits:** `22a5b80` (C1) · `1bf87a8` (C2) · `b384134` (C3)
 - **Spec:** `spec.md` in this folder
 - **Tests:** 2360 passing · 0 failing · 108 skipped (pre-existing `--postgres`/`--mssql` gated tests)
 - **Lint/type:** `uvx ruff check src/ tests/` and `uvx ty check src/` pass
 
 ## Commit plan
 
-Three commits inside one PR, each green at the boundary:
+Three commits, each green at the boundary:
 
 1. **C1** — Storage-model rename (`VFSObject` → `VFSEntry`, per-mount
    `table=True` minting, `model=` out, `table_name=` in,
    `NativeEmbeddingConfig` added, `postgres_native_vfs_object_model`
-   deleted). **Done.**
+   deleted). **Landed — `22a5b80`.**
 2. **C2** — Result-row rename (`Entry` → `Candidate`, `ENTRY_FIELDS`
    → `CANDIDATE_FIELDS`, `VFSResult.entries` → `.candidates`, every
-   backend's result construction and every test assertion). **Pending.**
-3. **C3** — Docs sweep (`docs/`, `README.md`,
-   `Grover_The_Agentic_File_System.md`, `examples/`), memory files at
+   backend's result construction and every test assertion).
+   **Landed — `1bf87a8`.**
+3. **C3** — Docs sweep (`docs/`, memory files at
    `~/.claude/.../grover/memory/`, `CHANGELOG.md` `### Breaking`
-   entry, and the migration note. **Pending.**
+   entry, and the migration note). **Landed — `b384134`.**
 
 ## Scope changes against the spec
 
@@ -270,69 +271,184 @@ rename since no module-level `table=True` class exists.
 Criteria #8, #14 come in C2 (`Candidate` import / `.candidates`
 field); #20 (CHANGELOG) and #22 (MEMORY.md) come in C3.
 
-## C2 — Result-row rename · **PENDING**
+## C2 — Result-row rename · **DONE**
 
-Expected file set:
-- `src/vfs/results.py` — `Entry` class → `Candidate`; `ENTRY_FIELDS`
-  → `CANDIDATE_FIELDS`; `VFSResult.entries` → `.candidates`; all
-  `.entries` property references in `sort`, `top`, `filter`,
-  `kinds`, `__and__`, `__or__`, `__sub__`, `_merge_entry` →
-  `_merge_candidate`, `add_prefix`, `strip_user_scope`,
-  `to_json`, `to_str`.
-- `src/vfs/columns.py` — `ENTRY_FIELD_TO_MODEL_COLUMNS` →
-  `CANDIDATE_FIELD_TO_MODEL_COLUMNS`; `ENTRY_BACKED_MODEL_COLUMNS`
-  → `CANDIDATE_BACKED_MODEL_COLUMNS`; `entry_field_columns` →
-  `candidate_field_columns`; docstring vocabulary sweep.
-- `src/vfs/models.py` — `VFSEntry.to_entry(...)` method returning an
-  `Entry` row → rename to `VFSEntry.to_candidate(...)` returning a
-  `Candidate`.
-- `src/vfs/base.py`, `src/vfs/backends/database.py`,
-  `src/vfs/backends/postgres.py`, `src/vfs/backends/mssql.py`,
-  `src/vfs/graph/rustworkx.py`, `src/vfs/query/executor.py`,
-  `src/vfs/query/parser.py`, `src/vfs/query/render.py`,
-  `src/vfs/versioning.py`, `src/vfs/replace.py` — every
-  `result.entries`, `VFSResult(entries=...)`, `.to_entry()`,
-  `list[Entry]`, `Entry(...)` construction, `ENTRY_FIELDS` import.
-- Every test file — `result.entries` assertions → `.candidates`,
-  `entries=[...]` kwargs in `VFSResult(...)` construction → either
-  `candidates=[...]` or use the positional / field-name the fixture
-  expects, `Entry(...)` row construction → `Candidate(...)`.
-- Projection validator messages — "Entry field" → "Candidate field".
+### What landed
 
-Grep gate targets for C2 sign-off:
-- `grep -rn '\bEntry\b' src/ tests/` returns only `VFSEntry`
-  references (Entry-as-row is gone).
-- `grep -rn 'ENTRY_FIELDS\|ENTRY_BACKED_MODEL_COLUMNS' src/ tests/`
-  returns zero.
-- `grep -rn '\.entries\b' src/ tests/` returns zero in
-  `VFSResult`-context (pytest method names like `test_entries_*`
-  are allowed but shouldn't exist — rename them too).
+#### `src/vfs/results.py`
 
-## C3 — Docs + memory + CHANGELOG · **PENDING**
+- `class Entry(BaseModel)` → `class Candidate(BaseModel)`. Same
+  frozen-model config, same fields (`path`, `kind`, `lines`,
+  `content`, `size_bytes`, `score`, `in_degree`, `out_degree`,
+  `updated_at`, `name` property). Class docstring now leads with
+  "one observation of a `VFSEntry`" so readers see the storage/view
+  split on the very first line.
+- `ENTRY_FIELDS` → `CANDIDATE_FIELDS`. `VFSResult.entries: list[Entry]`
+  → `candidates: list[Candidate]`. All chained enrichment methods
+  (`sort`, `top`, `filter`, `kinds`, `__and__`, `__or__`, `__sub__`,
+  `add_prefix`, `strip_user_scope`) read and write the new field.
+- `_merge_entry` → `_merge_candidate`. `_with_entries` →
+  `_with_candidates`. `iter_entries` → `iter_candidates`. The
+  `_render_*` helpers (`_render_grep`, `_render_tree`, `_render_read`,
+  `_render_block`, `_render_path_list`, `_render_action`) all iterate
+  `result.candidates`.
+- Projection-note wording: `"NOTE: <fields> not populated for any
+  entries."` → `"... for any candidates."`.
 
-- `CHANGELOG.md` — add `### Breaking` entry under `Unreleased`
-  linking to `spec.md`, enumerating the three renames plus the
-  storage-shape constructor change and the result envelope field
-  rename.
-- Migration note — short `migration.md` or appended section in
-  `implementation.md` describing the one-shot SQL rename users run if
-  they want to preserve an existing `vfs_objects` table:
-  ```sql
-  ALTER TABLE vfs_objects RENAME TO vfs_entries;
-  ALTER INDEX ix_vfs_objects_ext_kind RENAME TO ix_vfs_entries_ext_kind;
-  -- ... any pgvector / tsvector / trigram indexes named ix_vfs_objects_*
-  ```
-- `docs/architecture.md`, `docs/index.md`, `README.md`,
-  `Grover_The_Agentic_File_System.md`, any example notebooks under
-  `examples/` — replace `VFSObject`, `vfs_objects`, `model=`, `Entry`
-  (as result row), `entries=` (as write kwarg docs), `result.entries`
-  (as docs snippet).
-- `context/stories/*/` cross-references — check story 009's
-  references to `Entry.capabilities` now point at `VFSEntry`.
-- `/Users/claygendron/.claude/projects/-Users-claygendron-Git-Repos-grover/memory/`
-  — update `project_everything_is_a_file.md` and
-  `project_architecture_v2.md` to use `vfs_entries` / `VFSEntry` /
-  `Candidate` vocabulary. `MEMORY.md` index line-items unchanged.
+#### `src/vfs/columns.py`
+
+- `ENTRY_FIELD_TO_MODEL_COLUMNS` → `CANDIDATE_FIELD_TO_MODEL_COLUMNS`.
+- `ENTRY_BACKED_MODEL_COLUMNS` → `CANDIDATE_BACKED_MODEL_COLUMNS`.
+- `entry_field_columns()` → `candidate_field_columns()`.
+- Docstrings switched from "Entry fields" / "entry-level" to
+  "Candidate fields" / "candidate-level".
+
+#### `src/vfs/models.py`
+
+- `VFSEntry.to_entry(...)` → `VFSEntry.to_candidate(...)` returning
+  `Candidate`. Used by `_write_impl` / `_delete_impl` / `_move_impl`
+  in `backends/database.py` whenever a backend projects a stored row
+  into a result.
+
+#### `src/vfs/backends/database.py`
+
+- `_row_to_entry(row, cols) -> Entry` → `_row_to_candidate(row, cols)
+  -> Candidate`. Every call site updated (read/ls/glob/grep/search/
+  tree paths).
+- Every `VFSResult(function=..., entries=out, ...)` constructor call
+  reads `candidates=out` now — dozens of sites across write / delete /
+  mkdir / move / copy / read / ls / glob / grep / lexical_search /
+  vector_search / tree.
+- Storage kwargs **stay** named `entries=`: `_write_impl(entries=...)`,
+  `_mkedge_impl(entries=...)`, and the calls into them.
+- Error-message prose for column validation switched from "Entry
+  field" to "Candidate field".
+
+#### `src/vfs/backends/postgres.py`, `src/vfs/backends/mssql.py`
+
+- Import `Candidate` in place of `Entry`. Every `Entry(...)` row
+  constructor (native `vector_search`, MSSQL `CONTAINSTABLE` /
+  `FREETEXTTABLE` ranking, regex/glob pushdowns) now builds
+  `Candidate(...)`.
+- `VFSResult(..., candidates=matched, ...)` everywhere; the envelope
+  wrapping `_collect_line_matches` / `_hydrate_from_candidates` kept
+  its contract, only the row-list name changed.
+
+#### `src/vfs/base.py`
+
+- Public API and router plumbing: `_group_entries_by_terminal` (the
+  result-row rebaser) → `_group_candidates_by_terminal`. The
+  storage-batch rebaser `_group_entries_by_terminal` that takes a
+  `Sequence[VFSEntry]` kept its name — two different helpers with
+  two different callers.
+- `_route_read_batch` / `_route_delete_batch` / `_route_glob` /
+  `_route_grep` / `_route_meeting_subgraph` all construct
+  `VFSResult(candidates=...)`; every `result.entries` assignment /
+  read / slice (`result.entries[:max_count]`, `result.entries[0]`,
+  `for c in result.entries:` …) rewritten.
+- The `glob` / `grep` `_with_entries` call sites in the mount-merge
+  path became `_with_candidates`.
+
+#### `src/vfs/graph/rustworkx.py`, `src/vfs/query/executor.py`, `src/vfs/query/parser.py`, `src/vfs/query/ast.py`
+
+- Rustworkx returns `list[Candidate]` for its five traversals
+  (`predecessors`, `successors`, `ancestors`, `descendants`,
+  `neighborhood`) plus `meeting_subgraph` / `min_meeting_subgraph`.
+- Query executor imports `CANDIDATE_FIELDS` /
+  `CANDIDATE_FIELD_TO_MODEL_COLUMNS`; result assembly reads
+  `.candidates`. Parser and AST docstrings use the new vocabulary.
+
+#### Tests
+
+- Every import that pulled `Entry` from `vfs.results` now pulls
+  `Candidate`. `tests/conftest.py` relocated the shared `entry(...)`
+  fixture to return `Candidate` — the fixture name stayed as `entry`
+  to keep the diff small, but the return type is `Candidate` and
+  call sites write `_entry(...)` (aliased import) for readability.
+- `_RoutingFS` mock in `tests/test_routing.py` rewritten: `_read_impl`
+  / `_delete_impl` / `_glob_impl` take `candidates=` (result-row
+  kwarg); `_write_impl` still takes `entries=` (storage kwarg) and
+  forwards `entries=entries` to `write_mock`. The subagent-era fix
+  corrects an earlier over-rename that had flipped that forward to
+  `candidates=entries`.
+- `tests/test_results.py`, `tests/test_cli_hydration.py`,
+  `tests/test_columns.py` updated hard-coded JSON/render string
+  assertions: `"entries"` key in `to_json()` output becomes
+  `"candidates"`; the to_str NOTE ends `"... for any candidates."`.
+
+### Process note
+
+The rename was driven by `scripts/c2_rename.py` — a one-shot migration
+that applied ten word-boundary identifier rewrites plus a scoped
+`entries=` → `candidates=` sweep that skipped storage-write signatures.
+Two boundary bugs surfaced during the run:
+
+1. First version used `[\s\S]*?` for the "inside this method's arg
+   list" matcher, which spanned across unrelated calls and
+   over-protected `VFSResult(entries=[...])` calls that happened to
+   sit after a `write(...)` on an earlier line. Replaced with
+   `[^()]*?` so protection stays inside the matched open-paren.
+2. After fix, the regex still matched `_write_impl(` in a test mock
+   and incidentally protected the body's forwarded `entries=entries`
+   to `write_mock(...)`. Missed because `_write_impl`'s signature
+   matcher stopped at the close-paren of the signature but the body's
+   `entries=entries` happens to be reachable from the same
+   `[^()]*?entries=` window via a later iteration. The subagent
+   sweep corrected the five residual assertion and mock mismatches
+   by hand. Script was deleted after the run.
+
+### Acceptance criteria status for C2
+
+| # | Criterion | Status |
+| - | - | - |
+| 8 | `from vfs.results import Candidate` succeeds; old `Entry` import fails | ✓ |
+| 14 | `VFSResult().candidates` exists; `.entries` raises `AttributeError` | ✓ |
+| 15 | `result.to_json()` emits `"candidates"` key; `"entries"` absent | ✓ |
+| 16 | Every non-empty result carries `Candidate` instances | ✓ |
+| 18 | Tests green, no new skips | ✓ (2360 passing, 108 skipped) |
+| 19 | `uv run pytest`, `uvx ruff check`, `uvx ty check` all pass | ✓ |
+
+## C3 — Docs + memory + CHANGELOG · **DONE**
+
+### What landed
+
+- **`CHANGELOG.md`** — new `## [Unreleased]` `### Breaking` block
+  with six bullets (storage class rename, per-mount table,
+  `model=` removal, `table_name=` + `native_embedding=` kwargs,
+  result-row rename, envelope-field rename). The story-012
+  MSSQL-FREETEXTTABLE bullet that already sat under Unreleased was
+  touched up to read `Candidate.score` instead of `Entry.score`
+  since both ship in the same cut.
+- **Migration note** — appended to this file below. Documents the
+  one-shot SQL (`ALTER TABLE vfs_objects RENAME TO vfs_entries`
+  plus the `ix_vfs_objects_ext_kind` index rename) and the opt-out
+  path (pass `table_name="vfs_objects"` to the filesystem
+  constructor). No migration script, per
+  `feedback_no_migration_scripts.md`.
+- **Docs sweep** — `docs/architecture.md`, `docs/index.md`,
+  `docs/api.md`, `docs/fs_architecture.md`, `docs/internals/fs.md`
+  all scrubbed of `VFSObject` / `vfs_objects` / result-row `Entry`
+  / `result.entries` / `model=`. Postgres native-vector example now
+  shows the `NativeEmbeddingConfig` constructor path. The
+  `docs/plans/` archive was intentionally left alone — historical.
+  `README.md` had no old-name hits; `Grover_The_Agentic_File_System.md`
+  is pre-rename narrative unrelated to the storage/result surface.
+- **Memory** — `~/.claude/.../grover/memory/project_everything_is_a_file.md`
+  and `project_architecture_v2.md` updated to the
+  `vfs_entries` / `VFSEntry` / `Candidate` vocabulary.
+  `MEMORY.md` index titles were already accurate post-rename.
+
+### Grep-gate output (story-complete)
+
+```
+grep -Rn 'VFSObject'              src/ tests/ docs/ README.md  → 0 lines
+grep -Rn 'vfs_objects'            src/ tests/ docs/ README.md  → 0 lines
+grep -Rn 'postgres_native_vfs_object_model' src/ tests/ docs/  → 0 lines
+grep -Rn 'VFSResult\.entries\b'   src/ tests/ docs/            → 0 lines
+```
+
+Story folders (`context/stories/`) and the `docs/plans/` archive are
+expected to retain the old names and are excluded from the gates.
 
 ## Open questions that came up during C1
 
