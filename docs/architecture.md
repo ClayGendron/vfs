@@ -54,7 +54,14 @@ The portable baseline still defines the semantics. Backend-native implementation
 
 For lexical search, the native backends share the same public `lexical_search()` envelope but not the same scoring primitive.
 
-`MSSQLFileSystem` gets BM25-style server ranks directly from `CONTAINSTABLE`.
+`MSSQLFileSystem` runs a single `FREETEXTTABLE` query against the `vfs_ftcat`
+full-text index on `content`. `FREETEXTTABLE` handles tokenization, stemming,
+stoplist application, and thesaurus expansion server-side and ranks with
+SQL Server's BM25 implementation (OKAPI `k1=1.2, b=0.75, k3=8.0`). The
+ranking query projects `path`, `kind`, `content`, and `ct.[RANK]` as
+`score` in one round-trip and orders by `ct.[RANK] DESC, o.id` so rank
+collisions resolve to a stable, test-friendly order.
+
 `PostgresFileSystem` runs one native PostgreSQL full-text query against a stored
 `search_tsv` column and matching partial `GIN` index:
 
@@ -63,7 +70,10 @@ For lexical search, the native backends share the same public `lexical_search()`
 - the query projects `path`, `kind`, `content`, and `score` in one round-trip
 
 The final `Entry.score` values returned from Postgres lexical search are native
-`ts_rank_cd` cover-density scores in `[0, 1)`, not BM25 values.
+`ts_rank_cd` cover-density scores in `[0, 1)`. MSSQL `Entry.score` values are
+`FREETEXTTABLE` ranks — BM25-derived, integer-valued on the wire, returned as
+`float`, unbounded on the positive side. The two scales are architecturally
+different rankers and are not comparable across backends.
 
 That Postgres path assumes the database already exposes a stored generated `search_tsv tsvector` column plus a matching partial `GIN` index:
 

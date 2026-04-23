@@ -4,6 +4,13 @@ All notable changes to vfs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- **`MSSQLFileSystem._lexical_search_impl`** (story 012) — rewritten as a single `FREETEXTTABLE` query that projects `path`, `kind`, `content`, and `ct.[RANK] AS score` in one round-trip, ordered by `ct.[RANK] DESC, o.id` for deterministic ranking across calls. Tokenization, stemming, stoplist handling, and thesaurus expansion now run server-side; the Python `tokenize_query` + OR-of-literal-terms CONTAINS expression is gone. `_grep_impl` still uses `CONTAINSTABLE` and `_quote_contains_term` for its literal-AND pre-filter and is unchanged.
+- **MSSQL `Entry.score` scale change** — lexical-search scores are now `FREETEXTTABLE` BM25-derived ranks (unbounded positive, integer on the wire, returned as `float`), not the previous `CONTAINSTABLE` rank formula. Still `float`, different magnitude, still not comparable to Postgres `ts_rank_cd`. Callers thresholding on the old value must re-tune.
+
 ## [0.0.22] — 2026-04-22
 
 ### Added

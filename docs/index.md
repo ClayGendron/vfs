@@ -96,7 +96,7 @@ assert parts.edge_type == "references"
 
 - `DatabaseFileSystem` is the portable SQL baseline. It stores files, directories, chunks, versions, and edges in one `vfs_objects` table.
 - `PostgresFileSystem` keeps the same public API but pushes grep, glob, lexical search, and native vector search into PostgreSQL when the schema supports it. Its lexical path is native PostgreSQL FTS: a stored `search_tsv` column plus partial `GIN` index handle recall, and `ts_rank_cd(search_tsv, q, 1|32)` handles ranking in one SQL query. Its pattern path uses `text_pattern_ops` and `pg_trgm` indexes for sound narrowing, then applies the authoritative final glob/grep match in Python so valid patterns keep the same semantics.
-- `MSSQLFileSystem` provides the same API for SQL Server and Azure SQL with native full-text and regex pushdown.
+- `MSSQLFileSystem` provides the same API for SQL Server and Azure SQL with native full-text and regex pushdown. Its lexical path is a single `FREETEXTTABLE` query against the `vfs_ftcat` full-text index; tokenization, stemming, stoplists, and thesaurus expansion all run server-side, and ranking uses SQL Server's BM25 implementation.
 
 All three work behind the same client and return the same `VFSResult` envelope.
 
@@ -115,7 +115,7 @@ CREATE INDEX ix_vfs_objects_search_tsv_gin
       AND kind != 'version';
 ```
 
-This is intentionally different from SQL Server: MSSQL returns server-side BM25-style ranks, while Postgres returns native `ts_rank_cd` cover-density scores bounded to `[0, 1)`.
+This is intentionally different from SQL Server: MSSQL `FREETEXTTABLE` returns BM25-derived ranks (unbounded positive, integer on the wire, returned as `float`), while Postgres returns native `ts_rank_cd` cover-density scores bounded to `[0, 1)`. The two scales are not comparable across backends.
 
 For Postgres `glob()` / `grep()`, provision the pattern-search artifacts too:
 
