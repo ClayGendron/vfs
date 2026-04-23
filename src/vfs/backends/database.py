@@ -564,8 +564,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 child_kinds[child_path] = child_kind
 
         return [
-            Candidate(path=child, kind=kind if "kind" in cols else None)
-            for child, kind in sorted(child_kinds.items())
+            Candidate(path=child, kind=kind if "kind" in cols else None) for child, kind in sorted(child_kinds.items())
         ]
 
     def _parameter_budget(self, session: AsyncSession) -> int:

@@ -413,6 +413,7 @@ class TestEmbedding:
         obj = VFSEntry(path="/a.py", embedding=vec)
         assert obj.embedding is vec
 
+
 # =========================================================================
 # VFSEntry base vs minted table class
 # =========================================================================
