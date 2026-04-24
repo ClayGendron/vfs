@@ -147,7 +147,7 @@ class VFSEntry(SQLModel):
     # --- Ownership ----------------------------------------------------------
 
     owner_id: str | None = Field(default=None, max_length=255, index=True)
-    original_path: str | None = Field(default=None, max_length=4096)
+    original_path: str | None = Field(default=None, max_length=1024)
 
     # --- Timestamps ---------------------------------------------------------
 

@@ -157,14 +157,14 @@ class TestValidatePath:
         assert not ok
 
     def test_path_too_long(self):
-        ok, _ = validate_path("/" + "a" * 4096)
+        ok, _ = validate_path("/" + "a" * 1024)
         assert not ok
 
     def test_path_at_limit(self):
-        # 4096 total: "/" + 15 segments of "a" * 255 joined by "/"
-        # Use a path that's long but has valid segment lengths
-        path = "/" + "/".join(["a" * 255] * 15)
-        assert len(path) <= 4096
+        # 1024 total: "/" + 4 segments of "a" * 255 joined by "/"
+        # = 1 + 1020 + 3 = 1024
+        path = "/" + "/".join(["a" * 255] * 4)
+        assert len(path) <= 1024
         ok, _ = validate_path(path)
         assert ok
 

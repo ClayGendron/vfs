@@ -80,7 +80,7 @@ async def _provision_mssql_fulltext(eng, *, table: str = "vfs_entries") -> None:
 
     Full-text key index: we use the table's primary key (on ``id``, a
     36-char UUID string = 72 bytes) rather than the unique index on
-    ``path`` (NVARCHAR(4096) = 8192 bytes declared max). SQL Server's
+    ``path`` (NVARCHAR(1024) = 2048 bytes declared max). SQL Server's
     Full-Text Search rejects any key index whose column's declared max
     size exceeds 900 bytes, and that limit is on the schema definition,
     not the actual row data. The ``id`` PK satisfies all five FTS key

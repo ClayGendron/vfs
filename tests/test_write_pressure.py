@@ -100,8 +100,8 @@ class TestPathEdgeCases:
     """Adversarial path strings."""
 
     async def test_extremely_long_path_rejected(self, db: DatabaseFileSystem):
-        """Paths > 4096 chars should be rejected by validate_path."""
-        long_path = "/" + "a" * 4096 + ".txt"
+        """Paths > 1024 chars should be rejected by validate_path."""
+        long_path = "/" + "a" * 1024 + ".txt"
         with pytest.raises((ValueError, Exception)):
             VFSEntry(path=long_path, content="x")
 

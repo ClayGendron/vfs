@@ -194,8 +194,8 @@ def validate_path(path: str) -> tuple[bool, str]:
         if (0x01 <= code <= 0x1F) or code == 0x7F or (0x80 <= code <= 0x9F):
             return False, f"Path contains control character: U+{code:04X}"
 
-    if len(path) > 4096:
-        return False, "Path too long (max 4096 characters)"
+    if len(path) > 1024:
+        return False, "Path too long (max 1024 characters)"
 
     normalized = normalize_path(path)
     if normalized == "/":
