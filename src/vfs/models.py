@@ -100,10 +100,10 @@ class VFSEntry(SQLModel):
         max_length=36,
         primary_key=True,
     )
-    path: str = Field(max_length=4096, unique=True, index=True)
-    external_id: str | None = Field(default=None, max_length=4096)
+    path: str = Field(max_length=1024, unique=True, index=True)
+    external_id: str | None = Field(default=None, max_length=1024)
     name: str = Field(default="", max_length=255)
-    parent_path: str = Field(default="", max_length=4096, index=True)
+    parent_path: str = Field(default="", max_length=1024, index=True)
     kind: str = Field(default="", max_length=32, index=True)
 
     # --- Content ------------------------------------------------------------
@@ -134,8 +134,8 @@ class VFSEntry(SQLModel):
 
     # --- Edge-specific ------------------------------------------------------
 
-    source_path: str | None = Field(default=None, max_length=4096, index=True)
-    target_path: str | None = Field(default=None, max_length=4096, index=True)
+    source_path: str | None = Field(default=None, max_length=1024, index=True)
+    target_path: str | None = Field(default=None, max_length=1024, index=True)
     edge_type: str | None = Field(default=None, max_length=255)
     edge_weight: float | None = Field(default=None)
     edge_distance: float | None = Field(default=None)
