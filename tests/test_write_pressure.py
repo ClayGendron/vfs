@@ -106,10 +106,10 @@ class TestPathEdgeCases:
             VFSEntry(path=long_path, content="x")
 
     async def test_path_at_exact_limit(self, db: DatabaseFileSystem):
-        """A long path should be accepted if its deepest sidecar still fits in 4096."""
+        """A long path should be accepted if its deepest sidecar still fits in 1024."""
         # Backend auto-creates /.vfs/<path>/__meta__/versions on write.
         sidecar_overhead = len("/.vfs") + len("/__meta__/versions")
-        target = 4096 - sidecar_overhead - len("/.txt")
+        target = 1024 - sidecar_overhead - len("/.txt")
         prefix = "/a" * (target // 2)
         path = prefix[: target - 4] + ".txt"
         assert len(path) <= target
