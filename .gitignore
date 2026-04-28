@@ -222,3 +222,6 @@ tests_old/fixtures/repos/
 
 # Test Notebooks
 *test.ipynb
+
+# Node modules (vfs-app and any other JS subprojects)
+node_modules/
