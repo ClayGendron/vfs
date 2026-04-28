@@ -1,0 +1,164 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@import "@fontsource-variable/saira";
+@import "@fontsource-variable/space-grotesk";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/jetbrains-mono";
+
+@import "./styles/brand.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ─────────────────────────────────────────────────────────────
+   Pluto — grayscale with one cobalt signal.
+   Paper mode (light) is default.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  /* brand surfaces */
+  --bg:          #f1f1ee; /* frost — paper */
+  --fg:          #0b0b0d; /* night — ink */
+  --card:        #e4e4df; /* plain — surface */
+  --card-strong: #0f1012; /* inverse slab (on-wire samples) */
+
+  /* signal + states */
+  --accent:      #2f58cf; /* cobalt */
+  --pressed:     #183988; /* indigo */
+  --ok:          #3d7d3f; /* charon */
+
+  /* ink alphas for text / rules */
+  --muted:       rgba(11, 11, 13, 0.70);
+  --quiet:       rgba(11, 11, 13, 0.46);
+  --rule:        rgba(11, 11, 13, 0.14);
+
+  /* type stack */
+  --font-brand:   "Saira Variable", "Space Grotesk Variable", system-ui, sans-serif;
+  --font-display: "Space Grotesk Variable", system-ui, sans-serif;
+  --font-body:    "Geist Variable", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono Variable", ui-monospace, "Menlo", monospace;
+
+  /* shadcn token aliases so primitives inherit the brand */
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card-foreground: var(--fg);
+  --popover: var(--card);
+  --popover-foreground: var(--fg);
+  --primary: var(--accent);
+  --primary-foreground: var(--bg);
+  --secondary: var(--card);
+  --secondary-foreground: var(--fg);
+  --muted-foreground: var(--quiet);
+  --accent-foreground: var(--bg);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: var(--rule);
+  --input:  var(--rule);
+  --ring:   var(--accent);
+  --radius: 0.125rem; /* pluto is square-ish — 2px corners */
+}
+
+.dark {
+  --bg:          #0f1012; /* night — paper in ink mode */
+  --fg:          #e7e7e8; /* ice */
+  --card:        #18191c; /* shadow */
+  --card-strong: #050507;
+
+  --accent:      #4d7cf3; /* cobalt, shifted lighter for ink pool */
+  --pressed:     #2c54be; /* azurite */
+  --ok:          #86c17a;
+
+  --muted:       rgba(231, 231, 232, 0.70);
+  --quiet:       rgba(231, 231, 232, 0.46);
+  --rule:        rgba(231, 231, 232, 0.14);
+}
+
+@theme inline {
+  /* font tokens for Tailwind utilities: font-sans / font-mono / font-display / font-brand */
+  --font-sans:    var(--font-body);
+  --font-body:    var(--font-body);
+  --font-display: var(--font-display);
+  --font-brand:   var(--font-brand);
+  --font-mono:    var(--font-mono);
+
+  /* shadcn color bindings */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--card);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* brand-specific utilities (bg-paper, text-ink, etc. — handy shorthands) */
+  --color-paper: var(--bg);
+  --color-ink: var(--fg);
+  --color-signal: var(--accent);
+  --color-rule: var(--rule);
+  --color-fg-muted: var(--muted);
+  --color-fg-quiet: var(--quiet);
+  --color-card-strong: var(--card-strong);
+
+  --radius-sm: calc(var(--radius) * 1);
+  --radius-md: calc(var(--radius) * 2);
+  --radius-lg: calc(var(--radius) * 3);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    font-family: var(--font-body);
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "cv11";
+    overflow-x: hidden;
+  }
+
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; cursor: pointer; }
+  img, svg { display: block; max-width: 100%; }
+
+  /* selection — cobalt halo */
+  ::selection {
+    background: color-mix(in oklab, var(--accent) 70%, transparent);
+    color: var(--bg);
+  }
+}
+
+/* ─── brand utility classes (match vfs-brand) ────────────────── */
+.mono    { font-family: var(--font-mono); }
+.display { font-family: var(--font-display); }
+.brand   { font-family: var(--font-brand); }
+.mute    { color: var(--muted); }
+.quiet   { color: var(--quiet); }
+.signal  { color: var(--accent); }
