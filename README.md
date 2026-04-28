@@ -1,4 +1,4 @@
-# vfs: The Virtual File System for Agents
+# VFS: One Namespace for Enterprise-Scale Context Engineering
 
 <p align="center">
   <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/v/vfs-py" alt="PyPI version"></a>
@@ -7,18 +7,18 @@
   <a href="https://github.com/ClayGendron/grover/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/grover" alt="License"></a>
   <a href="https://codecov.io/gh/ClayGendron/grover"><img src="https://codecov.io/gh/ClayGendron/grover/branch/main/graph/badge.svg" alt="Coverage"></a>
 </p>
+Mount data, tools, and retrieval systems behind one virtual file system so agents can search, traverse, and act across enterprise context. VFS is an all-in-one tool the defines data engineering for AI agents.
+
 
 ```bash
 pip install vfs-py
 ```
 
-For PostgreSQL-native full-text search and pgvector support, install the Postgres extra:
+! Warning about Alpha state. Should only be used for research purposes
 
-```bash
-pip install 'vfs-py[postgres]'
-```
+## How to Get Started
 
-`vfs` is an in-process file system that mounts data from multiple sources to enable agentic search and operations through a Unix-like interface.
+`vfs` allows you to compose a single virtual file system from multiple sources. 
 
 ```python
 from vfs import VFSClient, LocalFileSystem, DatabaseFileSystem
