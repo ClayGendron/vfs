@@ -7,18 +7,18 @@
   <a href="https://github.com/ClayGendron/grover/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/grover" alt="License"></a>
   <a href="https://codecov.io/gh/ClayGendron/grover"><img src="https://codecov.io/gh/ClayGendron/grover/branch/main/graph/badge.svg" alt="Coverage"></a>
 </p>
-Mount data, tools, and retrieval systems behind one virtual file system so agents can search, traverse, and act across enterprise context. VFS is an all-in-one tool the defines data engineering for AI agents.
 
+Mount data, tools, and retrieval systems behind one virtual file system so agents can search, traverse, and act across enterprise context. VFS is an all-in-one tool that defines data engineering for AI agents.
 
 ```bash
 pip install vfs-py
 ```
 
-! Warning about Alpha state. Should only be used for research purposes
+> ⚠️ **Alpha:** `vfs` is under active development and the API may change. Use for research and prototyping only.
 
 ## How to Get Started
 
-`vfs` allows you to compose a single virtual file system from multiple sources. 
+`vfs` allows you to compose a single virtual file system from multiple sources.
 
 ```python
 from vfs import VFSClient, LocalFileSystem, DatabaseFileSystem
@@ -42,7 +42,7 @@ g.close()
 
 `PostgresFileSystem` is the explicit PostgreSQL-native backend. It keeps the same public VFS API as `DatabaseFileSystem`, but pushes lexical search, grep, glob, graph traversal, and native pgvector search into Postgres. If you pass `vector_store=`, that override still wins for vector and semantic search.
 
-> Every CLI command maps directly to a Python method. 
+> Every CLI command maps directly to a Python method.
 >
 > - `g.cli('write ...')` calls `g.write()`
 > - `g.cli('search ...')` calls `g.semantic_search()`
