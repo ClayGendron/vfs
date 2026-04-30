@@ -12,8 +12,9 @@ code, not just English words.
 
 The feature should let Grover accelerate `grep()` over chunked file content in
 any backend by using a code-oriented n-gram inverted index. PostgreSQL can keep
-using native `pg_trgm` where appropriate, but MSSQL and other databases need a
-portable side-table strategy. The public behavior remains unchanged:
+using native `pg_trgm` where appropriate, but MSSQL, PostgreSQL, and other
+databases should converge on the portable staged posting-block design when
+predictable code semantics matter. The public behavior remains unchanged:
 
 ```text
 SQL narrows candidates; Python decides correctness.
@@ -106,14 +107,47 @@ Key conclusions:
    - a second folded index generated from `content.casefold()`, or
    - a `gram_kind`/`folded` dimension in the same physical index.
 
-3. **Add a portable side-table schema.**
+3. **Adopt a portable inverted-index storage model.**
 
-   Logical schema:
+   The target architecture is the MSSQL design documented in
+   [`mssql-trigram-inverted-index-design.md`](./mssql-trigram-inverted-index-design.md),
+   generalized for every backend that needs predictable code-search semantics:
 
-   ```sql
+   ```text
+   chunk writes -> gram staging rows -> periodic flush -> immutable posting blocks
+   ```
+
+   Logical artifacts:
+
+   - a chunk metadata/content table, currently `vfs_entries`
+   - a staging table with one row per distinct `(index_id, gram_kind, gram, chunk_id)`
+   - posting-block storage with compressed sorted chunk ids per gram
+   - optional gram statistics for selectivity-aware query planning
+   - tombstone/update metadata or equivalent delete handling
+
+   Queries fetch postings for required grams, union posting blocks within each
+   gram, intersect across required grams, filter deletes and structural metadata,
+   then fetch candidate chunk content for Python verification.
+
+   Freshness is part of the correctness contract. A backend that uses staging and
+   posting blocks must do one of:
+
+   - query both flushed posting blocks and pending staging rows
+   - synchronously flush affected grams before a grep that needs them
+   - fall back to a scan over unflushed chunks
+
+   Search freshness may be tuned, but the candidate path must not lose committed
+   chunks that the public grep path would otherwise find.
+
+4. **Keep a row-per-gram store as the MVP adapter, not the final contract.**
+
+   The first implementation may use a simple relational row store to prove
+   tokenizer, regex-planning, maintenance, and no-false-negative behavior:
+
+   ```text
    vfs_entry_chunk_grams (
        gram_kind      smallint not null,  -- 0 raw, 1 folded
-       gram_key       integer not null,   -- packed 3-byte value, 0..16777215
+       gram_key       <packed-int-or-binary3> not null,
        chunk_id       text not null,
        owner_path     text not null,
        line_start     integer null,
@@ -122,21 +156,23 @@ Key conclusions:
    )
    ```
 
-   Backend-specific types can vary:
+   Backend-specific physical representations can vary behind the shared
+   tokenizer/query API:
 
-   - MSSQL: `tinyint`, `int`, `nvarchar(64)`/`uniqueidentifier`, `nvarchar(...)`
-   - Postgres: `smallint`, `integer`, `text`/`uuid`
-   - SQLite: `integer`, `integer`, `text`
+   - MSSQL: `tinyint` for kind, `binary(3)` or packed `int` for gram,
+     `nvarchar(36)`/`uniqueidentifier` for chunk ids, `nvarchar(...)` for paths
+   - Postgres: `smallint`, `bytea(3)` or `integer`, `text`/`uuid`
+   - SQLite: `integer`, `blob(3)` or `integer`, `text`
 
-   Required indexes:
+   Required row-store indexes:
 
    - primary lookup by `(gram_kind, gram_key, chunk_id)`
    - reverse maintenance lookup by `chunk_id`
    - optional `owner_path` prefix/pattern helper for glob narrowing
 
-4. **Implement candidate queries by gram intersection.**
+5. **Implement candidate queries by gram intersection.**
 
-   Fixed string query shape:
+   Row-store fixed string query shape:
 
    ```sql
    SELECT chunk_id
@@ -158,10 +194,11 @@ Key conclusions:
      AND c.deleted_at IS NULL
    ```
 
-   Every backend may tune this physically, but the logical behavior must be the
-   same.
+   Posting-block adapters implement the same logical intersection in application
+   code after loading compressed postings. Every backend may tune this physically,
+   but the logical candidate behavior must be the same.
 
-5. **Compile regexes conservatively into gram predicates.**
+6. **Compile regexes conservatively into gram predicates.**
 
    The first implementation may be conservative:
 
@@ -175,7 +212,7 @@ Key conclusions:
    A later implementation can adopt the fuller Russ Cox / Google Code Search
    regex-to-trigram query algorithm.
 
-6. **Keep Python authoritative.**
+7. **Keep Python authoritative.**
 
    After candidate chunks are fetched:
 
@@ -184,33 +221,38 @@ Key conclusions:
    - run `_compile_grep_regex(...)` and exact Python line matching
    - return the same `VFSResult` shape as existing grep
 
-7. **Support MSSQL first as the non-native proof.**
+8. **Support MSSQL first as the non-native proof.**
 
-   MSSQL should get the first side-table adapter because it lacks a native
-   `pg_trgm` equivalent and already has a backend grep path.
+   MSSQL should get the first portable adapter because it lacks a native
+   `pg_trgm` equivalent and already has a backend grep path. The row-store table
+   is acceptable for the MVP, but the desired durable design is staging plus
+   immutable posting blocks.
 
    The MSSQL path should:
 
-   - maintain `dbo.vfs_entry_chunk_grams`
-   - use binary-safe packed byte gram keys
+   - maintain the row-store MVP or the staged posting-block artifacts
+   - use binary-safe gram keys (`binary(3)` or canonical packed integer)
+   - preserve freshness by querying pending rows/blocks or falling back to scan
    - optionally combine gram candidates with `REGEXP_LIKE` on SQL Server 2025+
    - keep `CONTAINSTABLE` as a separate optional token prefilter, not the code
      gram index
 
-8. **Preserve the existing Postgres path.**
+9. **Preserve the existing Postgres path while targeting the portable design.**
 
    Postgres should keep using `pg_trgm` for the current chunk-search notebook
-   and backend path. This story may add a side-table Postgres adapter for
-   punctuation-sensitive comparison, but it should not regress the native
+   and backend path until the portable posting-block path is proven. The eventual
+   goal is to implement the same portable staged posting-block design for
+   Postgres too, so punctuation-sensitive code search is not limited by
+   `pg_trgm` tokenizer semantics. This must not regress the existing native
    `pg_trgm` implementation.
 
-9. **Add a benchmark harness.**
+10. **Add a benchmark harness.**
 
    Extend the notebook or add a new one to compare:
 
    - Postgres `pg_trgm`
-   - MSSQL side-table code grams
-   - optional Postgres side-table code grams
+   - MSSQL portable code-gram index
+   - Postgres portable code-gram index
    - ripgrep
 
    Required timing splits:
@@ -234,10 +276,10 @@ Key conclusions:
 
 | Backend | Native option | Story behavior |
 |---|---|---|
-| PostgreSQL | `pg_trgm` GIN/GiST | Keep native path; optionally compare side-table code grams. |
-| MSSQL | none equivalent | Implement side-table code grams first. |
-| SQLite | FTS5 trigram tokenizer | Prefer native FTS5 trigram for local adapter; side table optional. |
-| MySQL | ngram full-text parser | Treat as optional adapter; side table preferred for predictable code semantics. |
+| PostgreSQL | `pg_trgm` GIN/GiST | Keep native path; add portable staged posting-block adapter for raw code grams. |
+| MSSQL | none equivalent | Implement row-store MVP first, then staged posting-block adapter. |
+| SQLite | FTS5 trigram tokenizer | Prefer native FTS5 trigram for local adapter; portable storage optional. |
+| MySQL | ngram full-text parser | Treat as optional adapter; portable storage preferred for predictable code semantics. |
 | ClickHouse | `ngrambf_v1` skipping index | Not row-exact; use only as scan-pruning inspiration. |
 | Elasticsearch/OpenSearch | wildcard/ngram fields | External search adapter, not database VFS primary storage. |
 
@@ -304,29 +346,39 @@ The code gram index is a safe candidate generator:
      documented weaker predicate
    - regexes with no required grams degrade to `ANY`
 
-4. MSSQL schema provisioning creates the gram side table and required indexes.
+4. Schema provisioning creates the gram index artifacts required by the selected
+   adapter:
 
-5. MSSQL chunk writes/deletes maintain gram rows atomically with chunk rows.
+   - row-store MVP: `vfs_entry_chunk_grams` and required indexes
+   - posting-block target: staging, posting blocks, statistics, and delete
+     metadata
 
-6. MSSQL grep can use the gram table to fetch chunk candidates and then uses
-   Python final matching.
+5. MSSQL chunk writes/deletes maintain gram index state atomically with chunk
+   rows and preserve committed-write freshness by querying pending state,
+   flushing synchronously, or falling back to scan.
 
-7. A no-false-negative integration test compares MSSQL side-table grep against
+6. MSSQL grep can use the code-gram index to fetch chunk candidates and then
+   uses Python final matching.
+
+7. A no-false-negative integration test compares MSSQL code-gram grep against
    the portable in-memory grep path across fixed strings, regexes, punctuation,
-   path-like strings, and case-insensitive patterns.
+   path-like strings, case-sensitive patterns, and case-insensitive patterns.
 
-8. Benchmarks report candidate-only, fetch, verification, and end-to-end timing.
+8. A Postgres follow-up adapter can use the same logical staged posting-block
+   design while preserving existing `pg_trgm` behavior and tests.
 
-9. Documentation clearly states that code grams are not lexical search and not
+9. Benchmarks report candidate-only, fetch, verification, and end-to-end timing.
+
+10. Documentation clearly states that code grams are not lexical search and not
    final match semantics.
 
-10. Existing Postgres `pg_trgm` behavior and tests continue to pass.
+11. Existing Postgres `pg_trgm` behavior and tests continue to pass.
 
 ## Risks
 
-- **Storage growth.** Raw byte grams can produce many rows per chunk. Mitigation:
-  dedupe per chunk, chunk size caps, and file skip limits for high unique-gram
-  files.
+- **Storage growth.** Raw byte grams can produce many postings per chunk.
+  Mitigation: dedupe per chunk, chunk size caps, compressed posting blocks, and
+  file skip limits for high unique-gram files.
 
 - **Hot grams.** Whitespace and common punctuation produce enormous posting
   lists. Mitigation: query planner should choose the most selective grams first
@@ -341,13 +393,17 @@ The code gram index is a safe candidate generator:
   create false negatives. Mitigation: start conservative and add tests from
   Russ Cox-style boolean regex analysis before optimizing.
 
-- **Write latency.** Maintaining side-table grams on every write can be
-  expensive. Mitigation: batch ETL for repo loads; background index maintenance
-  for interactive writes if needed.
+- **Write latency.** Maintaining grams on every write can be expensive.
+  Mitigation: staging rows for cheap writes, batch flushes into posting blocks,
+  and scan fallback for unflushed chunks when required by freshness.
+
+- **Freshness gaps.** Periodic flushes can hide newly committed chunks if queries
+  read only posting blocks. Mitigation: include staging in queries, flush before
+  grep, or scan unflushed chunks.
 
 ## Open Questions
 
-1. Should the canonical side-table index be per chunk or per file? Default:
+1. Should the canonical code-gram index be per chunk or per file? Default:
    chunk-level, because it bounds content fetch and aligns with current
    Postgres research.
 
@@ -358,8 +414,9 @@ The code gram index is a safe candidate generator:
    selectivity but is safe. It should be query-planner-driven, not tokenizer
    semantics.
 
-4. Should Postgres add the side-table code gram adapter? Default: not in the
-   first implementation; use MSSQL to prove portability first.
+4. Should Postgres add the portable posting-block adapter immediately after the
+   MSSQL MVP? Default: yes after MSSQL proves the interface and benchmarks justify
+   the storage cost, while keeping `pg_trgm` as the native comparison path.
 
 5. Should grams be 3 bytes or configurable n-grams? Default: 3 bytes. Production
    systems repeatedly find trigrams to be the best default compromise.

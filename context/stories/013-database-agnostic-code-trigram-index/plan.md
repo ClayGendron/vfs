@@ -21,9 +21,36 @@ Start conservative. The first `GramQuery` implementation only needs:
 The regex planner may initially reuse existing literal extraction and return
 `ANY` for hard patterns. No false negatives are allowed.
 
-## Phase 2 — Side-Table Schema Contract
+## Phase 2 — Portable Inverted-Index Contract
 
-Define backend DDL for the logical side table:
+Define a backend-neutral contract for code-gram candidate indexes. The logical
+interface is:
+
+```text
+chunk content -> distinct code grams -> durable inverted index -> candidate chunk ids
+```
+
+The target physical design is:
+
+```text
+chunk writes -> staging rows -> periodic flush -> immutable posting blocks
+```
+
+Required artifacts:
+
+- staging rows keyed by `(index_id, gram_kind, gram, chunk_id)`
+- compressed posting blocks keyed by `(index_id, gram_kind, gram, block_id)`
+- gram statistics for selectivity planning
+- delete/update metadata or equivalent tombstone handling
+- candidate lookup that merges flushed blocks with pending writes or otherwise
+  preserves committed-write freshness
+
+Keep this as a backend contract, not a public model. Physical types, compression,
+DDL, and query execution may vary per database.
+
+## Phase 3 — Row-Store MVP Adapter
+
+Build the simpler row-per-gram adapter first to validate behavior:
 
 ```text
 vfs_entry_chunk_grams(
@@ -36,9 +63,6 @@ vfs_entry_chunk_grams(
 )
 ```
 
-Keep this as a backend contract, not a public model. Physical types and DDL may
-vary per database.
-
 Required operations:
 
 - create/provision gram artifacts
@@ -46,24 +70,46 @@ Required operations:
 - insert grams for a chunk
 - query candidate chunk ids from a `GramQuery`
 - join candidate ids back to chunk rows
+- preserve no-false-negative freshness for committed chunks
 
-## Phase 3 — MSSQL Adapter
+The row store is a proving implementation, not the desired long-term storage
+shape.
+
+## Phase 4 — MSSQL Portable Adapter
 
 Implement MSSQL first because it proves the non-native story.
 
 Work items:
 
-- add DDL for `dbo.vfs_entry_chunk_grams`
+- add DDL for `dbo.vfs_entry_chunk_grams` as the MVP
 - add provisioning/check helper
 - update chunk write/load path to maintain grams
 - add candidate query builder using grouped gram intersection
 - integrate with `_grep_impl` before final Python verification
 - optionally add `REGEXP_LIKE` as a second SQL narrowing step when available
+- require query-time freshness for committed chunks
 
 Do not remove the current `CONTAINSTABLE` path immediately. Keep it as a
 separate token-search prefilter until benchmarks show whether it helps.
 
-## Phase 4 — Benchmark Harness
+## Phase 5 — Posting-Block Storage
+
+Move the MSSQL adapter from row-store MVP to the target physical model from
+`mssql-trigram-inverted-index-design.md`:
+
+- `TrigramStage`
+- `TrigramBatches`
+- `TrigramPostingBlocks`
+- `TrigramStats`
+- tombstones or equivalent delete/update filtering
+- app-side decompression, union, and intersection
+- compaction for many small blocks
+
+The same storage contract is the future Postgres portable adapter. Postgres can
+keep `pg_trgm` as a native comparison path while the portable path provides
+punctuation-preserving byte-gram semantics.
+
+## Phase 6 — Benchmark Harness
 
 Extend `grep_glob research/live_grep_to_sql.ipynb` or add a sibling notebook.
 
@@ -78,8 +124,9 @@ Compare:
 
 - ripgrep
 - Postgres `pg_trgm`
-- MSSQL code-gram side table
-- optional Postgres side table
+- MSSQL row-store MVP
+- MSSQL posting-block code-gram index
+- Postgres posting-block code-gram index
 
 Use the same benchmark cases from
 `context/learnings/2026-04-24-postgres-trigram-grep-vs-ripgrep.md`, plus
@@ -91,14 +138,14 @@ punctuation-heavy patterns such as:
 - `foo|bar`
 - `a?.b`
 
-## Phase 5 — Optional Native Adapters
+## Phase 7 — Optional Native Adapters
 
-After MSSQL is proven:
+After the portable storage model is proven:
 
 - SQLite: evaluate FTS5 trigram tokenizer for local development.
-- MySQL: evaluate `WITH PARSER ngram`, but keep side table as the predictable
-  semantic fallback.
-- Postgres: compare side-table raw byte grams against native `pg_trgm` on
+- MySQL: evaluate `WITH PARSER ngram`, but keep the portable posting-block
+  adapter as the predictable semantic fallback.
+- Postgres: keep comparing portable raw byte grams against native `pg_trgm` on
   punctuation-heavy code patterns.
 
 ## Testing Strategy
@@ -117,6 +164,7 @@ Integration tests:
 - fixed string, regex, word regexp, case-insensitive grep
 - punctuation-heavy code strings
 - chunk delete/update gram cleanup
+- freshness across unflushed staging rows and flushed posting blocks
 
 Benchmark tests:
 
@@ -136,15 +184,17 @@ MSSQLFileSystem(..., pattern_index="code_grams")
 
 or a backend capability flag once the constructor surface is settled.
 
-For bulk-loaded repo databases, build grams after chunks using a batch process.
-For interactive writes, maintain grams transactionally with chunk rows.
+For bulk-loaded repo databases, build grams after chunks using a batch process
+that writes posting blocks. For interactive writes, write staging rows
+transactionally with chunks and make grep query the pending stage or scan
+unflushed chunks.
 
 ## Rollback
 
-The side table is additive. Rollback is:
+The code-gram index is additive. Rollback is:
 
 1. Disable the code-gram grep path.
-2. Drop or ignore `vfs_entry_chunk_grams`.
+2. Drop or ignore row-store/staging/posting-block artifacts.
 3. Fall back to existing backend grep behavior.
 
 No public VFS API or result shape changes are required.

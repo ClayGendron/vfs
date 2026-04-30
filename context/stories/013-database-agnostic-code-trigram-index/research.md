@@ -160,7 +160,8 @@ server-side verification, but it does not provide a native `pg_trgm` equivalent.
 
 Implication for Grover:
 
-- MSSQL should use a materialized side table for code grams.
+- MSSQL should start with a materialized row store for code grams, then move to
+  staged immutable posting blocks for the durable portable design.
 - Full-Text Search can remain a separate lexical-search path.
 - `CONTAINSTABLE` can still be used as an additional prefilter for word-like
   terms, but it should not be the code grep index.
@@ -187,8 +188,8 @@ Limitations for code:
 Implication for Grover:
 
 - MySQL native ngram FTS can be an optional adapter.
-- A portable side-table adapter is still preferable for exact code-search
-  behavior and predictable cross-database semantics.
+- The portable staged posting-block adapter is still preferable for exact
+  code-search behavior and predictable cross-database semantics.
 
 Source: https://dev.mysql.com/doc/refman/8.0/en/fulltext-search-ngram.html
 
@@ -217,7 +218,9 @@ chunk content -> raw code grams -> inverted index -> candidate chunks -> exact P
 Do not use natural-language tokenization as the canonical index. It loses
 punctuation and operator information that matters in code.
 
-For databases without native raw n-gram indexing, materialize a side table.
+For databases without native raw n-gram indexing, materialize a portable
+inverted index. The row-per-gram table is a useful MVP shape; the target durable
+shape is staging plus immutable compressed posting blocks.
 For databases with good native support, use the native index behind the same
 capability interface.
 
