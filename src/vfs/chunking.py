@@ -8,7 +8,7 @@ overlap rather than OLD's interleaved overlap-tail emissions.
 """
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 
 DEFAULT_SEPARATORS: tuple[str, ...] = ("\n\n", "\n", " ", "")
 
@@ -21,6 +21,53 @@ def recursive_text_split(
     separators: tuple[str, ...] = DEFAULT_SEPARATORS,
 ) -> list[str]:
     """Split *content* into pieces no larger than *chunk_size* characters."""
+    offsets = _chunk_offsets(content, chunk_size=chunk_size, overlap=overlap, separators=separators)
+    return [content[s:e] for s, e in offsets]
+
+
+def split_with_line_ranges(
+    content: str,
+    *,
+    chunk_size: int = 2048,
+    overlap: int = 256,
+    separators: tuple[str, ...] = DEFAULT_SEPARATORS,
+) -> list[tuple[str, int, int]]:
+    """Return ``(chunk_text, line_start, line_end)`` for each emitted chunk.
+
+    Lines are 1-indexed; ``line_end`` is the line containing the chunk's last
+    character. A chunk that lives entirely inside a single oversized line has
+    ``line_start == line_end``.
+    """
+    offsets = _chunk_offsets(content, chunk_size=chunk_size, overlap=overlap, separators=separators)
+    if not offsets:
+        return []
+    newlines: list[int] = []
+    nl_append = newlines.append
+    for i, c in enumerate(content):
+        if c == "\n":
+            nl_append(i)
+    bisect = bisect_left
+    out: list[tuple[str, int, int]] = []
+    for s, e in offsets:
+        line_start = bisect(newlines, s) + 1
+        line_end = bisect(newlines, e - 1) + 1 if e > s else line_start
+        out.append((content[s:e], line_start, line_end))
+    return out
+
+
+def _chunk_offsets(
+    content: str,
+    *,
+    chunk_size: int,
+    overlap: int,
+    separators: tuple[str, ...],
+) -> list[tuple[int, int]]:
+    """Return the ``(start, end)`` offset pairs the splitter would emit.
+
+    ``recursive_text_split`` slices ``content`` once per pair; callers that
+    need positional metadata (line numbers, byte offsets) consume the pairs
+    directly to avoid re-locating chunks.
+    """
     if chunk_size <= 0:
         raise ValueError(f"chunk_size must be positive, got {chunk_size}")
     if overlap < 0 or overlap >= chunk_size:
@@ -62,19 +109,19 @@ def recursive_text_split(
     n_seps = len(seps_non_empty)
     sep_lens = [len(s) for s in seps_non_empty]
 
-    chunks: list[str] = []
-    chunks_append = chunks.append
+    offsets: list[tuple[int, int]] = []
+    offsets_append = offsets.append
     if n_seps == 0:
         base = 0
         step = chunk_size - overlap
         while True:
             target = base + chunk_size
             if target >= n:
-                chunks_append(content[base:n])
+                offsets_append((base, n))
                 break
-            chunks_append(content[base:target])
+            offsets_append((base, target))
             base += step
-        return chunks
+        return offsets
 
     if n_seps == 1:
         sep = seps_non_empty[0]
@@ -87,21 +134,21 @@ def recursive_text_split(
             while True:
                 target = base + chunk_size
                 if target >= n:
-                    chunks_append(content[base:n])
+                    offsets_append((base, n))
                     break
                 lo = last_cut + 1 if last_cut >= base else base + 1
                 cut = rfind(content, sep, lo, target + sep_len)
                 if cut == -1:
                     cut = target
-                chunks_append(content[base:cut])
+                offsets_append((base, cut))
                 last_cut = cut
                 base = cut - overlap if overlap > 0 and cut > overlap else cut
-            return chunks
+            return offsets
 
         while True:
             target = base + chunk_size
             if target >= n:
-                chunks_append(content[base:n])
+                offsets_append((base, n))
                 break
             lo = last_cut + 1 if last_cut >= base else base + 1
             cut = rfind(content, sep, lo, target + sep_len)
@@ -114,10 +161,10 @@ def recursive_text_split(
                     cut = -1
             if cut == -1:
                 cut = target
-            chunks_append(content[base:cut])
+            offsets_append((base, cut))
             last_cut = cut
             base = cut - overlap if overlap > 0 and cut > overlap else cut
-        return chunks
+        return offsets
 
     base = 0
     last_cut = -1
@@ -127,7 +174,7 @@ def recursive_text_split(
     while True:
         target = base + chunk_size
         if target >= n:
-            chunks_append(content[base:n])
+            offsets_append((base, n))
             break
         lo = last_cut + 1 if last_cut >= base else base + 1
         cut = -1
@@ -159,10 +206,10 @@ def recursive_text_split(
                 cut = p
         if cut == -1:
             cut = target
-        chunks_append(content[base:cut])
+        offsets_append((base, cut))
         last_cut = cut
         base = cut - overlap if overlap > 0 and cut > overlap else cut
-    return chunks
+    return offsets
 
 
 def _find_oversized(
@@ -232,4 +279,4 @@ def _find_oversized_single_char(
         out.append((piece_start, end))
 
 
-__all__ = ["DEFAULT_SEPARATORS", "recursive_text_split"]
+__all__ = ["DEFAULT_SEPARATORS", "recursive_text_split", "split_with_line_ranges"]

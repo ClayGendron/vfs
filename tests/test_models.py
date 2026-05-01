@@ -1031,3 +1031,183 @@ class TestModelHelperErrors:
         vector_type = resolve_embedding_vector_type(NativeEmbeddingModel)
         assert isinstance(vector_type, VectorType)
         assert vector_type.dimension == 4
+
+
+# =========================================================================
+# index_content derivation
+# =========================================================================
+
+
+class TestIndexContentDerivation:
+    def test_file_default_is_one(self):
+        entry = VFSEntry(path="/foo.py", kind="file", content="hello")
+        assert entry.index_content == 1
+
+    def test_chunk_default_is_one(self):
+        entry = VFSEntry(
+            path="/.vfs/foo.py/__meta__/chunks/1_5",
+            kind="chunk",
+            content="hello",
+            line_start=1,
+            line_end=5,
+        )
+        assert entry.index_content == 1
+
+    def test_directory_default_is_zero(self):
+        entry = VFSEntry(path="/foo", kind="directory")
+        assert entry.index_content == 0
+
+    def test_version_default_is_zero(self):
+        entry = VFSEntry(
+            path="/.vfs/foo.py/__meta__/versions/1",
+            kind="version",
+            content="hello",
+            version_number=1,
+            is_snapshot=True,
+        )
+        assert entry.index_content == 0
+
+    def test_edge_default_is_zero(self):
+        entry = VFSEntry(
+            path="/.vfs/a.py/__meta__/edges/out/imports/b.py",
+            kind="edge",
+        )
+        assert entry.index_content == 0
+
+    def test_explicit_zero_overrides_default(self):
+        entry = VFSEntry(path="/foo.py", kind="file", content="hello", index_content=0)
+        assert entry.index_content == 0
+
+    def test_explicit_one_overrides_default_for_directory(self):
+        entry = VFSEntry(path="/foo", kind="directory", index_content=1)
+        assert entry.index_content == 1
+
+
+# =========================================================================
+# split_content + chunk()
+# =========================================================================
+
+
+class TestSplitContent:
+    def test_short_content_returns_empty(self):
+        assert VFSEntry.split_content("short content") == []
+
+    def test_long_content_returns_tuples_with_line_numbers(self):
+        content = "\n".join(f"line {i}" for i in range(1, 1001))
+        result = VFSEntry.split_content(content)
+        assert len(result) > 1
+        for text, line_start, line_end in result:
+            assert isinstance(text, str)
+            assert text  # non-empty
+            assert 1 <= line_start <= line_end <= 1000
+            assert text in content
+
+    def test_oversized_single_line_keeps_chunks_inside_one_line(self):
+        content = "header\n" + ("x" * 5000) + "\nfooter\n"
+        result = VFSEntry.split_content(content)
+        # The long middle line forces multi-chunk emission inside line 2.
+        single_line_chunks = [(ls, le) for _t, ls, le in result if ls == le == 2]
+        assert len(single_line_chunks) >= 1
+
+    def test_subclass_override_takes_effect(self):
+        class CustomEntry(VFSEntry):
+            @staticmethod
+            def split_content(content):
+                return [(content[:5], 1, 1), (content[5:10], 1, 1)]
+
+        result = CustomEntry.split_content("abcdefghijklmnop")
+        assert result == [("abcde", 1, 1), ("fghij", 1, 1)]
+
+
+class TestChunkMethod:
+    def test_short_file_no_op(self):
+        entry = VFSEntry(path="/foo.py", kind="file", content="hello world")
+        assert entry.chunk() == []
+        assert entry.index_content == 1  # unchanged
+
+    def test_long_file_emits_chunks_and_flips_flag(self):
+        content = "\n".join(f"line {i:04d}" for i in range(1, 1001))
+        entry = VFSEntry(path="/foo.py", kind="file", content=content)
+        chunks = entry.chunk()
+        assert len(chunks) > 1
+        for c in chunks:
+            assert c.kind == "chunk"
+            assert c.path.startswith("/.vfs/foo.py/__meta__/chunks/")
+            assert c.line_start is not None
+            assert c.line_end is not None
+            assert c.line_start <= c.line_end
+            assert c.index_content == 1
+            assert c.content
+        assert entry.index_content == 0
+
+    def test_chunk_path_uses_line_range(self):
+        content = "\n".join(f"line {i:04d}" for i in range(1, 1001))
+        entry = VFSEntry(path="/foo.py", kind="file", content=content)
+        chunks = entry.chunk()
+        first = chunks[0]
+        chunk_name = first.path.rsplit("/", 1)[-1]
+        # Default case should be "<line_start>_<line_end>" with no @offset.
+        assert "@" not in chunk_name
+        assert chunk_name == f"{first.line_start}_{first.line_end}"
+
+    def test_oversized_single_line_uses_offset_suffix(self):
+        # One huge line forces several chunks to all share line_start=line_end=2
+        # and collide; the @<offset> disambiguator must kick in.
+        content = "header\n" + ("x" * 8000) + "\nfooter\n"
+        entry = VFSEntry(path="/big.txt", kind="file", content=content)
+        chunks = entry.chunk()
+
+        # Group by (line_start, line_end) and assert: any group with >1 member
+        # has @-suffix on every member; any group with exactly 1 has none.
+        from collections import defaultdict
+
+        groups: dict[tuple[int, int], list[str]] = defaultdict(list)
+        for c in chunks:
+            groups[(c.line_start, c.line_end)].append(c.path)
+        colliding_groups = [paths for paths in groups.values() if len(paths) > 1]
+        assert colliding_groups, "expected at least one colliding line range"
+        for paths in colliding_groups:
+            for p in paths:
+                assert "@" in p.rsplit("/", 1)[-1]
+        for paths in groups.values():
+            if len(paths) == 1:
+                assert "@" not in paths[0].rsplit("/", 1)[-1]
+        # All paths are unique overall.
+        assert len({c.path for c in chunks}) == len(chunks)
+
+    def test_chunk_inherits_owner_id(self):
+        content = "\n".join(f"line {i}" for i in range(1, 1001))
+        entry = VFSEntry(path="/foo.py", kind="file", content=content, owner_id="alice")
+        chunks = entry.chunk()
+        assert all(c.owner_id == "alice" for c in chunks)
+
+    def test_chunk_on_directory_raises(self):
+        entry = VFSEntry(path="/foo", kind="directory")
+        with pytest.raises(ValueError, match="file"):
+            entry.chunk()
+
+    def test_chunk_on_chunk_raises(self):
+        entry = VFSEntry(
+            path="/.vfs/foo.py/__meta__/chunks/1_5",
+            kind="chunk",
+            content="hello",
+            line_start=1,
+            line_end=5,
+        )
+        with pytest.raises(ValueError, match="file"):
+            entry.chunk()
+
+    def test_subclass_split_content_override_propagates(self):
+        class CustomEntry(VFSEntry):
+            @staticmethod
+            def split_content(content):
+                return [(content[:50], 1, 5), (content[50:], 6, 10)]
+
+        entry = CustomEntry(path="/foo.py", kind="file", content="x" * 100)
+        chunks = entry.chunk()
+        assert len(chunks) == 2
+        assert chunks[0].line_start == 1
+        assert chunks[0].line_end == 5
+        assert chunks[1].line_start == 6
+        assert chunks[1].line_end == 10
+        assert entry.index_content == 0

@@ -26,7 +26,9 @@ from sqlmodel import Field, SQLModel
 from sqlmodel.main import SQLModelMetaclass
 
 from vfs.bm25 import tokenize as lexical_tokenize
+from vfs.chunking import split_with_line_ranges
 from vfs.paths import (
+    chunk_path,
     decompose_edge,
     extract_extension,
     normalize_path,
@@ -125,6 +127,10 @@ class VFSEntry(SQLModel):
 
     line_start: int | None = Field(default=None)
     line_end: int | None = Field(default=None)
+
+    # --- Search indexing ---------------------------------------------------
+
+    index_content: int = Field(default=0, index=True)
 
     # --- Version-specific ---------------------------------------------------
 
@@ -501,6 +507,68 @@ class VFSEntry(SQLModel):
         self.lexical_tokens = self._lexical_token_count(content)
         self.updated_at = datetime.now(UTC)
 
+    # --- Chunking -----------------------------------------------------------
+
+    @staticmethod
+    def split_content(content: str) -> list[tuple[str, int, int]]:
+        """Return ``(chunk_text, line_start, line_end)`` tuples for *content*.
+
+        Override on a subclass to plug in custom chunking (tree-sitter,
+        token-aware, semantic). Empty list signals "no split required."
+        """
+        return split_with_line_ranges(content)
+
+    def chunk(self) -> list[VFSEntry]:
+        """Split this file's content into chunk entries.
+
+        Returns the new ``kind="chunk"`` rows and mutates ``self.index_content
+        = 0`` so the file row stops feeding content-side indexes. When the
+        content fits in one chunk, returns ``[]`` and leaves
+        ``index_content`` alone. Path naming is ``<line_start>_<line_end>``
+        with an ``@<char_offset>`` suffix only when chunks would otherwise
+        collide on identical line ranges (e.g. a single oversized line
+        producing multiple chunks).
+        """
+        if self.kind != "file":
+            msg = f"chunk() applies only to files: kind={self.kind!r}"
+            raise ValueError(msg)
+        content = self.content or ""
+        pieces = self.split_content(content)
+        if not pieces:
+            return []
+
+        # Detect duplicate (line_start, line_end) ranges; only those need an
+        # @<offset> disambiguator. Tracking offsets requires re-walking the
+        # chunk text because split_content may be overridden — find each
+        # piece's start sequentially with content.find.
+        range_counts: dict[tuple[int, int], int] = {}
+        for _text, ls, le in pieces:
+            key = (ls, le)
+            range_counts[key] = range_counts.get(key, 0) + 1
+
+        new_chunks: list[VFSEntry] = []
+        cursor = 0
+        for text, line_start, line_end in pieces:
+            offset = content.find(text, cursor)
+            if offset == -1:
+                offset = cursor
+            cursor = offset + 1
+            name = f"{line_start}_{line_end}"
+            if range_counts[(line_start, line_end)] > 1:
+                name = f"{name}@{offset}"
+            new_chunks.append(
+                type(self)(
+                    path=chunk_path(self.path, name),
+                    kind="chunk",
+                    content=text,
+                    line_start=line_start,
+                    line_end=line_end,
+                    owner_id=self.owner_id,
+                )
+            )
+        self.index_content = 0
+        return new_chunks
+
     # --- Validator ----------------------------------------------------------
 
     @model_validator(mode="before")
@@ -591,6 +659,9 @@ class VFSEntry(SQLModel):
 
         if isinstance(content, str):
             data["lexical_tokens"] = cls._lexical_token_count(content)
+
+        if "index_content" not in data:
+            data["index_content"] = 1 if kind in {"file", "chunk"} else 0
 
         # Ensure timestamps
         now = datetime.now(UTC)
