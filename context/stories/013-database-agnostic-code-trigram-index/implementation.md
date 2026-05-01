@@ -1,7 +1,7 @@
 # 013 — Implementation notes
 
-- **Status:** in-progress (Phase 1 + 1.5 + chunker complete; DB integration not started)
-- **Date:** 2026-04-30
+- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; DDL / write maintenance / grep rewrite not started)
+- **Date:** 2026-05-01
 - **Spec:** [spec.md](./spec.md)
 - **Plan:** [plan.md](./plan.md)
 
@@ -10,14 +10,18 @@
 Pure-Python primitives for the database-agnostic code-gram index are
 landed: byte-trigram tokenizer with NFC + casefold normalization, a
 soundness-first regex-to-`GramQuery` planner built on Python's `sre_parse`
-AST, and a fast LangChain-compatible recursive text splitter for the
-upcoming chunk write path. No DB writes, no schema, no `_grep_impl`
-changes yet.
+AST, a LangChain-compatible recursive text splitter, and the
+`VFSEntry`-side chunking surface (`index_content` field, `split_content`
+override seam, `chunk()` method). No DB schema, no write-path gram
+maintenance, no `_grep_impl` changes yet.
 
-Two commits on `main`:
+Commits on `main`:
 
 - `f840ce5` — code grams + tests + walkthrough notebook
 - `f6d22f5` — text splitter + benchmarks
+- `172310b` — earlier implementation snapshot
+- `0c4f7d6` — `VFSEntry.chunk()`, `index_content`, `split_content`,
+  chunking offset refactor, 19 new tests
 
 ## What's done
 
@@ -64,11 +68,15 @@ and invalid-regex degradation.
 Public surface:
 
 - `recursive_text_split(content, *, chunk_size=2048, overlap=256, separators=DEFAULT_SEPARATORS) -> list[str]`
+- `split_with_line_ranges(content, *, chunk_size=2048, overlap=256, separators=DEFAULT_SEPARATORS) -> list[tuple[str, int, int]]`
+  — emits `(text, line_start, line_end)` per chunk; lines are 1-indexed
+  and `line_end` is the line containing the chunk's last character. A
+  chunk that lives entirely inside a single oversized line has
+  `line_start == line_end`.
 - `DEFAULT_SEPARATORS = ("\n\n", "\n", " ", "")`
 
-Returns `[]` when content fits in one chunk so the caller (`split_content`
-on `VFSEntry` once Phase 2 lands) can detect "no split required" without
-re-counting.
+Returns `[]` when content fits in one chunk so the caller can detect
+"no split required" without re-counting.
 
 Algorithm: region-aware `rfind` walker. Pre-compute oversized regions per
 separator level once via `str.split` plus `_find_oversized`, then walk
@@ -77,6 +85,12 @@ left-to-right; at each candidate cut take the rightmost separator inside
 table to decide which separator levels apply at that offset. Two
 specialized fast paths: char-fallback when no real separators are
 present, and a single-separator path that skips the region tables.
+
+Implementation note: `recursive_text_split` is a thin slicing wrapper over
+an internal `_chunk_offsets` helper that returns the `(start, end)` integer
+pairs the algorithm tracks anyway. `split_with_line_ranges` consumes those
+offsets directly plus a single `O(n)` newline scan and `O(log k)` bisect
+per chunk — no second pass, no `str.find` re-locating.
 
 Performance vs LangChain `RecursiveCharacterTextSplitter` on the 120
 markdown files in this repo (1.75 MB total), config `2048/256`:
@@ -102,6 +116,44 @@ Documented divergences from LangChain:
 - We return `[]` for content `<= chunk_size`; LangChain always returns
   `>= 1` chunk.
 
+### `src/vfs/models.py` — `index_content` field, `chunk()`, `split_content()`
+
+New on `VFSEntry`:
+
+- `index_content: int = Field(default=0, index=True)` — 0/1 flag controlling
+  whether this row's content feeds content-side indexes (vector,
+  text-search, code-gram trigrams). Path-side indexes ignore it. Validator
+  default in `_normalize_and_derive`: `kind in {"file", "chunk"}` → 1,
+  everything else → 0. Explicit values in input data are respected.
+- `VFSEntry.split_content(content: str) -> list[tuple[str, int, int]]` —
+  staticmethod, the override seam. Default delegates to
+  `split_with_line_ranges` with `chunk_size=2048` / `overlap=256`. Devs
+  plug in tree-sitter / token-aware / semantic chunkers by overriding
+  this on a subclass.
+- `VFSEntry.chunk() -> list[VFSEntry]` — instance method, no parameters.
+  Calls `self.split_content(self.content)`, composes new `kind="chunk"`
+  entries via `vfs.paths.chunk_path(self.path, name)` where `name` is
+  `<line_start>_<line_end>`, with `@<char_offset>` appended only when
+  multiple chunks share a line range (single oversized line case).
+  Mutates `self.index_content = 0` on success. Empty-list short-circuit
+  when content fits in one chunk leaves the flag alone. Raises
+  `ValueError` for non-file kinds.
+
+The chunking parameters live on `split_content`, not `chunk()` —
+overrides are the only way to tune chunk size, which keeps the public
+`chunk()` signature stable.
+
+### `tests/test_models.py` — 19 new tests
+
+Covers `index_content` derivation across all kinds, explicit field
+overrides, `split_content` shape (short content → empty list, long
+content → tuples with valid line numbers, oversized single line keeps
+chunks inside one line), `chunk()` flow (no-op on short content, flips
+flag on long, path uses line-range form, single-line collisions get
+`@offset` suffix while unique ranges stay clean, `owner_id` propagates,
+non-file kinds raise, subclass override of `split_content` propagates
+through `chunk()`).
+
 ### Benchmarks
 
 - `grep_glob research/bench_text_splitter.py` — 5 largest text files in
@@ -123,19 +175,8 @@ path doesn't drop a chunk the full scan finds.
 
 The remainder of [plan.md](./plan.md) phases 2-7 is open work:
 
-### Phase 2 (started, not landed) — Postgres row-store adapter
+### Phase 2 (not started) — Postgres row-store adapter DDL + maintenance
 
-- `index_content: int` field on `VFSEntry` with derivation in
-  `_normalize_and_derive`: `chunk` → 1, `file` → 1, everything else → 0.
-  An earlier attempt was reverted; the field name is settled but the
-  validator wiring isn't in.
-- `VFSEntry.split_content(content: str) -> list[str]` — the dev-overridable
-  hook that defaults to `recursive_text_split(content, chunk_size=2048,
-  overlap=256)`.
-- `VFSEntry.chunk(...) -> list[VFSEntry]` — calls `split_content`,
-  composes new `kind="chunk"` entries with sequential `chunk_no` paths
-  via `vfs.paths.chunk_path`, mutates `self.index_content = 0`.
-  Empty-list return leaves `index_content` alone.
 - DDL for `vfs_entry_chunk_grams(gram_kind, gram_key, chunk_id)` plus
   the reverse-lookup index by `chunk_id` for delete/update maintenance.
 - Provisioning + `_verify_pattern_schema` extension on
@@ -143,6 +184,8 @@ The remainder of [plan.md](./plan.md) phases 2-7 is open work:
 - Backend write path: extract grams from chunk content on insert, delete
   grams when a chunk is deleted, cascade old chunks when a file is
   re-chunked. Atomic with chunk row writes.
+- Filter `index_content = 1` in the gram extraction pipeline so the file
+  row stops feeding content indexes once it's been chunked.
 
 ### Phase 2 (not started) — `_grep_impl` rewrite
 
@@ -204,12 +247,15 @@ context/stories/013-database-agnostic-code-trigram-index/
   mssql-trigram-inverted-index-design.md       (new, prior commit)
   implementation.md                             (this file)
 src/vfs/code_grams.py                           (new, f840ce5)
-src/vfs/chunking.py                             (new, f6d22f5)
+src/vfs/chunking.py                             (new f6d22f5; refactored 0c4f7d6)
+src/vfs/models.py                               (modified, 0c4f7d6)
 tests/test_code_grams.py                        (new, f840ce5)
+tests/test_models.py                            (modified, 0c4f7d6)
 grep_glob research/code_grams_walkthrough.ipynb (new, f840ce5)
 grep_glob research/bench_text_splitter.py       (new, f6d22f5)
 grep_glob research/bench_vs_langchain.py        (new, f6d22f5)
 ```
 
-No backend, model, or public API changes have landed yet. The work is
-purely additive standalone modules + tests + research artifacts.
+The model now exposes the chunking surface (`index_content` field +
+`split_content` override seam + `chunk()` method). DB schema, write-path
+gram maintenance, and grep rewrite are still open.
