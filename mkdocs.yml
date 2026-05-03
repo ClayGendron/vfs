@@ -41,6 +41,7 @@ nav:
   - Internals:
     - Filesystem: internals/fs.md
     - FS Component Diagram: fs_architecture.md
+    - Write Pipeline: internals/write_pipeline.md
   - Contributing: contributing.md
 
 markdown_extensions:
