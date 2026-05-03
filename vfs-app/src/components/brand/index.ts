@@ -1,4 +1,4 @@
-export { Section } from "./Section"
+export { Section, SectionGrid } from "./Section"
 export { SpecHero } from "./SpecHero"
 export { Values, type ValueItem } from "./Values"
 export { Sample } from "./Sample"

@@ -3,14 +3,12 @@ import { cn } from "@/lib/utils"
 
 export function Section({
   label,
-  title,
   children,
   tight,
   className,
   id,
 }: {
   label?: ReactNode
-  title?: ReactNode
   children: ReactNode
   tight?: boolean
   className?: string
@@ -19,11 +17,39 @@ export function Section({
   return (
     <section
       id={id}
-      className={cn("vfs-section", tight && "vfs-section--tight", className)}
+      className={cn("vfs-section", tight && "tight", className)}
     >
       {label && <div className="vfs-section-label">{label}</div>}
-      {title && <h2 className="mb-10">{title}</h2>}
       {children}
     </section>
+  )
+}
+
+/**
+ * The standard 1fr / 2.4fr two-column inside a section: left is a
+ * Display-font tagline; right is body copy + content. Mirrors the
+ * `vfs-section-grid` + `vfs-section-tagline` pattern from the design.
+ */
+export function SectionGrid({
+  tagline,
+  taglineSize,
+  children,
+}: {
+  tagline: ReactNode
+  taglineSize?: "default" | "lg"
+  children: ReactNode
+}) {
+  return (
+    <div className="vfs-section-grid">
+      <h2
+        className={cn(
+          "vfs-section-tagline",
+          taglineSize === "lg" && "lg",
+        )}
+      >
+        {tagline}
+      </h2>
+      <div className="vfs-section-body">{children}</div>
+    </div>
   )
 }

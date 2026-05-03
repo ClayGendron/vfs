@@ -7,6 +7,7 @@
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/jetbrains-mono";
 
+@import "./styles/syntax.css";
 @import "./styles/brand.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -156,9 +157,16 @@
 }
 
 /* ─── brand utility classes (match vfs-brand) ────────────────── */
-.mono    { font-family: var(--font-mono); }
+.mono    { font-family: var(--font-mono); font-size: 14px; }
 .display { font-family: var(--font-display); }
 .brand   { font-family: var(--font-brand); }
 .mute    { color: var(--muted); }
 .quiet   { color: var(--quiet); }
 .signal  { color: var(--accent); }
+
+/* inline code in body copy uses mono at 14px */
+:where(p, li, dd, td) > code,
+:where(p, li, dd, td) .mono {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}

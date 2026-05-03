@@ -1,0 +1,108 @@
+/* ════════════════════════════════════════════════════════════════════════
+   vfs · syntax theme
+   GitHub-style role taxonomy, vfs palette.
+   Cobalt = primary wire (keywords). Ember = warm counter (strings/literals).
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* light = paper */
+:root {
+  /* surfaces */
+  --code-bg:        #f7f7f4;
+  --code-bg-strong: #ecece7;
+  --code-fg:        #0b0b0d;
+  --code-rule:      rgba(11,11,13,0.10);
+  --code-rule-2:    rgba(11,11,13,0.18);
+  --code-gutter:    rgba(11,11,13,0.36);
+  --code-line-hl:   color-mix(in oklab, #2f58cf 7%, transparent);
+  --code-sel:       color-mix(in oklab, #2f58cf 18%, transparent);
+
+  /* tokens (GitHub-mapped) */
+  --tok-keyword:     #c2410c;   /* ember — control flow, def, return, if, import */
+  --tok-entity:      #6f3bc6;   /* plum — function/class names being defined */
+  --tok-call:        #2f58cf;   /* cobalt — call sites */
+  --tok-string:      #2c5a2e;   /* moss — string literals */
+  --tok-number:      #14529c;   /* cobalt-deep — numbers, booleans */
+  --tok-constant:    #14529c;   /* cobalt-deep — constants, enums */
+  --tok-comment:     rgba(11,11,13,0.44);
+  --tok-tag:         #2f58cf;   /* cobalt — html tags, jsx components */
+  --tok-attr:        #6f3bc6;   /* plum — attributes */
+  --tok-meta:        #7a4a06;   /* deep ember — decorators, annotations */
+  --tok-regex:       #1a6857;   /* teal — regex literals */
+  --tok-operator:    #0b0b0d;
+  --tok-punct:       #0b0b0d;
+  --tok-property:    #1a6857;   /* teal — object props, css props */
+  --tok-variable:    #0b0b0d;   /* base ink */
+  --tok-bracket-1:   #0b0b0d;
+  --tok-bracket-2:   #0b0b0d;
+  --tok-bracket-3:   #0b0b0d;
+
+  /* diff */
+  --diff-add-bg:     color-mix(in oklab, #3d7d3f 14%, transparent);
+  --diff-add-fg:     #2c5a2e;
+  --diff-del-bg:     color-mix(in oklab, #c2410c 14%, transparent);
+  --diff-del-fg:     #9a3412;
+  --diff-meta:       rgba(11,11,13,0.58);
+
+  /* markup roles (for markdown sample) */
+  --md-heading:      #2f58cf;
+  --md-link:         #2f58cf;
+  --md-emph:         #c2410c;
+}
+
+/* dark = ink */
+html.dark, .dark {
+  --code-bg:        #0f1012;
+  --code-bg-strong: #18191c;
+  --code-fg:        #e7e7e8;
+  --code-rule:      rgba(231,231,232,0.10);
+  --code-rule-2:    rgba(231,231,232,0.18);
+  --code-gutter:    rgba(231,231,232,0.32);
+  --code-line-hl:   color-mix(in oklab, #4d7cf3 10%, transparent);
+  --code-sel:       color-mix(in oklab, #4d7cf3 28%, transparent);
+
+  --tok-keyword:    #ff6b6b;
+  --tok-entity:     #c4a4ff;
+  --tok-call:       #79a4ff;
+  --tok-string:     #a8d99a;
+  --tok-number:     #79a4ff;
+  --tok-constant:   #79a4ff;
+  --tok-comment:    rgba(231,231,232,0.42);
+  --tok-tag:        #79a4ff;
+  --tok-attr:       #c4a4ff;
+  --tok-meta:       #ff8b6e;
+  --tok-regex:      #67d8b6;
+  --tok-operator:   #e7e7e8;
+  --tok-punct:      #e7e7e8;
+  --tok-property:   #67d8b6;
+  --tok-variable:   #e7e7e8;
+  --tok-bracket-1:  #e7e7e8;
+  --tok-bracket-2:  #e7e7e8;
+  --tok-bracket-3:  #e7e7e8;
+
+  --diff-add-bg:    color-mix(in oklab, #86c17a 18%, transparent);
+  --diff-add-fg:    #a8d99a;
+  --diff-del-bg:    color-mix(in oklab, #ff6b6b 18%, transparent);
+  --diff-del-fg:    #ff6b6b;
+  --diff-meta:      rgba(231,231,232,0.55);
+
+  --md-heading:     #79a4ff;
+  --md-link:        #79a4ff;
+  --md-emph:        #ff6b6b;
+}
+
+/* token classes — for any code surface */
+.tok-k   { color: var(--tok-keyword); font-weight: 500; }
+.tok-e   { color: var(--tok-entity); font-weight: 500; }
+.tok-c   { color: var(--tok-call); }
+.tok-s   { color: var(--tok-string); }
+.tok-n   { color: var(--tok-number); }
+.tok-co  { color: var(--tok-comment); font-style: italic; }
+.tok-t   { color: var(--tok-tag); }
+.tok-a   { color: var(--tok-attr); }
+.tok-m   { color: var(--tok-meta); }
+.tok-r   { color: var(--tok-regex); }
+.tok-op  { color: var(--tok-operator); }
+.tok-pu  { color: var(--tok-punct); }
+.tok-p   { color: var(--tok-property); }
+.tok-v   { color: var(--tok-variable); }
+.tok-cn  { color: var(--tok-constant); }

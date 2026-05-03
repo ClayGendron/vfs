@@ -5,7 +5,7 @@ export type IntegrationGroup = {
 
 /**
  * Plain-text ecosystem grid. Mono labels, square borders, no logo polish.
- * Each group is a stacked column: the group name sits on a hairline rule,
+ * Each cell is a stacked column: the group name sits on a hairline rule,
  * items list below in mono with a leading `·` marker.
  */
 export function IntegrationsGrid({

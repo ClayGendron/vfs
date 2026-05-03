@@ -278,23 +278,25 @@ export function Terminal() {
               </div>
             ))}
             <form onSubmit={onSubmit} className="vfs-term-inputline">
-              <span className="vfs-term-prompt">
-                <span className="vfs-term-path">{cwd}</span>
-                {" $ "}
+              <span className="prompt">$</span>
+              <span className="input-wrap">
+                <span className="mirror" aria-hidden="true">
+                  {input}
+                </span>
+                <input
+                  ref={inputRef}
+                  className="input"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  aria-label="terminal input"
+                />
+                <span className="block-caret" aria-hidden="true" />
               </span>
-              <input
-                ref={inputRef}
-                className="vfs-term-input"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={onKeyDown}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                aria-label="terminal input"
-              />
-              <span className="vfs-term-cursor" aria-hidden />
             </form>
           </div>
         </ScrollArea>
@@ -303,13 +305,10 @@ export function Terminal() {
   )
 }
 
-function PromptLine({ cwd, line }: { cwd: string; line: string }) {
+function PromptLine({ line }: { cwd: string; line: string }) {
   return (
     <>
-      <span className="vfs-term-prompt">
-        <span className="vfs-term-path">{cwd}</span>
-        {" $ "}
-      </span>
+      <span className="vfs-term-prompt">$</span>
       <span>{line}</span>
     </>
   )

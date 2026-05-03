@@ -4,212 +4,239 @@ import {
   Positioning,
   Sample,
   Section,
+  SectionGrid,
   SpecHero,
   SpecStrip,
   TerminalTape,
   Values,
 } from "@/components/brand"
 import { SITE } from "@/lib/site"
-import { useLatestRelease } from "@/hooks/useLatestRelease"
 
 export function Home() {
-  const { version } = useLatestRelease()
+  const heroCode = (
+    <Sample label="example · python" kind="quickstart">
+{`from vfs `}<span className="kw">{`import`}</span>{` VFSClient
+`}<span className="kw">{`from`}</span>{` vfs.backends `}<span className="kw">{`import`}</span>{` PostgresFileSystem
+
+g = `}<span className="call">{`VFSClient`}</span>{`()
+g.`}<span className="call">{`add_mount`}</span>{`(`}<span className="str">{`"/enterprise"`}</span>{`, `}<span className="call">{`PostgresFileSystem`}</span>{`(uri))
+
+`}<span className="comment">{`# 1. write a file into the namespace`}</span>{`
+g.`}<span className="call">{`write`}</span>{`(`}<span className="str">{`"/enterprise/auth.py"`}</span>{`, source)
+
+`}<span className="comment">{`# 2. semantic + lexical retrieval over mounts`}</span>{`
+hits = g.`}<span className="call">{`search`}</span>{`(`}<span className="str">{`"authenticate"`}</span>{`, k=`}<span className="num">{`5`}</span>{`)
+
+`}<span className="comment">{`# 3. compose unix verbs over the result envelope`}</span>{`
+g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'grep "authenticate" | nbr | pagerank | top 15'`}</span>{`)`}
+    </Sample>
+  )
 
   return (
     <>
       <SpecHero
-        headline={SITE.headline}
+        headline={"One Namespace\nfor Enterprise-Scale\nContext Engineering."}
         lede={SITE.description}
-        code={
-          <Sample label="python" kind="VFSClient">
-{`from vfs import VFSClient
-from vfs.backends import PostgresFileSystem
-
-g = VFSClient()
-g.add_mount("/enterprise", PostgresFileSystem(...))
-
-# pipelines are composable, like shell
-g.cli('grep "authenticate" | nbr | pagerank | top 15')`}
-          </Sample>
-        }
+        code={heroCode}
         install={{ cmd: SITE.install.python }}
       />
 
-      {/* ─── proof strip (alpha-appropriate facts, not logos) ─── */}
       <SpecStrip metrics={SITE.metrics} />
 
-      {/* ─── on-wire: input vs. result contract ─── */}
       <Section label="vfs / 01 · on-wire">
-        <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)] gap-12 items-start mb-10">
-          <div className="font-[family-name:var(--font-display)] text-[clamp(22px,2.2vw,30px)] leading-tight tracking-tight font-medium">
-            One result contract. One method per verb.
-          </div>
-          <p className="text-[var(--muted)] text-[15px] leading-relaxed max-w-prose">
-            Every operation — search, grep, pagerank, neighborhood — returns
-            the same{" "}
-            <code className="mono">VFSResult</code>. That is what makes
-            pipelines compose: one method's output is always the next
-            method's input.
+        <SectionGrid
+          taglineSize="lg"
+          tagline={
+            <>
+              One result contract.
+              <br />
+              One method per verb.
+            </>
+          }
+        >
+          <p>
+            Every operation — read, write, list, search, traverse — returns a{" "}
+            <code className="mono">VFSResult</code>. Results compose with set
+            algebra (<code className="mono">&amp;</code>,{" "}
+            <code className="mono">|</code>,{" "}
+            <code className="mono">−</code>) so pipelines are just expressions
+            over one envelope.
           </p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Sample label="python · async" kind="VFSClient">
-{`from vfs import AsyncVFSClient
-from vfs.backends import PostgresFileSystem
+          <div style={{ marginTop: 24 }}>
+            <Sample label="async client · result envelope" kind="protocol">
+{`async with `}<span className="call">{`VFSClient`}</span>{`() as g:
+    auth   = `}<span className="kw">{`await`}</span>{` g.`}<span className="call">{`search`}</span>{`(`}<span className="str">{`"authenticate"`}</span>{`, k=`}<span className="num">{`20`}</span>{`)
+    policy = `}<span className="kw">{`await`}</span>{` g.`}<span className="call">{`list`}</span>{`(`}<span className="str">{`"/enterprise"`}</span>{`, glob=`}<span className="str">{`"*.md"`}</span>{`)
+    nearby = `}<span className="kw">{`await`}</span>{` g.`}<span className="call">{`neighborhood`}</span>{`(auth.paths, depth=`}<span className="num">{`2`}</span>{`)
 
-async def run():
-    g = AsyncVFSClient()
-    await g.add_mount("/enterprise", PostgresFileSystem(...))
+    ranked = (auth | nearby) - policy
+    top    = ranked.`}<span className="call">{`pagerank`}</span>{`().`}<span className="call">{`top`}</span>{`(`}<span className="num">{`10`}</span>{`)
 
-    # one verb per call; returns VFSResult
-    return await g.semantic_search(
-        "authentication",
-        scope="/enterprise/**/*.py",
-        top_k=15,
-    )`}
-          </Sample>
-          <Sample label="result" kind="VFSResult">
-{`VFSResult(
-  function="semantic_search",
-  success=True,
-  candidates=[
-    Candidate(path="/enterprise/auth.py",    score=0.184),
-    Candidate(path="/enterprise/session.py", score=0.131),
-    Candidate(path="/enterprise/policy.md",  score=0.097),
-    ...
-  ],
-  next_cursor=None,
-)`}
-          </Sample>
-        </div>
+    `}<span className="kw">{`for`}</span>{` entry `}<span className="kw">{`in`}</span>{` top:
+        `}<span className="call">{`print`}</span>{`(entry.path, entry.score, entry.content_hash)`}
+            </Sample>
+          </div>
+        </SectionGrid>
       </Section>
 
-      {/* ─── integrations grid ─── */}
       <Section label="vfs / 02 · integrations">
-        <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)] gap-12 items-start mb-10">
-          <div className="font-[family-name:var(--font-display)] text-[clamp(22px,2.2vw,30px)] leading-tight tracking-tight font-medium">
-            Mount the stack you already run.
-          </div>
-          <p className="text-[var(--muted)] text-[15px] leading-relaxed max-w-prose">
-            One result contract over the backends, retrieval primitives, graph
-            algorithms, and agent frameworks you're already wiring together.
-            Plain Python, plain CLI, no new infrastructure to host.
+        <SectionGrid tagline="Mount the stack you already run.">
+          <p>
+            vfs is the protocol, not the database. Bring postgres, mssql,
+            sqlite, your retrievers, your graph. We give you one namespace and
+            one envelope across all of them.
           </p>
-        </div>
-        <IntegrationsGrid groups={SITE.integrations} />
+          <div style={{ marginTop: 24 }}>
+            <IntegrationsGrid groups={SITE.integrations} />
+          </div>
+        </SectionGrid>
       </Section>
 
-      {/* ─── positioning: why vfs vs. obvious alternatives ─── */}
       <Section label="vfs / 03 · why vfs?">
-        <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)] gap-12 items-start mb-10">
-          <div className="font-[family-name:var(--font-display)] text-[clamp(22px,2.2vw,30px)] leading-tight tracking-tight font-medium">
-            Not a vector DB. Not a retriever. A namespace.
-          </div>
-          <p className="text-[var(--muted)] text-[15px] leading-relaxed max-w-prose">
-            vfs is the substrate underneath your retrievers, vector stores, and
-            graph queries. Everything is addressable by path; every operation
-            returns the same{" "}
-            <code className="mono">VFSResult</code>; pipelines compose like the
-            shell.
+        <SectionGrid
+          tagline={
+            <>
+              Not a vector DB.
+              <br />
+              Not a retriever.
+              <br />
+              A namespace.
+            </>
+          }
+        >
+          <p>
+            Developers reach for the closest analogue first. vfs sits next to
+            the tools you already use — and gives you a substrate that composes
+            them.
           </p>
-        </div>
-        <Positioning rows={SITE.positioning} />
+          <div style={{ marginTop: 24 }}>
+            <Positioning rows={SITE.positioning} />
+          </div>
+        </SectionGrid>
       </Section>
 
-      {/* ─── terminal tape preview ─── */}
       <Section label="vfs / 04 · the interface agents already know">
-        <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-12 items-start">
-          <div>
-            <div className="font-[family-name:var(--font-display)] text-[clamp(28px,3vw,40px)] leading-[1.1] tracking-tight font-medium">
-              grep. neighborhood. pagerank.
-            </div>
-            <p className="text-[var(--muted)] text-[15px] leading-relaxed mt-4 max-w-prose">
-              Unix verbs over enterprise context. Pipe the same way you'd pipe
-              on a shell — the same way an LLM was trained to. The REPL is a
-              click away.
-            </p>
+        <SectionGrid
+          tagline={
+            <>
+              grep. neighborhood.
+              <br />
+              pagerank.
+            </>
+          }
+        >
+          <p>
+            An LLM was already trained on Unix. vfs gives it a shell over
+            enterprise data — pasteable in chat, scriptable in code, identical
+            results in either.
+          </p>
+          <div style={{ marginTop: 24 }}>
+            <TerminalTape cta="open the repl" to="/terminal" />
           </div>
-          <TerminalTape cta="Open the REPL" to="/terminal" />
-        </div>
+        </SectionGrid>
       </Section>
 
-      {/* ─── principles · capability surface ─── */}
       <Section label="vfs / 05 · principles">
-        <Values
-          items={[
-            {
-              title: "Agent-first",
-              body:
-                "Built for an LLM running in a loop over a long horizon. Every operation is versioned, reversible, and expressible through a composable CLI — the interface agents are trained to use.",
-            },
-            {
-              title: "Everything is a file",
-              body:
-                "Files, chunks, versions, edges, tools — all addressable by path, all conforming to the same data types. One abstraction, one API, predictable behavior.",
-            },
-            {
-              title: "Small, composable tools",
-              body:
-                "Not a new tool per use case. Read, grep, pagerank, neighborhood — each tiny, each pipeable. Specialized tools live at their own paths and load into context only when needed.",
-            },
-            {
-              title: "Bring your own infra",
-              body:
-                "Database-first. Runs in-process with your app or as an MCP server. No new infra, no new patterns — vfs lives on the Postgres you already run.",
-            },
-          ]}
-        />
+        <SectionGrid tagline="Capabilities, not features.">
+          <p>
+            The product story has three load-bearing claims. The principles
+            below describe how those claims hold up under stress.
+          </p>
+          <div style={{ marginTop: 24 }}>
+            <Values
+              items={[
+                {
+                  title: "Agent-first",
+                  body:
+                    "An LLM already knows how to use a shell. vfs gives it one over enterprise data.",
+                },
+                {
+                  title: "Everything is a file",
+                  body:
+                    "One Unix-style namespace over heterogeneous stores. No probing. No special cases.",
+                },
+                {
+                  title: "Small composable tools",
+                  body:
+                    "grep, neighborhood, pagerank, top — pipe results across one envelope.",
+                },
+                {
+                  title: "Bring your own infra",
+                  body:
+                    "Mount what you already run. vfs is the protocol, not the database.",
+                },
+              ]}
+            />
+          </div>
+        </SectionGrid>
       </Section>
 
-      {/* ─── status + next ─── */}
       <Section label="vfs / 06 · status" tight>
-        <div className="grid md:grid-cols-2 gap-12 items-start">
-          <div>
-            <div className="font-[family-name:var(--font-display)] text-[clamp(28px,3vw,40px)] leading-[1.1] tracking-tight font-medium">
-              {SITE.stage} · {version}
-            </div>
-            <p className="text-[var(--muted)] text-[15px] leading-relaxed mt-4 max-w-prose">
-              Alpha means the API is still moving. The core file system, CLI
-              query engine, graph algorithms, and BM25 lexical search are
-              implemented and tested.{" "}
-              <span className="signal">2,157 tests, 99% coverage.</span> What's
-              next: MCP single-tool interface, shell entrypoint,{" "}
-              <code className="mono">.api/</code> control plane,
-              LocalFileSystem, more analyzers, automatic embedding on write.
-            </p>
-            <div className="flex flex-wrap gap-4 mt-8">
-              <Link
-                to="/terminal"
-                className="mono text-[11px] tracking-[0.22em] uppercase border border-[var(--rule)] px-4 py-3 hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
-              >
-                try the repl →
-              </Link>
-              <Link
-                to="/about"
-                className="mono text-[11px] tracking-[0.22em] uppercase border border-[var(--rule)] px-4 py-3 hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
-              >
-                read the thesis →
-              </Link>
-              <a
-                href={SITE.github}
-                target="_blank"
-                rel="noreferrer"
-                className="mono text-[11px] tracking-[0.22em] uppercase border border-[var(--rule)] px-4 py-3 hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
-              >
-                source →
-              </a>
-            </div>
+        <SectionGrid tagline={<><em>alpha</em> · v0.0.x</>}>
+          <p>
+            The core file system, CLI query engine, graph algorithms, and BM25
+            lexical search are implemented and tested.{" "}
+            <strong style={{ color: "var(--fg)" }}>2,157 tests</strong>,{" "}
+            <strong style={{ color: "var(--fg)" }}>99% coverage</strong>, three
+            production-grade backends. The API is still moving. Target stable:{" "}
+            <strong style={{ color: "var(--fg)" }}>{SITE.milestone}</strong>.
+          </p>
+          <div
+            style={{
+              display: "flex",
+              gap: 18,
+              marginTop: 18,
+              flexWrap: "wrap",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+            }}
+          >
+            <Link
+              to="/terminal"
+              style={{
+                color: "var(--accent)",
+                borderBottom: "1px solid var(--accent)",
+                paddingBottom: 2,
+              }}
+            >
+              try the repl →
+            </Link>
+            <Link
+              to="/about"
+              style={{
+                color: "var(--fg)",
+                borderBottom: "1px solid var(--rule)",
+                paddingBottom: 2,
+              }}
+            >
+              read the thesis →
+            </Link>
+            <a
+              href={SITE.github}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                color: "var(--fg)",
+                borderBottom: "1px solid var(--rule)",
+                paddingBottom: 2,
+              }}
+            >
+              source →
+            </a>
           </div>
-          <Sample label="install" kind="extras">
-{`pip install vfs-py                 # core: sqlite, rustworkx, bm25
-pip install 'vfs-py[postgres]'     # postgres: pgvector, fts, graph pushdown
-pip install 'vfs-py[mssql]'        # mssql backend
-pip install 'vfs-py[openai]'       # openai embeddings
-pip install 'vfs-py[langchain]'    # langchain embedding provider
-pip install 'vfs-py[deepagents]'   # deepagents integration
-pip install 'vfs-py[all]'          # everything`}
-          </Sample>
-        </div>
+          <div style={{ marginTop: 32 }}>
+            <Sample label="install extras" kind="pip">
+{`pip install vfs-py                  `}<span className="comment">{`# core`}</span>{`
+pip install "vfs-py[postgres]"      `}<span className="comment">{`# pg backend`}</span>{`
+pip install "vfs-py[mssql]"         `}<span className="comment">{`# mssql backend`}</span>{`
+pip install "vfs-py[graph]"         `}<span className="comment">{`# rustworkx algorithms`}</span>{`
+pip install "vfs-py[mcp]"           `}<span className="comment">{`# mcp surface`}</span>{`
+pip install "vfs-py[all]"           `}<span className="comment">{`# everything`}</span>
+            </Sample>
+          </div>
+        </SectionGrid>
       </Section>
     </>
   )

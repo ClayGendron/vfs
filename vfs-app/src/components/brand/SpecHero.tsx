@@ -2,23 +2,13 @@ import type { ReactNode } from "react"
 import { useState } from "react"
 
 export function SpecHero({
-  topLeft,
-  topRight,
   headline,
-  mark,
-  version,
   lede,
-  side,
   code,
   install,
 }: {
-  topLeft?: ReactNode
-  topRight?: ReactNode
   headline?: ReactNode
-  mark?: ReactNode
-  version?: ReactNode
   lede: ReactNode
-  side?: ReactNode
   code?: ReactNode
   install?: { cmd: string }
 }) {
@@ -35,38 +25,39 @@ export function SpecHero({
     }
   }
 
-  const showTop = topLeft || topRight
-  const showMarkRow = mark || version
+  // Each line is its own block with `overflow: hidden` so the painted
+  // ::selection rectangle (and any span-background or text-decoration that
+  // would paint at the line-box extent) is clipped to that one line and
+  // can't bleed into the adjacent line.
+  //
+  // Why this is the fix: in Chrome the selection rect is sized from the
+  // font's strut (hhea/OS-2 ascent + descent + line-gap, ~1.15 em for
+  // Saira), NOT from `line-height`. With `line-height: 1.02` the strut is
+  // ~7.8px taller than the line spacing, so consecutive lines' selection
+  // rects overlap by ~4px. `ascent-override`, `descent-override`,
+  // `line-gap-override`, and `text-box-trim` all leave the painted
+  // selection rect unchanged — `display: block; overflow: hidden` is the
+  // only mechanism that actually clips the paint in current Chrome.
+  // ReactNode children pass through unchanged so callers can opt out.
+  const renderedHeadline =
+    typeof headline === "string"
+      ? headline.split("\n").map((line, i) => (
+          <span key={i} className="vfs-hero-headline-line">
+            {line}
+          </span>
+        ))
+      : headline
 
   return (
     <section className="vfs-hero">
-      {showTop && (
-        <div className="vfs-hero-top">
-          <div className="vfs-hero-top-cell">{topLeft}</div>
-          <div className="vfs-hero-top-cell vfs-hero-top-cell--right">
-            {topRight}
-          </div>
+      <div className="vfs-hero-grid">
+        <div className="vfs-hero-left">
+          {renderedHeadline && (
+            <h1 className="vfs-hero-headline">{renderedHeadline}</h1>
+          )}
+          <p className="vfs-hero-lede">{lede}</p>
         </div>
-      )}
-
-      <div className="vfs-hero-body">
-        <div className="vfs-hero-stage">
-          <div className="vfs-hero-stage-text">
-            {showMarkRow && (
-              <div className="vfs-hero-mark-row">
-                <span className="vfs-hero-mark-sigil" aria-hidden="true" />
-                {mark && <span className="vfs-hero-mark-name">{mark}</span>}
-                {version && (
-                  <span className="vfs-hero-mark-version">{version}</span>
-                )}
-              </div>
-            )}
-            {headline && <h1 className="vfs-hero-headline">{headline}</h1>}
-            <p className="vfs-hero-lede">{lede}</p>
-            {side && <div className="vfs-hero-meta">{side}</div>}
-          </div>
-          {code && <div className="vfs-hero-code-col">{code}</div>}
-        </div>
+        {code && <div>{code}</div>}
       </div>
 
       {install && (
@@ -78,8 +69,9 @@ export function SpecHero({
             aria-label={`Copy install command: ${install.cmd}`}
             title="Click to copy"
           >
-            <span className="vfs-install-sigil">$</span>
+            <span className="sig">$</span>
             <span>{install.cmd}</span>
+            <span className="copy-status">{copied ? "copied" : ""}</span>
           </button>
         </div>
       )}

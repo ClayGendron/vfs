@@ -1,45 +1,63 @@
-import { MoonIcon, SunIcon, MonitorIcon } from "@phosphor-icons/react"
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { useEffect, useState } from "react"
 import { useTheme } from "@/components/theme-provider"
 
 export function ThemeToggle() {
-  const { theme, setTheme } = useTheme()
+  const { setTheme } = useTheme()
+  const [isDark, setIsDark] = useState(
+    () =>
+      typeof document !== "undefined" &&
+      document.documentElement.classList.contains("dark"),
+  )
+
+  useEffect(() => {
+    const root = document.documentElement
+    const sync = () => setIsDark(root.classList.contains("dark"))
+    sync()
+    const observer = new MutationObserver(sync)
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] })
+    return () => observer.disconnect()
+  }, [])
+
+  const toggle = () => setTheme(isDark ? "light" : "dark")
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        className="vfs-chrome-icon"
-        aria-label="Toggle theme"
-        title="Theme (press d to toggle)"
-      >
-        <SunIcon className="size-4 dark:hidden" weight="regular" />
-        <MoonIcon className="hidden size-4 dark:block" weight="regular" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-36">
-        <DropdownMenuCheckboxItem
-          checked={theme === "light"}
-          onCheckedChange={() => setTheme("light")}
+    <button
+      type="button"
+      className="vfs-icon-btn"
+      aria-label="Toggle theme"
+      title="Theme (press d to toggle)"
+      onClick={toggle}
+    >
+      {isDark ? (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
         >
-          <SunIcon className="size-4" weight="regular" /> light
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem
-          checked={theme === "dark"}
-          onCheckedChange={() => setTheme("dark")}
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+        </svg>
+      ) : (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
         >
-          <MoonIcon className="size-4" weight="regular" /> dark
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem
-          checked={theme === "system"}
-          onCheckedChange={() => setTheme("system")}
-        >
-          <MonitorIcon className="size-4" weight="regular" /> system
-        </DropdownMenuCheckboxItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" />
+        </svg>
+      )}
+    </button>
   )
 }

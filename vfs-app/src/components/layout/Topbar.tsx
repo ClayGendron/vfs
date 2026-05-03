@@ -1,8 +1,9 @@
 import { NavLink } from "react-router-dom"
-import { GithubLogoIcon } from "@phosphor-icons/react"
 import { ThemeToggle } from "./ThemeToggle"
 import { SITE } from "@/lib/site"
 import { useLatestRelease } from "@/hooks/useLatestRelease"
+
+const RELEASES_URL = "https://github.com/ClayGendron/vfs/releases/"
 
 const nav = [
   { to: "/", label: "home", end: true },
@@ -12,41 +13,48 @@ const nav = [
 ]
 
 export function Topbar() {
-  const { version, url } = useLatestRelease()
+  const { version } = useLatestRelease()
 
   return (
     <header className="vfs-chrome">
-      <NavLink to="/" end className="vfs-chrome-brand">
-        vfs<span className="vfs-chrome-brand-dot" aria-hidden />
+      <NavLink to="/" end className="vfs-spec-word" aria-label="vfs home">
+        <span className="word">vfs</span>
       </NavLink>
 
-      <nav className="vfs-chrome-nav" aria-label="Primary">
+      <nav className="vfs-spec-nav" aria-label="Primary">
         {nav.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.end}>
-            {item.label}
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            className={({ isActive }) =>
+              isActive ? "cell active" : "cell"
+            }
+          >
+            <span className="dot" aria-hidden="true" />
+            <span>{item.label}</span>
           </NavLink>
         ))}
-      </nav>
-
-      <div className="vfs-chrome-right">
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="vfs-chrome-meta hidden md:inline hover:text-[var(--fg)] transition-colors"
-          title="Latest release on GitHub"
-        >
-          alpha · {version}
-        </a>
         <a
           href={SITE.github}
           target="_blank"
-          rel="noreferrer"
-          className="vfs-chrome-icon"
-          aria-label="GitHub"
-          title="GitHub"
+          rel="noopener noreferrer"
+          className="cell"
         >
-          <GithubLogoIcon className="size-4" weight="regular" />
+          <span className="dot" aria-hidden="true" />
+          <span>github</span>
+        </a>
+      </nav>
+
+      <div className="vfs-spec-right">
+        <a
+          href={RELEASES_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="vfs-spec-ver"
+          title="Releases on GitHub"
+        >
+          {version}
         </a>
         <ThemeToggle />
       </div>
