@@ -120,14 +120,15 @@ Key conclusions:
    Logical artifacts:
 
    - a chunk metadata/content table, currently `vfs_entries`
-   - a staging table with one row per distinct `(index_id, gram_kind, gram, chunk_id)`
+   - a staging table with one row per distinct `(index_id, gram_kind, gram, chunk_id, action)`
    - posting-block storage with compressed sorted chunk ids per gram
    - optional gram statistics for selectivity-aware query planning
-   - tombstone/update metadata or equivalent delete handling
+   - staged delete deltas for delete/update handling
 
    Queries fetch postings for required grams, union posting blocks within each
-   gram, intersect across required grams, filter deletes and structural metadata,
-   then fetch candidate chunk content for Python verification.
+   gram, merge pending staging adds, subtract pending staging deletes, intersect
+   across required grams, filter structural metadata, then fetch candidate chunk
+   content for Python verification.
 
    Freshness is part of the correctness contract. A backend that uses staging and
    posting blocks must do one of:
@@ -169,6 +170,27 @@ Key conclusions:
    - primary lookup by `(gram_kind, gram_key, chunk_id)`
    - reverse maintenance lookup by `chunk_id`
    - optional `owner_path` prefix/pattern helper for glob narrowing
+
+   For the row-store MVP, changed entries may be applied directly by deleting
+   removed `(gram_kind, gram_key, chunk_id)` rows and inserting added rows. The
+   full posting-block adapter instead records those same changes as staging
+   deltas:
+
+   ```text
+   action = add     -- this chunk now contains this gram
+   action = delete  -- this chunk no longer contains this gram
+   ```
+
+   On edits, the backend computes old and new gram sets and stages only the
+   differences. On deletes, it recalculates the current trigrams before the
+   content or chunk rows disappear, then stages `delete` rows for each current
+   gram.
+
+   Pending staging rows are folded by **latest action wins** for each
+   `(index_id, gram_kind, gram, chunk_id)`. This preserves correctness when the
+   same chunk changes multiple times before a posting-block flush. For example,
+   if an older pending row says `delete` and a newer pending row says `add`, the
+   query path treats the gram as present.
 
 5. **Implement candidate queries by gram intersection.**
 
@@ -350,12 +372,13 @@ The code gram index is a safe candidate generator:
    adapter:
 
    - row-store MVP: `vfs_entry_chunk_grams` and required indexes
-   - posting-block target: staging, posting blocks, statistics, and delete
-     metadata
+   - posting-block target: add/delete staging rows, posting blocks, statistics,
+     and applied-delta metadata
 
 5. MSSQL chunk writes/deletes maintain gram index state atomically with chunk
-   rows and preserve committed-write freshness by querying pending state,
-   flushing synchronously, or falling back to scan.
+   rows. Deletes recalculate current chunk trigrams before content is removed,
+   stage `delete` deltas, and preserve committed-write freshness by querying
+   pending state, flushing synchronously, or falling back to scan.
 
 6. MSSQL grep can use the code-gram index to fetch chunk candidates and then
    uses Python final matching.

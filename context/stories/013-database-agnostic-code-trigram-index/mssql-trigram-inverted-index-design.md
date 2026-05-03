@@ -35,13 +35,14 @@ Document writes -> staging table -> periodic flush job -> immutable compressed p
 
 In other words:
 
-1. When documents are written, extract distinct trigrams and write `(CorpusId, Gram, DocId)` rows into a staging table.
+1. When documents are written, extract distinct trigrams and write `(CorpusId, Gram, DocId, Action)` rows into a staging table.
 2. Periodically, group staging rows by trigram.
-3. Sort and deduplicate document IDs.
-4. Split each trigram's document list into bounded chunks, such as 1,024 or 4,096 doc IDs.
-5. Compress each chunk into a `VARBINARY(MAX)` posting block.
-6. Store those blocks in a main inverted-index table.
-7. Queries fetch posting blocks, decompress them in the app, union blocks within each trigram, intersect across trigrams, then exact-regex verify the candidate documents.
+3. Apply staged deletes before staged adds for each trigram.
+4. Sort and deduplicate document IDs.
+5. Split each trigram's document list into bounded chunks, such as 1,024 or 4,096 doc IDs.
+6. Compress each chunk into a `VARBINARY(MAX)` posting block.
+7. Store those blocks in a main inverted-index table.
+8. Queries fetch posting blocks, decompress them in the app, union blocks within each trigram, apply still-pending staging adds/deletes, intersect across trigrams, then exact-regex verify the candidate documents.
 
 This approximates a production inverted index while keeping SQL Server as the storage system.
 
@@ -198,13 +199,17 @@ This is the pending write area.
 
 ```sql
 CREATE TABLE dbo.TrigramStage (
+    StageId   BIGINT IDENTITY(1,1) NOT NULL,
     BatchId   BIGINT NOT NULL,
     CorpusId  INT NOT NULL,
     Gram      BINARY(3) NOT NULL,
     DocId     BIGINT NOT NULL,
+    Action    TINYINT NOT NULL, -- 1 = add, 2 = delete
+    AppliedAt DATETIME2 NULL,
 
     CONSTRAINT PK_TrigramStage
-        PRIMARY KEY CLUSTERED (BatchId, CorpusId, Gram, DocId)
+        PRIMARY KEY CLUSTERED (BatchId, CorpusId, Gram, DocId, Action),
+    CONSTRAINT UQ_TrigramStage_StageId UNIQUE (StageId)
 )
 WITH (DATA_COMPRESSION = PAGE);
 ```
@@ -213,12 +218,31 @@ Purpose:
 
 ```text
 cheap bulk writes
-simple deduplication
+simple add/delete deltas
 batch-oriented flush
 no permanent row-per-posting storage
 ```
 
-On document ingest, the application extracts distinct trigrams and bulk inserts them into this table.
+On document ingest, the application extracts distinct trigrams and bulk inserts `Action = add` rows into this table. On document edit, the application computes the old and new trigram sets and inserts only the differences:
+
+```text
+old - new -> Action = delete
+new - old -> Action = add
+```
+
+On document delete, the application recalculates the document's current trigrams before the content disappears and inserts `Action = delete` rows for each current trigram.
+
+If the same document changes multiple times before compaction, staging may hold
+more than one action for the same `(CorpusId, Gram, DocId)`. Query and flush code
+must fold those rows by `StageId` and use the latest action as the current truth.
+That gives the expected behavior for sequences like:
+
+```text
+delete gram X
+add gram X back
+```
+
+The final staged state for `X` is `add`, because the newer row wins.
 
 ---
 
@@ -335,22 +359,28 @@ reject too-broad patterns early
 
 ---
 
-### 6. Optional Tombstone Table
+### 6. Delete Deltas Instead of Tombstones
 
-For deletes and updates, avoid mutating old posting blocks immediately.
+For deletes and updates, avoid mutating old posting blocks immediately. Instead, store gram-specific delete deltas in `TrigramStage`.
 
-```sql
-CREATE TABLE dbo.DocumentTombstones (
-    CorpusId   INT NOT NULL,
-    DocId      BIGINT NOT NULL,
-    DeletedAt  DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+Example:
 
-    CONSTRAINT PK_DocumentTombstones
-        PRIMARY KEY CLUSTERED (CorpusId, DocId)
-);
+```text
+deleted document 123 currently has grams: abc, bcd, cde
+
+stage:
+  abc, 123, delete
+  bcd, 123, delete
+  cde, 123, delete
 ```
 
-At query time, candidate doc IDs can be filtered against tombstones. Later compaction can remove deleted doc IDs from newly written blocks.
+At query time, candidate document IDs from compressed posting blocks are adjusted by latest-action staging rows:
+
+```text
+candidate docs = compressed_postings + latest_staged_adds - latest_staged_deletes
+```
+
+Later compaction removes deleted document IDs from newly written blocks. Delete staging rows are not discarded merely because they were read by a flush; they can be marked applied only after every active posting block that could contain the deleted `(Gram, DocId)` pair has been rewritten or retired.
 
 ---
 
@@ -418,10 +448,10 @@ def extract_trigrams(text: str) -> set[bytes]:
 
 ### Step 3: Bulk Insert Stage Rows
 
-For each distinct trigram:
+For each distinct trigram change:
 
 ```text
-(BatchId, CorpusId, Gram, DocId)
+(BatchId, CorpusId, Gram, DocId, Action)
 ```
 
 Use bulk loading:
@@ -445,16 +475,21 @@ High-level algorithm:
 ```text
 1. Close current batch.
 2. Create a new open batch for incoming writes.
-3. Read closed batch ordered by CorpusId, Gram, DocId.
+3. Read closed batch ordered by CorpusId, Gram, DocId, StageId.
 4. For each CorpusId + Gram:
-      a. Deduplicate DocIds.
-      b. Sort DocIds.
-      c. Split into blocks of N doc IDs.
-      d. Compress each block.
-      e. Insert into TrigramPostingBlocks.
+      a. Load active compressed postings for that gram if this flush is compacting the gram.
+      b. Fold staging rows by latest StageId per DocId.
+      c. Apply latest staged deletes.
+      d. Apply latest staged adds.
+      e. Deduplicate and sort DocIds.
+      f. Split into blocks of N doc IDs.
+      g. Compress each block.
+      h. Insert replacement TrigramPostingBlocks.
+      i. Mark old blocks inactive if replacement blocks were written.
 5. Update TrigramStats.
 6. Mark batch as Flushed.
-7. Delete or archive staging rows.
+7. Mark add rows applied once their replacement/add blocks are durable.
+8. Mark delete rows applied only after no active block can still contain the deleted posting.
 ```
 
 Example pseudocode:
@@ -462,8 +497,11 @@ Example pseudocode:
 ```python
 BLOCK_SIZE = 4096
 
-for (corpus_id, gram), doc_ids in grouped_stage_rows(batch_id):
-    doc_ids = sorted(set(doc_ids))
+for (corpus_id, gram), delta in grouped_latest_stage_rows(batch_id):
+    doc_ids = load_active_postings(corpus_id, gram)
+    doc_ids.difference_update(delta.deletes)
+    doc_ids.update(delta.adds)
+    doc_ids = sorted(doc_ids)
 
     for chunk in chunks(doc_ids, BLOCK_SIZE):
         blob = encode_delta_varint(chunk)
@@ -647,12 +685,12 @@ Always intersect starting with the smallest posting list.
 
 ---
 
-### Step 6: Filter Tombstones and Metadata
+### Step 6: Apply Pending Deletes and Metadata
 
-Remove deleted docs:
+Apply still-pending staging deletes:
 
 ```text
-candidate_docs = candidate_docs - tombstones
+candidate_docs = candidate_docs - staged_deletes
 ```
 
 Then apply metadata filters if needed:
@@ -696,8 +734,8 @@ The fresh query shape is:
 
 ```text
 candidate docs from main posting blocks
-UNION
-candidate docs from staging table
+UNION latest staged adds
+EXCEPT latest staged deletes
 ```
 
 This mirrors the idea of a pending list. The tradeoff is that a large staging table can slow reads. A practical compromise:
@@ -714,14 +752,16 @@ daily full optimization if needed
 
 Over time, there may be many small posting blocks. Reads get slower because each query must fetch and decode many blocks.
 
-Compaction merges older blocks into newer blocks:
+Compaction merges older blocks into newer blocks and applies staged delete rows:
 
 ```text
 read active blocks for selected batches/ranges
 merge doc IDs per trigram
-remove tombstoned doc IDs
+remove staged-deleted doc IDs
+add staged-added doc IDs
 write new larger blocks
 mark old blocks inactive
+mark applied staging rows as applied
 ```
 
 Important: compaction should usually be copy-on-write.
@@ -842,13 +882,13 @@ class TrigramIndex:
 
 This makes it easier to swap from relational rows to compressed postings.
 
-### Phase 3: Add Compaction and Tombstones
+### Phase 3: Add Compaction and Delete Deltas
 
 Implement:
 
 ```text
 delete handling
-tombstone filtering
+staged delete filtering
 copy-on-write compaction
 inactive block cleanup
 statistics refresh

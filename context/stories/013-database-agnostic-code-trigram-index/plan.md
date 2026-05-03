@@ -38,10 +38,13 @@ chunk writes -> staging rows -> periodic flush -> immutable posting blocks
 
 Required artifacts:
 
-- staging rows keyed by `(index_id, gram_kind, gram, chunk_id)`
+- staging rows keyed by `(index_id, gram_kind, gram, chunk_id, action)`
 - compressed posting blocks keyed by `(index_id, gram_kind, gram, block_id)`
 - gram statistics for selectivity planning
-- delete/update metadata or equivalent tombstone handling
+- applied-delta metadata so staged deletes are retained until every active block
+  that could contain the deleted posting has been rewritten or retired
+- latest-action folding for repeated pending changes to the same
+  `(index_id, gram_kind, gram, chunk_id)`
 - candidate lookup that merges flushed blocks with pending writes or otherwise
   preserves committed-write freshness
 
@@ -68,6 +71,8 @@ Required operations:
 - create/provision gram artifacts
 - delete grams for a chunk
 - insert grams for a chunk
+- compute edit deltas as `old_grams - new_grams` deletes and `new_grams - old_grams` adds
+- recalculate current chunk trigrams before delete and stage/delete them before content disappears
 - query candidate chunk ids from a `GramQuery`
 - join candidate ids back to chunk rows
 - preserve no-false-negative freshness for committed chunks
@@ -101,7 +106,7 @@ Move the MSSQL adapter from row-store MVP to the target physical model from
 - `TrigramBatches`
 - `TrigramPostingBlocks`
 - `TrigramStats`
-- tombstones or equivalent delete/update filtering
+- add/delete staging actions and applied-delta tracking
 - app-side decompression, union, and intersection
 - compaction for many small blocks
 
