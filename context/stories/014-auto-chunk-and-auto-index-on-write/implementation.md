@@ -1,6 +1,6 @@
 # 014 — Implementation notes
 
-- **Status:** in-progress (Slice 1 complete; Slice 2 = pipeline restructure not started)
+- **Status:** in-progress (Slices 1 + 2 complete; Slice 3 = Postgres trigram wiring not started)
 - **Date:** 2026-05-03
 - **Spec:** [spec.md](./spec.md)
 - **Pipeline doc:** [`docs/internals/write_pipeline.md`](../../../docs/internals/write_pipeline.md)
@@ -10,7 +10,7 @@
 | Slice | Scope | Status |
 |---|---|---|
 | 1 | Public surface, no behavior change | done |
-| 2 | Pipeline restructure in base `_write_impl` (change detect, auto-chunk, persist reorder, status population) | not started |
+| 2 | Pipeline restructure in base `_write_impl` (change detect, auto-chunk, persist reorder, status population) | done |
 | 3 | Postgres trigram + bulk embed wiring (depends on story 013 phase 2 row store) | not started |
 | 4 | Multi-mount router merge in `VFSClient`; delete-side delta staging | not started |
 
@@ -194,43 +194,151 @@ examples/demo_dbfs.py
 
 `uv run pytest` — 2457 passed, 108 skipped, no regressions.
 
-## Slice 2 — what's next
+## Slice 2 — landed
 
-Pipeline restructure inside `DatabaseFileSystem._write_impl`. Per the
-[pipeline doc](../../../docs/internals/write_pipeline.md), this is where:
+Pipeline restructure inside `DatabaseFileSystem._write_impl`. Behavior
+matches the [pipeline doc](../../../docs/internals/write_pipeline.md)
+end-to-end.
 
-1. **Change detection becomes per-entry** — unchanged writes are a true
-   no-op (no version row, no chunk cascade, no `UPDATE`, no
-   `updated_at` refresh).
-2. **Auto-chunk runs in-memory** when `self._auto_chunk` is True:
-   - batch-fatal pre-check for `file with index_content=True` plus
-     pre-built chunks for the same file
-   - call `entry.chunk()` per changed indexable file; append returned
-     chunks to the batch
-3. **Auto-index runs in-memory + provider call** when
-   `self._auto_index` is True:
-   - `_apply_index_maintenance(...)` for trigram delta staging
-   - one `embed_entries(...)` call per write; assign vectors to
-     `entry.embedding`
-4. **Single persist phase** reorders the existing logic:
-   - stage delete deltas before stale chunks/content disappears
-   - `DELETE` stale chunks via `_stage_chunk_cascade`
-   - clear stale embeddings for files flipped to `index_content=False`
-   - version cuts (existing pipeline)
-   - `INSERT` files + chunks + trigram staging rows in one batch
-   - `UPDATE` existing files (vectors ride along)
-   - commit parent dirs
-   - one `await session.flush()`
-5. **Populate `Candidate.status`** on every returned candidate
-   (`created` / `updated` / `unchanged`). Once populated, the
-   formatter's single-file path-line will say `created /foo.py`
-   instead of `wrote /foo.py`.
+### Per-entry change detection
 
-Slice 2 is the risky one — it rewrites the hottest write path. Cover
-with the existing `test_database.py` and `test_write_pressure.py`
-fleets plus new tests for the change-detection no-op (existing
-`updated_at` byte-identical before and after) and the auto-chunk
-conflict pre-check.
+`_write_impl` now runs change detection per entry between the fetch
+and the persist. Unchanged file rows (where
+`incoming.content_hash == existing.content_hash`) skip the rest of the
+pipeline — no version row, no chunk cascade, no trigram delta call,
+no embedding call, no `UPDATE`, **no `updated_at` refresh**. The row
+surfaces in the result as `Candidate(status="unchanged")`.
+
+New entries and existing entries with a changed hash both fall into
+the `changed_paths` set and proceed through auto-chunk → auto-index →
+persist. Soft-deleted existing rows always count as changed (the
+write revives them). Directories always count as changed (existing
+behavior preserved — they get `updated_at` refreshed on touch).
+
+### Auto-chunk
+
+When `self._auto_chunk` is True (default):
+
+1. **Batch-fatal pre-check.** Walk `write_map` once before mutating
+   anything. If any incoming chunk's owner file is also in the batch
+   with `index_content=True`, emit one error per offending owner and
+   return `VFSResult(success=False, candidates=[], errors=[...])`
+   without any DB write. Test:
+   `tests/test_write_pipeline.py::TestAutoChunk::test_auto_chunk_conflict_rejects_whole_batch`.
+2. **In-memory chunk().** For every changed file with `index_content
+   is True`, call `await asyncio.to_thread(incoming.chunk)`. The
+   returned chunk rows get appended to `write_map` and `changed_paths`;
+   the file's own `index_content` flips to `False` (already handled by
+   `chunk()`).
+
+`chunk()` itself was patched in `models.py` — SQLModel `table=True`
+constructors bypass Pydantic validators, so chunks created via
+`type(self)(...)` were silently shipping with `index_content=False`,
+`lexical_tokens=0`, and a missing `content_hash`. Fixed by routing
+each chunk through a base `VFSEntry(...)` validator pass first, then
+re-materializing as the table class via `model_dump()`.
+
+### Auto-index
+
+When `self._auto_index` is True (default):
+
+1. `_apply_index_maintenance(...)` is called for changed indexable
+   entries with `old_entries` so backends can compute deltas. A second
+   call with `delete_only=True` covers files whose `index_content`
+   flag flipped from True to False (auto-chunked files).
+2. **One** `embedding_provider.embed_entries(targets)` call per
+   write, where `targets` is every changed indexable entry without a
+   caller-provided embedding. Vectors are zipped onto
+   `entry.embedding` in input order.
+
+Provider failure raises, gets caught, and aborts the pipeline with
+`VFSResult(success=False, candidates=[], errors=[...])` before any DB
+write — verified by
+`tests/test_write_pipeline.py::TestAutoIndex::test_provider_failure_aborts_with_no_db_mutation`.
+
+The base-class `_apply_index_maintenance` stays a no-op
+(`PostgresFileSystem` will override in slice 3).
+
+### Persist phase
+
+Single phase, single `flush()`:
+
+1. `_stage_chunk_cascade(files_for_cascade, session=...)` — issues a
+   batched `DELETE` over `'<meta_root>/__meta__/chunks/%'` for every
+   existing file whose content changed. The base-class default issues
+   the cascade; backends with chunk-derived indexes override to first
+   stage trigram delete deltas, then call `super()`.
+2. Per-entry insert / update. Files use `_update_existing` (with the
+   existing snapshot/version pipeline) or `_insert_new`. Chunks /
+   edges use `update_content` or `session.add`. After update,
+   `_apply_incoming_embedding(existing, incoming, prev_index_content=...)`
+   propagates the embedding from incoming to existing with the right
+   precedence (explicit caller value wins, then auto-computed value,
+   then clear if the file just became non-indexable).
+3. `await session.flush()` once.
+4. Parent-dir creations / revivals are committed in a second flush
+   only when the batch produced at least one durable write
+   (`unchanged`-only batches don't touch parent dirs).
+
+### `Candidate.status`
+
+Every returned candidate carries a status:
+
+- `created` — new row inserted
+- `updated` — existing row whose content changed (or directory touched)
+- `unchanged` — existing file row, hash matched, no DB write happened
+
+The render-time formatter from slice 1 already consumes this; a
+single-file batch's path line now says `created /foo.py` instead of
+`wrote /foo.py`.
+
+### Pre-existing fix carried in this slice
+
+`VFSEntry.chunk()` in `src/vfs/models.py` now runs each chunk through
+the Pydantic validator before materializing it as the (possibly-table)
+class. Without this fix, chunk rows produced by the table class
+shipped with zeroed derived fields (`content_hash=None`,
+`lexical_tokens=0`, `index_content=False`). The bug was latent before
+slice 2 because nothing else reasoned about `chunk.index_content`;
+slice 2's auto-index loop made it user-visible.
+
+### Test changes
+
+- New `tests/test_write_pipeline.py` — 19 tests covering change
+  detection, auto-chunk (cascade, conflict, runtime error), auto-index
+  (bulk call count, input order, caller-provided embedding wins,
+  provider failure), and the `auto_chunk=False` / `auto_index=False`
+  opt-outs.
+- Updated 8 tests in `tests/test_write_pressure.py` and 2 tests in
+  `tests/test_database.py` to add `index_content=False` on files that
+  ship pre-built chunks in the same batch — those previously-valid
+  shapes now hit the story 014 conflict rule.
+
+### Files touched (slice 2)
+
+```
+src/vfs/backends/database.py    # _write_impl rewrite, _stage_chunk_cascade default DELETE,
+                                # _apply_incoming_embedding helper, sqlalchemy delete import
+src/vfs/models.py               # chunk() validator-pass-through fix
+tests/test_database.py          # 2 conflict-rule test fixes
+tests/test_write_pressure.py    # 8 conflict-rule test fixes
+tests/test_write_pipeline.py    # NEW — 19 slice-2 behavior tests
+context/stories/014-...         # this implementation.md
+```
+
+### Verification
+
+`uv run pytest` — 2476 passed (was 2457 at slice 1), 108 skipped, no
+regressions. `uvx ruff check` clean on changed files.
+
+## Slice 3 — what's next
+
+Postgres trigram row-store wiring (story 013 phase 2) plus the
+PostgresFileSystem overrides for `_stage_chunk_cascade` (must stage
+trigram delete deltas BEFORE calling `super()`) and
+`_apply_index_maintenance` (delta extraction + staging into
+`vfs_entry_chunk_grams`). Plus the EmbeddingProvider input-order test
+double for AC 20.
 
 ## Open follow-ups (slice 3+ deliverables)
 

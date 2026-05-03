@@ -538,9 +538,8 @@ class VFSEntry(SQLModel):
             return []
 
         # Detect duplicate (line_start, line_end) ranges; only those need an
-        # @<offset> disambiguator. Tracking offsets requires re-walking the
-        # chunk text because split_content may be overridden — find each
-        # piece's start sequentially with content.find.
+        # @<offset> disambiguator. The content.find walk is skipped for
+        # uniquely-keyed pieces (the common case).
         range_counts: dict[tuple[int, int], int] = {}
         for _text, ls, le in pieces:
             key = (ls, le)
@@ -548,24 +547,38 @@ class VFSEntry(SQLModel):
 
         new_chunks: list[VFSEntry] = []
         cursor = 0
+        cls = type(self)
         for text, line_start, line_end in pieces:
-            offset = content.find(text, cursor)
-            if offset == -1:
-                offset = cursor
-            cursor = offset + 1
             name = f"{line_start}_{line_end}"
             if range_counts[(line_start, line_end)] > 1:
+                offset = content.find(text, cursor)
+                if offset == -1:
+                    offset = cursor
+                cursor = offset + 1
                 name = f"{name}@{offset}"
-            new_chunks.append(
-                type(self)(
-                    path=chunk_path(self.path, name),
-                    kind="chunk",
-                    content=text,
-                    line_start=line_start,
-                    line_end=line_end,
-                    owner_id=self.owner_id,
-                )
+            # Run the Pydantic validator via base ``VFSEntry`` first so the
+            # chunk row gets ``content_hash``, ``size_bytes``, ``lines``,
+            # ``lexical_tokens``, and the chunk-default ``index_content=True``.
+            # SQLModel ``table=True`` constructors bypass validators, so
+            # going straight through ``cls(...)`` would leave those fields at
+            # their zero defaults.
+            validated = VFSEntry(
+                path=chunk_path(self.path, name),
+                kind="chunk",
+                content=text,
+                line_start=line_start,
+                line_end=line_end,
+                owner_id=self.owner_id,
             )
+
+            if cls is VFSEntry:
+                new_chunks.append(validated)
+
+            else:
+                row = cls(**validated.model_dump())
+                row._explicit_fields = validated._explicit_fields
+                new_chunks.append(row)
+
         self.index_content = False
         return new_chunks
 

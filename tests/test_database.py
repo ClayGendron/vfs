@@ -136,10 +136,13 @@ class TestWriteAndRead:
         assert "Chunk parent file not found" in r.error_message
 
     async def test_write_chunk_allows_companion_file_in_same_batch(self, db: DatabaseFileSystem):
+        # Pre-built chunks alongside a file require ``index_content=False`` on
+        # the file (story 014 conflict rule); otherwise auto-chunk would
+        # contend with the caller-supplied chunks.
         async with db._use_session() as s:
             r = await db._write_impl(
             entries=[
-                    VFSEntry(path="/src/auth.py", content="full content"),
+                    VFSEntry(path="/src/auth.py", content="full content", index_content=False),
                     VFSEntry(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
                 ],
                 session=s,
@@ -159,7 +162,7 @@ class TestWriteAndRead:
         r = await db.write(
             entries=[
                 VFSEntry(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
-                VFSEntry(path="/src/auth.py", content="full content"),
+                VFSEntry(path="/src/auth.py", content="full content", index_content=False),
             ]
         )
         assert r.success

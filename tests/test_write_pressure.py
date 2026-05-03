@@ -370,9 +370,11 @@ class TestChunkEdgeCases:
 
     async def test_chunk_parent_in_same_batch_after_chunk(self, db: DatabaseFileSystem):
         """Chunk appears BEFORE its parent file in the objects list."""
+        # ``index_content=False`` opts the file out of auto-chunk so the
+        # caller-supplied chunk does not contend with it (story 014).
         objects = [
             VFSEntry(path="/.vfs/src/module.py/__meta__/chunks/func", content="def func(): pass"),
-            VFSEntry(path="/src/module.py", content="full module"),
+            VFSEntry(path="/src/module.py", content="full module", index_content=False),
         ]
         r = await db.write(entries=objects)
         assert r.success
@@ -407,7 +409,7 @@ class TestChunkEdgeCases:
     async def test_multiple_chunks_same_parent(self, db: DatabaseFileSystem):
         """Multiple chunks for the same parent in one batch."""
         objects = [
-            VFSEntry(path="/multi.py", content="multi"),
+            VFSEntry(path="/multi.py", content="multi", index_content=False),
             VFSEntry(path="/.vfs/multi.py/__meta__/chunks/a", content="chunk a"),
             VFSEntry(path="/.vfs/multi.py/__meta__/chunks/b", content="chunk b"),
             VFSEntry(path="/.vfs/multi.py/__meta__/chunks/c", content="chunk c"),
@@ -1095,8 +1097,8 @@ class TestBatchOrderingGuarantees:
     async def test_batch_with_chunks_interleaved(self, db: DatabaseFileSystem):
         """Files and their chunks interleaved in a single batch."""
         objects = [
-            VFSEntry(path="/mix.py", content="module"),
-            VFSEntry(path="/other.py", content="other"),
+            VFSEntry(path="/mix.py", content="module", index_content=False),
+            VFSEntry(path="/other.py", content="other", index_content=False),
             VFSEntry(path="/.vfs/mix.py/__meta__/chunks/fn_a", content="fn a"),
             VFSEntry(path="/.vfs/other.py/__meta__/chunks/fn_b", content="fn b"),
         ]
@@ -1508,7 +1510,7 @@ class TestChunkValidationWithTinyBudget:
         set_parameter_budget(db, 1)
         objects = [
             VFSEntry(path="/.vfs/tiny_batch.py/__meta__/chunks/fn", content="def fn(): pass"),
-            VFSEntry(path="/tiny_batch.py", content="module content"),
+            VFSEntry(path="/tiny_batch.py", content="module content", index_content=False),
         ]
         r = await db.write(entries=objects)
         assert r.success
@@ -1518,7 +1520,7 @@ class TestChunkValidationWithTinyBudget:
         """Many chunks + parent, tiny budget — splits across batches."""
         set_parameter_budget(db, 1)
         objects = [
-            VFSEntry(path="/multi_chunk.py", content="module"),
+            VFSEntry(path="/multi_chunk.py", content="module", index_content=False),
             VFSEntry(path="/.vfs/multi_chunk.py/__meta__/chunks/a", content="a"),
             VFSEntry(path="/.vfs/multi_chunk.py/__meta__/chunks/b", content="b"),
             VFSEntry(path="/.vfs/multi_chunk.py/__meta__/chunks/c", content="c"),
@@ -1659,7 +1661,7 @@ class TestLargeWriteAndDelete:
         n = min(scale, 500)  # chunks double the object count
         objects = []
         for i in range(n):
-            objects.append(VFSEntry(path=f"/code/f_{i:05d}.py", content=f"code {i}"))
+            objects.append(VFSEntry(path=f"/code/f_{i:05d}.py", content=f"code {i}", index_content=False))
             objects.append(VFSEntry(path=f"/.vfs/code/f_{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():"))
         r = await db.write(entries=objects)
         assert r.success
@@ -1850,6 +1852,7 @@ class TestLargeWriteAndDelete:
                     VFSEntry(
                         path=f"/batch/d{d:04d}/f{f:03d}.py",
                         content=f"code d{d} f{f}",
+                        index_content=False,
                     )
                 )
                 all_objects.append(
@@ -1890,7 +1893,7 @@ class TestLargeWriteAndDelete:
 
         all_objects: list[VFSEntry] = []
         for i in range(n):
-            all_objects.append(VFSEntry(path=f"/flat/f{i:05d}.py", content=f"code {i}"))
+            all_objects.append(VFSEntry(path=f"/flat/f{i:05d}.py", content=f"code {i}", index_content=False))
             all_objects.append(
                 VFSEntry(path=f"/.vfs/flat/f{i:05d}.py/__meta__/chunks/main", content=f"def main_{i}():")
             )
