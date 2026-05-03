@@ -17,7 +17,7 @@ async def _seed(db: DatabaseFileSystem, files: dict[str, str]) -> None:
     """Write multiple files into the database."""
     async with db._use_session() as s:
         for path, content in files.items():
-            await db._write_impl(path, content, session=s)
+            await db._write_impl(path=path, content=content, session=s)
 
 
 # ------------------------------------------------------------------
@@ -206,8 +206,8 @@ class TestSearchesAllContent:
         await _seed(db, {"/a.py": "file content here"})
         async with db._use_session() as s:
             await db._write_impl(
-                "/.vfs/a.py/__meta__/chunks/login",
-                "authentication timeout handler",
+                path="/.vfs/a.py/__meta__/chunks/login",
+                content="authentication timeout handler",
                 session=s,
             )
         async with db._use_session() as s:
@@ -220,8 +220,8 @@ class TestSearchesAllContent:
         await _seed(db, {"/a.py": "authentication in file"})
         async with db._use_session() as s:
             await db._write_impl(
-                "/.vfs/a.py/__meta__/chunks/login",
-                "authentication in chunk",
+                path="/.vfs/a.py/__meta__/chunks/login",
+                content="authentication in chunk",
                 session=s,
             )
         async with db._use_session() as s:

@@ -38,8 +38,8 @@ async def main() -> None:
 
     # Write source files
     await g.write(
-        "/project/src/app.py",
-        """\
+        path="/project/src/app.py",
+        content="""\
 from flask import Flask
 
 app = Flask(__name__)
@@ -54,8 +54,8 @@ if __name__ == "__main__":
     )
 
     await g.write(
-        "/project/src/models/user.py",
-        """\
+        path="/project/src/models/user.py",
+        content="""\
 from dataclasses import dataclass
 
 @dataclass
@@ -70,8 +70,8 @@ class User:
     )
 
     await g.write(
-        "/project/src/models/project.py",
-        """\
+        path="/project/src/models/project.py",
+        content="""\
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -89,8 +89,8 @@ class Project:
     )
 
     await g.write(
-        "/project/src/routes/api.py",
-        """\
+        path="/project/src/routes/api.py",
+        content="""\
 from flask import Blueprint, jsonify, request
 
 api = Blueprint("api", __name__)
@@ -110,8 +110,8 @@ def list_projects():
     )
 
     await g.write(
-        "/project/src/routes/auth.py",
-        """\
+        path="/project/src/routes/auth.py",
+        content="""\
 from flask import Blueprint, request, redirect
 
 auth = Blueprint("auth", __name__)
@@ -130,8 +130,8 @@ def logout():
     )
 
     await g.write(
-        "/project/tests/test_app.py",
-        """\
+        path="/project/tests/test_app.py",
+        content="""\
 import pytest
 
 def test_index(client):
@@ -150,8 +150,8 @@ def test_get_user(client):
     )
 
     await g.write(
-        "/project/tests/test_models.py",
-        """\
+        path="/project/tests/test_models.py",
+        content="""\
 from src.models.user import User
 from src.models.project import Project
 
@@ -171,8 +171,8 @@ def test_project_slug():
     )
 
     await g.write(
-        "/project/docs/readme.md",
-        """\
+        path="/project/docs/readme.md",
+        content="""\
 # My Project
 
 A demo Flask application with user and project models.
@@ -191,8 +191,8 @@ A demo Flask application with user and project models.
     )
 
     await g.write(
-        "/project/pyproject.toml",
-        """\
+        path="/project/pyproject.toml",
+        content="""\
 [project]
 name = "myproject"
 version = "0.1.0"
@@ -266,15 +266,15 @@ dev = ["pytest", "coverage"]
     bob = "bob"
 
     # Alice creates her files
-    await g.write("/users/notes.md", "# Alice's Notes\n\nTODO: finish the demo\n", user_id=alice)
-    await g.write("/users/config.json", '{"theme": "dark", "lang": "en"}\n', user_id=alice)
+    await g.write(path="/users/notes.md", content="# Alice's Notes\n\nTODO: finish the demo\n", user_id=alice)
+    await g.write(path="/users/config.json", content='{"theme": "dark", "lang": "en"}\n', user_id=alice)
     await g.mkdir("/users/drafts", user_id=alice)
-    await g.write("/users/drafts/ideas.md", "## Ideas\n\n- idea 1\n- idea 2\n", user_id=alice)
-    await g.write("/users/drafts/outline.md", "## Outline\n\n1. Intro\n2. Body\n3. Conclusion\n", user_id=alice)
+    await g.write(path="/users/drafts/ideas.md", content="## Ideas\n\n- idea 1\n- idea 2\n", user_id=alice)
+    await g.write(path="/users/drafts/outline.md", content="## Outline\n\n1. Intro\n2. Body\n3. Conclusion\n", user_id=alice)
 
     # Bob creates his files
-    await g.write("/users/notes.md", "# Bob's Notes\n\nDifferent content, same path!\n", user_id=bob)
-    await g.write("/users/todo.md", "- [x] setup\n- [ ] deploy\n", user_id=bob)
+    await g.write(path="/users/notes.md", content="# Bob's Notes\n\nDifferent content, same path!\n", user_id=bob)
+    await g.write(path="/users/todo.md", content="- [x] setup\n- [ ] deploy\n", user_id=bob)
 
     # Each user sees only their own files
     result = await g.list_dir("/users", user_id=alice)

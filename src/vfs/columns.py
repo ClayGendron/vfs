@@ -22,6 +22,9 @@ CANDIDATE_FIELD_TO_MODEL_COLUMNS: dict[str, frozenset[str]] = {
     "out_degree": frozenset(),
     "score": frozenset(),
     "lines": frozenset(),
+    # Set by the write pipeline to flag created/updated/unchanged rows in the
+    # write summary; never read from a model column.
+    "status": frozenset(),
 }
 
 # Valid public ``columns=`` input — union of every Candidate-backed model column.

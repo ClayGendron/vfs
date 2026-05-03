@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from vfs.vector import Vector
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from langchain_core.embeddings import Embeddings
+
+    from vfs.models import VFSEntry
 
 try:
     from langchain_core.embeddings import Embeddings as _LCEmbeddings
@@ -44,6 +48,18 @@ class EmbeddingProvider(Protocol):
 
     async def embed_batch(self, texts: list[str]) -> list[Vector]:
         """Embed multiple texts into vectors."""
+        ...
+
+    async def embed_entries(self, entries: Sequence[VFSEntry]) -> Sequence[Vector]:
+        """Embed a list of entries; return one vector per entry in input order.
+
+        Implementations are free to send the whole list to the upstream API
+        in one request, sub-batch by token budget / rate limit, or serialize
+        to one-at-a-time as a fallback. The VFS makes no assumption about
+        how the work is sharded — only that input order is preserved on
+        output. Retries and backoff live inside a single ``embed_entries``
+        call, not across calls.
+        """
         ...
 
     @property
@@ -113,6 +129,16 @@ class LangChainEmbeddingProvider:
         cls = await self._ensure_vector_cls()
         raw_vectors = await self._embeddings.aembed_documents(texts)
         return [cls(raw) for raw in raw_vectors]
+
+    async def embed_entries(self, entries: Sequence[VFSEntry]) -> list[Vector]:
+        """Embed entries by their ``content``, preserving input order.
+
+        Default adapter: extract ``content``, hand the whole list to
+        ``embed_batch``. The upstream LangChain provider decides how to
+        sub-batch.
+        """
+        texts = [entry.content or "" for entry in entries]
+        return await self.embed_batch(texts)
 
     @property
     def dimensions(self) -> int:

@@ -148,7 +148,7 @@ class TestIntegrationDirectDoubleSlash:
     async def test_direct_write_double_slash_evades_frozen(self):
         ws = await _workspace_fs()
         try:
-            r = await ws.write("//.frozen/evil.toml", "owned")
+            r = await ws.write(path="//.frozen/evil.toml", content="owned")
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
         finally:
@@ -169,7 +169,7 @@ class TestIntegrationDirectDoubleSlash:
     async def test_direct_write_triple_slash_is_collapsed(self):
         ws = await _workspace_fs()
         try:
-            r = await ws.write("///.frozen/evil.toml", "owned")
+            r = await ws.write(path="///.frozen/evil.toml", content="owned")
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
         finally:
@@ -183,7 +183,7 @@ class TestIntegrationRouterCollapsesDoubleSlash:
         router = VFSClientAsync()
         try:
             await router.add_mount("ws", ws)
-            r = await router.write("//ws/.frozen/evil.toml", "owned")
+            r = await router.write(path="//ws/.frozen/evil.toml", content="owned")
             assert not r.success
         finally:
             await router.close()
@@ -193,7 +193,7 @@ class TestIntegrationRouterCollapsesDoubleSlash:
         router = VFSClientAsync()
         try:
             await router.add_mount("ws", ws)
-            r = await router.write("/ws//.frozen/evil.toml", "owned")
+            r = await router.write(path="/ws//.frozen/evil.toml", content="owned")
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
         finally:
@@ -204,7 +204,7 @@ class TestIntegrationReadOnlyDefault:
     async def test_double_slash_on_default_still_blocked(self):
         wiki = await _wiki_fs()
         try:
-            r = await wiki.write("//raw/evil.md", "owned")
+            r = await wiki.write(path="//raw/evil.md", content="owned")
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
         finally:
@@ -216,7 +216,7 @@ class TestIntegrationReadOnlyDefault:
         — `//` collapses to `/` and the writable carve-out applies."""
         wiki = await _wiki_fs()
         try:
-            r = await wiki.write("//synthesis/new.md", "hi")
+            r = await wiki.write(path="//synthesis/new.md", content="hi")
             assert r.success, r.error_message
         finally:
             if wiki._engine is not None:

@@ -240,7 +240,7 @@ class TestVFSClientMount:
 
 class TestVFSClientCRUD:
     def test_write_and_read_roundtrip(self, g: VFSClient):
-        result = g.write("/data/hello.txt", "hello world")
+        result = g.write(path="/data/hello.txt", content="hello world")
         assert result.file is not None
         assert result.file.path == "/data/hello.txt"
 
@@ -248,12 +248,12 @@ class TestVFSClientCRUD:
         assert result.content == "hello world"
 
     def test_read_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/test.txt", "x")
+        g.write(path="/data/test.txt", content="x")
         result = g.read("/data/test.txt")
         assert isinstance(result, VFSResult)
 
     def test_write_returns_vfs_result(self, g: VFSClient):
-        result = g.write("/data/test.txt", "x")
+        result = g.write(path="/data/test.txt", content="x")
         assert isinstance(result, VFSResult)
 
     def test_read_not_found_raises(self, g: VFSClient):
@@ -265,17 +265,17 @@ class TestVFSClientCRUD:
             g.read("/unknown/file.txt")
 
     def test_write_overwrite_false_raises(self, g: VFSClient):
-        g.write("/data/exists.txt", "first")
+        g.write(path="/data/exists.txt", content="first")
         with pytest.raises(WriteConflictError, match="Already exists"):
-            g.write("/data/exists.txt", "second", overwrite=False)
+            g.write(path="/data/exists.txt", content="second", overwrite=False)
 
     def test_edit_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/test.txt", "old text")
+        g.write(path="/data/test.txt", content="old text")
         result = g.edit("/data/test.txt", "old", "new")
         assert isinstance(result, VFSResult)
 
     def test_delete_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/test.txt", "x")
+        g.write(path="/data/test.txt", content="x")
         result = g.delete("/data/test.txt")
         assert isinstance(result, VFSResult)
 
@@ -284,7 +284,7 @@ class TestVFSClientCRUD:
         assert isinstance(result, VFSResult)
 
     def test_stat_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/test.txt", "x")
+        g.write(path="/data/test.txt", content="x")
         result = g.stat("/data/test.txt")
         assert isinstance(result, VFSResult)
 
@@ -296,22 +296,22 @@ class TestVFSClientCRUD:
 
 class TestVFSClientSearchAndListing:
     def test_glob_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/a.py", "a")
-        g.write("/data/b.py", "b")
+        g.write(path="/data/a.py", content="a")
+        g.write(path="/data/b.py", content="b")
         result = g.glob("**/*.py")
         assert isinstance(result, VFSResult)
         assert len(result.candidates) == 2
 
     def test_grep_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/test.txt", "needle in haystack")
+        g.write(path="/data/test.txt", content="needle in haystack")
         result = g.grep("needle")
         assert isinstance(result, VFSResult)
         assert len(result.candidates) >= 1
 
     def test_set_algebra_works(self, g: VFSClient):
-        g.write("/data/a.py", "import os")
-        g.write("/data/b.py", "hello world")
-        g.write("/data/c.txt", "import sys")
+        g.write(path="/data/a.py", content="import os")
+        g.write(path="/data/b.py", content="hello world")
+        g.write(path="/data/c.txt", content="import sys")
 
         py_files = g.glob("**/*.py")
         importers = g.grep("import")
@@ -325,7 +325,7 @@ class TestVFSClientSearchAndListing:
         assert isinstance(result, VFSResult)
 
     def test_tree_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/a.txt", "a")
+        g.write(path="/data/a.txt", content="a")
         result = g.tree("/data")
         assert isinstance(result, VFSResult)
 
@@ -337,13 +337,13 @@ class TestVFSClientSearchAndListing:
 
 class TestVFSClientQuery:
     def test_run_query_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/hello.py", "print('hi')")
+        g.write(path="/data/hello.py", content="print('hi')")
         result = g.run_query('glob "**/*.py"')
         assert isinstance(result, VFSResult)
         assert any("hello.py" in e.path for e in result.candidates)
 
     def test_cli_returns_str(self, g: VFSClient):
-        g.write("/data/hello.py", "print('hi')")
+        g.write(path="/data/hello.py", content="print('hi')")
         output = g.cli('glob "**/*.py"')
         assert isinstance(output, str)
         assert "hello.py" in output
@@ -360,7 +360,7 @@ class TestVFSClientQuery:
 
 class TestVFSClientTransferOps:
     def test_move_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/src.txt", "content")
+        g.write(path="/data/src.txt", content="content")
         result = g.move("/data/src.txt", "/data/dst.txt")
         assert isinstance(result, VFSResult)
         assert result.success
@@ -368,7 +368,7 @@ class TestVFSClientTransferOps:
             g.read("/data/src.txt")
 
     def test_copy_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/orig.txt", "content")
+        g.write(path="/data/orig.txt", content="content")
         result = g.copy("/data/orig.txt", "/data/dup.txt")
         assert isinstance(result, VFSResult)
         assert result.success
@@ -376,8 +376,8 @@ class TestVFSClientTransferOps:
         assert g.read("/data/dup.txt").content == "content"
 
     def test_mkedge_returns_vfs_result(self, g: VFSClient):
-        g.write("/data/a.py", "import b")
-        g.write("/data/b.py", "class B: ...")
+        g.write(path="/data/a.py", content="import b")
+        g.write(path="/data/b.py", content="class B: ...")
         result = g.mkedge("/data/a.py", "/data/b.py", "imports")
         assert isinstance(result, VFSResult)
 
@@ -390,9 +390,9 @@ class TestVFSClientTransferOps:
 class TestVFSClientGraph:
     @pytest.fixture(autouse=True)
     def _setup_graph(self, g: VFSClient):
-        g.write("/data/a.py", "x")
-        g.write("/data/b.py", "y")
-        g.write("/data/c.py", "z")
+        g.write(path="/data/a.py", content="x")
+        g.write(path="/data/b.py", content="y")
+        g.write(path="/data/c.py", content="z")
         g.mkedge("/data/a.py", "/data/b.py", "imports")
         g.mkedge("/data/b.py", "/data/c.py", "calls")
 
@@ -462,16 +462,16 @@ class TestVFSClientGraph:
 
 class TestVFSClientSearchMethods:
     def test_lexical_search(self, g: VFSClient):
-        g.write("/data/test.txt", "the quick brown fox")
+        g.write(path="/data/test.txt", content="the quick brown fox")
         result = g.lexical_search("quick fox")
         assert isinstance(result, VFSResult)
 
     def test_semantic_search_raises_without_provider(self, g: VFSClient):
-        g.write("/data/test.txt", "content")
+        g.write(path="/data/test.txt", content="content")
         with pytest.raises(VFSError):
             g.semantic_search("test query")
 
     def test_vector_search_raises_without_provider(self, g: VFSClient):
-        g.write("/data/test.txt", "content")
+        g.write(path="/data/test.txt", content="content")
         with pytest.raises(VFSError):
             g.vector_search([0.1, 0.2, 0.3])

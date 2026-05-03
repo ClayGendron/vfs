@@ -66,7 +66,7 @@ class TestSelectColumnsValidation:
     async def test_known_column_passes_through(self, db):
         """Sanity check: real columns don't trip the validator."""
         async with db._use_session() as s:
-            await db._write_impl("/a.md", "hi", session=s)
+            await db._write_impl(path="/a.md", content="hi", session=s)
             # No raise — size_bytes is the correct spelling.
             result = await db._read_impl(
                 "/a.md",
@@ -79,10 +79,10 @@ class TestSelectColumnsValidation:
 async def _seed(db: DatabaseFileSystem) -> None:
     """Seed a small namespace covering files, dirs, and chunks."""
     async with db._use_session() as s:
-        await db._write_impl("/docs/intro.md", "# Intro\nhello world", session=s)
-        await db._write_impl("/docs/guide.md", "# Guide\nhydrate the index", session=s)
-        await db._write_impl("/src/auth.py", "def login(): pass", session=s)
-        await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "def login(): pass", session=s)
+        await db._write_impl(path="/docs/intro.md", content="# Intro\nhello world", session=s)
+        await db._write_impl(path="/docs/guide.md", content="# Guide\nhydrate the index", session=s)
+        await db._write_impl(path="/src/auth.py", content="def login(): pass", session=s)
+        await db._write_impl(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login(): pass", session=s)
 
 
 class TestGlobProjection:
@@ -202,7 +202,7 @@ class TestPostgresNativeVectorSearchProjection:
     ):
         async with postgres_native_db._use_session() as s:
             await postgres_native_db._write_impl(
-                entries=[
+            entries=[
                     postgres_native_db._model(
                         path="/vec.py",
                         content="vector row",

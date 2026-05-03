@@ -125,8 +125,8 @@ async def test_vector_search_with_candidates(db: DatabaseFileSystem):
     db._vector_store = store
 
     # Write files so we have candidates to filter with
-    await db.write("/a.py", "aaa")
-    await db.write("/b.py", "bbb")
+    await db.write(path="/a.py", content="aaa")
+    await db.write(path="/b.py", content="bbb")
     pre = await db.glob("/*.py")
 
     result = await db.vector_search([0.1, 0.2, 0.3, 0.4], k=5, candidates=pre)

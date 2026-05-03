@@ -853,14 +853,14 @@ class TestPublicCRUD:
     async def test_write_routes(self):
         fs = _FullRoutingFS()
         fs.write_mock.return_value = VFSResult(function="write", candidates=[_entry("/f.py")])
-        result = await fs.write("/f.py", "hello")
+        result = await fs.write(path="/f.py", content="hello")
         fs.write_mock.assert_awaited_once()
         assert result.candidates[0].path == "/f.py"
 
     async def test_write_passes_content_and_overwrite(self):
         fs = _FullRoutingFS()
         fs.write_mock.return_value = VFSResult()
-        await fs.write("/f.py", "data", overwrite=False)
+        await fs.write(path="/f.py", content="data", overwrite=False)
         call_kwargs = fs.write_mock.call_args
         assert call_kwargs.kwargs.get("content") == "data"
         assert call_kwargs.kwargs.get("overwrite") is False

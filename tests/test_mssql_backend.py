@@ -45,7 +45,7 @@ async def _seed_graph(
 ) -> None:
     async with db._use_session() as session:
         for path in nodes:
-            await db._write_impl(path, path, session=session)
+            await db._write_impl(path=path, content=path, session=session)
         for source, target, edge_type in edges:
             await db._mkedge_impl(source, target, edge_type, session=session)
 
@@ -476,7 +476,7 @@ async def _seed(db: MSSQLFileSystem, files: dict[str, str]) -> None:
     """Write files into the database under test and wait for FTS to catch up."""
     async with db._use_session() as s:
         for path, content in files.items():
-            await db._write_impl(path, content, session=s)
+            await db._write_impl(path=path, content=content, session=s)
     indexable = sum(1 for content in files.values() if content)
     if indexable:
         await _wait_for_fts_ready(db, indexable)

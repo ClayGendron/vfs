@@ -27,13 +27,13 @@ class TestUnicodeChaos:
     """Unicode edge cases in paths and content."""
 
     async def test_emoji_path(self, db: DatabaseFileSystem):
-        r = await db.write("/docs/\U0001f600.txt", "smile")
+        r = await db.write(path="/docs/\U0001f600.txt", content="smile")
         assert r.success
         r2 = await db.read("/docs/\U0001f600.txt")
         assert r2.content == "smile"
 
     async def test_emoji_content(self, db: DatabaseFileSystem):
-        r = await db.write("/emoji.txt", "\U0001f4a9\U0001f525\U0001f680")
+        r = await db.write(path="/emoji.txt", content="\U0001f4a9\U0001f525\U0001f680")
         assert r.success
         r2 = await db.read("/emoji.txt")
         assert r2.content == "\U0001f4a9\U0001f525\U0001f680"
@@ -44,7 +44,7 @@ class TestUnicodeChaos:
             VFSEntry(path="/file\x00evil.txt", content="x")
 
     async def test_rtl_characters_in_path(self, db: DatabaseFileSystem):
-        r = await db.write("/docs/\u202eevil.txt", "rtl content")
+        r = await db.write(path="/docs/\u202eevil.txt", content="rtl content")
         # RTL override is a control character (U+202E, in range 0x00-0x1F? No, it's > 0x9F)
         # Actually U+202E is 0x202E which is > 0x9F, so should be allowed
         if r.success:
@@ -52,25 +52,25 @@ class TestUnicodeChaos:
             assert r2.content == "rtl content"
 
     async def test_zero_width_joiners_in_path(self, db: DatabaseFileSystem):
-        r = await db.write("/docs/a\u200db.txt", "zwj")
+        r = await db.write(path="/docs/a\u200db.txt", content="zwj")
         assert r.success
         r2 = await db.read("/docs/a\u200db.txt")
         assert r2.content == "zwj"
 
     async def test_combining_characters(self, db: DatabaseFileSystem):
         # e + combining acute = e\u0301, but NFC normalizes to \u00e9
-        r = await db.write("/docs/caf\u00e9.txt", "coffee")
+        r = await db.write(path="/docs/caf\u00e9.txt", content="coffee")
         assert r.success
 
         # The validator does NFC normalization, so e+combining should match
-        r2 = await db.write("/docs/cafe\u0301.txt", "coffee2")
+        r2 = await db.write(path="/docs/cafe\u0301.txt", content="coffee2")
         # After NFC normalization both should be the same path
         assert r2.success
 
     async def test_4byte_utf8_content(self, db: DatabaseFileSystem):
         # Musical symbol (U+1D11E) and CJK
         content = "\U0001d11e \u4e16\u754c \U0001f1fa\U0001f1f8"
-        r = await db.write("/unicode.txt", content)
+        r = await db.write(path="/unicode.txt", content=content)
         assert r.success
         r2 = await db.read("/unicode.txt")
         assert r2.content == content
@@ -113,33 +113,33 @@ class TestPathEdgeCases:
         prefix = "/a" * (target // 2)
         path = prefix[: target - 4] + ".txt"
         assert len(path) <= target
-        r = await db.write(path, "hi")
+        r = await db.write(path=path, content="hi")
         assert r.success
 
     async def test_path_with_spaces(self, db: DatabaseFileSystem):
-        r = await db.write("/my documents/my file.txt", "space content")
+        r = await db.write(path="/my documents/my file.txt", content="space content")
         assert r.success
         r2 = await db.read("/my documents/my file.txt")
         assert r2.content == "space content"
 
     async def test_path_with_special_chars(self, db: DatabaseFileSystem):
         """Quotes, semicolons, etc. in paths."""
-        r = await db.write('/files/it\'s a "test";yes.txt', "special")
+        r = await db.write(path='/files/it\'s a "test";yes.txt', content="special")
         assert r.success
 
     async def test_deeply_nested_path(self, db: DatabaseFileSystem):
         """50+ levels of nesting."""
         parts = "/".join(f"d{i}" for i in range(50))
         path = "/" + parts + "/deep.txt"
-        r = await db.write(path, "deep content")
+        r = await db.write(path=path, content="deep content")
         assert r.success
         r2 = await db.read(path)
         assert r2.content == "deep content"
 
     async def test_paths_differ_by_case(self, db: DatabaseFileSystem):
         """Case-sensitive paths should be distinct."""
-        r1 = await db.write("/File.TXT", "upper")
-        r2 = await db.write("/file.txt", "lower")
+        r1 = await db.write(path="/File.TXT", content="upper")
+        r2 = await db.write(path="/file.txt", content="lower")
         assert r1.success
         assert r2.success
 
@@ -150,12 +150,12 @@ class TestPathEdgeCases:
 
     async def test_path_with_backslashes(self, db: DatabaseFileSystem):
         """Backslashes are not path separators in POSIX."""
-        r = await db.write("/dir/file\\name.txt", "backslash")
+        r = await db.write(path="/dir/file\\name.txt", content="backslash")
         assert r.success
 
     async def test_path_with_dot_segments(self, db: DatabaseFileSystem):
         """.. and . should be normalized."""
-        r = await db.write("/a/b/../c/./d.txt", "normalized")
+        r = await db.write(path="/a/b/../c/./d.txt", content="normalized")
         assert r.success
         r2 = await db.read("/a/c/d.txt")
         assert r2.content == "normalized"
@@ -169,7 +169,7 @@ class TestPathEdgeCases:
     async def test_root_path_write(self, db: DatabaseFileSystem):
         """Writing to '/' should fail — it's a directory."""
         async with db._use_session() as s:
-            r = await db._write_impl("/", "content", session=s)
+            r = await db._write_impl(path="/", content="content", session=s)
         assert not r.success
 
 
@@ -182,7 +182,7 @@ class TestContentEdgeCases:
     """Adversarial content strings."""
 
     async def test_empty_string_content(self, db: DatabaseFileSystem):
-        r = await db.write("/empty.txt", "")
+        r = await db.write(path="/empty.txt", content="")
         assert r.success
         r2 = await db.read("/empty.txt")
         assert r2.content == ""
@@ -190,7 +190,7 @@ class TestContentEdgeCases:
     async def test_none_content_single_path(self, db: DatabaseFileSystem):
         """None content via single-path API defaults to empty string."""
         async with db._use_session() as s:
-            r = await db._write_impl("/none.txt", None, session=s)
+            r = await db._write_impl(path="/none.txt", content=None, session=s)
         assert r.success
         async with db._use_session() as s:
             r2 = await db._read_impl("/none.txt", session=s)
@@ -199,14 +199,14 @@ class TestContentEdgeCases:
     async def test_massive_content(self, db: DatabaseFileSystem):
         """1MB+ content."""
         big = "x" * (1024 * 1024)
-        r = await db.write("/big.txt", big)
+        r = await db.write(path="/big.txt", content=big)
         assert r.success
         r2 = await db.read("/big.txt")
         assert r2.content == big
         assert require_file(r2).size_bytes == len(big.encode())
 
     async def test_pure_whitespace_content(self, db: DatabaseFileSystem):
-        r = await db.write("/whitespace.txt", "   \n\t\n   ")
+        r = await db.write(path="/whitespace.txt", content="   \n\t\n   ")
         assert r.success
         r2 = await db.read("/whitespace.txt")
         assert r2.content == "   \n\t\n   "
@@ -214,25 +214,25 @@ class TestContentEdgeCases:
     async def test_binary_looking_content(self, db: DatabaseFileSystem):
         """Content with bytes that look like binary data."""
         content = "".join(chr(i) for i in range(256) if chr(i).isprintable() or i > 0x9F)
-        r = await db.write("/binary_ish.txt", content)
+        r = await db.write(path="/binary_ish.txt", content=content)
         assert r.success
 
     async def test_content_with_sql_injection(self, db: DatabaseFileSystem):
         """SQL injection in content — parameterized queries should handle it."""
         evil = "'; DROP TABLE vfs_entries; --"
-        r = await db.write("/evil.txt", evil)
+        r = await db.write(path="/evil.txt", content=evil)
         assert r.success
         r2 = await db.read("/evil.txt")
         assert r2.content == evil
 
     async def test_content_with_sql_injection_in_path(self, db: DatabaseFileSystem):
         """SQL injection in path."""
-        r = await db.write("/'; DROP TABLE vfs_entries; --.txt", "payload")
+        r = await db.write(path="/'; DROP TABLE vfs_entries; --.txt", content="payload")
         assert r.success
 
     async def test_content_with_many_newlines(self, db: DatabaseFileSystem):
         content = "\n" * 100_000
-        r = await db.write("/newlines.txt", content)
+        r = await db.write(path="/newlines.txt", content=content)
         assert r.success
         assert require_file(r).size_bytes == len(content.encode())
 
@@ -250,7 +250,7 @@ class TestBatchAdversarial:
         # Manually sneak in a version-kind object by constructing it explicitly
         async with db._use_session() as s:
             r = await db._write_impl(
-                entries=[
+            entries=[
                     VFSEntry(path="/fine.txt", content="fine"),
                 ],
                 session=s,
@@ -259,7 +259,7 @@ class TestBatchAdversarial:
 
         # A version path should be rejected
         async with db._use_session() as s:
-            r = await db._write_impl("/.vfs/x.txt/__meta__/versions/1", "nope", session=s)
+            r = await db._write_impl(path="/.vfs/x.txt/__meta__/versions/1", content="nope", session=s)
         assert not r.success
 
     async def test_batch_all_duplicate_paths(self, db: DatabaseFileSystem):
@@ -308,9 +308,9 @@ class TestVersionStress:
 
     async def test_rapid_50_overwrites(self, db: DatabaseFileSystem):
         """Overwrite the same file 50 times — version chain should survive."""
-        await db.write("/versioned.txt", "v0")
+        await db.write(path="/versioned.txt", content="v0")
         for i in range(1, 51):
-            r = await db.write("/versioned.txt", f"v{i}")
+            r = await db.write(path="/versioned.txt", content=f"v{i}")
             assert r.success, f"Failed on overwrite {i}: {r.error_message}"
 
         r = await db.read("/versioned.txt")
@@ -324,8 +324,8 @@ class TestVersionStress:
 
     async def test_overwrite_identical_content_no_version(self, db: DatabaseFileSystem):
         """Writing identical content should not create an additional version."""
-        await db.write("/stable.txt", "same")
-        await db.write("/stable.txt", "same")
+        await db.write(path="/stable.txt", content="same")
+        await db.write(path="/stable.txt", content="same")
 
         async with db._use_session() as s:
             v1 = await db._get_object("/.vfs/stable.txt/__meta__/versions/1", s)
@@ -338,8 +338,8 @@ class TestVersionStress:
         v1 = "a\n" * 1000
         # Complete replacement — worst case for diff
         v2 = "b\n" * 1000
-        await db.write("/diffhell.txt", v1)
-        r = await db.write("/diffhell.txt", v2)
+        await db.write(path="/diffhell.txt", content=v1)
+        r = await db.write(path="/diffhell.txt", content=v2)
         assert r.success
 
         r2 = await db.read("/diffhell.txt")
@@ -347,14 +347,14 @@ class TestVersionStress:
 
     async def test_version_with_empty_to_large(self, db: DatabaseFileSystem):
         """Transition from empty to very large content."""
-        await db.write("/grow.txt", "")
-        r = await db.write("/grow.txt", "x" * 100_000)
+        await db.write(path="/grow.txt", content="")
+        r = await db.write(path="/grow.txt", content="x" * 100_000)
         assert r.success
 
     async def test_version_with_large_to_empty(self, db: DatabaseFileSystem):
         """Transition from very large to empty content."""
-        await db.write("/shrink.txt", "x" * 100_000)
-        r = await db.write("/shrink.txt", "")
+        await db.write(path="/shrink.txt", content="x" * 100_000)
+        r = await db.write(path="/shrink.txt", content="")
         assert r.success
         r2 = await db.read("/shrink.txt")
         assert r2.content == ""
@@ -381,7 +381,7 @@ class TestChunkEdgeCases:
     async def test_chunk_without_parent_file(self, db: DatabaseFileSystem):
         """Chunk with no parent file in DB or batch — must fail."""
         async with db._use_session() as s:
-            r = await db._write_impl("/.vfs/ghost.py/__meta__/chunks/orphan", "orphan", session=s)
+            r = await db._write_impl(path="/.vfs/ghost.py/__meta__/chunks/orphan", content="orphan", session=s)
         assert not r.success
         assert "parent" in r.error_message.lower()
 
@@ -389,15 +389,15 @@ class TestChunkEdgeCases:
         """Chunk path with a deep parent."""
         parent = "/a/b/c/d/e/f/g.py"
         chunk = "/.vfs/a/b/c/d/e/f/g.py/__meta__/chunks/deep"
-        await db.write(parent, "content")
-        r = await db.write(chunk, "chunk content")
+        await db.write(path=parent, content="content")
+        r = await db.write(path=chunk, content="chunk content")
         assert r.success
 
     async def test_chunk_overwrite(self, db: DatabaseFileSystem):
         """Overwriting a chunk should NOT create a version."""
-        await db.write("/mod.py", "module")
-        await db.write("/.vfs/mod.py/__meta__/chunks/fn", "original")
-        r = await db.write("/.vfs/mod.py/__meta__/chunks/fn", "updated")
+        await db.write(path="/mod.py", content="module")
+        await db.write(path="/.vfs/mod.py/__meta__/chunks/fn", content="original")
+        r = await db.write(path="/.vfs/mod.py/__meta__/chunks/fn", content="updated")
         assert r.success
 
         async with db._use_session() as s:
@@ -432,7 +432,7 @@ class TestConcurrentWrites:
         We accept that some may fail with OperationalError but none should
         produce unhandled crashes.
         """
-        tasks = [db.write(f"/concurrent/f{i}.txt", f"content {i}") for i in range(20)]
+        tasks = [db.write(path=f"/concurrent/f{i}.txt", content=f"content {i}") for i in range(20)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         # At minimum, some should succeed. None should be truly unexpected crashes.
         successes = [r for r in results if isinstance(r, VFSResult) and r.success]
@@ -451,8 +451,8 @@ class TestConcurrentWrites:
         The system should handle this gracefully — some may fail due to
         session conflicts, but none should crash with unhandled exceptions.
         """
-        await db.write("/contested.txt", "initial")
-        tasks = [db.write("/contested.txt", f"v{i}") for i in range(10)]
+        await db.write(path="/contested.txt", content="initial")
+        tasks = [db.write(path="/contested.txt", content=f"v{i}") for i in range(10)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         # We don't assert all succeed, but none should be unhandled exceptions
         for r in results:
@@ -515,7 +515,7 @@ class TestSoftDeleteResurrection:
     async def test_write_to_soft_deleted_file(self, db: DatabaseFileSystem):
         """Write should revive a soft-deleted file."""
         # Create file
-        await db.write("/zombie.txt", "old content")
+        await db.write(path="/zombie.txt", content="old content")
 
         # Soft-delete manually (delete() is not implemented on DatabaseFileSystem)
         async with db._use_session() as s:
@@ -527,7 +527,7 @@ class TestSoftDeleteResurrection:
         assert not r.success
 
         # Revive by writing again
-        r = await db.write("/zombie.txt", "new content")
+        r = await db.write(path="/zombie.txt", content="new content")
         assert r.success
         r2 = await db.read("/zombie.txt")
         assert r2.content == "new content"
@@ -535,8 +535,8 @@ class TestSoftDeleteResurrection:
     async def test_batch_mixed_deleted_and_new(self, db: DatabaseFileSystem):
         """Batch with some pre-deleted paths and some new paths."""
         # Create some files
-        await db.write("/mix_a.txt", "a")
-        await db.write("/mix_b.txt", "b")
+        await db.write(path="/mix_a.txt", content="a")
+        await db.write(path="/mix_b.txt", content="b")
 
         # Soft-delete /mix_a.txt manually
         async with db._use_session() as s:
@@ -562,7 +562,7 @@ class TestSoftDeleteResurrection:
         async with db._use_session() as s:
             s.add(db._row(path="/dead_parent", kind="directory", deleted_at=now))
 
-        r = await db.write("/dead_parent/child.txt", "alive")
+        r = await db.write(path="/dead_parent/child.txt", content="alive")
         assert r.success
 
         async with db._use_session() as s:
@@ -582,18 +582,18 @@ class TestTypeConfusion:
     async def test_directory_kind_accepted(self, db: DatabaseFileSystem):
         """Writing with kind=directory is allowed (upsert, no versioning)."""
         async with db._use_session() as s:
-            r = await db._write_impl("/somedir", "content", session=s)
+            r = await db._write_impl(path="/somedir", content="content", session=s)
         assert r.success
         assert require_file(r).kind == "directory"
 
     async def test_version_kind_rejected(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/.vfs/f.txt/__meta__/versions/1", "nope", session=s)
+            r = await db._write_impl(path="/.vfs/f.txt/__meta__/versions/1", content="nope", session=s)
         assert not r.success
 
     async def test_connection_kind_accepted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/.vfs/a.py/__meta__/edges/out/imports/b.py", "nope", session=s)
+            r = await db._write_impl(path="/.vfs/a.py/__meta__/edges/out/imports/b.py", content="nope", session=s)
         assert r.success
         assert require_file(r).kind == "edge"
 
@@ -612,7 +612,7 @@ class TestTypeConfusion:
         """A batch where every item is an invalid kind should fail."""
         async with db._use_session() as s:
             r = await db._write_impl(
-                entries=[
+            entries=[
                     VFSEntry(path="/.vfs/v1.txt/__meta__/versions/1", content="v"),
                     VFSEntry(path="/.vfs/v2.txt/__meta__/versions/2", content="v"),
                 ],
@@ -630,20 +630,20 @@ class TestInterleavedOperations:
     """Write, read, overwrite, delete, write-again sequences."""
 
     async def test_write_read_overwrite_read(self, db: DatabaseFileSystem):
-        r1 = await db.write("/inter.txt", "v1")
+        r1 = await db.write(path="/inter.txt", content="v1")
         assert r1.success
 
         r2 = await db.read("/inter.txt")
         assert r2.content == "v1"
 
-        r3 = await db.write("/inter.txt", "v2")
+        r3 = await db.write(path="/inter.txt", content="v2")
         assert r3.success
 
         r4 = await db.read("/inter.txt")
         assert r4.content == "v2"
 
     async def test_write_delete_write_again(self, db: DatabaseFileSystem):
-        await db.write("/phoenix.txt", "born")
+        await db.write(path="/phoenix.txt", content="born")
 
         # Soft-delete manually
         async with db._use_session() as s:
@@ -653,7 +653,7 @@ class TestInterleavedOperations:
         r = await db.read("/phoenix.txt")
         assert not r.success
 
-        r2 = await db.write("/phoenix.txt", "reborn")
+        r2 = await db.write(path="/phoenix.txt", content="reborn")
         assert r2.success
 
         r3 = await db.read("/phoenix.txt")
@@ -679,7 +679,7 @@ class TestInterleavedOperations:
 
     async def test_overwrite_false_after_delete(self, db: DatabaseFileSystem):
         """After soft-delete, overwrite=False should revive the file."""
-        await db.write("/ovf.txt", "original")
+        await db.write(path="/ovf.txt", content="original")
 
         # Soft-delete manually
         async with db._use_session() as s:
@@ -687,7 +687,7 @@ class TestInterleavedOperations:
             require_object(obj).deleted_at = datetime.now(UTC)
 
         async with db._use_session() as s:
-            r = await db._write_impl("/ovf.txt", "new", overwrite=False, session=s)
+            r = await db._write_impl(path="/ovf.txt", content="new", overwrite=False, session=s)
         assert r.success
 
 
@@ -702,13 +702,13 @@ class TestEmptyDegenerate:
     async def test_write_empty_path_string(self, db: DatabaseFileSystem):
         """Empty string path — normalizes to '/' which is directory."""
         async with db._use_session() as s:
-            r = await db._write_impl("", "content", session=s)
+            r = await db._write_impl(path="", content="content", session=s)
         assert not r.success
 
     async def test_write_slash_only(self, db: DatabaseFileSystem):
         """'/' is root directory — not writable."""
         async with db._use_session() as s:
-            r = await db._write_impl("/", "content", session=s)
+            r = await db._write_impl(path="/", content="content", session=s)
         assert not r.success
 
     async def test_objects_none_path_none(self, db: DatabaseFileSystem):
@@ -720,7 +720,7 @@ class TestEmptyDegenerate:
     async def test_write_path_with_only_dots(self, db: DatabaseFileSystem):
         """Path like '/...' — normalization should handle."""
         async with db._use_session() as s:
-            r = await db._write_impl("/../../..", "x", session=s)
+            r = await db._write_impl(path="/../../..", content="x", session=s)
         # Should normalize to "/" which is a directory
         assert not r.success
 
@@ -735,7 +735,7 @@ class TestEmptyDegenerate:
         """
         # Direct _write_impl with a normalized path should work
         async with db._use_session() as s:
-            r = await db._write_impl("/a/b/c.txt", "normalized", session=s)
+            r = await db._write_impl(path="/a/b/c.txt", content="normalized", session=s)
         assert r.success
         async with db._use_session() as s:
             r2 = await db._read_impl("/a/b/c.txt", session=s)
@@ -743,7 +743,7 @@ class TestEmptyDegenerate:
 
         # The public API normalizes before reaching _write_impl,
         # so double-slashes in the original path should also work
-        r3 = await db.write("/x//y//z.txt", "also fine")
+        r3 = await db.write(path="/x//y//z.txt", content="also fine")
         assert r3.success
 
 
@@ -758,20 +758,20 @@ class TestOverwriteFalse:
     async def test_overwrite_false_new_file(self, db: DatabaseFileSystem):
         """New file with overwrite=False should succeed."""
         async with db._use_session() as s:
-            r = await db._write_impl("/new_noof.txt", "content", overwrite=False, session=s)
+            r = await db._write_impl(path="/new_noof.txt", content="content", overwrite=False, session=s)
         assert r.success
 
     async def test_overwrite_false_existing_file(self, db: DatabaseFileSystem):
         """Existing file with overwrite=False should fail."""
-        await db.write("/exists.txt", "v1")
+        await db.write(path="/exists.txt", content="v1")
         async with db._use_session() as s:
-            r = await db._write_impl("/exists.txt", "v2", overwrite=False, session=s)
+            r = await db._write_impl(path="/exists.txt", content="v2", overwrite=False, session=s)
         assert not r.success
         assert "overwrite=False" in r.error_message
 
     async def test_overwrite_false_batch_mixed(self, db: DatabaseFileSystem):
         """Batch with overwrite=False: some new, some existing."""
-        await db.write("/batch_ow_a.txt", "a")
+        await db.write(path="/batch_ow_a.txt", content="a")
 
         objects = [
             VFSEntry(path="/batch_ow_a.txt", content="a_new"),
@@ -798,7 +798,7 @@ class TestContentHashCorrectness:
 
     async def test_hash_matches_content(self, db: DatabaseFileSystem):
         content = "hello world"
-        r = await db.write("/hash_test.txt", content)
+        r = await db.write(path="/hash_test.txt", content=content)
         assert r.success
 
         async with db._use_session() as s:
@@ -807,8 +807,8 @@ class TestContentHashCorrectness:
         assert require_object(obj).content_hash == expected
 
     async def test_hash_updated_on_overwrite(self, db: DatabaseFileSystem):
-        await db.write("/hash_ow.txt", "v1")
-        await db.write("/hash_ow.txt", "v2")
+        await db.write(path="/hash_ow.txt", content="v1")
+        await db.write(path="/hash_ow.txt", content="v2")
 
         async with db._use_session() as s:
             obj = await db._get_object("/hash_ow.txt", s)
@@ -816,7 +816,7 @@ class TestContentHashCorrectness:
         assert require_object(obj).content_hash == expected
 
     async def test_hash_for_empty_content(self, db: DatabaseFileSystem):
-        await db.write("/hash_empty.txt", "")
+        await db.write(path="/hash_empty.txt", content="")
 
         async with db._use_session() as s:
             obj = await db._get_object("/hash_empty.txt", s)
@@ -833,25 +833,25 @@ class TestMetricCorrectness:
     """Verify lines, size_bytes are accurate under adversarial content."""
 
     async def test_size_bytes_no_trailing_newline(self, db: DatabaseFileSystem):
-        r = await db.write("/lines.txt", "a\nb\nc")
+        r = await db.write(path="/lines.txt", content="a\nb\nc")
         assert require_file(r).size_bytes == len(b"a\nb\nc")
 
     async def test_size_bytes_trailing_newline(self, db: DatabaseFileSystem):
-        r = await db.write("/lines2.txt", "a\nb\nc\n")
+        r = await db.write(path="/lines2.txt", content="a\nb\nc\n")
         assert require_file(r).size_bytes == len(b"a\nb\nc\n")
 
     async def test_size_bytes_empty_content(self, db: DatabaseFileSystem):
-        r = await db.write("/lines_empty.txt", "")
+        r = await db.write(path="/lines_empty.txt", content="")
         assert require_file(r).size_bytes == 0
 
     async def test_size_bytes_multibyte_chars(self, db: DatabaseFileSystem):
         content = "\U0001f600"  # 4 bytes in UTF-8
-        r = await db.write("/multi_byte.txt", content)
+        r = await db.write(path="/multi_byte.txt", content=content)
         assert require_file(r).size_bytes == 4
 
     async def test_size_bytes_with_bom(self, db: DatabaseFileSystem):
         content = "\ufeffhello"
-        r = await db.write("/bom.txt", content)
+        r = await db.write(path="/bom.txt", content=content)
         assert require_file(r).size_bytes == len(content.encode())
 
 
@@ -866,7 +866,7 @@ class TestSessionEdgeCases:
     async def test_write_then_read_same_session(self, db: DatabaseFileSystem):
         """Write and read in the same session context."""
         async with db._use_session() as s:
-            await db._write_impl("/same_session.txt", "content", session=s)
+            await db._write_impl(path="/same_session.txt", content="content", session=s)
             r = await db._read_impl("/same_session.txt", session=s)
         assert r.success
         assert r.content == "content"
@@ -874,8 +874,8 @@ class TestSessionEdgeCases:
     async def test_multiple_writes_same_session(self, db: DatabaseFileSystem):
         """Multiple writes in one session."""
         async with db._use_session() as s:
-            r1 = await db._write_impl("/multi_a.txt", "a", session=s)
-            r2 = await db._write_impl("/multi_b.txt", "b", session=s)
+            r1 = await db._write_impl(path="/multi_a.txt", content="a", session=s)
+            r2 = await db._write_impl(path="/multi_b.txt", content="b", session=s)
         assert r1.success
         assert r2.success
 
@@ -883,11 +883,11 @@ class TestSessionEdgeCases:
         """A failed write should not corrupt session for next write."""
         async with db._use_session() as s:
             # This should fail (version path)
-            r1 = await db._write_impl("/.vfs/x.txt/__meta__/versions/1", "bad", session=s)
+            r1 = await db._write_impl(path="/.vfs/x.txt/__meta__/versions/1", content="bad", session=s)
             assert not r1.success
 
             # This should succeed
-            r2 = await db._write_impl("/good.txt", "good", session=s)
+            r2 = await db._write_impl(path="/good.txt", content="good", session=s)
             assert r2.success
 
 
@@ -921,9 +921,9 @@ class TestLargeBatchVersionCombo:
 
     async def test_triple_overwrite_verifies_chain(self, db: DatabaseFileSystem):
         """3x overwrite — version chain should be intact."""
-        await db.write("/chain.txt", "v1")
-        await db.write("/chain.txt", "v2")
-        await db.write("/chain.txt", "v3")
+        await db.write(path="/chain.txt", content="v1")
+        await db.write(path="/chain.txt", content="v2")
+        await db.write(path="/chain.txt", content="v3")
 
         async with db._use_session() as s:
             v1 = await db._get_object("/.vfs/chain.txt/__meta__/versions/1", s)
@@ -954,61 +954,61 @@ class TestExoticPaths:
 
     async def test_path_with_percent_encoding_chars(self, db: DatabaseFileSystem):
         """Percent signs in paths (not actually encoded)."""
-        r = await db.write("/files/100%.txt", "percent")
+        r = await db.write(path="/files/100%.txt", content="percent")
         assert r.success
 
     async def test_path_with_hash_sign(self, db: DatabaseFileSystem):
-        r = await db.write("/files/config#1.txt", "hash")
+        r = await db.write(path="/files/config#1.txt", content="hash")
         assert r.success
 
     async def test_path_with_at_sign(self, db: DatabaseFileSystem):
-        r = await db.write("/files/user@host.txt", "at")
+        r = await db.write(path="/files/user@host.txt", content="at")
         assert r.success
 
     async def test_path_with_tilde(self, db: DatabaseFileSystem):
-        r = await db.write("/files/~backup.txt", "tilde")
+        r = await db.write(path="/files/~backup.txt", content="tilde")
         assert r.success
 
     async def test_path_with_exclamation(self, db: DatabaseFileSystem):
-        r = await db.write("/files/important!.txt", "bang")
+        r = await db.write(path="/files/important!.txt", content="bang")
         assert r.success
 
     async def test_path_with_parentheses(self, db: DatabaseFileSystem):
-        r = await db.write("/files/doc (1).txt", "parens")
+        r = await db.write(path="/files/doc (1).txt", content="parens")
         assert r.success
 
     async def test_path_with_brackets(self, db: DatabaseFileSystem):
-        r = await db.write("/files/[draft].txt", "brackets")
+        r = await db.write(path="/files/[draft].txt", content="brackets")
         assert r.success
 
     async def test_path_with_curly_braces(self, db: DatabaseFileSystem):
-        r = await db.write("/files/{template}.txt", "curlies")
+        r = await db.write(path="/files/{template}.txt", content="curlies")
         assert r.success
 
     async def test_path_with_pipe(self, db: DatabaseFileSystem):
-        r = await db.write("/files/a|b.txt", "pipe")
+        r = await db.write(path="/files/a|b.txt", content="pipe")
         assert r.success
 
     async def test_path_with_ampersand(self, db: DatabaseFileSystem):
-        r = await db.write("/files/a&b.txt", "ampersand")
+        r = await db.write(path="/files/a&b.txt", content="ampersand")
         assert r.success
 
     async def test_path_with_equals(self, db: DatabaseFileSystem):
-        r = await db.write("/files/key=val.txt", "equals")
+        r = await db.write(path="/files/key=val.txt", content="equals")
         assert r.success
 
     async def test_path_with_plus(self, db: DatabaseFileSystem):
-        r = await db.write("/files/a+b.txt", "plus")
+        r = await db.write(path="/files/a+b.txt", content="plus")
         assert r.success
 
     async def test_dotfile_path(self, db: DatabaseFileSystem):
         """Dotfiles should be treated as files, not directories."""
-        r = await db.write("/.env", "SECRET=x")
+        r = await db.write(path="/.env", content="SECRET=x")
         assert r.success
         assert require_file(r).kind == "file"
 
     async def test_dotfile_in_nested_dir(self, db: DatabaseFileSystem):
-        r = await db.write("/config/.gitignore", "*.pyc")
+        r = await db.write(path="/config/.gitignore", content="*.pyc")
         assert r.success
         assert require_file(r).kind == "file"
 
@@ -1023,7 +1023,7 @@ class TestCreateDeleteCycles:
 
     async def test_10_create_delete_cycles(self, db: DatabaseFileSystem):
         for i in range(10):
-            r = await db.write("/cycle.txt", f"iteration {i}")
+            r = await db.write(path="/cycle.txt", content=f"iteration {i}")
             assert r.success, f"Write failed at iteration {i}"
 
             # Soft-delete manually (delete() not implemented on DatabaseFileSystem)
@@ -1115,8 +1115,8 @@ class TestSameHashDifferentMetadata:
 
     async def test_same_content_different_id(self, db: DatabaseFileSystem):
         """Two objects with the same path, different IDs — should be handled by dedup."""
-        await db.write("/dup_id.txt", "same content")
-        r2 = await db.write("/dup_id.txt", "same content")
+        await db.write(path="/dup_id.txt", content="same content")
+        r2 = await db.write(path="/dup_id.txt", content="same content")
         # Same content — no additional version created, just timestamp updated
         assert r2.success
 
@@ -1138,9 +1138,9 @@ class TestDiffLikeContent:
     async def test_content_that_looks_like_a_diff(self, db: DatabaseFileSystem):
         """File content that is itself a valid unified diff."""
         diff_content = "--- a/file.txt\n+++ b/file.txt\n@@ -1,3 +1,3 @@\n line1\n-line2\n+line2_modified\n line3\n"
-        await db.write("/diff.txt", diff_content)
+        await db.write(path="/diff.txt", content=diff_content)
         # Overwrite to create a version of the diff content
-        r = await db.write("/diff.txt", "replaced")
+        r = await db.write(path="/diff.txt", content="replaced")
         assert r.success
 
         async with db._use_session() as s:
@@ -1150,8 +1150,8 @@ class TestDiffLikeContent:
     async def test_content_with_at_at_markers(self, db: DatabaseFileSystem):
         """Content with @@ markers that could confuse hunk parsing."""
         content = "@@ this is not a hunk @@\n@@ -0,0 +0,0 @@\nfake"
-        await db.write("/atat.txt", content)
-        r = await db.write("/atat.txt", "new content")
+        await db.write(path="/atat.txt", content=content)
+        r = await db.write(path="/atat.txt", content="new content")
         assert r.success
 
 
@@ -1187,7 +1187,7 @@ class TestParentDirectoryEdgeCases:
 
     async def test_write_to_root_level_file(self, db: DatabaseFileSystem):
         """File directly under root — no intermediate dirs needed."""
-        r = await db.write("/root_file.txt", "content")
+        r = await db.write(path="/root_file.txt", content="content")
         assert r.success
         # Parent is / — no intermediate dirs needed.
         # The key test is that the file was created successfully.
@@ -1204,8 +1204,8 @@ class TestSessionReEntrancy:
     async def test_two_write_impls_same_session(self, db: DatabaseFileSystem):
         """Two sequential _write_impl calls in one session."""
         async with db._use_session() as s:
-            r1 = await db._write_impl("/re_a.txt", "a", session=s)
-            r2 = await db._write_impl("/re_b.txt", "b", session=s)
+            r1 = await db._write_impl(path="/re_a.txt", content="a", session=s)
+            r2 = await db._write_impl(path="/re_b.txt", content="b", session=s)
         assert r1.success
         assert r2.success
 
@@ -1218,8 +1218,8 @@ class TestSessionReEntrancy:
     async def test_write_then_overwrite_same_session(self, db: DatabaseFileSystem):
         """Write then overwrite in the same session."""
         async with db._use_session() as s:
-            await db._write_impl("/re_ow.txt", "v1", session=s)
-            r2 = await db._write_impl("/re_ow.txt", "v2", session=s)
+            await db._write_impl(path="/re_ow.txt", content="v1", session=s)
+            r2 = await db._write_impl(path="/re_ow.txt", content="v2", session=s)
         assert r2.success
 
         async with db._use_session() as s:
@@ -1228,10 +1228,10 @@ class TestSessionReEntrancy:
 
     async def test_write_then_read_then_write_same_session(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/rwr.txt", "v1", session=s)
+            await db._write_impl(path="/rwr.txt", content="v1", session=s)
             r = await db._read_impl("/rwr.txt", session=s)
             assert r.content == "v1"
-            await db._write_impl("/rwr.txt", "v2", session=s)
+            await db._write_impl(path="/rwr.txt", content="v2", session=s)
             r2 = await db._read_impl("/rwr.txt", session=s)
             assert r2.content == "v2"
 
@@ -1250,10 +1250,10 @@ class TestCorruptedVersionChains:
         plan_file_write should handle this gracefully. We insert the corrupt
         record at a path that won't collide with auto-generated version paths.
         """
-        await db.write("/corrupt_chain.txt", "v1")
+        await db.write(path="/corrupt_chain.txt", content="v1")
 
         # First overwrite creates version 2 normally
-        await db.write("/corrupt_chain.txt", "v2")
+        await db.write(path="/corrupt_chain.txt", content="v2")
 
         # Manually insert a corrupt version record with None version_number
         # at a path that doesn't collide with any real version
@@ -1268,7 +1268,7 @@ class TestCorruptedVersionChains:
 
         # Overwrite again — plan_file_write should ignore the corrupt extra row
         # in the recent_versions list gracefully (filtering it out)
-        r = await db.write("/corrupt_chain.txt", "v3")
+        r = await db.write(path="/corrupt_chain.txt", content="v3")
         assert r.success
         r2 = await db.read("/corrupt_chain.txt")
         assert r2.content == "v3"
@@ -1284,9 +1284,9 @@ class TestIdempotency:
 
     async def test_double_write_same_content(self, db: DatabaseFileSystem):
         """Writing the same content twice should be idempotent (no extra version)."""
-        await db.write("/idem.txt", "constant")
-        await db.write("/idem.txt", "constant")
-        await db.write("/idem.txt", "constant")
+        await db.write(path="/idem.txt", content="constant")
+        await db.write(path="/idem.txt", content="constant")
+        await db.write(path="/idem.txt", content="constant")
 
         async with db._use_session() as s:
             v1 = await db._get_object("/.vfs/idem.txt/__meta__/versions/1", s)
@@ -1332,9 +1332,9 @@ class TestUnicodeNormalizationAttacks:
         nfd = unicodedata.normalize("NFD", nfc)  # e + \u0301
         assert nfc != nfd  # different byte sequences
 
-        await db.write(nfc, "coffee v1")
+        await db.write(path=nfc, content="coffee v1")
         # Writing with NFD form should overwrite (same path after normalization)
-        r = await db.write(nfd, "coffee v2")
+        r = await db.write(path=nfd, content="coffee v2")
         assert r.success
 
         # Reading with either form should return the same content
@@ -1344,8 +1344,8 @@ class TestUnicodeNormalizationAttacks:
     async def test_look_alike_unicode_paths_are_distinct(self, db: DatabaseFileSystem):
         """Visually similar but code-point-different paths should be distinct."""
         # Latin 'a' vs Cyrillic 'a' (U+0430)
-        r1 = await db.write("/a.txt", "latin a")
-        r2 = await db.write("/\u0430.txt", "cyrillic a")
+        r1 = await db.write(path="/a.txt", content="latin a")
+        r2 = await db.write(path="/\u0430.txt", content="cyrillic a")
         assert r1.success
         assert r2.success
 
@@ -1415,12 +1415,12 @@ class TestTimestampManipulation:
 
     async def test_overwrite_preserves_created_at(self, db: DatabaseFileSystem):
         """Overwriting should not change created_at."""
-        await db.write("/preserve_ts.txt", "v1")
+        await db.write(path="/preserve_ts.txt", content="v1")
         async with db._use_session() as s:
             obj1 = await db._get_object("/preserve_ts.txt", s)
             created_original = require_object(obj1).created_at
 
-        await db.write("/preserve_ts.txt", "v2")
+        await db.write(path="/preserve_ts.txt", content="v2")
         async with db._use_session() as s:
             obj2 = await db._get_object("/preserve_ts.txt", s)
         assert require_object(obj2).created_at == created_original
@@ -1466,26 +1466,26 @@ class TestLineEndings:
     """CRLF, CR, LF, mixed — verify they're stored faithfully."""
 
     async def test_unix_lf(self, db: DatabaseFileSystem):
-        r = await db.write("/lf.txt", "a\nb\nc")
+        r = await db.write(path="/lf.txt", content="a\nb\nc")
         assert r.success
         r2 = await db.read("/lf.txt")
         assert r2.content == "a\nb\nc"
 
     async def test_windows_crlf(self, db: DatabaseFileSystem):
-        r = await db.write("/crlf.txt", "a\r\nb\r\nc")
+        r = await db.write(path="/crlf.txt", content="a\r\nb\r\nc")
         assert r.success
         r2 = await db.read("/crlf.txt")
         assert r2.content == "a\r\nb\r\nc"
 
     async def test_old_mac_cr(self, db: DatabaseFileSystem):
-        r = await db.write("/cr.txt", "a\rb\rc")
+        r = await db.write(path="/cr.txt", content="a\rb\rc")
         assert r.success
         r2 = await db.read("/cr.txt")
         assert r2.content == "a\rb\rc"
 
     async def test_mixed_line_endings(self, db: DatabaseFileSystem):
         content = "unix\nwindows\r\nold_mac\rend"
-        r = await db.write("/mixed_le.txt", content)
+        r = await db.write(path="/mixed_le.txt", content=content)
         assert r.success
         r2 = await db.read("/mixed_le.txt")
         assert r2.content == content
@@ -1541,8 +1541,8 @@ class TestExceptionRecovery:
         """plan_file_write raises for one item — it's skipped, others succeed."""
         from unittest.mock import patch
 
-        await db.write("/good.txt", "v1")
-        await db.write("/bad.txt", "v1")
+        await db.write(path="/good.txt", content="v1")
+        await db.write(path="/bad.txt", content="v1")
 
         from vfs.models import VFSEntry
 

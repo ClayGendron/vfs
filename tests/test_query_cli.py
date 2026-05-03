@@ -11,11 +11,11 @@ from vfs.query import QuerySyntaxError
 @pytest.fixture
 async def query_fs(db: DatabaseFileSystem):
     async with db._use_session() as session:
-        await db._write_impl("/src/auth.py", "import utils\ndef login(): pass", session=session)
-        await db._write_impl("/src/utils.py", "def helper(): pass", session=session)
-        await db._write_impl("/src/db.py", "import utils\ndef connect(): pass", session=session)
-        await db._write_impl("/src/api.py", "import auth\nimport utils", session=session)
-        await db._write_impl("/src/config.py", "DEBUG = True", session=session)
+        await db._write_impl(path="/src/auth.py", content="import utils\ndef login(): pass", session=session)
+        await db._write_impl(path="/src/utils.py", content="def helper(): pass", session=session)
+        await db._write_impl(path="/src/db.py", content="import utils\ndef connect(): pass", session=session)
+        await db._write_impl(path="/src/api.py", content="import auth\nimport utils", session=session)
+        await db._write_impl(path="/src/config.py", content="DEBUG = True", session=session)
 
     for source, target, edge_type in [
         ("/src/auth.py", "/src/utils.py", "imports"),
@@ -86,7 +86,9 @@ class TestCliRendering:
 
     async def test_write_renders_action_summary(self, query_fs: DatabaseFileSystem):
         text = await query_fs.cli('write /notes/todo.md "hello"')
-        assert text == "Wrote /notes/todo.md"
+        # slice 2 will populate Candidate.status; until then the fallback verb is "wrote".
+        assert text.startswith("write success: 1 file")
+        assert "/notes/todo.md" in text
 
     async def test_ls_renders_names(self, query_fs: DatabaseFileSystem):
         text = await query_fs.cli("ls /src")

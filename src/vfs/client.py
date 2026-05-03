@@ -134,15 +134,17 @@ class VFSClient:
 
     def write(
         self,
+        entries: Sequence[VFSEntry] | None = None,
+        *,
         path: str | None = None,
         content: str | None = None,
-        entries: Sequence[VFSEntry] | None = None,
         overwrite: bool = True,
-        *,
         user_id: str | None = None,
     ) -> VFSResult:
         """Write content to *path*. Raises on conflict."""
-        return self._run(self._async.write(path, content, entries=entries, overwrite=overwrite, user_id=user_id))
+        return self._run(
+            self._async.write(entries, path=path, content=content, overwrite=overwrite, user_id=user_id),
+        )
 
     def edit(
         self,

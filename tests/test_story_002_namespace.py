@@ -72,7 +72,7 @@ def test_story_002_query_parser_rejects_removed_mkconn_alias() -> None:
 
 @pytest.mark.asyncio
 async def test_story_002_file_write_materializes_vfs_namespace(db) -> None:
-    result = await db.write("/src/a.py", "print('hi')")
+    result = await db.write(path="/src/a.py", content="print('hi')")
     assert result.success
 
     stat = await db.stat("/.vfs/src/a.py")
@@ -85,8 +85,8 @@ async def test_story_002_file_write_materializes_vfs_namespace(db) -> None:
 
 @pytest.mark.asyncio
 async def test_story_002_chunk_write_uses_vfs_tree(db) -> None:
-    await db.write("/src/a.py", "print('hi')")
-    chunk = await db.write("/.vfs/src/a.py/__meta__/chunks/login", "chunk body")
+    await db.write(path="/src/a.py", content="print('hi')")
+    chunk = await db.write(path="/.vfs/src/a.py/__meta__/chunks/login", content="chunk body")
     assert chunk.success
 
     listed = await db.ls("/.vfs/src/a.py/__meta__/chunks")
@@ -96,8 +96,8 @@ async def test_story_002_chunk_write_uses_vfs_tree(db) -> None:
 
 @pytest.mark.asyncio
 async def test_story_002_mkedge_writes_canonical_out_projection(db) -> None:
-    await db.write("/src/a.py", "print('a')")
-    await db.write("/src/b.py", "print('b')")
+    await db.write(path="/src/a.py", content="print('a')")
+    await db.write(path="/src/b.py", content="print('b')")
 
     result = await db.mkedge("/src/a.py", "/src/b.py", "imports")
     assert result.success
@@ -108,13 +108,13 @@ async def test_story_002_mkedge_writes_canonical_out_projection(db) -> None:
 
 @pytest.mark.asyncio
 async def test_story_002_inverse_projection_attaches_when_target_exists(db) -> None:
-    await db.write("/src/a.py", "print('a')")
+    await db.write(path="/src/a.py", content="print('a')")
     await db.mkedge("/src/a.py", "/src/b.py", "imports")
 
     missing = await db.stat("/.vfs/src/b.py/__meta__/edges/in/imports/src/a.py")
     assert not missing.success
 
-    await db.write("/src/b.py", "print('b')")
+    await db.write(path="/src/b.py", content="print('b')")
 
     inverse = await db.stat("/.vfs/src/b.py/__meta__/edges/in/imports/src/a.py")
     assert inverse.success
@@ -126,9 +126,9 @@ async def test_story_002_inverse_projection_attaches_when_target_exists(db) -> N
 
 @pytest.mark.asyncio
 async def test_story_002_move_updates_vfs_metadata_paths(db) -> None:
-    await db.write("/src/a.py", "print('a')")
-    await db.write("/src/b.py", "print('b')")
-    await db.write("/.vfs/src/a.py/__meta__/chunks/login", "chunk body")
+    await db.write(path="/src/a.py", content="print('a')")
+    await db.write(path="/src/b.py", content="print('b')")
+    await db.write(path="/.vfs/src/a.py/__meta__/chunks/login", content="chunk body")
     await db.mkedge("/src/a.py", "/src/b.py", "imports")
 
     moved = await db.move("/src/a.py", "/src/c.py")

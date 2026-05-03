@@ -19,9 +19,9 @@ from vfs.query.parser import parse_query
 
 async def _seed(db: DatabaseFileSystem) -> None:
     async with db._use_session() as s:
-        await db._write_impl("/docs/intro.md", "# Intro", session=s)
-        await db._write_impl("/docs/guide.md", "# Guide", session=s)
-        await db._write_impl("/src/auth.py", "def login(): pass", session=s)
+        await db._write_impl(path="/docs/intro.md", content="# Intro", session=s)
+        await db._write_impl(path="/docs/guide.md", content="# Guide", session=s)
+        await db._write_impl(path="/src/auth.py", content="def login(): pass", session=s)
 
 
 class TestOutputWidensGlob:

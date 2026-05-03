@@ -22,7 +22,7 @@ Serialization:
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 — Pydantic needs this at runtime for field resolution
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -105,6 +105,7 @@ class Candidate(BaseModel):
     in_degree: int | None = None
     out_degree: int | None = None
     updated_at: datetime | None = None
+    status: Literal["created", "updated", "unchanged"] | None = None
 
     @property
     def name(self) -> str:
@@ -335,6 +336,7 @@ class VFSResult(BaseModel):
             in_degree=fs(a.in_degree, b.in_degree),
             out_degree=fs(a.out_degree, b.out_degree),
             updated_at=fs(a.updated_at, b.updated_at),
+            status=fs(a.status, b.status),
         )
 
     def _merged_function(self, other: VFSResult) -> str:
@@ -452,15 +454,25 @@ class VFSResult(BaseModel):
         """Pydantic JSON — for APIs, caches, MCP tools."""
         return self.model_dump_json(exclude_none=exclude_none)
 
+    def __str__(self) -> str:
+        """Delegate to ``to_str()`` for default text rendering."""
+        return self.to_str()
+
     def to_str(self, *, projection: tuple[str, ...] | list[str] | None = None) -> str:
         """Render to text. *projection* selects Candidate columns to show.
 
         - ``None`` → function's default projection.
         - Tuple/list of field names, possibly with ``default`` / ``all`` sentinels.
-        - ``success=False`` short-circuits to ``"ERROR: ..."`` regardless of projection.
+        - ``write`` results use a dedicated ``write errors:`` / ``write success:``
+          formatter regardless of projection.
+        - For other functions, ``success=False`` with no candidates short-circuits
+          to ``"ERROR: ..."``.
         - If the result has errors but ``success=True``, the error block is
           appended after the body.
         """
+        if self.function == "write":
+            return _render_write(self)
+
         if not self.success and not self.candidates:
             return _render_errors(self.errors)
 
@@ -728,6 +740,84 @@ def _render_action(result: VFSResult) -> str:
     if count == 1:
         return f"{verb} {result.candidates[0].path}"
     return f"{verb} {count} paths"
+
+
+# Kinds counted in the write-success summary. Versions are deliberately omitted
+# (they are bookkeeping rows the agent does not need to know about).
+_WRITE_SUMMARY_KINDS: tuple[str, ...] = ("file", "chunk", "edge")
+
+
+def _render_write(result: VFSResult) -> str:
+    """Render a ``write`` result.
+
+    Up to two blocks, errors first when present. Empty results render
+    ``write: nothing to do``. The summary line counts files/chunks/edges
+    only; version rows are excluded. Single-file batches append a
+    ``  <status> <path>`` line below the summary.
+    """
+    error_block = _render_write_errors(result.errors)
+    success_block = _render_write_success(result.candidates)
+
+    if not error_block and not success_block:
+        return "write: nothing to do"
+
+    blocks = [b for b in (error_block, success_block) if b]
+    return "\n\n".join(blocks)
+
+
+def _render_write_errors(errors: list[str]) -> str:
+    if not errors:
+        return ""
+    lines = ["write errors:"]
+    for err in errors:
+        lines.append(f"  {err}")
+    return "\n".join(lines)
+
+
+def _render_write_success(candidates: list[Candidate]) -> str:
+    counts: dict[str, int] = {}
+    file_statuses: list[str] = []
+    file_candidates: list[Candidate] = []
+    for c in candidates:
+        if c.kind not in _WRITE_SUMMARY_KINDS:
+            continue
+        counts[c.kind] = counts.get(c.kind, 0) + 1
+        if c.kind == "file":
+            file_candidates.append(c)
+            if c.status is not None:
+                file_statuses.append(c.status)
+
+    if not counts:
+        return ""
+
+    parts: list[str] = []
+    for kind in _WRITE_SUMMARY_KINDS:
+        n = counts.get(kind, 0)
+        if not n:
+            continue
+        label = _pluralize(kind, n)
+        if kind == "file" and file_statuses:
+            unique = set(file_statuses)
+            if len(unique) > 1:
+                breakdown = ", ".join(
+                    f"{file_statuses.count(s)} {s}" for s in ("created", "updated", "unchanged") if s in unique
+                )
+                label = f"{label} ({breakdown})"
+        parts.append(label)
+
+    summary = "write success: " + ", ".join(parts) + " written"
+
+    if len(file_candidates) == 1:
+        c = file_candidates[0]
+        verb = c.status or "wrote"
+        return f"{summary}\n\n  {verb} {c.path}"
+
+    return summary
+
+
+def _pluralize(kind: str, n: int) -> str:
+    word = kind if n == 1 else kind + "s"
+    return f"{n} {word}"
 
 
 def _verb_for(operation: str) -> str:

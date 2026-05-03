@@ -234,6 +234,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         schema: str | None = None,
         table_name: str = "vfs_entries",
         native_embedding: NativeEmbeddingConfig | None = None,
+        auto_chunk: bool = True,
+        auto_index: bool = True,
     ) -> None:
         super().__init__(
             engine=engine,
@@ -252,6 +254,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         self._graph = RustworkxGraph(model=self._model, user_scoped=user_scoped)
         self._embedding_provider = embedding_provider
         self._vector_store = vector_store
+        self._auto_chunk = bool(auto_chunk)
+        self._auto_index = bool(auto_index)
 
     def _row(self, **data: Any) -> VFSEntry:
         """Mint a table-row instance from validated data.
@@ -414,6 +418,57 @@ class DatabaseFileSystem(VirtualFileSystem):
         """Persist explicit embedding writes without clobbering omissions."""
         if self._field_was_explicitly_provided(incoming, "embedding"):
             existing.embedding = incoming.embedding
+
+    # ------------------------------------------------------------------
+    # Auto-maintenance hook surface (story 014)
+    #
+    # Backends override these to plug in trigram and embedding maintenance
+    # for the write pipeline. The base class supplies no-op defaults so the
+    # in-memory and plain-SQL backends keep working without any trigram or
+    # embedding store.
+    # ------------------------------------------------------------------
+
+    async def _stage_chunk_cascade(
+        self,
+        file_entries: Sequence[VFSEntry],
+        *,
+        session: AsyncSession,
+    ) -> None:
+        """Stage a ``DELETE`` of pre-existing chunk rows for re-chunked files.
+
+        Called from the persist phase, **before** the new chunks are
+        inserted, so backends with a trigram index can also stage delete
+        deltas for the old chunks before their content disappears.
+        Default implementation is a no-op; backends with chunk-derived
+        indexes override to issue the cascade ``DELETE``.
+        """
+
+    async def _apply_index_maintenance(
+        self,
+        entries: Sequence[VFSEntry],
+        *,
+        old_entries: dict[str, VFSEntry] | None = None,
+        delete_only: bool = False,
+        session: AsyncSession,
+    ) -> None:
+        """Compute trigram add/delete deltas and embeddings, stage for the persist flush.
+
+        ``old_entries`` supplies the current persisted content for
+        existing rows so the backend can compute::
+
+            old_grams - new_grams -> delete deltas
+            new_grams - old_grams -> add deltas
+
+        When ``delete_only`` is True, the backend recalculates the current
+        trigrams for the supplied entries and stages delete deltas only.
+        Used for deletes and for files whose flag flipped to
+        ``index_content=False``.
+
+        Embedding work is delegated to the configured provider in a
+        single bulk call. No ``INSERT``/``UPDATE``/``DELETE`` is issued
+        here — everything is queued on the session and emitted at the
+        persist flush. Default implementation is a no-op.
+        """
 
     async def _get_object(
         self,
@@ -1263,11 +1318,11 @@ class DatabaseFileSystem(VirtualFileSystem):
 
     async def _write_impl(
         self,
+        entries: Sequence[VFSEntry] | None = None,
+        *,
         path: str | None = None,
         content: str | None = None,
-        entries: Sequence[VFSEntry] | None = None,
         overwrite: bool = True,
-        *,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:

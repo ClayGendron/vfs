@@ -59,7 +59,7 @@ async def graph_db(db: DatabaseFileSystem):
             "/src/api.py",
             "/src/config.py",
         ]:
-            await db._write_impl(path, f"# {path}", session=s)
+            await db._write_impl(path=path, content=f"# {path}", session=s)
 
     async with db._use_session() as s:
         await db._mkedge_impl("/src/auth.py", "/src/utils.py", "imports", session=s)

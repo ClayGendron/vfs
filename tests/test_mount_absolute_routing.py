@@ -72,14 +72,14 @@ async def two_mounts() -> AsyncIterator[tuple[VirtualFileSystem, DatabaseFileSys
     await router.add_mount("/data", data)
     await router.add_mount("/other", other)
 
-    await router.write("/data/readme.md", "data readme")
-    await router.write("/data/src/app.py", "print('data')")
-    await router.write("/data/src/util.py", "def util(): ...")
-    await router.write("/data/docs/guide.md", "guide")
-    await router.write("/data/docs/deep/nested.md", "nested")
+    await router.write(path="/data/readme.md", content="data readme")
+    await router.write(path="/data/src/app.py", content="print('data')")
+    await router.write(path="/data/src/util.py", content="def util(): ...")
+    await router.write(path="/data/docs/guide.md", content="guide")
+    await router.write(path="/data/docs/deep/nested.md", content="nested")
 
-    await router.write("/other/notes.md", "other notes")
-    await router.write("/other/src/main.py", "print('other')")
+    await router.write(path="/other/notes.md", content="other notes")
+    await router.write(path="/other/src/main.py", content="print('other')")
 
     try:
         yield router, data, other
@@ -104,14 +104,14 @@ async def storageful_root_with_mount() -> AsyncIterator[tuple[DatabaseFileSystem
     await root.add_mount("/data", mount)
 
     # Files at root, outside any mount
-    await root.write("/top.md", "top level")
-    await root.write("/lib/util.py", "util at root")
-    await root.write("/lib/sub/deep.py", "deep at root")
+    await root.write(path="/top.md", content="top level")
+    await root.write(path="/lib/util.py", content="util at root")
+    await root.write(path="/lib/sub/deep.py", content="deep at root")
 
     # Files inside the mount
-    await root.write("/data/readme.md", "data readme")
-    await root.write("/data/src/app.py", "print('mount')")
-    await root.write("/data/src/sub/inner.py", "inner")
+    await root.write(path="/data/readme.md", content="data readme")
+    await root.write(path="/data/src/app.py", content="print('mount')")
+    await root.write(path="/data/src/sub/inner.py", content="inner")
 
     try:
         yield root, mount
@@ -131,10 +131,10 @@ async def wildcard_mount_router() -> AsyncIterator[tuple[VirtualFileSystem, Data
     router = VFSClientAsync()
     await router.add_mount("/data", mount)
 
-    await router.write("/data/src/app.py", "print('x')")
-    await router.write("/data/src/util.py", "u")
-    await router.write("/data/src/sub/deep.py", "d")
-    await router.write("/data/readme.md", "r")
+    await router.write(path="/data/src/app.py", content="print('x')")
+    await router.write(path="/data/src/util.py", content="u")
+    await router.write(path="/data/src/sub/deep.py", content="d")
+    await router.write(path="/data/readme.md", content="r")
 
     try:
         yield router, mount
@@ -157,9 +157,9 @@ async def nested_mounts() -> AsyncIterator[tuple[VirtualFileSystem, DatabaseFile
     router = VFSClientAsync()
     await router.add_mount("/l1", mid)
 
-    await router.write("/l1/l2/plan.md", "the plan")
-    await router.write("/l1/l2/src/a.py", "a = 1")
-    await router.write("/l1/l2/src/sub/b.py", "b = 2")
+    await router.write(path="/l1/l2/plan.md", content="the plan")
+    await router.write(path="/l1/l2/src/a.py", content="a = 1")
+    await router.write(path="/l1/l2/src/sub/b.py", content="b = 2")
 
     try:
         yield router, leaf
@@ -187,10 +187,10 @@ async def deep_chain_mounts() -> AsyncIterator[tuple[VirtualFileSystem, Database
     outer = VFSClientAsync()
     await outer.add_mount("/a", router1)
 
-    await outer.write("/a/b/c/top.md", "top")
-    await outer.write("/a/b/c/src/app.py", "app")
-    await outer.write("/a/b/c/src/util.py", "util")
-    await outer.write("/a/b/c/src/sub/deep.py", "deep")
+    await outer.write(path="/a/b/c/top.md", content="top")
+    await outer.write(path="/a/b/c/src/app.py", content="app")
+    await outer.write(path="/a/b/c/src/util.py", content="util")
+    await outer.write(path="/a/b/c/src/sub/deep.py", content="deep")
 
     try:
         yield outer, leaf

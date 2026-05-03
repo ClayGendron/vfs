@@ -20,7 +20,7 @@ from vfs.permissions import PermissionMap, read_only
 
 async def _seed(fs: DatabaseFileSystem, path: str, content: str = "x") -> None:
     async with fs._use_session() as s:
-        await fs._write_impl(path, content=content, session=s)
+        await fs._write_impl(path=path, content=content, session=s)
 
 
 async def _raw_has_path(fs: DatabaseFileSystem, path: str) -> bool:
@@ -61,7 +61,7 @@ async def test_writable_carve_out_creates_unrestricted_ancestors():
     router = VFSClientAsync()
     await router.add_mount("mnt", fs)
     try:
-        r = await router.write("/mnt/wh/a/b/c/x.md", "ok")
+        r = await router.write(path="/mnt/wh/a/b/c/x.md", content="ok")
         assert r.success, r.error_message
         # Ancestors are created on demand even though they fall under
         # the read-only default — the carve-out would be unreachable
@@ -90,7 +90,7 @@ async def test_parent_dir_revival_does_not_undelete_read_only_ancestors():
     router = VFSClientAsync()
     await router.add_mount("mnt", fs)
     try:
-        r = await router.write("/mnt/wh/a/b/c/new.md", "ok")
+        r = await router.write(path="/mnt/wh/a/b/c/new.md", content="ok")
         assert not r.success
         assert "Cannot write to read-only path" in r.error_message
         # The soft-deleted ancestors must remain soft-deleted.
@@ -136,7 +136,7 @@ async def test_user_scoped_pre_scoped_path_no_double_write():
     router = VFSClientAsync()
     await router.add_mount("wiki", fs)
     try:
-        r = await router.write("/wiki/alice/synthesis/x.md", "x", user_id="alice")
+        r = await router.write(path="/wiki/alice/synthesis/x.md", content="x", user_id="alice")
         assert not r.success
         assert "Cannot write" in r.error_message
         assert not await _raw_has_path(fs, "/alice/alice/synthesis/x.md")
@@ -165,7 +165,7 @@ async def test_user_scoped_rule_with_user_id_in_path_is_global_not_per_user():
     try:
         # Bob matches the rule because the check sees the unscoped path
         # /alice/synthesis/x.md before _scope_path runs.
-        r = await router.write("/wiki/alice/synthesis/x.md", "bob-wrote-this", user_id="bob")
+        r = await router.write(path="/wiki/alice/synthesis/x.md", content="bob-wrote-this", user_id="bob")
         assert r.success, r.error_message
         # Bob's data lands in HIS own scope — no cross-user leak.
         assert await _raw_has_path(fs, "/bob/alice/synthesis/x.md")
@@ -181,12 +181,12 @@ async def test_remove_and_readd_uses_fresh_filesystem():
     readonly = await make_sqlite_db(permissions="read")
     router = VFSClientAsync()
     await router.add_mount("mnt", writable)
-    r = await router.write("/mnt/ok.md", "ok")
+    r = await router.write(path="/mnt/ok.md", content="ok")
     assert r.success
     await router.remove_mount("mnt")
     await router.add_mount("mnt", readonly)
     try:
-        r = await router.write("/mnt/evil.md", "nope")
+        r = await router.write(path="/mnt/evil.md", content="nope")
         assert not r.success
         assert "Cannot write" in r.error_message
     finally:
@@ -198,9 +198,9 @@ async def test_self_storage_database_fs_checks_own_permissions():
         permissions=read_only(write=["/writable"]),
     )
     try:
-        r = await fs.write("/writable/ok.md", "ok")
+        r = await fs.write(path="/writable/ok.md", content="ok")
         assert r.success, r.error_message
-        r = await fs.write("/other/blocked.md", "nope")
+        r = await fs.write(path="/other/blocked.md", content="nope")
         assert not r.success
         assert "Cannot write" in r.error_message
     finally:

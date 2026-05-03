@@ -54,7 +54,7 @@ async def _sqlite_engine():
 async def _seed(fs: DatabaseFileSystem, path: str, content: str = "hi") -> None:
     """Seed a file directly via ``_write_impl``, bypassing the router."""
     async with fs._use_session() as s:
-        await fs._write_impl(path, content=content, session=s)
+        await fs._write_impl(path=path, content=content, session=s)
 
 
 # ==================================================================
@@ -325,7 +325,7 @@ class TestWritableHoleAllows:
     async def test_write_inside_hole(self):
         router, _wiki = await _make_wiki_router()
         try:
-            r = await router.write("/wiki/synthesis/new.md", "hello")
+            r = await router.write(path="/wiki/synthesis/new.md", content="hello")
             assert r.success, r.error_message
         finally:
             await router.close()
@@ -396,7 +396,7 @@ class TestWritableHoleBlocks:
     async def test_write_outside_hole(self):
         router, _wiki = await _make_wiki_router()
         try:
-            r = await router.write("/wiki/raw/new.pdf", "nope")
+            r = await router.write(path="/wiki/raw/new.pdf", content="nope")
             assert not r.success
             assert "Cannot write to read-only path '/wiki/raw/new.pdf'" in r.error_message
             assert "(mount default)" in r.error_message
@@ -453,7 +453,7 @@ class TestWritableHoleBlocks:
         router = VFSClientAsync()
         await router.add_mount("wiki", wiki)
         try:
-            r = await router.write("/wiki/synthesis-archive/x.md", "nope")
+            r = await router.write(path="/wiki/synthesis-archive/x.md", content="nope")
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
         finally:
@@ -483,7 +483,7 @@ class TestFrozenIsland:
     async def test_write_outside_frozen_succeeds(self):
         router, _ws = await _make_workspace_router()
         try:
-            r = await router.write("/workspace/src/util.py", "u")
+            r = await router.write(path="/workspace/src/util.py", content="u")
             assert r.success, r.error_message
         finally:
             await router.close()
@@ -491,7 +491,7 @@ class TestFrozenIsland:
     async def test_write_inside_frozen_blocked(self):
         router, _ws = await _make_workspace_router()
         try:
-            r = await router.write("/workspace/.frozen/new.toml", "x")
+            r = await router.write(path="/workspace/.frozen/new.toml", content="x")
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
             assert "read-only by mount rule '/.frozen'" in r.error_message
@@ -525,7 +525,7 @@ class TestFrozenIsland:
     async def test_second_frozen_rule_works(self):
         router, _ws = await _make_workspace_router()
         try:
-            r = await router.write("/workspace/vendor/new.so", "x")
+            r = await router.write(path="/workspace/vendor/new.so", content="x")
             assert not r.success
             assert "read-only by mount rule '/vendor'" in r.error_message
         finally:
@@ -823,7 +823,7 @@ class TestMetadataInheritance:
             # Writes targeted at the projected chunk namespace under a read-only file
             # should be blocked just like the file itself.
             chunk_path = "/wiki/.vfs/raw/rfc.pdf/__meta__/chunks/section1"
-            r = await router.write(chunk_path, "chunk-content")
+            r = await router.write(path=chunk_path, content="chunk-content")
             assert not r.success
             assert "Cannot write to read-only path" in r.error_message
         finally:
@@ -850,7 +850,7 @@ class TestSyncRaisesWithRules:
             wiki = g._run(_setup())
             g.add_mount("wiki", wiki)
             with pytest.raises(WriteConflictError, match="Cannot write to read-only path"):
-                g.write("/wiki/raw/x.md", "nope")
+                g.write(path="/wiki/raw/x.md", content="nope")
         finally:
             g.close()
 
@@ -868,7 +868,7 @@ class TestSyncRaisesWithRules:
             wiki = g._run(_setup())
             g.add_mount("wiki", wiki)
             # No exception raised → write succeeded under the writable hole.
-            g.write("/wiki/synthesis/x.md", "ok")
+            g.write(path="/wiki/synthesis/x.md", content="ok")
             r = g.read("/wiki/synthesis/x.md")
             assert r.content == "ok"
         finally:

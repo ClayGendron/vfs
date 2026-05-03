@@ -171,7 +171,7 @@ async def _seed_graph(
 ) -> None:
     async with db._use_session() as session:
         for path in nodes:
-            await db._write_impl(path, path, session=session)
+            await db._write_impl(path=path, content=path, session=session)
         for source, target, edge_type in edges:
             await db._mkedge_impl(source, target, edge_type, session=session)
 
@@ -439,13 +439,13 @@ class TestVerifyNativeSearchSchema:
 class TestLexicalSearch:
     async def test_uses_single_native_fts_query_with_bounded_scores(self, postgres_native_db, sql_capture):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/dense.py", "authentication timeout", session=session)
+            await postgres_native_db._write_impl(path="/dense.py", content="authentication timeout", session=session)
             await postgres_native_db._write_impl(
-                "/bm25.py",
-                "authentication authentication authentication timeout handler",
+            path="/bm25.py",
+                content="authentication authentication authentication timeout handler",
                 session=session,
             )
-            await postgres_native_db._write_impl("/none.py", "unrelated", session=session)
+            await postgres_native_db._write_impl(path="/none.py", content="unrelated", session=session)
 
         sql_capture.reset()
         async with postgres_native_db._use_session() as session:
@@ -464,7 +464,7 @@ class TestLexicalSearch:
 
     async def test_multi_term_query_uses_bound_plainto_tsquery_or(self, postgres_native_db, sql_capture):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/focus.py", "authentication timeout", session=session)
+            await postgres_native_db._write_impl(path="/focus.py", content="authentication timeout", session=session)
 
         sql_capture.reset()
         async with postgres_native_db._use_session() as session:
@@ -478,7 +478,7 @@ class TestLexicalSearch:
 
     async def test_single_term_query_uses_single_plainto_tsquery(self, postgres_native_db, sql_capture):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/focus.py", "authentication timeout", session=session)
+            await postgres_native_db._write_impl(path="/focus.py", content="authentication timeout", session=session)
 
         sql_capture.reset()
         async with postgres_native_db._use_session() as session:
@@ -515,7 +515,7 @@ class TestLexicalSearch:
 class TestGrep:
     async def test_regex_pushdown_preserves_line_matches(self, postgres_native_db):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/a.py", "TODO\nok\nTODO", session=session)
+            await postgres_native_db._write_impl(path="/a.py", content="TODO\nok\nTODO", session=session)
 
         async with postgres_native_db._use_session() as session:
             result = await postgres_native_db._grep_impl("TODO", session=session)
@@ -526,7 +526,7 @@ class TestGrep:
 
     async def test_invert_match_stays_python_authoritative(self, postgres_native_db, sql_capture):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/a.py", "alpha\nbeta\ngamma", session=session)
+            await postgres_native_db._write_impl(path="/a.py", content="alpha\nbeta\ngamma", session=session)
 
         sql_capture.reset()
         async with postgres_native_db._use_session() as session:
@@ -537,7 +537,7 @@ class TestGrep:
 
     async def test_anchored_regex_skips_whole_content_regex_pushdown(self, postgres_native_db, sql_capture):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/a.py", "skip\nTODO now\nlater", session=session)
+            await postgres_native_db._write_impl(path="/a.py", content="skip\nTODO now\nlater", session=session)
 
         sql_capture.reset()
         async with postgres_native_db._use_session() as session:
@@ -551,7 +551,7 @@ class TestGrep:
 
     async def test_fixed_string_uses_content_like_narrowing(self, postgres_native_db, sql_capture):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/a.py", "100% ready", session=session)
+            await postgres_native_db._write_impl(path="/a.py", content="100% ready", session=session)
 
         sql_capture.reset()
         async with postgres_native_db._use_session() as session:
@@ -562,8 +562,8 @@ class TestGrep:
 
     async def test_hard_regex_matches_database_authoritative_python_result(self, postgres_native_db):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/src/foo.py", "alpha\nbeta\ngamma", session=session)
-            await postgres_native_db._write_impl("/src/bar.py", "delta\nepsilon", session=session)
+            await postgres_native_db._write_impl(path="/src/foo.py", content="alpha\nbeta\ngamma", session=session)
+            await postgres_native_db._write_impl(path="/src/bar.py", content="delta\nepsilon", session=session)
             native = await postgres_native_db._grep_impl(r"^(alpha|beta)$", paths=("/src",), session=session)
             baseline = await DatabaseFileSystem._grep_impl(
                 postgres_native_db,
@@ -580,9 +580,9 @@ class TestGrep:
 class TestGlob:
     async def test_pushdown_matches_path_regex(self, postgres_native_db):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
-            await postgres_native_db._write_impl("/src/bar.ts", "y", session=session)
-            await postgres_native_db._write_impl("/tests/baz.py", "z", session=session)
+            await postgres_native_db._write_impl(path="/src/foo.py", content="x", session=session)
+            await postgres_native_db._write_impl(path="/src/bar.ts", content="y", session=session)
+            await postgres_native_db._write_impl(path="/tests/baz.py", content="z", session=session)
 
         async with postgres_native_db._use_session() as session:
             result = await postgres_native_db._glob_impl("**/*.py", session=session)
@@ -590,8 +590,8 @@ class TestGlob:
 
     async def test_pushdown_is_case_sensitive(self, postgres_native_db):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/src/lower.py", "x", session=session)
-            await postgres_native_db._write_impl("/src/upper.PY", "y", session=session)
+            await postgres_native_db._write_impl(path="/src/lower.py", content="x", session=session)
+            await postgres_native_db._write_impl(path="/src/upper.PY", content="y", session=session)
 
         async with postgres_native_db._use_session() as session:
             result = await postgres_native_db._glob_impl("**/*.py", session=session)
@@ -600,9 +600,9 @@ class TestGlob:
 
     async def test_character_class_glob_matches_database_authoritative_python_result(self, postgres_native_db):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
-            await postgres_native_db._write_impl("/src/boo.py", "y", session=session)
-            await postgres_native_db._write_impl("/src/zoo.py", "z", session=session)
+            await postgres_native_db._write_impl(path="/src/foo.py", content="x", session=session)
+            await postgres_native_db._write_impl(path="/src/boo.py", content="y", session=session)
+            await postgres_native_db._write_impl(path="/src/zoo.py", content="z", session=session)
             native = await postgres_native_db._glob_impl("/src/[fb]oo.py", session=session)
             baseline = await DatabaseFileSystem._glob_impl(postgres_native_db, "/src/[fb]oo.py", session=session)
 
@@ -610,9 +610,9 @@ class TestGlob:
 
     async def test_max_count_applies_after_authoritative_filter(self, postgres_native_db):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
-            await postgres_native_db._write_impl("/src/bar.py", "y", session=session)
-            await postgres_native_db._write_impl("/src/baz.ts", "z", session=session)
+            await postgres_native_db._write_impl(path="/src/foo.py", content="x", session=session)
+            await postgres_native_db._write_impl(path="/src/bar.py", content="y", session=session)
+            await postgres_native_db._write_impl(path="/src/baz.ts", content="z", session=session)
 
         async with postgres_native_db._use_session() as session:
             result = await postgres_native_db._glob_impl("/src/[fb]*.py", max_count=1, session=session)
@@ -623,7 +623,7 @@ class TestGlob:
 class TestPatternSearchPlans:
     async def test_prefix_path_like_uses_path_pattern_index(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
+            await postgres_native_db._write_impl(path="/src/foo.py", content="x", session=session)
 
         index_names = await _explain_index_names(
             engine,
@@ -640,8 +640,8 @@ class TestPatternSearchPlans:
 
     async def test_path_ilike_gets_an_indexed_plan(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/src/foo.py", "x", session=session)
-            await postgres_native_db._write_impl("/tests/bar.py", "y", session=session)
+            await postgres_native_db._write_impl(path="/src/foo.py", content="x", session=session)
+            await postgres_native_db._write_impl(path="/tests/bar.py", content="y", session=session)
 
         index_names = await _explain_index_names(
             engine,
@@ -657,8 +657,8 @@ class TestPatternSearchPlans:
 
     async def test_content_ilike_gets_an_indexed_plan(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/a.py", "TODO item", session=session)
-            await postgres_native_db._write_impl("/b.py", "unrelated", session=session)
+            await postgres_native_db._write_impl(path="/a.py", content="TODO item", session=session)
+            await postgres_native_db._write_impl(path="/b.py", content="unrelated", session=session)
 
         index_names = await _explain_index_names(
             engine,
@@ -739,12 +739,12 @@ class TestVectorSearch:
         scoped_fs = PostgresFileSystem(engine=engine, model=model, user_scoped=True)
         async with scoped_fs._use_session() as session:
             await scoped_fs._write_impl(
-                entries=[model(path="/doc.txt", content="alice", embedding=[1.0, 0.0, 0.0, 0.0])],
+            entries=[model(path="/doc.txt", content="alice", embedding=[1.0, 0.0, 0.0, 0.0])],
                 user_id="alice",
                 session=session,
             )
             await scoped_fs._write_impl(
-                entries=[model(path="/doc.txt", content="bob", embedding=[0.0, 1.0, 0.0, 0.0])],
+            entries=[model(path="/doc.txt", content="bob", embedding=[0.0, 1.0, 0.0, 0.0])],
                 user_id="bob",
                 session=session,
             )
@@ -819,7 +819,7 @@ class TestWriteAndDelete:
     async def test_write_with_embedding_persists_native_vector_column(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl(
-                entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
+            entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
                 session=session,
             )
 
@@ -831,12 +831,12 @@ class TestWriteAndDelete:
     async def test_update_embedding_rewrites_native_vector_column(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl(
-                entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
+            entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
                 session=session,
             )
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl(
-                entries=[postgres_native_db._model(path="/a.py", content="v2", embedding=[0.4, 0.3, 0.2, 0.1])],
+            entries=[postgres_native_db._model(path="/a.py", content="v2", embedding=[0.4, 0.3, 0.2, 0.1])],
                 session=session,
             )
 
@@ -848,11 +848,11 @@ class TestWriteAndDelete:
     async def test_write_without_embedding_preserves_existing_embedding(self, postgres_native_db, engine):
         async with postgres_native_db._use_session() as session:
             await postgres_native_db._write_impl(
-                entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
+            entries=[postgres_native_db._model(path="/a.py", content="v1", embedding=[0.1, 0.2, 0.3, 0.4])],
                 session=session,
             )
         async with postgres_native_db._use_session() as session:
-            await postgres_native_db._write_impl("/a.py", "v2", session=session)
+            await postgres_native_db._write_impl(path="/a.py", content="v2", session=session)
 
         async with engine.connect() as conn:
             row = (await conn.execute(sql_text("SELECT embedding::text FROM vfs_entries WHERE path = '/a.py'"))).first()
@@ -871,7 +871,7 @@ class TestLegacyMigrationPath:
     async def test_explicit_migration_path_preserves_existing_embeddings(self, postgres_legacy_db, engine):
         async with postgres_legacy_db._use_session() as session:
             await postgres_legacy_db._write_impl(
-                entries=[
+            entries=[
                     postgres_legacy_db._model(
                         path="/legacy.py",
                         content="legacy",
@@ -1050,10 +1050,10 @@ class TestNativeGraphTraversal:
         assert engine is not None
         scoped_fs = PostgresFileSystem(engine=engine, user_scoped=True)
         async with scoped_fs._use_session() as session:
-            await scoped_fs._write_impl("/a.py", "alice", user_id="alice", session=session)
-            await scoped_fs._write_impl("/b.py", "alice", user_id="alice", session=session)
-            await scoped_fs._write_impl("/a.py", "bob", user_id="bob", session=session)
-            await scoped_fs._write_impl("/b.py", "bob", user_id="bob", session=session)
+            await scoped_fs._write_impl(path="/a.py", content="alice", user_id="alice", session=session)
+            await scoped_fs._write_impl(path="/b.py", content="alice", user_id="alice", session=session)
+            await scoped_fs._write_impl(path="/a.py", content="bob", user_id="bob", session=session)
+            await scoped_fs._write_impl(path="/b.py", content="bob", user_id="bob", session=session)
             await scoped_fs._mkedge_impl("/a.py", "/b.py", "imports", user_id="alice", session=session)
             await scoped_fs._mkedge_impl("/a.py", "/b.py", "imports", user_id="bob", session=session)
 

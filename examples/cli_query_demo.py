@@ -26,12 +26,12 @@ async def build_demo_fs() -> DatabaseFileSystem:
     fs = DatabaseFileSystem(engine=engine)
 
     async with fs._use_session() as session:
-        await fs._write_impl("/src/auth.py", "import utils\ndef login(): pass", session=session)
-        await fs._write_impl("/src/utils.py", "def helper(): pass", session=session)
-        await fs._write_impl("/src/db.py", "import utils\ndef connect(): pass", session=session)
-        await fs._write_impl("/src/api.py", "import auth\nimport utils", session=session)
-        await fs._write_impl("/src/config.py", "DEBUG = True", session=session)
-        await fs._write_impl("/docs/notes.md", "# Notes\n\nAuthentication design notes.", session=session)
+        await fs._write_impl(path="/src/auth.py", content="import utils\ndef login(): pass", session=session)
+        await fs._write_impl(path="/src/utils.py", content="def helper(): pass", session=session)
+        await fs._write_impl(path="/src/db.py", content="import utils\ndef connect(): pass", session=session)
+        await fs._write_impl(path="/src/api.py", content="import auth\nimport utils", session=session)
+        await fs._write_impl(path="/src/config.py", content="DEBUG = True", session=session)
+        await fs._write_impl(path="/docs/notes.md", content="# Notes\n\nAuthentication design notes.", session=session)
 
     for source, target, edge_type in [
         ("/src/auth.py", "/src/utils.py", "imports"),

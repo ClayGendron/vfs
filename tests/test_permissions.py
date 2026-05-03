@@ -41,7 +41,7 @@ async def _seed(fs: DatabaseFileSystem, path: str, content: str = "hi") -> None:
     Bypasses the router so seeding works on read-only mounts.
     """
     async with fs._use_session() as s:
-        await fs._write_impl(path, content=content, session=s)
+        await fs._write_impl(path=path, content=content, session=s)
 
 
 async def _make_router(
@@ -185,7 +185,7 @@ class TestReadOnlyBlocksMutations:
     async def test_write_rejected(self):
         router, _ro, _rw = await _make_router()
         try:
-            result = await router.write("/ro/new.md", "nope")
+            result = await router.write(path="/ro/new.md", content="nope")
             assert not result.success
             assert "Cannot write to read-only path" in result.error_message
         finally:
@@ -420,7 +420,7 @@ class TestSyncRaises:
             g.add_mount("ro", ro)
 
             with pytest.raises(WriteConflictError, match="Cannot write to read-only path"):
-                g.write("/ro/new.md", "nope")
+                g.write(path="/ro/new.md", content="nope")
         finally:
             g.close()
 
@@ -448,7 +448,7 @@ class TestSyncRaises:
                 engine = await _sqlite_engine()
                 fs = DatabaseFileSystem(engine=engine, permissions="read")
                 async with fs._use_session() as s:
-                    await fs._write_impl("/doc.md", content="hi", session=s)
+                    await fs._write_impl(path="/doc.md", content="hi", session=s)
                 return fs
 
             ro = g._run(_setup())
@@ -493,7 +493,7 @@ class TestSharedEngineIsNotIsolated:
             await router.add_mount("back", rw)
             try:
                 # The read-only mount correctly rejects a direct write.
-                blocked = await router.write("/ro/doc.md", "blocked")
+                blocked = await router.write(path="/ro/doc.md", content="blocked")
                 assert not blocked.success
                 assert "Cannot write to read-only path" in blocked.error_message
 
@@ -501,7 +501,7 @@ class TestSharedEngineIsNotIsolated:
                 # the underlying row.  Both mounts are reading the same
                 # bytes.  The permission check never sees this path because
                 # the writable mount is, correctly, writable.
-                sibling = await router.write("/back/doc.md", "PWNED_VIA_SIBLING")
+                sibling = await router.write(path="/back/doc.md", content="PWNED_VIA_SIBLING")
                 assert sibling.success
 
                 # Reading through the read-only mount now returns the

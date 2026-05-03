@@ -477,7 +477,7 @@ class VirtualFileSystem:
             return err
 
         async with fs._use_session() as s:
-            result = await getattr(fs, f"_{op}_impl")(rel, user_id=user_id, session=s, **kwargs)
+            result = await getattr(fs, f"_{op}_impl")(path=rel, user_id=user_id, session=s, **kwargs)
 
         return result.add_prefix(prefix)
 
@@ -586,7 +586,7 @@ class VirtualFileSystem:
             write_results = self._merge_results(
                 [
                     await dst_fs._write_impl(
-                        dst_rel,
+                        path=dst_rel,
                         content=candidate.content or "",
                         overwrite=overwrite,
                         user_id=user_id,
@@ -1216,11 +1216,11 @@ class VirtualFileSystem:
 
     async def write(
         self,
+        entries: Sequence[VFSEntry] | None = None,
+        *,
         path: str | None = None,
         content: str | None = None,
-        entries: Sequence[VFSEntry] | None = None,
         overwrite: bool = True,
-        *,
         user_id: str | None = None,
     ) -> VFSResult:
         if entries is not None:
@@ -1603,11 +1603,11 @@ class VirtualFileSystem:
 
     async def _write_impl(
         self,
+        entries: Sequence[VFSEntry] | None = None,
+        *,
         path: str | None = None,
         content: str | None = None,
-        entries: Sequence[VFSEntry] | None = None,
         overwrite: bool = True,
-        *,
         user_id: str | None = None,
         session: AsyncSession,
     ) -> VFSResult:

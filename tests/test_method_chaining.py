@@ -58,11 +58,11 @@ async def fs(db: DatabaseFileSystem):
         api  ──imports──▶  utils                auth  ──calls───▶  db
     """
     async with db._use_session() as s:
-        await db._write_impl("/src/auth.py", "import utils\ndef login(): pass", session=s)
-        await db._write_impl("/src/utils.py", "def helper(): pass", session=s)
-        await db._write_impl("/src/db.py", "import utils\ndef connect(): pass", session=s)
-        await db._write_impl("/src/api.py", "import auth\nimport utils", session=s)
-        await db._write_impl("/src/config.py", "DEBUG = True", session=s)
+        await db._write_impl(path="/src/auth.py", content="import utils\ndef login(): pass", session=s)
+        await db._write_impl(path="/src/utils.py", content="def helper(): pass", session=s)
+        await db._write_impl(path="/src/db.py", content="import utils\ndef connect(): pass", session=s)
+        await db._write_impl(path="/src/api.py", content="import auth\nimport utils", session=s)
+        await db._write_impl(path="/src/config.py", content="DEBUG = True", session=s)
 
     for src, tgt, typ in [
         ("/src/auth.py", "/src/utils.py", "imports"),

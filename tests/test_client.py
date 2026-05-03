@@ -91,7 +91,7 @@ class TestStorageFlag:
             await router.add_mount("/data", child)
 
             async with child._use_session() as s:
-                await child._write_impl("/hello.py", content="print('hi')", session=s)
+                await child._write_impl(path="/hello.py", content="print('hi')", session=s)
 
             result = await router.glob("**/*.py")
             assert result.success
@@ -126,7 +126,7 @@ class TestVFSClientAsyncAddMount:
         fs = await _make_db()
         await g.add_mount("data", fs)
         try:
-            w = await g.write("/data/hello.txt", "hello")
+            w = await g.write(path="/data/hello.txt", content="hello")
             assert w.success
 
             r = await g.read("/data/hello.txt")
@@ -140,7 +140,7 @@ class TestVFSClientAsyncAddMount:
         fs = await _make_db()
         await g.add_mount("/data", fs)
         try:
-            w = await g.write("/data/test.txt", "content")
+            w = await g.write(path="/data/test.txt", content="content")
             assert w.success
             assert "/data" in g._mounts
         finally:
@@ -151,7 +151,7 @@ class TestVFSClientAsyncAddMount:
         g = VFSClientAsync()
         await g.add_mount("data", DatabaseFileSystem(engine=engine))
         try:
-            w = await g.write("/data/test.txt", "content")
+            w = await g.write(path="/data/test.txt", content="content")
             assert w.success
 
             r = await g.read("/data/test.txt")
@@ -167,7 +167,7 @@ class TestVFSClientAsyncAddMount:
         g = VFSClientAsync()
         await g.add_mount("data", DatabaseFileSystem(session_factory=sf))
         try:
-            w = await g.write("/data/test.txt", "via sf")
+            w = await g.write(path="/data/test.txt", content="via sf")
             assert w.success
 
             r = await g.read("/data/test.txt")
@@ -180,7 +180,7 @@ class TestVFSClientAsyncAddMount:
         g = VFSClientAsync()
         await g.add_mount("data", DatabaseFileSystem(engine=engine, user_scoped=True))
         try:
-            w = await g.write("/data/hello.txt", "user content", user_id="alice")
+            w = await g.write(path="/data/hello.txt", content="user content", user_id="alice")
             assert w.success
 
             r = await g.read("/data/hello.txt", user_id="alice")
@@ -233,8 +233,8 @@ class TestVFSClientAsyncRouting:
         await g.add_mount("alpha", await _make_db())
         await g.add_mount("beta", await _make_db())
         try:
-            await g.write("/alpha/a.txt", "alpha content")
-            await g.write("/beta/b.txt", "beta content")
+            await g.write(path="/alpha/a.txt", content="alpha content")
+            await g.write(path="/beta/b.txt", content="beta content")
 
             ra = await g.read("/alpha/a.txt")
             assert ra.content == "alpha content"
@@ -253,8 +253,8 @@ class TestVFSClientAsyncRouting:
         await g.add_mount("one", await _make_db())
         await g.add_mount("two", await _make_db())
         try:
-            await g.write("/one/file.py", "one")
-            await g.write("/two/file.py", "two")
+            await g.write(path="/one/file.py", content="one")
+            await g.write(path="/two/file.py", content="two")
 
             result = await g.glob("**/*.py")
             assert result.success
@@ -269,8 +269,8 @@ class TestVFSClientAsyncRouting:
         await g.add_mount("a", await _make_db())
         await g.add_mount("b", await _make_db())
         try:
-            await g.write("/a/file.txt", "needle in a haystack")
-            await g.write("/b/file.txt", "another needle here")
+            await g.write(path="/a/file.txt", content="needle in a haystack")
+            await g.write(path="/b/file.txt", content="another needle here")
 
             result = await g.grep("needle")
             assert result.success
@@ -294,7 +294,7 @@ class TestVFSClientAsyncQueryEngine:
         g = VFSClientAsync()
         await g.add_mount("data", await _make_db())
         try:
-            await g.write("/data/hello.py", "print('hi')")
+            await g.write(path="/data/hello.py", content="print('hi')")
             result = await g.run_query('glob "**/*.py"')
             assert result.success
             assert any("hello.py" in e.path for e in result.candidates)
@@ -305,7 +305,7 @@ class TestVFSClientAsyncQueryEngine:
         g = VFSClientAsync()
         await g.add_mount("data", await _make_db())
         try:
-            await g.write("/data/hello.py", "print('hi')")
+            await g.write(path="/data/hello.py", content="print('hi')")
             output = await g.cli('glob "**/*.py"')
             assert isinstance(output, str)
             assert "hello.py" in output

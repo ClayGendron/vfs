@@ -31,6 +31,7 @@ def _entry(
     updated_at=None,
     in_degree: int | None = None,
     out_degree: int | None = None,
+    status=None,
 ) -> Candidate:
     return Candidate(
         path=path,
@@ -41,6 +42,7 @@ def _entry(
         updated_at=updated_at,
         in_degree=in_degree,
         out_degree=out_degree,
+        status=status,
     )
 
 
@@ -116,17 +118,17 @@ class TestContentMode:
 
 class TestActionMode:
     def test_no_changes(self):
-        result = VFSResult(function="write", candidates=[])
+        result = VFSResult(function="delete", candidates=[])
         output = render_query_result(result, _plan())
         assert output == "No changes"
 
     def test_single_path(self):
         result = VFSResult(
-            function="write",
+            function="delete",
             candidates=[_entry("/a.py")],
         )
         output = render_query_result(result, _plan())
-        assert output == "Wrote /a.py"
+        assert output == "Deleted /a.py"
 
     def test_multi_path(self):
         result = VFSResult(
@@ -143,7 +145,7 @@ class TestActionMode:
         # success=True with errors but no entries → action renders "No changes" + error block
         result = VFSResult(
             success=True,
-            function="write",
+            function="delete",
             errors=["permission denied"],
             candidates=[],
         )
@@ -151,9 +153,18 @@ class TestActionMode:
         assert "permission denied" in output
         assert "ERROR" in output
 
+    def test_write_uses_dedicated_formatter(self):
+        # write() returns its own block-style summary — see TestWriteRender.
+        result = VFSResult(
+            function="write",
+            candidates=[_entry("/a.py", kind="file", status="created")],
+        )
+        output = render_query_result(result, _plan())
+        assert output.startswith("write success:")
+        assert "/a.py" in output
+
     def test_all_verbs(self):
         for op, verb in [
-            ("write", "Wrote"),
             ("edit", "Edited"),
             ("delete", "Deleted"),
             ("move", "Moved"),

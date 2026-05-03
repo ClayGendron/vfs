@@ -38,7 +38,7 @@ def _stored_payload(obj: VFSEntry) -> str:
 class TestWriteAndRead:
     async def test_write_and_read_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            w = await db._write_impl("/hello.txt", "hello world", session=s)
+            w = await db._write_impl(path="/hello.txt", content="hello world", session=s)
         assert w.success
         file = require_file(w)
         assert file.kind == "file"
@@ -51,7 +51,7 @@ class TestWriteAndRead:
 
     async def test_write_creates_parent_dirs(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a/b/c/file.py", "code", session=s)
+            await db._write_impl(path="/a/b/c/file.py", content="code", session=s)
             # Parents should exist
             for p in ["/a", "/a/b", "/a/b/c"]:
                 obj = await db._get_object(p, s)
@@ -60,17 +60,17 @@ class TestWriteAndRead:
 
     async def test_write_overwrite_false_rejects_existing(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v1", session=s)
+            await db._write_impl(path="/file.txt", content="v1", session=s)
         async with db._use_session() as s:
-            r = await db._write_impl("/file.txt", "v2", overwrite=False, session=s)
+            r = await db._write_impl(path="/file.txt", content="v2", overwrite=False, session=s)
         assert not r.success
         assert "overwrite=False" in r.error_message
 
     async def test_write_overwrite_updates_content(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v1", session=s)
+            await db._write_impl(path="/file.txt", content="v1", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v2", overwrite=True, session=s)
+            await db._write_impl(path="/file.txt", content="v2", overwrite=True, session=s)
         async with db._use_session() as s:
             r = await db._read_impl("/file.txt", session=s)
         assert r.content == "v2"
@@ -78,7 +78,7 @@ class TestWriteAndRead:
     async def test_write_with_embedding_persists_on_insert(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             result = await db._write_impl(
-                entries=[VFSEntry(path="/embed.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+            entries=[VFSEntry(path="/embed.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
                 session=s,
             )
         assert result.success
@@ -91,11 +91,11 @@ class TestWriteAndRead:
     async def test_write_without_embedding_preserves_existing_value(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl(
-                entries=[VFSEntry(path="/preserve.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+            entries=[VFSEntry(path="/preserve.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
                 session=s,
             )
         async with db._use_session() as s:
-            await db._write_impl("/preserve.txt", "v2", session=s)
+            await db._write_impl(path="/preserve.txt", content="v2", session=s)
 
         async with db._use_session() as s:
             obj = require_object(await db._get_object("/preserve.txt", s))
@@ -105,12 +105,12 @@ class TestWriteAndRead:
     async def test_write_with_embedding_none_clears_existing_value(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl(
-                entries=[VFSEntry(path="/clear.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
+            entries=[VFSEntry(path="/clear.txt", content="v1", embedding=Vector([0.1, 0.2, 0.3]))],
                 session=s,
             )
         async with db._use_session() as s:
             await db._write_impl(
-                entries=[VFSEntry(path="/clear.txt", content="v2", embedding=None)],
+            entries=[VFSEntry(path="/clear.txt", content="v2", embedding=None)],
                 session=s,
             )
 
@@ -120,8 +120,8 @@ class TestWriteAndRead:
 
     async def test_write_chunk(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/auth.py", "full content", session=s)
-            w = await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "def login():", session=s)
+            await db._write_impl(path="/src/auth.py", content="full content", session=s)
+            w = await db._write_impl(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():", session=s)
         assert w.success
         assert require_file(w).kind == "chunk"
 
@@ -131,14 +131,14 @@ class TestWriteAndRead:
 
     async def test_write_chunk_requires_existing_parent_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/.vfs/ghost.py/__meta__/chunks/login", "def login():", session=s)
+            r = await db._write_impl(path="/.vfs/ghost.py/__meta__/chunks/login", content="def login():", session=s)
         assert not r.success
         assert "Chunk parent file not found" in r.error_message
 
     async def test_write_chunk_allows_companion_file_in_same_batch(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             r = await db._write_impl(
-                entries=[
+            entries=[
                     VFSEntry(path="/src/auth.py", content="full content"),
                     VFSEntry(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():"),
                 ],
@@ -173,13 +173,13 @@ class TestWriteAndRead:
 
     async def test_write_rejects_version_path(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/.vfs/file.txt/__meta__/versions/1", "nope", session=s)
+            r = await db._write_impl(path="/.vfs/file.txt/__meta__/versions/1", content="nope", session=s)
         assert not r.success
         assert "version" in r.error_message.lower()
 
     async def test_write_accepts_connection_path(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            r = await db._write_impl("/.vfs/a.py/__meta__/edges/out/imports/b.py", "nope", session=s)
+            r = await db._write_impl(path="/.vfs/a.py/__meta__/edges/out/imports/b.py", content="nope", session=s)
         assert r.success
         assert require_file(r).kind == "edge"
 
@@ -191,8 +191,8 @@ class TestWriteAndRead:
 
     async def test_read_with_candidates(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "aaa", session=s)
-            await db._write_impl("/b.py", "bbb", session=s)
+            await db._write_impl(path="/a.py", content="aaa", session=s)
+            await db._write_impl(path="/b.py", content="bbb", session=s)
         candidates = VFSResult(
             candidates=[
                 Candidate(path="/a.py"),
@@ -208,17 +208,17 @@ class TestWriteAndRead:
 
     async def test_content_metrics(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            w = await db._write_impl("/file.txt", "line1\nline2\nline3", session=s)
+            w = await db._write_impl(path="/file.txt", content="line1\nline2\nline3", session=s)
         file = require_file(w)
         assert file.size_bytes == len(b"line1\nline2\nline3")
 
     async def test_write_under_existing_file_ancestor_rejected(self, db: DatabaseFileSystem):
         """Writing /a.txt/b.txt when /a.txt is a file must fail."""
         async with db._use_session() as s:
-            await db._write_impl("/a.txt", "i am a file", session=s)
+            await db._write_impl(path="/a.txt", content="i am a file", session=s)
 
         async with db._use_session() as s:
-            r = await db._write_impl("/a.txt/b.txt", "child", session=s)
+            r = await db._write_impl(path="/a.txt/b.txt", content="child", session=s)
         assert not r.success
         assert "not directory" in r.error_message.lower()
 
@@ -230,7 +230,7 @@ class TestWriteAndRead:
     async def test_write_under_existing_file_ancestor_batch_rejected(self, db: DatabaseFileSystem):
         """Batch write where one file's ancestor is an existing file."""
         async with db._use_session() as s:
-            await db._write_impl("/blocker.py", "file", session=s)
+            await db._write_impl(path="/blocker.py", content="file", session=s)
 
         objects = [
             VFSEntry(path="/blocker.py/sub/child.txt", content="bad"),
@@ -248,7 +248,7 @@ class TestWriteAndRead:
             s.add(db._row(path="/archive/nested", kind="directory", deleted_at=deleted_at))
 
         async with db._use_session() as s:
-            r = await db._write_impl("/archive/nested/report.txt", "report", session=s)
+            r = await db._write_impl(path="/archive/nested/report.txt", content="report", session=s)
         assert r.success
 
         async with db._use_session() as s:
@@ -271,8 +271,8 @@ class TestWriteAndRead:
             s.add(db._row(path="/ghost/deep/file.txt", content="existing"))
         async with db._use_session() as s:
             r = await db._write_impl(
-                "/ghost/deep/file.txt",
-                "conflict",
+            path="/ghost/deep/file.txt",
+                content="conflict",
                 overwrite=False,
                 session=s,
             )
@@ -296,7 +296,7 @@ class TestWriteAndRead:
                     raise RuntimeError("simulated insert failure")
 
                 cast("Any", s).flush = failing_flush
-                await db._write_impl("/brand_new/dir/file.txt", "content", session=s)
+                await db._write_impl(path="/brand_new/dir/file.txt", content="content", session=s)
 
         async with db._use_session() as s:
             parent = await db._get_object("/brand_new/dir", s)
@@ -315,7 +315,7 @@ class TestWriteAndRead:
             )
 
         async with db._use_session() as s:
-            r = await db._write_impl("/revive.txt", "new", overwrite=False, session=s)
+            r = await db._write_impl(path="/revive.txt", content="new", overwrite=False, session=s)
         assert r.success
 
         async with db._use_session() as s:
@@ -328,7 +328,7 @@ class TestWriteAndRead:
 class TestStat:
     async def test_stat_returns_metadata_no_content(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "some content", session=s)
+            await db._write_impl(path="/file.txt", content="some content", session=s)
         async with db._use_session() as s:
             r = await db._stat_impl("/file.txt", session=s)
         assert r.success
@@ -348,7 +348,7 @@ class TestStat:
 
 class TestEdit:
     async def test_edit_single_file(self, db: DatabaseFileSystem):
-        await db.write("/file.py", "def hello():\n    return 'world'\n")
+        await db.write(path="/file.py", content="def hello():\n    return 'world'\n")
         async with db._use_session() as s:
             r = await db._edit_impl(
                 "/file.py",
@@ -362,7 +362,7 @@ class TestEdit:
         assert "'earth'" in require_text(r2.content)
 
     async def test_edit_multiple_edits(self, db: DatabaseFileSystem):
-        await db.write("/file.py", "x = 1\ny = 2\nz = 3\n")
+        await db.write(path="/file.py", content="x = 1\ny = 2\nz = 3\n")
         async with db._use_session() as s:
             r = await db._edit_impl(
                 "/file.py",
@@ -377,7 +377,7 @@ class TestEdit:
         assert r2.content == "x = 10\ny = 2\nz = 30\n"
 
     async def test_edit_replace_all(self, db: DatabaseFileSystem):
-        await db.write("/file.txt", "foo bar foo baz foo")
+        await db.write(path="/file.txt", content="foo bar foo baz foo")
         async with db._use_session() as s:
             r = await db._edit_impl(
                 "/file.txt",
@@ -391,7 +391,7 @@ class TestEdit:
         assert r2.content == "qux bar qux baz qux"
 
     async def test_edit_string_not_found(self, db: DatabaseFileSystem):
-        await db.write("/file.txt", "hello world")
+        await db.write(path="/file.txt", content="hello world")
         async with db._use_session() as s:
             r = await db._edit_impl(
                 "/file.txt",
@@ -415,7 +415,7 @@ class TestEdit:
         assert not r.success
 
     async def test_edit_creates_version(self, db: DatabaseFileSystem):
-        await db.write("/ver.py", "v1 content")
+        await db.write(path="/ver.py", content="v1 content")
         await db.edit("/ver.py", old="v1", new="v2")
         async with db._use_session() as s:
             obj = await db._get_object("/ver.py", s)
@@ -424,8 +424,8 @@ class TestEdit:
         assert obj.content == "v2 content"
 
     async def test_edit_batch_via_candidates(self, db: DatabaseFileSystem):
-        await db.write("/a.py", "old_name = 1")
-        await db.write("/b.py", "old_name = 2")
+        await db.write(path="/a.py", content="old_name = 1")
+        await db.write(path="/b.py", content="old_name = 2")
         candidates = VFSResult(
             candidates=[
                 Candidate(path="/a.py"),
@@ -447,7 +447,7 @@ class TestEdit:
 
     async def test_edit_fuzzy_whitespace_match(self, db: DatabaseFileSystem):
         """Line-trimmed replacer handles indentation differences."""
-        await db.write("/indent.py", "    def foo():\n        pass\n")
+        await db.write(path="/indent.py", content="    def foo():\n        pass\n")
         async with db._use_session() as s:
             r = await db._edit_impl(
                 "/indent.py",
@@ -463,7 +463,7 @@ class TestEdit:
     async def test_edit_through_public_api(self, db: DatabaseFileSystem, engine):
         root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
-        await root.write("/code/app.py", "timeout = 30")
+        await root.write(path="/code/app.py", content="timeout = 30")
         r = await root.edit("/code/app.py", old="30", new="120")
         assert r.success
         r2 = await root.read("/code/app.py")
@@ -473,9 +473,9 @@ class TestEdit:
 class TestAutoVersioning:
     async def test_overwrite_creates_version(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v1", session=s)
+            await db._write_impl(path="/file.txt", content="v1", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v2", session=s)
+            await db._write_impl(path="/file.txt", content="v2", session=s)
 
         async with db._use_session() as s:
             v1 = await db._get_object("/.vfs/file.txt/__meta__/versions/1", s)
@@ -492,11 +492,11 @@ class TestAutoVersioning:
 
     async def test_multiple_overwrites_increment_versions(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v1", session=s)
+            await db._write_impl(path="/file.txt", content="v1", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v2", session=s)
+            await db._write_impl(path="/file.txt", content="v2", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v3", session=s)
+            await db._write_impl(path="/file.txt", content="v3", session=s)
 
         # Both version records should exist
         async with db._use_session() as s:
@@ -515,11 +515,11 @@ class TestAutoVersioning:
         from vfs.versioning import reconstruct_version
 
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "line1\n", session=s)
+            await db._write_impl(path="/file.txt", content="line1\n", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "line1\nline2\n", session=s)
+            await db._write_impl(path="/file.txt", content="line1\nline2\n", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "line1\nline2\nline3\n", session=s)
+            await db._write_impl(path="/file.txt", content="line1\nline2\nline3\n", session=s)
 
         # Live content is "line1\nline2\nline3\n"
         # Version 1 is the first full file state.
@@ -548,10 +548,10 @@ class TestAutoVersioning:
     async def test_periodic_snapshot(self, db: DatabaseFileSystem):
         """Every SNAPSHOT_INTERVAL versions is a full snapshot."""
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "v0", session=s)
+            await db._write_impl(path="/file.txt", content="v0", session=s)
         for i in range(1, 11):
             async with db._use_session() as s:
-                await db._write_impl("/file.txt", f"v{i}", session=s)
+                await db._write_impl(path="/file.txt", content=f"v{i}", session=s)
 
         async with db._use_session() as s:
             v10 = await db._get_object("/.vfs/file.txt/__meta__/versions/10", s)
@@ -560,13 +560,13 @@ class TestAutoVersioning:
         assert v10.version_diff is None
 
     async def test_external_edit_creates_synthetic_snapshot(self, db: DatabaseFileSystem):
-        await db.write("/app.py", "v1")
+        await db.write(path="/app.py", content="v1")
 
         assert db._engine is not None
         async with db._engine.begin() as conn:
             await conn.execute(text("UPDATE vfs_entries SET content='external' WHERE path='/app.py'"))
 
-        r = await db.write("/app.py", "v2")
+        r = await db.write(path="/app.py", content="v2")
         assert r.success
 
         async with db._use_session() as s:
@@ -587,15 +587,15 @@ class TestAutoVersioning:
         assert v3.version_diff is not None
 
     async def test_missing_current_version_creates_repair_snapshot(self, db: DatabaseFileSystem):
-        await db.write("/repair.txt", "v1")
-        await db.write("/repair.txt", "v2")
+        await db.write(path="/repair.txt", content="v1")
+        await db.write(path="/repair.txt", content="v2")
 
         async with db._use_session() as s:
             bad = await db._get_object("/.vfs/repair.txt/__meta__/versions/2", s)
             assert bad is not None
             await s.delete(bad)
 
-        r = await db.write("/repair.txt", "v3")
+        r = await db.write(path="/repair.txt", content="v3")
         assert r.success
 
         async with db._use_session() as s:
@@ -615,10 +615,10 @@ class TestAutoVersioning:
 
     async def test_chunk_write_does_not_version(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.py", "full", session=s)
-            await db._write_impl("/.vfs/file.py/__meta__/chunks/fn", "def fn(): pass", session=s)
+            await db._write_impl(path="/file.py", content="full", session=s)
+            await db._write_impl(path="/.vfs/file.py/__meta__/chunks/fn", content="def fn(): pass", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/.vfs/file.py/__meta__/chunks/fn", "def fn(): return 1", session=s)
+            await db._write_impl(path="/.vfs/file.py/__meta__/chunks/fn", content="def fn(): return 1", session=s)
 
         # No version should be created for chunk overwrites
         async with db._use_session() as s:
@@ -668,7 +668,7 @@ class TestNestedMountPaths:
         await root.add_mount("/org", mid)
         await mid.add_mount("/team", leaf)
 
-        w = await root.write("/org/team/plan.md", "# Plan")
+        w = await root.write(path="/org/team/plan.md", content="# Plan")
         assert w.success
         assert require_file(w).path == "/org/team/plan.md"
 
@@ -765,8 +765,8 @@ class TestFastPathVersioning:
 
     async def test_overwrite_uses_fast_path(self, db: DatabaseFileSystem):
         """Normal overwrite: version increments by 1 (no repair inserted)."""
-        await db.write("/fp.txt", "v1")
-        await db.write("/fp.txt", "v2")
+        await db.write(path="/fp.txt", content="v1")
+        await db.write(path="/fp.txt", content="v2")
 
         async with db._use_session() as s:
             f = await db._get_object("/fp.txt", s)
@@ -785,9 +785,9 @@ class TestFastPathVersioning:
         hash. If an intermediate version row is deleted, the chain is broken
         but the fast path does not detect it — by design.
         """
-        await db.write("/chain.txt", "v1")
-        await db.write("/chain.txt", "v2")
-        await db.write("/chain.txt", "v3")
+        await db.write(path="/chain.txt", content="v1")
+        await db.write(path="/chain.txt", content="v2")
+        await db.write(path="/chain.txt", content="v3")
 
         # Delete intermediate version row
         async with db._use_session() as s:
@@ -796,7 +796,7 @@ class TestFastPathVersioning:
             await s.delete(v2)
 
         # Write v4 — fast path, no repair
-        r = await db.write("/chain.txt", "v4")
+        r = await db.write(path="/chain.txt", content="v4")
         assert r.success
 
         async with db._use_session() as s:
@@ -812,8 +812,8 @@ class TestFastPathVersioning:
         This triggers the slow path: _fetch_version_chain loads the chain,
         plan_file_write detects the gap, and a repair snapshot is created.
         """
-        await db.write("/slow.txt", "v1")
-        await db.write("/slow.txt", "v2")
+        await db.write(path="/slow.txt", content="v1")
+        await db.write(path="/slow.txt", content="v2")
 
         # Delete the latest version row (v2)
         async with db._use_session() as s:
@@ -822,7 +822,7 @@ class TestFastPathVersioning:
             await s.delete(v2)
 
         # Write v3 — slow path should create repair snapshot
-        r = await db.write("/slow.txt", "v3")
+        r = await db.write(path="/slow.txt", content="v3")
         assert r.success
 
         async with db._use_session() as s:
@@ -836,13 +836,13 @@ class TestFastPathVersioning:
 
     async def test_external_edit_still_detected_with_fast_path(self, db: DatabaseFileSystem):
         """External SQL edits are detected regardless of fast path."""
-        await db.write("/ext.txt", "v1")
+        await db.write(path="/ext.txt", content="v1")
 
         assert db._engine is not None
         async with db._engine.begin() as conn:
             await conn.execute(text("UPDATE vfs_entries SET content='hacked' WHERE path='/ext.txt'"))
 
-        r = await db.write("/ext.txt", "v2")
+        r = await db.write(path="/ext.txt", content="v2")
         assert r.success
 
         async with db._use_session() as s:
@@ -861,7 +861,7 @@ class TestFetchVersionChain:
 
         # Create 15 versions
         for i in range(1, 16):
-            await db.write("/bounded.txt", f"v{i}")
+            await db.write(path="/bounded.txt", content=f"v{i}")
 
         async with db._use_session() as s:
             f = await db._get_object("/bounded.txt", s)
@@ -885,8 +885,8 @@ class TestFetchVersionChain:
 class TestLs:
     async def test_ls_directory_returns_files(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/auth.py", "auth", session=s)
-            await db._write_impl("/src/utils.py", "utils", session=s)
+            await db._write_impl(path="/src/auth.py", content="auth", session=s)
+            await db._write_impl(path="/src/utils.py", content="utils", session=s)
 
         async with db._use_session() as s:
             r = await db._ls_impl("/src", session=s)
@@ -895,8 +895,8 @@ class TestLs:
 
     async def test_ls_directory_returns_subdirs(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/data/docs/readme.txt", "hello", session=s)
-            await db._write_impl("/data/src/app.py", "code", session=s)
+            await db._write_impl(path="/data/docs/readme.txt", content="hello", session=s)
+            await db._write_impl(path="/data/src/app.py", content="code", session=s)
 
         async with db._use_session() as s:
             r = await db._ls_impl("/data", session=s)
@@ -905,8 +905,8 @@ class TestLs:
 
     async def test_ls_file_requires_explicit_vfs_metadata_browse(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/auth.py", "code", session=s)
-            await db._write_impl("/.vfs/auth.py/__meta__/chunks/login", "def login():", session=s)
+            await db._write_impl(path="/auth.py", content="code", session=s)
+            await db._write_impl(path="/.vfs/auth.py/__meta__/chunks/login", content="def login():", session=s)
 
         async with db._use_session() as s:
             r = await db._ls_impl("/auth.py", session=s)
@@ -921,7 +921,7 @@ class TestLs:
     async def test_ls_directory_hides_metadata_kinds(self, db: DatabaseFileSystem):
         """ls on a directory should not return chunks/versions of child files."""
         async with db._use_session() as s:
-            await db._write_impl("/src/app.py", "code", session=s)
+            await db._write_impl(path="/src/app.py", content="code", session=s)
 
         async with db._use_session() as s:
             r = await db._ls_impl("/src", session=s)
@@ -932,8 +932,8 @@ class TestLs:
 
     async def test_ls_root(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.txt", "a", session=s)
-            await db._write_impl("/b.txt", "b", session=s)
+            await db._write_impl(path="/a.txt", content="a", session=s)
+            await db._write_impl(path="/b.txt", content="b", session=s)
 
         async with db._use_session() as s:
             r = await db._ls_impl("/", session=s)
@@ -958,8 +958,8 @@ class TestLs:
 
     async def test_ls_excludes_deleted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.txt", "a", session=s)
-            await db._write_impl("/b.txt", "b", session=s)
+            await db._write_impl(path="/a.txt", content="a", session=s)
+            await db._write_impl(path="/b.txt", content="b", session=s)
 
         async with db._use_session() as s:
             obj = await db._get_object("/b.txt", s)
@@ -973,8 +973,8 @@ class TestLs:
     async def test_ls_with_candidates_known_kind(self, db: DatabaseFileSystem):
         """Candidates with kind set skip the DB kind lookup."""
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "a", session=s)
-            await db._write_impl("/lib/b.py", "b", session=s)
+            await db._write_impl(path="/src/a.py", content="a", session=s)
+            await db._write_impl(path="/lib/b.py", content="b", session=s)
 
         candidates = VFSResult(
             candidates=[
@@ -990,7 +990,7 @@ class TestLs:
     async def test_ls_with_candidates_unknown_kind(self, db: DatabaseFileSystem):
         """Candidates with kind=None trigger a DB lookup."""
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "a", session=s)
+            await db._write_impl(path="/src/a.py", content="a", session=s)
 
         candidates = VFSResult(candidates=[Candidate(path="/src")])
         async with db._use_session() as s:
@@ -1001,9 +1001,9 @@ class TestLs:
     async def test_ls_with_candidates_mixed_files_and_dirs(self, db: DatabaseFileSystem):
         """Batch ls on a mix of files and directories."""
         async with db._use_session() as s:
-            await db._write_impl("/src/auth.py", "code", session=s)
-            await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "chunk", session=s)
-            await db._write_impl("/lib/utils.py", "utils", session=s)
+            await db._write_impl(path="/src/auth.py", content="code", session=s)
+            await db._write_impl(path="/.vfs/src/auth.py/__meta__/chunks/login", content="chunk", session=s)
+            await db._write_impl(path="/lib/utils.py", content="utils", session=s)
 
         candidates = VFSResult(
             candidates=[
@@ -1020,7 +1020,7 @@ class TestLs:
         root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
 
-        await root.write("/code/src/app.py", "code")
+        await root.write(path="/code/src/app.py", content="code")
         r = await root.ls("/code/src")
         assert r.success
         assert r.paths == ("/code/src/app.py",)
@@ -1043,7 +1043,7 @@ class TestLs:
 class TestDelete:
     async def test_soft_delete_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "content", session=s)
+            await db._write_impl(path="/file.txt", content="content", session=s)
 
         async with db._use_session() as s:
             r = await db._delete_impl("/file.txt", session=s)
@@ -1063,7 +1063,7 @@ class TestDelete:
 
     async def test_permanent_delete(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.txt", "content", session=s)
+            await db._write_impl(path="/file.txt", content="content", session=s)
 
         async with db._use_session() as s:
             r = await db._delete_impl("/file.txt", permanent=True, session=s)
@@ -1075,11 +1075,11 @@ class TestDelete:
 
     async def test_soft_delete_cascades_to_metadata(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/auth.py", "v1", session=s)
+            await db._write_impl(path="/auth.py", content="v1", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/auth.py", "v2", session=s)
+            await db._write_impl(path="/auth.py", content="v2", session=s)
         async with db._use_session() as s:
-            await db._write_impl("/.vfs/auth.py/__meta__/chunks/login", "chunk", session=s)
+            await db._write_impl(path="/.vfs/auth.py/__meta__/chunks/login", content="chunk", session=s)
 
         async with db._use_session() as s:
             r = await db._delete_impl("/auth.py", session=s)
@@ -1095,8 +1095,8 @@ class TestDelete:
 
     async def test_permanent_delete_cascades_to_metadata(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/auth.py", "code", session=s)
-            await db._write_impl("/.vfs/auth.py/__meta__/chunks/fn", "chunk", session=s)
+            await db._write_impl(path="/auth.py", content="code", session=s)
+            await db._write_impl(path="/.vfs/auth.py/__meta__/chunks/fn", content="chunk", session=s)
 
         async with db._use_session() as s:
             await db._delete_impl("/auth.py", permanent=True, session=s)
@@ -1111,8 +1111,8 @@ class TestDelete:
 
     async def test_soft_delete_directory_cascades_all(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "a", session=s)
-            await db._write_impl("/src/b.py", "b", session=s)
+            await db._write_impl(path="/src/a.py", content="a", session=s)
+            await db._write_impl(path="/src/b.py", content="b", session=s)
 
         async with db._use_session() as s:
             await db._delete_impl("/src", session=s)
@@ -1125,8 +1125,8 @@ class TestDelete:
 
     async def test_permanent_delete_directory_cascades_all(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "a", session=s)
-            await db._write_impl("/src/b.py", "b", session=s)
+            await db._write_impl(path="/src/a.py", content="a", session=s)
+            await db._write_impl(path="/src/b.py", content="b", session=s)
 
         async with db._use_session() as s:
             await db._delete_impl("/src", permanent=True, session=s)
@@ -1147,8 +1147,8 @@ class TestDelete:
 
     async def test_delete_with_candidates(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.txt", "a", session=s)
-            await db._write_impl("/b.txt", "b", session=s)
+            await db._write_impl(path="/a.txt", content="a", session=s)
+            await db._write_impl(path="/b.txt", content="b", session=s)
 
         candidates = VFSResult(
             candidates=[
@@ -1168,7 +1168,7 @@ class TestDelete:
 
     async def test_delete_edge(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "a", session=s)
+            await db._write_impl(path="/a.py", content="a", session=s)
         async with db._use_session() as s:
             await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
 
@@ -1184,12 +1184,12 @@ class TestDelete:
     async def test_write_revives_soft_deleted_file(self, db: DatabaseFileSystem):
         """Soft-deleted files can be overwritten (revived)."""
         async with db._use_session() as s:
-            await db._write_impl("/revive.txt", "v1", session=s)
+            await db._write_impl(path="/revive.txt", content="v1", session=s)
         async with db._use_session() as s:
             await db._delete_impl("/revive.txt", session=s)
 
         async with db._use_session() as s:
-            r = await db._write_impl("/revive.txt", "v2", session=s)
+            r = await db._write_impl(path="/revive.txt", content="v2", session=s)
         assert r.success
         async with db._use_session() as s:
             r2 = await db._read_impl("/revive.txt", session=s)
@@ -1219,7 +1219,7 @@ class TestDelete:
 
     async def test_non_cascade_delete_nonempty_dir_rejected(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/nonempty/file.txt", "x", session=s)
+            await db._write_impl(path="/nonempty/file.txt", content="x", session=s)
         async with db._use_session() as s:
             r = await db._delete_impl("/nonempty", cascade=False, session=s)
         assert not r.success
@@ -1237,7 +1237,7 @@ class TestDelete:
         non-cascade deleted.  Note: it still has a version row, so this
         tests that versions do block non-cascade delete."""
         async with db._use_session() as s:
-            await db._write_impl("/bare.txt", "x", session=s)
+            await db._write_impl(path="/bare.txt", content="x", session=s)
         # File has a version row — non-cascade should reject
         async with db._use_session() as s:
             r = await db._delete_impl("/bare.txt", cascade=False, session=s)
@@ -1246,8 +1246,8 @@ class TestDelete:
 
     async def test_non_cascade_delete_file_with_chunks_rejected(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/chunked.py", "code", session=s)
-            await db._write_impl("/.vfs/chunked.py/__meta__/chunks/fn", "def fn():", session=s)
+            await db._write_impl(path="/chunked.py", content="code", session=s)
+            await db._write_impl(path="/.vfs/chunked.py/__meta__/chunks/fn", content="def fn():", session=s)
         async with db._use_session() as s:
             r = await db._delete_impl("/chunked.py", cascade=False, session=s)
         assert not r.success
@@ -1256,7 +1256,7 @@ class TestDelete:
     async def test_cascade_true_still_works(self, db: DatabaseFileSystem):
         """Explicit cascade=True behaves the same as the default."""
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "a", session=s)
+            await db._write_impl(path="/src/a.py", content="a", session=s)
         async with db._use_session() as s:
             r = await db._delete_impl("/src", cascade=True, session=s)
         assert r.success
@@ -1266,7 +1266,7 @@ class TestDelete:
         """Batch with some empty and some non-empty paths."""
         async with db._use_session() as s:
             await db._mkdir_impl("/ok_dir", session=s)
-            await db._write_impl("/full_dir/file.txt", "x", session=s)
+            await db._write_impl(path="/full_dir/file.txt", content="x", session=s)
 
         candidates = VFSResult(
             candidates=[
@@ -1290,7 +1290,7 @@ class TestDelete:
 class TestMkedge:
     async def test_mkedge_creates_edge(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/auth.py", "code", session=s)
+            await db._write_impl(path="/auth.py", content="code", session=s)
 
         async with db._use_session() as s:
             r = await db._mkedge_impl("/auth.py", "/utils.py", "imports", session=s)
@@ -1301,7 +1301,7 @@ class TestMkedge:
 
     async def test_mkedge_stores_correct_fields(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/auth.py", "code", session=s)
+            await db._write_impl(path="/src/auth.py", content="code", session=s)
 
         async with db._use_session() as s:
             await db._mkedge_impl("/src/auth.py", "/src/utils.py", "imports", session=s)
@@ -1327,7 +1327,7 @@ class TestMkedge:
     async def test_mkedge_duplicate_updates(self, db: DatabaseFileSystem):
         """Writing the same edge again updates it (via write upsert)."""
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "a", session=s)
+            await db._write_impl(path="/a.py", content="a", session=s)
         async with db._use_session() as s:
             await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
         async with db._use_session() as s:
@@ -1336,7 +1336,7 @@ class TestMkedge:
 
     async def test_mkedge_revives_soft_deleted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "a", session=s)
+            await db._write_impl(path="/a.py", content="a", session=s)
         async with db._use_session() as s:
             await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
 
@@ -1371,8 +1371,8 @@ class TestMkedge:
 
     async def test_mkedge_with_objects_batch(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "a", session=s)
-            await db._write_impl("/b.py", "b", session=s)
+            await db._write_impl(path="/a.py", content="a", session=s)
+            await db._write_impl(path="/b.py", content="b", session=s)
 
         conns = [
             VFSEntry(
@@ -1413,7 +1413,7 @@ class TestMkedge:
 
     async def test_mkedge_visible_in_ls(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/auth.py", "code", session=s)
+            await db._write_impl(path="/auth.py", content="code", session=s)
         async with db._use_session() as s:
             await db._mkedge_impl("/auth.py", "/utils.py", "imports", session=s)
 
@@ -1426,7 +1426,7 @@ class TestMkedge:
         root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
 
-        await root.write("/code/auth.py", "code")
+        await root.write(path="/code/auth.py", content="code")
         r = await root.mkedge("/code/auth.py", "/code/utils.py", "imports")
         assert r.success
         assert require_file(r).path == "/code/.vfs/auth.py/__meta__/edges/out/imports/utils.py"
@@ -1484,7 +1484,7 @@ class TestMkdir:
 
 class TestCopy:
     async def test_copy_file(self, db: DatabaseFileSystem):
-        await db.write("/orig.py", "content")
+        await db.write(path="/orig.py", content="content")
         async with db._use_session() as s:
             r = await db._copy_impl(
                 ops=[TwoPathOperation(src="/orig.py", dest="/copy.py")],
@@ -1508,8 +1508,8 @@ class TestCopy:
         assert not r.success
 
     async def test_copy_overwrite_false_rejects(self, db: DatabaseFileSystem):
-        await db.write("/a.py", "a")
-        await db.write("/b.py", "b")
+        await db.write(path="/a.py", content="a")
+        await db.write(path="/b.py", content="b")
         async with db._use_session() as s:
             r = await db._copy_impl(
                 ops=[TwoPathOperation(src="/a.py", dest="/b.py")],
@@ -1519,8 +1519,8 @@ class TestCopy:
         assert not r.success
 
     async def test_copy_batch(self, db: DatabaseFileSystem):
-        await db.write("/x.py", "x")
-        await db.write("/y.py", "y")
+        await db.write(path="/x.py", content="x")
+        await db.write(path="/y.py", content="y")
         async with db._use_session() as s:
             r = await db._copy_impl(
                 ops=[
@@ -1535,7 +1535,7 @@ class TestCopy:
     async def test_copy_through_public_api(self, db: DatabaseFileSystem, engine):
         root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
-        await root.write("/code/app.py", "code")
+        await root.write(path="/code/app.py", content="code")
         r = await root.copy(src="/code/app.py", dest="/code/app_bak.py")
         assert r.success
         r2 = await root.read("/code/app_bak.py")
@@ -1549,7 +1549,7 @@ class TestCopy:
 
 class TestMove:
     async def test_move_file(self, db: DatabaseFileSystem):
-        await db.write("/old.py", "content")
+        await db.write(path="/old.py", content="content")
         async with db._use_session() as s:
             r = await db._move_impl(
                 ops=[TwoPathOperation(src="/old.py", dest="/new.py")],
@@ -1564,8 +1564,8 @@ class TestMove:
         assert r2.content == "content"
 
     async def test_move_directory_cascades(self, db: DatabaseFileSystem):
-        await db.write("/src/a.py", "a")
-        await db.write("/src/b.py", "b")
+        await db.write(path="/src/a.py", content="a")
+        await db.write(path="/src/b.py", content="b")
         async with db._use_session() as s:
             r = await db._move_impl(
                 ops=[TwoPathOperation(src="/src", dest="/lib")],
@@ -1583,8 +1583,8 @@ class TestMove:
 
     async def test_move_cascades_metadata(self, db: DatabaseFileSystem):
         """Chunks and versions follow the file."""
-        await db.write("/old.py", "v1")
-        await db.write("/.vfs/old.py/__meta__/chunks/fn", "def fn():")
+        await db.write(path="/old.py", content="v1")
+        await db.write(path="/.vfs/old.py/__meta__/chunks/fn", content="def fn():")
         async with db._use_session() as s:
             r = await db._move_impl(
                 ops=[TwoPathOperation(src="/old.py", dest="/new.py")],
@@ -1602,8 +1602,8 @@ class TestMove:
 
     async def test_move_updates_incoming_connection_targets(self, db: DatabaseFileSystem):
         """Connections from other files that target the moved file get updated."""
-        await db.write("/a.py", "a")
-        await db.write("/b.py", "b")
+        await db.write(path="/a.py", content="a")
+        await db.write(path="/b.py", content="b")
         async with db._use_session() as s:
             await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
 
@@ -1624,8 +1624,8 @@ class TestMove:
 
     async def test_move_updates_outgoing_connection_source(self, db: DatabaseFileSystem):
         """When source file moves, its outgoing connections update source_path."""
-        await db.write("/a.py", "a")
-        await db.write("/b.py", "b")
+        await db.write(path="/a.py", content="a")
+        await db.write(path="/b.py", content="b")
         async with db._use_session() as s:
             await db._mkedge_impl("/a.py", "/b.py", "imports", session=s)
 
@@ -1652,8 +1652,8 @@ class TestMove:
         assert not r.success
 
     async def test_move_occupied_dest_rejected(self, db: DatabaseFileSystem):
-        await db.write("/a.py", "a")
-        await db.write("/b.py", "b")
+        await db.write(path="/a.py", content="a")
+        await db.write(path="/b.py", content="b")
         async with db._use_session() as s:
             r = await db._move_impl(
                 ops=[TwoPathOperation(src="/a.py", dest="/b.py")],
@@ -1668,7 +1668,7 @@ class TestMove:
     async def test_move_through_public_api(self, db: DatabaseFileSystem, engine):
         root = VirtualFileSystem(engine=engine)
         await root.add_mount("/code", db)
-        await root.write("/code/old.py", "content")
+        await root.write(path="/code/old.py", content="content")
         r = await root.move(src="/code/old.py", dest="/code/new.py")
         assert r.success
         r2 = await root.read("/code/new.py")
@@ -1683,9 +1683,9 @@ class TestMove:
 class TestGlob:
     async def test_glob_matches_files(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/auth.py", "code", session=s)
-            await db._write_impl("/src/db.py", "code", session=s)
-            await db._write_impl("/src/util.js", "code", session=s)
+            await db._write_impl(path="/src/auth.py", content="code", session=s)
+            await db._write_impl(path="/src/db.py", content="code", session=s)
+            await db._write_impl(path="/src/util.js", content="code", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/src/*.py", session=s)
         assert r.success
@@ -1693,33 +1693,33 @@ class TestGlob:
 
     async def test_glob_single_star_does_not_cross_segments(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a/b/c.py", "code", session=s)
-            await db._write_impl("/a/x.py", "code", session=s)
+            await db._write_impl(path="/a/b/c.py", content="code", session=s)
+            await db._write_impl(path="/a/x.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/a/*.py", session=s)
         assert r.paths == ("/a/x.py",)
 
     async def test_glob_double_star_crosses_segments(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a/b/c.py", "code", session=s)
-            await db._write_impl("/a/x.py", "code", session=s)
+            await db._write_impl(path="/a/b/c.py", content="code", session=s)
+            await db._write_impl(path="/a/x.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/a/**/*.py", session=s)
         assert set(r.paths) == {"/a/b/c.py", "/a/x.py"}
 
     async def test_glob_question_mark(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "code", session=s)
-            await db._write_impl("/ab.py", "code", session=s)
+            await db._write_impl(path="/a.py", content="code", session=s)
+            await db._write_impl(path="/ab.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/?.py", session=s)
         assert r.paths == ("/a.py",)
 
     async def test_glob_character_class(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "code", session=s)
-            await db._write_impl("/b.py", "code", session=s)
-            await db._write_impl("/c.py", "code", session=s)
+            await db._write_impl(path="/a.py", content="code", session=s)
+            await db._write_impl(path="/b.py", content="code", session=s)
+            await db._write_impl(path="/c.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/[ab].py", session=s)
         assert set(r.paths) == {"/a.py", "/b.py"}
@@ -1727,8 +1727,8 @@ class TestGlob:
     async def test_glob_returns_files_and_dirs_only(self, db: DatabaseFileSystem):
         """Metadata kinds (chunks, versions, connections) are excluded."""
         async with db._use_session() as s:
-            await db._write_impl("/src/auth.py", "code", session=s)
-            await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "chunk", session=s)
+            await db._write_impl(path="/src/auth.py", content="code", session=s)
+            await db._write_impl(path="/.vfs/src/auth.py/__meta__/chunks/login", content="chunk", session=s)
             await db._mkedge_impl("/src/auth.py", "/src/db.py", "imports", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/**", session=s)
@@ -1737,7 +1737,7 @@ class TestGlob:
 
     async def test_glob_no_match(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/hello.txt", "hi", session=s)
+            await db._write_impl(path="/hello.txt", content="hi", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/*.py", session=s)
         assert r.success
@@ -1763,17 +1763,17 @@ class TestGlob:
 
     async def test_glob_results_sorted_by_path(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/z.py", "z", session=s)
-            await db._write_impl("/a.py", "a", session=s)
-            await db._write_impl("/m.py", "m", session=s)
+            await db._write_impl(path="/z.py", content="z", session=s)
+            await db._write_impl(path="/a.py", content="a", session=s)
+            await db._write_impl(path="/m.py", content="m", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/*.py", session=s)
         assert r.paths == ("/a.py", "/m.py", "/z.py")
 
     async def test_glob_excludes_soft_deleted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/keep.py", "keep", session=s)
-            await db._write_impl("/gone.py", "gone", session=s)
+            await db._write_impl(path="/keep.py", content="keep", session=s)
+            await db._write_impl(path="/gone.py", content="gone", session=s)
             await db._delete_impl("/gone.py", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/*.py", session=s)
@@ -1781,7 +1781,7 @@ class TestGlob:
 
     async def test_glob_includes_directories(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "code", session=s)
+            await db._write_impl(path="/src/a.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/src", session=s)
         assert "/src" in r.paths
@@ -1790,8 +1790,8 @@ class TestGlob:
     async def test_glob_through_public_api(self, db: DatabaseFileSystem, engine):
         root = DatabaseFileSystem(engine=engine)
         await root.add_mount("/code", db)
-        await root.write("/code/auth.py", "code")
-        await root.write("/code/db.py", "code")
+        await root.write(path="/code/auth.py", content="code")
+        await root.write(path="/code/db.py", content="code")
         r = await root.glob("**/*.py")
         assert {"/code/auth.py", "/code/db.py"} <= set(r.paths)
 
@@ -1804,7 +1804,7 @@ class TestGlob:
 class TestGrep:
     async def test_grep_finds_matching_lines(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "line one\ntimeout = 30\nline three", session=s)
+            await db._write_impl(path="/a.py", content="line one\ntimeout = 30\nline three", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="timeout", session=s)
         assert r.success
@@ -1819,7 +1819,7 @@ class TestGrep:
 
     async def test_grep_multiple_matches_in_file(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "TODO: fix\nok\nTODO: refactor", session=s)
+            await db._write_impl(path="/a.py", content="TODO: fix\nok\nTODO: refactor", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="TODO", session=s)
         file = require_file(r)
@@ -1829,16 +1829,16 @@ class TestGrep:
 
     async def test_grep_across_multiple_files(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "import os", session=s)
-            await db._write_impl("/b.py", "import sys", session=s)
-            await db._write_impl("/c.py", "no imports here", session=s)
+            await db._write_impl(path="/a.py", content="import os", session=s)
+            await db._write_impl(path="/b.py", content="import sys", session=s)
+            await db._write_impl(path="/c.py", content="no imports here", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="^import", session=s)
         assert set(r.paths) == {"/a.py", "/b.py"}
 
     async def test_grep_case_insensitive(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "Error occurred", session=s)
+            await db._write_impl(path="/a.py", content="Error occurred", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="error", case_mode="sensitive", session=s)
         assert len(r) == 0
@@ -1849,14 +1849,14 @@ class TestGrep:
     async def test_grep_max_count(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             for i in range(10):
-                await db._write_impl(f"/file{i:02d}.py", "match me", session=s)
+                await db._write_impl(path=f"/file{i:02d}.py", content="match me", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="match", max_count=3, session=s)
         assert len(r) == 3
 
     async def test_grep_no_match(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "hello world", session=s)
+            await db._write_impl(path="/a.py", content="hello world", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="zzz_no_match", session=s)
         assert r.success
@@ -1864,7 +1864,7 @@ class TestGrep:
 
     async def test_grep_regex_pattern(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "timeout = 30\ntimeout = 120", session=s)
+            await db._write_impl(path="/a.py", content="timeout = 30\ntimeout = 120", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern=r"timeout\s*=\s*\d{3}", session=s)
         assert len(r) == 1
@@ -1886,8 +1886,8 @@ class TestGrep:
     async def test_grep_skips_non_file_kinds(self, db: DatabaseFileSystem):
         """Grep only searches file content, not chunks/connections."""
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "no match", session=s)
-            await db._write_impl("/.vfs/a.py/__meta__/chunks/login", "timeout here", session=s)
+            await db._write_impl(path="/a.py", content="no match", session=s)
+            await db._write_impl(path="/.vfs/a.py/__meta__/chunks/login", content="timeout here", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="timeout", session=s)
         assert len(r) == 0
@@ -1907,7 +1907,7 @@ class TestGrep:
     async def test_grep_with_candidates_hydrates_missing_content(self, db: DatabaseFileSystem):
         """Candidates without content get hydrated from DB."""
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "timeout = 30", session=s)
+            await db._write_impl(path="/a.py", content="timeout = 30", session=s)
         cands = VFSResult(
             candidates=[
                 Candidate(path="/a.py", kind="file"),  # content=None
@@ -1919,7 +1919,7 @@ class TestGrep:
 
     async def test_grep_excludes_soft_deleted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "match me", session=s)
+            await db._write_impl(path="/a.py", content="match me", session=s)
             await db._delete_impl("/a.py", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="match", session=s)
@@ -1928,7 +1928,7 @@ class TestGrep:
     async def test_grep_through_public_api(self, db: DatabaseFileSystem, engine):
         root = DatabaseFileSystem(engine=engine)
         await root.add_mount("/code", db)
-        await root.write("/code/auth.py", "timeout = 30")
+        await root.write(path="/code/auth.py", content="timeout = 30")
         r = await root.grep("timeout")
         assert "/code/auth.py" in r.paths
 
@@ -1945,13 +1945,13 @@ class TestGrepRipgrepFilters:
 
     async def _seed_corpus(self, db: DatabaseFileSystem) -> None:
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "def grep():\n    pass", session=s)
-            await db._write_impl("/src/b.py", "class Grep:\n    pass", session=s)
-            await db._write_impl("/src/sub/c.py", "grep = None", session=s)
-            await db._write_impl("/src/README.md", "# grep docs", session=s)
-            await db._write_impl("/lib/d.py", "def helper():\n    pass", session=s)
-            await db._write_impl("/lib/e.js", "function grep() {}", session=s)
-            await db._write_impl("/test_grep.py", "def test_grep():\n    pass", session=s)
+            await db._write_impl(path="/src/a.py", content="def grep():\n    pass", session=s)
+            await db._write_impl(path="/src/b.py", content="class Grep:\n    pass", session=s)
+            await db._write_impl(path="/src/sub/c.py", content="grep = None", session=s)
+            await db._write_impl(path="/src/README.md", content="# grep docs", session=s)
+            await db._write_impl(path="/lib/d.py", content="def helper():\n    pass", session=s)
+            await db._write_impl(path="/lib/e.js", content="function grep() {}", session=s)
+            await db._write_impl(path="/test_grep.py", content="def test_grep():\n    pass", session=s)
 
     # ── ext / ext_not ────────────────────────────────────────────────
 
@@ -2034,8 +2034,8 @@ class TestGrepRipgrepFilters:
         regex rejects.
         """
         async with db._use_session() as s:
-            await db._write_impl("/test_ok.py", "grep", session=s)
-            await db._write_impl("/src/foo_test_bar.py", "grep", session=s)
+            await db._write_impl(path="/test_ok.py", content="grep", session=s)
+            await db._write_impl(path="/src/foo_test_bar.py", content="grep", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="grep", globs=("**/test_*.py",), session=s)
         assert r.paths == ("/test_ok.py",)
@@ -2053,7 +2053,7 @@ class TestGrepRipgrepFilters:
 
     async def test_grep_output_mode_count(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "TODO\nok\nTODO\nTODO", session=s)
+            await db._write_impl(path="/a.py", content="TODO\nok\nTODO\nTODO", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="TODO", output_mode="count", session=s)
         c = next(c for c in r.candidates if c.path == "/a.py")
@@ -2064,7 +2064,7 @@ class TestGrepRipgrepFilters:
 
     async def test_grep_after_context(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "l1\nl2 MATCH\nl3\nl4\nl5", session=s)
+            await db._write_impl(path="/a.py", content="l1\nl2 MATCH\nl3\nl4\nl5", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="MATCH", after_context=2, session=s)
         c = r.candidates[0]
@@ -2078,7 +2078,7 @@ class TestGrepRipgrepFilters:
 
     async def test_grep_before_context(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "l1\nl2\nl3\nl4 MATCH\nl5", session=s)
+            await db._write_impl(path="/a.py", content="l1\nl2\nl3\nl4 MATCH\nl5", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="MATCH", before_context=2, session=s)
         c = r.candidates[0]
@@ -2090,8 +2090,8 @@ class TestGrepRipgrepFilters:
     async def test_grep_context_windows_merge(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             await db._write_impl(
-                "/a.py",
-                "l1\nHIT\nl3\nHIT\nl5\nl6\nl7",
+            path="/a.py",
+                content="l1\nHIT\nl3\nHIT\nl5\nl6\nl7",
                 session=s,
             )
         async with db._use_session() as s:
@@ -2115,7 +2115,7 @@ class TestGrepRipgrepFilters:
         db: DatabaseFileSystem,
     ) -> None:
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "value = foo.bar\nother = fooxbar", session=s)
+            await db._write_impl(path="/a.py", content="value = foo.bar\nother = fooxbar", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="foo.bar", fixed_strings=True, session=s)
         c = r.candidates[0]
@@ -2125,14 +2125,14 @@ class TestGrepRipgrepFilters:
 
     async def test_grep_word_regexp(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "grep\ngrepper\nregrep\n", session=s)
+            await db._write_impl(path="/a.py", content="grep\ngrepper\nregrep\n", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="grep", word_regexp=True, session=s)
         assert r.candidates[0].score == 1.0
 
     async def test_grep_invert_match(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "alpha\nbeta\ngamma", session=s)
+            await db._write_impl(path="/a.py", content="alpha\nbeta\ngamma", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="beta", invert_match=True, session=s)
         c = r.candidates[0]
@@ -2145,7 +2145,7 @@ class TestGrepRipgrepFilters:
         db: DatabaseFileSystem,
     ) -> None:
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "FOO\nfoo", session=s)
+            await db._write_impl(path="/a.py", content="FOO\nfoo", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="foo", case_mode="smart", session=s)
         assert r.candidates[0].score == 2.0
@@ -2155,7 +2155,7 @@ class TestGrepRipgrepFilters:
         db: DatabaseFileSystem,
     ) -> None:
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "FOO\nfoo", session=s)
+            await db._write_impl(path="/a.py", content="FOO\nfoo", session=s)
         async with db._use_session() as s:
             r = await db._grep_impl(pattern="FOO", case_mode="smart", session=s)
         assert r.candidates[0].score == 1.0
@@ -2180,8 +2180,8 @@ class TestGlobRipgrepFilters:
 
     async def test_glob_ext_filter(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "x", session=s)
-            await db._write_impl("/src/b.js", "x", session=s)
+            await db._write_impl(path="/src/a.py", content="x", session=s)
+            await db._write_impl(path="/src/b.js", content="x", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="**/*", ext=("py",), session=s)
         assert "/src/a.py" in r.paths
@@ -2189,8 +2189,8 @@ class TestGlobRipgrepFilters:
 
     async def test_glob_positional_path_prefix(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "x", session=s)
-            await db._write_impl("/lib/b.py", "x", session=s)
+            await db._write_impl(path="/src/a.py", content="x", session=s)
+            await db._write_impl(path="/lib/b.py", content="x", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="**/*.py", paths=("/src",), session=s)
         assert r.paths == ("/src/a.py",)
@@ -2198,7 +2198,7 @@ class TestGlobRipgrepFilters:
     async def test_glob_max_count_caps_results(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
             for i in range(5):
-                await db._write_impl(f"/f{i}.py", "x", session=s)
+                await db._write_impl(path=f"/f{i}.py", content="x", session=s)
         async with db._use_session() as s:
             r = await db._glob_impl(pattern="/*.py", max_count=2, session=s)
         assert len(r) == 2
@@ -2212,8 +2212,8 @@ class TestGlobRipgrepFilters:
 class TestTree:
     async def test_tree_lists_descendants(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "code", session=s)
-            await db._write_impl("/src/sub/b.py", "code", session=s)
+            await db._write_impl(path="/src/a.py", content="code", session=s)
+            await db._write_impl(path="/src/sub/b.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/src", session=s)
         assert r.success
@@ -2224,8 +2224,8 @@ class TestTree:
 
     async def test_tree_max_depth_1(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a/b/c.py", "code", session=s)
-            await db._write_impl("/a/x.py", "code", session=s)
+            await db._write_impl(path="/a/b/c.py", content="code", session=s)
+            await db._write_impl(path="/a/x.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/a", max_depth=1, session=s)
         paths = set(r.paths)
@@ -2235,7 +2235,7 @@ class TestTree:
 
     async def test_tree_max_depth_2(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/a/b/c/d.py", "code", session=s)
+            await db._write_impl(path="/a/b/c/d.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/a", max_depth=2, session=s)
         paths = set(r.paths)
@@ -2245,8 +2245,8 @@ class TestTree:
 
     async def test_tree_root(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/top.py", "code", session=s)
-            await db._write_impl("/sub/deep.py", "code", session=s)
+            await db._write_impl(path="/top.py", content="code", session=s)
+            await db._write_impl(path="/sub/deep.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/", session=s)
         paths = set(r.paths)
@@ -2256,8 +2256,8 @@ class TestTree:
 
     async def test_tree_root_max_depth_1(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/top.py", "code", session=s)
-            await db._write_impl("/sub/deep.py", "code", session=s)
+            await db._write_impl(path="/top.py", content="code", session=s)
+            await db._write_impl(path="/sub/deep.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/", max_depth=1, session=s)
         paths = set(r.paths)
@@ -2273,7 +2273,7 @@ class TestTree:
 
     async def test_tree_not_a_directory(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/file.py", "code", session=s)
+            await db._write_impl(path="/file.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/file.py", session=s)
         assert not r.success
@@ -2282,9 +2282,9 @@ class TestTree:
     async def test_tree_excludes_metadata(self, db: DatabaseFileSystem):
         """Chunks, versions, and edges are excluded from tree output."""
         async with db._use_session() as s:
-            await db._write_impl("/src/a.py", "v1", session=s)
-            await db._write_impl("/src/a.py", "v2", session=s)  # creates version
-            await db._write_impl("/.vfs/src/a.py/__meta__/chunks/login", "chunk", session=s)
+            await db._write_impl(path="/src/a.py", content="v1", session=s)
+            await db._write_impl(path="/src/a.py", content="v2", session=s)  # creates version
+            await db._write_impl(path="/.vfs/src/a.py/__meta__/chunks/login", content="chunk", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/src", session=s)
         kinds = {c.kind for c in r.candidates}
@@ -2300,9 +2300,9 @@ class TestTree:
 
     async def test_tree_sorted_by_path(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/d/z.py", "z", session=s)
-            await db._write_impl("/d/a.py", "a", session=s)
-            await db._write_impl("/d/m.py", "m", session=s)
+            await db._write_impl(path="/d/z.py", content="z", session=s)
+            await db._write_impl(path="/d/a.py", content="a", session=s)
+            await db._write_impl(path="/d/m.py", content="m", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/d", session=s)
         file_paths = [c.path for c in r.candidates if c.kind == "file"]
@@ -2310,8 +2310,8 @@ class TestTree:
 
     async def test_tree_excludes_soft_deleted(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/d/keep.py", "keep", session=s)
-            await db._write_impl("/d/gone.py", "gone", session=s)
+            await db._write_impl(path="/d/keep.py", content="keep", session=s)
+            await db._write_impl(path="/d/gone.py", content="gone", session=s)
             await db._delete_impl("/d/gone.py", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("/d", session=s)
@@ -2327,7 +2327,7 @@ class TestTree:
     async def test_tree_through_public_api(self, db: DatabaseFileSystem, engine):
         root = DatabaseFileSystem(engine=engine)
         await root.add_mount("/code", db)
-        await root.write("/code/src/a.py", "code")
+        await root.write(path="/code/src/a.py", content="code")
         r = await root.tree("/code/src")
         assert "/code/src/a.py" in r.paths
 
@@ -2342,8 +2342,8 @@ class TestLikeWildcardSafety:
 
     async def test_move_percent_in_path_does_not_match_unrelated(self, db: DatabaseFileSystem):
         """Moving /data/100% must not affect /data/100_items."""
-        await db.write("/data/100%/report.txt", "owned")
-        await db.write("/data/100_items/secret.txt", "unrelated")
+        await db.write(path="/data/100%/report.txt", content="owned")
+        await db.write(path="/data/100_items/secret.txt", content="unrelated")
         async with db._use_session() as s:
             r = await db._move_impl(
                 ops=[TwoPathOperation(src="/data/100%", dest="/archive/done")],
@@ -2362,8 +2362,8 @@ class TestLikeWildcardSafety:
 
     async def test_move_underscore_in_path_does_not_match_unrelated(self, db: DatabaseFileSystem):
         """Moving /src/a_ must not affect /src/ab."""
-        await db.write("/src/a_/f.py", "target")
-        await db.write("/src/ab/g.py", "bystander")
+        await db.write(path="/src/a_/f.py", content="target")
+        await db.write(path="/src/ab/g.py", content="bystander")
         async with db._use_session() as s:
             r = await db._move_impl(
                 ops=[TwoPathOperation(src="/src/a_", dest="/dst/a_")],
@@ -2378,8 +2378,8 @@ class TestLikeWildcardSafety:
 
     async def test_delete_cascade_percent_does_not_affect_siblings(self, db: DatabaseFileSystem):
         """Cascading delete of /data/100% must not delete /data/100xyz."""
-        await db.write("/data/100%/a.txt", "delete-me")
-        await db.write("/data/100xyz/b.txt", "keep-me")
+        await db.write(path="/data/100%/a.txt", content="delete-me")
+        await db.write(path="/data/100xyz/b.txt", content="keep-me")
         async with db._use_session() as s:
             r = await db._delete_impl("/data/100%", cascade=True, session=s)
         assert r.success
@@ -2393,8 +2393,8 @@ class TestLikeWildcardSafety:
 
     async def test_ls_percent_dir_returns_only_own_children(self, db: DatabaseFileSystem):
         """ls on /data/100% must not include children of /data/100xyz."""
-        await db.write("/data/100%/a.txt", "a")
-        await db.write("/data/100xyz/b.txt", "b")
+        await db.write(path="/data/100%/a.txt", content="a")
+        await db.write(path="/data/100xyz/b.txt", content="b")
         async with db._use_session() as s:
             r = await db._ls_impl("/data/100%", session=s)
         assert r.success
@@ -2403,9 +2403,9 @@ class TestLikeWildcardSafety:
 
     async def test_move_updates_connections_with_percent_in_path(self, db: DatabaseFileSystem):
         """Connections targeting /lib/100% must not match /lib/100other after move."""
-        await db.write("/lib/100%/mod.py", "code")
-        await db.write("/lib/100other/x.py", "other")
-        await db.write("/caller.py", "import")
+        await db.write(path="/lib/100%/mod.py", content="code")
+        await db.write(path="/lib/100other/x.py", content="other")
+        await db.write(path="/caller.py", content="import")
         async with db._use_session() as s:
             await db._mkedge_impl("/caller.py", "/lib/100%/mod.py", "imports", session=s)
             await db._mkedge_impl("/caller.py", "/lib/100other/x.py", "imports", session=s)
@@ -2461,10 +2461,10 @@ class TestUpdateContentPath:
     async def test_overwrite_chunk_uses_update_content(self, db: DatabaseFileSystem):
         """database.py:628 — overwriting a chunk takes the update_content path."""
         async with db._use_session() as s:
-            await db._write_impl("/src/auth.py", "full content", session=s)
-            await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "def login():", session=s)
+            await db._write_impl(path="/src/auth.py", content="full content", session=s)
+            await db._write_impl(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login():", session=s)
         async with db._use_session() as s:
-            r = await db._write_impl("/.vfs/src/auth.py/__meta__/chunks/login", "def login(): pass", session=s)
+            r = await db._write_impl(path="/.vfs/src/auth.py/__meta__/chunks/login", content="def login(): pass", session=s)
         assert r.success
         async with db._use_session() as s:
             r2 = await db._read_impl("/.vfs/src/auth.py/__meta__/chunks/login", session=s)
@@ -2552,7 +2552,7 @@ class TestLsFilterMetadataKinds:
         directory, but kind='chunk', so the ls filter skips it.
         """
         async with db._use_session() as s:
-            await db._write_impl("/src/auth.py", "code", session=s)
+            await db._write_impl(path="/src/auth.py", content="code", session=s)
             # Insert a chunk whose parent_path == /src (normally chunks live
             # under files, but this exercises the filter guard).
             chunk = db._row(path="/.vfs/src/__meta__/chunks/login", content="chunk body")
@@ -2598,7 +2598,7 @@ class TestEditImplErrors:
     async def test_edit_empty_edits(self, db: DatabaseFileSystem):
         """database.py:1232 — edit with no edits returns error."""
         async with db._use_session() as s:
-            await db._write_impl("/a.py", "hello", session=s)
+            await db._write_impl(path="/a.py", content="hello", session=s)
         async with db._use_session() as s:
             r = await db._edit_impl(path="/a.py", edits=[], session=s)
         assert not r.success
@@ -2657,7 +2657,7 @@ class TestTreeEmptyPath:
     async def test_empty_path_defaults_to_root(self, db: DatabaseFileSystem):
         """database.py:1772 — empty string path defaults to root."""
         async with db._use_session() as s:
-            await db._write_impl("/top.py", "code", session=s)
+            await db._write_impl(path="/top.py", content="code", session=s)
         async with db._use_session() as s:
             r = await db._tree_impl("", session=s)
         assert r.success
@@ -2719,14 +2719,14 @@ class TestInverseEdgeProjectedPaths:
     @staticmethod
     async def _seed_inverse_edges(db: DatabaseFileSystem) -> None:
         async with db._use_session() as s:
-            await db._write_impl("/target.py", "target", session=s)
-            await db._write_impl("/src/a.py", "a", session=s)
-            await db._write_impl("/src/nested/b.py", "b", session=s)
-            await db._write_impl("/lib/c.py", "c", session=s)
-            await db._write_impl("/single.py", "single", session=s)
+            await db._write_impl(path="/target.py", content="target", session=s)
+            await db._write_impl(path="/src/a.py", content="a", session=s)
+            await db._write_impl(path="/src/nested/b.py", content="b", session=s)
+            await db._write_impl(path="/lib/c.py", content="c", session=s)
+            await db._write_impl(path="/single.py", content="single", session=s)
             for source in ("/src/a.py", "/src/nested/b.py", "/lib/c.py", "/single.py"):
-                await db._write_impl(edge_out_path(source, "/target.py", "imports"), "", session=s)
-            await db._write_impl(edge_out_path("/other.py", "/target.py", "calls"), "", session=s)
+                await db._write_impl(path=edge_out_path(source, "/target.py", "imports"), content="", session=s)
+            await db._write_impl(path=edge_out_path("/other.py", "/target.py", "calls"), content="", session=s)
 
     async def test_stat_inverse_edge_paths_distinguish_directories_and_leaf_edges(self, db: DatabaseFileSystem):
         await self._seed_inverse_edges(db)
@@ -2792,7 +2792,7 @@ class TestInverseEdgeProjectedPaths:
 
     async def test_inverse_edges_require_existing_target_but_allow_empty_results(self, db: DatabaseFileSystem):
         async with db._use_session() as s:
-            await db._write_impl("/orphan-target.py", "target", session=s)
+            await db._write_impl(path="/orphan-target.py", content="target", session=s)
             empty = await db._ls_impl("/.vfs/orphan-target.py/__meta__/edges/in", session=s)
         assert empty.success is True
         assert empty.candidates == []

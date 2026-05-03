@@ -784,15 +784,56 @@ class TestToStr:
         assert r.to_str() == "print('hi')"
 
     def test_action_write_one_path(self):
-        r = VFSResult(function="write", candidates=[Candidate(path="/a.py")])
-        assert r.to_str() == "Wrote /a.py"
+        r = VFSResult(
+            function="write",
+            candidates=[Candidate(path="/a.py", kind="file", status="created")],
+        )
+        assert r.to_str() == "write success: 1 file written\n\n  created /a.py"
 
     def test_action_write_many_paths(self):
         r = VFSResult(
             function="write",
-            candidates=[Candidate(path="/a.py"), Candidate(path="/b.py")],
+            candidates=[
+                Candidate(path="/a.py", kind="file", status="created"),
+                Candidate(path="/b.py", kind="file", status="created"),
+            ],
         )
-        assert r.to_str() == "Wrote 2 paths"
+        assert r.to_str() == "write success: 2 files written"
+
+    def test_write_empty_renders_nothing_to_do(self):
+        r = VFSResult(function="write", candidates=[])
+        assert r.to_str() == "write: nothing to do"
+
+    def test_write_errors_only(self):
+        r = VFSResult(function="write", success=False, errors=["/a.py: bad"], candidates=[])
+        assert r.to_str() == "write errors:\n  /a.py: bad"
+
+    def test_write_mixed_errors_then_success(self):
+        r = VFSResult(
+            function="write",
+            success=False,
+            errors=["/b.py: bad"],
+            candidates=[Candidate(path="/a.py", kind="file", status="created")],
+        )
+        assert r.to_str() == "write errors:\n  /b.py: bad\n\nwrite success: 1 file written\n\n  created /a.py"
+
+    def test_write_status_breakdown_when_mixed(self):
+        r = VFSResult(
+            function="write",
+            candidates=[
+                Candidate(path="/a.py", kind="file", status="created"),
+                Candidate(path="/b.py", kind="file", status="updated"),
+                Candidate(path="/c.py", kind="file", status="unchanged"),
+            ],
+        )
+        assert r.to_str() == "write success: 3 files (1 created, 1 updated, 1 unchanged) written"
+
+    def test_write_str_delegates_to_to_str(self):
+        r = VFSResult(
+            function="write",
+            candidates=[Candidate(path="/a.py", kind="file", status="created")],
+        )
+        assert str(r) == r.to_str()
 
     def test_success_true_with_errors_appends_error_block(self):
         r = VFSResult(
