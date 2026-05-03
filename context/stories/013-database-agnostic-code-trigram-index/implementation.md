@@ -120,11 +120,11 @@ Documented divergences from LangChain:
 
 New on `VFSEntry`:
 
-- `index_content: int = Field(default=0, index=True)` — 0/1 flag controlling
-  whether this row's content feeds content-side indexes (vector,
+- `index_content: bool = Field(default=False, index=True)` — boolean flag
+  controlling whether this row's content feeds content-side indexes (vector,
   text-search, code-gram trigrams). Path-side indexes ignore it. Validator
-  default in `_normalize_and_derive`: `kind in {"file", "chunk"}` → 1,
-  everything else → 0. Explicit values in input data are respected.
+  default in `_normalize_and_derive`: `kind in {"file", "chunk"}` → True,
+  everything else → False. Explicit values in input data are respected.
 - `VFSEntry.split_content(content: str) -> list[tuple[str, int, int]]` —
   staticmethod, the override seam. Default delegates to
   `split_with_line_ranges` with `chunk_size=2048` / `overlap=256`. Devs
@@ -135,7 +135,7 @@ New on `VFSEntry`:
   entries via `vfs.paths.chunk_path(self.path, name)` where `name` is
   `<line_start>_<line_end>`, with `@<char_offset>` appended only when
   multiple chunks share a line range (single oversized line case).
-  Mutates `self.index_content = 0` on success. Empty-list short-circuit
+  Mutates `self.index_content = False` on success. Empty-list short-circuit
   when content fits in one chunk leaves the flag alone. Raises
   `ValueError` for non-file kinds.
 
@@ -184,7 +184,7 @@ The remainder of [plan.md](./plan.md) phases 2-7 is open work:
 - Backend write path: extract grams from chunk content on insert, delete
   grams when a chunk is deleted, cascade old chunks when a file is
   re-chunked. Atomic with chunk row writes.
-- Filter `index_content = 1` in the gram extraction pipeline so the file
+- Filter `index_content = True` in the gram extraction pipeline so the file
   row stops feeding content indexes once it's been chunked.
 
 ### Phase 2 (not started) — `_grep_impl` rewrite

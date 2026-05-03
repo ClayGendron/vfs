@@ -130,7 +130,7 @@ class VFSEntry(SQLModel):
 
     # --- Search indexing ---------------------------------------------------
 
-    index_content: int = Field(default=0, index=True)
+    index_content: bool = Field(default=False, index=True)
 
     # --- Version-specific ---------------------------------------------------
 
@@ -522,7 +522,7 @@ class VFSEntry(SQLModel):
         """Split this file's content into chunk entries.
 
         Returns the new ``kind="chunk"`` rows and mutates ``self.index_content
-        = 0`` so the file row stops feeding content-side indexes. When the
+        = False`` so the file row stops feeding content-side indexes. When the
         content fits in one chunk, returns ``[]`` and leaves
         ``index_content`` alone. Path naming is ``<line_start>_<line_end>``
         with an ``@<char_offset>`` suffix only when chunks would otherwise
@@ -566,7 +566,7 @@ class VFSEntry(SQLModel):
                     owner_id=self.owner_id,
                 )
             )
-        self.index_content = 0
+        self.index_content = False
         return new_chunks
 
     # --- Validator ----------------------------------------------------------
@@ -661,7 +661,7 @@ class VFSEntry(SQLModel):
             data["lexical_tokens"] = cls._lexical_token_count(content)
 
         if "index_content" not in data:
-            data["index_content"] = 1 if kind in {"file", "chunk"} else 0
+            data["index_content"] = kind in {"file", "chunk"}
 
         # Ensure timestamps
         now = datetime.now(UTC)

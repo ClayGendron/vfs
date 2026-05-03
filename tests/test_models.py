@@ -1039,11 +1039,11 @@ class TestModelHelperErrors:
 
 
 class TestIndexContentDerivation:
-    def test_file_default_is_one(self):
+    def test_file_default_is_true(self):
         entry = VFSEntry(path="/foo.py", kind="file", content="hello")
-        assert entry.index_content == 1
+        assert entry.index_content is True
 
-    def test_chunk_default_is_one(self):
+    def test_chunk_default_is_true(self):
         entry = VFSEntry(
             path="/.vfs/foo.py/__meta__/chunks/1_5",
             kind="chunk",
@@ -1051,13 +1051,13 @@ class TestIndexContentDerivation:
             line_start=1,
             line_end=5,
         )
-        assert entry.index_content == 1
+        assert entry.index_content is True
 
-    def test_directory_default_is_zero(self):
+    def test_directory_default_is_false(self):
         entry = VFSEntry(path="/foo", kind="directory")
-        assert entry.index_content == 0
+        assert entry.index_content is False
 
-    def test_version_default_is_zero(self):
+    def test_version_default_is_false(self):
         entry = VFSEntry(
             path="/.vfs/foo.py/__meta__/versions/1",
             kind="version",
@@ -1065,22 +1065,22 @@ class TestIndexContentDerivation:
             version_number=1,
             is_snapshot=True,
         )
-        assert entry.index_content == 0
+        assert entry.index_content is False
 
-    def test_edge_default_is_zero(self):
+    def test_edge_default_is_false(self):
         entry = VFSEntry(
             path="/.vfs/a.py/__meta__/edges/out/imports/b.py",
             kind="edge",
         )
-        assert entry.index_content == 0
+        assert entry.index_content is False
 
-    def test_explicit_zero_overrides_default(self):
-        entry = VFSEntry(path="/foo.py", kind="file", content="hello", index_content=0)
-        assert entry.index_content == 0
+    def test_explicit_false_overrides_default(self):
+        entry = VFSEntry(path="/foo.py", kind="file", content="hello", index_content=False)
+        assert entry.index_content is False
 
-    def test_explicit_one_overrides_default_for_directory(self):
-        entry = VFSEntry(path="/foo", kind="directory", index_content=1)
-        assert entry.index_content == 1
+    def test_explicit_true_overrides_default_for_directory(self):
+        entry = VFSEntry(path="/foo", kind="directory", index_content=True)
+        assert entry.index_content is True
 
 
 # =========================================================================
@@ -1123,7 +1123,7 @@ class TestChunkMethod:
     def test_short_file_no_op(self):
         entry = VFSEntry(path="/foo.py", kind="file", content="hello world")
         assert entry.chunk() == []
-        assert entry.index_content == 1  # unchanged
+        assert entry.index_content is True  # unchanged
 
     def test_long_file_emits_chunks_and_flips_flag(self):
         content = "\n".join(f"line {i:04d}" for i in range(1, 1001))
@@ -1136,9 +1136,9 @@ class TestChunkMethod:
             assert c.line_start is not None
             assert c.line_end is not None
             assert c.line_start <= c.line_end
-            assert c.index_content == 1
+            assert c.index_content is True
             assert c.content
-        assert entry.index_content == 0
+        assert entry.index_content is False
 
     def test_chunk_path_uses_line_range(self):
         content = "\n".join(f"line {i:04d}" for i in range(1, 1001))
@@ -1210,4 +1210,4 @@ class TestChunkMethod:
         assert chunks[0].line_end == 5
         assert chunks[1].line_start == 6
         assert chunks[1].line_end == 10
-        assert entry.index_content == 0
+        assert entry.index_content is False
