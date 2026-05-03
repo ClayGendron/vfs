@@ -113,16 +113,11 @@ class Candidate(BaseModel):
 
 
 CANDIDATE_FIELDS: frozenset[str] = frozenset(Candidate.model_fields.keys())
-"""Every field name on ``Candidate`` — used to validate projection input."""
-
 PROJECTION_SENTINELS: frozenset[str] = frozenset({"default", "all"})
-"""Projection names that expand to a function-specific or result-derived set."""
-
 
 # ---------------------------------------------------------------------------
 # Function vocabulary
 # ---------------------------------------------------------------------------
-
 
 # Arrangement groups. The envelope's ``function`` key picks an arrangement;
 # multiple functions can share an arrangement (e.g. all centrality methods).
