@@ -102,8 +102,8 @@ This story turns the existing comments into actual code boundaries.
            if self._auto_index:
                await self._write_phase_auto_index(ctx, session)
            out = await self._write_phase_persist(ctx, session)
-       except _AbortWrite as abort:
-           return self._error(abort.result)
+       except _WriteAbort as abort:
+           return self._error(abort.payload)
 
        if out and any(c.kind == "edge" for c in out):
            self._graph.invalidate()
@@ -144,22 +144,33 @@ This story turns the existing comments into actual code boundaries.
    Introduce a private exception:
 
    ```python
-   class _AbortWrite(Exception):
-       def __init__(self, result: VFSResult) -> None:
-           self.result = result
+   class _WriteAbort(Exception):
+       def __init__(self, payload: str | list[str] | VFSResult) -> None:
+           self.payload = payload
    ```
 
-   A phase may raise `_AbortWrite(...)` only for failures that currently
+   `_WriteAbort` is a control-flow signal that always represents a
+   *failure* — it carries whatever shape the linear `_write_impl`
+   originally passed to `self._error(...)` at that phase (a string, a
+   list of strings, or a fully shaped failed `VFSResult`). The "nothing
+   to do" case (empty input, no errors) is **not** an abort; phases that
+   can short-circuit successfully should signal that out-of-band (e.g.
+   `_build_write_context` returns `None`) so `_WriteAbort` never carries
+   a `success=True` payload.
+
+   A phase may raise `_WriteAbort(...)` only for failures that currently
    return before the persist phase, such as:
 
-   - invalid input that leaves no writable entries
+   - invalid input that leaves no writable entries with errors collected
+   - duplicate path inside a single batch
    - parent directory resolution failure
-   - auto-chunk conflict
+   - permission rejection on a parent-dir revival
+   - auto-chunk conflict (file + chunks both in batch with `index_content=True`)
    - auto-chunk runtime failure
    - index maintenance failure
    - embedding provider failure or vector-count mismatch
 
-   `_write_impl` must pass abort results through `self._error(...)` so
+   `_write_impl` must pass abort payloads through `self._error(...)` so
    `raise_on_error` behavior is preserved.
 
 5. **Keep backend extension points deliberate.**

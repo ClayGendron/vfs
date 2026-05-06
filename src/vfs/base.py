@@ -1090,24 +1090,19 @@ class VirtualFileSystem:
     # errors
     # -------------------------------------------------------------------
 
-    def _error(self, errors: str | list[str] | VFSResult) -> VFSResult:
-        """Create or check a failed result, raising if ``raise_on_error`` is set.
+    def _error(self, errors: str | list[str]) -> VFSResult:
+        """Compose a failed ``VFSResult``, or raise if ``raise_on_error`` is set.
 
-        Accepts either:
-        - A string or list of strings → creates ``VFSResult(success=False)``
-        - An existing ``VFSResult`` → returns it as-is if successful,
-          raises if ``raise_on_error`` is set and ``success`` is ``False``
+        ``_error`` is the *constructor* for failure surfaces. Pass the
+        raw error message (or list of messages) — it composes the result
+        and either returns it or raises a classified exception. Callers
+        that already hold a fully-shaped ``VFSResult`` should return it
+        directly rather than route it through this method.
         """
-        if isinstance(errors, VFSResult):
-            if errors.success or not self._raise_on_error:
-                return errors
-            result = errors
-        else:
-            error_list = [errors] if isinstance(errors, str) else errors
-            result = VFSResult(success=False, errors=error_list)
-            if not self._raise_on_error:
-                return result
-
+        error_list = [errors] if isinstance(errors, str) else errors
+        result = VFSResult(success=False, errors=error_list)
+        if not self._raise_on_error:
+            return result
         raise _classify_error(result.error_message, result.errors, result)
 
     def parse_query(self, query: str) -> QueryPlan:

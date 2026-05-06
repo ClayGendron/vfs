@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
@@ -20,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
 from vfs.columns import CANDIDATE_BACKED_MODEL_COLUMNS, default_columns
+from vfs.exceptions import _classify_error
 from vfs.graph import RustworkxGraph
 from vfs.models import VFSEntry, _build_entry_table_class
 from vfs.paths import (
@@ -196,6 +198,40 @@ def _unchecked_select(*entities: Any) -> Any:
 def _unchecked_clause(expression: object) -> Any:
     """Pass SQLAlchemy clauses through Any to sidestep stub precision gaps."""
     return cast("Any", expression)
+
+
+@dataclass
+class _WriteContext:
+    """Shared state threaded through ``_write_phase_*`` helpers.
+
+    Holds every piece of write-pipeline state that survives across phases
+    so the helpers can take ``(self, ctx, session)`` rather than long
+    positional argument lists.
+    """
+
+    write_map: dict[str, VFSEntry]
+    overwrite: bool
+    user_id: str | None
+    errors: list[str] = field(default_factory=list)
+    existing_map: dict[str, VFSEntry] = field(default_factory=dict)
+    latest_version_hash: dict[str, str | None] = field(default_factory=dict)
+    parent_dirs: list[VFSEntry] = field(default_factory=list)
+    changed_paths: set[str] = field(default_factory=set)
+    unchanged_candidates: list[Candidate] = field(default_factory=list)
+
+
+class _WriteAbort(Exception):  # noqa: N818 — phase-abort signal; "Abort" names the control flow more precisely than "Error".
+    """Phase-fatal abort signal raised by ``_write_phase_*`` helpers.
+
+    Always represents a *failure* the orchestrator must surface. Carries
+    the raw error message(s); the orchestrator composes the failure
+    result through ``self._error(...)`` so ``raise_on_error`` semantics
+    survive.
+    """
+
+    def __init__(self, payload: str | list[str]) -> None:
+        super().__init__()
+        self.payload: str | list[str] = payload
 
 
 class DatabaseFileSystem(VirtualFileSystem):
@@ -769,6 +805,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                     continue
                 if candidate.content is not None:
                     append_doc(
+                        candidate.path,
                         candidate.path,
                         candidate.kind,
                         candidate.content,
@@ -1360,62 +1397,107 @@ class DatabaseFileSystem(VirtualFileSystem):
     ) -> VFSResult:
         """Write entries through the auto-maintenance pipeline (story 014).
 
-        Pipeline phases (see ``docs/internals/write_pipeline.md``):
-
-        1. **Validate** — reject root, reserved-metadata, and unknown-kind
-           paths; reject duplicate paths in the same batch.
-        2. **Validate chunk parents** — chunks whose owner file is absent
-           from both DB and batch are rejected.
-        3. **Resolve parent dirs** — collect ancestor directories that
-           need creation or revival (not yet added to the session).
-        4. **Fetch existing rows + latest version hash** for every path.
-        5. **Per-entry change detection.** Hash equality means no-op:
-           no version row, no chunk cascade, no index work, no ``UPDATE``,
-           and ``updated_at`` is left untouched.
-        6. **Auto-chunk** (gated by ``self._auto_chunk``):
-           - Batch-fatal pre-check rejects the whole batch when a file
-             with ``index_content=True`` ships alongside pre-built chunks
-             for the same file.
-           - For each changed indexable file, call ``entry.chunk()`` and
-             append returned chunk rows to the in-memory batch. The
-             file's ``index_content`` flips to ``False``.
-        7. **Auto-index** (gated by ``self._auto_index``):
-           - ``_apply_index_maintenance(...)`` stages trigram delta rows
-             for changed indexable entries (no-op default).
-           - One bulk ``EmbeddingProvider.embed_entries`` call computes
-             vectors for every entry that needs one; vectors are
-             assigned to ``entry.embedding`` in memory.
-           - A provider failure aborts the pipeline before any DB write.
-        8. **Persist** — single phase, single ``flush()``:
-           - Stage chunk cascade ``DELETE`` for re-chunked files
-             (``_stage_chunk_cascade``).
-           - Apply per-entry inserts/updates; computed embeddings ride
-             along on the row's ``embedding`` column.
-           - Commit parent-dir creations / revivals.
+        Orchestrates the named ``_write_phase_*`` helpers in order. See
+        ``docs/internals/write_pipeline.md`` for the full pipeline shape;
+        each phase below mirrors a section of that document. Phase-fatal
+        failures raise ``_WriteAbort`` and are funneled back through
+        ``self._error(...)`` so ``raise_on_error`` semantics survive.
         """
         self._require_user_id(user_id)
 
-        # ── Step 1: Resolve to entries list, validate paths ───────────
+        try:
+            coerced = self._coerce_write_entries(entries, path, content, user_id)
+            ctx = self._build_write_context(coerced, overwrite, user_id)
+            if ctx is None:
+                # Empty input — nothing to validate, nothing to write.
+                return VFSResult(function="write", success=True, candidates=[])
+            await self._write_phase_validate_chunk_parents(ctx, session)
+            await self._write_phase_resolve_parent_dirs(ctx, session)
+            await self._write_phase_fetch_existing(ctx, session)
+            self._write_phase_detect_changes(ctx)
+            if self._auto_chunk:
+                self._write_phase_auto_chunk_conflict_check(ctx)
+                await self._write_phase_auto_chunk(ctx)
+            if self._auto_index:
+                await self._write_phase_auto_index(ctx, session)
+            out = await self._write_phase_persist(ctx, session)
+        except _WriteAbort as abort:
+            return self._error(abort.payload)
+
+        # Edge writes invalidate the in-process graph cache so the next
+        # traversal rebuilds from the new rows.
+        if out and any(c.kind == "edge" for c in out):
+            self._graph.invalidate()
+
+        result = self._unscope_result(
+            VFSResult(
+                function="write",
+                candidates=out,
+                errors=ctx.errors,
+                success=len(ctx.errors) == 0,
+            ),
+            user_id,
+        )
+        if not result.success and self._raise_on_error:
+            raise _classify_error(result.error_message, result.errors, result)
+        return result
+
+    # -------------------------------------------------------------------
+    # Write pipeline phases
+    # -------------------------------------------------------------------
+
+    def _coerce_write_entries(
+        self,
+        entries: Sequence[VFSEntry] | None,
+        path: str | None,
+        content: str | None,
+        user_id: str | None,
+    ) -> list[VFSEntry]:
+        """Normalize the two ``write()`` call shapes to a single entry list.
+
+        Supports either ``entries=[...]`` or ``path=..., content=...``;
+        rejects both-or-neither. Re-classes incoming rows under the
+        backend's minted entry table and applies user-scoping when the
+        filesystem is user-scoped.
+        """
         if entries is None:
             if path is None:
-                return self._error("Write requires a path or entries")
+                raise _WriteAbort("Write requires a path or entries")
             scoped_path = self._scope_path(path, user_id)
             entry = self._row(path=scoped_path or path, content=content or "")
             if self._user_scoped and user_id:
                 entry.owner_id = user_id
-            entries = [entry]
+            return [entry]
 
-        elif path is not None:
-            return self._error("Write requires a path or entries, not both")
-        else:
-            converted: list[VFSEntry] = []
-            for entry in entries:
-                row = self._model(**entry.model_dump()) if type(entry) is VFSEntry else self._row(**entry.model_dump())
-                row._explicit_fields = entry._explicit_fields
-                converted.append(row)
-            entries = converted
-            self._scope_entries(entries, user_id)
+        if path is not None:
+            raise _WriteAbort("Write requires a path or entries, not both")
 
+        converted: list[VFSEntry] = []
+        for entry in entries:
+            row = (
+                self._model(**entry.model_dump())
+                if type(entry) is VFSEntry
+                else self._row(**entry.model_dump())
+            )
+            row._explicit_fields = entry._explicit_fields
+            converted.append(row)
+        self._scope_entries(converted, user_id)
+        return converted
+
+    def _build_write_context(
+        self,
+        entries: Sequence[VFSEntry],
+        overwrite: bool,
+        user_id: str | None,
+    ) -> _WriteContext | None:
+        """Validate paths/kinds and build the shared write context.
+
+        Path-level validation errors collect into ``ctx.errors``; a
+        duplicate path in the same batch is fatal (legacy contract).
+        Returns ``None`` when there's literally nothing to do — empty
+        input, no errors. When validation rejected every entry, errors
+        accumulated and the batch aborts via ``_WriteAbort``.
+        """
         write_map: dict[str, VFSEntry] = {}
         errors: list[str] = []
         for entry in entries:
@@ -1430,42 +1512,76 @@ class DatabaseFileSystem(VirtualFileSystem):
                 errors.append(f"Cannot write to {entry.kind} path: {entry.path}")
                 continue
             if entry.path in write_map:
-                return self._error(f"Duplicate path in write batch: {entry.path}")
+                raise _WriteAbort(f"Duplicate path in write batch: {entry.path}")
             write_map[entry.path] = entry
 
         if not write_map:
-            return self._error(VFSResult(success=len(errors) == 0, errors=errors))
+            if errors:
+                raise _WriteAbort(errors)
+            return None
 
-        # ── Step 2: Validate chunk parents ────────────────────────────
-        invalid_chunk_paths, chunk_errors = await self._validate_chunk_parents(write_map, session)
-        errors.extend(chunk_errors)
-        if len(invalid_chunk_paths) == len(write_map):
-            return self._error(errors)
+        return _WriteContext(
+            write_map=write_map,
+            overwrite=overwrite,
+            user_id=user_id,
+            errors=errors,
+        )
+
+    async def _write_phase_validate_chunk_parents(
+        self,
+        ctx: _WriteContext,
+        session: AsyncSession,
+    ) -> None:
+        """Drop chunks whose owner file is absent from DB and batch."""
+        invalid_chunk_paths, chunk_errors = await self._validate_chunk_parents(
+            ctx.write_map, session
+        )
+        ctx.errors.extend(chunk_errors)
+        if len(invalid_chunk_paths) == len(ctx.write_map):
+            raise _WriteAbort(ctx.errors)
         for p in invalid_chunk_paths:
-            write_map.pop(p, None)
+            ctx.write_map.pop(p, None)
 
-        # ── Step 3: Resolve parent dirs (deferred) ────────────────────
+    async def _write_phase_resolve_parent_dirs(
+        self,
+        ctx: _WriteContext,
+        session: AsyncSession,
+    ) -> None:
+        """Resolve ancestor directories that need creation or revival.
+
+        Brand-new ancestors are created without a permission check —
+        a writable carve-out (e.g. ``/a/b/c``) inside a read-only mount
+        needs reachable ancestors. Revivals (``deleted_at`` set) must
+        still satisfy the writable check.
+        """
         await self._ensure_metadata_root(session)
-        file_paths = list(write_map)
-        file_paths.extend(version_path(p, 1) for p, obj in write_map.items() if obj.kind == "file")
-        parent_dirs: list[VFSEntry] = []
-        if file_paths:
-            parent_dirs, dir_errors = await self._resolve_parent_dirs(file_paths, session)
-            if dir_errors:
-                errors.extend(dir_errors)
-                return self._error(errors)
-            # Brand-new ancestor directories are created without a
-            # permission check — a writable carve-out (e.g. /a/b/c) inside
-            # a read-only mount needs reachable ancestors.
-            for d in parent_dirs:
-                if d.deleted_at is None:
-                    continue  # creation — accepted
-                err = check_writable(self, "write", d.path)
-                if err is not None:
-                    return err
+        file_paths = list(ctx.write_map)
+        file_paths.extend(
+            version_path(p, 1)
+            for p, obj in ctx.write_map.items()
+            if obj.kind == "file"
+        )
+        if not file_paths:
+            return
+        parent_dirs, dir_errors = await self._resolve_parent_dirs(file_paths, session)
+        if dir_errors:
+            ctx.errors.extend(dir_errors)
+            raise _WriteAbort(ctx.errors)
+        for d in parent_dirs:
+            if d.deleted_at is None:
+                continue
+            err = check_writable(self, "write", d.path)
+            if err is not None:
+                raise _WriteAbort(err.errors)
+        ctx.parent_dirs = parent_dirs
 
-        # ── Step 4a: Fetch existing rows ──────────────────────────────
-        all_paths = list(write_map.keys())
+    async def _write_phase_fetch_existing(
+        self,
+        ctx: _WriteContext,
+        session: AsyncSession,
+    ) -> None:
+        """Batch-fetch existing rows and the latest version hash per file."""
+        all_paths = list(ctx.write_map.keys())
         existing_map: dict[str, VFSEntry] = {}
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
             stmt = select(self._model).where(
@@ -1474,57 +1590,60 @@ class DatabaseFileSystem(VirtualFileSystem):
             result = await session.execute(stmt)
             for row in result.scalars().all():
                 existing_map[row.path] = row
+        ctx.existing_map = existing_map
 
-        # ── Step 4b: Fetch latest version hash per file ───────────────
-        latest_version_hash: dict[str, str | None] = {}
         version_path_to_file: dict[str, str] = {}
         for obj_path, existing in existing_map.items():
-            if existing.kind == "file" and existing.version_number is not None and existing.version_number > 0:
+            if (
+                existing.kind == "file"
+                and existing.version_number is not None
+                and existing.version_number > 0
+            ):
                 vp = version_path(obj_path, existing.version_number)
                 version_path_to_file[vp] = obj_path
 
-        if version_path_to_file:
-            vp_list = list(version_path_to_file.keys())
-            for batch in self._chunk_paths(session, vp_list, binds_per_item=1):
-                stmt = select(self._model.path, self._model.content_hash).where(  # ty: ignore[no-matching-overload]
-                    self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
-                )
-                result = await session.execute(stmt)
-                for vp, content_hash in result.all():
-                    file_path = version_path_to_file[vp]
-                    latest_version_hash[file_path] = content_hash
+        if not version_path_to_file:
+            return
 
-        # ── Step 5: Per-entry change detection ────────────────────────
-        # An entry is "changed" if it is new, was soft-deleted, is a
-        # directory (always touched on write), or its incoming
-        # content_hash differs from the persisted one. Unchanged file
-        # rows surface as ``status="unchanged"`` candidates and skip the
-        # rest of the pipeline entirely — no version row, no chunk
-        # cascade, no trigram delta, no embedding call, no ``UPDATE``,
-        # and crucially no ``updated_at`` refresh.
-        changed_paths: set[str] = set()
-        unchanged_candidates: list[Candidate] = []
+        latest_version_hash: dict[str, str | None] = {}
+        vp_list = list(version_path_to_file.keys())
+        for batch in self._chunk_paths(session, vp_list, binds_per_item=1):
+            stmt = select(self._model.path, self._model.content_hash).where(  # ty: ignore[no-matching-overload]
+                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
+            )
+            result = await session.execute(stmt)
+            for vp, content_hash in result.all():
+                file_path = version_path_to_file[vp]
+                latest_version_hash[file_path] = content_hash
+        ctx.latest_version_hash = latest_version_hash
+
+    def _write_phase_detect_changes(self, ctx: _WriteContext) -> None:
+        """Classify each entry as changed, unchanged, or overwrite-rejected.
+
+        Hash equality on a live file row produces a ``status="unchanged"``
+        candidate and skips the rest of the pipeline for that path —
+        no version row, no chunk cascade, no index work, no ``UPDATE``,
+        and crucially no ``updated_at`` refresh.
+        """
         overwrite_rejections: set[str] = set()
-        for obj_path, incoming in write_map.items():
-            existing = existing_map.get(obj_path)
+        for obj_path, incoming in ctx.write_map.items():
+            existing = ctx.existing_map.get(obj_path)
             if existing is None:
-                changed_paths.add(obj_path)
+                ctx.changed_paths.add(obj_path)
                 continue
-            # Files with overwrite=False on a live row are rejected here
-            # so they don't enter auto-chunk / auto-index.
             if (
                 incoming.kind == "file"
                 and existing.deleted_at is None
-                and not overwrite
+                and not ctx.overwrite
             ):
-                errors.append(f"Already exists (overwrite=False): {obj_path}")
+                ctx.errors.append(f"Already exists (overwrite=False): {obj_path}")
                 overwrite_rejections.add(obj_path)
                 continue
             if existing.deleted_at is not None:
-                changed_paths.add(obj_path)
+                ctx.changed_paths.add(obj_path)
                 continue
             if existing.kind == "directory":
-                changed_paths.add(obj_path)
+                ctx.changed_paths.add(obj_path)
                 continue
             incoming_hash = incoming.content_hash
             existing_hash = existing.content_hash
@@ -1533,153 +1652,179 @@ class DatabaseFileSystem(VirtualFileSystem):
                 and existing_hash is not None
                 and incoming_hash == existing_hash
             ):
-                unchanged_candidates.append(
+                ctx.unchanged_candidates.append(
                     existing.to_candidate().model_copy(update={"status": "unchanged"})
                 )
             else:
-                changed_paths.add(obj_path)
+                ctx.changed_paths.add(obj_path)
 
         for p in overwrite_rejections:
-            write_map.pop(p, None)
+            ctx.write_map.pop(p, None)
 
-        # ── Step 6: Auto-chunk (in-memory) ────────────────────────────
-        if self._auto_chunk:
-            # Batch-fatal pre-check: a file with index_content=True
-            # cannot ship alongside pre-built chunks owned by it. The
-            # caller intended either auto-chunk OR pre-built chunks, not
-            # both — failing the whole batch surfaces the bug instead of
-            # half-committing inconsistent state.
-            conflict_owners: set[str] = set()
-            for obj_path, obj in write_map.items():
-                if obj.kind != "chunk":
-                    continue
-                owner = base_path(obj_path)
-                owner_obj = write_map.get(owner)
-                if owner_obj is not None and owner_obj.kind == "file" and owner_obj.index_content:
-                    conflict_owners.add(owner)
-            if conflict_owners:
-                errors.extend(
-                    f"{owner}: file + chunks both in batch with index_content=True"
-                    for owner in sorted(conflict_owners)
-                )
-                return self._error(
-                    VFSResult(function="write", success=False, errors=errors, candidates=[])
-                )
+    def _write_phase_auto_chunk_conflict_check(self, ctx: _WriteContext) -> None:
+        """Reject the whole batch when a file with ``index_content=True``
+        ships alongside pre-built chunks for the same file. The caller
+        intended either auto-chunk OR pre-built chunks, not both — failing
+        the whole batch surfaces the bug instead of half-committing
+        inconsistent state.
+        """
+        conflict_owners: set[str] = set()
+        for obj_path, obj in ctx.write_map.items():
+            if obj.kind != "chunk":
+                continue
+            owner = base_path(obj_path)
+            owner_obj = ctx.write_map.get(owner)
+            if (
+                owner_obj is not None
+                and owner_obj.kind == "file"
+                and owner_obj.index_content
+            ):
+                conflict_owners.add(owner)
+        if not conflict_owners:
+            return
+        ctx.errors.extend(
+            f"{owner}: file + chunks both in batch with index_content=True"
+            for owner in sorted(conflict_owners)
+        )
+        raise _WriteAbort(ctx.errors)
 
-            # Iterate a snapshot since we mutate write_map while looping.
-            for obj_path in list(write_map.keys()):
-                incoming = write_map[obj_path]
-                if obj_path not in changed_paths:
-                    continue
-                if incoming.kind != "file" or not incoming.index_content:
-                    continue
-                try:
-                    chunks = await asyncio.to_thread(incoming.chunk)
-                except Exception as exc:
-                    errors.append(f"Auto-chunk failed for {obj_path}: {exc}")
-                    return self._error(
-                        VFSResult(function="write", success=False, errors=errors, candidates=[])
-                    )
-                for ch in chunks:
-                    row = self._model(**ch.model_dump())
-                    row._explicit_fields = ch._explicit_fields
-                    if self._user_scoped and user_id:
-                        row.owner_id = user_id
-                    write_map[row.path] = row
-                    changed_paths.add(row.path)
+    async def _write_phase_auto_chunk(self, ctx: _WriteContext) -> None:
+        """Chunk changed indexable files in-memory and append chunk rows.
 
-        # ── Step 7: Auto-index (trigram deltas + bulk embed) ──────────
-        if self._auto_index:
-            # Files whose flag flipped True → False (e.g. just chunked) —
-            # the row stays but its content is no longer indexed; stage
-            # delete deltas for its old grams.
-            delete_only_existing: list[VFSEntry] = []
-            for obj_path in changed_paths:
-                existing = existing_map.get(obj_path)
-                incoming = write_map.get(obj_path)
-                if existing is None or incoming is None:
-                    continue
-                if existing.index_content and not incoming.index_content:
-                    delete_only_existing.append(existing)
-
-            indexable_changed = [
-                write_map[p]
-                for p in changed_paths
-                if p in write_map and write_map[p].index_content
-            ]
-            old_for_changed = {p: existing_map[p] for p in changed_paths if p in existing_map}
-
+        Iterates a snapshot of ``write_map`` since chunking mutates it.
+        A chunker exception aborts the batch before any DB mutation.
+        """
+        for obj_path in list(ctx.write_map.keys()):
+            incoming = ctx.write_map[obj_path]
+            if obj_path not in ctx.changed_paths:
+                continue
+            if incoming.kind != "file" or not incoming.index_content:
+                continue
             try:
-                if indexable_changed:
-                    await self._apply_index_maintenance(
-                        indexable_changed,
-                        old_entries=old_for_changed,
-                        session=session,
-                    )
-                if delete_only_existing:
-                    await self._apply_index_maintenance(
-                        delete_only_existing,
-                        delete_only=True,
-                        session=session,
-                    )
+                chunks = await asyncio.to_thread(incoming.chunk)
             except Exception as exc:
-                errors.append(f"Index maintenance failed: {exc}")
-                return self._error(
-                    VFSResult(function="write", success=False, errors=errors, candidates=[])
+                ctx.errors.append(f"Auto-chunk failed for {obj_path}: {exc}")
+                raise _WriteAbort(ctx.errors) from exc
+            for ch in chunks:
+                row = self._model(**ch.model_dump())
+                row._explicit_fields = ch._explicit_fields
+                if self._user_scoped and ctx.user_id:
+                    row.owner_id = ctx.user_id
+                ctx.write_map[row.path] = row
+                ctx.changed_paths.add(row.path)
+
+    async def _write_phase_auto_index(
+        self,
+        ctx: _WriteContext,
+        session: AsyncSession,
+    ) -> None:
+        """Stage trigram deltas, then issue ONE bulk embedding call.
+
+        A provider failure or vector-count mismatch aborts before any
+        DB mutation — embeddings ride along on the persist phase's
+        per-entry write, so failing here leaves no half-written index.
+        """
+        # Files whose flag flipped True → False (e.g. just chunked) —
+        # the row stays but its content is no longer indexed; stage
+        # delete deltas for its old grams.
+        delete_only_existing: list[VFSEntry] = []
+        for obj_path in ctx.changed_paths:
+            existing = ctx.existing_map.get(obj_path)
+            incoming = ctx.write_map.get(obj_path)
+            if existing is None or incoming is None:
+                continue
+            if existing.index_content and not incoming.index_content:
+                delete_only_existing.append(existing)
+
+        indexable_changed = [
+            ctx.write_map[p]
+            for p in ctx.changed_paths
+            if p in ctx.write_map and ctx.write_map[p].index_content
+        ]
+        old_for_changed = {
+            p: ctx.existing_map[p]
+            for p in ctx.changed_paths
+            if p in ctx.existing_map
+        }
+
+        try:
+            if indexable_changed:
+                await self._apply_index_maintenance(
+                    indexable_changed,
+                    old_entries=old_for_changed,
+                    session=session,
                 )
+            if delete_only_existing:
+                await self._apply_index_maintenance(
+                    delete_only_existing,
+                    delete_only=True,
+                    session=session,
+                )
+        except Exception as exc:
+            ctx.errors.append(f"Index maintenance failed: {exc}")
+            raise _WriteAbort(ctx.errors) from exc
 
-            # ONE bulk embedding call. Skip entries the caller embedded
-            # explicitly (their value wins). Skip entries with no content
-            # to embed.
-            if self._embedding_provider is not None:
-                embed_targets: list[VFSEntry] = [
-                    obj
-                    for p, obj in write_map.items()
-                    if p in changed_paths
-                    and obj.index_content
-                    and not self._field_was_explicitly_provided(obj, "embedding")
-                    and (obj.content or "")
-                ]
-                if embed_targets:
-                    try:
-                        vectors = await self._embedding_provider.embed_entries(embed_targets)
-                    except Exception as exc:
-                        errors.append(f"Embedding provider failed: {exc}")
-                        return self._error(
-                            VFSResult(function="write", success=False, errors=errors, candidates=[])
-                        )
-                    if len(vectors) != len(embed_targets):
-                        errors.append(
-                            f"Embedding provider returned {len(vectors)} vectors for "
-                            f"{len(embed_targets)} entries"
-                        )
-                        return self._error(
-                            VFSResult(function="write", success=False, errors=errors, candidates=[])
-                        )
-                    for entry, vector in zip(embed_targets, vectors, strict=True):
-                        entry.embedding = vector
+        if self._embedding_provider is None:
+            return
 
-        # ── Step 8: Persist ───────────────────────────────────────────
-        out: list[Candidate] = list(unchanged_candidates)
+        # ONE bulk embedding call. Skip entries the caller embedded
+        # explicitly (their value wins). Skip entries with no content
+        # to embed.
+        embed_targets: list[VFSEntry] = [
+            obj
+            for p, obj in ctx.write_map.items()
+            if p in ctx.changed_paths
+            and obj.index_content
+            and not self._field_was_explicitly_provided(obj, "embedding")
+            and (obj.content or "")
+        ]
+        if not embed_targets:
+            return
+        try:
+            vectors = await self._embedding_provider.embed_entries(embed_targets)
+        except Exception as exc:
+            ctx.errors.append(f"Embedding provider failed: {exc}")
+            raise _WriteAbort(ctx.errors) from exc
+        if len(vectors) != len(embed_targets):
+            ctx.errors.append(
+                f"Embedding provider returned {len(vectors)} vectors for "
+                f"{len(embed_targets)} entries"
+            )
+            raise _WriteAbort(ctx.errors)
+        for entry, vector in zip(embed_targets, vectors, strict=True):
+            entry.embedding = vector
 
-        # 8a: cascade DELETE of stale chunks for files whose content changed.
-        # The hook's default impl issues the DELETE; backends with chunk-derived
-        # indexes override to first stage trigram delete deltas.
+    async def _write_phase_persist(
+        self,
+        ctx: _WriteContext,
+        session: AsyncSession,
+    ) -> list[Candidate]:
+        """Stage cascade, apply inserts/updates, then revive parent dirs.
+
+        Per-entry failures append ``"Write failed for ..."`` to
+        ``ctx.errors`` and continue — partial-persist behavior is part of
+        the write contract. Parent directories revive only when at least
+        one durable (non-unchanged) candidate landed in this batch.
+        """
+        out: list[Candidate] = list(ctx.unchanged_candidates)
+
+        # Cascade DELETE of stale chunks for files whose content changed.
+        # The hook's default impl issues the DELETE; backends with chunk-
+        # derived indexes override to first stage trigram delete deltas.
         files_for_cascade = [
-            existing_map[p]
-            for p in changed_paths
-            if p in existing_map and existing_map[p].kind == "file"
+            ctx.existing_map[p]
+            for p in ctx.changed_paths
+            if p in ctx.existing_map and ctx.existing_map[p].kind == "file"
         ]
         if files_for_cascade:
             await self._stage_chunk_cascade(files_for_cascade, session=session)
 
-        # 8b: per-entry inserts / updates.
-        for obj_path in write_map:
-            if obj_path not in changed_paths:
+        for obj_path in ctx.write_map:
+            if obj_path not in ctx.changed_paths:
                 continue
-            incoming = write_map[obj_path]
+            incoming = ctx.write_map[obj_path]
             new_content = incoming.content or ""
-            existing = existing_map.get(obj_path)
+            existing = ctx.existing_map.get(obj_path)
 
             try:
                 if incoming.kind != "file":
@@ -1711,7 +1856,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                         existing,
                         incoming,
                         new_content,
-                        latest_version_hash.get(obj_path),
+                        ctx.latest_version_hash.get(obj_path),
                         session,
                     )
                     existing.index_content = incoming.index_content
@@ -1728,16 +1873,16 @@ class DatabaseFileSystem(VirtualFileSystem):
             except Exception as exc:
                 if existing is not None:
                     session.expire(existing)
-                errors.append(f"Write failed for {obj_path}: {exc}")
+                ctx.errors.append(f"Write failed for {obj_path}: {exc}")
 
         await session.flush()
 
-        # 8c: commit parent dirs.
-        # Only when this batch produced at least one durable write —
-        # ``unchanged_candidates`` doesn't count because it adds zero rows.
+        # Revive parent dirs only when this batch produced at least one
+        # durable write — ``unchanged_candidates`` doesn't count because
+        # it adds zero rows.
         if any(c.status != "unchanged" for c in out):
             now = datetime.now(UTC)
-            for d in parent_dirs:
+            for d in ctx.parent_dirs:
                 if d.deleted_at is not None:
                     d.deleted_at = None
                     d.updated_at = now
@@ -1745,20 +1890,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                     session.add(d)
             await session.flush()
 
-        # Invalidate the graph if any edges were written.
-        if out and any(c.kind == "edge" for c in out):
-            self._graph.invalidate()
-
-        result = self._unscope_result(
-            VFSResult(
-                function="write",
-                candidates=out,
-                errors=errors,
-                success=len(errors) == 0,
-            ),
-            user_id,
-        )
-        return self._error(result)
+        return out
 
     async def _ls_impl(
         self,
@@ -1923,7 +2055,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 errors.append(f"Not found: {p}")
 
         if not found:
-            return self._error(VFSResult(function="delete", errors=errors, success=len(errors) == 0))
+            return self._error(errors)
 
         # ── Batch-fetch children ─────────────────────────────────────
         children_map = await self._fetch_children_batched(
@@ -1941,7 +2073,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                     blocked.add(p)
             found = {p: o for p, o in found.items() if p not in blocked}
             if not found:
-                return self._error(VFSResult(function="delete", errors=errors, success=len(errors) == 0))
+                return self._error(errors)
 
         # ── Per-child permission check (cascade fail-fast) ───────────
         # The router's chokepoint only saw the top-level paths.  When a
