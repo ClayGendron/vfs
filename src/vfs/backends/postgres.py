@@ -26,17 +26,19 @@ from vfs.backends.database import (
     _regex_flags_for_mode,
 )
 from vfs.bm25 import tokenize_query
+from vfs.code_grams import unique_code_grams
 from vfs.models import postgres_vector_column_spec, resolve_embedding_vector_type
 from vfs.paths import scope_path
 from vfs.patterns import compile_glob, decompose_glob, glob_to_sql_like
 from vfs.results import Candidate, VFSResult
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.types import TypeEngine
 
+    from vfs.models import VFSEntry
     from vfs.query.ast import CaseMode, GrepOutputMode
 
 
@@ -513,6 +515,30 @@ class PostgresFileSystem(DatabaseFileSystem):
     _native_pattern_verified: bool = False
     _native_fulltext_verified: bool = False
     _native_vector_verified: bool = False
+    _native_chunk_grams_verified: bool = False
+
+    def _chunk_grams_bare_name(self) -> str:
+        return f"{self._model.__tablename__!s}_chunk_grams"
+
+    def _chunk_grams_table(self) -> str:
+        bare = self._chunk_grams_bare_name()
+        return f"{self._schema}.{bare}" if self._schema else bare
+
+    def _chunk_grams_schema_hint(self) -> str:
+        bare = self._chunk_grams_bare_name()
+        table = self._chunk_grams_table()
+        return dedent(f"""\
+            Provision the chunk-grams delta store outside the application, for example:
+              CREATE TABLE {table} (
+                  seq      bigserial PRIMARY KEY,
+                  gram_key integer   NOT NULL,
+                  chunk_id text      NOT NULL,
+                  action   smallint  NOT NULL
+              );
+              CREATE INDEX ix_{bare}_gram_chunk_seq
+                  ON {table} (gram_key, chunk_id, seq DESC);
+              CREATE INDEX ix_{bare}_chunk_id ON {table} (chunk_id);
+            Or call PostgresFileSystem.install_native_chunk_grams_schema() during setup.""")
 
     def _pattern_schema_hint(self) -> str:
         """Return the required pg_trgm/path-index DDL contract."""
@@ -656,6 +682,68 @@ class PostgresFileSystem(DatabaseFileSystem):
         async with self._use_session() as session:
             await session.execute(text(sql))
         self._native_graph_verified = False
+
+    async def install_native_chunk_grams_schema(self) -> None:
+        """Install the chunk-grams delta store required for code-gram grep maintenance.
+
+        Append-only delta rows; latest-action-wins per ``(gram_key, chunk_id)``
+        on read. ``action`` is ``1`` for add, ``0`` for delete. Compaction
+        (folding rows down to the current truth) is a separate slice.
+        """
+        bare = self._chunk_grams_bare_name()
+        table = self._chunk_grams_table()
+        statements = (
+            f"""
+            CREATE TABLE IF NOT EXISTS {table} (
+                seq      bigserial PRIMARY KEY,
+                gram_key integer   NOT NULL,
+                chunk_id text      NOT NULL,
+                action   smallint  NOT NULL
+            )
+            """,
+            f"CREATE INDEX IF NOT EXISTS ix_{bare}_gram_chunk_seq ON {table} (gram_key, chunk_id, seq DESC)",
+            f"CREATE INDEX IF NOT EXISTS ix_{bare}_chunk_id ON {table} (chunk_id)",
+        )
+        async with self._use_session() as session:
+            for stmt in statements:
+                await session.execute(text(stmt))
+        self._native_chunk_grams_verified = False
+
+    async def verify_native_chunk_grams_schema(self) -> None:
+        """Confirm the chunk-grams delta store exists with the expected shape."""
+        async with self._use_session() as session:
+            await self._verify_chunk_grams_schema(session)
+
+    async def _verify_chunk_grams_schema(self, session: AsyncSession) -> None:
+        if self._native_chunk_grams_verified:
+            return
+        table = self._chunk_grams_table()
+        object_id = (
+            await session.execute(text("SELECT to_regclass(:table)::oid"), {"table": table})
+        ).scalar()
+        if object_id is None:
+            raise RuntimeError(
+                f"PostgresFileSystem requires table '{table}' for code-gram maintenance. "
+                f"{self._chunk_grams_schema_hint()}"
+            )
+        bare = self._chunk_grams_bare_name()
+        index_names = {row[0] for row in (
+            await session.execute(
+                text("""
+                    SELECT indexname FROM pg_indexes
+                    WHERE schemaname = COALESCE(:schema, current_schema())
+                      AND tablename = :bare
+                """),
+                {"schema": self._schema, "bare": bare},
+            )
+        ).all()}
+        for required in (f"ix_{bare}_gram_chunk_seq", f"ix_{bare}_chunk_id"):
+            if required not in index_names:
+                raise RuntimeError(
+                    f"PostgresFileSystem requires index '{required}' on '{table}'. "
+                    f"{self._chunk_grams_schema_hint()}"
+                )
+        self._native_chunk_grams_verified = True
 
     async def verify_native_graph_schema(self) -> None:
         """Confirm the database has the native graph artifacts required by this backend."""

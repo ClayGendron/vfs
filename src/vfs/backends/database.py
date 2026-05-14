@@ -512,7 +512,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             stmt = delete(self._model).where(or_(*conditions))
             await session.execute(stmt)
 
-    async def _apply_index_maintenance(
+    async def _apply_trigram_maintenance(
         self,
         entries: Sequence[VFSEntry],
         *,
@@ -520,23 +520,27 @@ class DatabaseFileSystem(VirtualFileSystem):
         delete_only: bool = False,
         session: AsyncSession,
     ) -> None:
-        """Compute trigram add/delete deltas and embeddings, stage for the persist flush.
+        """Stage trigram add/delete deltas for the persist flush.
 
         ``old_entries`` supplies the current persisted content for
-        existing rows so the backend can compute::
+        path-stable updates (files) so the backend can compute::
 
             old_grams - new_grams -> delete deltas
             new_grams - old_grams -> add deltas
 
-        When ``delete_only`` is True, the backend recalculates the current
-        trigrams for the supplied entries and stages delete deltas only.
-        Used for deletes and for files whose flag flipped to
-        ``index_content=False``.
+        Chunks have no persistent identity across content changes — the
+        cascade hook stages deletes for the old chunks before they are
+        DELETEd from the entries table, and this hook stages adds for
+        the new chunks. Do not diff chunks against ``old_entries``.
 
-        Embedding work is delegated to the configured provider in a
-        single bulk call. No ``INSERT``/``UPDATE``/``DELETE`` is issued
-        here — everything is queued on the session and emitted at the
-        persist flush. Default implementation is a no-op.
+        When ``delete_only`` is True, recalculate the current trigrams
+        for the supplied entries and stage delete deltas only. Used for
+        files whose flag flipped to ``index_content=False`` and (in
+        a later slice) for row-deletes.
+
+        No ``INSERT``/``UPDATE``/``DELETE`` against the entries table is
+        issued here — delta rows are queued on the session and emitted
+        at the persist flush. Default implementation is a no-op.
         """
 
     async def _get_object(
@@ -1749,19 +1753,19 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         try:
             if indexable_changed:
-                await self._apply_index_maintenance(
+                await self._apply_trigram_maintenance(
                     indexable_changed,
                     old_entries=old_for_changed,
                     session=session,
                 )
             if delete_only_existing:
-                await self._apply_index_maintenance(
+                await self._apply_trigram_maintenance(
                     delete_only_existing,
                     delete_only=True,
                     session=session,
                 )
         except Exception as exc:
-            ctx.errors.append(f"Index maintenance failed: {exc}")
+            ctx.errors.append(f"Trigram maintenance failed: {exc}")
             raise _WriteAbort(ctx.errors) from exc
 
         if self._embedding_provider is None:

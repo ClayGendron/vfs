@@ -1,7 +1,7 @@
 # 013 — Implementation notes
 
-- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; DDL / write maintenance / grep rewrite not started)
-- **Date:** 2026-05-01
+- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 DDL + provisioning landed via story 014 slice 3, Postgres write maintenance + grep rewrite in flight)
+- **Date:** 2026-05-01 (last updated 2026-05-13)
 - **Spec:** [spec.md](./spec.md)
 - **Plan:** [plan.md](./plan.md)
 
@@ -171,31 +171,91 @@ candidate-generation pipeline using a `defaultdict(set)` posting index,
 and a 30-case soundness sweep. Every cell asserts that the candidate
 path doesn't drop a chunk the full scan finds.
 
-## What is NOT done yet
+## Phase 2 — in flight (story 014 slice 3)
 
-The remainder of [plan.md](./plan.md) phases 2-7 is open work:
+Phase 2 ships inside [story 014 slice 3](../014-auto-chunk-and-auto-index-on-write/implementation.md#slice-3--in-progress)
+because the gram-store maintenance is the same write-pipeline hook
+(`_apply_trigram_maintenance`) that auto-index defines. Reading the
+slice 3 section is the load-bearing context for what's actually
+shipped.
 
-### Phase 2 (not started) — Postgres row-store adapter DDL + maintenance
+### Schema deviation from spec §4
 
-- DDL for `vfs_entry_chunk_grams(gram_kind, gram_key, chunk_id)` plus
-  the reverse-lookup index by `chunk_id` for delete/update maintenance.
-- Provisioning + `_verify_pattern_schema` extension on
-  `PostgresFileSystem` to demand the new artifacts.
-- Backend write path: extract grams from chunk content on insert, delete
-  grams when a chunk is deleted, cascade old chunks when a file is
-  re-chunked. Atomic with chunk row writes.
-- Filter `index_content = True` in the gram extraction pipeline so the file
-  row stops feeding content indexes once it's been chunked.
+Spec §4 described the row-store MVP as "adds insert rows and deletes
+remove rows" — the table at any point holds current truth. The
+implementation ships the **append-only delta** shape instead, which
+matches the posting-block model (spec §3, phase 5) collapsed onto the
+row store. The staging stream IS the future posting-block compaction
+input, so we skip a migration when phase 5 lands.
 
-### Phase 2 (not started) — `_grep_impl` rewrite
+Final schema:
 
-- `PostgresFileSystem._grep_impl` swaps `pg_trgm` for the code-gram path:
-  build `GramQuery` → SQL intersection → fetch chunk content → fetch
-  owner-file paths → run authoritative Python regex via the existing
-  `_collect_line_matches`.
-- No-false-negative integration test against the in-memory backend
-  across fixed strings, regexes, punctuation, path-like strings, and
-  case-sensitive vs case-insensitive grep.
+```sql
+CREATE TABLE {entries_table}_chunk_grams (
+    seq      bigserial PRIMARY KEY,
+    gram_key integer   NOT NULL,
+    chunk_id text      NOT NULL,
+    action   smallint  NOT NULL    -- 1=add, 0=delete
+);
+CREATE INDEX ix_..._gram_chunk_seq
+    ON {table} (gram_key, chunk_id, seq DESC);
+CREATE INDEX ix_..._chunk_id ON {table} (chunk_id);
+```
+
+Reads use latest-action-wins per `(gram_key, chunk_id)` via
+`DISTINCT ON ... ORDER BY seq DESC`. Other simplifications vs.
+spec §4:
+
+- **No `gram_kind` column.** Single normalization (folded);
+  case-sensitive grep gets a less selective candidate set with
+  Python verification enforcing case. A raw-gram stream is a
+  separate slice if benchmarks demand it. This deviates from the
+  earlier "maintain both raw and folded streams" decision below
+  — slice 3 chose the simpler single-stream path.
+- **No `owner_path`, `line_start`, `line_end`.** Spec marked these
+  optional; the join to `vfs_entries` is mandatory anyway for
+  content fetch, and denormalizing inflated gram-row storage
+  roughly 5–10× for no correctness win.
+- **No FK** to the entries table — write-order independent;
+  cascade is application-level via `_stage_chunk_cascade`.
+- **No `user_id`** — `vfs_entries` is already path-scoped; the
+  scope filter applies on the join.
+
+### Landed so far
+
+`src/vfs/backends/postgres.py`:
+
+- `_native_chunk_grams_verified` flag.
+- `_chunk_grams_bare_name()`, `_chunk_grams_table()`,
+  `_chunk_grams_schema_hint()` helpers.
+- `install_native_chunk_grams_schema()` — idempotent
+  `CREATE TABLE IF NOT EXISTS` + both indexes.
+- `verify_native_chunk_grams_schema()` and
+  `_verify_chunk_grams_schema(session)` — fail-fast with a hint
+  pointing at the installer. Cached after first pass.
+
+`src/vfs/backends/database.py`:
+
+- Base hook renamed from `_apply_index_maintenance` to
+  `_apply_trigram_maintenance` — the orchestrator already ran
+  embeddings directly, so the old name was wider than the
+  responsibility. Docstring now spells out the chunk-vs-file
+  identity contract.
+
+### What's next inside Phase 2
+
+- **Postgres `_apply_trigram_maintenance`** — diff gram sets for
+  files (persistent id via `existing.id`), all-adds for chunks
+  (no persistent id; cascade handles their deletes).
+- **Postgres `_stage_chunk_cascade`** — read existing chunks,
+  recompute their grams, stage delete deltas using old chunk
+  ids, then `super()` to issue the DELETE.
+- **`PostgresFileSystem._grep_impl` rewrite** — `GramQuery` →
+  delta-store SQL with latest-action-wins → chunk content fetch
+  → Python regex via existing `_collect_line_matches`.
+- **No-false-negative integration test** against the in-memory
+  backend across fixed strings, regexes, punctuation, path-like
+  strings, case-sensitive and case-insensitive grep.
 
 ### Later phases — out of scope for this story slice
 
@@ -210,10 +270,19 @@ The remainder of [plan.md](./plan.md) phases 2-7 is open work:
 
 ## Decisions captured along the way
 
-- **Default case mode is folded.** The Postgres adapter will maintain
-  both raw and folded gram streams; grep queries always emit folded
-  grams. The `gram_kind` dimension is in the schema regardless so
-  case-sensitive search remains possible without a schema change.
+- **Default case mode is folded.** ~~The Postgres adapter will
+  maintain both raw and folded gram streams; grep queries always emit
+  folded grams. The `gram_kind` dimension is in the schema regardless
+  so case-sensitive search remains possible without a schema change.~~
+  **Superseded 2026-05-13 (slice 3):** the dual-stream plan was
+  dropped during slice 3 design. The implementation ships
+  **folded only** with no `gram_kind` column; case-sensitive grep
+  gets a less selective candidate set than a dedicated raw index
+  would, but Python verification enforces case correctness. A raw
+  stream is a follow-up slice if benchmarks call for it. The
+  posting-block design (phase 5) can re-introduce per-stream
+  separation without a schema migration by namespacing inside
+  `index_id`.
 - **Field name is `index_content`, not `indexable`.** Captures the
   state ("include this row's content in the content-side indexes")
   rather than the capability ("can be indexed"). Path-side indexes are

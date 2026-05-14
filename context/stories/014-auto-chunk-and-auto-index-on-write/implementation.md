@@ -1,7 +1,7 @@
 # 014 — Implementation notes
 
-- **Status:** in-progress (Slices 1 + 2 complete; Slice 3 = Postgres trigram wiring not started)
-- **Date:** 2026-05-03
+- **Status:** in-progress (Slices 1 + 2 complete; Slice 3 schema + provisioning landed, Postgres maintenance overrides in flight)
+- **Date:** 2026-05-03 (last updated 2026-05-13)
 - **Spec:** [spec.md](./spec.md)
 - **Pipeline doc:** [`docs/internals/write_pipeline.md`](../../../docs/internals/write_pipeline.md)
 
@@ -11,7 +11,7 @@
 |---|---|---|
 | 1 | Public surface, no behavior change | done |
 | 2 | Pipeline restructure in base `_write_impl` (change detect, auto-chunk, persist reorder, status population) | done |
-| 3 | Postgres trigram + bulk embed wiring (depends on story 013 phase 2 row store) | not started |
+| 3 | Postgres trigram delta-store + bulk embed wiring (subsumes story 013 phase 2) | in progress — DDL + provisioning landed; maintenance overrides + grep rewrite next |
 | 4 | Multi-mount router merge in `VFSClient`; delete-side delta staging | not started |
 
 Slice 1 is mechanical — adds the API surface, hooks, and writer formatter
@@ -331,23 +331,144 @@ context/stories/014-...         # this implementation.md
 `uv run pytest` — 2476 passed (was 2457 at slice 1), 108 skipped, no
 regressions. `uvx ruff check` clean on changed files.
 
-## Slice 3 — what's next
+## Slice 3 — in progress
 
-Postgres trigram row-store wiring (story 013 phase 2) plus the
-PostgresFileSystem overrides for `_stage_chunk_cascade` (must stage
-trigram delete deltas BEFORE calling `super()`) and
-`_apply_index_maintenance` (delta extraction + staging into
-`vfs_entry_chunk_grams`). Plus the EmbeddingProvider input-order test
-double for AC 20.
+Postgres trigram delta-store wiring. Story 013 phase 2 (DDL +
+provisioning) lands inside this slice, then the `PostgresFileSystem`
+overrides for `_stage_chunk_cascade` and the trigram-maintenance hook,
+then the `_grep_impl` rewrite to read candidates out of the delta
+store.
+
+### Design deviations from spec
+
+Two spec deviations were settled during slice 3 design and are
+intentional. The spec is authoritative for intent; this section is
+authoritative for what shipped.
+
+1. **Hook renamed `_apply_index_maintenance` → `_apply_trigram_maintenance`.**
+   The base hook described itself as "trigram + embedding
+   maintenance" but the orchestrator (`_write_phase_auto_index`)
+   already runs the bulk `embed_entries` call directly — the hook
+   only ever touched trigrams in practice. The new name matches the
+   actual responsibility. Three call sites updated:
+   `src/vfs/backends/database.py:515` (definition),
+   `src/vfs/backends/database.py:1755` and `1762` (orchestrator
+   call sites). Error string at line 1768 became "Trigram
+   maintenance failed: ...". No test or external surface depended
+   on the old name.
+
+2. **Schema: delta-append, not row-store-as-truth.** Spec §4 of
+   story 013 described the row-store MVP as "adds insert rows and
+   deletes remove rows" — the table at any point holds exactly
+   current truth. Slice 3 ships the **append-only delta** shape
+   instead, matching the posting-block model (spec §3, phase 5)
+   collapsed onto the row store:
+
+   ```sql
+   CREATE TABLE {entries_table}_chunk_grams (
+       seq      bigserial PRIMARY KEY,
+       gram_key integer   NOT NULL,
+       chunk_id text      NOT NULL,
+       action   smallint  NOT NULL    -- 1=add, 0=delete
+   );
+   CREATE INDEX ix_..._gram_chunk_seq
+       ON {table} (gram_key, chunk_id, seq DESC);
+   CREATE INDEX ix_..._chunk_id ON {table} (chunk_id);
+   ```
+
+   Reads use latest-action-wins per `(gram_key, chunk_id)` via
+   `DISTINCT ON ... ORDER BY seq DESC`. The trade is a slightly
+   slower hot path (3–5× at zero compaction lag) for a much
+   smoother path to posting-block compaction (story 013 phase 5)
+   when it lands — the staging stream IS the compaction input.
+
+   Other schema simplifications vs. spec §4:
+   - **No `gram_kind` column.** Single normalization (folded);
+     case-sensitive grep gets a slightly less selective candidate
+     set with Python verification enforcing case. Raw grams are
+     a separate slice if benchmarks demand them.
+   - **No `owner_path`, `line_start`, `line_end`.** Spec marked
+     these optional; the join to `vfs_entries` is mandatory anyway
+     for content fetch, so denormalizing them ~5–10× the gram-row
+     storage for no correctness win.
+   - **No FK** to the entries table — write-order independent;
+     cascade is application-level via `_stage_chunk_cascade`.
+   - **No `user_id`** — `vfs_entries` is path-scoped, grep joins
+     back for the scope filter.
+
+### Landed so far
+
+`src/vfs/backends/database.py`:
+
+- `_apply_trigram_maintenance` base hook with the new name + the
+  chunk-vs-file identity contract documented in the docstring
+  (chunks have no persistent identity; cascade stages their
+  deletes, this hook stages their adds).
+- Orchestrator call sites and error string renamed.
+
+`src/vfs/backends/postgres.py`:
+
+- `_native_chunk_grams_verified` flag.
+- `_chunk_grams_bare_name()`, `_chunk_grams_table()`,
+  `_chunk_grams_schema_hint()` — naming + provisioning hint
+  parallel to the existing `_pattern_schema_hint` /
+  `_fulltext_schema_hint` pattern.
+- `install_native_chunk_grams_schema()` — creates the table and
+  both indexes (idempotent via `IF NOT EXISTS`).
+- `verify_native_chunk_grams_schema()` (public) +
+  `_verify_chunk_grams_schema(session)` (internal, cached) —
+  fail-fast with a clear hint pointing at the installer.
+- Imports: `unique_code_grams` from `vfs.code_grams`; `Sequence`
+  and `VFSEntry` added to the `TYPE_CHECKING` block.
+
+The Postgres override for `_apply_trigram_maintenance` and the
+`_stage_chunk_cascade` override are next. The `_grep_impl`
+rewrite onto the delta store and the integration test sweep land
+after the maintenance side is green.
+
+### Identity contract (chunks vs files)
+
+The trigram hook treats kind as load-bearing:
+
+- **Files** (`kind="file"`, `index_content=True`): persistent
+  identity. `_update_existing` keeps the existing row's id, so
+  `chunk_id = existing.id`. Diff against `old_entries[path]`:
+  stage `new_grams - old_grams` as adds, `old_grams - new_grams`
+  as deletes. Shared grams produce no row.
+- **Chunks** (`kind="chunk"`): no persistent identity across
+  content changes. The cascade (`_stage_chunk_cascade`) reads
+  the existing chunks and stages all-deletes for their grams
+  using the old chunk ids; this hook stages all-adds for the
+  incoming chunk grams using the incoming chunk ids. Never
+  diff chunks against `old_entries`.
+- **`delete_only=True`** (flag flip True→False, or row-delete in
+  slice 4): recompute current grams from `entry.content` and
+  stage every gram as a delete using `entry.id`.
+
+This is why "chunk_id" in the table name is slightly misleading
+— small unchunked files with `index_content=True` also land in
+the table, keyed by the file row's id. The naming is kept for
+spec alignment.
 
 ## Open follow-ups (slice 3+ deliverables)
 
-- **Story 013 phase 2** must land before `PostgresFileSystem` can
-  implement real `_stage_chunk_cascade` / `_apply_index_maintenance`
-  hooks (the row-store DDL `vfs_entry_chunk_grams` does not exist yet).
-- **EmbeddingProvider input-order test** (spec AC 20) — reference test
-  double that proves a sub-batching provider returns vectors in input
-  order even when sub-batches complete out of order. Slice 3.
-- **Multi-mount partial commit** — `VFSClient.write()` flatten-and-merge
-  with both blocks in `to_str()`. Slice 4.
+- **Postgres override of `_apply_trigram_maintenance`** — staging
+  delta rows per the identity contract above. In progress.
+- **Postgres override of `_stage_chunk_cascade`** — read existing
+  chunks, stage delete deltas for their grams using old chunk
+  ids, then call `super()` to issue the DELETE.
+- **`_grep_impl` rewrite** — `GramQuery` → SQL intersection over
+  the delta store with latest-action-wins → fetch chunk content
+  → Python regex verification via existing `_collect_line_matches`.
+- **Compaction** — fold delta rows down to current truth per
+  `(gram_key, chunk_id)`. Required when delta-stream growth
+  starts costing read latency; can ship behind a manual
+  `compact_chunk_grams()` helper initially. Story 013 phase 5
+  is the eventual home.
+- **EmbeddingProvider input-order test** (spec AC 20) — reference
+  test double that proves a sub-batching provider returns vectors
+  in input order even when sub-batches complete out of order.
+  Slice 3.
+- **Multi-mount partial commit** — `VFSClient.write()`
+  flatten-and-merge with both blocks in `to_str()`. Slice 4.
 - **Delete-side delta staging** in `_delete_impl`. Slice 4.
