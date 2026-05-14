@@ -1,8 +1,8 @@
 site_name: vfs
 site_description: The virtual file system for agents.
 site_url: https://claygendron.github.io/vfs/
-repo_url: https://github.com/ClayGendron/grover
-repo_name: ClayGendron/grover
+repo_url: https://github.com/ClayGendron/vfs
+repo_name: ClayGendron/vfs
 
 theme:
   name: material

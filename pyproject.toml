@@ -35,9 +35,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ClayGendron/grover"
-Repository = "https://github.com/ClayGendron/grover"
-Issues = "https://github.com/ClayGendron/grover/issues"
+Homepage = "https://github.com/ClayGendron/vfs"
+Repository = "https://github.com/ClayGendron/vfs"
+Issues = "https://github.com/ClayGendron/vfs/issues"
 
 [project.optional-dependencies]
 search = [
