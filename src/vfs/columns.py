@@ -77,6 +77,17 @@ DEFAULT_COLUMNS: dict[str, frozenset[str]] = {
     "min_meeting_subgraph": _PATH_KIND_ONLY,
     # Merged
     "hybrid": _PATH_KIND_ONLY,
+    # ──────────────────────────────────────────────────────────────────
+    # Internal — load_only sets for DatabaseFileSystem write-path queries.
+    # Heavy columns (``embedding``, ``version_diff``) stay excluded; phase
+    # 3 also pulls ``content`` so changed-path detection has it on hand
+    # without a second roundtrip.
+    # ──────────────────────────────────────────────────────────────────
+    "_fetch_existing": _METADATA_COLUMNS | frozenset(
+        {"content", "content_hash", "deleted_at", "version_number", "index_content"}
+    ),
+    "_write_path_scan": _METADATA_COLUMNS | frozenset({"deleted_at", "parent_path"}),
+    "_move_edges": _PATH_KIND_ONLY | frozenset({"source_path", "target_path", "edge_type"}),
 }
 
 

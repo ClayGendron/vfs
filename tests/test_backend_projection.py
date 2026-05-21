@@ -13,6 +13,8 @@ the spec for what each impl must do.
 
 from __future__ import annotations
 
+import re
+
 from vfs.backends.database import DatabaseFileSystem
 from vfs.columns import default_columns
 
@@ -291,6 +293,41 @@ class TestPublicSurfaceColumnsKwarg:
         entry = result.file
         assert entry is not None
         assert entry.content == "# Intro\nhello world"
+
+
+class TestWritePathProjection:
+    """Pin the column list for write-path ORM-row SELECTs.
+
+    Without these tests, a future edit can silently re-add ``embedding``
+    or ``version_diff`` to ``_fetch_existing`` and nothing fails.
+    """
+
+    async def test_fetch_existing_omits_heavy_columns(self, db, sql_capture):
+        async with db._use_session() as s:
+            await db._write_impl(path="/seed.txt", content="seed", session=s)
+        sql_capture.reset()
+
+        # Identical-content rewrite — runs _write_phase_fetch_existing
+        # and exits before any phase that re-fetches.
+        async with db._use_session() as s:
+            await db._write_impl(path="/seed.txt", content="seed", session=s)
+
+        # Phase 3 SELECT is recognizable by projecting content_hash and
+        # kind together — neither read-path defaults nor the version-hash
+        # tuple projection use that combination.
+        phase3 = [
+            s for s in sql_capture.reads_against_entries()
+            if "vfs_entries.content_hash" in s and "vfs_entries.kind" in s
+        ]
+        assert phase3, "expected to capture the _write_phase_fetch_existing SELECT"
+
+        word = lambda col: re.compile(rf"\bvfs_entries\.{col}\b")
+        for stmt in phase3:
+            assert not word("embedding").search(stmt), stmt
+            assert not word("version_diff").search(stmt), stmt
+            assert word("content").search(stmt)
+            assert word("content_hash").search(stmt)
+            assert word("deleted_at").search(stmt)
 
 
 class TestPagerankProjection:

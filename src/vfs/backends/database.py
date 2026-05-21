@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import load_only
 
 from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
@@ -209,15 +210,15 @@ class _WriteContext:
     positional argument lists.
     """
 
-    write_map: dict[str, VFSEntry]
-    overwrite: bool
     user_id: str | None
-    errors: list[str] = field(default_factory=list)
+    overwrite: bool
+    write_map: dict[str, VFSEntry]
+    parent_dirs: list[VFSEntry] = field(default_factory=list)
     existing_map: dict[str, VFSEntry] = field(default_factory=dict)
     latest_version_hash: dict[str, str | None] = field(default_factory=dict)
-    parent_dirs: list[VFSEntry] = field(default_factory=list)
     changed_paths: set[str] = field(default_factory=set)
     unchanged_candidates: list[Candidate] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 class _WriteAbort(Exception):  # noqa: N818 — phase-abort signal; "Abort" names the control flow more precisely than "Error".
@@ -292,6 +293,24 @@ class DatabaseFileSystem(VirtualFileSystem):
         self._vector_store = vector_store
         self._auto_chunk = bool(auto_chunk)
         self._auto_index = bool(auto_index)
+        self._metadata_root_ensured = False
+
+    async def setup(self) -> None:
+        """Run one-shot initialization against the backing database.
+
+        Currently ensures the reserved ``/.vfs`` metadata directory
+        exists. Callers must invoke this once after construction —
+        before the first ``write()`` — so the write path no longer
+        has to check on every call.
+
+        Safe to call multiple times; subsequent calls are no-ops
+        once the metadata root is confirmed.
+        """
+        if self._metadata_root_ensured:
+            return
+        async with self._session_factory() as session:
+            await self._ensure_metadata_root(session)
+            await session.commit()
 
     def _row(self, **data: Any) -> VFSEntry:
         """Mint a table-row instance from validated data.
@@ -409,6 +428,16 @@ class DatabaseFileSystem(VirtualFileSystem):
         """
         ordered = ["path", *sorted(c for c in cols if c != "path")]
         return [getattr(self._model, c) for c in ordered]
+
+    def _load_only_columns(self, cols: frozenset[str]) -> Any:
+        """ORM-row equivalent of :meth:`_select_columns`.
+
+        Returns a ``load_only()`` ``Load`` option (pass to ``.options(...)``),
+        not a list to splat into ``select(*...)``. Use for write-path
+        queries that need mutation tracking and identity-map semantics.
+        """
+        ordered = ["path", *sorted(c for c in cols if c != "path")]
+        return load_only(*(getattr(self._model, c) for c in ordered))
 
     def _row_to_candidate(
         self,
@@ -951,27 +980,6 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         return corpus_size, avgdl, doc_freqs
 
-    async def _resolve_required_parents(
-        self,
-        paths: list[str],
-        session: AsyncSession,
-        *,
-        required_kind: str,
-        include_deleted: bool,
-    ) -> dict[str, VFSEntry]:
-        """Load required parent objects using a kind-specific policy."""
-        resolved: dict[str, VFSEntry] = {}
-        for batch in self._chunk_paths(session, paths, binds_per_item=1):
-            stmt = select(self._model).where(
-                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
-                _unchecked_clause(self._model.kind == required_kind),
-            )
-            if not include_deleted:
-                stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
-            result = await session.execute(stmt)
-            resolved.update({obj.path: obj for obj in result.scalars().all()})
-        return resolved
-
     async def _resolve_parent_dirs(
         self,
         paths: list[str],
@@ -1006,15 +1014,17 @@ class DatabaseFileSystem(VirtualFileSystem):
         if not all_ancestors:
             return [], []
 
-        # Load ALL existing objects at ancestor paths (any kind, including
-        # soft-deleted) so we can detect non-directory ancestors.
+        cols = self._resolve_columns("_write_path_scan", None)
         existing: dict[str, VFSEntry] = {}
         for batch in self._chunk_paths(session, sorted(all_ancestors), binds_per_item=1):
-            stmt = select(self._model).where(self._model.path.in_(batch))  # ty: ignore[unresolved-attribute]
+            stmt = (
+                select(self._model)
+                .where(self._model.path.in_(batch))  # ty: ignore[unresolved-attribute]
+                .options(self._load_only_columns(cols))
+            )
             result = await session.execute(stmt)
             existing.update({obj.path: obj for obj in result.scalars().all()})
 
-        # Reject non-directory ancestors
         errors: list[str] = []
         for p, obj in existing.items():
             if obj.kind != "directory":
@@ -1023,12 +1033,10 @@ class DatabaseFileSystem(VirtualFileSystem):
         if errors:
             return [], errors
 
-        # Collect soft-deleted dirs for revival (not mutated yet)
         dirs: list[VFSEntry] = [
             existing[p] for p in sorted(existing, key=lambda p: p.count("/")) if existing[p].deleted_at is not None
         ]
 
-        # Create missing directories (shallowest first)
         missing = sorted(all_ancestors - set(existing), key=lambda p: p.count("/"))
         dirs.extend(self._row(path=ancestor, kind="directory") for ancestor in missing)
 
@@ -1037,15 +1045,18 @@ class DatabaseFileSystem(VirtualFileSystem):
     async def _ensure_metadata_root(self, session: AsyncSession) -> None:
         """Ensure the reserved ``/.vfs`` directory exists.
 
-        Parallel write batches all need the same projected metadata root.
-        Create or revive it once and tolerate a concurrent creator racing
-        us to the unique key.
+        Idempotent — the instance memoizes success in
+        ``_metadata_root_ensured`` so repeated ``setup()`` calls are
+        cheap. Tolerates concurrent creators racing the unique key.
         """
+        if self._metadata_root_ensured:
+            return
         existing = await self._get_object(METADATA_ROOT, session, include_deleted=True)
         if existing is not None:
             if existing.deleted_at is not None:
                 existing.deleted_at = None
                 existing.updated_at = datetime.now(UTC)
+            self._metadata_root_ensured = True
             return
         try:
             async with session.begin_nested():
@@ -1053,38 +1064,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 await session.flush()
         except IntegrityError:
             pass
-
-    async def _validate_chunk_parents(
-        self,
-        write_map: dict[str, VFSEntry],
-        session: AsyncSession,
-    ) -> tuple[set[str], list[str]]:
-        """Reject chunk writes whose companion file is absent from DB and batch."""
-        chunk_writes = [
-            obj for obj in write_map.values() if obj.kind == "chunk" and base_path(obj.path) not in write_map
-        ]
-        if not chunk_writes:
-            return set(), []
-
-        parent_paths = sorted({base_path(obj.path) for obj in chunk_writes})
-        existing_parents = set(
-            await self._resolve_required_parents(
-                parent_paths,
-                session,
-                required_kind="file",
-                include_deleted=False,
-            )
-        )
-
-        invalid_paths: set[str] = set()
-        errors: list[str] = []
-        for obj in chunk_writes:
-            owning_file = base_path(obj.path)
-            if owning_file not in existing_parents:
-                invalid_paths.add(obj.path)
-                errors.append(f"Chunk parent file not found: {owning_file} (for {obj.path})")
-
-        return invalid_paths, errors
+        self._metadata_root_ensured = True
 
     async def _fetch_children_batched(
         self,
@@ -1104,6 +1084,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         files = {p: o for p, o in objs.items() if o.kind != "directory"}
         result_map: dict[str, list[VFSEntry]] = {p: [] for p in objs}
         or_batch_size = min(self._query_chunk_size(session, binds_per_item=2), 200)
+        cols = self._resolve_columns("_write_path_scan", None)
 
         # Directory cascade — batched OR of LIKE conditions
         if dirs:
@@ -1120,7 +1101,11 @@ class DatabaseFileSystem(VirtualFileSystem):
                     conditions.append(
                         self._model.path.like(_escape_like(rooted) + "/%", escape="\\")  # ty: ignore[unresolved-attribute]
                     )
-                stmt = select(self._model).where(or_(*conditions))
+                stmt = (
+                    select(self._model)
+                    .where(or_(*conditions))
+                    .options(self._load_only_columns(cols))
+                )
                 if not include_deleted:
                     stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
                 rows = await session.execute(stmt)
@@ -1154,7 +1139,11 @@ class DatabaseFileSystem(VirtualFileSystem):
                         conditions.append(
                             self._model.path.like(_escape_like(path) + "/%", escape="\\")  # ty: ignore[unresolved-attribute]
                         )
-                stmt = select(self._model).where(or_(*conditions))
+                stmt = (
+                    select(self._model)
+                    .where(or_(*conditions))
+                    .options(self._load_only_columns(cols))
+                )
                 if not include_deleted:
                     stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
                 rows = await session.execute(stmt)
@@ -1410,28 +1399,27 @@ class DatabaseFileSystem(VirtualFileSystem):
         self._require_user_id(user_id)
 
         try:
-            coerced = self._coerce_write_entries(entries, path, content, user_id)
-            ctx = self._build_write_context(coerced, overwrite, user_id)
+            built = self._build_write_entries(entries, path, content, user_id)
+            ctx = self._build_write_context(built, overwrite, user_id)
             if ctx is None:
-                # Empty input — nothing to validate, nothing to write.
                 return VFSResult(function="write", success=True, candidates=[])
-            await self._write_phase_validate_chunk_parents(ctx, session)
+
+            self._write_phase_validate_chunk_parents(ctx)
+
             await self._write_phase_resolve_parent_dirs(ctx, session)
             await self._write_phase_fetch_existing(ctx, session)
-            self._write_phase_detect_changes(ctx)
+
             if self._auto_chunk:
                 self._write_phase_auto_chunk_conflict_check(ctx)
                 await self._write_phase_auto_chunk(ctx)
+
             if self._auto_index:
                 await self._write_phase_auto_index(ctx, session)
+
             out = await self._write_phase_persist(ctx, session)
+
         except _WriteAbort as abort:
             return self._error(abort.payload)
-
-        # Edge writes invalidate the in-process graph cache so the next
-        # traversal rebuilds from the new rows.
-        if out and any(c.kind == "edge" for c in out):
-            self._graph.invalidate()
 
         result = self._unscope_result(
             VFSResult(
@@ -1442,6 +1430,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             ),
             user_id,
         )
+
         if not result.success and self._raise_on_error:
             raise _classify_error(result.error_message, result.errors, result)
         return result
@@ -1450,7 +1439,7 @@ class DatabaseFileSystem(VirtualFileSystem):
     # Write pipeline phases
     # -------------------------------------------------------------------
 
-    def _coerce_write_entries(
+    def _build_write_entries(
         self,
         entries: Sequence[VFSEntry] | None,
         path: str | None,
@@ -1531,16 +1520,28 @@ class DatabaseFileSystem(VirtualFileSystem):
             errors=errors,
         )
 
-    async def _write_phase_validate_chunk_parents(
-        self,
-        ctx: _WriteContext,
-        session: AsyncSession,
-    ) -> None:
-        """Drop chunks whose owner file is absent from DB and batch."""
-        invalid_chunk_paths, chunk_errors = await self._validate_chunk_parents(
-            ctx.write_map, session
-        )
-        ctx.errors.extend(chunk_errors)
+    def _write_phase_validate_chunk_parents(self, ctx: _WriteContext) -> None:
+        """Reject chunks whose owner file is not in the same write batch.
+
+        Chunks always travel with their owner file in one transaction.
+        A chunk without a same-batch parent is an incomplete write —
+        either a configuration bug (the caller forgot the file) or a
+        stale write (chunks for a file the caller didn't author here).
+        Either way, we reject rather than letting it persist against
+        whatever the DB currently has. This makes the validation a
+        pure in-memory check — no DB round-trip in phase 1.
+        """
+        invalid_chunk_paths: list[str] = []
+        for obj in ctx.write_map.values():
+            if obj.kind != "chunk":
+                continue
+            owning_file = base_path(obj.path)
+            if owning_file not in ctx.write_map:
+                invalid_chunk_paths.append(obj.path)
+                ctx.errors.append(
+                    f"Chunk parent file must be in the same write batch: "
+                    f"{owning_file} (for {obj.path})"
+                )
         if len(invalid_chunk_paths) == len(ctx.write_map):
             raise _WriteAbort(ctx.errors)
         for p in invalid_chunk_paths:
@@ -1558,25 +1559,28 @@ class DatabaseFileSystem(VirtualFileSystem):
         needs reachable ancestors. Revivals (``deleted_at`` set) must
         still satisfy the writable check.
         """
-        await self._ensure_metadata_root(session)
         file_paths = list(ctx.write_map)
         file_paths.extend(
             version_path(p, 1)
             for p, obj in ctx.write_map.items()
             if obj.kind == "file"
         )
+
         if not file_paths:
             return
+
         parent_dirs, dir_errors = await self._resolve_parent_dirs(file_paths, session)
         if dir_errors:
             ctx.errors.extend(dir_errors)
             raise _WriteAbort(ctx.errors)
+
         for d in parent_dirs:
             if d.deleted_at is None:
                 continue
             err = check_writable(self, "write", d.path)
             if err is not None:
                 raise _WriteAbort(err.errors)
+
         ctx.parent_dirs = parent_dirs
 
     async def _write_phase_fetch_existing(
@@ -1584,12 +1588,26 @@ class DatabaseFileSystem(VirtualFileSystem):
         ctx: _WriteContext,
         session: AsyncSession,
     ) -> None:
-        """Batch-fetch existing rows and the latest version hash per file."""
+        """Fetch existing rows, the latest version hash, and classify each entry.
+
+        ``embedding`` and ``version_diff`` are excluded from the SELECT —
+        they are large and write-only on existing rows. ``content`` is
+        pulled here so the inline change-detection step and downstream
+        phases have it on hand without a second roundtrip.
+
+        Hash equality on a live file row produces a ``status="unchanged"``
+        candidate and skips the rest of the pipeline for that path —
+        no version row, no chunk cascade, no index work, no ``UPDATE``,
+        and crucially no ``updated_at`` refresh.
+        """
+        cols = self._resolve_columns("_fetch_existing", None)
         all_paths = list(ctx.write_map.keys())
         existing_map: dict[str, VFSEntry] = {}
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
-            stmt = select(self._model).where(
-                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
+            stmt = (
+                select(self._model)
+                .where(self._model.path.in_(batch))  # ty: ignore[unresolved-attribute]
+                .options(self._load_only_columns(cols))
             )
             result = await session.execute(stmt)
             for row in result.scalars().all():
@@ -1606,29 +1624,19 @@ class DatabaseFileSystem(VirtualFileSystem):
                 vp = version_path(obj_path, existing.version_number)
                 version_path_to_file[vp] = obj_path
 
-        if not version_path_to_file:
-            return
+        if version_path_to_file:
+            latest_version_hash: dict[str, str | None] = {}
+            vp_list = list(version_path_to_file.keys())
+            for batch in self._chunk_paths(session, vp_list, binds_per_item=1):
+                stmt = select(self._model.path, self._model.content_hash).where(  # ty: ignore[no-matching-overload]
+                    self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
+                )
+                result = await session.execute(stmt)
+                for vp, content_hash in result.all():
+                    file_path = version_path_to_file[vp]
+                    latest_version_hash[file_path] = content_hash
+            ctx.latest_version_hash = latest_version_hash
 
-        latest_version_hash: dict[str, str | None] = {}
-        vp_list = list(version_path_to_file.keys())
-        for batch in self._chunk_paths(session, vp_list, binds_per_item=1):
-            stmt = select(self._model.path, self._model.content_hash).where(  # ty: ignore[no-matching-overload]
-                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
-            )
-            result = await session.execute(stmt)
-            for vp, content_hash in result.all():
-                file_path = version_path_to_file[vp]
-                latest_version_hash[file_path] = content_hash
-        ctx.latest_version_hash = latest_version_hash
-
-    def _write_phase_detect_changes(self, ctx: _WriteContext) -> None:
-        """Classify each entry as changed, unchanged, or overwrite-rejected.
-
-        Hash equality on a live file row produces a ``status="unchanged"``
-        candidate and skips the rest of the pipeline for that path —
-        no version row, no chunk cascade, no index work, no ``UPDATE``,
-        and crucially no ``updated_at`` refresh.
-        """
         overwrite_rejections: set[str] = set()
         for obj_path, incoming in ctx.write_map.items():
             existing = ctx.existing_map.get(obj_path)
@@ -2037,10 +2045,13 @@ class DatabaseFileSystem(VirtualFileSystem):
             return self._error("Cannot delete root path")
 
         # ── Fetch targets ────────────────────────────────────────────
+        cols = self._resolve_columns("_write_path_scan", None)
         objs: dict[str, VFSEntry] = {}
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
-            stmt = select(self._model).where(
-                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
+            stmt = (
+                select(self._model)
+                .where(self._model.path.in_(batch))  # ty: ignore[unresolved-attribute]
+                .options(self._load_only_columns(cols))
             )
             if not permanent:
                 stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
@@ -2427,13 +2438,18 @@ class DatabaseFileSystem(VirtualFileSystem):
             # root, so outgoing edges already moved with descendants. We
             # only need to find incoming edges from other files
             # whose target_path points into the moved subtree.
-            conn_stmt = select(self._model).where(
-                _unchecked_clause(self._model.kind == "edge"),
-                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
-                or_(
-                    _unchecked_clause(self._model.target_path == op.src),
-                    self._model.target_path.like(_escape_like(op.src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
-                ),
+            edge_cols = self._resolve_columns("_move_edges", None)
+            conn_stmt = (
+                select(self._model)
+                .where(
+                    _unchecked_clause(self._model.kind == "edge"),
+                    self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+                    or_(
+                        _unchecked_clause(self._model.target_path == op.src),
+                        self._model.target_path.like(_escape_like(op.src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
+                    ),
+                )
+                .options(self._load_only_columns(edge_cols))
             )
             conn_result = await session.execute(conn_stmt)
             for conn in conn_result.scalars().all():
