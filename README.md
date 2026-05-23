@@ -139,7 +139,7 @@ print(g.cli('search "authentication" | glob "/workspace/**/*.py" | nbr | pageran
 Requires Python 3.12+.
 
 ```bash
-pip install vfs-py                # core (SQLite, rustworkx, BM25)
+pip install vfs-py                # core (SQLite, rustworkx, BM25, tree-sitter code chunking)
 pip install vfs-py[openai]        # OpenAI embeddings
 pip install vfs-py[langchain]     # LangChain embedding provider
 pip install vfs-py[postgres]      # PostgreSQL backend
@@ -147,7 +147,6 @@ pip install vfs-py[mssql]         # MSSQL backend
 pip install vfs-py[pinecone]      # Pinecone vector store
 pip install vfs-py[databricks]    # Databricks Vector Search
 pip install vfs-py[search]        # usearch (local vector search)
-pip install vfs-py[treesitter]    # JS/TS/Go code analyzers
 pip install vfs-py[deepagents]    # deepagents integration
 pip install vfs-py[langgraph]     # LangGraph persistent store
 pip install vfs-py[all]           # everything

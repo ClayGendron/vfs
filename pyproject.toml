@@ -32,6 +32,9 @@ dependencies = [
     "aiosqlite>=0.20",
     "rustworkx>=0.17",
     "unidiff>=0.7",
+    "tiktoken>=0.8",
+    "tree-sitter>=0.22",
+    "tree-sitter-language-pack>=1.8",
 ]
 
 [project.urls]
@@ -43,12 +46,6 @@ Issues = "https://github.com/ClayGendron/vfs/issues"
 search = [
     "usearch>=2.0",
 ]
-treesitter = [
-    "tree-sitter>=0.22",
-    "tree-sitter-javascript>=0.21",
-    "tree-sitter-typescript>=0.21",
-    "tree-sitter-go>=0.21",
-]
 openai = ["openai>=1.0"]
 pinecone = ["pinecone[asyncio]>=5.0"]
 databricks = ["databricks-vectorsearch>=0.40"]
@@ -57,7 +54,7 @@ mssql = ["aioodbc>=0.5", "pyodbc>=5.0"]
 deepagents = ["deepagents>=0.4"]
 langchain = ["langchain-core>=0.3"]
 langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
-all = ["vfs-py[search,openai,pinecone,databricks,treesitter,postgres,mssql,deepagents,langchain,langgraph]"]
+all = ["vfs-py[search,openai,pinecone,databricks,postgres,mssql,deepagents,langchain,langgraph]"]
 
 [dependency-groups]
 dev = [

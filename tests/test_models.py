@@ -1090,11 +1090,11 @@ class TestIndexContentDerivation:
 
 class TestSplitContent:
     def test_short_content_returns_empty(self):
-        assert VFSEntry.split_content("short content") == []
+        assert VFSEntry.split_content("short content", None) == []
 
     def test_long_content_returns_tuples_with_line_numbers(self):
         content = "\n".join(f"line {i}" for i in range(1, 1001))
-        result = VFSEntry.split_content(content)
+        result = VFSEntry.split_content(content, None)
         assert len(result) > 1
         for text, line_start, line_end in result:
             assert isinstance(text, str)
@@ -1104,18 +1104,56 @@ class TestSplitContent:
 
     def test_oversized_single_line_keeps_chunks_inside_one_line(self):
         content = "header\n" + ("x" * 5000) + "\nfooter\n"
-        result = VFSEntry.split_content(content)
+        result = VFSEntry.split_content(content, None)
         # The long middle line forces multi-chunk emission inside line 2.
         single_line_chunks = [(ls, le) for _t, ls, le in result if ls == le == 2]
         assert len(single_line_chunks) >= 1
 
+    def test_unmapped_extension_uses_recursive_splitter(self):
+        content = "\n".join(f"line {i}" for i in range(1, 1001))
+        # ``txt`` has no grammar — falls back to the separator splitter.
+        result = VFSEntry.split_content(content, "txt")
+        assert len(result) > 1
+        for text, _ls, _le in result:
+            assert text in content
+
+    def test_grammar_extension_uses_structure_aware_split(self):
+        src = "\n\n".join(
+            f"def func_{i}():\n" + "    x = 1\n" * 80 + "    return x" for i in range(6)
+        )
+        result = VFSEntry.split_content(src, "py")
+        assert len(result) > 1
+        # Byte budget is honored (2048 default).
+        assert all(len(text.encode()) <= 2048 for text, _ls, _le in result)
+        for _text, line_start, line_end in result:
+            assert 1 <= line_start <= line_end
+
+    def test_notebook_extension_chunks_cell_source(self):
+        import json
+
+        notebook = json.dumps(
+            {
+                "cells": [
+                    {"cell_type": "markdown", "source": ["# Title\n", "intro\n"]},
+                    {"cell_type": "code", "source": ["import os\n", "x = 1\n"]},
+                ],
+                "metadata": {"kernelspec": {"language": "python"}},
+            }
+        )
+        result = VFSEntry.split_content(notebook, "ipynb")
+        texts = [t for t, _ls, _le in result]
+        assert any("# Title" in t for t in texts)
+        assert any("import os" in t for t in texts)
+        # Raw JSON noise (the cell_type keys) must not appear as chunk content.
+        assert not any('"cell_type"' in t for t in texts)
+
     def test_subclass_override_takes_effect(self):
         class CustomEntry(VFSEntry):
             @staticmethod
-            def split_content(content):
+            def split_content(content, ext):
                 return [(content[:5], 1, 1), (content[5:10], 1, 1)]
 
-        result = CustomEntry.split_content("abcdefghijklmnop")
+        result = CustomEntry.split_content("abcdefghijklmnop", "py")
         assert result == [("abcde", 1, 1), ("fghij", 1, 1)]
 
 
@@ -1200,7 +1238,7 @@ class TestChunkMethod:
     def test_subclass_split_content_override_propagates(self):
         class CustomEntry(VFSEntry):
             @staticmethod
-            def split_content(content):
+            def split_content(content, ext):
                 return [(content[:50], 1, 5), (content[50:], 6, 10)]
 
         entry = CustomEntry(path="/foo.py", kind="file", content="x" * 100)

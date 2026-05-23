@@ -64,7 +64,7 @@ class _RecordingProvider:
         return self._model_name
 
 
-def _tiny_chunker(content: str) -> list[tuple[str, int, int]]:
+def _tiny_chunker(content: str, ext: str | None = None) -> list[tuple[str, int, int]]:
     """Force every line of *content* into its own chunk.
 
     The default ``split_content`` only chunks at ~2 KB; tests that want to
@@ -252,7 +252,7 @@ class TestAutoChunk:
     async def test_auto_chunk_runtime_error_aborts_with_no_mutation(self):
         fs = await make_sqlite_db()
 
-        def boom(content: str) -> list[tuple[str, int, int]]:
+        def boom(content: str, ext: str | None = None) -> list[tuple[str, int, int]]:
             msg = "split blew up"
             raise RuntimeError(msg)
 

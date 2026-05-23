@@ -26,7 +26,13 @@ from sqlmodel import Field, SQLModel
 from sqlmodel.main import SQLModelMetaclass
 
 from vfs.bm25 import tokenize as lexical_tokenize
-from vfs.chunking import split_with_line_ranges
+from vfs.chunking import (
+    grammar_for_extension,
+    NOTEBOOK_EXTENSION,
+    split_code,
+    split_notebook,
+    split_with_line_ranges,
+)
 from vfs.paths import (
     chunk_path,
     decompose_edge,
@@ -510,12 +516,19 @@ class VFSEntry(SQLModel):
     # --- Chunking -----------------------------------------------------------
 
     @staticmethod
-    def split_content(content: str) -> list[tuple[str, int, int]]:
+    def split_content(content: str, ext: str | None) -> list[tuple[str, int, int]]:
         """Return ``(chunk_text, line_start, line_end)`` tuples for *content*.
 
-        Override on a subclass to plug in custom chunking (tree-sitter,
-        token-aware, semantic). Empty list signals "no split required."
+        Dispatches on the file extension *ext* (no leading dot): notebooks use
+        ``split_notebook``, extensions with a tree-sitter grammar use
+        structure-aware ``split_code``, and everything else falls back to the
+        recursive separator splitter. Override on a subclass to plug in custom
+        chunking. Empty list signals "no split required."
         """
+        if ext == NOTEBOOK_EXTENSION:
+            return split_notebook(content)
+        if grammar := grammar_for_extension(ext):
+            return split_code(content, language=grammar)
         return split_with_line_ranges(content)
 
     def chunk(self) -> list[VFSEntry]:
@@ -533,7 +546,7 @@ class VFSEntry(SQLModel):
             msg = f"chunk() applies only to files: kind={self.kind!r}"
             raise ValueError(msg)
         content = self.content or ""
-        pieces = self.split_content(content)
+        pieces = self.split_content(content, self.ext)
         if not pieces:
             return []
 
