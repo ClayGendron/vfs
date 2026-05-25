@@ -20,7 +20,15 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar, cast
 
 from pydantic import PrivateAttr, model_validator
-from sqlalchemy import BigInteger, DateTime, Index, Integer, MetaData, SmallInteger
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Index,
+    Integer,
+    LargeBinary,
+    MetaData,
+    SmallInteger,
+)
 from sqlalchemy.orm import InstanceState
 from sqlmodel import Field, SQLModel
 from sqlmodel.main import SQLModelMetaclass
@@ -804,6 +812,12 @@ class VFSGram(SQLModel):
     ``seq``. ``doc_id`` is the posting-list integer key (``vfs_entries.id``):
     null on adds (resolved by join at flush), captured at stage time on
     deletes (the entry row may be gone before flush).
+
+    ``batch_id`` ties the row to the flush batch processing it. Staging is a
+    transient buffer: a row is deleted once it is durable — an add delta when
+    the flush folds it into a posting block, a delete delta when compaction
+    rewrites the block holding its ``doc_id`` — so the table does not grow
+    without bound.
     """
 
     ACTION_DELETE: ClassVar[int] = 0
@@ -821,6 +835,10 @@ class VFSGram(SQLModel):
         sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
     )
     action: int = Field(sa_type=SmallInteger, nullable=False)  # ty: ignore[invalid-argument-type]
+    batch_id: int | None = Field(
+        default=None,
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+    )
 
 
 def _build_gram_table_class(
@@ -858,4 +876,194 @@ def _build_gram_table_class(
     return cast(
         "type[VFSGram]",
         SQLModelMetaclass("VFSGramTable", (VFSGram,), attrs, table=True),
+    )
+
+
+def _mint_table_class(
+    base: type[SQLModel],
+    *,
+    class_name: str,
+    table_name: str,
+    metadata: MetaData,
+    indexes: tuple[Index, ...],
+    schema: str | None,
+) -> type[SQLModel]:
+    """Mint a private ``table=True`` subclass of *base* bound to *metadata*.
+
+    Shared by the gram-index tables so they all provision from the entry
+    table's ``MetaData`` under one ``create_all``. The returned class is an
+    implementation detail and MUST NOT leak onto the public surface.
+    """
+    table_args: tuple[object, ...] = indexes
+    if schema is not None:
+        table_args = (*table_args, {"schema": schema})
+    attrs: dict[str, object] = {
+        "__module__": __name__,
+        "__tablename__": table_name,
+        "__table_args__": table_args,
+        "metadata": metadata,
+    }
+    return cast("type[SQLModel]", SQLModelMetaclass(class_name, (base,), attrs, table=True))
+
+
+class VFSPostingBlock(SQLModel):
+    """One immutable, compressed posting block of the durable gram index.
+
+    A flush folds a batch of staging deltas into blocks: each row holds a
+    sorted ``doc_id`` list for one ``gram_key``, delta+varint encoded in
+    ``postings`` with ``min_doc_id`` kept raw as the decode anchor and
+    ``max_doc_id`` carried for range pruning. A gram's full posting list is
+    the union of its active blocks; a long list spans several blocks bounded
+    by ``doc_count`` or a byte budget. Blocks are never edited in place —
+    compaction writes new blocks and flips ``is_active`` false on the ones
+    they supersede.
+    """
+
+    ENCODING_DELTA_VARINT: ClassVar[int] = 1
+
+    block_id: int | None = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+    )
+    gram_key: int = Field(sa_type=Integer, nullable=False)  # ty: ignore[invalid-argument-type]
+    batch_id: int = Field(
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+        nullable=False,
+    )
+    doc_count: int = Field(sa_type=Integer, nullable=False)  # ty: ignore[invalid-argument-type]
+    min_doc_id: int = Field(
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+        nullable=False,
+    )
+    max_doc_id: int = Field(
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+        nullable=False,
+    )
+    encoding: int = Field(default=ENCODING_DELTA_VARINT, sa_type=SmallInteger, nullable=False)  # ty: ignore[invalid-argument-type]
+    postings: bytes = Field(sa_type=LargeBinary, nullable=False)  # ty: ignore[invalid-argument-type]
+    is_active: bool = Field(default=True, nullable=False)
+
+
+def _build_posting_block_table_class(
+    *,
+    entries_table_name: str,
+    metadata: MetaData,
+    schema: str | None = None,
+) -> type[VFSPostingBlock]:
+    """Mint the ``"{entries_table_name}_posting_blocks"`` table.
+
+    Indexed ``(gram_key, is_active, min_doc_id)`` for the read fold (active
+    blocks of a gram, range-prunable) and ``(batch_id)`` for flush and
+    compaction bookkeeping.
+    """
+    name = f"{entries_table_name}_posting_blocks"
+    return cast(
+        "type[VFSPostingBlock]",
+        _mint_table_class(
+            VFSPostingBlock,
+            class_name="VFSPostingBlockTable",
+            table_name=name,
+            metadata=metadata,
+            indexes=(
+                Index(f"ix_{name}_gram_active", "gram_key", "is_active", "min_doc_id"),
+                Index(f"ix_{name}_batch", "batch_id"),
+            ),
+            schema=schema,
+        ),
+    )
+
+
+class VFSGramBatch(SQLModel):
+    """One flush batch in the staging-to-posting-block pipeline.
+
+    A batch moves Open -> Closed -> Flushing -> Flushed (or Failed). Staging
+    rows carry the ``batch_id`` of the batch folding them and posting blocks
+    carry the ``batch_id`` that produced them, so a crashed flush can be
+    identified and resumed or rolled back.
+    """
+
+    STATUS_OPEN: ClassVar[int] = 0
+    STATUS_CLOSED: ClassVar[int] = 1
+    STATUS_FLUSHING: ClassVar[int] = 2
+    STATUS_FLUSHED: ClassVar[int] = 3
+    STATUS_FAILED: ClassVar[int] = 4
+
+    batch_id: int | None = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+    )
+    status: int = Field(default=STATUS_OPEN, sa_type=SmallInteger, nullable=False)  # ty: ignore[invalid-argument-type]
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),  # ty: ignore[invalid-argument-type]
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),  # ty: ignore[invalid-argument-type]
+    )
+
+
+def _build_gram_batch_table_class(
+    *,
+    entries_table_name: str,
+    metadata: MetaData,
+    schema: str | None = None,
+) -> type[VFSGramBatch]:
+    """Mint the ``"{entries_table_name}_gram_batches"`` table, indexed by status."""
+    name = f"{entries_table_name}_gram_batches"
+    return cast(
+        "type[VFSGramBatch]",
+        _mint_table_class(
+            VFSGramBatch,
+            class_name="VFSGramBatchTable",
+            table_name=name,
+            metadata=metadata,
+            indexes=(Index(f"ix_{name}_status", "status"),),
+            schema=schema,
+        ),
+    )
+
+
+class VFSGramStat(SQLModel):
+    """Per-gram statistics for rarest-first query planning.
+
+    ``doc_freq`` is the number of distinct docs the gram currently appears
+    in; ``block_count`` is its active posting-block count. Maintained by
+    flush and compaction; consumed by the read path to scan the most
+    selective grams first.
+    """
+
+    gram_key: int = Field(primary_key=True, sa_type=Integer)  # ty: ignore[invalid-argument-type]
+    doc_freq: int = Field(
+        default=0,
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+        nullable=False,
+    )
+    block_count: int = Field(default=0, sa_type=Integer, nullable=False)  # ty: ignore[invalid-argument-type]
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),  # ty: ignore[invalid-argument-type]
+    )
+
+
+def _build_gram_stat_table_class(
+    *,
+    entries_table_name: str,
+    metadata: MetaData,
+    schema: str | None = None,
+) -> type[VFSGramStat]:
+    """Mint the ``"{entries_table_name}_gram_stats"`` table (PK ``gram_key``)."""
+    name = f"{entries_table_name}_gram_stats"
+    return cast(
+        "type[VFSGramStat]",
+        _mint_table_class(
+            VFSGramStat,
+            class_name="VFSGramStatTable",
+            table_name=name,
+            metadata=metadata,
+            indexes=(),
+            schema=schema,
+        ),
     )

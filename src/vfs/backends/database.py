@@ -21,10 +21,18 @@ from sqlalchemy.orm import load_only
 
 from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
+from vfs.code_grams import unique_code_grams
 from vfs.columns import CANDIDATE_BACKED_MODEL_COLUMNS, default_columns
 from vfs.exceptions import _classify_error
 from vfs.graph import RustworkxGraph
-from vfs.models import VFSEntry, _build_entry_table_class, _build_gram_table_class
+from vfs.models import (
+    VFSEntry,
+    _build_entry_table_class,
+    _build_gram_batch_table_class,
+    _build_gram_stat_table_class,
+    _build_gram_table_class,
+    _build_posting_block_table_class,
+)
 from vfs.paths import (
     METADATA_ROOT,
     base_path,
@@ -292,6 +300,21 @@ class DatabaseFileSystem(VirtualFileSystem):
             metadata=self._model.metadata,
             schema=self._schema,
         )
+        self._posting_block_model = _build_posting_block_table_class(
+            entries_table_name=self._table_name,
+            metadata=self._model.metadata,
+            schema=self._schema,
+        )
+        self._gram_batch_model = _build_gram_batch_table_class(
+            entries_table_name=self._table_name,
+            metadata=self._model.metadata,
+            schema=self._schema,
+        )
+        self._gram_stat_model = _build_gram_stat_table_class(
+            entries_table_name=self._table_name,
+            metadata=self._model.metadata,
+            schema=self._schema,
+        )
         self._user_scoped = user_scoped
         self._graph = RustworkxGraph(model=self._model, user_scoped=user_scoped)
         self._embedding_provider = embedding_provider
@@ -554,28 +577,76 @@ class DatabaseFileSystem(VirtualFileSystem):
         delete_only: bool = False,
         session: AsyncSession,
     ) -> None:
-        """Stage trigram add/delete deltas for the persist flush.
+        """Stage folded trigram add/delete deltas onto the session.
 
-        ``old_entries`` supplies the current persisted content for
-        path-stable updates (files) so the backend can compute::
+        Each entry's grams are extracted folded. A path-stable file edit
+        (the path appears in ``old_entries``) is diffed: grams only in the
+        old content become delete deltas, grams only in the new content
+        become add deltas. The persisted row survives the edit in place, so
+        both its deletes and its re-adds carry the old row's ``entry_id``
+        and ``id`` — not the discarded incoming uuid. A new file or any
+        chunk has no old content to diff, so every gram is staged as an add;
+        chunk deletes are staged by the cascade hook instead, never diffed
+        here.
 
-            old_grams - new_grams -> delete deltas
-            new_grams - old_grams -> add deltas
+        Add deltas leave ``doc_id`` null (resolved at flush); delete deltas
+        carry the ``doc_id`` captured now, since the row may be gone by
+        flush. With ``delete_only`` the entries' current grams are all staged
+        as deletes — used for files whose content leaves the index (e.g. a
+        file that was just chunked).
 
-        Chunks have no persistent identity across content changes — the
-        cascade hook stages deletes for the old chunks before they are
-        DELETEd from the entries table, and this hook stages adds for
-        the new chunks. Do not diff chunks against ``old_entries``.
-
-        When ``delete_only`` is True, recalculate the current trigrams
-        for the supplied entries and stage delete deltas only. Used for
-        files whose flag flipped to ``index_content=False`` and (in
-        a later slice) for row-deletes.
-
-        No ``INSERT``/``UPDATE``/``DELETE`` against the entries table is
-        issued here — delta rows are queued on the session and emitted
-        at the persist flush. Default implementation is a no-op.
+        Deltas are queued with ``session.add`` and written by the single
+        persist flush; no statement is emitted here.
         """
+        old_entries = old_entries or {}
+        gram_model = self._gram_model
+
+        for entry in entries:
+            grams = unique_code_grams(entry.content or "", folded=True)
+
+            if delete_only:
+                for gram_key in grams:
+                    session.add(
+                        gram_model(
+                            gram_key=gram_key,
+                            entry_id=entry.entry_id,
+                            doc_id=entry.id,
+                            action=gram_model.ACTION_DELETE,
+                        )
+                    )
+                continue
+
+            old = old_entries.get(entry.path) if entry.kind == "file" else None
+            if old is not None:
+                old_grams = unique_code_grams(old.content or "", folded=True)
+                for gram_key in old_grams - grams:
+                    session.add(
+                        gram_model(
+                            gram_key=gram_key,
+                            entry_id=old.entry_id,
+                            doc_id=old.id,
+                            action=gram_model.ACTION_DELETE,
+                        )
+                    )
+                for gram_key in grams - old_grams:
+                    session.add(
+                        gram_model(
+                            gram_key=gram_key,
+                            entry_id=old.entry_id,
+                            doc_id=None,
+                            action=gram_model.ACTION_ADD,
+                        )
+                    )
+            else:
+                for gram_key in grams:
+                    session.add(
+                        gram_model(
+                            gram_key=gram_key,
+                            entry_id=entry.entry_id,
+                            doc_id=None,
+                            action=gram_model.ACTION_ADD,
+                        )
+                    )
 
     async def _get_object(
         self,

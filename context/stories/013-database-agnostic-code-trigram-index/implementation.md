@@ -1,7 +1,7 @@
 # 013 — Implementation notes
 
-- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** from Postgres-first to base-class-universal — delta-log gram store + maintenance + grep now target `DatabaseFileSystem`; landed Postgres DDL/provisioning to be lifted into a minted model)
-- **Date:** 2026-05-01 (last updated 2026-05-24)
+- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** to base-class-universal. **Landed 2026-05-25:** the identity reshape (`id` → integer auto-increment PK == posting-list `doc_id`; uuid → new `entry_id` column), the minted `VFSGram` delta-log model + `_build_gram_table_class`, and `self._gram_model` wired into `DatabaseFileSystem`; then a working `_apply_trigram_maintenance`, the Phase 5 durable-store schema (`posting_blocks` / `gram_batches` / `gram_stats` tables + staging `batch_id`) minted on the shared `MetaData`, and the `entry_id` write-path load-only fix. **Pending:** `_stage_chunk_cascade`, the abort/rollback fix, the `code_grams.py` docstring cleanup, and the integration test.)
+- **Date:** 2026-05-01 (last updated 2026-05-25)
 - **Spec:** [spec.md](./spec.md) (phasing is spec.md §6; the standalone plan.md
   was dropped 2026-05-25 — its work items live in this file's §"What's next
   inside Phase 2")
@@ -208,23 +208,30 @@ matches the posting-block model (spec §3, phase 5) collapsed onto the
 row store. The staging stream IS the future posting-block compaction
 input, so we skip a migration when phase 5 lands.
 
-Final schema:
+Final schema (minted portably by `_build_gram_table_class`; the logical
+shape, shown as Postgres DDL):
 
 ```sql
 CREATE TABLE {entries_table}_chunk_grams (
     seq      bigserial PRIMARY KEY,
     gram_key integer   NOT NULL,
-    chunk_id text      NOT NULL,
-    action   smallint  NOT NULL    -- 1=add, 0=delete
+    entry_id varchar(36) NOT NULL,   -- vfs_entries.entry_id (uuid)
+    doc_id   bigint,                 -- vfs_entries.id; null on adds, set on deletes
+    action   smallint  NOT NULL,     -- 1=add, 0=delete
+    batch_id bigint                  -- flush batch folding this row; null while pending
 );
-CREATE INDEX ix_..._gram_chunk_seq
-    ON {table} (gram_key, chunk_id, seq DESC);
-CREATE INDEX ix_..._chunk_id ON {table} (chunk_id);
+CREATE INDEX ix_..._gram_entry_seq
+    ON {table} (gram_key, entry_id, seq);
+CREATE INDEX ix_..._entry_id ON {table} (entry_id);
 ```
 
-Reads use latest-action-wins per `(gram_key, chunk_id)` via
-`DISTINCT ON ... ORDER BY seq DESC`. Other simplifications vs.
-spec §4:
+The MVP folds by latest-action-wins per `(gram_key, entry_id)` — `entry_id`
+(the uuid) is known at write time, so the fold is unambiguous before
+`doc_id` is resolved. `doc_id` (= `vfs_entries.id`, the integer PK) is the
+posting-list key carried forward for Phase 5: **null on adds** (resolved by
+join `entry_id → vfs_entries.id` at flush), **captured at stage time on
+deletes** (the entry row may be gone before flush). Other simplifications
+vs. spec §4:
 
 - **No `gram_kind` column.** Single normalization (folded);
   case-sensitive grep gets a less selective candidate set with
@@ -241,26 +248,77 @@ spec §4:
 - **No `user_id`** — `vfs_entries` is already path-scoped; the
   scope filter applies on the join.
 
-### Landed so far
+### Landed so far (2026-05-25)
 
-`src/vfs/backends/postgres.py`:
+`src/vfs/models.py`:
 
-- `_native_chunk_grams_verified` flag.
-- `_chunk_grams_bare_name()`, `_chunk_grams_table()`,
-  `_chunk_grams_schema_hint()` helpers.
-- `install_native_chunk_grams_schema()` — idempotent
-  `CREATE TABLE IF NOT EXISTS` + both indexes.
-- `verify_native_chunk_grams_schema()` and
-  `_verify_chunk_grams_schema(session)` — fail-fast with a hint
-  pointing at the installer. Cached after first pass.
+- **Identity reshape.** `id` is now the auto-increment **integer** PK
+  (`BigInteger().with_variant(Integer, "sqlite")`) — which *is* the
+  posting-list `doc_id`: dense, sorted, stable, mapped to the native
+  per-backend auto-increment (rowid / `BIGSERIAL` / `BIGINT IDENTITY`), so
+  no second auto-increment column or trigger is needed. The client-side
+  `uuid4` moved to a new unique, indexed `entry_id` column. `id` is `None`
+  until flush; pre-persist identity uses `entry_id`.
+- **`VFSGram` + `_build_gram_table_class`.** A `table=False` delta-log base
+  (`seq` PK, `gram_key`, `entry_id`, nullable `doc_id`, `action`, with
+  `ACTION_ADD=1` / `ACTION_DELETE=0`) and a minter that mirrors
+  `_build_entry_table_class` — **but binds to the entry table's `MetaData`**
+  (not its own) so one `create_all` provisions both tables. Indexes:
+  `(gram_key, entry_id, seq)` and `(entry_id)`. Staging now also carries a
+  nullable `batch_id` (the flush batch folding it); the table is a transient
+  buffer — rows are deleted once durable (an add when a flush folds it into a
+  block, a delete when compaction rewrites the block holding its `doc_id`), so
+  there is no `applied_at` tombstone and it does not grow without bound.
+- **Phase 5 durable-store schema** (minted alongside `VFSGram` on the same
+  `MetaData`, via a shared `_mint_table_class` helper; flush/compaction
+  *logic* is still future work — only the tables landed):
+  - `VFSPostingBlock` → `{entries}_posting_blocks`: one immutable, compressed
+    posting block (`block_id` PK, `gram_key`, `batch_id`, `doc_count`,
+    `min_doc_id`, `max_doc_id`, `encoding` (`ENCODING_DELTA_VARINT=1`),
+    `postings` blob, `is_active`). Indexes `(gram_key, is_active, min_doc_id)`
+    for the read fold and `(batch_id)` for flush/compaction.
+  - `VFSGramBatch` → `{entries}_gram_batches`: flush batch lifecycle
+    (`batch_id` PK, `status` Open/Closed/Flushing/Flushed/Failed, timestamps),
+    indexed by `status`.
+  - `VFSGramStat` → `{entries}_gram_stats`: per-gram `doc_freq` / `block_count`
+    for rarest-first reads (PK `gram_key`).
 
 `src/vfs/backends/database.py`:
 
-- Base hook renamed from `_apply_index_maintenance` to
-  `_apply_trigram_maintenance` — the orchestrator already ran
-  embeddings directly, so the old name was wider than the
-  responsibility. Docstring now spells out the chunk-vs-file
-  identity contract.
+- **`_apply_trigram_maintenance` implemented** (was a no-op). Extracts
+  folded-only grams (`unique_code_grams(..., folded=True)`); for a path-stable
+  file edit it diffs old vs. new and stages `old − new` deletes + `new − old`
+  adds, **both keyed on the surviving `old.entry_id` / `old.id`** (the persist
+  phase updates `existing` in place, discarding the incoming uuid, so keying on
+  the incoming row would break the `(gram_key, entry_id)` fold); a new file or
+  any chunk stages all-adds (chunk deletes are the cascade's job, never
+  diffed); `delete_only` stages every current gram as a delete. Deltas are
+  staged with `session.add` and emitted by the single persist flush — **no
+  statement is issued inside the helper** (chosen over a bulk `insert()` for
+  consistency with the rest of the write path and one all-or-nothing
+  transaction boundary).
+- `self._gram_model`, `self._posting_block_model`, `self._gram_batch_model`,
+  `self._gram_stat_model` all minted in `__init__` on `self._model.metadata`.
+
+`src/vfs/columns.py`:
+
+- Added `entry_id` to the `_fetch_existing` `load_only` set. Without it,
+  gram maintenance's read of `old.entry_id` on a narrowed existing row fired a
+  deferred-column refresh in a sync context → `MissingGreenlet`. (The PK `id`
+  is always loaded by `load_only`; `content` was already in the set.)
+
+`src/vfs/backends/postgres.py`:
+
+- **Removed** the now-dead `install_native_chunk_grams_schema` /
+  `verify_native_chunk_grams_schema` / `_verify_chunk_grams_schema` /
+  `_chunk_grams_*` helpers and the `_native_chunk_grams_verified` flag — the
+  minted model + shared `MetaData` supersede the hand-written Postgres DDL.
+
+`src/vfs/code_grams.py`:
+
+- Bound to `re._parser` / `re._constants` directly instead of the deprecated
+  `sre_parse` / `sre_constants` shims (drops the `warnings.catch_warnings`
+  suppression block).
 
 ### What's next inside Phase 2 (base-class-universal, production-only)
 
@@ -269,29 +327,40 @@ them. The story is scoped to **producing and maintaining** the index;
 querying it is provider-specific and out of scope (spec.md §Out). The
 full work-item list follows.
 
-- **`models.py` — `_build_gram_table_class`** mirroring
-  `_build_entry_table_class`: minted `table=True` gram model with own
-  `MetaData()`, portable types (`BigInteger` autoincrement `seq`,
-  `Integer` `gram_key`, `String` `chunk_id`, `SmallInteger` `action`),
-  and `Index()` objects. Replaces the raw Postgres DDL.
-- **`DatabaseFileSystem.__init__` / `setup()`** — mint
-  `self._gram_model`; provision via metadata `create_all`. Retire (or
-  thin-shim) `install_native_chunk_grams_schema` / `verify_*`.
-- **Base `_apply_trigram_maintenance`** — diff gram sets for files
-  (persistent id via `existing.id`), all-adds for chunks (no persistent
-  id; cascade handles their deletes). Stage via
-  `session.add(self._gram_model(...))`.
-- **Base `_stage_chunk_cascade`** — read existing chunks, recompute
-  their grams, stage delete deltas using old chunk ids, then `super()`
-  to issue the DELETE.
-- **Abort/rollback fix** — `_write_impl` must `await session.rollback()`
-  on `_WriteAbort` (or reorder embeddings before gram staging) so an
-  embedding failure mid-batch can't commit orphan gram deltas. Test it.
-- **Maintenance-correctness integration test** on SQLite **and**
-  Postgres: after writes/edits/deletes, the folded index contains
-  exactly the grams of the currently-committed chunks (storage
-  completeness, no committed gram missing); an aborted write commits no
-  gram rows.
+- **[done] `models.py` — `_build_gram_table_class`** mirroring
+  `_build_entry_table_class`: minted `table=True` gram model (`seq` PK,
+  `gram_key`, `entry_id`, nullable `doc_id`, `action`) and `Index()`
+  objects. Binds to the entry table's `MetaData` (not its own) so a single
+  `create_all` provisions both. Replaces the raw Postgres DDL.
+- **[done] `DatabaseFileSystem.__init__`** — mint `self._gram_model` on
+  `self._model.metadata`. No `setup()` change needed: provisioning rides the
+  existing `create_all`. The Postgres `install_*`/`verify_*` helpers were
+  removed outright (not thin-shimmed).
+- **[done] Base `_apply_trigram_maintenance`** — diff gram sets for
+  path-stable files (deletes carry `entry_id` + `doc_id = existing.id`; adds
+  carry the **same surviving `entry_id`**, `doc_id = None`), all-adds for
+  chunks/new files (no persistent id; cascade handles their deletes),
+  `delete_only` for flag-flips. Staged via `session.add` (not a bulk
+  `insert()`); emitted by the single persist flush. Forced the `columns.py`
+  `entry_id` load-only fix.
+- **[done, ahead of schedule] Phase 5 durable-store schema** — `posting_blocks`
+  / `gram_batches` / `gram_stats` tables + staging `batch_id` minted on the
+  shared `MetaData` (see "Landed so far"). Only the *schema* landed; flush,
+  compaction, and stats maintenance logic remain Phase 5.
+- **[pending] Base `_stage_chunk_cascade`** — read existing chunk rows,
+  recompute their grams, stage delete deltas carrying their `entry_id` +
+  `doc_id`, then issue the existing batched `DELETE`.
+- **[pending] Abort/rollback fix** — `_write_impl` must
+  `await session.rollback()` on `_WriteAbort` (or reorder embeddings before
+  gram staging) so an embedding failure mid-batch can't commit orphan gram
+  deltas. Test it.
+- **[pending] `code_grams.py` docstring cleanup** — the module docstring
+  still describes a `gram_kind` raw+folded pair (spec §4.1: stale); correct
+  it and drop the unused `GramKind`/`GRAM_KIND_*` constants.
+- **[pending] Maintenance-correctness integration test** on SQLite (and
+  Postgres when run): after writes/edits/deletes, the folded index contains
+  exactly the grams of the currently-committed chunks (storage completeness,
+  no committed gram missing); an aborted write commits no gram rows.
 
 *Out of scope here (query path, provider-specific):* the `_grep_impl`
 code-gram read query (`GramQuery` → intersection → content fetch →
@@ -308,30 +377,38 @@ grep-vs-ripgrep benchmark.
   model emits valid T-SQL.
 - Phase 5 (posting-block storage) — staged immutable blocks per
   spec.md §"Durable Storage Model" (backend-neutral); a base-class storage
-  upgrade that benefits all backends at once.
+  upgrade that benefits all backends at once. **Schema landed early
+  2026-05-25** (`posting_blocks` / `gram_batches` / `gram_stats` + staging
+  `batch_id`); the flush, copy-on-write compaction, and stats-maintenance
+  *logic* remain.
 - Phases 6–7 — benchmarks and optional native read accelerators; both
   read-path concerns, out of scope.
 
 ## Decisions captured along the way
 
-- **Integer `doc_id` for posting compression; keep `uuid4` PK (2026-05-25).**
-  Posting-list compression (delta/varint, Roaring, Elias-Fano) needs *sorted
-  integer* doc IDs, which a `uuid`/`text` chunk id cannot provide. Resolution:
-  add an auto-increment `doc_id` column to `vfs_entries` (stable per row, shared
-  by files and chunks) and keep `uuid4` as the entity primary key — do **not**
-  switch the global PK (it would forfeit client-side id generation, and VFS
-  relationships key on `path` not `id`). Gram staging references the entry
-  `uuid` (known at write time, no ordering dependency); `doc_id` is resolved by
-  join at flush for **adds**, and captured at stage time for **deletes** (a
-  hard-deleted row is gone by compaction, so the join would fail). `doc_id`s are
-  **stable and never renumbered** — deletes/re-chunks leave gaps, which delta
-  encoding tolerates (sorted is the requirement, dense is a bonus); a rare full
-  reindex is the only dense renumber. Posting blocks are **re-encoded at
-  compaction, never patched in place**, and a file edit rewrites only the changed
-  grams' affected blocks (O(changed grams) at write time, compaction amortized
-  and localized) — not the whole index. This is the Phase 5 evolution of the
-  shipped `chunk_id text` delta-log (see spec.md §Data Model → Doc IDs and
-  §"Durable Storage Model").
+- **`id` becomes the integer auto-increment PK; uuid moves to `entry_id`
+  (2026-05-25) — reverses the earlier "keep `uuid4` PK" decision.** Posting-list
+  compression (delta/varint, Roaring, Elias-Fano) needs *sorted integer* doc
+  IDs. The earlier plan kept `uuid4` as the PK and added a *separate*
+  auto-increment `doc_id` — but a second auto-increment column is not portable:
+  SQLite only auto-increments the `INTEGER PRIMARY KEY` (rowid), and MSSQL allows
+  one `IDENTITY` per table. Making the **single primary key** the auto-increment
+  integer sidesteps that entirely — every backend auto-increments its PK
+  natively (rowid / `BIGSERIAL` / `BIGINT IDENTITY`), with no trigger or second
+  sequence. So `vfs_entries.id` is now that integer and *is* the posting `doc_id`;
+  the client-side `uuid4` moves to a new unique `entry_id` column, which
+  preserves the client-side identity the earlier decision was protecting (VFS
+  relationships key on `path`, so the uuid carried no FK weight — confirmed: no
+  FKs/relationships reference it). Gram staging references `entry_id` (known at
+  write time, no ordering dependency); `doc_id` (= `id`) is resolved by join at
+  flush for **adds** and captured at stage time for **deletes** (a hard-deleted
+  row is gone by compaction, so the join would fail). `id`/`doc_id` is **stable
+  and never renumbered** — deletes/re-chunks leave gaps, which delta encoding
+  tolerates (sorted is the requirement, dense is a bonus). *Caveat:* SQLite may
+  reuse the largest `rowid` after a delete; that only matters for Phase 5
+  posting-block compaction (which applies deletes), not the `entry_id`-folded
+  delta-log. Posting blocks (Phase 5) are **re-encoded at compaction, never
+  patched in place** (see spec.md §5.3, §5.4).
 
 - **Index production + maintenance live in the base class, not per
   backend (2026-05-24).** The posting list is conceptually
@@ -385,11 +462,12 @@ grep-vs-ripgrep benchmark.
   re-chunked, the backend deletes pre-existing chunk rows for that
   file before persisting new ones. The model is dumb; the writer
   handles the transaction.
-- **The regex query planner traverses `sre_parse` AST** rather than
+- **The regex query planner traverses the regex AST** rather than
   hand-rolling a tokenizer. Eliminated every false-negative bug
-  surfaced by the audit in one shot. `sre_parse` was deprecated in
-  3.11 but still re-exports from `re._parser` and is the only
-  supported access path for regex AST inspection.
+  surfaced by the audit in one shot. It binds `re._parser` /
+  `re._constants` directly (the modules the deprecated `sre_parse` /
+  `sre_constants` shims re-export); there is no public AST access path,
+  so the underscore-private import is intentional (2026-05-25).
 - **NFC normalization is the indexer + planner contract.** Without it,
   `café` (NFC) and `café` (NFD) produce disjoint gram sets and
   matching content is silently dropped. ASCII inputs short-circuit
@@ -403,12 +481,16 @@ context/stories/013-database-agnostic-code-trigram-index/
   plan.md                                       (removed 2026-05-25; phasing → spec.md §6, work items → this file)
   research.md                                   (modified, prior commit)
   mssql-trigram-inverted-index-design.md       (removed 2026-05-24; folded into spec.md, db-agnostic)
+  analysis-{codesearch,zoekt,fts5,pg_trgm-gin}.md (new 2026-05-25; reference-impl evidence)
   implementation.md                             (this file)
-src/vfs/code_grams.py                           (new, f840ce5)
+src/vfs/code_grams.py                           (new f840ce5; re._parser import 98b5cf6)
 src/vfs/chunking.py                             (new f6d22f5; refactored 0c4f7d6)
-src/vfs/models.py                               (modified, 0c4f7d6)
+src/vfs/models.py                               (id→int PK + entry_id + VFSGram, 98b5cf6; staging batch_id + posting_blocks/gram_batches/gram_stats + _mint_table_class)
+src/vfs/backends/database.py                    (mint _gram_model, 98b5cf6; _apply_trigram_maintenance impl + mint posting/batch/stat models)
+src/vfs/columns.py                              (entry_id added to _fetch_existing load-only set)
+src/vfs/backends/postgres.py                    (removed dead chunk_grams DDL helpers, 98b5cf6)
 tests/test_code_grams.py                        (new, f840ce5)
-tests/test_models.py                            (modified, 0c4f7d6)
+tests/test_models.py                            (TestId → int PK + entry_id, ae9d54b)
 grep_glob research/code_grams_walkthrough.ipynb (new, f840ce5)
 grep_glob research/bench_text_splitter.py       (new, f6d22f5)
 grep_glob research/bench_vs_langchain.py        (new, f6d22f5)

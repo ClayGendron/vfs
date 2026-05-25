@@ -84,7 +84,7 @@ DEFAULT_COLUMNS: dict[str, frozenset[str]] = {
     # without a second roundtrip.
     # ──────────────────────────────────────────────────────────────────
     "_fetch_existing": _METADATA_COLUMNS | frozenset(
-        {"content", "content_hash", "deleted_at", "version_number", "index_content"}
+        {"content", "content_hash", "deleted_at", "version_number", "index_content", "entry_id"}
     ),
     "_write_path_scan": _METADATA_COLUMNS | frozenset({"deleted_at", "parent_path"}),
     "_move_edges": _PATH_KIND_ONLY | frozenset({"source_path", "target_path", "edge_type"}),
