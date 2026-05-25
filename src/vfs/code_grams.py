@@ -41,14 +41,12 @@ from typing import TYPE_CHECKING, Final, Literal
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# ``sre_parse`` is the canonical way to inspect the regex AST. It was marked
-# deprecated in Python 3.11 but is still the only supported access path; the
-# replacement ``re._parser`` is private. We import sre_parse and silence the
-# DeprecationWarning rather than reaching into private modules.
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", DeprecationWarning)
-    import sre_constants
-    import sre_parse
+# The public ``sre_parse``/``sre_constants`` names are deprecated shims (3.11+)
+# that re-export these modules and emit a DeprecationWarning on import. We bind
+# the real modules directly — no warning to suppress — and keep the historical
+# names locally so the AST-walking code below reads unchanged.
+from re import _constants as sre_constants  # noqa: PLC2701 — regex AST has no public access path
+from re import _parser as sre_parse  # noqa: PLC2701
 
 GRAM_SIZE: Final = 3
 

@@ -1,470 +1,384 @@
 # 013 — Database-Agnostic Code Trigram Index
 
 - **Status:** draft
-- **Date:** 2026-04-24
+- **Date:** 2026-04-24 (restructured 2026-05-25)
 - **Owner:** Clay Gendron
 - **Kind:** feature + backend + research
 
-## Intent
+## 1. Summary
+
+Build the **production side** of a database-agnostic code-gram index for chunked
+source content: define the canonical grams, provision the index tables portably
+across backends, and maintain them transactionally as chunks are written,
+edited, and deleted. **Querying the index — turning a grep pattern into candidate
+chunks — is out of scope** (provider-specific, decided elsewhere).
+
+Why: code search needs punctuation-, operator-, and whitespace-sensitive
+substring/regex filtering that `pg_trgm`'s word-oriented model cannot provide.
+Production code-search systems converge on inverted **trigram** indexes used as a
+*filter*: the index narrows the corpus to candidate documents, then a real regex
+verifies them. This story delivers a portable, correct, current such index; it
+deliberately stops short of reading it back.
+
+Design and constants here were validated against the cloned source of the
+reference implementations — see [`analysis-codesearch.md`](./analysis-codesearch.md),
+[`analysis-zoekt.md`](./analysis-zoekt.md), [`analysis-fts5.md`](./analysis-fts5.md),
+[`analysis-pg_trgm-gin.md`](./analysis-pg_trgm-gin.md), and [`research.md`](./research.md).
+This spec carries the **contract**; those docs carry the evidence (`file:line`
+citations).
+
+## 2. Goals / Non-Goals
+
+**Goals**
+
+- A shared, code-oriented gram tokenizer (raw byte trigrams, single lowercase
+  stream).
+- A portable inverted-index storage model: `staging → flush → posting blocks`,
+  minted once on the base `DatabaseFileSystem` so every backend inherits it.
+- Transactional index maintenance on insert / edit / delete / re-chunk.
+- Concrete per-document indexing limits.
+- One index everywhere — **no `pg_trgm` as the index**.
+
+**Non-Goals (out of scope)**
+
+- The query path: candidate generation, regex→gram compilation, intersection
+  SQL, content fetch, the Python final-match step, `_grep_impl` wiring, and
+  removing/replacing any backend's existing query path. Read-time freshness
+  *strategy* (when to flush vs. scan staging) is decided there too — but the
+  minimal *read fold* a correct reader must compute is a storage contract (§4.5).
+- A grep benchmark harness; replacing ripgrep/Python as the final authority.
+- Fuzzy search, similarity, typo tolerance, ranking beyond candidate generation.
+- Lexical/BM25/FTS token search; a custom search server.
+- Indexing binary or invalid-text content as searchable code.
+- Forcing identical physical SQL across backends.
+
+## 3. Concepts & Glossary
+
+| Term | Meaning |
+|---|---|
+| **gram** | A lowercase raw UTF-8 **byte trigram** (3-byte window), packed into a 24-bit `gram_key = (b0<<16)|(b1<<8)|b2`. |
+| **doc_id** | A stable database auto-increment integer per `vfs_entries` row; the **integer key inside posting lists**. Distinct from the entity's `uuid`. |
+| **entry_id** | The entry `uuid` (`vfs_entries.id`), carried on **every** staging row. Staging references this (known at write time); `doc_id` is resolved later. |
+| **index_exclusion_reason** | Nullable marker on a `vfs_entries` row: `too_large \| binary \| high_cardinality \| null`. Non-null ⇒ the row's content is *not* in the index and a reader must fallback-scan it. Distinct from `index_content`, which a *chunked parent* also sets false (but with a `null` reason — skip, don't scan). |
+| **staging (delta-log)** | An append-only log of `(gram, entry_id, action)` pending changes (`action ∈ {add, delete}`). The shipped MVP store. |
+| **latest-action-wins (LAW)** | The fold of staging by the latest `seq` per `(gram_key, entry_id)` — the rule that resolves repeated changes to one current truth. |
+| **posting block** | An immutable, compressed, sorted list of `doc_id`s for one gram. The durable index unit. |
+| **flush** | Turning a closed staging batch into posting blocks. |
+| **compaction** | Background, copy-on-write merge/re-encode of blocks that also applies pending deletes. |
+| **filter-then-verify** | The index yields a candidate *superset*; the real regex verifies. False positives OK; false negatives forbidden. |
+
+## 4. The Contract (normative)
+
+### 4.1 Tokenizer
+
+- The tokenizer MUST normalize before extraction:
+  `CRLF/CR → \n`, then **NFC**, then Unicode **`casefold()`**, then UTF-8 encode,
+  then emit **every 3-byte window**.
+- It MUST include punctuation, whitespace, operators, path separators, and the
+  bytes inside multibyte code points; it MUST dedupe grams per chunk.
+- The index MUST be a **single lowercase stream** — no `gram_kind`, no raw-case
+  stream. Case sensitivity is enforced by the final regex verify, never by the
+  index.
+- The tokenizer **API** MAY remain dual-mode (a `folded` parameter) so the query
+  planner can fold a search *pattern*, but **index maintenance MUST extract with
+  `folded=True`** — the stored index is folded-only. (The `code_grams.py`
+  module docstring still describing a `gram_kind` raw+folded pair is stale and
+  predates this contract; it should be corrected.)
+
+### 4.2 Correctness invariants
+
+- For every committed, **indexed** chunk, every distinct gram MUST be
+  represented: the LAW fold over staging + posting blocks MUST equal the exact
+  set of grams in the chunks currently present.
+- False positives are allowed; a committed, indexed chunk's gram MUST NOT be
+  missing (no false negatives).
+- Chunks excluded by §4.3 MUST set a non-null **`index_exclusion_reason`** so a
+  reader can distinguish them (fallback-scan) from *chunked parents* (skip —
+  their content is covered by their chunk rows); both have `index_content =
+  false`, so `index_content` alone is insufficient. This preserves the *overall*
+  no-false-negative guarantee even though excluded chunks are not in the index
+  (see §4.5).
+- Maintenance MUST run in the **same transaction** as the chunk rows it
+  describes.
+
+### 4.3 Indexing limits
+
+Content that is not worth indexing as code MUST be **excluded from the index
+(not truncated) and marked with a non-null `index_exclusion_reason`**. Defaults
+(benchmarked knobs):
 
-Build a database-agnostic code-search candidate index that works for source
-code, not just English words.
-
-The feature should let Grover accelerate `grep()` over chunked file content in
-any backend by using a code-oriented n-gram inverted index. PostgreSQL can keep
-using native `pg_trgm` where appropriate, but MSSQL, PostgreSQL, and other
-databases should converge on the portable staged posting-block design when
-predictable code semantics matter. The public behavior remains unchanged:
-
-```text
-SQL narrows candidates; Python decides correctness.
-```
-
-The important shift from prior Postgres work is that the canonical index is not
-`pg_trgm`'s word-oriented trigram model. Code search needs punctuation,
-operators, whitespace, path separators, and mixed-language bytes to participate
-in candidate narrowing.
-
-## Why
-
-The live benchmark in
-[`context/learnings/2026-04-24-postgres-trigram-grep-vs-ripgrep.md`](../../learnings/2026-04-24-postgres-trigram-grep-vs-ripgrep.md)
-showed that Postgres chunk trigram search can beat ripgrep on selective
-corpus-wide searches, but loses badly when candidate sets are broad or Python
-verification has to process too many chunks.
-
-MSSQL currently has Full-Text Search and `REGEXP_LIKE` support paths, but those
-are not a raw code trigram index:
-
-- Full-Text Search is word-breaker/linguistic-token based.
-- `CONTAINSTABLE` is useful for token search, not punctuation-sensitive grep.
-- `REGEXP_LIKE` can verify or narrow, but it does not provide an index like
-  `pg_trgm`.
-
-Production code-search systems repeatedly converge on n-gram indexes:
-
-- Google Code Search used trigram queries to narrow regex candidates.
-- Zoekt/Sourcegraph use trigram indexes for source-code substring/regex search.
-- GitHub Blackbird uses n-gram inverted indexes for substring code search.
-- Elasticsearch's `wildcard` field uses an n-gram approximate filter plus exact
-  verification.
-- SQLite FTS5 has a native trigram tokenizer for substring matching.
-
-Grover should make this pattern explicit and portable.
-
-## Research
-
-See [`research.md`](./research.md).
-
-Key conclusions:
-
-- The canonical tokenizer should be code-oriented, not English-word-oriented.
-- A raw sliding byte trigram index is the most portable primitive.
-- Native database support should be used only behind a common capability
-  interface.
-- Side-table indexes are required for MSSQL and likely useful for other
-  relational backends.
-- Final Python/ripgrep-style matching remains mandatory.
-
-## Scope
-
-### In
-
-1. **Define a backend capability for code-gram grep candidates.**
-
-   Add an internal capability shape that can answer:
-
-   ```python
-   get_code_gram_candidates(
-       pattern: str,
-       *,
-       case_mode: CaseMode,
-       fixed_strings: bool,
-       word_regexp: bool,
-       glob: str | None,
-       paths: tuple[str, ...],
-       ext: tuple[str, ...],
-       limit: int | None,
-   ) -> Iterable[ChunkCandidate]
-   ```
-
-   The capability returns chunk candidates only. It must not claim final match
-   correctness.
-
-2. **Define canonical code grams.**
-
-   Canonical grams are raw sliding UTF-8 byte trigrams:
-
-   - normalize line endings to `\n`
-   - encode content as UTF-8
-   - emit every 3-byte window
-   - include punctuation, whitespace, operators, and bytes inside non-ASCII
-     code points
-   - deduplicate grams per chunk before storage
-
-   For case-insensitive grep, support one of:
-
-   - a second folded index generated from `content.casefold()`, or
-   - a `gram_kind`/`folded` dimension in the same physical index.
-
-3. **Adopt a portable inverted-index storage model.**
-
-   The target architecture is the MSSQL design documented in
-   [`mssql-trigram-inverted-index-design.md`](./mssql-trigram-inverted-index-design.md),
-   generalized for every backend that needs predictable code-search semantics:
-
-   ```text
-   chunk writes -> gram staging rows -> periodic flush -> immutable posting blocks
-   ```
-
-   Logical artifacts:
-
-   - a chunk metadata/content table, currently `vfs_entries`
-   - a staging table with one row per distinct `(index_id, gram_kind, gram, chunk_id, action)`
-   - posting-block storage with compressed sorted chunk ids per gram
-   - optional gram statistics for selectivity-aware query planning
-   - staged delete deltas for delete/update handling
-
-   Queries fetch postings for required grams, union posting blocks within each
-   gram, merge pending staging adds, subtract pending staging deletes, intersect
-   across required grams, filter structural metadata, then fetch candidate chunk
-   content for Python verification.
-
-   Freshness is part of the correctness contract. A backend that uses staging and
-   posting blocks must do one of:
-
-   - query both flushed posting blocks and pending staging rows
-   - synchronously flush affected grams before a grep that needs them
-   - fall back to a scan over unflushed chunks
-
-   Search freshness may be tuned, but the candidate path must not lose committed
-   chunks that the public grep path would otherwise find.
-
-4. **Keep a row-per-gram store as the MVP adapter, not the final contract.**
-
-   The first implementation may use a simple relational row store to prove
-   tokenizer, regex-planning, maintenance, and no-false-negative behavior:
-
-   ```text
-   vfs_entry_chunk_grams (
-       gram_kind      smallint not null,  -- 0 raw, 1 folded
-       gram_key       <packed-int-or-binary3> not null,
-       chunk_id       text not null,
-       owner_path     text not null,
-       line_start     integer null,
-       line_end       integer null,
-       primary key (gram_kind, gram_key, chunk_id)
-   )
-   ```
-
-   Backend-specific physical representations can vary behind the shared
-   tokenizer/query API:
-
-   - MSSQL: `tinyint` for kind, `binary(3)` or packed `int` for gram,
-     `nvarchar(36)`/`uniqueidentifier` for chunk ids, `nvarchar(...)` for paths
-   - Postgres: `smallint`, `bytea(3)` or `integer`, `text`/`uuid`
-   - SQLite: `integer`, `blob(3)` or `integer`, `text`
-
-   Required row-store indexes:
-
-   - primary lookup by `(gram_kind, gram_key, chunk_id)`
-   - reverse maintenance lookup by `chunk_id`
-   - optional `owner_path` prefix/pattern helper for glob narrowing
-
-   For the row-store MVP, changed entries may be applied directly by deleting
-   removed `(gram_kind, gram_key, chunk_id)` rows and inserting added rows. The
-   full posting-block adapter instead records those same changes as staging
-   deltas:
-
-   ```text
-   action = add     -- this chunk now contains this gram
-   action = delete  -- this chunk no longer contains this gram
-   ```
-
-   On edits, the backend computes old and new gram sets and stages only the
-   differences. On deletes, it recalculates the current trigrams before the
-   content or chunk rows disappear, then stages `delete` rows for each current
-   gram.
-
-   Pending staging rows are folded by **latest action wins** for each
-   `(index_id, gram_kind, gram, chunk_id)`. This preserves correctness when the
-   same chunk changes multiple times before a posting-block flush. For example,
-   if an older pending row says `delete` and a newer pending row says `add`, the
-   query path treats the gram as present.
-
-5. **Implement candidate queries by gram intersection.**
-
-   Row-store fixed string query shape:
-
-   ```sql
-   SELECT chunk_id
-   FROM vfs_entry_chunk_grams
-   WHERE gram_kind = :kind
-     AND gram_key IN (:g1, :g2, :g3, ...)
-   GROUP BY chunk_id
-   HAVING COUNT(DISTINCT gram_key) = :required_count
-   ```
-
-   Then join back to chunk rows in `vfs_entries`:
-
-   ```sql
-   SELECT c.path, c.line_start, c.line_end, c.content
-   FROM vfs_entries AS c
-   JOIN candidate_chunks AS cc ON cc.chunk_id = c.id
-   WHERE c.kind = 'chunk'
-     AND c.content IS NOT NULL
-     AND c.deleted_at IS NULL
-   ```
-
-   Posting-block adapters implement the same logical intersection in application
-   code after loading compressed postings. Every backend may tune this physically,
-   but the logical candidate behavior must be the same.
-
-6. **Compile regexes conservatively into gram predicates.**
-
-   The first implementation may be conservative:
-
-   - fixed strings: exact byte-gram AND
-   - simple regex literal runs: AND guaranteed literals
-   - alternation with literal branches: OR of branch conjunctions when safe
-   - hard regexes: no gram predicate, only structural filters
-
-   False negatives are forbidden. Weak candidate predicates are acceptable.
-
-   A later implementation can adopt the fuller Russ Cox / Google Code Search
-   regex-to-trigram query algorithm.
-
-7. **Keep Python authoritative.**
-
-   After candidate chunks are fetched:
-
-   - convert chunk paths back to owner file paths
-   - apply exact glob matcher
-   - run `_compile_grep_regex(...)` and exact Python line matching
-   - return the same `VFSResult` shape as existing grep
-
-8. **Support MSSQL first as the non-native proof.**
-
-   MSSQL should get the first portable adapter because it lacks a native
-   `pg_trgm` equivalent and already has a backend grep path. The row-store table
-   is acceptable for the MVP, but the desired durable design is staging plus
-   immutable posting blocks.
-
-   The MSSQL path should:
-
-   - maintain the row-store MVP or the staged posting-block artifacts
-   - use binary-safe gram keys (`binary(3)` or canonical packed integer)
-   - preserve freshness by querying pending rows/blocks or falling back to scan
-   - optionally combine gram candidates with `REGEXP_LIKE` on SQL Server 2025+
-   - keep `CONTAINSTABLE` as a separate optional token prefilter, not the code
-     gram index
-
-9. **Preserve the existing Postgres path while targeting the portable design.**
-
-   Postgres should keep using `pg_trgm` for the current chunk-search notebook
-   and backend path until the portable posting-block path is proven. The eventual
-   goal is to implement the same portable staged posting-block design for
-   Postgres too, so punctuation-sensitive code search is not limited by
-   `pg_trgm` tokenizer semantics. This must not regress the existing native
-   `pg_trgm` implementation.
-
-10. **Add a benchmark harness.**
-
-   Extend the notebook or add a new one to compare:
-
-   - Postgres `pg_trgm`
-   - MSSQL portable code-gram index
-   - Postgres portable code-gram index
-   - ripgrep
-
-   Required timing splits:
-
-   - SQL candidate ids only
-   - SQL candidate content fetch
-   - Python verification
-   - end-to-end
-
-### Out
-
-- Replacing ripgrep/Python as the final semantic authority
-- Fuzzy search, typo tolerance, or similarity ranking
-- A full custom search server
-- Token/lexical search replacement for BM25 or SQL FTS
-- Query ranking beyond candidate generation
-- Supporting invalid text/binary files as searchable code
-- Making every database use identical physical SQL
-
-## Native/Portable Backend Matrix
-
-| Backend | Native option | Story behavior |
+| Limit | Default | Action on hit |
 |---|---|---|
-| PostgreSQL | `pg_trgm` GIN/GiST | Keep native path; add portable staged posting-block adapter for raw code grams. |
-| MSSQL | none equivalent | Implement row-store MVP first, then staged posting-block adapter. |
-| SQLite | FTS5 trigram tokenizer | Prefer native FTS5 trigram for local adapter; portable storage optional. |
-| MySQL | ngram full-text parser | Treat as optional adapter; portable storage preferred for predictable code semantics. |
-| ClickHouse | `ngrambf_v1` skipping index | Not row-exact; use only as scan-pruning inspiration. |
-| Elasticsearch/OpenSearch | wildcard/ngram fields | External search adapter, not database VFS primary storage. |
+| Content size per file/chunk | **2 MiB** | exclude; `index_exclusion_reason = too_large` |
+| Distinct grams per document | **20,000** | exclude; `index_exclusion_reason = high_cardinality` |
+| NUL byte present (binary) | — | exclude; `index_exclusion_reason = binary` |
+| Content < 3 bytes | — | not indexable (no trigram) |
 
-## Data Model
+### 4.4 Maintenance operations
 
-### Logical Chunk Candidate
+- **Insert:** stage `add` for every distinct gram of the chunk.
+- **Edit (path-stable file):** diff old/new grams; stage `old − new` deletes and
+  `new − old` adds; the row's `doc_id` is unchanged.
+- **Delete / re-chunk:** recompute the current grams **before** the row
+  disappears, then stage `delete` deltas (carrying `doc_id`).
+- Every backend MUST produce this one portable index through the shared path and
+  MUST NOT produce or maintain a `pg_trgm`/FTS artifact *as* this index.
 
-```python
-@dataclass(frozen=True)
-class ChunkCandidate:
-    chunk_id: str
-    chunk_path: str
-    owner_path: str
-    line_start: int | None
-    line_end: int | None
-    content: str | None
-```
+### 4.5 Storage-read contract
 
-### Gram Key
+Query *execution* is out of scope (§2), but the no-false-negative guarantee
+(§4.2) is only real if a reader folds staging over blocks. The storage therefore
+exposes one minimal, normative read rule — distinct from query execution:
 
-Pack three bytes into an integer:
+- A reader MUST resolve a gram's current doc-set as
+  **`(∪ active posting blocks) ∪ (unapplied staged adds) − (unapplied staged
+  deletes)`**, applying LAW per `(gram_key, entry_id)`.
+- A reader MUST treat rows with a non-null `index_exclusion_reason` as **not
+  represented** in the index, and fallback-scan them.
 
-```python
-gram_key = (b0 << 16) | (b1 << 8) | b2
-```
+Everything above the candidate doc-set — regex→gram compilation, intersection,
+ranking, content fetch, and the final regex verify — remains out of scope.
 
-This avoids collation behavior and keeps storage compact.
+## 5. Design
 
-### Gram Kind
+Terse mechanism; rationale is in §7, evidence in the analysis docs.
+
+### 5.1 Data model
+
+All physical types are per-backend (§6); these are logical columns.
+
+- **`vfs_entries.doc_id`** — auto-increment (`bigserial`/`IDENTITY`/rowid),
+  assigned at insert, stable for the row's life; files and chunks share one space.
+- **`vfs_entries.index_exclusion_reason`** — nullable enum
+  (`too_large | binary | high_cardinality | null`). Non-null ⇒ excluded from the
+  index, fallback-scan (§4.3, §4.5). Orthogonal to `index_content`: a chunked
+  parent has `index_content = false` with a **null** reason (skip), an excluded
+  chunk has a **non-null** reason (scan).
+- **Staging:** `seq` (monotonic), `batch_id`, `gram_key`, `entry_id` (uuid, on
+  **every** row), `doc_id` (nullable: resolved by join at flush for adds, carried
+  at stage time for deletes — see §5.3), `action`, `applied_at`. **Folded by LAW
+  per `(gram_key, entry_id)`** — `entry_id` is 1:1 with `doc_id`, so the fold is
+  unambiguous and works before `doc_id` is resolved; `doc_id` is the block
+  encoding key after resolution.
+- **Posting block:** `gram_key`, `block_id`, `batch_id`, `doc_count`,
+  `min_doc_id`, `max_doc_id`, `encoding`, `postings` (compressed sorted-doc_id
+  blob), `is_active`.
+- **Batch metadata:** `batch_id`, `status` (`Open→Closed→Flushing→Flushed/Failed`),
+  timestamps.
+- **Gram statistics:** `gram_key`, `doc_freq`, `block_count` (for rarest-first
+  reads; consumed by the out-of-scope query path).
+
+### 5.2 Write pipeline
 
 ```text
-0 = raw UTF-8 bytes from normalized content
-1 = UTF-8 bytes from content.casefold()
+chunk write ──▶ staging deltas ──▶ flush ──▶ immutable posting blocks
+   (txn)         (append-only)              ◀── compaction (background, CoW)
 ```
 
-## Query Semantics
+- **Stage** (in the chunk-write transaction): append `(gram_key, entry_id,
+  action)` rows. Cheap, append-only, no ordering dependency on `doc_id`.
+- **Flush** (background, size-triggered): close the batch; resolve `doc_id`
+  (join `entry_id → vfs_entries` for adds; deletes already carry it); fold LAW;
+  sort doc_ids; split into blocks bounded by **N doc_ids OR a byte budget,
+  whichever first**; compress; write new blocks; retire superseded blocks
+  (`is_active = false`). Mark delete deltas applied only once every block that
+  could contain them is rewritten/retired.
+- **Compaction** (background, single-flight, idempotent): merge a gram's blocks,
+  apply pending deletes, re-encode, retire old. Triggered by block count or
+  stale-doc_id ratio (§7 for defaults). Never inline with a write.
 
-The code gram index is a safe candidate generator:
+### 5.3 doc_id resolution, deletes, and edits
 
-- it may return false positives
-- it must not introduce false negatives
-- if a pattern has no safe grams, the backend must fall back to weaker
-  structural narrowing
-- final grep/glob semantics are unchanged
+- Every staging row carries `entry_id`. **Adds** leave `doc_id` null and resolve
+  it by join at flush (the row persists). **Deletes** carry **both** `entry_id`
+  and the `doc_id` captured at stage time (a hard-deleted row is gone by
+  compaction, so the join would fail). LAW folds by `(gram_key, entry_id)`,
+  applied **at read** for the MVP delta-log and **at flush** for the
+  posting-block target.
+- `doc_id`s are **stable and never renumbered**. Deletes/re-chunks leave gaps;
+  delta encoding only needs *sorted* ids, so gaps are tolerated. The only
+  renumbering event is a rare **full reindex**.
+- Blocks are **re-encoded at compaction, never patched in place**. Worked
+  example — `def` in docs `[10,20,30]`, then doc 20 removed:
 
-## Acceptance Criteria
+  ```text
+  block (immutable): def → encode([10,20,30])
+  stage delete:      (def, doc_id=20)                  ← pending
+  read:              {10,20,30} − pending {20} = {10,30}   ✓
+  compaction:        decode → drop 20 → re-encode [10,30]; retire old block
+  ```
 
-1. A shared code-gram tokenizer emits raw byte trigrams including punctuation,
-   whitespace, and operators.
+  Cost is O(grams changed) at write time; one bounded block re-encoded at
+  compaction — never the whole index.
 
-2. Unit tests prove tokenizer behavior for examples like:
+### 5.4 Posting-block compression
 
-   ```text
-   foo|bar
-   content ~ 'Postgres(FileSystem|Backend)'
-   a?.b
-   path/to/file.py
-   ```
+```text
+sorted doc_ids → min_doc_id stored uncompressed (anchor)
+              → delta (gap) encode the rest
+              → varint (7-bit continuation)
+              → optional zstd/gzip
+```
 
-3. Unit tests prove gram extraction is conservative:
+The per-block `encoding` field lets the format evolve (Roaring / FOR / EWAH)
+without migrating existing blocks. Start with delta+varint.
 
-   - fixed string `postgres` emits all byte trigrams
-   - regex `Postgres(FileSystem|Backend)` emits a safe OR/AND predicate or a
-     documented weaker predicate
-   - regexes with no required grams degrade to `ANY`
+## 6. Phasing
 
-4. Schema provisioning creates the gram index artifacts required by the selected
-   adapter:
+| Phase | What ships | Status |
+|---|---|---|
+| **MVP (row store)** | A `{entries}_chunk_grams` delta-log keyed by `(gram_key, chunk_id)`; direct add/delete rows; proves tokenizer, maintenance, and no-false-negatives. | shipped (implementation.md) |
+| **Target (posting blocks)** | `doc_id` column; `staging → flush → posting blocks`; background compaction; gram statistics. Minted on base `DatabaseFileSystem`; all backends inherit. | Phase 5 |
 
-   - row-store MVP: `vfs_entry_chunk_grams` and required indexes
-   - posting-block target: add/delete staging rows, posting blocks, statistics,
-     and applied-delta metadata
+Backend physical-type mapping (behind the shared tokenizer + maintenance API):
 
-5. MSSQL chunk writes/deletes maintain gram index state atomically with chunk
-   rows. Deletes recalculate current chunk trigrams before content is removed,
-   stage `delete` deltas, and preserve committed-write freshness by querying
-   pending state, flushing synchronously, or falling back to scan.
+| Backend | gram key | doc / entry ids |
+|---|---|---|
+| PostgreSQL | `bytea(3)` or `integer` | `bigserial` doc_id, `uuid` entry_id |
+| MSSQL | `binary(3)` or packed `int` | `IDENTITY` doc_id, `uniqueidentifier`/`nvarchar(36)` entry_id |
+| SQLite | `blob(3)` or `integer` | rowid doc_id, `text` entry_id |
 
-6. MSSQL grep can use the code-gram index to fetch chunk candidates and then
-   uses Python final matching.
+## 7. Rationale & Alternatives
 
-7. A no-false-negative integration test compares MSSQL code-gram grep against
-   the portable in-memory grep path across fixed strings, regexes, punctuation,
-   path-like strings, case-sensitive patterns, and case-insensitive patterns.
+Each decision states the choice, the one-line why, and where it's validated.
 
-8. A Postgres follow-up adapter can use the same logical staged posting-block
-   design while preserving existing `pg_trgm` behavior and tests.
+- **Doc-level, not positional (vs. Zoekt).** Zoekt stores rune offsets so a
+  substring needs only two list intersections, but that needs offset arithmetic
+  over an mmap'd byte stream and costs ~3× size + a uint32 4 GB shard cap. A
+  relational doc-set engine has no carrier for offset math. *(analysis-zoekt.md)*
+- **Single lowercase stream, fold the index (vs. codesearch/Zoekt, which index
+  raw case and fold the query).** Query-side case expansion is cheap only for
+  positional ~2-list lookups; for VFS's doc-level many-trigram AND it would
+  multiply the candidate set. Folding the index halves storage; the final regex
+  enforces case. A two-sided trade; raw-case is worse for *this* engine.
+  *(analysis-codesearch.md)*
+- **Keep `uuid4` PK; add a local integer `doc_id`.** `uuid4` is client-generated
+  and VFS relationships key on `path`, so the uuid carries little FK weight;
+  posting lists need compact sorted integers only internally. Switching the
+  global PK would forfeit client-side id generation for one subsystem's benefit.
+- **Stable `doc_id`, never renumbered (vs. codesearch, which renumbers every
+  merge).** codesearch can renumber because it rewrites the whole file offline;
+  VFS is a live, mutable, multi-backend store. Sorted is mandatory; dense is only
+  a compression bonus. *(analysis-codesearch.md)*
+- **Immutable copy-on-write blocks (vs. GIN's in-place posting-tree deletion).**
+  CoW avoids GIN's xid-marking/right-link concurrency protocol and metapage
+  interlock; readers stay correct, recovery is trivial. *(analysis-pg_trgm-gin.md)*
+- **`staging → flush → blocks` (vs. row-per-`(gram,doc)` forever or one mutable
+  row per gram).** This is GIN's `fastupdate` pending list and FTS5's level-0
+  segments — the proven log-structured model that decouples write cost from index
+  size. *(analysis-fts5.md, analysis-pg_trgm-gin.md)*
+- **No `pg_trgm` as the index.** Its tokenizer is word-oriented: pads words,
+  drops punctuation, CRC-hashes multibyte grams — so `foo|bar` indexes as words
+  `foo`,`bar`. *(analysis-pg_trgm-gin.md)*
+- **Fixed 3-byte trigrams (vs. sparse/variable n-grams).** Trigrams are the
+  proven default; sparse n-grams (Blackbird, Cursor) are the escape hatch if hot
+  grams dominate storage. Deferred. *(research.md)*
+- **Compaction defaults, grounded in FTS5/GIN (benchmarked knobs, not
+  invariants):** merge fan-in **4**; compact a gram at **~16** active blocks or
+  **~10%** stale doc_ids; bound a block by N doc_ids **or** a byte budget
+  (~4 KB); size-trigger the flush (GIN's pending-list limit is 4 MB). Run
+  everything **off the write path** — FTS5's inline `crisismerge` is the
+  multi-hundred-ms-to-second stall this avoids. *(analysis-fts5.md,
+  analysis-pg_trgm-gin.md)*
 
-9. Benchmarks report candidate-only, fetch, verification, and end-to-end timing.
+## 8. Risks
 
-10. Documentation clearly states that code grams are not lexical search and not
-   final match semantics.
+- **Storage growth / hot grams.** Raw byte grams (esp. whitespace/punctuation)
+  produce huge posting lists. Mitigation: per-chunk dedup, the §4.3 unique-gram
+  ceiling, byte-budgeted compressed blocks; sparse n-grams as the future escape
+  hatch.
+- **Case-sensitive candidate breadth.** The single lowercase stream broadens
+  case-sensitive candidates. Mitigation: the regex verify enforces case; a
+  raw stream can be added later via `index_id` namespacing if benchmarks demand.
+- **Write amplification.** Compaction rewrites a doc's blocks when it folds in
+  changes touching them. Mitigation: tune cadence/block size; keep it background.
+- **doc_id density decay.** Gaps from deletes/re-chunks slowly worsen
+  compression. Mitigation: graceful (sorted still holds); rare full reindex
+  re-densifies.
+- **Write latency.** Per-write gram maintenance costs work. Mitigation:
+  append-only staging; O(grams changed) per edit, independent of corpus size.
 
-11. Existing Postgres `pg_trgm` behavior and tests continue to pass.
+## 9. Decision Log
 
-## Risks
+- **2026-05-13** — Single lowercase (casefold) stream; no `gram_kind`, no
+  raw-case stream.
+- **2026-05-24** — Index production + maintenance live on the base
+  `DatabaseFileSystem`; all backends inherit; no per-backend adapter sequence.
+- **2026-05-24** — Story scoped to *producing* the index; querying it is
+  out of scope.
+- **2026-05-24** — `pg_trgm` is not the index (word-oriented model wrong for
+  code).
+- **2026-05-25** — Keep `uuid4` as the entity PK; add a separate auto-increment
+  `doc_id` as the posting-list key; stage by `uuid`, resolve `doc_id` at flush
+  for adds and at stage time for deletes; `doc_id` stable, never renumbered.
+- **2026-05-25** — Adopt concrete indexing limits (2 MiB / 20,000 grams / NUL /
+  <3 B); excluded chunks are flagged for query-path fallback.
+- **2026-05-25** — Compaction/flush defaults grounded in FTS5/GIN; jobs are
+  background, single-flight, idempotent; blocks re-encoded, never patched.
+- **2026-05-25** — Contract tightenings from review: (a) a dedicated
+  `index_exclusion_reason` replaces the overloaded `index_content` flag for
+  exclusion (chunked-parent vs. excluded are now distinguishable); (b) staging
+  carries `entry_id` on every row and LAW folds by `(gram_key, entry_id)`
+  (deletes also carry `doc_id`); (c) index maintenance extracts folded-only even
+  though the tokenizer API stays dual-mode; (d) added a minimal §4.5
+  storage-read contract so the no-false-negative guarantee is well-defined while
+  query execution stays out of scope.
+- **2026-05-25** — **Index unit is the chunk.** A file small enough to fit one
+  chunk stays a single indexed `file` row; a larger file flips
+  `index_content=False` on chunking (`models.py:595`) and is indexed via its
+  `chunk` rows. Bounds verify-fetch and shares the `index_content` row set with
+  the vector index. (Resolves former Open Question 1.)
+- **2026-05-25** — **Versions/snapshots are not content-indexed.**
+  `index_content` defaults `True` only for `kind ∈ {file, chunk}`
+  (`models.py:689-690`); `kind="version"` rows default `False`. So there is no
+  redundant-version posting bloat and no need for Zoekt branch-mask dedup —
+  reopens only if version rows ever become content-indexed. (Resolves former
+  Open Question 3.)
+- **2026-05-25** — **Fixed 3-byte trigrams for v1.** Sparse/variable-length
+  n-grams (Blackbird, Cursor) are deferred, benchmark-gated on hot-gram storage
+  pressure — a decision-with-a-trigger, not an open fork.
 
-- **Storage growth.** Raw byte grams can produce many postings per chunk.
-  Mitigation: dedupe per chunk, chunk size caps, compressed posting blocks, and
-  file skip limits for high unique-gram files.
+## 10. Deferred Options (decided, non-blocking)
 
-- **Hot grams.** Whitespace and common punctuation produce enormous posting
-  lists. Mitigation: query planner should choose the most selective grams first
-  where backend supports it; optionally drop ultra-hot grams from candidate
-  predicates if doing so is still safe only as a weaker filter.
+No design questions are currently open. The following are decided deferrals,
+each with a clear reopening trigger:
 
-- **Case-fold storage cost.** Folded grams may nearly double index size.
-  Mitigation: make folded index optional and fall back to raw plus Python for
-  case-sensitive workloads.
+1. **Sparse / variable-length n-grams** — reopen if benchmarks show hot-gram
+   storage or selectivity is the bottleneck (Blackbird, Cursor).
+2. **A second raw-case gram stream** — reopen if case-sensitive candidate breadth
+   dominates; addable via `index_id` namespacing without a schema migration.
+3. **Multi-version / snapshot dedup** (Zoekt branch-mask style) — reopen only if
+   `kind="version"` rows are ever made content-indexed.
 
-- **Regex compiler unsoundness.** Regex-to-gram extraction can accidentally
-  create false negatives. Mitigation: start conservative and add tests from
-  Russ Cox-style boolean regex analysis before optimizing.
+## 11. References
 
-- **Write latency.** Maintaining grams on every write can be expensive.
-  Mitigation: staging rows for cheap writes, batch flushes into posting blocks,
-  and scan fallback for unflushed chunks when required by freshness.
+**Source repos reviewed (cloned 2026-05-25), with this story's analyses:**
 
-- **Freshness gaps.** Periodic flushes can hide newly committed chunks if queries
-  read only posting blocks. Mitigation: include staging in queries, flush before
-  grep, or scan unflushed chunks.
+- `google/codesearch` — doc-level trigram index (closest match) —
+  [`analysis-codesearch.md`](./analysis-codesearch.md)
+- `sourcegraph/zoekt` — positional, sharded trigram search —
+  [`analysis-zoekt.md`](./analysis-zoekt.md)
+- SQLite `ext/fts5/` — LSM segments + trigram tokenizer (a target backend) —
+  [`analysis-fts5.md`](./analysis-fts5.md)
+- PostgreSQL `pg_trgm` + GIN — pending-list staging + posting model —
+  [`analysis-pg_trgm-gin.md`](./analysis-pg_trgm-gin.md)
 
-## Open Questions
+**External:**
 
-1. Should the canonical code-gram index be per chunk or per file? Default:
-   chunk-level, because it bounds content fetch and aligns with current
-   Postgres research.
-
-2. Should folded grams always be stored? Default: no; make it configurable per
-   backend/index profile.
-
-3. Should hot grams be globally ignored? Default: no; ignoring grams weakens
-   selectivity but is safe. It should be query-planner-driven, not tokenizer
-   semantics.
-
-4. Should Postgres add the portable posting-block adapter immediately after the
-   MSSQL MVP? Default: yes after MSSQL proves the interface and benchmarks justify
-   the storage cost, while keeping `pg_trgm` as the native comparison path.
-
-5. Should grams be 3 bytes or configurable n-grams? Default: 3 bytes. Production
-   systems repeatedly find trigrams to be the best default compromise.
-
-## References
-
-- Russ Cox, "Regular Expression Matching with a Trigram Index":
+- Russ Cox, *Regex Matching with a Trigram Index*:
   https://swtch.com/~rsc/regexp/regexp4.html
-- Sourcegraph Zoekt:
-  https://github.com/sourcegraph/zoekt
-- Sourcegraph search admin docs:
-  https://sourcegraph.com/docs/admin/search
-- Sourcegraph architecture note on Zoekt trigram indexes:
-  https://sourcegraph.com/docs/cody/core-concepts/enterprise-architecture
+- Sourcegraph Zoekt: https://github.com/sourcegraph/zoekt
 - GitHub Blackbird:
   https://github.blog/2023-02-06-the-technology-behind-githubs-new-code-search/
-- PostgreSQL `pg_trgm`:
-  https://www.postgresql.org/docs/current/pgtrgm.html
-- SQLite FTS5 trigram tokenizer:
-  https://sqlite.org/fts5.html
+- PostgreSQL `pg_trgm`: https://www.postgresql.org/docs/current/pgtrgm.html
+- SQLite FTS5: https://sqlite.org/fts5.html
 - SQL Server Full-Text Search:
   https://learn.microsoft.com/en-us/sql/relational-databases/search/full-text-search
-- MySQL ngram full-text parser:
-  https://dev.mysql.com/doc/refman/8.0/en/fulltext-search-ngram.html
-- Elasticsearch wildcard field:
-  https://www.elastic.co/blog/find-strings-within-strings-faster-with-the-new-elasticsearch-wildcard-field
-- ClickHouse data skipping indexes:
-  https://clickhouse.com/docs/en/optimize/skipping-indexes
+- Cursor, *Fast regex search* (sparse n-grams):
+  https://cursor.com/blog/fast-regex-search
+- Manning, Raghavan & Schütze, *Introduction to Information Retrieval*, ch. 4
+  (SPIMI/BSBI) & §2.3 (skip pointers): https://nlp.stanford.edu/IR-book/
+- Apache Lucene segment management & merging:
+  https://deepwiki.com/apache/lucene/2.4-segment-management-and-merging
+- hexops, empirical `pg_trgm` at scale:
+  https://github.com/hexops-graveyard/pgtrgm_emperical_measurements

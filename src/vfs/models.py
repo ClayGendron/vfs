@@ -17,10 +17,10 @@ import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from pydantic import PrivateAttr, model_validator
-from sqlalchemy import DateTime, Index, MetaData
+from sqlalchemy import BigInteger, DateTime, Index, Integer, MetaData, SmallInteger
 from sqlalchemy.orm import InstanceState
 from sqlmodel import Field, SQLModel
 from sqlmodel.main import SQLModelMetaclass
@@ -103,10 +103,19 @@ class VFSEntry(SQLModel):
 
     # --- Identity -----------------------------------------------------------
 
-    id: str = Field(
+    # Auto-increment PK == posting-list ``doc_id`` (story 013 §5.3); ``None``
+    # until flush, so use ``entry_id`` for identity before persist.
+    id: int | None = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+    )
+    # Client-side ``uuid4`` entity identity.
+    entry_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         max_length=36,
-        primary_key=True,
+        unique=True,
+        index=True,
     )
     path: str = Field(max_length=1024, unique=True, index=True)
     external_id: str | None = Field(default=None, max_length=1024)
@@ -782,4 +791,71 @@ def _build_entry_table_class(
     return cast(
         "type[VFSEntry]",
         SQLModelMetaclass("VFSEntryTable", (VFSEntry,), attrs, table=True),
+    )
+
+
+class VFSGram(SQLModel):
+    """One append-only row of the code-gram delta-log.
+
+    Each row records that one distinct folded byte-trigram (``gram_key``) was
+    added to or deleted from one indexed entry. ``entry_id`` (the entity
+    ``uuid``) is known at write time and is what the log folds on by
+    **latest-action-wins** per ``(gram_key, entry_id)`` using the monotonic
+    ``seq``. ``doc_id`` is the posting-list integer key (``vfs_entries.id``):
+    null on adds (resolved by join at flush), captured at stage time on
+    deletes (the entry row may be gone before flush).
+    """
+
+    ACTION_DELETE: ClassVar[int] = 0
+    ACTION_ADD: ClassVar[int] = 1
+
+    seq: int | None = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+    )
+    gram_key: int = Field(sa_type=Integer, nullable=False)  # ty: ignore[invalid-argument-type]
+    entry_id: str = Field(max_length=36, nullable=False)
+    doc_id: int | None = Field(
+        default=None,
+        sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
+    )
+    action: int = Field(sa_type=SmallInteger, nullable=False)  # ty: ignore[invalid-argument-type]
+
+
+def _build_gram_table_class(
+    *,
+    entries_table_name: str,
+    metadata: MetaData,
+    schema: str | None = None,
+) -> type[VFSGram]:
+    """Mint a private ``table=True`` subclass of :class:`VFSGram`.
+
+    The gram table is named ``"{entries_table_name}_chunk_grams"`` and is
+    bound to *metadata* — pass the minted entry table's ``MetaData`` so a
+    single ``metadata.create_all`` provisions the entry and gram tables
+    together. Indexes mirror the read fold: ``(gram_key, entry_id, seq)`` for
+    latest-action-wins resolution and ``(entry_id)`` for cascade deletes.
+
+    Like :func:`_build_entry_table_class`, the returned class is an
+    implementation detail of the calling filesystem and MUST NOT leak onto
+    the public surface.
+    """
+    gram_table_name = f"{entries_table_name}_chunk_grams"
+    table_args: tuple[object, ...] = (
+        Index(f"ix_{gram_table_name}_gram_entry_seq", "gram_key", "entry_id", "seq"),
+        Index(f"ix_{gram_table_name}_entry_id", "entry_id"),
+    )
+    if schema is not None:
+        table_args = (*table_args, {"schema": schema})
+
+    attrs: dict[str, object] = {
+        "__module__": __name__,
+        "__tablename__": gram_table_name,
+        "__table_args__": table_args,
+        "metadata": metadata,
+    }
+    return cast(
+        "type[VFSGram]",
+        SQLModelMetaclass("VFSGramTable", (VFSGram,), attrs, table=True),
     )

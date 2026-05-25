@@ -1,9 +1,10 @@
 # 013 — Implementation notes
 
-- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 DDL + provisioning landed via story 014 slice 3, Postgres write maintenance + grep rewrite in flight)
-- **Date:** 2026-05-01 (last updated 2026-05-13)
-- **Spec:** [spec.md](./spec.md)
-- **Plan:** [plan.md](./plan.md)
+- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** from Postgres-first to base-class-universal — delta-log gram store + maintenance + grep now target `DatabaseFileSystem`; landed Postgres DDL/provisioning to be lifted into a minted model)
+- **Date:** 2026-05-01 (last updated 2026-05-24)
+- **Spec:** [spec.md](./spec.md) (phasing is spec.md §6; the standalone plan.md
+  was dropped 2026-05-25 — its work items live in this file's §"What's next
+  inside Phase 2")
 
 ## Summary
 
@@ -173,6 +174,25 @@ path doesn't drop a chunk the full scan finds.
 
 ## Phase 2 — in flight (story 014 slice 3)
 
+> **Redirected & rescoped 2026-05-24.** Phase 2 originally targeted
+> `PostgresFileSystem` and covered both maintenance *and* grep (the
+> "Landed so far" / "What's next" items below were Postgres-scoped).
+> Three confirmed decisions reshape it: **(a)** keep the append-only
+> **delta-log** store (already chosen — see §"Schema deviation");
+> **(b)** move index production + maintenance into the base
+> `DatabaseFileSystem` so SQLite, MSSQL, and Postgres inherit **one**
+> implementation, with **no `pg_trgm`** as the index anywhere; and
+> **(c)** scope this story to **producing and maintaining** the index —
+> **querying it is provider-specific and out of scope** (the `_grep_impl`
+> read path, regex→gram predicates, intersection SQL, Python match, and
+> removing the Postgres `pg_trgm` grep path all move to a separate query
+> effort; see spec.md §Out). The maintenance is already backend-neutral;
+> the only Postgres-specific piece is the table DDL, replaced by a minted
+> SQLAlchemy gram model. See §"What's next inside Phase 2" below for the
+> work items, including the load-bearing abort/rollback fix. The §"Landed so far"
+> Postgres DDL below is retained as history but will be lifted into the
+> minted model.
+
 Phase 2 ships inside [story 014 slice 3](../014-auto-chunk-and-auto-index-on-write/implementation.md#slice-3--in-progress)
 because the gram-store maintenance is the same write-pipeline hook
 (`_apply_trigram_maintenance`) that auto-index defines. Reading the
@@ -242,34 +262,103 @@ spec §4:
   responsibility. Docstring now spells out the chunk-vs-file
   identity contract.
 
-### What's next inside Phase 2
+### What's next inside Phase 2 (base-class-universal, production-only)
 
-- **Postgres `_apply_trigram_maintenance`** — diff gram sets for
-  files (persistent id via `existing.id`), all-adds for chunks
-  (no persistent id; cascade handles their deletes).
-- **Postgres `_stage_chunk_cascade`** — read existing chunks,
-  recompute their grams, stage delete deltas using old chunk
-  ids, then `super()` to issue the DELETE.
-- **`PostgresFileSystem._grep_impl` rewrite** — `GramQuery` →
-  delta-store SQL with latest-action-wins → chunk content fetch
-  → Python regex via existing `_collect_line_matches`.
-- **No-false-negative integration test** against the in-memory
-  backend across fixed strings, regexes, punctuation, path-like
-  strings, case-sensitive and case-insensitive grep.
+All items land in `src/vfs/` base modules so every backend inherits
+them. The story is scoped to **producing and maintaining** the index;
+querying it is provider-specific and out of scope (spec.md §Out). The
+full work-item list follows.
+
+- **`models.py` — `_build_gram_table_class`** mirroring
+  `_build_entry_table_class`: minted `table=True` gram model with own
+  `MetaData()`, portable types (`BigInteger` autoincrement `seq`,
+  `Integer` `gram_key`, `String` `chunk_id`, `SmallInteger` `action`),
+  and `Index()` objects. Replaces the raw Postgres DDL.
+- **`DatabaseFileSystem.__init__` / `setup()`** — mint
+  `self._gram_model`; provision via metadata `create_all`. Retire (or
+  thin-shim) `install_native_chunk_grams_schema` / `verify_*`.
+- **Base `_apply_trigram_maintenance`** — diff gram sets for files
+  (persistent id via `existing.id`), all-adds for chunks (no persistent
+  id; cascade handles their deletes). Stage via
+  `session.add(self._gram_model(...))`.
+- **Base `_stage_chunk_cascade`** — read existing chunks, recompute
+  their grams, stage delete deltas using old chunk ids, then `super()`
+  to issue the DELETE.
+- **Abort/rollback fix** — `_write_impl` must `await session.rollback()`
+  on `_WriteAbort` (or reorder embeddings before gram staging) so an
+  embedding failure mid-batch can't commit orphan gram deltas. Test it.
+- **Maintenance-correctness integration test** on SQLite **and**
+  Postgres: after writes/edits/deletes, the folded index contains
+  exactly the grams of the currently-committed chunks (storage
+  completeness, no committed gram missing); an aborted write commits no
+  gram rows.
+
+*Out of scope here (query path, provider-specific):* the `_grep_impl`
+code-gram read query (`GramQuery` → intersection → content fetch →
+Python verification), removing the Postgres `pg_trgm` grep path, and any
+grep-vs-ripgrep benchmark.
 
 ### Later phases — out of scope for this story slice
 
-- Phase 3 (glob via grams) — explicitly deferred; the user said no glob
-  for now.
-- Phase 4 (MSSQL adapter) — same row-store contract, different physical
-  types.
+- Phase 3 — querying the index (candidate generation, regex→gram
+  predicates, intersection, Python match, `_grep_impl` wiring,
+  `pg_trgm` removal). Provider-specific; tracked separately.
+- Phase 4 (MSSQL) — largely subsumed: MSSQL inherits the base index
+  production + maintenance. Remaining work is confirming the minted
+  model emits valid T-SQL.
 - Phase 5 (posting-block storage) — staged immutable blocks per
-  `mssql-trigram-inverted-index-design.md`.
-- Phase 6 (benchmark harness in the live grep notebook).
-- Phase 7 (optional native adapters: SQLite FTS5 trigram, MySQL ngram).
+  spec.md §"Durable Storage Model" (backend-neutral); a base-class storage
+  upgrade that benefits all backends at once.
+- Phases 6–7 — benchmarks and optional native read accelerators; both
+  read-path concerns, out of scope.
 
 ## Decisions captured along the way
 
+- **Integer `doc_id` for posting compression; keep `uuid4` PK (2026-05-25).**
+  Posting-list compression (delta/varint, Roaring, Elias-Fano) needs *sorted
+  integer* doc IDs, which a `uuid`/`text` chunk id cannot provide. Resolution:
+  add an auto-increment `doc_id` column to `vfs_entries` (stable per row, shared
+  by files and chunks) and keep `uuid4` as the entity primary key — do **not**
+  switch the global PK (it would forfeit client-side id generation, and VFS
+  relationships key on `path` not `id`). Gram staging references the entry
+  `uuid` (known at write time, no ordering dependency); `doc_id` is resolved by
+  join at flush for **adds**, and captured at stage time for **deletes** (a
+  hard-deleted row is gone by compaction, so the join would fail). `doc_id`s are
+  **stable and never renumbered** — deletes/re-chunks leave gaps, which delta
+  encoding tolerates (sorted is the requirement, dense is a bonus); a rare full
+  reindex is the only dense renumber. Posting blocks are **re-encoded at
+  compaction, never patched in place**, and a file edit rewrites only the changed
+  grams' affected blocks (O(changed grams) at write time, compaction amortized
+  and localized) — not the whole index. This is the Phase 5 evolution of the
+  shipped `chunk_id text` delta-log (see spec.md §Data Model → Doc IDs and
+  §"Durable Storage Model").
+
+- **Index production + maintenance live in the base class, not per
+  backend (2026-05-24).** The posting list is conceptually
+  backend-neutral — gram computation, the old/new diff, and
+  `session.add` staging are all dialect-free. Only the table DDL was
+  Postgres-shaped, and it has a portable equivalent (a minted SQLAlchemy
+  gram model). Landing one implementation in `DatabaseFileSystem` means
+  SQLite, MSSQL, and Postgres inherit it, collapsing the old MSSQL-first
+  / Postgres-follow-up adapter sequence into a single deliverable.
+- **Story scoped to producing the index, not querying it (2026-05-24).**
+  Querying — candidate generation, regex→gram predicates, the
+  latest-action-wins intersection query, content fetch, Python final
+  match, `_grep_impl` wiring — is provider-specific and out of scope.
+  The shared work stops at a correct, current index.
+- **`pg_trgm` is not the index (2026-05-24).** No backend produces or
+  maintains a `pg_trgm` artifact as this index: its word-oriented,
+  punctuation-insensitive trigram model is the wrong semantics for code
+  search. (Removing any existing `pg_trgm` *query* path on Postgres is
+  part of the out-of-scope query work, not this story.)
+- **Pre-persist staging forces an abort/rollback fix (2026-05-24).**
+  Making `_apply_trigram_maintenance` real means it `session.add`s gram
+  rows *before* `_write_phase_persist`. Because `_write_impl` catches
+  `_WriteAbort` and early-returns an error result (it does **not**
+  re-raise), the per-batch session would otherwise commit those staged
+  deltas even though their chunk rows never persisted. The fix —
+  `await session.rollback()` in the abort handler (or reorder embeddings
+  before gram staging) — is part of Phase 2, not a follow-up.
 - **Default case mode is folded.** ~~The Postgres adapter will
   maintain both raw and folded gram streams; grep queries always emit
   folded grams. The `gram_kind` dimension is in the schema regardless
@@ -310,10 +399,10 @@ spec §4:
 
 ```
 context/stories/013-database-agnostic-code-trigram-index/
-  spec.md                                       (modified, prior commit)
-  plan.md                                       (modified, prior commit)
+  spec.md                                       (rewritten 2026-05-25; contract-first, analyses folded in)
+  plan.md                                       (removed 2026-05-25; phasing → spec.md §6, work items → this file)
   research.md                                   (modified, prior commit)
-  mssql-trigram-inverted-index-design.md       (new, prior commit)
+  mssql-trigram-inverted-index-design.md       (removed 2026-05-24; folded into spec.md, db-agnostic)
   implementation.md                             (this file)
 src/vfs/code_grams.py                           (new, f840ce5)
 src/vfs/chunking.py                             (new f6d22f5; refactored 0c4f7d6)

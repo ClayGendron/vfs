@@ -24,7 +24,7 @@ from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
 from vfs.columns import CANDIDATE_BACKED_MODEL_COLUMNS, default_columns
 from vfs.exceptions import _classify_error
 from vfs.graph import RustworkxGraph
-from vfs.models import VFSEntry, _build_entry_table_class
+from vfs.models import VFSEntry, _build_entry_table_class, _build_gram_table_class
 from vfs.paths import (
     METADATA_ROOT,
     base_path,
@@ -286,6 +286,11 @@ class DatabaseFileSystem(VirtualFileSystem):
             table_name=self._table_name,
             schema=self._schema,
             native_embedding=self._native_embedding,
+        )
+        self._gram_model = _build_gram_table_class(
+            entries_table_name=self._table_name,
+            metadata=self._model.metadata,
+            schema=self._schema,
         )
         self._user_scoped = user_scoped
         self._graph = RustworkxGraph(model=self._model, user_scoped=user_scoped)
@@ -1692,12 +1697,15 @@ class DatabaseFileSystem(VirtualFileSystem):
                 and owner_obj.index_content
             ):
                 conflict_owners.add(owner)
+
         if not conflict_owners:
             return
+
         ctx.errors.extend(
             f"{owner}: file + chunks both in batch with index_content=True"
             for owner in sorted(conflict_owners)
         )
+
         raise _WriteAbort(ctx.errors)
 
     async def _write_phase_auto_chunk(self, ctx: _WriteContext) -> None:
@@ -1712,11 +1720,14 @@ class DatabaseFileSystem(VirtualFileSystem):
                 continue
             if incoming.kind != "file" or not incoming.index_content:
                 continue
+
             try:
                 chunks = await asyncio.to_thread(incoming.chunk)
+
             except Exception as exc:
                 ctx.errors.append(f"Auto-chunk failed for {obj_path}: {exc}")
                 raise _WriteAbort(ctx.errors) from exc
+
             for ch in chunks:
                 row = self._model(**ch.model_dump())
                 row._explicit_fields = ch._explicit_fields

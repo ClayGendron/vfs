@@ -2,7 +2,7 @@
 
 > Date: 2026-04-24
 > Scope: production code-search systems, database-native n-gram/trigram support,
-> and a portable design for Grover grep candidate generation.
+> and a portable design for VFS grep candidate generation.
 
 ## Summary
 
@@ -21,7 +21,7 @@ word-oriented: non-alphanumeric punctuation is ignored and words are padded.
 That is useful for natural-language-ish strings, but it is not the ideal
 canonical model for source code.
 
-For Grover, the cross-database story should be a **code gram index**, not an
+For VFS, the cross-database story should be a **code gram index**, not an
 English word trigram index. The canonical tokenizer should preserve punctuation,
 operators, indentation, and path separators.
 
@@ -124,7 +124,7 @@ characters and pads words. For example, `foo|bar` is treated as separate
 word-like pieces rather than raw grams crossing the `|` operator. That is often
 fine for identifiers and prose, but it loses useful punctuation grams for code.
 
-Implication for Grover:
+Implication for VFS:
 
 - Keep using `pg_trgm` as the native Postgres adapter because it is already
   fast and deeply integrated with the planner.
@@ -141,7 +141,7 @@ Its docs explicitly say it treats each contiguous sequence of three characters
 as a token. FTS5 trigram tables can also accelerate `LIKE` and `GLOB` where the
 pattern has at least one non-wildcard sequence of three or more characters.
 
-Implication for Grover:
+Implication for VFS:
 
 - SQLite can be a serious local prototype target for this story.
 - `tokenize='trigram case_sensitive 1'` is a native code-search-ish option.
@@ -158,7 +158,7 @@ linguistic/token search and exposes `CONTAINSTABLE`/`FREETEXTTABLE`, but it is
 not a raw trigram index. SQL Server 2025 adds `REGEXP_LIKE`, which helps
 server-side verification, but it does not provide a native `pg_trgm` equivalent.
 
-Implication for Grover:
+Implication for VFS:
 
 - MSSQL should start with a materialized row store for code grams, then move to
   staged immutable posting blocks for the durable portable design.
@@ -185,7 +185,7 @@ Limitations for code:
 - Boolean/phrase behavior is not a direct equivalent of raw posting-list
   intersection.
 
-Implication for Grover:
+Implication for VFS:
 
 - MySQL native ngram FTS can be an optional adapter.
 - The portable staged posting-block adapter is still preferable for exact
@@ -200,7 +200,7 @@ inverted indexes; they are Bloom filters over granules that help ClickHouse skip
 blocks. They can help substring-like queries, but they are probabilistic and
 block-oriented.
 
-Implication for Grover:
+Implication for VFS:
 
 - ClickHouse-style ngram Bloom filters are useful for analytics scans.
 - They are not the canonical model for exact candidate row/chunk ids.
@@ -209,7 +209,7 @@ Source: https://clickhouse.com/docs/en/optimize/skipping-indexes
 
 ## Design Conclusion
 
-The portable Grover primitive should be:
+The portable VFS primitive should be:
 
 ```text
 chunk content -> raw code grams -> inverted index -> candidate chunks -> exact Python matcher
@@ -217,6 +217,35 @@ chunk content -> raw code grams -> inverted index -> candidate chunks -> exact P
 
 Do not use natural-language tokenization as the canonical index. It loses
 punctuation and operator information that matters in code.
+
+The build pipeline and storage model this implies are well-established IR
+techniques, worth citing directly:
+
+- The `staging -> flush -> immutable posting blocks` shape is single-pass
+  in-memory indexing (SPIMI) followed by block merging — Manning, Raghavan &
+  Schütze, *Introduction to Information Retrieval*, ch. 4. Posting-list
+  intersection with skip pointers is §2.3. https://nlp.stanford.edu/IR-book/
+- The append-only delta-log folded by latest-action-wins is the
+  log-structured / immutable-segment model: writes append, deletes are
+  tombstones, and background compaction reclaims space — exactly Lucene's
+  segment + `liveDocs` design.
+  https://deepwiki.com/apache/lucene/2.4-segment-management-and-merging
+- Posting-list compression (delta/gap encoding, Roaring bitmaps, Elias-Fano,
+  PForDelta) all require **sorted integer doc IDs**; that ordering is also
+  what makes the linear-merge intersection work. A text/UUID `chunk_id` cannot
+  be compressed this way directly — an integer doc-id layer is the prerequisite
+  (sorted is mandatory; dense merely compresses best). See spec.md §Data Model →
+  Doc IDs for VFS's design (auto-increment `doc_id` on `vfs_entries`, stable /
+  never renumbered, gaps tolerated).
+- hexops measured `pg_trgm` regex search over 10,000+ GitHub repos and found
+  GIN builds are single-core (OOM/multi-hour) and that partitioning is the
+  scaling fix — external corroboration of the local
+  `postgres-trigram-grep-vs-ripgrep` benchmark.
+  https://github.com/hexops-graveyard/pgtrgm_emperical_measurements
+- Sparse / variable-length n-grams (GitHub Blackbird, Cursor) are the
+  production answer to non-selective short grams — keep a gram only where its
+  border character-pair weights exceed the interior weights.
+  https://cursor.com/blog/fast-regex-search
 
 For databases without native raw n-gram indexing, materialize a portable
 inverted index. The row-per-gram table is a useful MVP shape; the target durable
@@ -226,15 +255,20 @@ capability interface.
 
 ## Recommended Canonical Tokenizer
 
-Use raw sliding UTF-8 byte trigrams for candidate generation:
+Use lowercase, raw sliding UTF-8 byte trigrams for candidate generation:
 
 - Normalize line endings to `\n` before chunking/indexing.
+- Apply Unicode `casefold()` so the index is a single lowercase stream.
 - Encode content as UTF-8 bytes.
 - Emit every 3-byte window, including punctuation, whitespace, path separators,
   operators, and bytes inside non-ASCII code points.
 - Deduplicate grams per chunk before writing the inverted index.
-- For case-insensitive search, maintain a second folded gram stream or a
-  `folded` flag dimension generated from Unicode `casefold()` text.
+- Do **not** maintain a separate raw-case stream or a `gram_kind` dimension. The
+  grams only prefilter; the authoritative regex check enforces case. A
+  case-sensitive query casefolds its pattern to derive candidate grams, then
+  verifies the original case exactly in Python. This roughly halves index size
+  versus a dual raw+folded design, at the cost of a slightly broader (still
+  correct) candidate set for case-sensitive queries.
 
 Why bytes rather than SQL `nchar(3)`:
 
