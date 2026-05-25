@@ -378,19 +378,25 @@ class TestTimestamps:
 
 
 class TestId:
-    def test_auto_generated(self):
+    def test_id_unset_until_persist(self):
+        # ``id`` is the auto-increment integer PK (== posting-list doc_id),
+        # assigned by the database at flush, so it is None pre-persist.
         obj = VFSEntry(path="/a.py")
-        assert obj.id is not None
-        assert len(obj.id) == 36  # UUID format
+        assert obj.id is None
 
-    def test_unique_across_instances(self):
+    def test_entry_id_auto_generated(self):
+        obj = VFSEntry(path="/a.py")
+        assert obj.entry_id is not None
+        assert len(obj.entry_id) == 36  # UUID format
+
+    def test_entry_id_unique_across_instances(self):
         a = VFSEntry(path="/a.py")
         b = VFSEntry(path="/b.py")
-        assert a.id != b.id
+        assert a.entry_id != b.entry_id
 
-    def test_explicit_id_preserved(self):
-        obj = VFSEntry(path="/a.py", id="custom-id")
-        assert obj.id == "custom-id"
+    def test_explicit_entry_id_preserved(self):
+        obj = VFSEntry(path="/a.py", entry_id="custom-id")
+        assert obj.entry_id == "custom-id"
 
 
 # =========================================================================
