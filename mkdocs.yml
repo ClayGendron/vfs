@@ -35,13 +35,22 @@ theme:
     repo: fontawesome/brands/github
 
 nav:
-  - Home: index.md
-  - API Reference: api.md
-  - Architecture: architecture.md
-  - Internals:
-    - Filesystem: internals/fs.md
-    - FS Component Diagram: fs_architecture.md
-    - Write Pipeline: internals/write_pipeline.md
+  - Home: home.md
+  - Tutorials:
+    - Get started: tutorials/getting-started.md
+  - How-to guides:
+    - Overview: how-to/index.md
+    - Provision Postgres search: how-to/provision-postgres-search.md
+    - Add a backend: how-to/add-a-backend.md
+    - Expose over MCP: how-to/expose-over-mcp.md
+  - Reference:
+    - API: reference/api.md
+    - Metadata path format: reference/metadata-paths.md
+    - Query engine: reference/query-engine.md
+  - Explanation:
+    - Architecture: explanation/architecture.md
+    - Why database-backed: explanation/why-database-backed.md
+    - Filesystem internals: explanation/filesystem-internals.md
   - Contributing: contributing.md
 
 markdown_extensions:

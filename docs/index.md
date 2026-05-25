@@ -11,7 +11,6 @@ The docs site is published on GitHub Pages at `https://claygendron.github.io/vfs
 
 ```bash
 pip install vfs-py
-pip install "vfs-py[postgres]"  # PostgreSQL-native search + pgvector
 ```
 
 Requires Python 3.12+.
