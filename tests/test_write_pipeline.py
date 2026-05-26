@@ -172,7 +172,7 @@ class TestAutoChunk:
             # Chunk rows under the file's metadata root.
             for line_no in (1, 2, 3):
                 chunk = await fs._get_object(
-                    f"/.vfs/code.py/__meta__/chunks/{line_no}_{line_no}",
+                    f"/.vfs/code.py/__meta__/chunks/1/{line_no}_{line_no}",
                     s,
                 )
                 assert chunk is not None
@@ -226,24 +226,24 @@ class TestAutoChunk:
         assert r.success
         async with fs._use_session() as s:
             assert await fs._get_object("/coexist.py", s) is not None
-            assert await fs._get_object("/.vfs/coexist.py/__meta__/chunks/c1", s) is not None
+            assert await fs._get_object("/.vfs/coexist.py/__meta__/chunks/1/c1", s) is not None
 
     async def test_re_chunk_cascades_old_chunks(self):
         fs = await make_sqlite_db()
         _patch_chunker(fs, _tiny_chunker)
-        # Initial write produces 3 chunks.
+        # Initial write produces 3 chunks at version 1.
         await fs.write(path="/code.py", content="a\nb\nc\n")
         async with fs._use_session() as s:
-            assert await fs._get_object("/.vfs/code.py/__meta__/chunks/3_3", s) is not None
-        # Re-write with different shape — only 2 chunks. The cascade must
-        # remove the orphaned 3_3 chunk (no longer in the new shape) and
-        # the surviving 1_1/2_2 paths must carry the *new* content,
-        # proving the old rows were deleted before insert.
+            assert await fs._get_object("/.vfs/code.py/__meta__/chunks/1/3_3", s) is not None
+        # Re-write with different content — only 2 chunks, none matching by
+        # content. The new chunks land in the version-2 namespace and the
+        # whole version-1 chunk dir is vacated (no carry-forward).
         await fs.write(path="/code.py", content="d\ne\n")
         async with fs._use_session() as s:
-            assert await fs._get_object("/.vfs/code.py/__meta__/chunks/3_3", s) is None
-            new_chunk_1 = await fs._get_object("/.vfs/code.py/__meta__/chunks/1_1", s)
-            new_chunk_2 = await fs._get_object("/.vfs/code.py/__meta__/chunks/2_2", s)
+            assert await fs._get_object("/.vfs/code.py/__meta__/chunks/1/3_3", s) is None
+            assert await fs._get_object("/.vfs/code.py/__meta__/chunks/1", s) is None
+            new_chunk_1 = await fs._get_object("/.vfs/code.py/__meta__/chunks/2/1_1", s)
+            new_chunk_2 = await fs._get_object("/.vfs/code.py/__meta__/chunks/2/2_2", s)
             assert new_chunk_1 is not None
             assert new_chunk_1.content == "d"
             assert new_chunk_2 is not None
@@ -352,6 +352,62 @@ class TestAutoIndex:
 
 
 # ----- constructor flags (story 014 ACs 1, 22) ------------------------------
+
+
+class TestIndexedContentHash:
+    """Story 030 Phase 1 — the ``indexed_content_hash`` watermark.
+
+    With ``auto_index=True`` the inline index path stamps
+    ``indexed_content_hash = content_hash`` on every row whose content it
+    folds into the index; with ``auto_index=False`` it leaves the watermark
+    null (stale) for a later ``index()`` to reconcile.
+    """
+
+    async def test_indexed_file_stamps_watermark_to_content_hash(self):
+        fs = await make_sqlite_db()
+        await fs.write(path="/doc.txt", content="hello world")
+        async with fs._use_session() as s:
+            row = await fs._get_object("/doc.txt", s)
+            assert row is not None
+            assert row.index_content is True
+            assert row.indexed_content_hash == row.content_hash
+
+    async def test_auto_index_false_leaves_watermark_null(self):
+        fs = await make_sqlite_db(auto_index=False)
+        await fs.write(path="/doc.txt", content="hello world")
+        async with fs._use_session() as s:
+            row = await fs._get_object("/doc.txt", s)
+            assert row is not None
+            assert row.index_content is True
+            assert row.indexed_content_hash is None
+
+    async def test_edit_advances_watermark_to_new_hash(self):
+        fs = await make_sqlite_db()
+        await fs.write(path="/doc.txt", content="first")
+        async with fs._use_session() as s:
+            first = await fs._get_object("/doc.txt", s)
+            first_hash = first.indexed_content_hash
+        await fs.write(path="/doc.txt", content="second")
+        async with fs._use_session() as s:
+            row = await fs._get_object("/doc.txt", s)
+            assert row.indexed_content_hash == row.content_hash
+            assert row.indexed_content_hash != first_hash
+
+    async def test_chunk_rows_carry_watermark_parent_does_not(self):
+        fs = await make_sqlite_db()
+        _patch_chunker(fs, _tiny_chunker)
+        await fs.write(path="/code.py", content="line one\nline two\nline three\n")
+        async with fs._use_session() as s:
+            parent = await fs._get_object("/code.py", s)
+            # Parent was chunked → index_content flipped False → never stamped.
+            assert parent.index_content is False
+            assert parent.indexed_content_hash is None
+            for line_no in (1, 2, 3):
+                chunk = await fs._get_object(
+                    f"/.vfs/code.py/__meta__/chunks/1/{line_no}_{line_no}", s
+                )
+                assert chunk is not None
+                assert chunk.indexed_content_hash == chunk.content_hash
 
 
 class TestAutoFlags:

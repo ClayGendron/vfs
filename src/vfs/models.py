@@ -42,6 +42,7 @@ from vfs.chunking import (
     split_with_line_ranges,
 )
 from vfs.paths import (
+    base_path,
     chunk_path,
     decompose_edge,
     extract_extension,
@@ -154,6 +155,7 @@ class VFSEntry(SQLModel):
     # --- Search indexing ---------------------------------------------------
 
     index_content: bool = Field(default=False, index=True)
+    indexed_content_hash: str | None = Field(default=None, max_length=64)
 
     # --- Version-specific ---------------------------------------------------
 
@@ -375,6 +377,26 @@ class VFSEntry(SQLModel):
                 raise ValueError(msg)
         return reconstructed
 
+    def set_version(self, version_number: int) -> None:
+        """Set this entry's version, rebuilding its path when the path embeds it.
+
+        ``file`` tracks its current version in ``version_number`` only — its
+        path has no version segment. ``version`` (``.../versions/<N>``) and
+        ``chunk`` (``.../chunks/<N>/<name>``) carry the version in the path, so
+        it is rebuilt.
+        """
+        if self.kind not in {"file", "version", "chunk"}:
+            msg = f"set_version applies only to files, versions, and chunks: kind={self.kind!r}"
+            raise ValueError(msg)
+        self.version_number = version_number
+        if self.kind == "version":
+            self.path = version_path(base_path(self.path), version_number)
+            self._rederive_path_fields()
+        elif self.kind == "chunk":
+            name = split_path(self.path)[1]
+            self.path = chunk_path(base_path(self.path), name, version_number)
+            self._rederive_path_fields()
+
     def plan_file_write(
         self,
         new_content: str,
@@ -575,6 +597,7 @@ class VFSEntry(SQLModel):
             key = (ls, le)
             range_counts[key] = range_counts.get(key, 0) + 1
 
+        version = self.version_number or 1
         new_chunks: list[VFSEntry] = []
         cursor = 0
         cls = type(self)
@@ -593,11 +616,12 @@ class VFSEntry(SQLModel):
             # going straight through ``cls(...)`` would leave those fields at
             # their zero defaults.
             validated = VFSEntry(
-                path=chunk_path(self.path, name),
+                path=chunk_path(self.path, name, version),
                 kind="chunk",
                 content=text,
                 line_start=line_start,
                 line_end=line_end,
+                version_number=version,
                 owner_id=self.owner_id,
             )
 

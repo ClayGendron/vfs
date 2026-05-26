@@ -329,8 +329,8 @@ class TestNamespaceRoots:
         assert endpoint_root("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py") == "/.vfs/src/auth.py"
 
     def test_endpoint_root_collapses_nested_chunk_children(self):
-        assert endpoint_root("/.vfs/src/auth.py/__meta__/chunks/login/body.txt") == (
-            "/.vfs/src/auth.py/__meta__/chunks/login"
+        assert endpoint_root("/.vfs/src/auth.py/__meta__/chunks/1/login/body.txt") == (
+            "/.vfs/src/auth.py/__meta__/chunks/1/login"
         )
 
     def test_endpoint_root_leaves_non_nested_metadata_paths_alone(self):
@@ -385,33 +385,33 @@ class TestParentPath:
 
 class TestChunkPath:
     def test_basic(self):
-        assert chunk_path("/src/auth.py", "login") == "/.vfs/src/auth.py/__meta__/chunks/login"
+        assert chunk_path("/src/auth.py", "login", 1) == "/.vfs/src/auth.py/__meta__/chunks/1/login"
 
     def test_normalizes_file_path(self):
-        assert chunk_path("src/auth.py", "login") == "/.vfs/src/auth.py/__meta__/chunks/login"
+        assert chunk_path("src/auth.py", "login", 2) == "/.vfs/src/auth.py/__meta__/chunks/2/login"
 
     def test_roundtrip_parse_kind(self):
-        assert parse_kind(chunk_path("/f.py", "x")) == "chunk"
+        assert parse_kind(chunk_path("/f.py", "x", 1)) == "chunk"
 
     def test_empty_name_rejected(self):
         with pytest.raises(ValueError, match="chunk_name"):
-            chunk_path("/f.py", "")
+            chunk_path("/f.py", "", 1)
 
     def test_slash_in_name_rejected(self):
         with pytest.raises(ValueError, match="chunk_name"):
-            chunk_path("/f.py", "a/b")
+            chunk_path("/f.py", "a/b", 1)
 
     def test_metadata_base_rejected(self):
         with pytest.raises(ValueError, match="metadata"):
-            chunk_path("/.vfs/f.py/__meta__/chunks/bar", "x")
+            chunk_path("/.vfs/f.py/__meta__/chunks/bar", "x", 1)
 
     def test_reserved_ending_rejected(self):
         with pytest.raises(ValueError, match="metadata path"):
-            chunk_path("/.vfs/foo/__meta__/chunks", "x")
+            chunk_path("/.vfs/foo/__meta__/chunks", "x", 1)
 
     def test_root_base_rejected(self):
         with pytest.raises(ValueError, match="root or reserved metadata root"):
-            chunk_path("/", "x")
+            chunk_path("/", "x", 1)
 
 
 # =========================================================================
@@ -761,8 +761,8 @@ class TestPathInternals:
         assert _canonical_endpoint_path("/.vfs/src/auth.py") == "/src/auth.py"
 
     def test_canonical_endpoint_preserves_nested_chunk_root(self):
-        assert _canonical_endpoint_path("/.vfs/src/auth.py/__meta__/chunks/login/body.txt") == (
-            "/.vfs/src/auth.py/__meta__/chunks/login"
+        assert _canonical_endpoint_path("/.vfs/src/auth.py/__meta__/chunks/1/login/body.txt") == (
+            "/.vfs/src/auth.py/__meta__/chunks/1/login"
         )
 
     def test_split_nested_endpoint_returns_endpoint_when_path_stops_at_version(self):

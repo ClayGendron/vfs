@@ -415,11 +415,15 @@ def _validate_edge_endpoint(path: str, label: str) -> str:
     return normalized
 
 
-def chunk_path(file_path: str, chunk_name: str) -> str:
-    """Build a chunk path under the hidden root metadata tree."""
+def chunk_path(file_path: str, chunk_name: str, version: int) -> str:
+    """Build a chunk path under the hidden root metadata tree.
+
+    Chunks are tied to the owning file's version:
+    ``.../__meta__/chunks/<version>/<chunk_name>``.
+    """
     base = _validate_file_base(file_path)
     _validate_name(chunk_name, "chunk_name")
-    return f"{meta_root(base)}/{META_SEGMENT}/chunks/{chunk_name}"
+    return f"{meta_root(base)}/{META_SEGMENT}/chunks/{version}/{chunk_name}"
 
 
 def version_path(file_path: str, version_number: int) -> str:
@@ -597,17 +601,20 @@ def _canonical_endpoint_path(path: str) -> str:
 
 
 def _split_nested_endpoint(path: str) -> str | None:
-    """Return the chunk/version endpoint root if *path* lies within one."""
-    for family in ("chunks", "versions"):
+    """Return the chunk/version endpoint root if *path* lies within one.
+
+    Chunks are version-addressed (``chunks/<version>/<name>``), so the
+    endpoint spans two segments; versions (``versions/<N>``) span one.
+    Anything deeper (an edge or descendant) collapses to the endpoint root.
+    """
+    for family, depth in (("chunks", 2), ("versions", 1)):
         marker = f"/{META_SEGMENT}/{family}/"
         idx = path.find(marker)
         if idx < 0:
             continue
-        rest = path[idx + len(marker) :]
-        slash = rest.find("/")
-        if slash < 0:
-            return path
-        return path[: idx + len(marker) + slash]
+        start = idx + len(marker)
+        segments = path[start:].split("/")
+        return path[:start] + "/".join(segments[:depth])
     return None
 
 
