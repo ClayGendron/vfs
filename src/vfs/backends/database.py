@@ -2086,7 +2086,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         one durable (non-unchanged) candidate landed in this batch.
         """
         out: list[Candidate] = list(ctx.unchanged_candidates)
-        
+
         for stale in ctx.stale_chunks:
             await session.delete(stale)
         if ctx.carry_renames:
