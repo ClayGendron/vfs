@@ -1,6 +1,6 @@
 # 013 — Implementation notes
 
-- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** to base-class-universal. **Landed 2026-05-25:** the identity reshape (`id` → integer auto-increment PK == posting-list `doc_id`; uuid → new `entry_id` column), the minted `VFSGram` delta-log model + `_build_gram_table_class`, and `self._gram_model` wired into `DatabaseFileSystem`; then a working `_apply_trigram_maintenance`, the Phase 5 durable-store schema (`posting_blocks` / `gram_batches` / `gram_stats` tables + staging `batch_id`) minted on the shared `MetaData`, and the `entry_id` write-path load-only fix. **Pending:** `_stage_chunk_cascade`, the abort/rollback fix, the `code_grams.py` docstring cleanup, and the integration test.)
+- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** to base-class-universal. **Landed 2026-05-25:** the identity reshape (`id` → integer auto-increment PK == posting-list `doc_id`; uuid → new `entry_id` column), the minted `VFSGram` delta-log model + `_build_gram_table_class`, and `self._gram_model` wired into `DatabaseFileSystem`; then a working `_apply_trigram_maintenance`, the Phase 5 durable-store schema (`posting_blocks` / `gram_batches` / `gram_stats` tables + staging `batch_id`) minted on the shared `MetaData`, and the `entry_id` write-path load-only fix; then the chunk-cascade rework (capture old chunks in fetch-existing, de-index them in the index phase, DELETE before persist) and the abort/rollback fix. **Pending:** the `code_grams.py` docstring cleanup and the integration test.)
 - **Date:** 2026-05-01 (last updated 2026-05-25)
 - **Spec:** [spec.md](./spec.md) (phasing is spec.md §6; the standalone plan.md
   was dropped 2026-05-25 — its work items live in this file's §"What's next
@@ -244,7 +244,9 @@ vs. spec §4:
   content fetch, and denormalizing inflated gram-row storage
   roughly 5–10× for no correctness win.
 - **No FK** to the entries table — write-order independent;
-  cascade is application-level via `_stage_chunk_cascade`.
+  cascade is application-level via the chunk-cascade helpers
+  (`_fetch_existing_chunks` / `_stage_chunk_delete_deltas` /
+  `_delete_stale_chunks`).
 - **No `user_id`** — `vfs_entries` is already path-scoped; the
   scope filter applies on the join.
 
@@ -307,6 +309,34 @@ vs. spec §4:
   deferred-column refresh in a sync context → `MissingGreenlet`. (The PK `id`
   is always loaded by `load_only`; `content` was already in the set.)
 
+Chunk-cascade rework + abort rollback (`src/vfs/backends/database.py`):
+
+- **Cascade moved out of persist into the fetch-existing phase**, split three
+  ways. `_fetch_existing_chunks` captures the old chunk rows for re-chunked
+  files via a **column SELECT** (`id` / `entry_id` / `content`) keyed on the
+  indexed `kind = 'chunk' AND parent_path IN (...)` — an equality/IN match, not
+  a `LIKE` prefix scan — returning plain `_StaleChunk` tuples. Capturing as
+  tuples (not ORM rows) means the later cascade `DELETE` can't expire them, so
+  their content stays readable when the index phase reads it. The capture only
+  runs when `_auto_index` is on (nothing else consumes it).
+- **De-indexing happens in the index phase**, not the cascade: `auto_index`
+  calls `_stage_chunk_delete_deltas(ctx.existing_chunks)`, which queues each
+  captured chunk's folded grams as delete deltas (carrying its `doc_id` /
+  `entry_id`). Because the content was captured up front, this no longer depends
+  on the rows still existing — dissolving the read-before-delete ordering knot.
+- **`_delete_stale_chunks`** issues the row `DELETE` (same `parent_path IN`
+  match) before persist inserts the new chunks — chunk paths collide on
+  re-chunk and `path` is unique, so the stale rows must be gone first. It runs
+  whether or not indexing is on (chunk cleanup is not gated on the index).
+- **Abort/rollback fix landed.** `_write_impl` now `await session.rollback()`s
+  in the `_WriteAbort` handler. Since the early `DELETE` executes before the
+  abort-prone phases (`auto_chunk`, embeddings), a swallowed abort would
+  otherwise commit a partial write (chunks deleted, new ones never inserted).
+  Whole-session rollback is correct because **each write owns its own session**
+  (verified: `_route_write_batch`, copy, edit, mkdir each call `_write_impl`
+  once per session; move/delete don't go through it) — so it drops only this
+  write's staged work.
+
 `src/vfs/backends/postgres.py`:
 
 - **Removed** the now-dead `install_native_chunk_grams_schema` /
@@ -347,13 +377,16 @@ full work-item list follows.
   / `gram_batches` / `gram_stats` tables + staging `batch_id` minted on the
   shared `MetaData` (see "Landed so far"). Only the *schema* landed; flush,
   compaction, and stats maintenance logic remain Phase 5.
-- **[pending] Base `_stage_chunk_cascade`** — read existing chunk rows,
-  recompute their grams, stage delete deltas carrying their `entry_id` +
-  `doc_id`, then issue the existing batched `DELETE`.
-- **[pending] Abort/rollback fix** — `_write_impl` must
-  `await session.rollback()` on `_WriteAbort` (or reorder embeddings before
-  gram staging) so an embedding failure mid-batch can't commit orphan gram
-  deltas. Test it.
+- **[done] Chunk cascade (reworked)** — split into `_fetch_existing_chunks`
+  (capture old chunks as `_StaleChunk` tuples in the fetch-existing phase,
+  keyed on indexed `parent_path IN (...)`), `_stage_chunk_delete_deltas`
+  (de-index them in the index phase off the captured tuples), and
+  `_delete_stale_chunks` (the row `DELETE` before persist). Replaces the old
+  `_stage_chunk_cascade` that lived in persist.
+- **[done] Abort/rollback fix** — `_write_impl` now `await session.rollback()`s
+  on `_WriteAbort`, so the early stale-chunk `DELETE` can't commit a partial
+  write. Correct under one-session-per-write. Integration coverage still
+  pending (see below).
 - **[pending] `code_grams.py` docstring cleanup** — the module docstring
   still describes a `gram_kind` raw+folded pair (spec §4.1: stale); correct
   it and drop the unused `GramKind`/`GRAM_KIND_*` constants.
@@ -428,14 +461,23 @@ grep-vs-ripgrep benchmark.
   punctuation-insensitive trigram model is the wrong semantics for code
   search. (Removing any existing `pg_trgm` *query* path on Postgres is
   part of the out-of-scope query work, not this story.)
-- **Pre-persist staging forces an abort/rollback fix (2026-05-24).**
-  Making `_apply_trigram_maintenance` real means it `session.add`s gram
-  rows *before* `_write_phase_persist`. Because `_write_impl` catches
-  `_WriteAbort` and early-returns an error result (it does **not**
-  re-raise), the per-batch session would otherwise commit those staged
-  deltas even though their chunk rows never persisted. The fix —
-  `await session.rollback()` in the abort handler (or reorder embeddings
-  before gram staging) — is part of Phase 2, not a follow-up.
+- **Pre-persist staging forces an abort/rollback fix (2026-05-24; landed
+  2026-05-25).** Making `_apply_trigram_maintenance` real means it
+  `session.add`s gram rows *before* `_write_phase_persist`; the
+  reworked cascade also issues a stale-chunk `DELETE` in the fetch-existing
+  phase, *before* the abort-prone `auto_chunk` / embedding phases. Because
+  `_write_impl` catches `_WriteAbort` and early-returns an error result (it
+  does **not** re-raise), the per-batch session would otherwise commit that
+  partial work (deltas staged, chunks deleted) even though the write failed.
+  **Fix: `await session.rollback()` in the abort handler.** A *whole-session*
+  rollback is correct because **each write owns its own session** — no
+  production path issues two writes on one session (`_route_write_batch`
+  passes a whole group as one `_write_impl` call; copy/edit do read-only work
+  before their single `_write_impl`; move/delete bypass `_write_impl`). The
+  savepoint alternative was considered and rejected: it only matters if a
+  session is shared across writes, which the architecture forbids. (Tests that
+  chained multiple `_write_impl` calls into one `_use_session` block were
+  violating that rule; they get one session per write.)
 - **Default case mode is folded.** ~~The Postgres adapter will
   maintain both raw and folded gram streams; grep queries always emit
   folded grams. The `gram_kind` dimension is in the schema regardless
@@ -486,7 +528,7 @@ context/stories/013-database-agnostic-code-trigram-index/
 src/vfs/code_grams.py                           (new f840ce5; re._parser import 98b5cf6)
 src/vfs/chunking.py                             (new f6d22f5; refactored 0c4f7d6)
 src/vfs/models.py                               (id→int PK + entry_id + VFSGram, 98b5cf6; staging batch_id + posting_blocks/gram_batches/gram_stats + _mint_table_class)
-src/vfs/backends/database.py                    (mint _gram_model, 98b5cf6; _apply_trigram_maintenance impl + mint posting/batch/stat models)
+src/vfs/backends/database.py                    (mint _gram_model, 98b5cf6; _apply_trigram_maintenance impl + mint posting/batch/stat models; chunk-cascade rework + abort rollback, 357de52)
 src/vfs/columns.py                              (entry_id added to _fetch_existing load-only set)
 src/vfs/backends/postgres.py                    (removed dead chunk_grams DDL helpers, 98b5cf6)
 tests/test_code_grams.py                        (new, f840ce5)
@@ -497,5 +539,7 @@ grep_glob research/bench_vs_langchain.py        (new, f6d22f5)
 ```
 
 The model now exposes the chunking surface (`index_content` field +
-`split_content` override seam + `chunk()` method). DB schema, write-path
-gram maintenance, and grep rewrite are still open.
+`split_content` override seam + `chunk()` method). The DB schema and
+write-path gram maintenance (add/delete diffing, chunk-cascade de-indexing,
+abort rollback) are landed; the `code_grams.py` docstring cleanup, the
+maintenance-correctness integration test, and the grep read path remain open.
