@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Database-Agnostic Trigram Posting Index ERD</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --paper: #ffffff;
+      --ink: #1d2733;
+      --muted: #627083;
+      --line: #c8d0da;
+      --strong-line: #6b7890;
+      --accent: #176b87;
+      --accent-soft: #e7f4f8;
+      --green: #2f6f4e;
+      --green-soft: #e8f3ed;
+      --amber: #8a5a00;
+      --amber-soft: #fff3d6;
+      --code: #f1f4f7;
+      --shadow: 0 1px 2px rgba(29, 39, 51, 0.08), 0 8px 24px rgba(29, 39, 51, 0.06);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    main {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    header {
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 34px 0 12px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 20px 0 8px;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 12px;
+      max-width: 900px;
+    }
+
+    .lede {
+      color: var(--muted);
+      font-size: 17px;
+      max-width: 980px;
+    }
+
+    .diagram-shell,
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .diagram-shell {
+      padding: 12px;
+      overflow-x: auto;
+    }
+
+    section {
+      padding: 22px;
+      margin-top: 18px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .note {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px 14px;
+      margin: 14px 0;
+    }
+
+    ul,
+    ol {
+      margin: 8px 0 0;
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 5px 0;
+    }
+
+    code,
+    pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    code {
+      background: var(--code);
+      border: 1px solid #d8e0e8;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      overflow-x: auto;
+      background: #101820;
+      color: #e8edf2;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: #39475a;
+      background: #f3f6f9;
+      font-weight: 700;
+    }
+
+    .svg-wrap {
+      min-width: 1120px;
+    }
+
+    svg {
+      display: block;
+      width: 1120px;
+      height: 760px;
+    }
+
+    .entity {
+      fill: #ffffff;
+      stroke: #8794a7;
+      stroke-width: 1.2;
+    }
+
+    .entity.main {
+      stroke: var(--accent);
+      stroke-width: 1.6;
+    }
+
+    .entity.stage {
+      stroke: var(--amber);
+      stroke-width: 1.6;
+    }
+
+    .entity.stats {
+      stroke: var(--green);
+      stroke-width: 1.6;
+    }
+
+    .title {
+      font: 700 15px Inter, sans-serif;
+      fill: #17202b;
+    }
+
+    .subtitle {
+      font: 600 12px Inter, sans-serif;
+      fill: #4c5b6e;
+    }
+
+    .field {
+      font: 12px "SFMono-Regular", Consolas, monospace;
+      fill: #263445;
+    }
+
+    .field.muted {
+      fill: #6c798b;
+    }
+
+    .label {
+      font: 700 12px Inter, sans-serif;
+      fill: #425166;
+    }
+
+    .rel {
+      fill: none;
+      stroke: var(--strong-line);
+      stroke-width: 1.4;
+      marker-end: url(#arrow);
+    }
+
+    .flow {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2;
+      stroke-dasharray: 6 5;
+      marker-end: url(#arrowAccent);
+    }
+
+    .badge {
+      fill: var(--accent-soft);
+      stroke: #b7dce7;
+      stroke-width: 1;
+    }
+
+    .badge-text {
+      font: 700 12px Inter, sans-serif;
+      fill: var(--accent);
+    }
+
+    @media (max-width: 820px) {
+      main {
+        padding: 22px 14px 42px;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+
+      .grid,
+      .three {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Database-Agnostic Trigram Posting Index ERD</h1>
+      <p class="lede">
+        A portable inverted index for VFS code search: write cheap gram deltas,
+        flush them into immutable page-shaped posting segments, and compact in
+        the background. The index is a candidate filter; exact regex/string
+        verification still runs against stored content.
+      </p>
+    </header>
+
+    <div class="diagram-shell" aria-label="Entity relationship diagram">
+      <div class="svg-wrap">
+        <svg role="img" aria-labelledby="erd-title erd-desc" viewBox="0 0 1120 760" xmlns="http://www.w3.org/2000/svg">
+          <title id="erd-title">ERD for a database-agnostic trigram posting index</title>
+          <desc id="erd-desc">Entities include index shards, VFS entries, gram staging, posting pages, gram stats, and gram batches.</desc>
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7890"></path>
+            </marker>
+            <marker id="arrowAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#176b87"></path>
+            </marker>
+          </defs>
+
+          <!-- vfs_index_shards -->
+          <rect class="entity main" x="34" y="42" width="250" height="190" rx="7"></rect>
+          <text class="title" x="52" y="70">vfs_index_shards</text>
+          <text class="subtitle" x="52" y="91">logical index / partition</text>
+          <text class="field" x="52" y="120">PK index_id bigint</text>
+          <text class="field" x="52" y="142">backend text</text>
+          <text class="field" x="52" y="164">entries_table text</text>
+          <text class="field" x="52" y="186">payload_target_bytes int</text>
+          <text class="field" x="52" y="208">payload_hard_max_bytes int</text>
+
+          <!-- vfs_entries -->
+          <rect class="entity main" x="414" y="42" width="285" height="245" rx="7"></rect>
+          <text class="title" x="432" y="70">vfs_entries</text>
+          <text class="subtitle" x="432" y="91">files and chunks being indexed</text>
+          <text class="field" x="432" y="120">PK entry_id uuid/text</text>
+          <text class="field" x="432" y="142">UQ doc_id bigint</text>
+          <text class="field" x="432" y="164">path text</text>
+          <text class="field" x="432" y="186">kind text</text>
+          <text class="field" x="432" y="208">content text/blob</text>
+          <text class="field" x="432" y="230">content_hash text</text>
+          <text class="field" x="432" y="252">index_content bool</text>
+          <text class="field" x="432" y="274">index_exclusion_reason text?</text>
+
+          <!-- gram_staging -->
+          <rect class="entity stage" x="798" y="42" width="286" height="245" rx="7"></rect>
+          <text class="title" x="816" y="70">gram_staging</text>
+          <text class="subtitle" x="816" y="91">append-only delta log</text>
+          <text class="field" x="816" y="120">PK seq bigint</text>
+          <text class="field" x="816" y="142">FK index_id bigint</text>
+          <text class="field" x="816" y="164">FK batch_id bigint?</text>
+          <text class="field" x="816" y="186">gram_key int24/int32</text>
+          <text class="field" x="816" y="208">FK entry_id uuid/text</text>
+          <text class="field" x="816" y="230">doc_id bigint?</text>
+          <text class="field" x="816" y="252">action smallint</text>
+          <text class="field muted" x="816" y="274">0=delete, 1=add</text>
+
+          <!-- gram_batches -->
+          <rect class="entity stage" x="34" y="392" width="250" height="185" rx="7"></rect>
+          <text class="title" x="52" y="420">gram_batches</text>
+          <text class="subtitle" x="52" y="441">flush lifecycle</text>
+          <text class="field" x="52" y="470">PK batch_id bigint</text>
+          <text class="field" x="52" y="492">FK index_id bigint</text>
+          <text class="field" x="52" y="514">status smallint</text>
+          <text class="field" x="52" y="536">created_at timestamptz</text>
+          <text class="field" x="52" y="558">updated_at timestamptz</text>
+
+          <!-- posting_pages -->
+          <rect class="entity main" x="414" y="366" width="310" height="310" rx="7"></rect>
+          <text class="title" x="432" y="394">posting_pages</text>
+          <text class="subtitle" x="432" y="415">immutable compressed doc_id pages</text>
+          <text class="field" x="432" y="444">PK page_id bigint</text>
+          <text class="field" x="432" y="466">FK index_id bigint</text>
+          <text class="field" x="432" y="488">FK batch_id bigint</text>
+          <text class="field" x="432" y="510">gram_key int24/int32</text>
+          <text class="field" x="432" y="532">level smallint</text>
+          <text class="field" x="432" y="554">generation bigint</text>
+          <text class="field" x="432" y="576">doc_count int</text>
+          <text class="field" x="432" y="598">min_doc_id bigint</text>
+          <text class="field" x="432" y="620">max_doc_id bigint</text>
+          <text class="field" x="432" y="642">byte_count int</text>
+          <text class="field" x="432" y="664">encoding smallint, postings blob</text>
+
+          <!-- gram_stats -->
+          <rect class="entity stats" x="798" y="392" width="286" height="210" rx="7"></rect>
+          <text class="title" x="816" y="420">gram_stats</text>
+          <text class="subtitle" x="816" y="441">query planning and compaction hints</text>
+          <text class="field" x="816" y="470">PK (index_id, gram_key)</text>
+          <text class="field" x="816" y="492">doc_freq bigint</text>
+          <text class="field" x="816" y="514">active_page_count int</text>
+          <text class="field" x="816" y="536">staged_add_count bigint</text>
+          <text class="field" x="816" y="558">staged_delete_count bigint</text>
+          <text class="field" x="816" y="580">updated_at timestamptz</text>
+
+          <!-- Labels -->
+          <rect class="badge" x="392" y="319" width="355" height="30" rx="15"></rect>
+          <text class="badge-text" x="414" y="339">flush: LAW fold, resolve doc_id, sort, encode pages</text>
+
+          <rect class="badge" x="769" y="319" width="315" height="30" rx="15"></rect>
+          <text class="badge-text" x="790" y="339">read: active pages + staged adds - staged deletes</text>
+
+          <!-- Relationship lines -->
+          <path class="rel" d="M 284 132 C 330 132, 360 132, 414 132"></path>
+          <text class="label" x="310" y="119">1 index has many entries</text>
+
+          <path class="rel" d="M 699 172 C 740 172, 760 172, 798 172"></path>
+          <text class="label" x="713" y="158">entry_id</text>
+
+          <path class="rel" d="M 159 232 C 159 285, 159 336, 159 392"></path>
+          <text class="label" x="176" y="316">index_id</text>
+
+          <path class="rel" d="M 284 484 C 330 484, 360 484, 414 484"></path>
+          <text class="label" x="307" y="470">batch_id</text>
+
+          <path class="rel" d="M 941 287 C 941 324, 941 356, 941 392"></path>
+          <text class="label" x="958" y="344">gram_key</text>
+
+          <path class="flow" d="M 798 252 C 745 310, 705 330, 640 366"></path>
+          <text class="label" x="690" y="306">staging to pages</text>
+
+          <path class="rel" d="M 724 505 C 754 505, 768 505, 798 505"></path>
+          <text class="label" x="733" y="491">stats per gram</text>
+
+          <path class="rel" d="M 284 524 C 326 560, 360 584, 414 606"></path>
+          <text class="label" x="306" y="560">produced by</text>
+        </svg>
+      </div>
+    </div>
+
+    <section>
+      <h2>Design Summary</h2>
+      <p>
+        The portable design is an inverted trigram index stored as ordinary
+        database tables. The write path appends cheap delta rows to
+        <code>gram_staging</code>. A background flush folds those deltas into
+        immutable compressed <code>posting_pages</code>. A later compaction job
+        merges pages, applies tombstones, and retires old pages by marking
+        <code>is_active = false</code>.
+      </p>
+      <div class="note">
+        The core invariant is no false negatives: for every indexed chunk, each
+        distinct folded byte trigram must be present in the read fold of active
+        pages plus unapplied staged adds minus unapplied staged deletes.
+      </div>
+      <div class="grid three">
+        <div>
+          <h3>Canonical Gram</h3>
+          <p>
+            Normalize line endings, apply NFC, apply Unicode
+            <code>casefold()</code>, encode UTF-8, then emit every 3-byte
+            window as a packed integer.
+          </p>
+        </div>
+        <div>
+          <h3>Posting Key</h3>
+          <p>
+            Posting lists use a stable integer <code>doc_id</code>, not UUIDs
+            or paths. Sorted integer ids are required for compression and fast
+            merge/intersection.
+          </p>
+        </div>
+        <div>
+          <h3>Verification</h3>
+          <p>
+            The index only returns candidate chunks. The exact literal or regex
+            matcher must still verify candidates against stored content.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Logical Tables</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Table</th>
+            <th>Purpose</th>
+            <th>Portability Rule</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>vfs_index_shards</code></td>
+            <td>One logical index or partition. Stores backend-specific sizing knobs.</td>
+            <td>Use this when a backend needs tenant, corpus, repo, or doc-id range partitioning.</td>
+          </tr>
+          <tr>
+            <td><code>vfs_entries</code></td>
+            <td>Files and chunks. <code>doc_id</code> is the posting-list integer key.</td>
+            <td>Keep entity identity separate from posting identity. UUID/text can remain public.</td>
+          </tr>
+          <tr>
+            <td><code>gram_staging</code></td>
+            <td>Append-only delta log for adds and deletes.</td>
+            <td>Fold by latest <code>seq</code> per <code>(index_id, gram_key, entry_id)</code>.</td>
+          </tr>
+          <tr>
+            <td><code>posting_pages</code></td>
+            <td>Immutable compressed pages of sorted <code>doc_id</code>s for one gram.</td>
+            <td>Bound by compressed byte target, not by a fixed tiny doc count.</td>
+          </tr>
+          <tr>
+            <td><code>gram_batches</code></td>
+            <td>Flush state machine for resumable background work.</td>
+            <td>Use status transitions so crashes can resume or retry safely.</td>
+          </tr>
+          <tr>
+            <td><code>gram_stats</code></td>
+            <td>Document frequency and active page counts.</td>
+            <td>Required for rarest-first reads and compaction scheduling.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Portable Schema Skeleton</h2>
+      <pre><code>CREATE TABLE posting_pages (
+  page_id       BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  index_id      BIGINT NOT NULL,
+  batch_id      BIGINT NOT NULL,
+  gram_key      INTEGER NOT NULL,
+
+  level         SMALLINT NOT NULL DEFAULT 0,
+  generation    BIGINT NOT NULL DEFAULT 0,
+
+  doc_count     INTEGER NOT NULL,
+  min_doc_id    BIGINT NOT NULL,
+  max_doc_id    BIGINT NOT NULL,
+
+  encoding      SMALLINT NOT NULL,
+  byte_count    INTEGER NOT NULL,
+  postings      BINARY_BLOB_TYPE NOT NULL,
+  is_active     BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE INDEX ix_posting_pages_lookup
+  ON posting_pages (index_id, gram_key, is_active, min_doc_id);
+
+CREATE TABLE gram_staging (
+  seq       BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  index_id  BIGINT NOT NULL,
+  batch_id  BIGINT,
+  gram_key  INTEGER NOT NULL,
+  entry_id  ENTRY_ID_TYPE NOT NULL,
+  doc_id    BIGINT,
+  action    SMALLINT NOT NULL
+);
+
+CREATE INDEX ix_gram_staging_law
+  ON gram_staging (index_id, gram_key, entry_id, seq);</code></pre>
+    </section>
+
+    <section>
+      <h2>Write, Flush, Read</h2>
+      <div class="grid">
+        <div>
+          <h3>Write Transaction</h3>
+          <ol>
+            <li>Chunk content if needed.</li>
+            <li>Extract distinct folded byte trigrams per indexed chunk.</li>
+            <li>For inserts, append <code>action = add</code> staging rows.</li>
+            <li>For edits, diff old and new gram sets.</li>
+            <li>For deletes, stage delete rows before content disappears.</li>
+          </ol>
+        </div>
+        <div>
+          <h3>Background Flush</h3>
+          <ol>
+            <li>Close an open batch.</li>
+            <li>Apply latest-action-wins over staging rows.</li>
+            <li>Resolve add rows from <code>entry_id</code> to <code>doc_id</code>.</li>
+            <li>Sort doc ids per gram.</li>
+            <li>Encode page-shaped sorted runs into <code>posting_pages</code>.</li>
+          </ol>
+        </div>
+      </div>
+      <h3>Read Fold</h3>
+      <pre><code>current_doc_set(gram) =
+    union(active posting_pages for gram)
+    union(unapplied staged adds for gram)
+    minus(unapplied staged deletes for gram)</code></pre>
+    </section>
+
+    <section>
+      <h2>Posting Page Encoding</h2>
+      <p>
+        Store each page as a compressed sorted run. Keep
+        <code>min_doc_id</code> and <code>max_doc_id</code> as normal columns for
+        range pruning. The blob stores deltas after the first id:
+      </p>
+      <pre><code>doc_ids:  [10, 20, 30, 45]
+anchor:   min_doc_id = 10
+blob:     varint(10), varint(10), varint(15)
+
+decode:
+  current = min_doc_id
+  for gap in blob:
+      current += gap
+      emit current</code></pre>
+      <p>
+        The <code>encoding</code> column allows future formats such as
+        delta-varint, bitpacking, roaring bitmaps, or Elias-Fano without a full
+        table migration.
+      </p>
+    </section>
+
+    <section>
+      <h2>Backend Mapping</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Concept</th>
+            <th>Postgres</th>
+            <th>SQLite</th>
+            <th>SQL Server</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Entry id</td>
+            <td><code>uuid</code> or <code>text</code></td>
+            <td><code>text</code></td>
+            <td><code>uniqueidentifier</code> or <code>nvarchar(36)</code></td>
+          </tr>
+          <tr>
+            <td>Doc id</td>
+            <td><code>bigint identity</code></td>
+            <td><code>integer primary key</code></td>
+            <td><code>bigint identity</code></td>
+          </tr>
+          <tr>
+            <td>Gram key</td>
+            <td><code>integer</code></td>
+            <td><code>integer</code></td>
+            <td><code>int</code></td>
+          </tr>
+          <tr>
+            <td>Posting blob</td>
+            <td><code>bytea</code></td>
+            <td><code>blob</code></td>
+            <td><code>varbinary(max)</code> or bounded <code>varbinary</code></td>
+          </tr>
+          <tr>
+            <td>Payload target</td>
+            <td>1 KB default, benchmark 2 KB</td>
+            <td>4 KB to 16 KB</td>
+            <td>1 KB to 8 KB, benchmarked</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Postgres-Specific Notes From the Linux Experiment</h2>
+      <p>
+        A 10,000-chunk Linux-source benchmark produced 9,189,305
+        <code>(gram, doc)</code> postings across 120,437 grams. The strongest
+        current Postgres recommendation is:
+      </p>
+      <pre><code>target payload = 1 KB
+benchmark 2 KB
+do not default to 64 KB
+consider STORAGE PLAIN only with a hard payload ceiling near 4 KB</code></pre>
+      <p>
+        In the retained local benchmark database, a 1 KB payload target stored
+        9,189,305 postings in 161,956 posting-page rows, total size 39 MB, with
+        the TOAST table still at its empty baseline.
+      </p>
+    </section>
+
+    <section>
+      <h2>Errors To Avoid</h2>
+      <ul>
+        <li>Do not store UUIDs, paths, or strings inside posting lists. Use sorted integer <code>doc_id</code>s.</li>
+        <li>Do not use one huge mutable blob per gram. Split postings into page-shaped immutable segments.</li>
+        <li>Do not apply delete staging rows too early. Deletes are safe to remove only after every affected active page is rewritten or retired.</li>
+        <li>Do not rely on <code>pg_trgm</code> as the canonical code index. Its tokenizer is word-oriented and loses punctuation-sensitive grams.</li>
+        <li>Do not skip exact verification. The index is a conservative candidate generator.</li>
+        <li>Do not let staging grow only by time. Bound it by pending rows or bytes because read cost scales with pending size.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
