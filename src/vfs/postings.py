@@ -1,17 +1,14 @@
 """Posting-list codec for the code-gram index.
 
 A posting list is the sorted ``doc_id`` set of a single gram. v1 packs it with
-``delta+gamma``: gaps between consecutive ids, Elias-γ coded. The byte format is
-ported verbatim from Google ``codesearch`` (``index/delta.go`` writer +
-``index/read.go`` reader) so the two never produce incompatible blobs:
+``delta+gamma``: gaps between consecutive ids, Elias-gamma coded:
 
 - ids are encoded as gaps from a running cursor that starts at ``-1`` (so the
   first gap is ``first_id + 1``);
 - the list ends with a trailing **zero** gap as a terminator;
-- Elias-γ cannot encode 0, so every value is remapped before coding —
-  ``0 → 16`` and any ``v ≥ 16 → v + 1`` (``deltaZeroEnc = 16``,
-  ``index/delta.go:31``; the reader inverts it);
-- γ codes are written LSB-first within each byte and the partial trailing byte
+- Elias-gamma cannot encode 0, so every value is remapped before coding —
+  ``0 → 16`` and any ``v ≥ 16 → v + 1`` (the reader inverts the remap);
+- gamma codes are written LSB-first within each byte and the partial trailing byte
   is flushed at end-of-blob.
 
 Decode is **count-bounded**: the caller supplies ``doc_count`` (the posting
@@ -27,9 +24,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
     from collections.abc import Set as AbstractSet
 
-# index/delta.go:31 — Elias-γ cannot encode 0, so 0 maps to this sentinel and
-# every value >= it shifts up by one. The reader inverts the remap.
+# Elias-gamma cannot encode 0, so 0 maps to this sentinel and every value >= it
+# shifts up by one; the reader inverts the remap.
 _DELTA_ZERO_ENC = 16
+
+# A doc_id is vfs_entries.id — a signed 64-bit PK on every backend, so a value
+# beyond this is not a real row and indicates a bug (encode) or corruption (decode).
+_MAX_DOC_ID = (1 << 63) - 1
 
 
 class PostingCorruptionError(ValueError):
@@ -37,9 +38,9 @@ class PostingCorruptionError(ValueError):
 
 
 class GammaWriter:
-    """LSB-first Elias-γ bit writer (port of ``deltaWriter`` in delta.go)."""
+    """LSB-first Elias-gamma bit writer."""
 
-    __slots__ = ("_out", "_b", "_nb")
+    __slots__ = ("_b", "_nb", "_out")
 
     def __init__(self) -> None:
         self._out = bytearray()
@@ -53,11 +54,10 @@ class GammaWriter:
             self._nb -= 8
 
     def _write_bits(self, x: int) -> None:
-        # γ-code a strictly-positive integer: ``lg`` leading zero bits, a 1
+        # gamma-code a strictly-positive integer: ``lg`` leading zero bits, a 1
         # marker bit, then the low ``lg`` mantissa bits. Python ints are
-        # unbounded, so unlike delta.go we never split a wide mantissa — the
-        # emitted bit sequence is identical because _flush_bits only drains
-        # whole low bytes.
+        # unbounded, so we never split a wide mantissa — the emitted bit sequence
+        # is identical because _flush_bits only drains whole low bytes.
         if x <= 0:
             msg = f"gamma write of non-positive value {x}"
             raise ValueError(msg)
@@ -91,9 +91,9 @@ class GammaWriter:
 
 
 class GammaReader:
-    """LSB-first Elias-γ bit reader (port of ``deltaReader`` in delta.go)."""
+    """LSB-first Elias-gamma bit reader."""
 
-    __slots__ = ("_d", "_pos", "_b", "_nb")
+    __slots__ = ("_b", "_d", "_nb", "_pos")
 
     def __init__(self, data: bytes) -> None:
         self._d = data
@@ -118,6 +118,8 @@ class GammaReader:
             self._nb = 8
         nb = _trailing_zeros(self._b)
         lg += nb
+        if lg > 64:  # a real doc-id gap fits in 64 bits; wider is corruption
+            raise PostingCorruptionError("posting gamma value exceeds 64 bits")
         self._b >>= nb + 1  # consume the zeros and the marker bit
         self._nb -= nb + 1
         x = 1 << lg
@@ -143,6 +145,10 @@ class GammaReader:
             return i - 1
         return i
 
+    def at_end(self) -> bool:
+        """True iff every byte is consumed and the buffered padding bits are zero."""
+        return self._pos >= len(self._d) and self._b == 0
+
 
 def _trailing_zeros(value: int) -> int:
     # value is always > 0 here (the window holds a set bit).
@@ -150,10 +156,11 @@ def _trailing_zeros(value: int) -> int:
 
 
 def encode_postings(doc_ids: Iterable[int]) -> bytes:
-    """Encode a sorted, strictly-increasing ``doc_id`` set as a delta+γ blob.
+    """Encode a sorted, strictly-increasing ``doc_id`` set as a delta+gamma blob.
 
-    ``doc_ids`` MUST be sorted ascending with no duplicates; each gap is then
-    ``>= 1`` as γ-coding requires. Raises ``ValueError`` otherwise.
+    ``doc_ids`` MUST be sorted ascending with no duplicates (each gap is then
+    ``>= 1`` as gamma-coding requires) and within ``[0, _MAX_DOC_ID]``. Raises
+    ``ValueError`` otherwise.
     """
     writer = GammaWriter()
     prev = -1
@@ -164,17 +171,24 @@ def encode_postings(doc_ids: Iterable[int]) -> bytes:
             raise ValueError(msg)
         writer.write_value(gap)
         prev = doc_id
+    if prev > _MAX_DOC_ID:  # ascending ⇒ prev is the max
+        msg = f"doc_id {prev} exceeds the maximum {_MAX_DOC_ID}"
+        raise ValueError(msg)
     writer.write_value(0)  # trailing zero terminator
     return writer.finish()
 
 
 def decode_postings(blob: bytes, doc_count: int) -> list[int]:
-    """Decode a delta+γ blob into its ``doc_id`` list.
+    """Decode a delta+gamma blob into its ``doc_id`` list.
 
     Reads exactly ``doc_count`` gaps, then asserts the trailing zero
-    terminator. Raises :class:`PostingCorruptionError` on truncation or a
-    missing/!= 0 terminator.
+    terminator and that the blob is fully consumed (no trailing data, no
+    non-zero padding bits). Raises :class:`PostingCorruptionError` on a negative
+    ``doc_count``, truncation, an over-wide gamma value, an out-of-range
+    ``doc_id``, a missing/!= 0 terminator, or trailing data.
     """
+    if doc_count < 0:
+        raise PostingCorruptionError(f"negative doc_count {doc_count}")
     reader = GammaReader(blob)
     doc_id = -1
     ids: list[int] = []
@@ -184,8 +198,12 @@ def decode_postings(blob: bytes, doc_count: int) -> list[int]:
             raise PostingCorruptionError("non-positive gap in posting list")
         doc_id += gap
         ids.append(doc_id)
+    if ids and ids[-1] > _MAX_DOC_ID:  # ascending ⇒ last is the max
+        raise PostingCorruptionError(f"doc_id {ids[-1]} exceeds the maximum {_MAX_DOC_ID}")
     if reader.read_value() != 0:
         raise PostingCorruptionError("posting list missing zero terminator")
+    if not reader.at_end():
+        raise PostingCorruptionError("posting list has trailing data after terminator")
     return ids
 
 
@@ -194,7 +212,7 @@ def merge_postings(
 ) -> list[int]:
     """Merge a sorted posting list with staged adds, dropping deletes.
 
-    Computes ``(base ∪ adds) − dels`` as an ascending, distinct list via a
+    Computes ``(base | adds) - dels`` as an ascending, distinct list via a
     linear two-pointer merge that exploits the existing order — O(B + A·log A)
     rather than re-sorting the union. ``base_ids`` MUST be ascending and
     distinct (the decode output); ``adds`` may be any iterable. ``adds`` and
