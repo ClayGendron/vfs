@@ -1,10 +1,93 @@
 # 013 — Implementation notes
 
-- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** to base-class-universal. **Landed 2026-05-25:** the identity reshape (`id` → integer auto-increment PK == posting-list `doc_id`; uuid → new `entry_id` column), the minted `VFSGram` delta-log model + `_build_gram_table_class`, and `self._gram_model` wired into `DatabaseFileSystem`; then a working `_apply_trigram_maintenance`, the Phase 5 durable-store schema (`posting_blocks` / `gram_batches` / `gram_stats` tables + staging `batch_id`) minted on the shared `MetaData`, and the `entry_id` write-path load-only fix; then the chunk-cascade rework (capture old chunks in fetch-existing, de-index them in the index phase, DELETE before persist) and the abort/rollback fix. **Pending:** the `code_grams.py` docstring cleanup and the integration test.)
-- **Date:** 2026-05-01 (last updated 2026-05-25)
+- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** to base-class-universal. **Landed 2026-05-25:** the identity reshape (`id` → integer auto-increment PK == posting-list `doc_id`; uuid → new `entry_id` column), the minted `VFSGram` delta-log model + `_build_gram_table_class`, and `self._gram_model` wired into `DatabaseFileSystem`; then a working `_apply_trigram_maintenance`, the Phase 5 durable-store schema (`posting_blocks` / `gram_batches` / `gram_stats` tables + staging `batch_id`) minted on the shared `MetaData`, and the `entry_id` write-path load-only fix; then the chunk-cascade rework (capture old chunks in fetch-existing, de-index them in the index phase, DELETE before persist) and the abort/rollback fix. **Pending:** the `code_grams.py` docstring cleanup and the integration test.) **2026-05-27:** the four-table block model was collapsed to the two-table target (Core `Table`s), the write-path maintenance rewritten to reconciliation-driven bulk staging, and chunk-all adopted — see §"2026-05-27 — Phase 5 two-table rewrite" below. Durable flush + gamma codec remain.
+- **Date:** 2026-05-01 (last updated 2026-05-27)
 - **Spec:** [spec.md](./spec.md) (phasing is spec.md §6; the standalone plan.md
   was dropped 2026-05-25 — its work items live in this file's §"What's next
   inside Phase 2")
+
+## 2026-05-27 — Phase 5 two-table rewrite (this session)
+
+Reconciled the landed four-table block model to the spec's two-table target and
+rewrote the write-path maintenance. **The durable flush and the gamma codec are
+the remaining Phase-5 work.**
+
+### Done
+
+- **Two-table durable model.** Removed `VFSPostingBlock` / `VFSGramBatch` /
+  `VFSGramStat` and the staging `batch_id`. The gram tables are now plain
+  SQLAlchemy **Core `Table`s** (internal index machinery, never validated
+  through Pydantic — per the bulk-insert learning's table-modeling note):
+  `{table}_grams_staging` (`seq` PK, `gram_key`, `entry_id`, `doc_id`, `action`)
+  and `{table}_grams_posting_list` (`gram_key` PK, `postings`, `encoding`,
+  `doc_count`, `byte_size`). Action/encoding codes are module-level constants
+  (`GRAM_ACTION_ADD/DELETE`, `ENCODING_DELTA_VARINT/GAMMA/ROARING`).
+- **`_build_vfs_tables`** (models.py) replaces the three `_build_*` helpers: one
+  function mints the entry model + both gram tables on a shared `MetaData`.
+  Entry PK is now `sqlite_autoincrement=True` (bars rowid reuse). Minted entry
+  class gets a **unique name** (`name` + random token) to avoid the SQLAlchemy
+  declarative-registry collision warning across mounts.
+- **`code_grams.py`** docstring corrected to the single lowercase (folded)
+  stream; removed the unused `GRAM_KIND_*` constants.
+- **`setup()`** now runs `create_all` (idempotent DDL). New **`ensure_schema()`**
+  reflects the live DB and diffs it against the in-memory tables (columns,
+  nullability, PK, coarse type family), raising `SchemaMismatchError` with a
+  per-difference message; read-only, for migration-owning callers.
+- **`VirtualFileSystem`** gained MCP-aligned `name` / `title` / `description`
+  (public); the old `self._name = class name` became `self._class_name`.
+- **chunk-all.** `split_with_line_ranges` now emits a whole-file piece for
+  content ≥ `GRAM_SIZE` bytes (else `[]`); `split_code` / `split_notebook` route
+  their fits-in-one-chunk and fallback cases through it. Every ≥3-byte document
+  becomes ≥1 chunk; the file row's `index_content` flips `False`. Verified by a
+  throwaway harness: reconstruction, ≤`chunk_size`, valid line ranges, and speed
+  parity with the old splitter.
+- **Maintenance rewrite.** `_stage_gram_deltas` replaces `_apply_trigram_maintenance`
+  + `_stage_chunk_delete_deltas`: **reconciliation-driven, no gram diff** —
+  de-indexed rows (stale chunks + flag-flipped files) all-delete carrying
+  `doc_id`; path-stable edits all-delete old + all-add new (LAW resolves the
+  overlap); new rows all-add (`doc_id` NULL). All deltas land in **one Core bulk
+  `insert`** (the ~50× win). `index()` simplified accordingly.
+- **Dropped `index_exclusion_reason` + §4.3 per-chunk limits.** With chunk-all
+  and size-bounded chunks, neither limit (2 MiB / 20k grams) can fire, so the
+  column, validator, and exclusion branch are dead. **The code now diverges from
+  spec §4.3 and the 4-state truth table — the spec needs updating** (or the
+  limits reintroduced if an unsplittable oversized chunk is a real concern).
+
+### Open questions
+
+- **chunk-all `write()` shape (undecided).** A small file now produces a chunk
+  row, so `write()` returns file + chunk candidates (2N for N small files), and
+  embeddings + the `indexed_content_hash` watermark attach to the **chunk**, not
+  the file. Options on the table: (A) accept; (B) keep chunk-all internally but
+  hide chunk rows from `write()` candidates; (C) don't chunk single-piece files
+  (revert to self-index — `_stage_gram_deltas` already supports indexing a file
+  row). 8 existing tests encode the old single-row behavior and are red pending
+  this decision.
+- Duplicate-content chunk `occurrence` tie-break (spec §10 item 7) still open.
+
+### Remaining work
+
+1. **`delta+gamma` posting codec** — encode/decode ported from codesearch's exact
+   byte format (gap-from-−1, trailing-zero terminator, `deltaZeroEnc=16`,
+   LSB-first), count-bounded decode + terminator assert.
+2. **Watermarked single-flight flush** — `seq` watermark, LAW fold, resolve
+   surviving adds via `entry_id`→`id` join (drop join-misses), idempotent
+   set-merge into posting rows (UPDATE, or DELETE when emptied), delete the exact
+   folded `seq` set; one transaction. Wire into `index(compile_post_list=True)`.
+3. **Tests** — update the 8 chunk-all behavior tests once (A/B/C) is decided; add
+   codec round-trip, flush fold, and §4.5 read-fold tests.
+4. **Test migration** — ~15 call sites use the removed `_build_entry_table_class`
+   (test_models / test_postgres_backend / test_mssql_backend / test_graph);
+   redirect to `_build_vfs_tables`, then inline/remove the old helper.
+5. **Spec update** — record the dropped exclusion model in spec §4.3 / §9.
+
+### Pre-existing breakage (not this story)
+
+64 tests fail on a pristine `main` (verified in a HEAD worktree): `_move_impl` /
+`_copy_impl` / `_delete_impl` call `self._error(result)` on a **success**
+`VFSResult`, which pydantic 2.12 rejects (errors must be `list[str]`). Move /
+copy / delete are broken on `main`. Out of 013 scope; flagged for a separate fix
+(likely `return result` when `success`).
 
 ## Summary
 

@@ -43,6 +43,10 @@ class GraphError(VFSError):
     """A graph algorithm failed."""
 
 
+class SchemaMismatchError(VFSError):
+    """The live database schema does not match the in-memory table definitions."""
+
+
 def _classify_error(
     message: str,
     errors: list[str],

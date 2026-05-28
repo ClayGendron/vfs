@@ -21,9 +21,12 @@ Layers:
    A small boolean algebra over required gram sets, derived from a traversal
    of Python's ``sre_parse`` regex AST.
 
-Case folding is handled by emitting a separate folded byte stream from
-``content.casefold()``. The caller decides whether to maintain folded grams
-in addition to raw grams via ``gram_kind``.
+The stored index is a **single lowercase stream**: index maintenance always
+extracts with ``folded=True`` (``content.casefold()`` after newline + NFC
+normalization), and case sensitivity is enforced by the final regex verify,
+never by the index. The tokenizer API stays dual-mode via the ``folded``
+parameter only so the query planner can fold a search *pattern* the same way;
+there is no second raw-case stream and no ``gram_kind``.
 
 Unicode normalization: both indexer and query planner apply NFC normalization
 before encoding, so canonically-equivalent code points produce the same byte
@@ -36,7 +39,7 @@ from __future__ import annotations
 import unicodedata
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -49,10 +52,6 @@ from re import _constants as sre_constants  # noqa: PLC2701 — regex AST has no
 from re import _parser as sre_parse  # noqa: PLC2701
 
 GRAM_SIZE: Final = 3
-
-GramKind = Literal[0, 1]
-GRAM_KIND_RAW: Final[GramKind] = 0
-GRAM_KIND_FOLDED: Final[GramKind] = 1
 
 _IGNORECASE: Final = sre_constants.SRE_FLAG_IGNORECASE
 
@@ -420,12 +419,9 @@ def build_code_gram_query(
 
 
 __all__ = [
-    "GRAM_KIND_FOLDED",
-    "GRAM_KIND_RAW",
     "GRAM_SIZE",
     "GramAnd",
     "GramAny",
-    "GramKind",
     "GramOr",
     "GramQuery",
     "build_code_gram_query",

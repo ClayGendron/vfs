@@ -1,7 +1,8 @@
 # 013 — Database-Agnostic Code Trigram Index
 
 - **Status:** draft
-- **Date:** 2026-04-24 (restructured 2026-05-25)
+- **Date:** 2026-04-24 (restructured 2026-05-25; posting-list model simplified
+  2026-05-27; triage pass 2026-05-27)
 - **Owner:** Clay Gendron
 - **Kind:** feature + backend + research
 
@@ -33,10 +34,12 @@ citations).
 
 - A shared, code-oriented gram tokenizer (raw byte trigrams, single lowercase
   stream).
-- A portable inverted-index storage model: `staging → flush → posting blocks`,
-  minted once on the base `DatabaseFileSystem` so every backend inherits it.
-- Transactional index maintenance on insert / edit / delete / re-chunk.
-- Concrete per-document indexing limits.
+- A portable inverted-index storage model: `staging → flush → one posting-list
+  row per gram`, minted once on the base `DatabaseFileSystem` so every backend
+  inherits it.
+- Transactional index maintenance on insert / edit / delete / re-chunk, via
+  content-addressed **chunk reconciliation** (grams are never diffed).
+- Concrete per-chunk indexing limits.
 - One index everywhere — **no `pg_trgm` as the index**.
 
 **Non-Goals (out of scope)**
@@ -51,20 +54,24 @@ citations).
 - Lexical/BM25/FTS token search; a custom search server.
 - Indexing binary or invalid-text content as searchable code.
 - Forcing identical physical SQL across backends.
+- **Full reindex** (renumbering doc_ids / rebuilding every posting row from
+  source): named here as the only doc_id-renumbering event, but its procedure is
+  deferred — see §10.
 
 ## 3. Concepts & Glossary
 
 | Term | Meaning |
 |---|---|
-| **gram** | A lowercase raw UTF-8 **byte trigram** (3-byte window), packed into a 24-bit `gram_key = (b0<<16)|(b1<<8)|b2`. |
-| **doc_id** | A stable database auto-increment integer per `vfs_entries` row; the **integer key inside posting lists**. Distinct from the entity's `uuid`. |
-| **entry_id** | The entry `uuid` (`vfs_entries.id`), carried on **every** staging row. Staging references this (known at write time); `doc_id` is resolved later. |
-| **index_exclusion_reason** | Nullable marker on a `vfs_entries` row: `too_large \| binary \| high_cardinality \| null`. Non-null ⇒ the row's content is *not* in the index and a reader must fallback-scan it. Distinct from `index_content`, which a *chunked parent* also sets false (but with a `null` reason — skip, don't scan). |
-| **staging (delta-log)** | An append-only log of `(gram, entry_id, action)` pending changes (`action ∈ {add, delete}`). The shipped MVP store. |
-| **latest-action-wins (LAW)** | The fold of staging by the latest `seq` per `(gram_key, entry_id)` — the rule that resolves repeated changes to one current truth. |
-| **posting block** | An immutable, compressed, sorted list of `doc_id`s for one gram. The durable index unit. |
-| **flush** | Turning a closed staging batch into posting blocks. |
-| **compaction** | Background, copy-on-write merge/re-encode of blocks that also applies pending deletes. |
+| **gram** | A lowercase raw UTF-8 **byte trigram** (3-byte window), packed into a 24-bit `gram_key = (b0<<16)|(b1<<8)|b2`, stored as a signed `integer` (range 0–16,777,215). |
+| **doc_id** | `vfs_entries.id` — the row's **integer auto-increment primary key**, which *is* the posting-list key (dense, sorted, stable). Distinct from the entity's `uuid`, which lives in `entry_id`. |
+| **entry_id** | The entry `uuid` (`vfs_entries.entry_id`), carried on **every** staging row. Known at write time; `doc_id` is resolved later (§5.3). |
+| **chunk** | The index unit. **Every** indexed document is chunked (even into a single chunk); only `kind="chunk"` rows are content-indexed. |
+| **index_exclusion_reason** | Nullable marker on a chunk row: `too_large \| high_cardinality \| null`. Non-null ⇒ the chunk's content is *not* in the index and a reader must fallback-scan it. Distinct from a *chunked parent* (`index_content=false`, **null** reason — skip, its content is covered by its chunk rows). |
+| **staging (delta-log)** | A **transient**, append-only log of `(gram_key, entry_id, doc_id?, action)` pending changes (`action ∈ {add, delete}`). Rows are deleted once a flush folds them, so "present in staging" == "not yet flushed". |
+| **latest-action-wins (LAW)** | The fold of staging by the latest `seq` per `(gram_key, entry_id)` — resolves repeated changes to one current truth. `seq` is a monotonic, insertion-ordered autoincrement (verified across SQLite/Postgres/MSSQL). |
+| **posting list** | **One row per gram**: the gram's complete sorted `doc_id` set in a single `postings` blob. The durable index unit. A gram with no docs has **no row** (a missing row ≡ the empty set). |
+| **flush** | The background fold of staged deltas into the per-gram posting-list rows — capture a `seq` watermark, LAW-fold rows ≤ it, apply to each touched row with idempotent set semantics, then delete the folded staged rows. Off the write path; global single-flight; one transaction. |
+| **encoding** | The per-row tag naming how `postings` is packed (`delta+varint`, `delta+gamma`, `roaring`). v1 implements `delta+gamma` only; the tag lets the format evolve per gram without migration. |
 | **filter-then-verify** | The index yields a candidate *superset*; the real regex verifies. False positives OK; false negatives forbidden. |
 
 ## 4. The Contract (normative)
@@ -88,53 +95,123 @@ citations).
 ### 4.2 Correctness invariants
 
 - For every committed, **indexed** chunk, every distinct gram MUST be
-  represented: the LAW fold over staging + posting blocks MUST equal the exact
+  represented: the LAW fold over staging + the posting list MUST equal the exact
   set of grams in the chunks currently present.
 - False positives are allowed; a committed, indexed chunk's gram MUST NOT be
   missing (no false negatives).
 - Chunks excluded by §4.3 MUST set a non-null **`index_exclusion_reason`** so a
   reader can distinguish them (fallback-scan) from *chunked parents* (skip —
-  their content is covered by their chunk rows); both have `index_content =
-  false`, so `index_content` alone is insufficient. This preserves the *overall*
+  their content is covered by their chunk rows). The full
+  `(index_content, index_exclusion_reason)` truth table:
+
+  | `index_content` | `reason` | meaning | reader does |
+  |---|---|---|---|
+  | true | null | indexed chunk | use the index |
+  | false | non-null | excluded chunk (§4.3) | fallback-scan |
+  | false | null | chunked parent (covered by its chunk rows) | skip |
+  | true | non-null | **invalid** | — |
+
+  `index_content` alone is insufficient (the middle two rows share it), which is
+  why the reason column exists. A model validator MUST reject the invalid row
+  (`index_content=true` with a non-null reason). This preserves the *overall*
   no-false-negative guarantee even though excluded chunks are not in the index
   (see §4.5).
 - Maintenance MUST run in the **same transaction** as the chunk rows it
-  describes.
+  describes — in particular, a staged **add** and the `vfs_entries` row it
+  references MUST commit together.
+- **Single-session / single-writer execution model (v1).** All reads, writes,
+  and the flush execute in a **single session**, serialized — there is no
+  concurrent second writer and never a second flush in flight. This makes the
+  §4.5 read fold snapshot-consistent and satisfies the flush's single-flight
+  premise (§5.2) without an explicit cross-process lock. Concurrent multi-worker
+  flush/write is **out of scope** and deferred (§10); the reopening trigger is a
+  multi-process deployment, at which point a cross-process flush lock becomes
+  load-bearing (the exact-folded-`seq` deletion of §5.2 already covers the rest).
+- `seq` MUST be insertion-order-monotonic on every backend (verified for
+  SQLite / Postgres / MSSQL under the Core bulk-insert path); LAW relies on it.
 
 ### 4.3 Indexing limits
 
-Content that is not worth indexing as code MUST be **excluded from the index
-(not truncated) and marked with a non-null `index_exclusion_reason`**. Defaults
-(benchmarked knobs):
+The index unit is the **chunk** (§4.4). Content that is not worth indexing as
+code MUST be **excluded from the index (not truncated) and marked with a non-null
+`index_exclusion_reason`** on the chunk row. Limits are evaluated **per chunk**.
 
-| Limit | Default | Action on hit |
-|---|---|---|
-| Content size per file/chunk | **2 MiB** | exclude; `index_exclusion_reason = too_large` |
-| Distinct grams per document | **20,000** | exclude; `index_exclusion_reason = high_cardinality` |
-| NUL byte present (binary) | — | exclude; `index_exclusion_reason = binary` |
-| Content < 3 bytes | — | not indexable (no trigram) |
+| Limit | Default | Measured on | Action on hit |
+|---|---|---|---|
+| Content size per chunk | **2 MiB** | chunk content bytes, after line-ending normalization | exclude; `index_exclusion_reason = too_large` |
+| Distinct grams per chunk | **20,000** | the **folded, deduped** gram set | exclude; `index_exclusion_reason = high_cardinality` |
+| Content < 3 bytes | — | chunk content | **no chunk is created** (see §4.4); nothing to index or scan |
 
-### 4.4 Maintenance operations
+Notes:
 
-- **Insert:** stage `add` for every distinct gram of the chunk.
-- **Edit (path-stable file):** diff old/new grams; stage `old − new` deletes and
-  `new − old` adds; the row's `doc_id` is unchanged.
-- **Delete / re-chunk:** recompute the current grams **before** the row
-  disappears, then stage `delete` deltas (carrying `doc_id`).
+- **NUL / binary content is rejected at write time** by the model validator
+  (`models.py`), so it never reaches the index. There is therefore **no `binary`
+  exclusion reason** — invalid content cannot be stored at all.
+- **Sub-3-byte content** produces no trigram, so VFS **does not create a chunk
+  for it**. This is not a false-negative hole: a grep *pattern* under 3 bytes
+  cannot use the index either and MUST full-scan content (where it finds such
+  files), and a pattern ≥3 bytes cannot match a <3-byte file.
+- Exclusion is decided **before** staging: an excluded chunk stages **zero** gram
+  deltas and sets its reason in the same transaction (no flush-time filtering).
+
+### 4.4 Maintenance operations — chunk reconciliation
+
+**Every indexable (≥3-byte) document is chunked; only `kind="chunk"` rows are
+content-indexed; grams are never diffed.** Content under 3 bytes produces no
+chunk and is not content-indexed at all (§4.3). A write reconciles the document's
+*new* chunk set against its *existing* chunk set by **content hash** (the
+tie-break for duplicate-content chunks within one file is a deferred detail):
+
+- **Matched** (a new chunk's content equals an existing chunk's): **carry the
+  existing chunk forward** — keep its `entry_id` and `doc_id`, stage **no** gram
+  deltas (identical content ⇒ identical grams). Carry-forward is an `UPDATE` of
+  the existing row's positional metadata (`path`, line range); its
+  `id`/`entry_id`/grams survive. Chunk paths are version-namespaced and
+  stale-version rows are deleted before new-version rows insert, so paths never
+  collide during the reconcile.
+- **New** (no existing chunk matches): create a new chunk entry (fresh
+  `entry_id`; `doc_id` assigned at persist) and stage **all-adds** for its grams
+  (subject to §4.3 exclusion).
+- **Unmatched existing** (an existing chunk has no match in the new set): delete
+  the chunk entry and stage **all-deletes** (carrying its `doc_id`).
+
+**Exclusion is decided per new chunk at reconcile time** (§4.3): a new chunk over
+a limit stages **zero** gram adds and sets its `index_exclusion_reason` in the
+same transaction; a new chunk under the limits sets a **null** reason; a
+carried-forward (content-identical) chunk keeps its existing verdict. Because a
+content change always produces a *new* chunk evaluated fresh, there is no separate
+"edit crosses a limit" transition — the reason is set/cleared as a side effect of
+normal reconciliation.
+
+Consequences:
+
+- **Insert / edit / re-chunk** are all the same reconciliation; there is no
+  gram-level diff and no "path-stable edit" special case.
+- **Delete** a document ⇒ delete all its chunks ⇒ stage all-deletes for each.
+- **Move / rename** ⇒ content and grams unchanged, `doc_id` stable ⇒ **no gram
+  maintenance** (positional metadata only).
+- **Copy** ⇒ a new entity with new chunk entries ⇒ stage **all-adds** (like
+  insert).
+- The old chunks' grams MUST be captured **before** their rows disappear: the
+  reconcile snapshots existing chunk content up front, so staging the deletes
+  does not depend on the rows still existing.
 - Every backend MUST produce this one portable index through the shared path and
   MUST NOT produce or maintain a `pg_trgm`/FTS artifact *as* this index.
 
 ### 4.5 Storage-read contract
 
 Query *execution* is out of scope (§2), but the no-false-negative guarantee
-(§4.2) is only real if a reader folds staging over blocks. The storage therefore
-exposes one minimal, normative read rule — distinct from query execution:
+(§4.2) is only real if a reader folds staging over the posting list. The storage
+therefore exposes one minimal, normative read rule — distinct from query
+execution:
 
 - A reader MUST resolve a gram's current doc-set as
-  **`(∪ active posting blocks) ∪ (unapplied staged adds) − (unapplied staged
-  deletes)`**, applying LAW per `(gram_key, entry_id)`.
-- A reader MUST treat rows with a non-null `index_exclusion_reason` as **not
-  represented** in the index, and fallback-scan them.
+  **`(the gram's posting-list row, or ∅ if no row exists) ∪ (unflushed staged
+  adds) − (unflushed staged deletes)`**, applying LAW per `(gram_key,
+  entry_id)`. "Unflushed" means staging rows visible in the reader's snapshot
+  (rows are deleted by the flush that folds them, §5.2).
+- A reader MUST treat chunk rows with a non-null `index_exclusion_reason` as
+  **not represented** in the index, and fallback-scan them.
 
 Everything above the candidate doc-set — regex→gram compilation, intersection,
 ranking, content fetch, and the final regex verify — remains out of scope.
@@ -145,98 +222,200 @@ Terse mechanism; rationale is in §7, evidence in the analysis docs.
 
 ### 5.1 Data model
 
-All physical types are per-backend (§6); these are logical columns.
+Two tables (`GramStaging` + `GramPostingList`) plus three columns on
+`vfs_entries`. Physical types are pinned below and per-backend in §6.
 
-- **`vfs_entries.doc_id`** — auto-increment (`bigserial`/`IDENTITY`/rowid),
-  assigned at insert, stable for the row's life; files and chunks share one space.
-- **`vfs_entries.index_exclusion_reason`** — nullable enum
-  (`too_large | binary | high_cardinality | null`). Non-null ⇒ excluded from the
-  index, fallback-scan (§4.3, §4.5). Orthogonal to `index_content`: a chunked
-  parent has `index_content = false` with a **null** reason (skip), an excluded
-  chunk has a **non-null** reason (scan).
-- **Staging:** `seq` (monotonic), `batch_id`, `gram_key`, `entry_id` (uuid, on
-  **every** row), `doc_id` (nullable: resolved by join at flush for adds, carried
-  at stage time for deletes — see §5.3), `action`, `applied_at`. **Folded by LAW
-  per `(gram_key, entry_id)`** — `entry_id` is 1:1 with `doc_id`, so the fold is
-  unambiguous and works before `doc_id` is resolved; `doc_id` is the block
-  encoding key after resolution.
-- **Posting block:** `gram_key`, `block_id`, `batch_id`, `doc_count`,
-  `min_doc_id`, `max_doc_id`, `encoding`, `postings` (compressed sorted-doc_id
-  blob), `is_active`.
-- **Batch metadata:** `batch_id`, `status` (`Open→Closed→Flushing→Flushed/Failed`),
-  timestamps.
-- **Gram statistics:** `gram_key`, `doc_freq`, `block_count` (for rarest-first
-  reads; consumed by the out-of-scope query path).
+- **`vfs_entries.id` (= `doc_id`)** — the integer auto-increment **primary key**,
+  mapped to each backend's native auto-increment (rowid / `BIGSERIAL` /
+  `BIGINT IDENTITY`); it *is* the posting-list `doc_id`. On **SQLite the PK MUST
+  be declared `AUTOINCREMENT`** (`sqlite_autoincrement=True`) to prevent rowid
+  **reuse** after deletes (Postgres/MSSQL never reuse). `id` is `None` until the
+  persist flush; pre-persist identity uses `entry_id`.
+- **`vfs_entries.entry_id`** — the client-generated `uuid4`, unique, indexed
+  (`varchar(36)`). Carries identity before `id` exists.
+- **`vfs_entries.index_exclusion_reason`** — nullable, `varchar` over the
+  documented value set `too_large | high_cardinality | null` (avoid a native
+  enum for portability). Non-null ⇒ excluded, fallback-scan (§4.3, §4.5).
+  Orthogonal to `index_content`.
+
+```python
+class GramStaging:
+    seq       # bigint autoincrement PRIMARY KEY; monotonic; orders the LAW fold
+    gram_key  # integer (packed 24-bit trigram), NOT NULL
+    entry_id  # varchar(36) — vfs_entries.entry_id (uuid), NOT NULL
+    doc_id    # bigint — vfs_entries.id; NULL on adds (joined at flush), set on deletes
+    action    # smallint — 1 = add, 0 = delete; NOT NULL
+    # indexes: (gram_key, entry_id, seq) for the fold; (entry_id) for delete-cascade
+
+class GramPostingList:
+    gram_key   # integer PRIMARY KEY — one row per gram; a gram with 0 docs has NO row
+    postings   # blob — the gram's full sorted doc_id set, delta+gamma encoded (§5.4)
+    encoding   # smallint — 1=delta+varint, 2=delta+gamma, 3=roaring; v1 writes only 2
+    doc_count  # integer — number of doc_ids in postings; INVARIANT: == count(decode(postings))
+    byte_size  # integer — len(postings); storage view + §10 hot-gram trigger signal
+```
+
+- **Staging is transient** — the flush deletes rows once folded, so there is no
+  batch-lifecycle table; "present in staging" == "not yet flushed". `action`
+  uses `1=add / 0=delete`.
+- **`postings` physical type** is `bytea` (PG) / `varbinary(max)` (MSSQL) /
+  `blob` (SQLite). There is **no MVP size ceiling**: the row uses **default
+  storage** (PG TOAST / MSSQL LOB off-row / SQLite overflow) — *not*
+  `STORAGE PLAIN` — so a hot gram's blob may grow large; `byte_size` is the
+  signal that triggers the deferred §10 hot-gram paging.
+- **Gram tables are un-scoped** (no `owner_id`/tenant column). One posting row
+  per gram is **global**; tenant/path scope is enforced solely by the
+  post-candidate **join to `vfs_entries`** (which is mandatory for content fetch
+  anyway). A posting row therefore carries no tenant boundary — a deliberate,
+  stated assumption.
+
+This is **two tables**, not the earlier four (`posting_blocks` / `gram_batches` /
+`gram_stats`): transient staging removes the batch table, `doc_count` folds in
+the only needed statistic, and one row per gram removes the block/segment
+machinery. Hot-gram paging (§10) reintroduces multiple rows per gram only for
+the grams that need it.
 
 ### 5.2 Write pipeline
 
 ```text
-chunk write ──▶ staging deltas ──▶ flush ──▶ immutable posting blocks
-   (txn)         (append-only)              ◀── compaction (background, CoW)
+chunk write ──▶ staging deltas ──▶ flush ──▶ one posting-list row per gram
+   (txn)         (append-only)     (background, off the write path)
 ```
 
-- **Stage** (in the chunk-write transaction): append `(gram_key, entry_id,
-  action)` rows. Cheap, append-only, no ordering dependency on `doc_id`.
-- **Flush** (background, size-triggered): close the batch; resolve `doc_id`
-  (join `entry_id → vfs_entries` for adds; deletes already carry it); fold LAW;
-  sort doc_ids; split into blocks bounded by **N doc_ids OR a byte budget,
-  whichever first**; compress; write new blocks; retire superseded blocks
-  (`is_active = false`). Mark delete deltas applied only once every block that
-  could contain them is rewritten/retired.
-- **Compaction** (background, single-flight, idempotent): merge a gram's blocks,
-  apply pending deletes, re-encode, retire old. Triggered by block count or
-  stale-doc_id ratio (§7 for defaults). Never inline with a write.
+- **Stage** (in the chunk-write transaction): bulk-insert `(gram_key, entry_id,
+  action)` rows for the reconciliation's adds/deletes (§4.4). Cheap, append-only,
+  no ordering dependency on `doc_id`. Use a Core bulk `insert()`, not per-row ORM
+  `add` (~50× faster on SQLite — see implementation notes).
+- **Flush** (background, **global single-flight**, **one transaction**,
+  size/time-triggered):
+  1. Capture a `seq` **watermark** = `max(seq)` of current staging.
+  2. Read staging rows with `seq ≤ watermark`; **LAW-fold first** (latest action
+     per `(gram_key, entry_id)`), then resolve `doc_id` only for the surviving
+     **adds** (join `entry_id → vfs_entries.id`; deletes already carry it). If a
+     surviving add's join **misses** — the entry was hard-deleted after its add
+     was staged but before this flush (a normal add-then-delete across two flush
+     windows) — **drop the add**: the doc is gone, and its later delete delta is a
+     harmless no-op, so the net result is correct.
+  3. For each touched gram: decode its `postings` (or start empty if no row),
+     apply the folded adds/deletes with **idempotent set semantics**
+     (delete-of-absent and add-of-present are both no-ops), re-encode, refresh
+     `doc_count`/`byte_size`, and `UPDATE` the row — asserting
+     `doc_count == len(decode(postings))` as a free invariant check — or
+     **DELETE the row** if the gram now has zero docs.
+  4. `DELETE` the **exact set of staged rows folded** in step 2 (by their `seq`
+     values) — not a `seq ≤ watermark` range. Under the single-session model
+     (§4.2) the two coincide, but deleting only the folded `seq`s keeps the flush
+     correct even if a future multi-writer deployment lets a lower `seq` commit
+     after the watermark read.
+
+  Rows not folded by this flush survive to the next one, so a write is never
+  lost. Because steps 3–4 share one transaction and the fold is set-idempotent, a
+  crashed/re-run flush re-derives the same result — there is no separate
+  compaction step; with one row per gram the flush *is* the rebuild. Single-flight
+  follows from the §4.2 single-session model (never a second concurrent flush, so
+  no two writers race a read-modify-write on one row); a cross-process lock is
+  deferred to the multi-worker case (§10).
 
 ### 5.3 doc_id resolution, deletes, and edits
 
 - Every staging row carries `entry_id`. **Adds** leave `doc_id` null and resolve
-  it by join at flush (the row persists). **Deletes** carry **both** `entry_id`
-  and the `doc_id` captured at stage time (a hard-deleted row is gone by
-  compaction, so the join would fail). LAW folds by `(gram_key, entry_id)`,
-  applied **at read** for the MVP delta-log and **at flush** for the
-  posting-block target.
+  it by join at flush (the `vfs_entries` row persists, committed in the same
+  transaction as the add — §4.2). **Deletes** carry **both** `entry_id` and the
+  `doc_id` captured at stage time (a hard-deleted row is gone by flush, so the
+  join would fail). LAW folds by `(gram_key, entry_id)`, applied **at read** for
+  staging and **at flush** into the posting-list row.
 - `doc_id`s are **stable and never renumbered**. Deletes/re-chunks leave gaps;
-  delta encoding only needs *sorted* ids, so gaps are tolerated. The only
-  renumbering event is a rare **full reindex**.
-- Blocks are **re-encoded at compaction, never patched in place**. Worked
-  example — `def` in docs `[10,20,30]`, then doc 20 removed:
+  delta encoding only needs *sorted* ids, so gaps are tolerated. SQLite's
+  `AUTOINCREMENT` PK (§5.1) prevents rowid reuse, so a stale staged delete can
+  never collide with a re-handed-out id. The only renumbering event is a **full
+  reindex** (deferred, §10).
+- The posting-list row is **re-encoded by the flush, never patched in place**.
+  Worked example — `def` in docs `[10,20,30]`, then doc 20 removed:
 
   ```text
-  block (immutable): def → encode([10,20,30])
-  stage delete:      (def, doc_id=20)                  ← pending
-  read:              {10,20,30} − pending {20} = {10,30}   ✓
-  compaction:        decode → drop 20 → re-encode [10,30]; retire old block
+  posting row:   def → encode([10,20,30])
+  stage delete:  (def, doc_id=20)                      ← pending in staging
+  read:          {10,20,30} − pending {20} = {10,30}   ✓
+  flush:         decode → drop 20 → re-encode [10,30]; UPDATE the def row
+                 (if the gram emptied, DELETE the row instead)
   ```
 
-  Cost is O(grams changed) at write time; one bounded block re-encoded at
-  compaction — never the whole index.
+  Cost is O(grams changed) at write time (staged deltas only); the flush rewrites
+  one row per touched gram — never the whole index.
 
-### 5.4 Posting-block compression
+### 5.4 Posting-list encoding
+
+v1 implements **`delta+gamma` only**, applied to every gram, **ported from Google
+`codesearch`'s exact byte format** (`index/delta.go`, `index/read.go`). The
+posting blob is the delta-list portion of codesearch's posting list (the
+`gram_key` is the row key, not in the blob):
 
 ```text
-sorted doc_ids → min_doc_id stored uncompressed (anchor)
-              → delta (gap) encode the rest
-              → varint (7-bit continuation)
-              → optional zstd/gzip
+doc_ids sorted ascending → gamma-coded gaps:
+  • first gap = firstID − (−1)  (i.e. firstID + 1); lastID starts at −1
+  • each subsequent gap = id − prevID
+  • terminate with a trailing ZERO delta
+  • Elias-γ cannot encode 0, so remap EVERY value (gaps AND the terminator):
+    0 → 16, and any v ≥ 16 → v+1 (deltaZeroEnc = 16, index/delta.go:31 —
+    NOTE index/read.go's "31" comment is STALE; follow delta.go)
+  • bits are LSB-first within each byte; flush the partial byte at end-of-blob
 ```
 
-The per-block `encoding` field lets the format evolve (Roaring / FOR / EWAH)
-without migrating existing blocks. Start with delta+varint.
+There is **no separate `min_doc_id` anchor** — codesearch frames the whole list
+as one gamma gap-stream from −1 with a trailing zero terminator, and VFS adopts
+that verbatim (so `delta.go`'s `writeBits`/`next64` and the zero-remap port
+directly). **Decode is count-bounded with a terminator assert:** read exactly
+`doc_count` ids, then assert the trailing remapped-zero terminator (detects
+truncation/corruption), matching codesearch's reader (`index/read.go`). Empty
+list ⇒ no row (§5.1). Worked examples:
+- codesearch's, **0-based** fileids: delta list `[2,5,1,1,0]` → `1,6,7,8`.
+- VFS, **1-based** doc_ids `[10,20,30]`: from `lastID=−1` the gaps are
+  `[11,10,10,0]` (the trailing `0` is the terminator, remapped to `16` before
+  γ-coding).
+
+The per-row `encoding` tag lets the format evolve **per gram** without a
+migration: each row stays readable under its own tag. `delta+varint` and
+`roaring` are **defined but unimplemented** values:
+
+- `delta+varint` — byte-aligned, easy-to-debug fallback, available if a gram ever
+  needs it.
+- `roaring` — the intended **hot-gram, query-path** encoding. Its win is
+  compressed-bitmap *intersection at query time* (out of scope here), not
+  storage, so it is built and measured with the query story (§10), not now.
+
+Evidence the upgrade path is real: `codesearch` shipped delta+varint (v1) then
+moved to Elias-γ (v2), measuring a **>40% total index-size cut** on the Linux
+kernel and a posting-list reduction of **132.7 GB → 80.3 GB** on 1.6 TB of Go
+modules (`index/read.go:110-144`).
 
 ## 6. Phasing
 
 | Phase | What ships | Status |
 |---|---|---|
-| **MVP (row store)** | A `{entries}_chunk_grams` delta-log keyed by `(gram_key, chunk_id)`; direct add/delete rows; proves tokenizer, maintenance, and no-false-negatives. | shipped (implementation.md) |
-| **Target (posting blocks)** | `doc_id` column; `staging → flush → posting blocks`; background compaction; gram statistics. Minted on base `DatabaseFileSystem`; all backends inherit. | Phase 5 |
+| **MVP (row store)** | A `{entries}_chunk_grams` delta-log keyed by `(gram_key, entry_id)`; direct add/delete rows; proves tokenizer, maintenance, and no-false-negatives. | shipped (implementation.md) |
+| **Target (posting list)** | `staging → flush → one posting-list row per gram` (`gram_key`, `postings`, `encoding`, `doc_count`, `byte_size`); background, single-flight flush; chunk-reconciliation maintenance. Minted on base `DatabaseFileSystem`; all backends inherit. | Phase 5 |
+
+> **Implementation note:** the *landed* `models.py` still mints the superseded
+> four-table block model (`VFSPostingBlock` / `VFSGramBatch` / `VFSGramStat`).
+> This spec is the new two-table target; reconciling the code (collapse to two
+> tables, add `byte_size`, drop `is_active`/`block_id`/batch lifecycle, gamma
+> encoder) is the Phase-5 work. §4.3 limits and `index_exclusion_reason` are
+> **contracted but not yet implemented**.
 
 Backend physical-type mapping (behind the shared tokenizer + maintenance API):
 
-| Backend | gram key | doc / entry ids |
-|---|---|---|
-| PostgreSQL | `bytea(3)` or `integer` | `bigserial` doc_id, `uuid` entry_id |
-| MSSQL | `binary(3)` or packed `int` | `IDENTITY` doc_id, `uniqueidentifier`/`nvarchar(36)` entry_id |
-| SQLite | `blob(3)` or `integer` | rowid doc_id, `text` entry_id |
+| Column | PostgreSQL | MSSQL | SQLite |
+|---|---|---|---|
+| `gram_key` | `integer` | `int` | `integer` |
+| `doc_id` (`vfs_entries.id`) | `bigserial` PK | `bigint IDENTITY` PK | `integer PRIMARY KEY AUTOINCREMENT` |
+| `entry_id` | `uuid` or `varchar(36)` | `varchar(36)` | `text` |
+| `seq` (staging) | `bigserial` | `bigint IDENTITY` | `integer` (rowid) |
+| `postings` | `bytea` (default/TOAST storage) | `varbinary(max)` | `blob` |
+
+`entry_id` MUST match the type used on `vfs_entries` (`varchar(36)`) so the flush
+join is an index seek, not a per-row coercion. `seq` monotonicity under the Core
+bulk-insert path is **verified** on all three (SQLite/Postgres via the bulk-insert
+learning; MSSQL via a 50,000-row `IDENTITY` check, zero inversions).
 
 ## 7. Rationale & Alternatives
 
@@ -252,51 +431,99 @@ Each decision states the choice, the one-line why, and where it's validated.
   multiply the candidate set. Folding the index halves storage; the final regex
   enforces case. A two-sided trade; raw-case is worse for *this* engine.
   *(analysis-codesearch.md)*
-- **Keep `uuid4` PK; add a local integer `doc_id`.** `uuid4` is client-generated
-  and VFS relationships key on `path`, so the uuid carries little FK weight;
-  posting lists need compact sorted integers only internally. Switching the
-  global PK would forfeit client-side id generation for one subsystem's benefit.
+- **`doc_id` IS the integer auto-increment PK; `uuid` moved to `entry_id`.**
+  Posting-list compression needs compact *sorted integers*; a second
+  auto-increment column is not portable (SQLite auto-increments only the
+  `INTEGER PRIMARY KEY`; MSSQL allows one `IDENTITY` per table). Making the single
+  PK that integer sidesteps both, and the client-side `uuid4` (which carries no
+  FK weight — VFS keys on `path`) moves to `entry_id`. *(reverses the earlier
+  "keep uuid4 PK + add a separate doc_id" plan.)*
 - **Stable `doc_id`, never renumbered (vs. codesearch, which renumbers every
   merge).** codesearch can renumber because it rewrites the whole file offline;
   VFS is a live, mutable, multi-backend store. Sorted is mandatory; dense is only
-  a compression bonus. *(analysis-codesearch.md)*
-- **Immutable copy-on-write blocks (vs. GIN's in-place posting-tree deletion).**
-  CoW avoids GIN's xid-marking/right-link concurrency protocol and metapage
-  interlock; readers stay correct, recovery is trivial. *(analysis-pg_trgm-gin.md)*
-- **`staging → flush → blocks` (vs. row-per-`(gram,doc)` forever or one mutable
-  row per gram).** This is GIN's `fastupdate` pending list and FTS5's level-0
+  a compression bonus. SQLite `AUTOINCREMENT` closes the rowid-reuse gap so
+  "stable" holds literally. *(analysis-codesearch.md)*
+- **One posting-list row per gram, rebuilt in place by the flush (vs. multiple
+  immutable blocks per gram).** Staging absorbs all write traffic, so the durable
+  row is rewritten only at flush time, off the write path; the backend's MVCC
+  hands readers a consistent prior version during the rewrite, and global
+  single-flight means no two writers race one row — so no `is_active` flag or
+  block-level concurrency protocol is needed. This matches `codesearch`'s
+  one-list-per-gram shape (`index/read.go:31-44` — it never splits a gram's list;
+  its 256-byte "blocks" index the *lookup table*, not the lists) without
+  codesearch's offline whole-file rebuild — staging is VFS's mutable substitute.
+  The one cost it accepts — rewriting a gram's whole row even for a small change —
+  is bounded for normal grams and deferred to the hot-gram optimization (§10) for
+  the rest. *(analysis-codesearch.md, analysis-pg_trgm-gin.md)*
+- **Content-addressed chunk reconciliation; grams never diffed.** All docs are
+  chunked and only chunks are indexed, so re-chunk is a set reconciliation by
+  content: matched chunks carry `entry_id`/`doc_id` forward (zero gram work),
+  new chunks all-add, unmatched old chunks all-delete. This makes a carried chunk
+  cost nothing, keeps every staged `(gram_key, entry_id)` to a single action
+  direction (so LAW never has to merge an add and a delete under one entry_id),
+  and removes the fragile gram-diff path entirely.
+- **`staging → flush` in front of the durable store (vs. row-per-`(gram,doc)`
+  forever, or maintaining the posting list inline on every write).** The
+  append-only delta-log is GIN's `fastupdate` pending list and FTS5's level-0
   segments — the proven log-structured model that decouples write cost from index
-  size. *(analysis-fts5.md, analysis-pg_trgm-gin.md)*
+  size. It is also what makes one mutable row per gram affordable: the classic
+  objection to that shape is the per-write rewrite cost, and staging removes it by
+  deferring the rewrite to a batched background flush.
+  *(analysis-fts5.md, analysis-pg_trgm-gin.md)*
+- **Flush is transactional, watermarked, single-flight, set-idempotent.** Capture
+  a `seq` ceiling, fold/apply/clear ≤ it in one transaction; rows staged during
+  the flush survive. Idempotent set semantics (delete-of-absent / add-of-present
+  are no-ops) plus the single transaction make a re-run after a crash safe with no
+  batch state machine.
 - **No `pg_trgm` as the index.** Its tokenizer is word-oriented: pads words,
   drops punctuation, CRC-hashes multibyte grams — so `foo|bar` indexes as words
   `foo`,`bar`. *(analysis-pg_trgm-gin.md)*
 - **Fixed 3-byte trigrams (vs. sparse/variable n-grams).** Trigrams are the
   proven default; sparse n-grams (Blackbird, Cursor) are the escape hatch if hot
   grams dominate storage. Deferred. *(research.md)*
-- **Compaction defaults, grounded in FTS5/GIN (benchmarked knobs, not
-  invariants):** merge fan-in **4**; compact a gram at **~16** active blocks or
-  **~10%** stale doc_ids; bound a block by N doc_ids **or** a byte budget
-  (~4 KB); size-trigger the flush (GIN's pending-list limit is 4 MB). Run
-  everything **off the write path** — FTS5's inline `crisismerge` is the
-  multi-hundred-ms-to-second stall this avoids. *(analysis-fts5.md,
-  analysis-pg_trgm-gin.md)*
+- **`delta+gamma` only for v1, ported from codesearch exactly (vs. selecting per
+  gram, or shipping varint first).** codesearch's v2 is "gamma everywhere" and
+  still won >40%; per-gram selection buys little because cold grams are negligible
+  bytes. Porting the exact byte format (zero-remap 16, trailing-zero terminator,
+  gap-from-−1) reuses `delta.go` directly and avoids two implementers producing
+  incompatible blobs. *(analysis-codesearch.md, `index/delta.go`, `index/read.go`)*
+- **Flush cadence, grounded in FTS5/GIN (benchmarked knobs, not invariants):**
+  size- or time-trigger the background flush (GIN's pending-list limit is 4 MB);
+  run it single-flight and idempotent, **off the write path** — FTS5's inline
+  `crisismerge` is the multi-hundred-ms-to-second stall this avoids. With one row
+  per gram there is no block fan-in or block-count threshold to tune.
+  *(analysis-fts5.md, analysis-pg_trgm-gin.md)*
+- **Query latency over build/flush cost.** The background flush absorbs build work
+  off the user-facing write, so the durable format may be chosen for query speed
+  (e.g. `roaring` for hot grams) rather than cheapest build.
 
 ## 8. Risks
 
 - **Storage growth / hot grams.** Raw byte grams (esp. whitespace/punctuation)
-  produce huge posting lists. Mitigation: per-chunk dedup, the §4.3 unique-gram
-  ceiling, byte-budgeted compressed blocks; sparse n-grams as the future escape
-  hatch.
+  produce huge posting lists, and one row per gram means a hot gram is one large
+  blob. Mitigation: per-chunk dedup, the §4.3 unique-gram ceiling, `encoding`
+  (gamma collapses a near-universal gram's run of 1-gaps to a fraction of varint
+  size), and default TOAST/LOB storage. The deferred hot-gram paging optimization
+  (§10, triggered off `byte_size`) and sparse n-grams are the future escape
+  hatches if a few grams still dominate.
 - **Case-sensitive candidate breadth.** The single lowercase stream broadens
   case-sensitive candidates. Mitigation: the regex verify enforces case; a
   raw stream can be added later via `index_id` namespacing if benchmarks demand.
-- **Write amplification.** Compaction rewrites a doc's blocks when it folds in
-  changes touching them. Mitigation: tune cadence/block size; keep it background.
+- **Write amplification.** The flush rewrites a gram's whole posting-list row even
+  when only a few of its doc_ids changed. Mitigation: it is batched and runs in
+  the background (staging absorbs the writes), and `encoding` keeps the rewritten
+  blob small; for grams hot enough that the rewrite cost dominates, the §10
+  hot-gram paging optimization switches them to bounded append-only pages.
+- **Flush stall / staging growth.** Staging is transient only while the flush
+  keeps up; if it stalls, staging grows and the §4.5 read-fold cost rises with
+  depth. v1 exposes a **staging-depth / `max(seq) − last-flushed` lag gauge** so a
+  stalled single-flight flush is observable, not silent; an enforced backpressure
+  bound is a deferred operability item (§10).
 - **doc_id density decay.** Gaps from deletes/re-chunks slowly worsen
-  compression. Mitigation: graceful (sorted still holds); rare full reindex
-  re-densifies.
+  compression. Mitigation: graceful (sorted still holds); a rare full reindex
+  (§10) re-densifies.
 - **Write latency.** Per-write gram maintenance costs work. Mitigation:
-  append-only staging; O(grams changed) per edit, independent of corpus size.
+  append-only staging; O(grams changed) per write, independent of corpus size.
 
 ## 9. Decision Log
 
@@ -308,40 +535,79 @@ Each decision states the choice, the one-line why, and where it's validated.
   out of scope.
 - **2026-05-24** — `pg_trgm` is not the index (word-oriented model wrong for
   code).
-- **2026-05-25** — Keep `uuid4` as the entity PK; add a separate auto-increment
-  `doc_id` as the posting-list key; stage by `uuid`, resolve `doc_id` at flush
-  for adds and at stage time for deletes; `doc_id` stable, never renumbered.
-- **2026-05-25** — Adopt concrete indexing limits (2 MiB / 20,000 grams / NUL /
-  <3 B); excluded chunks are flagged for query-path fallback.
-- **2026-05-25** — Compaction/flush defaults grounded in FTS5/GIN; jobs are
-  background, single-flight, idempotent; blocks re-encoded, never patched.
-- **2026-05-25** — Contract tightenings from review: (a) a dedicated
-  `index_exclusion_reason` replaces the overloaded `index_content` flag for
-  exclusion (chunked-parent vs. excluded are now distinguishable); (b) staging
-  carries `entry_id` on every row and LAW folds by `(gram_key, entry_id)`
-  (deletes also carry `doc_id`); (c) index maintenance extracts folded-only even
-  though the tokenizer API stays dual-mode; (d) added a minimal §4.5
-  storage-read contract so the no-false-negative guarantee is well-defined while
-  query execution stays out of scope.
-- **2026-05-25** — **Index unit is the chunk.** A file small enough to fit one
-  chunk stays a single indexed `file` row; a larger file flips
-  `index_content=False` on chunking (`models.py:595`) and is indexed via its
-  `chunk` rows. Bounds verify-fetch and shares the `index_content` row set with
-  the vector index. (Resolves former Open Question 1.)
-- **2026-05-25** — **Versions/snapshots are not content-indexed.**
-  `index_content` defaults `True` only for `kind ∈ {file, chunk}`
-  (`models.py:689-690`); `kind="version"` rows default `False`. So there is no
-  redundant-version posting bloat and no need for Zoekt branch-mask dedup —
-  reopens only if version rows ever become content-indexed. (Resolves former
-  Open Question 3.)
-- **2026-05-25** — **Fixed 3-byte trigrams for v1.** Sparse/variable-length
-  n-grams (Blackbird, Cursor) are deferred, benchmark-gated on hot-gram storage
-  pressure — a decision-with-a-trigger, not an open fork.
+- **2026-05-25** — Adopt concrete indexing limits; excluded chunks are flagged
+  for query-path fallback.
+- **2026-05-25** — Contract tightenings: a dedicated `index_exclusion_reason`
+  (chunked-parent vs. excluded now distinguishable); staging carries `entry_id`
+  on every row and LAW folds by `(gram_key, entry_id)` (deletes also carry
+  `doc_id`); index maintenance extracts folded-only; a minimal §4.5 storage-read
+  contract.
+- **2026-05-25** — Versions/snapshots are not content-indexed.
+- **2026-05-25** — Fixed 3-byte trigrams for v1; sparse n-grams deferred,
+  benchmark-gated.
+- **2026-05-27** — **Durable store is one posting-list row per gram, not multiple
+  immutable blocks.** `staging → flush → a single (gram_key, postings, encoding,
+  doc_count, byte_size) row per gram`, rewritten in place by the background flush
+  (MVCC + global single-flight cover concurrency). Collapses the four-table shape:
+  transient staging (no `gram_batches`), `doc_count` (no `gram_stats`), flush
+  absorbs compaction. Matches `codesearch`'s one-list-per-gram shape.
+- **2026-05-27** — **Encodings: three values defined, `delta+gamma` implemented
+  for v1, ported from codesearch's exact byte format** (gap-from-−1, trailing-zero
+  terminator, `deltaZeroEnc=16` per `index/delta.go:31`; `index/read.go`'s "31"
+  comment is stale). `delta+varint` reserved as a debug fallback; `roaring`
+  reserved for the query path (compressed-bitmap intersection). Per-row tag makes
+  adding either later migration-free.
+- **2026-05-27** — **Priority: optimize query latency over index build/flush
+  cost.** The background flush absorbs build work; the durable format may favor
+  query speed (e.g. `roaring` for hot grams).
+- **2026-05-27 (triage)** — Resolutions from the spec-underspecification audit:
+  - **Identity text corrected.** `doc_id` IS `vfs_entries.id` (integer
+    auto-increment PK); `uuid` lives in `entry_id`. (Removes the stale "keep
+    uuid4 PK + separate doc_id column" description.)
+  - **All ≥3-byte docs chunked; only chunks indexed; grams never diffed** —
+    re-chunk is content-addressed reconciliation (carry-forward matched / all-add
+    new / all-delete unmatched), matched by content hash. Reverses the "small file
+    stays a single indexed file row" decision.
+  - **Flush protocol pinned:** `seq` watermark, LAW-fold-first then resolve
+    surviving adds, idempotent set application, posting-row UPDATE + staging
+    DELETE in **one transaction**, **global single-flight**; a gram that empties
+    has its row **deleted**; rows staged past the watermark survive.
+  - **`gram_key` = `integer` everywhere** (resolves the `bytea(3)/integer` "or").
+  - **Tiny content:** chunks under 3 bytes are **not created**; <3-byte patterns
+    full-scan, so no false negative.
+  - **NUL/binary:** rejected at write by the validator, so **no `binary`
+    exclusion reason** exists.
+  - **No posting-blob ceiling** in v1; **default storage** (TOAST/LOB), never
+    `STORAGE PLAIN`; `byte_size` is the §10 hot-gram trigger.
+  - **Gram tables un-scoped;** tenant/path scope enforced by the join to
+    `vfs_entries`.
+  - **SQLite PK `AUTOINCREMENT`** to bar rowid reuse (verified: a non-AUTOINCREMENT
+    rowid reuses a deleted top id; AUTOINCREMENT does not). Postgres/MSSQL never
+    reuse.
+  - **`seq` monotonicity verified on MSSQL** (50,000-row `IDENTITY` bulk insert,
+    dense `1..N`, zero inversions) in addition to SQLite/Postgres.
+  - **Full reindex** moved to an explicit deferred item (§10), not a dangling
+    procedure.
+- **2026-05-27 (re-audit)** — A second blind four-lens audit of the rewrite
+  confirmed the first-round resolutions and surfaced a concurrency cluster,
+  resolved by stating a **single-session / single-writer execution model** (§4.2):
+  reads/writes/flush are serialized in one session, so the §4.5 fold is
+  snapshot-consistent and single-flight needs no cross-process lock (deferred to
+  multi-worker, §10). Also pinned: the flush deletes the **exact folded `seq`
+  set** (not `≤ watermark`); a flush **join-miss drops the add** (normal
+  add-then-delete race), not an "invariant violation"; **encoding codes**
+  `1=varint, 2=gamma, 3=roaring`; gamma **decode is count-bounded + terminator
+  assert** with the terminator itself zero-remapped; `index_exclusion_reason` is
+  **set/cleared per new chunk at reconcile** with a 4-state truth table + a
+  validator barring the invalid combo; carry-forward collisions are prevented by
+  **version-namespaced chunk paths**; the flush asserts `doc_count ==
+  len(decode(postings))` and v1 exposes a staging-lag gauge. Left open for
+  discussion: the duplicate-content-chunk `occurrence` tie-break (§10 item 7).
 
-## 10. Deferred Options (decided, non-blocking)
+## 10. Deferred Options
 
-No design questions are currently open. The following are decided deferrals,
-each with a clear reopening trigger:
+One small detail is open (item 7, flagged for discussion); the rest are decided
+deferrals, each with a clear reopening trigger:
 
 1. **Sparse / variable-length n-grams** — reopen if benchmarks show hot-gram
    storage or selectivity is the bottleneck (Blackbird, Cursor).
@@ -349,19 +615,51 @@ each with a clear reopening trigger:
    dominates; addable via `index_id` namespacing without a schema migration.
 3. **Multi-version / snapshot dedup** (Zoekt branch-mask style) — reopen only if
    `kind="version"` rows are ever made content-indexed.
+4. **Hot-gram paging + `roaring` encoding** — for the grams in more than ~N% of
+   documents (identified by a `hot_grams` table; `byte_size` is the trigger
+   signal), two related **query-driven** upgrades built with the query path:
+   (a) split them into bounded, append-only posting *pages* (exploiting monotonic
+   doc_ids: append a new page, never rewriting existing data) instead of one
+   rewritten-in-place row; (b) encode them as `roaring` for compressed-bitmap
+   intersection at query time. Both are addable per-gram without a migration.
+   This is where the `experiment-linux-posting-pages-2026-05-27` work
+   (byte-budgeted pages, backend-specific targets ~1–2 KB on Postgres) applies.
+5. **Full reindex / re-densify** — the only doc_id-renumbering operation; rewrites
+   every posting row from current chunk content and necessarily runs as an offline
+   whole-index rebuild. Procedure deferred; reopen if doc_id density decay or a
+   corruption-recovery need makes it necessary.
+6. **Operability: enforced flush-stall backpressure + a per-gram "rebuild from
+   source" recovery/audit op** — deferred (v1 already exposes a staging-lag gauge
+   and a flush-time `doc_count` self-check, §5.2/§8); reopen when the index runs
+   in production and the §4.2 invariant needs a stronger runtime guard.
+7. **Duplicate-content chunk `occurrence` tie-break** *(open — to discuss)* — when
+   one file has multiple chunks of identical content, the rule pairing old↔new for
+   carry-forward isn't pinned (the landed code uses FIFO within the owning file).
+   It only affects which `doc_id`/line-range binds to which position (grams are
+   identical either way), so it is index-correctness-safe; pin it before the query
+   path relies on that binding.
 
 ## 11. References
 
 **Source repos reviewed (cloned 2026-05-25), with this story's analyses:**
 
 - `google/codesearch` — doc-level trigram index (closest match) —
-  [`analysis-codesearch.md`](./analysis-codesearch.md)
+  [`analysis-codesearch.md`](./analysis-codesearch.md). Posting-list byte format
+  and gamma encoding ported from `index/delta.go` + `index/read.go`.
 - `sourcegraph/zoekt` — positional, sharded trigram search —
   [`analysis-zoekt.md`](./analysis-zoekt.md)
 - SQLite `ext/fts5/` — LSM segments + trigram tokenizer (a target backend) —
   [`analysis-fts5.md`](./analysis-fts5.md)
 - PostgreSQL `pg_trgm` + GIN — pending-list staging + posting model —
   [`analysis-pg_trgm-gin.md`](./analysis-pg_trgm-gin.md)
+
+**Experiments / learnings:**
+
+- [`experiment-linux-posting-pages-2026-05-27.md`](./experiment-linux-posting-pages-2026-05-27.md)
+  — real-corpus posting sizing (informs §10 paging; superseded for the v1
+  one-row-per-gram store).
+- `context/learnings/2026-05-26-bulk-insert-vs-orm-per-row.md` — Core bulk insert
+  vs ORM per-row; `seq` monotonicity on SQLite/Postgres.
 
 **External:**
 

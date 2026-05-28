@@ -62,12 +62,18 @@ class VirtualFileSystem:
         raise_on_error: bool = False,
         permissions: Permission | PermissionMap = "read_write",
         schema: str | None = None,
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
     ) -> None:
         self._storage = storage
         self._raise_on_error = raise_on_error
         self._permission_map: PermissionMap = coerce_permissions(permissions)
         self._engine = engine
         self._schema = schema
+        self.name = name
+        self.title = title
+        self.description = description
         if session_factory is not None:
             self._session_factory: SessionFactory | None = session_factory
         elif engine is not None:
@@ -79,7 +85,7 @@ class VirtualFileSystem:
             self._session_factory = None
         self._mounts: dict[str, VirtualFileSystem] = {}
         self._sorted_mount_paths: list[str] = []
-        self._name = self.__class__.__name__
+        self._class_name = self.__class__.__name__
 
     # -------------------------------------------------------------------
     # mounts and routing
@@ -1072,7 +1078,7 @@ class VirtualFileSystem:
         references, not opaque string SQL.
         """
         if self._session_factory is None:
-            msg = f"{self._name} has no session factory (storage=False)"
+            msg = f"{self._class_name} has no session factory (storage=False)"
             raise RuntimeError(msg)
         async with self._session_factory() as session:
             try:

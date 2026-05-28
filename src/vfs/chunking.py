@@ -1,18 +1,32 @@
-"""Recursive text splitter — region-aware rfind walker.
+"""Recursive character text splitter (LangChain-style).
 
-LangChain-compatible split: try each separator in priority order; oversized
-pieces recurse into the next separator. Boundaries match the OLD ``str.split``
-baseline for typical text/code at the bench config (2048/256). Pathological
-char-fallback inputs (long runs without any separator) chunk with sliding
-overlap rather than OLD's interleaved overlap-tail emissions.
+Split content into chunks no larger than *chunk_size* by trying separators in
+priority order — paragraph, line, word, then a fixed-size fallback for runs
+with no separator. The separator is kept attached to the piece preceding it,
+adjacent pieces are greedily merged up to the budget, and any single piece
+still over budget recurses into the next separator. With no overlap, the
+concatenation of the emitted chunks reconstructs the input exactly.
+
+Any content of at least ``GRAM_SIZE`` bytes (the smallest indexable unit)
+yields at least one chunk; shorter content yields none. ``split_code`` and
+``split_notebook`` route their fits-in-one-chunk and fallback cases through
+``split_with_line_ranges`` so small files and cells chunk under the same rule.
+
+Unit: ``chunk_size`` is measured in characters for ``recursive_text_split`` /
+``split_with_line_ranges``; ``split_code`` measures UTF-8 bytes internally for
+its tree-sitter span logic and delegates oversized leaves to the character
+splitter (where a byte budget bounds a character budget for ASCII-dominant
+code, which is the regime that matters).
 """
 from __future__ import annotations
 
 import json
 import typing
-from bisect import bisect_left, bisect_right
+from bisect import bisect_left
 
 from tree_sitter_language_pack import SupportedLanguage, get_parser
+
+from vfs.code_grams import GRAM_SIZE, normalize_content
 
 DEFAULT_SEPARATORS: tuple[str, ...] = ("\n\n", "\n", " ", "")
 
@@ -21,266 +35,113 @@ def recursive_text_split(
     content: str,
     *,
     chunk_size: int = 2048,
-    overlap: int = 256,
     separators: tuple[str, ...] = DEFAULT_SEPARATORS,
 ) -> list[str]:
-    """Split *content* into pieces no larger than *chunk_size* characters."""
-    offsets = _chunk_offsets(content, chunk_size=chunk_size, overlap=overlap, separators=separators)
-    return [content[s:e] for s, e in offsets]
+    """Split *content* into pieces no larger than *chunk_size* characters.
+
+    Returns ``[]`` for sub-trigram content, otherwise a non-empty list whose
+    concatenation equals *content*.
+    """
+    if len(normalize_content(content)) < GRAM_SIZE:
+        return []
+    return _recursive_split(content, chunk_size, separators)
 
 
 def split_with_line_ranges(
     content: str,
     *,
     chunk_size: int = 2048,
-    overlap: int = 256,
     separators: tuple[str, ...] = DEFAULT_SEPARATORS,
 ) -> list[tuple[str, int, int]]:
     """Return ``(chunk_text, line_start, line_end)`` for each emitted chunk.
 
     Lines are 1-indexed; ``line_end`` is the line containing the chunk's last
     character. A chunk that lives entirely inside a single oversized line has
-    ``line_start == line_end``.
+    ``line_start == line_end``. Returns ``[]`` only for sub-trigram content.
     """
-    offsets = _chunk_offsets(content, chunk_size=chunk_size, overlap=overlap, separators=separators)
-    if not offsets:
+    pieces = recursive_text_split(content, chunk_size=chunk_size, separators=separators)
+    if not pieces:
         return []
-    newlines: list[int] = []
-    nl_append = newlines.append
-    for i, c in enumerate(content):
-        if c == "\n":
-            nl_append(i)
-    bisect = bisect_left
+    newlines: list[int] = [i for i, c in enumerate(content) if c == "\n"]
     out: list[tuple[str, int, int]] = []
-    for s, e in offsets:
-        line_start = bisect(newlines, s) + 1
-        line_end = bisect(newlines, e - 1) + 1 if e > s else line_start
-        out.append((content[s:e], line_start, line_end))
+    pos = 0
+    for piece in pieces:
+        start = pos
+        end = pos + len(piece)
+        line_start = bisect_left(newlines, start) + 1
+        line_end = bisect_left(newlines, end - 1) + 1 if end > start else line_start
+        out.append((piece, line_start, line_end))
+        pos = end
     return out
 
 
-def _chunk_offsets(
-    content: str,
-    *,
-    chunk_size: int,
-    overlap: int,
-    separators: tuple[str, ...],
-) -> list[tuple[int, int]]:
-    """Return the ``(start, end)`` offset pairs the splitter would emit.
+def _recursive_split(content: str, chunk_size: int, separators: tuple[str, ...]) -> list[str]:
+    """Recursive character splitter; returns pieces that concatenate to *content*.
 
-    ``recursive_text_split`` slices ``content`` once per pair; callers that
-    need positional metadata (line numbers, byte offsets) consume the pairs
-    directly to avoid re-locating chunks.
+    Splits on the highest-priority separator present in *content*, keeping the
+    separator attached to the preceding piece, then greedily merges adjacent
+    pieces up to *chunk_size*. Any merged piece still over budget recurses into
+    the next separator; the empty-string separator is the fixed-size fallback.
     """
     if chunk_size <= 0:
         raise ValueError(f"chunk_size must be positive, got {chunk_size}")
-    if overlap < 0 or overlap >= chunk_size:
-        raise ValueError(f"overlap must be in [0, chunk_size); got {overlap}")
     if not separators:
         raise ValueError("separators must not be empty")
-    n = len(content)
-    if n <= chunk_size:
+    if not content:
         return []
+    if len(content) <= chunk_size:
+        return [content]
 
-    # Drop seps not present in content; avoids per-chunk rfind for absent seps.
-    seps_non_empty: list[str] = [s for s in separators if s != "" and s in content]
+    # Pick the first separator that appears in the content; "" always matches.
+    sep = separators[-1]
+    rest = separators[1:]
+    for i, candidate in enumerate(separators):
+        if candidate == "" or candidate in content:
+            sep = candidate
+            rest = separators[i + 1 :] or ("",)
+            break
 
-    # Per separator level, the active regions are oversized pieces of the prior
-    # level. Sep 0 is active everywhere; sep i (i>0) is active only inside an
-    # oversized sep-(i-1) piece. Bisect on starts gives O(log) "is active here".
-    region_starts: list[tuple[int, ...]] = [()]
-    region_ends: list[tuple[int, ...]] = [()]
-    prev_regions: list[tuple[int, int]] = [(0, n)]
-    for sep in seps_non_empty[:-1]:
-        new_regions: list[tuple[int, int]] = []
-        for s, e in prev_regions:
-            new_regions.extend(_find_oversized(content, s, e, sep, chunk_size))
-        if new_regions:
-            starts, ends = zip(*new_regions, strict=True)
-            region_starts.append(starts)
-            region_ends.append(ends)
+    pieces = _split_keep_separator(content, sep, chunk_size)
+
+    out: list[str] = []
+    buf = ""
+    for piece in pieces:
+        if len(piece) > chunk_size:
+            if buf:
+                out.append(buf)
+                buf = ""
+            out.extend(_recursive_split(piece, chunk_size, rest))
+        elif len(buf) + len(piece) <= chunk_size:
+            buf += piece
         else:
-            region_starts.append(())
-            region_ends.append(())
-        prev_regions = new_regions
-
-    # Drop trailing seps with no active region — they can never produce a cut.
-    while len(seps_non_empty) > 1 and not region_starts[-1]:
-        seps_non_empty.pop()
-        region_starts.pop()
-        region_ends.pop()
-
-    n_seps = len(seps_non_empty)
-    sep_lens = [len(s) for s in seps_non_empty]
-
-    offsets: list[tuple[int, int]] = []
-    offsets_append = offsets.append
-    if n_seps == 0:
-        base = 0
-        step = chunk_size - overlap
-        while True:
-            target = base + chunk_size
-            if target >= n:
-                offsets_append((base, n))
-                break
-            offsets_append((base, target))
-            base += step
-        return offsets
-
-    if n_seps == 1:
-        sep = seps_non_empty[0]
-        sep_len = sep_lens[0]
-        repeat_char = sep[0] if sep_len > 1 and sep[0] == sep[1] else ""
-        base = 0
-        last_cut = -1
-        rfind = str.rfind
-        if not repeat_char:
-            while True:
-                target = base + chunk_size
-                if target >= n:
-                    offsets_append((base, n))
-                    break
-                lo = last_cut + 1 if last_cut >= base else base + 1
-                cut = rfind(content, sep, lo, target + sep_len)
-                if cut == -1:
-                    cut = target
-                offsets_append((base, cut))
-                last_cut = cut
-                base = cut - overlap if overlap > 0 and cut > overlap else cut
-            return offsets
-
-        while True:
-            target = base + chunk_size
-            if target >= n:
-                offsets_append((base, n))
-                break
-            lo = last_cut + 1 if last_cut >= base else base + 1
-            cut = rfind(content, sep, lo, target + sep_len)
-            if cut != -1 and repeat_char:
-                run_start = cut
-                while run_start > 0 and content[run_start - 1] == repeat_char:
-                    run_start -= 1
-                cut = run_start + (cut - run_start) // sep_len * sep_len
-                if cut < lo:
-                    cut = -1
-            if cut == -1:
-                cut = target
-            offsets_append((base, cut))
-            last_cut = cut
-            base = cut - overlap if overlap > 0 and cut > overlap else cut
-        return offsets
-
-    base = 0
-    last_cut = -1
-    rfind = str.rfind
-    bisect = bisect_right
-    repeat_chars = [s[0] if len(s) > 1 and s[0] == s[1] else "" for s in seps_non_empty]
-    while True:
-        target = base + chunk_size
-        if target >= n:
-            offsets_append((base, n))
-            break
-        lo = last_cut + 1 if last_cut >= base else base + 1
-        cut = -1
-        for sep_idx in range(n_seps):
-            sep = seps_non_empty[sep_idx]
-            sep_len = sep_lens[sep_idx]
-            p = rfind(content, sep, lo, target + sep_len)
-            if p == -1 or p <= cut:
-                continue
-            repeat_char = repeat_chars[sep_idx]
-            if repeat_char:
-                # rfind gives rightmost match; greedy str.split skips ahead by
-                # sep_len after each hit, so adjust to the earliest aligned start
-                # within the current run of identical chars.
-                run_start = p
-                while run_start > 0 and content[run_start - 1] == repeat_char:
-                    run_start -= 1
-                p = run_start + (p - run_start) // sep_len * sep_len
-                if p < lo or p <= cut:
-                    continue
-            if sep_idx == 0:
-                cut = p
-                continue
-            starts = region_starts[sep_idx]
-            if not starts:
-                continue
-            j = bisect(starts, p) - 1
-            if j >= 0 and p < region_ends[sep_idx][j]:
-                cut = p
-        if cut == -1:
-            cut = target
-        offsets_append((base, cut))
-        last_cut = cut
-        base = cut - overlap if overlap > 0 and cut > overlap else cut
-    return offsets
-
-
-def _find_oversized(
-    content: str, start: int, end: int, sep: str, chunk_size: int
-) -> list[tuple[int, int]]:
-    """Return ranges of *sep*-bounded pieces in [start, end] exceeding chunk_size."""
-    sep_len = len(sep)
-    out: list[tuple[int, int]] = []
-    if sep_len == 1:
-        _find_oversized_single_char(content, start, end, sep, chunk_size, out)
-        return out
-
-    # Match the old split-based semantics without materializing ``content[start:end]``
-    # or the full list of separator-bounded pieces.
-    piece_start = start
-    search_from = start
-    find = str.find
-
-    while True:
-        sep_start = find(content, sep, search_from, end)
-        if sep_start == -1:
-            break
-
-        piece_end = sep_start
-        plen = piece_end - piece_start
-        if plen > chunk_size:
-            out.append((piece_start, piece_end))
-
-        piece_start = sep_start
-        search_from = sep_start + sep_len
-
-    plen = end - piece_start
-    if plen > chunk_size:
-        out.append((piece_start, end))
+            if buf:
+                out.append(buf)
+            buf = piece
+    if buf:
+        out.append(buf)
     return out
 
 
-def _find_oversized_single_char(
-    content: str,
-    start: int,
-    end: int,
-    sep: str,
-    chunk_size: int,
-    out: list[tuple[int, int]],
-) -> None:
-    """Single-character variant that skips separator hits inside small pieces."""
-    piece_start = start
-    search_from = start
-    find = str.find
-    rfind = str.rfind
+def _split_keep_separator(content: str, sep: str, chunk_size: int) -> list[str]:
+    """Split *content* on *sep*, keeping each separator attached to its piece.
 
-    while search_from < end:
-        last_safe = rfind(content, sep, search_from, min(end, piece_start + chunk_size + 1))
-        if last_safe != -1:
-            piece_start = last_safe
-            search_from = last_safe + 1
-            continue
-
-        sep_start = find(content, sep, search_from, end)
-        if sep_start == -1:
+    The empty separator falls back to fixed-size slicing of *chunk_size*.
+    """
+    if sep == "":
+        return [content[i : i + chunk_size] for i in range(0, len(content), chunk_size)]
+    pieces: list[str] = []
+    start = 0
+    sep_len = len(sep)
+    find = content.find
+    while True:
+        hit = find(sep, start)
+        if hit == -1:
             break
-        out.append((piece_start, sep_start))
-        piece_start = sep_start
-        search_from = sep_start + 1
-
-    if end - piece_start > chunk_size:
-        out.append((piece_start, end))
+        pieces.append(content[start : hit + sep_len])
+        start = hit + sep_len
+    if start < len(content):
+        pieces.append(content[start:])
+    return pieces
 
 
 # ===========================================================================
@@ -442,19 +303,21 @@ def split_code(
 ) -> list[tuple[str, int, int]]:
     """Structure-aware split of *content* using its tree-sitter *grammar*.
 
-    Returns ``(chunk_text, line_start, line_end)`` tuples (1-indexed lines), or
-    ``[]`` when the whole content fits one chunk. Boundaries fall on syntax-tree
-    node edges. A merged span that is itself an oversized indivisible leaf falls
-    back to the recursive separator splitter; an unparseable file (or any
-    binding error) falls back wholesale. *chunk_size* is measured in UTF-8 bytes.
+    Returns ``(chunk_text, line_start, line_end)`` tuples (1-indexed lines).
+    Content that fits one chunk yields a single whole-content piece; sub-trigram
+    content yields ``[]``. Boundaries fall on syntax-tree node edges. A merged
+    span that is itself an oversized indivisible leaf falls back to the recursive
+    separator splitter; an unparseable file (or any binding error) falls back
+    wholesale. *chunk_size* is measured in UTF-8 bytes.
     """
     data = content.encode("utf-8")
     if len(data) <= chunk_size:
-        return []
+        # Fits one chunk — emit a whole-content piece (or [] for sub-trigram).
+        return split_with_line_ranges(content, chunk_size=chunk_size)
     try:
         spans = _atomic_spans(content, language, chunk_size)
     except Exception:
-        return split_with_line_ranges(content, chunk_size=chunk_size, overlap=0)
+        return split_with_line_ranges(content, chunk_size=chunk_size)
 
     newlines = [i for i, byte in enumerate(data) if byte == 0x0A]
     out: list[tuple[str, int, int]] = []
@@ -466,7 +329,7 @@ def split_code(
         if end - start > chunk_size:  # oversized indivisible leaf
             base = line_start - 1
             for piece, rel_start, _rel_end in split_with_line_ranges(
-                text, chunk_size=chunk_size, overlap=0
+                text, chunk_size=chunk_size
             ):
                 out.append((piece, base + rel_start, base + rel_start + piece.count("\n")))
         else:
@@ -491,7 +354,7 @@ def split_notebook(
         if not isinstance(cells, list):
             raise TypeError
     except (ValueError, KeyError, TypeError):
-        return split_with_line_ranges(content, chunk_size=chunk_size, overlap=0)
+        return split_with_line_ranges(content, chunk_size=chunk_size)
 
     metadata = notebook.get("metadata") or {}
     kernelspec = metadata.get("kernelspec") or {}
@@ -516,12 +379,9 @@ def split_notebook(
 
         if grammar is not None and source.strip():
             pieces = split_code(source, language=grammar, chunk_size=chunk_size)
-            if pieces:
-                out.extend(
-                    (text, line_base + ls, line_base + le) for text, ls, le in pieces
-                )
-            else:
-                out.append((source, line_base + 1, line_base + 1 + source.count("\n")))
+            out.extend(
+                (text, line_base + ls, line_base + le) for text, ls, le in pieces
+            )
         line_base += source.count("\n") + 1
     return out
 

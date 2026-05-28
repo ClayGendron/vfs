@@ -15,7 +15,20 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Integer,
+    LargeBinary,
+    Numeric,
+    String,
+    case,
+    func,
+    insert,
+    inspect,
+    or_,
+    select,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import load_only
 
@@ -23,15 +36,13 @@ from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
 from vfs.code_grams import unique_code_grams
 from vfs.columns import CANDIDATE_BACKED_MODEL_COLUMNS, default_columns
-from vfs.exceptions import _classify_error
+from vfs.exceptions import SchemaMismatchError, _classify_error
 from vfs.graph import RustworkxGraph
 from vfs.models import (
+    GRAM_ACTION_ADD,
+    GRAM_ACTION_DELETE,
     VFSEntry,
-    _build_entry_table_class,
-    _build_gram_batch_table_class,
-    _build_gram_stat_table_class,
-    _build_gram_table_class,
-    _build_posting_block_table_class,
+    _build_vfs_tables,
 )
 from vfs.paths import (
     METADATA_ROOT,
@@ -82,6 +93,30 @@ class _InverseEdgeSpec(NamedTuple):
 def _escape_like(term: str) -> str:
     """Escape special characters for a SQL LIKE pattern."""
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _type_family(sa_type: Any) -> str:
+    """Coarse type category for cross-dialect schema comparison.
+
+    Collapses the integer widths (Integer/SmallInteger/BigInteger) into one
+    family, and likewise for the other broad categories, so a column declared
+    ``BigInteger().with_variant(Integer, "sqlite")`` matches whatever width a
+    backend reflects. Both our declared types and the dialect's reflected
+    types subclass these generic bases, so a direct ``isinstance`` classifies
+    them. Custom/decorated types (e.g. the embedding vector) match none and
+    return ``""``, which the caller treats as "do not compare".
+    """
+    for family, base in (
+        ("boolean", Boolean),
+        ("integer", Integer),
+        ("string", String),
+        ("binary", LargeBinary),
+        ("datetime", DateTime),
+        ("numeric", Numeric),
+    ):
+        if isinstance(sa_type, base):
+            return family
+    return ""
 
 
 def _regex_flags_for_mode(case_mode: CaseMode, pattern: str) -> int:
@@ -285,39 +320,26 @@ class DatabaseFileSystem(VirtualFileSystem):
         native_embedding: NativeEmbeddingConfig | None = None,
         auto_chunk: bool = True,
         auto_index: bool = True,
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
     ) -> None:
         super().__init__(
             engine=engine,
             session_factory=session_factory,
             permissions=permissions,
             schema=schema,
+            name=name,
+            title=title,
+            description=description,
         )
         self._table_name = table_name
         self._native_embedding = native_embedding
-        self._model = _build_entry_table_class(
+        self._model, self._gram_table, self._posting_table = _build_vfs_tables(
             table_name=self._table_name,
             schema=self._schema,
             native_embedding=self._native_embedding,
-        )
-        self._gram_model = _build_gram_table_class(
-            entries_table_name=self._table_name,
-            metadata=self._model.metadata,
-            schema=self._schema,
-        )
-        self._posting_block_model = _build_posting_block_table_class(
-            entries_table_name=self._table_name,
-            metadata=self._model.metadata,
-            schema=self._schema,
-        )
-        self._gram_batch_model = _build_gram_batch_table_class(
-            entries_table_name=self._table_name,
-            metadata=self._model.metadata,
-            schema=self._schema,
-        )
-        self._gram_stat_model = _build_gram_stat_table_class(
-            entries_table_name=self._table_name,
-            metadata=self._model.metadata,
-            schema=self._schema,
+            name=self.name,
         )
         self._user_scoped = user_scoped
         self._graph = RustworkxGraph(model=self._model, user_scoped=user_scoped)
@@ -330,19 +352,96 @@ class DatabaseFileSystem(VirtualFileSystem):
     async def setup(self) -> None:
         """Run one-shot initialization against the backing database.
 
-        Currently ensures the reserved ``/.vfs`` metadata directory
-        exists. Callers must invoke this once after construction —
-        before the first ``write()`` — so the write path no longer
-        has to check on every call.
+        Creates this mount's tables if absent (idempotent ``create_all``)
+        and ensures the reserved ``/.vfs`` metadata directory exists.
+        Callers must invoke this once after construction — before the
+        first ``write()`` — so the write path no longer has to check on
+        every call.
 
-        Safe to call multiple times; subsequent calls are no-ops
-        once the metadata root is confirmed.
+        Safe to call multiple times; subsequent calls are no-ops once the
+        metadata root is confirmed.
         """
         if self._metadata_root_ensured:
             return
         async with self._session_factory() as session:
+            conn = await session.connection()
+            await conn.run_sync(self._model.metadata.create_all)
             await self._ensure_metadata_root(session)
             await session.commit()
+
+    async def ensure_schema(self) -> bool:
+        """Verify the live database schema matches this mount's tables.
+
+        Reflects the backing database and compares it against the in-memory
+        table definitions (the entry table plus the two gram-index tables).
+        Returns ``True`` when every expected table is present with matching
+        columns, nullability, primary keys, and type families. Raises
+        :class:`SchemaMismatchError` describing each difference otherwise.
+
+        Unlike :meth:`setup`, this never mutates the database — it is a
+        read-only assertion for callers that own DDL externally (migrations)
+        and want to fail fast on drift.
+        """
+        async with self._session_factory() as session:
+            conn = await session.connection()
+            diffs = await conn.run_sync(self._collect_schema_diffs)
+        if diffs:
+            detail = "\n".join(f"  - {d}" for d in diffs)
+            msg = f"Database schema does not match expected VFS tables:\n{detail}"
+            raise SchemaMismatchError(msg)
+        return True
+
+    def _collect_schema_diffs(self, sync_conn: Any) -> list[str]:
+        """Diff the reflected database against the in-memory tables.
+
+        Runs synchronously under ``run_sync`` so it can drive the SQLAlchemy
+        inspector. Returns a flat list of human-readable difference lines —
+        empty when the schema matches.
+        """
+        inspector = inspect(sync_conn)
+        diffs: list[str] = []
+        for table in self._model.metadata.sorted_tables:
+            qual = f"{table.schema}.{table.name}" if table.schema else table.name
+            if not inspector.has_table(table.name, schema=table.schema):
+                diffs.append(f"missing table {qual}")
+                continue
+
+            actual = {c["name"]: c for c in inspector.get_columns(table.name, schema=table.schema)}
+            expected = {c.name: c for c in table.columns}
+            for name in expected.keys() - actual.keys():
+                diffs.append(f"table {qual}: missing column {name}")
+            for name in actual.keys() - expected.keys():
+                diffs.append(f"table {qual}: unexpected column {name}")
+
+            for name in expected.keys() & actual.keys():
+                exp, act = expected[name], actual[name]
+                if bool(exp.nullable) != bool(act["nullable"]):
+                    diffs.append(
+                        f"table {qual}.{name}: nullable expected {bool(exp.nullable)}, "
+                        f"found {bool(act['nullable'])}"
+                    )
+                exp_fam = _type_family(exp.type)
+                act_fam = _type_family(act["type"])
+                # Skip the comparison when either side is an unrecognized
+                # (custom/dialect) type — a class-name mismatch there is noise,
+                # not drift.
+                if exp_fam and act_fam and exp_fam != act_fam:
+                    diffs.append(
+                        f"table {qual}.{name}: type expected {exp_fam}, found {act_fam}"
+                    )
+
+            expected_pk = {c.name for c in table.primary_key.columns}
+            actual_pk = set(
+                inspector.get_pk_constraint(table.name, schema=table.schema).get(
+                    "constrained_columns", []
+                )
+            )
+            if expected_pk != actual_pk:
+                diffs.append(
+                    f"table {qual}: primary key expected {sorted(expected_pk)}, "
+                    f"found {sorted(actual_pk)}"
+                )
+        return diffs
 
     def _row(self, **data: Any) -> VFSEntry:
         """Mint a table-row instance from validated data.
@@ -586,108 +685,77 @@ class DatabaseFileSystem(VirtualFileSystem):
             chunks.extend(result.scalars().all())
         return chunks
 
-    async def _stage_chunk_delete_deltas(
-        self,
-        chunks: Sequence[VFSEntry],
-        *,
-        session: AsyncSession,
-    ) -> None:
-        """Stage folded-gram delete deltas for chunks leaving the index.
-
-        Each row's grams are queued as delete deltas carrying its
-        ``id`` (doc_id) / ``entry_id``; the rows themselves are removed
-        separately by the persist-phase stale DELETE.
-        """
-        gram_model = self._gram_model
-        for chunk in chunks:
-            for gram_key in unique_code_grams(chunk.content or "", folded=True):
-                session.add(
-                    gram_model(
-                        gram_key=gram_key,
-                        entry_id=chunk.entry_id,
-                        doc_id=chunk.id,
-                        action=gram_model.ACTION_DELETE,
-                    )
-                )
-
-    async def _apply_trigram_maintenance(
+    async def _stage_gram_deltas(
         self,
         entries: Sequence[VFSEntry],
+        old_by_path: dict[str, VFSEntry],
+        deindexed: Sequence[VFSEntry],
         *,
-        old_entries: dict[str, VFSEntry] | None = None,
-        delete_only: bool = False,
         session: AsyncSession,
     ) -> None:
-        """Stage folded trigram add/delete deltas onto the session.
+        """Stage this write's folded-gram deltas in one Core bulk insert.
 
-        Each entry's grams are extracted folded. A path-stable file edit
-        (the path appears in ``old_entries``) is diffed: grams only in the
-        old content become delete deltas, grams only in the new content
-        become add deltas. The persisted row survives the edit in place, so
-        both its deletes and its re-adds carry the old row's ``entry_id``
-        and ``id`` — not the discarded incoming uuid. A new file or any
-        chunk has no old content to diff, so every gram is staged as an add;
-        chunk deletes are staged by the cascade hook instead, never diffed
-        here.
+        Reconciliation drives the deltas — grams are never diffed:
 
-        Add deltas leave ``doc_id`` null (resolved at flush); delete deltas
-        carry the ``doc_id`` captured now, since the row may be gone by
-        flush. With ``delete_only`` the entries' current grams are all staged
-        as deletes — used for files whose content leaves the index (e.g. a
-        file that was just chunked).
+        - **De-indexed rows** (stale chunks, rows leaving the index) all-delete
+          their current grams, carrying ``doc_id``.
+        - A **path-stable edit** (the row persists at its path, present in
+          ``old_by_path``) all-deletes the old row's grams, then all-adds the
+          new grams under the persisted row's ``entry_id`` — latest-action-wins
+          resolves a gram in both to the add.
+        - A **brand-new row** all-adds its grams.
 
-        Deltas are queued with ``session.add`` and written by the single
-        persist flush; no statement is emitted here.
+        Carried-forward chunks are absent here and cost nothing. Adds leave
+        ``doc_id`` null (the flush resolves it by ``entry_id``→``id`` join);
+        deletes carry the captured ``doc_id`` since the row may be gone by
+        flush. A Core bulk insert (not per-row ``session.add``) keeps a large
+        file's tens of thousands of deltas cheap.
         """
-        old_entries = old_entries or {}
-        gram_model = self._gram_model
-
+        rows: list[dict[str, object]] = []
+        for entry in deindexed:
+            rows.extend(
+                {
+                    "gram_key": gram_key,
+                    "entry_id": entry.entry_id,
+                    "doc_id": entry.id,
+                    "action": GRAM_ACTION_DELETE,
+                }
+                for gram_key in unique_code_grams(entry.content or "", folded=True)
+            )
         for entry in entries:
-            grams = unique_code_grams(entry.content or "", folded=True)
-
-            if delete_only:
-                for gram_key in grams:
-                    session.add(
-                        gram_model(
-                            gram_key=gram_key,
-                            entry_id=entry.entry_id,
-                            doc_id=entry.id,
-                            action=gram_model.ACTION_DELETE,
-                        )
-                    )
-                continue
-
-            old = old_entries.get(entry.path) if entry.kind == "file" else None
+            new_grams = unique_code_grams(entry.content or "", folded=True)
+            old = old_by_path.get(entry.path)
             if old is not None:
-                old_grams = unique_code_grams(old.content or "", folded=True)
-                for gram_key in old_grams - grams:
-                    session.add(
-                        gram_model(
-                            gram_key=gram_key,
-                            entry_id=old.entry_id,
-                            doc_id=old.id,
-                            action=gram_model.ACTION_DELETE,
-                        )
-                    )
-                for gram_key in grams - old_grams:
-                    session.add(
-                        gram_model(
-                            gram_key=gram_key,
-                            entry_id=old.entry_id,
-                            doc_id=None,
-                            action=gram_model.ACTION_ADD,
-                        )
-                    )
+                rows.extend(
+                    {
+                        "gram_key": gram_key,
+                        "entry_id": old.entry_id,
+                        "doc_id": old.id,
+                        "action": GRAM_ACTION_DELETE,
+                    }
+                    for gram_key in unique_code_grams(old.content or "", folded=True)
+                )
+                rows.extend(
+                    {
+                        "gram_key": gram_key,
+                        "entry_id": old.entry_id,
+                        "doc_id": None,
+                        "action": GRAM_ACTION_ADD,
+                    }
+                    for gram_key in new_grams
+                )
             else:
-                for gram_key in grams:
-                    session.add(
-                        gram_model(
-                            gram_key=gram_key,
-                            entry_id=entry.entry_id,
-                            doc_id=None,
-                            action=gram_model.ACTION_ADD,
-                        )
-                    )
+                rows.extend(
+                    {
+                        "gram_key": gram_key,
+                        "entry_id": entry.entry_id,
+                        "doc_id": None,
+                        "action": GRAM_ACTION_ADD,
+                    }
+                    for gram_key in new_grams
+                )
+        if rows:
+            await session.execute(insert(self._gram_table), rows)
 
     async def _get_object(
         self,
@@ -1995,19 +2063,19 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         ``compile_post_list=False`` (the write-path call) leaves the staged
         deltas in the delta-log for a later flush; the deferred public entry
-        point compiles them into posting blocks (story 030 Phase 4).
+        point folds them into the posting list.
         """
-        # Files whose flag flipped True → False (e.g. just chunked) —
-        # the row stays but its content is no longer indexed; stage
-        # delete deltas for its old grams.
-        delete_only_existing: list[VFSEntry] = []
+        # Rows leaving the index: stale chunks reconciled away, plus rows whose
+        # flag flipped True → False (e.g. a file that just chunked). Both stage
+        # all-deletes for their current grams, carrying ``doc_id``.
+        deindexed: list[VFSEntry] = list(ctx.stale_chunks)
         for obj_path in ctx.changed_paths:
             existing = ctx.existing_map.get(obj_path)
             incoming = ctx.write_map.get(obj_path)
             if existing is None or incoming is None:
                 continue
             if existing.index_content and not incoming.index_content:
-                delete_only_existing.append(existing)
+                deindexed.append(existing)
 
         indexable_changed = [
             ctx.write_map[p]
@@ -2021,24 +2089,12 @@ class DatabaseFileSystem(VirtualFileSystem):
         }
 
         try:
-            if indexable_changed:
-                await self._apply_trigram_maintenance(
-                    indexable_changed,
-                    old_entries=old_for_changed,
-                    session=session,
-                )
-            if delete_only_existing:
-                await self._apply_trigram_maintenance(
-                    delete_only_existing,
-                    delete_only=True,
-                    session=session,
-                )
-            if ctx.stale_chunks:
-                await self._stage_chunk_delete_deltas(
-                    ctx.stale_chunks,
-                    session=session,
-                )
-
+            await self._stage_gram_deltas(
+                indexable_changed,
+                old_for_changed,
+                deindexed,
+                session=session,
+            )
         except Exception as exc:
             ctx.errors.append(f"Trigram maintenance failed: {exc}")
             raise _WriteAbort(ctx.errors) from exc
