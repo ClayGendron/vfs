@@ -22,12 +22,15 @@ from sqlalchemy import (
     LargeBinary,
     Numeric,
     String,
+    bindparam,
     case,
+    delete,
     func,
     insert,
     inspect,
     or_,
     select,
+    update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import load_only
@@ -39,11 +42,13 @@ from vfs.columns import CANDIDATE_BACKED_MODEL_COLUMNS, default_columns
 from vfs.exceptions import SchemaMismatchError, _classify_error
 from vfs.graph import RustworkxGraph
 from vfs.models import (
+    ENCODING_DELTA_GAMMA,
     GRAM_ACTION_ADD,
     GRAM_ACTION_DELETE,
     VFSEntry,
     _build_vfs_tables,
 )
+from vfs.postings import decode_postings, encode_postings, merge_postings
 from vfs.paths import (
     METADATA_ROOT,
     base_path,
@@ -348,6 +353,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         self._auto_chunk = bool(auto_chunk)
         self._auto_index = bool(auto_index)
         self._metadata_root_ensured = False
+        self._flush_lock = asyncio.Lock()
 
     async def setup(self) -> None:
         """Run one-shot initialization against the backing database.
@@ -756,6 +762,144 @@ class DatabaseFileSystem(VirtualFileSystem):
                 )
         if rows:
             await session.execute(insert(self._gram_table), rows)
+
+    async def compile_postings(self, session: AsyncSession) -> int:
+        """Fold staged gram deltas into the per-gram posting list.
+
+        The **compile** phase of the index pipeline. Runs in the caller's
+        transaction, serialized by ``self._flush_lock``. Returns the number of
+        staged rows folded (0 when staging is empty).
+
+        The latest-action-wins fold and the ``doc_id`` resolution happen
+        server-side: a ``ROW_NUMBER`` window keyed on ``(gram_key, entry_id)``
+        keeps the latest delta per pair, a ``LEFT JOIN`` to the entry table
+        resolves an add's ``doc_id``, and adds whose join missed (entry
+        hard-deleted) are dropped in the same query. Python only buckets the
+        survivors into per-gram add/delete sets, set-merges them into each
+        touched gram's decoded posting list, and re-encodes. Writes go through
+        ``executemany`` and the staging cleanup is a range delete, so SQLAlchemy
+        manages the bind-parameter cap.
+        """
+        async with self._flush_lock:
+            gram = self._gram_table
+            posting = self._posting_table
+            entry = self._model.__table__
+
+            watermark = await session.scalar(select(func.max(gram.c.seq)))
+            if watermark is None:
+                return 0
+
+            # Server-side latest-action-wins fold + doc_id resolution.
+            rn = (
+                func.row_number()
+                .over(
+                    partition_by=[gram.c.gram_key, gram.c.entry_id],
+                    order_by=gram.c.seq.desc(),
+                )
+                .label("rn")
+            )
+            folded_subq = (
+                select(
+                    gram.c.gram_key,
+                    gram.c.action,
+                    gram.c.doc_id,
+                    entry.c.id.label("resolved_id"),
+                    rn,
+                )
+                .select_from(gram.outerjoin(entry, entry.c.entry_id == gram.c.entry_id))
+                .where(gram.c.seq <= watermark)
+                .subquery()
+            )
+            survivors = (
+                await session.execute(
+                    select(
+                        folded_subq.c.gram_key,
+                        folded_subq.c.action,
+                        folded_subq.c.doc_id,
+                        folded_subq.c.resolved_id,
+                    ).where(
+                        folded_subq.c.rn == 1,
+                        ~(
+                            (folded_subq.c.action == GRAM_ACTION_ADD)
+                            & (folded_subq.c.resolved_id.is_(None))
+                        ),
+                    )
+                )
+            ).all()
+
+            adds_by_gram: dict[int, set[int]] = defaultdict(set)
+            dels_by_gram: dict[int, set[int]] = defaultdict(set)
+            for gram_key, action, staged_doc_id, resolved_id in survivors:
+                if action == GRAM_ACTION_ADD:
+                    adds_by_gram[gram_key].add(resolved_id)
+                elif staged_doc_id is not None:
+                    dels_by_gram[gram_key].add(staged_doc_id)
+
+            # Load the posting rows for every gram present in staging (a superset
+            # of the touched grams) via an IN-subquery so the keys never leave
+            # the database as bind parameters.
+            # Keep each decoded posting list as its ascending list (not a set)
+            # so the merge below can exploit the existing order.
+            current: dict[int, list[int]] = {}
+            existing_rows = (
+                await session.execute(
+                    select(posting.c.gram_key, posting.c.postings, posting.c.doc_count).where(
+                        posting.c.gram_key.in_(
+                            select(gram.c.gram_key).where(gram.c.seq <= watermark).distinct()
+                        )
+                    )
+                )
+            ).all()
+            for gram_key, blob, doc_count in existing_rows:
+                current[gram_key] = decode_postings(bytes(blob), doc_count)
+
+            to_insert: list[dict[str, object]] = []
+            to_update: list[dict[str, object]] = []
+            to_delete: list[dict[str, object]] = []
+            for gram_key in adds_by_gram.keys() | dels_by_gram.keys():
+                merged = merge_postings(
+                    current.get(gram_key, ()),
+                    adds_by_gram.get(gram_key, ()),
+                    dels_by_gram.get(gram_key, frozenset()),
+                )
+                if not merged:
+                    if gram_key in current:
+                        to_delete.append({"_gram_key": gram_key})
+                    continue
+                blob = encode_postings(merged)
+                values = {
+                    "postings": blob,
+                    "encoding": ENCODING_DELTA_GAMMA,
+                    "doc_count": len(merged),
+                    "byte_size": len(blob),
+                }
+                if gram_key in current:
+                    to_update.append({"_gram_key": gram_key, **values})
+                else:
+                    to_insert.append({"gram_key": gram_key, **values})
+
+            if to_insert:
+                await session.execute(insert(posting), to_insert)
+            if to_update:
+                await session.execute(
+                    update(posting)
+                    .where(posting.c.gram_key == bindparam("_gram_key"))
+                    .values(
+                        postings=bindparam("postings"),
+                        encoding=bindparam("encoding"),
+                        doc_count=bindparam("doc_count"),
+                        byte_size=bindparam("byte_size"),
+                    ),
+                    to_update,
+                )
+            if to_delete:
+                await session.execute(
+                    delete(posting).where(posting.c.gram_key == bindparam("_gram_key")),
+                    to_delete,
+                )
+
+            result = await session.execute(delete(gram).where(gram.c.seq <= watermark))
+            return result.rowcount
 
     async def _get_object(
         self,
@@ -1599,7 +1743,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             await self._write_phase_resolve_parent_dirs(ctx, session)
 
             if self._auto_index:
-                await self.index(ctx, session, compile_post_list=False)
+                await self.index(ctx, session)
 
             out = await self._write_phase_persist(ctx, session)
 
@@ -2050,10 +2194,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         self,
         ctx: _WriteContext,
         session: AsyncSession,
-        *,
-        compile_post_list: bool = True,
     ) -> None:
-        """Bring the durable index current for this write's changed rows.
+        """Stage this write's gram deltas and compute embeddings.
 
         Stages folded trigram deltas (adds for new/changed indexable rows,
         deletes for de-indexed files and stale chunks), then issues ONE bulk
@@ -2061,9 +2203,9 @@ class DatabaseFileSystem(VirtualFileSystem):
         before any DB mutation — embeddings ride along on the persist phase's
         per-entry write, so failing here leaves no half-written index.
 
-        ``compile_post_list=False`` (the write-path call) leaves the staged
-        deltas in the delta-log for a later flush; the deferred public entry
-        point folds them into the posting list.
+        The staged deltas are folded into the posting list separately by
+        :meth:`compile_postings`, which resolves a new row's ``doc_id`` and so
+        must run after persist.
         """
         # Rows leaving the index: stale chunks reconciled away, plus rows whose
         # flag flipped True → False (e.g. a file that just chunked). Both stage
