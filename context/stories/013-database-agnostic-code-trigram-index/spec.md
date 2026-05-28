@@ -2,7 +2,7 @@
 
 - **Status:** draft
 - **Date:** 2026-04-24 (restructured 2026-05-25; posting-list model simplified
-  2026-05-27; triage pass 2026-05-27)
+  2026-05-27; triage pass 2026-05-27; index-pipeline reframe 2026-05-28)
 - **Owner:** Clay Gendron
 - **Kind:** feature + backend + research
 
@@ -34,12 +34,17 @@ citations).
 
 - A shared, code-oriented gram tokenizer (raw byte trigrams, single lowercase
   stream).
-- A portable inverted-index storage model: `staging → flush → one posting-list
+- A portable inverted-index storage model: `staging → compile → one posting-list
   row per gram`, minted once on the base `DatabaseFileSystem` so every backend
   inherits it.
-- Transactional index maintenance on insert / edit / delete / re-chunk, via
-  content-addressed **chunk reconciliation** (grams are never diffed).
-- Concrete per-chunk indexing limits.
+- A **three-phase index pipeline** — **chunk → encode → compile** (§4.6) — run as
+  a server-side reconciliation, each phase idempotent and independently runnable.
+  Index maintenance on insert / edit / delete / re-chunk is content-addressed
+  **chunk reconciliation** (grams are never diffed); inline phases share the
+  write transaction.
+- Index maintenance exposed through a server-side **capability** (a
+  `SupportsIndexMaintenance` protocol), never a client/MCP verb — a client cannot
+  trigger indexing.
 - One index everywhere — **no `pg_trgm` as the index**.
 
 **Non-Goals (out of scope)**
@@ -66,11 +71,13 @@ citations).
 | **doc_id** | `vfs_entries.id` — the row's **integer auto-increment primary key**, which *is* the posting-list key (dense, sorted, stable). Distinct from the entity's `uuid`, which lives in `entry_id`. |
 | **entry_id** | The entry `uuid` (`vfs_entries.entry_id`), carried on **every** staging row. Known at write time; `doc_id` is resolved later (§5.3). |
 | **chunk** | The index unit. **Every** indexed document is chunked (even into a single chunk); only `kind="chunk"` rows are content-indexed. |
-| **index_exclusion_reason** | Nullable marker on a chunk row: `too_large \| high_cardinality \| null`. Non-null ⇒ the chunk's content is *not* in the index and a reader must fallback-scan it. Distinct from a *chunked parent* (`index_content=false`, **null** reason — skip, its content is covered by its chunk rows). |
+| **index_exclusion_reason** | *(Removed 2026-05-28, §4.3.)* A former chunk-row marker for content excluded by per-chunk limits. Chunk-all + size-bounded chunks make those limits unreachable, so the column and the excluded/fallback-scan state are gone; `index_content` alone classifies a row (§4.2). |
 | **staging (delta-log)** | A **transient**, append-only log of `(gram_key, entry_id, doc_id?, action)` pending changes (`action ∈ {add, delete}`). Rows are deleted once a flush folds them, so "present in staging" == "not yet flushed". |
 | **latest-action-wins (LAW)** | The fold of staging by the latest `seq` per `(gram_key, entry_id)` — resolves repeated changes to one current truth. `seq` is a monotonic, insertion-ordered autoincrement (verified across SQLite/Postgres/MSSQL). |
 | **posting list** | **One row per gram**: the gram's complete sorted `doc_id` set in a single `postings` blob. The durable index unit. A gram with no docs has **no row** (a missing row ≡ the empty set). |
-| **flush** | The background fold of staged deltas into the per-gram posting-list rows — capture a `seq` watermark, LAW-fold rows ≤ it, apply to each touched row with idempotent set semantics, then delete the folded staged rows. Off the write path; global single-flight; one transaction. |
+| **flush** | The fold of staged deltas into the per-gram posting-list rows — capture a `seq` watermark, LAW-fold rows ≤ it, apply to each touched row with idempotent set semantics, then delete the folded staged rows. This is the **compile** phase (§4.6); global single-flight, one transaction; run deferred (off the write path) or inline post-persist on the shared write session. |
+| **index pipeline** | The three-phase, server-side maintenance reconciliation (§4.6): **chunk** (split files), **encode** (chunk grams → staging + embedding), **compile** (fold staging → posting list). `index()` runs all three; each is independently runnable and idempotent. Not a client/MCP verb. |
+| **chunk watermark** | A durable per-file marker (the file's `content_hash` recorded at last chunking) that drives the **chunk** phase: a file whose current `content_hash` differs is (re)chunked. Mirrors `indexed_content_hash` for the **encode** phase. |
 | **encoding** | The per-row tag naming how `postings` is packed (`delta+varint`, `delta+gamma`, `roaring`). v1 implements `delta+gamma` only; the tag lets the format evolve per gram without migration. |
 | **filter-then-verify** | The index yields a candidate *superset*; the real regex verifies. False positives OK; false negatives forbidden. |
 
@@ -99,23 +106,18 @@ citations).
   set of grams in the chunks currently present.
 - False positives are allowed; a committed, indexed chunk's gram MUST NOT be
   missing (no false negatives).
-- Chunks excluded by §4.3 MUST set a non-null **`index_exclusion_reason`** so a
-  reader can distinguish them (fallback-scan) from *chunked parents* (skip —
-  their content is covered by their chunk rows). The full
-  `(index_content, index_exclusion_reason)` truth table:
+- Under chunk-all (§4.3, §4.4) every indexable row is a size-bounded chunk, so
+  there is **no excluded-chunk state** and `index_content` alone is sufficient:
 
-  | `index_content` | `reason` | meaning | reader does |
-  |---|---|---|---|
-  | true | null | indexed chunk | use the index |
-  | false | non-null | excluded chunk (§4.3) | fallback-scan |
-  | false | null | chunked parent (covered by its chunk rows) | skip |
-  | true | non-null | **invalid** | — |
+  | `index_content` | meaning | reader does |
+  |---|---|---|
+  | true | indexed chunk | use the index |
+  | false | chunked parent (covered by its chunk rows) | skip |
 
-  `index_content` alone is insufficient (the middle two rows share it), which is
-  why the reason column exists. A model validator MUST reject the invalid row
-  (`index_content=true` with a non-null reason). This preserves the *overall*
-  no-false-negative guarantee even though excluded chunks are not in the index
-  (see §4.5).
+  The earlier `index_exclusion_reason` column and its 4-state truth table were
+  dropped (§4.3, decision log) because bounded chunks make the per-chunk limits
+  unreachable. No row is ever both committed-indexed and absent from the index,
+  so the no-false-negative guarantee holds without a fallback-scan case.
 - Maintenance MUST run in the **same transaction** as the chunk rows it
   describes — in particular, a staged **add** and the `vfs_entries` row it
   references MUST commit together.
@@ -132,29 +134,31 @@ citations).
 
 ### 4.3 Indexing limits
 
-The index unit is the **chunk** (§4.4). Content that is not worth indexing as
-code MUST be **excluded from the index (not truncated) and marked with a non-null
-`index_exclusion_reason`** on the chunk row. Limits are evaluated **per chunk**.
+The index unit is the **chunk** (§4.4). Under chunk-all every indexable document
+is split into **size-bounded** chunks by the splitter (default ≤ 2048 chars,
+char-fallback hard-cuts even an unsplittable oversized line), so the original
+per-chunk limits — 2 MiB content, 20,000 distinct grams — **can never fire**.
+They, the `index_exclusion_reason` column, the 4-state truth table, and the
+exclusion branch have therefore been **dropped** (decision log; landed in code).
+A chunk is always either indexed or carried forward; there is no excluded,
+fallback-scanned chunk. (A custom `split_content` override that emits oversized
+chunks is the override's responsibility; v1's default splitter cannot.)
 
-| Limit | Default | Measured on | Action on hit |
-|---|---|---|---|
-| Content size per chunk | **2 MiB** | chunk content bytes, after line-ending normalization | exclude; `index_exclusion_reason = too_large` |
-| Distinct grams per chunk | **20,000** | the **folded, deduped** gram set | exclude; `index_exclusion_reason = high_cardinality` |
-| Content < 3 bytes | — | chunk content | **no chunk is created** (see §4.4); nothing to index or scan |
-
-Notes:
+Two limit-like rules remain, enforced at write time rather than as exclusions:
 
 - **NUL / binary content is rejected at write time** by the model validator
-  (`models.py`), so it never reaches the index. There is therefore **no `binary`
-  exclusion reason** — invalid content cannot be stored at all.
+  (`models.py`), so it never reaches the index — there is no `binary` state to
+  represent.
 - **Sub-3-byte content** produces no trigram, so VFS **does not create a chunk
   for it**. This is not a false-negative hole: a grep *pattern* under 3 bytes
   cannot use the index either and MUST full-scan content (where it finds such
   files), and a pattern ≥3 bytes cannot match a <3-byte file.
-- Exclusion is decided **before** staging: an excluded chunk stages **zero** gram
-  deltas and sets its reason in the same transaction (no flush-time filtering).
 
 ### 4.4 Maintenance operations — chunk reconciliation
+
+This is the **chunk** and **encode** phases (§4.6) at the data level: the chunk
+phase reconciles a document's chunk set, the encode phase stages the resulting
+gram adds/deletes.
 
 **Every indexable (≥3-byte) document is chunked; only `kind="chunk"` rows are
 content-indexed; grams are never diffed.** Content under 3 bytes produces no
@@ -170,18 +174,14 @@ tie-break for duplicate-content chunks within one file is a deferred detail):
   stale-version rows are deleted before new-version rows insert, so paths never
   collide during the reconcile.
 - **New** (no existing chunk matches): create a new chunk entry (fresh
-  `entry_id`; `doc_id` assigned at persist) and stage **all-adds** for its grams
-  (subject to §4.3 exclusion).
+  `entry_id`; `doc_id` assigned at persist) and stage **all-adds** for its grams.
 - **Unmatched existing** (an existing chunk has no match in the new set): delete
   the chunk entry and stage **all-deletes** (carrying its `doc_id`).
 
-**Exclusion is decided per new chunk at reconcile time** (§4.3): a new chunk over
-a limit stages **zero** gram adds and sets its `index_exclusion_reason` in the
-same transaction; a new chunk under the limits sets a **null** reason; a
-carried-forward (content-identical) chunk keeps its existing verdict. Because a
-content change always produces a *new* chunk evaluated fresh, there is no separate
-"edit crosses a limit" transition — the reason is set/cleared as a side effect of
-normal reconciliation.
+There is no per-chunk exclusion step: chunks are size-bounded (§4.3), so every
+new chunk is indexed and every carried-forward chunk keeps its grams. A content
+change always produces a *new* chunk (new `entry_id`, fresh grams) reconciled
+against the old, so there is no separate "edit" transition to special-case.
 
 Consequences:
 
@@ -210,11 +210,62 @@ execution:
   adds) − (unflushed staged deletes)`**, applying LAW per `(gram_key,
   entry_id)`. "Unflushed" means staging rows visible in the reader's snapshot
   (rows are deleted by the flush that folds them, §5.2).
-- A reader MUST treat chunk rows with a non-null `index_exclusion_reason` as
-  **not represented** in the index, and fallback-scan them.
+- A reader uses `index_content` to decide coverage (§4.2): `true` ⇒ an indexed
+  chunk, use the index; `false` ⇒ a chunked parent, skip (its chunk rows cover
+  it). There is no excluded/fallback-scan case under chunk-all.
 
 Everything above the candidate doc-set — regex→gram compilation, intersection,
 ranking, content fetch, and the final regex verify — remains out of scope.
+
+### 4.6 The index pipeline & server boundary
+
+Index maintenance is a **server-side reconciliation**, not a client operation.
+It decomposes into three idempotent, independently-runnable phases, each driven
+by comparing a durable marker against current state:
+
+| Phase | Driver (compare → act) | Output |
+|---|---|---|
+| **chunk** | a file's `content_hash` ≠ its chunk watermark → (re)chunk | `kind="chunk"` rows; the file's `index_content` flips false |
+| **encode** | a chunk's `indexed_content_hash` ≠ its `content_hash` → extract folded grams + embedding | staging delta-log rows (`doc_id` null on adds) + `embedding`; sets the chunk's watermark |
+| **compile** | staging rows ≤ a `seq` watermark → LAW-fold into posting rows | one posting-list row per touched gram; the folded staging rows are deleted |
+
+`index()` = run **chunk → encode → compile** over a scope. Each phase is also
+callable alone. The phases are idempotent because each re-derives its work from
+durable state (watermarks, the delta-log), so a re-run after a crash or a
+partial pass converges — there is no batch state machine.
+
+**Server boundary.** `index` and its phases are **not** part of the
+client-facing surface (the verbs that become MCP tools: read/write/ls/grep/…). A
+client never triggers indexing; the **server or an ETL pipeline** drives it.
+Index-bearing backends expose the phases through a narrow maintenance capability
+(a `SupportsIndexMaintenance` protocol) that the base `VirtualFileSystem` does
+**not** define; backends without an index simply do not implement it. This keeps
+the client contract clean and makes "maintains an index" an explicit, checkable
+capability rather than an inherited no-op.
+
+**Inline vs. deferred is policy, not structure.** A `DatabaseFileSystem` carries
+three independent switches — `auto_chunk`, `auto_encode`, `auto_compile` — that
+select which phases run **inline on `write()`** versus deferred to a server/ETL
+reconcile pass. There is deliberately **no `auto_index` flag**: `index` names the
+whole pipeline, so a per-phase flag must not share the name. (`encode` here means
+"encode a chunk's content into its index representations — grams and vector"; it
+is a different layer from the posting codec's byte encoding in §5.4.)
+
+**Atomicity of inline phases.** When a phase runs inline it **shares the write's
+session and transaction**, so the whole write commits or rolls back as a unit.
+The inline order is:
+
+```text
+chunk → encode (deltas, doc_id null) → persist (flush assigns vfs_entries.id)
+      → compile (fold; resolves doc_id via entry_id→id join) → single commit
+```
+
+`compile` runs **after** persist on purpose: the fold's add-resolution join
+needs the auto-increment `id`s that the persist flush assigns (§5.3). Keeping it
+in the same transaction preserves the no-false-negative guarantee (§4.2) across a
+crash — a failed compile rolls back the whole write, never a half-folded index.
+The deferred/batch path runs the same phases over watermark-dirty rows in their
+own sessions when the corresponding inline flag is off.
 
 ## 5. Design
 
@@ -222,8 +273,8 @@ Terse mechanism; rationale is in §7, evidence in the analysis docs.
 
 ### 5.1 Data model
 
-Two tables (`GramStaging` + `GramPostingList`) plus three columns on
-`vfs_entries`. Physical types are pinned below and per-backend in §6.
+Two tables (`GramStaging` + `GramPostingList`) plus identity and index-state
+columns on `vfs_entries`. Physical types are pinned below and per-backend in §6.
 
 - **`vfs_entries.id` (= `doc_id`)** — the integer auto-increment **primary key**,
   mapped to each backend's native auto-increment (rowid / `BIGSERIAL` /
@@ -233,10 +284,12 @@ Two tables (`GramStaging` + `GramPostingList`) plus three columns on
   persist flush; pre-persist identity uses `entry_id`.
 - **`vfs_entries.entry_id`** — the client-generated `uuid4`, unique, indexed
   (`varchar(36)`). Carries identity before `id` exists.
-- **`vfs_entries.index_exclusion_reason`** — nullable, `varchar` over the
-  documented value set `too_large | high_cardinality | null` (avoid a native
-  enum for portability). Non-null ⇒ excluded, fallback-scan (§4.3, §4.5).
-  Orthogonal to `index_content`.
+- **`vfs_entries.index_content`** — boolean; `true` ⇒ this row's content is
+  indexed (a chunk), `false` ⇒ chunked parent, skip (§4.2).
+- **Phase watermarks** — `indexed_content_hash` drives the **encode** phase (a
+  chunk re-encodes when its `content_hash` differs), and a **chunk watermark**
+  (the file's `content_hash` at last chunking) drives the **chunk** phase (§4.6).
+  The dropped `index_exclusion_reason` column is gone (§4.3).
 
 ```python
 class GramStaging:
@@ -277,17 +330,24 @@ the grams that need it.
 
 ### 5.2 Write pipeline
 
+These are the **encode** and **compile** phases of §4.6 at the storage level;
+whether they run inline (one shared transaction) or deferred (server/ETL) is the
+policy decided there.
+
 ```text
-chunk write ──▶ staging deltas ──▶ flush ──▶ one posting-list row per gram
-   (txn)         (append-only)     (background, off the write path)
+chunk ──▶ encode ──────────────▶ compile ──▶ one posting-list row per gram
+(phase 1) (phase 2: staging       (phase 3: the flush)
+           deltas + embedding)
 ```
 
-- **Stage** (in the chunk-write transaction): bulk-insert `(gram_key, entry_id,
-  action)` rows for the reconciliation's adds/deletes (§4.4). Cheap, append-only,
-  no ordering dependency on `doc_id`. Use a Core bulk `insert()`, not per-row ORM
-  `add` (~50× faster on SQLite — see implementation notes).
-- **Flush** (background, **global single-flight**, **one transaction**,
-  size/time-triggered):
+- **Encode** (phase 2; in the chunk-write transaction when inline): bulk-insert
+  `(gram_key, entry_id, action)` rows for the reconciliation's adds/deletes
+  (§4.4) and compute the chunk's embedding. Cheap, append-only, no ordering
+  dependency on `doc_id`. Use a Core bulk `insert()`, not per-row ORM `add`
+  (~50× faster on SQLite — see implementation notes).
+- **Compile** (phase 3 — the flush; **global single-flight**, **one
+  transaction**, size/time-triggered when deferred, or post-persist on the
+  shared session when inline):
   1. Capture a `seq` **watermark** = `max(seq)` of current staging.
   2. Read staging rows with `seq ≤ watermark`; **LAW-fold first** (latest action
      per `(gram_key, entry_id)`), then resolve `doc_id` only for the surviving
@@ -392,15 +452,16 @@ modules (`index/read.go:110-144`).
 
 | Phase | What ships | Status |
 |---|---|---|
-| **MVP (row store)** | A `{entries}_chunk_grams` delta-log keyed by `(gram_key, entry_id)`; direct add/delete rows; proves tokenizer, maintenance, and no-false-negatives. | shipped (implementation.md) |
-| **Target (posting list)** | `staging → flush → one posting-list row per gram` (`gram_key`, `postings`, `encoding`, `doc_count`, `byte_size`); background, single-flight flush; chunk-reconciliation maintenance. Minted on base `DatabaseFileSystem`; all backends inherit. | Phase 5 |
+| **MVP (row store)** | A `{entries}_chunk_grams` delta-log keyed by `(gram_key, entry_id)`; direct add/delete rows; proves tokenizer, maintenance, and no-false-negatives. | shipped |
+| **Target (posting list)** | Two-table `staging → compile → one posting-list row per gram` (`gram_key`, `postings`, `encoding`, `doc_count`, `byte_size`); `delta+gamma` codec; chunk-reconciliation maintenance. Minted on base `DatabaseFileSystem`; all backends inherit. | tables + codec landed |
+| **Pipeline (this work)** | The three-phase `index()` (§4.6): the **compile** fold; `auto_chunk`/`auto_encode`/`auto_compile`; inline phases on the shared write session (compile post-persist); the `SupportsIndexMaintenance` capability + batch phases; the file chunk watermark. | in progress |
 
-> **Implementation note:** the *landed* `models.py` still mints the superseded
-> four-table block model (`VFSPostingBlock` / `VFSGramBatch` / `VFSGramStat`).
-> This spec is the new two-table target; reconciling the code (collapse to two
-> tables, add `byte_size`, drop `is_active`/`block_id`/batch lifecycle, gamma
-> encoder) is the Phase-5 work. §4.3 limits and `index_exclusion_reason` are
-> **contracted but not yet implemented**.
+> **Implementation note:** the four-table block model and the
+> `index_exclusion_reason` exclusion model have been **dropped** (collapsed to two
+> tables; chunk-all makes the §4.3 limits unreachable). The `delta+gamma` codec is
+> landed (`src/vfs/postings.py`, byte-verified against codesearch). Remaining: the
+> compile fold, the three `auto_*` flags + inline session wiring, and the
+> capability protocol (§4.6).
 
 Backend physical-type mapping (behind the shared tokenizer + maintenance API):
 
@@ -603,6 +664,36 @@ Each decision states the choice, the one-line why, and where it's validated.
   **version-namespaced chunk paths**; the flush asserts `doc_count ==
   len(decode(postings))` and v1 exposes a staging-lag gauge. Left open for
   discussion: the duplicate-content-chunk `occurrence` tie-break (§10 item 7).
+- **2026-05-28** — **`index()` reframed as a three-phase server-side pipeline**
+  (§4.6): **chunk → encode → compile**, each watermark-driven, idempotent, and
+  independently runnable. The flush is the **compile** phase.
+  - **Index is not a client/MCP verb.** Indexing is a server/ETL responsibility,
+    exposed through a `SupportsIndexMaintenance` capability that the base
+    `VirtualFileSystem` does not define — only index-bearing backends implement
+    it. Keeps the MCP client surface (read/write/ls/grep/…) clean.
+  - **Three per-phase flags `auto_chunk` / `auto_encode` / `auto_compile`**
+    replace the conflated `auto_index`. `encode` = "encode a chunk's content into
+    its index representations (grams + vector)"; a different layer from the
+    posting codec's byte encoding (§5.4). No `auto_index` flag — `index` names the
+    whole pipeline.
+  - **Inline phases share the write session/transaction.** Order:
+    chunk → encode (deltas, `doc_id` null) → persist (assigns `id`) → compile
+    (post-persist fold, resolves `doc_id` by `entry_id→id` join) → one commit.
+    Compile runs after persist so the join sees the assigned ids; a failure rolls
+    back the whole write. Retires the `compile_post_list` boolean.
+  - **A file `chunk watermark`** (the file `content_hash` at last chunking) is
+    added to drive the chunk phase; chunking previously had no durable marker.
+- **2026-05-28** — **Per-chunk indexing limits + `index_exclusion_reason`
+  dropped.** Chunk-all + the size-bounded splitter make the 2 MiB / 20k-gram
+  limits unreachable, so the column, its validator, the 4-state truth table, and
+  the exclusion/fallback-scan branch are removed (§4.2, §4.3, §4.5). Every chunk
+  is indexed or carried forward; `index_content` alone classifies a row.
+- **2026-05-28** — **`delta+gamma` codec landed and byte-verified.**
+  `src/vfs/postings.py` (`encode_postings` / `decode_postings`, public
+  `GammaWriter` / `GammaReader`) ports codesearch's exact format; output is
+  byte-identical to a Go harness running `delta.go`'s writer across the
+  zero-remap boundary, a 10⁶ gap, and a 200-id run. Decode is count-bounded with a
+  terminator assert.
 
 ## 10. Deferred Options
 
