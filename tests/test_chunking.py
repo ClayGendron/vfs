@@ -48,8 +48,13 @@ class TestGrammarForExtension:
 
 
 class TestSplitCode:
-    def test_short_content_returns_empty(self):
-        assert split_code("def f():\n    return 1\n", language="python") == []
+    def test_fits_in_one_chunk_emits_whole_content(self):
+        src = "def f():\n    return 1\n"
+        # Content under the budget but >= GRAM_SIZE yields one whole-content piece.
+        assert split_code(src, language="python") == [(src, 1, 2)]
+
+    def test_sub_trigram_content_returns_empty(self):
+        assert split_code("x", language="python") == []
 
     def test_multi_function_python_splits_and_honors_budget(self):
         src = "\n\n".join(
@@ -182,5 +187,7 @@ class TestSplitNotebook:
         assert len(chunks) > 1
 
     def test_cells_not_a_list_falls_back(self):
-        chunks = split_notebook(json.dumps({"cells": "nope"}))
-        assert chunks == []  # short content → recursive splitter returns []
+        # cells not a list → fall back to the recursive splitter, which now
+        # emits the whole (>= GRAM_SIZE) content as a single chunk.
+        content = json.dumps({"cells": "nope"})
+        assert split_notebook(content) == [(content, 1, 1)]
