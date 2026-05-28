@@ -127,8 +127,8 @@ citations).
   §4.5 read fold snapshot-consistent and satisfies the flush's single-flight
   premise (§5.2) without an explicit cross-process lock. Concurrent multi-worker
   flush/write is **out of scope** and deferred (§10); the reopening trigger is a
-  multi-process deployment, at which point a cross-process flush lock becomes
-  load-bearing (the exact-folded-`seq` deletion of §5.2 already covers the rest).
+  multi-process deployment, at which point a cross-process flush lock and the
+  exact-folded-`seq` deletion (vs. v1's range delete, §5.2) become load-bearing.
 - `seq` MUST be insertion-order-monotonic on every backend (verified for
   SQLite / Postgres / MSSQL under the Core bulk-insert path); LAW relies on it.
 
@@ -349,32 +349,34 @@ chunk ──▶ encode ──────────────▶ compile ─
   transaction**, size/time-triggered when deferred, or post-persist on the
   shared session when inline):
   1. Capture a `seq` **watermark** = `max(seq)` of current staging.
-  2. Read staging rows with `seq ≤ watermark`; **LAW-fold first** (latest action
-     per `(gram_key, entry_id)`), then resolve `doc_id` only for the surviving
-     **adds** (join `entry_id → vfs_entries.id`; deletes already carry it). If a
-     surviving add's join **misses** — the entry was hard-deleted after its add
-     was staged but before this flush (a normal add-then-delete across two flush
-     windows) — **drop the add**: the doc is gone, and its later delete delta is a
-     harmless no-op, so the net result is correct.
+  2. **Fold server-side in one query**: a `ROW_NUMBER` window keyed on
+     `(gram_key, entry_id)` ordered by `seq DESC` keeps the latest action per
+     pair (LAW), a `LEFT JOIN` to `vfs_entries` resolves a surviving **add**'s
+     `doc_id` (deletes already carry theirs), and an add whose join **misses** —
+     the entry was hard-deleted after its add was staged (a normal add-then-delete
+     across two windows) — is **dropped** in the same `WHERE`: the doc is gone and
+     its later delete delta is a harmless no-op. The keys never leave the database
+     as bind parameters.
   3. For each touched gram: decode its `postings` (or start empty if no row),
-     apply the folded adds/deletes with **idempotent set semantics**
-     (delete-of-absent and add-of-present are both no-ops), re-encode, refresh
-     `doc_count`/`byte_size`, and `UPDATE` the row — asserting
-     `doc_count == len(decode(postings))` as a free invariant check — or
-     **DELETE the row** if the gram now has zero docs.
-  4. `DELETE` the **exact set of staged rows folded** in step 2 (by their `seq`
-     values) — not a `seq ≤ watermark` range. Under the single-session model
-     (§4.2) the two coincide, but deleting only the folded `seq`s keeps the flush
-     correct even if a future multi-writer deployment lets a lower `seq` commit
-     after the watermark read.
+     **linear-merge** the folded adds and drop the deletes with **idempotent set
+     semantics** (delete-of-absent and add-of-present are no-ops), re-encode, and
+     `UPDATE` the row — or **DELETE the row** if the gram now has zero docs.
+     `doc_count`/`byte_size` come from the merged list, so
+     `doc_count == len(decode(postings))` holds by construction.
+  4. Clear the folded staging with a range `DELETE … WHERE seq ≤ watermark` (one
+     bound parameter). Under the single-session model (§4.2) this is exactly the
+     folded set; a future multi-writer deployment would tighten it to the exact
+     folded `seq`s — since a lower `seq` could then commit after the watermark
+     read — but that refinement is deferred with multi-writer (§10).
 
   Rows not folded by this flush survive to the next one, so a write is never
   lost. Because steps 3–4 share one transaction and the fold is set-idempotent, a
   crashed/re-run flush re-derives the same result — there is no separate
   compaction step; with one row per gram the flush *is* the rebuild. Single-flight
-  follows from the §4.2 single-session model (never a second concurrent flush, so
-  no two writers race a read-modify-write on one row); a cross-process lock is
-  deferred to the multi-worker case (§10).
+  follows from the §4.2 single-session model and is additionally guarded by an
+  in-process lock; a cross-process lock is deferred to the multi-worker case
+  (§10). Posting-row writes use `executemany` so SQLAlchemy keeps each statement
+  under the dialect's bind-parameter cap (§6).
 
 ### 5.3 doc_id resolution, deletes, and edits
 
@@ -427,7 +429,13 @@ that verbatim (so `delta.go`'s `writeBits`/`next64` and the zero-remap port
 directly). **Decode is count-bounded with a terminator assert:** read exactly
 `doc_count` ids, then assert the trailing remapped-zero terminator (detects
 truncation/corruption), matching codesearch's reader (`index/read.go`). Empty
-list ⇒ no row (§5.1). Worked examples:
+list ⇒ no row (§5.1). For a **standalone DB blob** (vs. codesearch's concatenated
+mmap stream) the codec adds a few cheap integrity checks beyond the reference:
+encode rejects a `doc_id` outside `[0, 2^63−1]` (the signed-BIGINT PK range) as a
+producer-side contract check; decode additionally rejects a negative
+`doc_count`, an over-wide gamma value, an out-of-range `doc_id`, and any trailing
+data/non-zero padding after the terminator — turning silent corruption into a
+loud `PostingCorruptionError`. Worked examples:
 - codesearch's, **0-based** fileids: delta list `[2,5,1,1,0]` → `1,6,7,8`.
 - VFS, **1-based** doc_ids `[10,20,30]`: from `lastID=−1` the gaps are
   `[11,10,10,0]` (the trailing `0` is the terminator, remapped to `16` before
@@ -693,7 +701,24 @@ Each decision states the choice, the one-line why, and where it's validated.
   `GammaWriter` / `GammaReader`) ports codesearch's exact format; output is
   byte-identical to a Go harness running `delta.go`'s writer across the
   zero-remap boundary, a 10⁶ gap, and a 200-id run. Decode is count-bounded with a
-  terminator assert.
+  terminator assert. `merge_postings` does the posting/delta merge as a linear
+  sorted two-pointer merge (O(B + A·log A + D)), exploiting the decoded list's
+  order rather than re-sorting a set union. **Hardened** after independent
+  review: encode bounds `doc_id` to the signed-BIGINT PK range (a producer-side
+  contract check); decode additionally rejects a negative `doc_count`, an
+  over-wide gamma value, an out-of-range `doc_id`, and trailing data — loud
+  `PostingCorruptionError` instead of silently-wrong results. Covered by
+  `tests/test_postings.py` (codec round-trip, golden byte-format vectors, merge
+  oracle, the corruption guards) and `tests/test_compile_postings.py` (compile
+  fold + §4.5 read-fold vs a brute-force gram oracle).
+- **2026-05-28** — **`compile_postings` (the compile phase) landed and validated.**
+  The fold runs server-side (LAW `ROW_NUMBER` window + `doc_id` `LEFT JOIN` +
+  join-miss drop in one query), loads touched posting rows via an `IN`-subquery,
+  writes via `executemany`, and clears staging with a **range delete**
+  (`seq ≤ watermark`) — O(1) round trips, no Python `IN`-lists. The exact-folded-
+  `seq` delete is deferred to the multi-writer case (§10); under v1's single
+  session it coincides with the range. Single-flight is additionally guarded by an
+  in-process lock.
 
 ## 10. Deferred Options
 

@@ -1,10 +1,96 @@
 # 013 — Implementation notes
 
-- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** to base-class-universal. **Landed 2026-05-25:** the identity reshape (`id` → integer auto-increment PK == posting-list `doc_id`; uuid → new `entry_id` column), the minted `VFSGram` delta-log model + `_build_gram_table_class`, and `self._gram_model` wired into `DatabaseFileSystem`; then a working `_apply_trigram_maintenance`, the Phase 5 durable-store schema (`posting_blocks` / `gram_batches` / `gram_stats` tables + staging `batch_id`) minted on the shared `MetaData`, and the `entry_id` write-path load-only fix; then the chunk-cascade rework (capture old chunks in fetch-existing, de-index them in the index phase, DELETE before persist) and the abort/rollback fix. **Pending:** the `code_grams.py` docstring cleanup and the integration test.) **2026-05-27:** the four-table block model was collapsed to the two-table target (Core `Table`s), the write-path maintenance rewritten to reconciliation-driven bulk staging, and chunk-all adopted — see §"2026-05-27 — Phase 5 two-table rewrite" below. Durable flush + gamma codec remain.
-- **Date:** 2026-05-01 (last updated 2026-05-27)
+- **Status:** in-progress (Phase 1 + 1.5 + chunker + model chunking surface complete; Phase 2 **redirected 2026-05-24** to base-class-universal. **Landed 2026-05-25:** the identity reshape (`id` → integer auto-increment PK == posting-list `doc_id`; uuid → new `entry_id` column), the minted `VFSGram` delta-log model + `_build_gram_table_class`, and `self._gram_model` wired into `DatabaseFileSystem`; then a working `_apply_trigram_maintenance`, the Phase 5 durable-store schema (`posting_blocks` / `gram_batches` / `gram_stats` tables + staging `batch_id`) minted on the shared `MetaData`, and the `entry_id` write-path load-only fix; then the chunk-cascade rework (capture old chunks in fetch-existing, de-index them in the index phase, DELETE before persist) and the abort/rollback fix. **Pending:** the `code_grams.py` docstring cleanup and the integration test.) **2026-05-27:** the four-table block model was collapsed to the two-table target (Core `Table`s), the write-path maintenance rewritten to reconciliation-driven bulk staging, and chunk-all adopted — see §"2026-05-27 — Phase 5 two-table rewrite" below. **2026-05-28:** the gamma codec and the compile fold (formerly "flush") landed and were validated, and `index()` was reframed as a three-phase server-side pipeline (chunk → encode → compile) behind a maintenance capability — see §"2026-05-28 — codec + compile + pipeline reframe" below. The structural wiring (flag rename, chunk watermark, capability protocol, inline shared session) remains.
+- **Date:** 2026-05-01 (last updated 2026-05-28)
 - **Spec:** [spec.md](./spec.md) (phasing is spec.md §6; the standalone plan.md
   was dropped 2026-05-25 — its work items live in this file's §"What's next
   inside Phase 2")
+
+## 2026-05-28 — codec + compile + pipeline reframe (this session)
+
+Landed the two remaining Phase-5 code pieces (codec + compile), validated both,
+and reframed `index()` conceptually. Commits: `a90d64d` (feat: codec + compile),
+`9234907` (docs: spec reframe).
+
+### Done
+
+- **`delta+gamma` posting codec** — new `src/vfs/postings.py`. `encode_postings` /
+  `decode_postings` and public `GammaWriter` / `GammaReader` port codesearch's
+  exact byte format (`index/delta.go` writer + `index/read.go` reader): gap-from-
+  −1, trailing-zero terminator, `deltaZeroEnc=16` remap, LSB-first packing,
+  count-bounded decode + terminator assert. **Byte-verified** against a Go harness
+  running the reference `deltaWriter` — identical output across the zero-remap
+  boundary, a 10⁶ gap, and a 200-id run.
+- **`merge_postings`** (same module) — linear sorted two-pointer merge of a
+  decoded posting list with the staged adds, deletes as an O(1) membership filter,
+  dedup inline. O(B + A·log A + D); exploits the decode's order instead of
+  re-sorting a set union. (`adds ∩ dels = ∅` by construction — a `doc_id` maps to
+  one entry whose folded action is add *or* delete.)
+- **`DatabaseFileSystem.compile_postings(session)`** — the compile phase (was
+  "flush"). Server-side LAW fold (`ROW_NUMBER() OVER (PARTITION BY gram_key,
+  entry_id ORDER BY seq DESC)`) + `doc_id`-resolving `LEFT JOIN` + join-miss drop,
+  all in one query; touched posting rows loaded via `IN (SELECT DISTINCT gram_key
+  …)`; writes via `executemany`; staging cleared with a range `DELETE … WHERE
+  seq ≤ watermark`. O(1) round trips, **no Python `IN`-lists** (SQLAlchemy manages
+  the bind-parameter cap). Serialized by a new `self._flush_lock` (in-process
+  single-flight).
+- **`index()` simplified** — dropped the dead `compile_post_list` param; it now
+  stages gram deltas + computes embeddings only. Compilation is the separate
+  `compile_postings` step (must run post-persist so adds' `doc_id` joins resolve).
+- **Spec rewrite** (see spec §4.6, §5.2, §9) — `index()` reframed as the
+  three-phase pipeline; `index_exclusion_reason` + the per-chunk limits formally
+  dropped; codec/compile decisions recorded.
+- **Codec hardening (post independent review)** — encode bounds `doc_id` to the
+  signed-BIGINT PK range `[0, 2^63−1]` (producer-side contract check); decode
+  rejects a negative `doc_count`, an over-wide gamma value, an out-of-range
+  `doc_id`, and trailing data/non-zero padding — loud `PostingCorruptionError`
+  instead of silently-wrong results. Both range checks are O(1) post-loop (the
+  list is ascending, so the max is the last id). Go-source citations were
+  stripped from the code; provenance lives in spec §5.4/§11.
+- **Tests** — `tests/test_postings.py` (codec round-trip, golden byte-format
+  vectors, encode guards, the corruption guards, `merge_postings` vs a 5000-case
+  oracle) and `tests/test_compile_postings.py` (compile fold: add / edit / delete
+  / idempotent / join-miss / invariants, plus the §4.5 read-fold across
+  pre/post/mixed compile states) — all green, ruff clean.
+- **Validated** — a sub-agent also built focused SQLite harnesses
+  (`scripts/_validate_compile_postings.py`, `scripts/_validate_compile_perf.py`,
+  untracked/throwaway): 8/8 correctness cases vs a brute-force `unique_code_grams`
+  oracle, confirming performance is 5 statements per compile, scaling with touched
+  grams not corpus size (8× corpus → 1.12× time).
+
+### Decisions this session
+
+- **Index pipeline = chunk → encode → compile**, server-side reconciliation, each
+  phase watermark-driven and idempotent. `index` is **not** a client/MCP verb —
+  it's a `SupportsIndexMaintenance` capability the server/ETL drives.
+- **Per-phase flags `auto_chunk` / `auto_encode` / `auto_compile`** (no
+  `auto_index` — it conflated with the umbrella). Phase 2 named `encode` ("encode a
+  chunk's content into its index representations: grams + vector"); distinct from
+  the codec's byte encoding.
+- **Inline phases share the write session** (atomic commit/rollback); compile runs
+  **post-persist** so the `entry_id → id` join resolves.
+- **chunk-all write() shape: option A** — small single-piece files produce a chunk
+  row; `write()` returns file + chunk candidates; embeddings + the
+  `indexed_content_hash` watermark attach to the chunk.
+- **Staging cleanup: range delete** (`seq ≤ watermark`) for v1 (single-session);
+  the exact-folded-`seq` delete is deferred with multi-writer.
+
+### Remaining work
+
+1. **Structural wiring** (task #9) — add a file **chunk watermark** (phase-1
+   driver; chunking has no durable marker today); rename the constructor flag
+   `auto_index → auto_encode` and add `auto_compile`; rewire `_write_impl` so
+   inline phases share one session (chunk → encode → persist → compile).
+2. **Capability protocol** (task #8) — `SupportsIndexMaintenance` (off the base
+   `VirtualFileSystem`) with `chunk_pending` / `encode_pending` /
+   `compile_postings` / `index`; batch variants scan watermark-dirty rows.
+3. **chunk-all option-A finalization** (task #3) — confirm `write()` candidate
+   shape + watermark/embedding attach point.
+4. **Test migration** (task #4) — redirect the ~15 `_build_entry_table_class`
+   call sites to `_build_vfs_tables`.
+5. ~~**Codec/compile tests**~~ — done (`tests/test_postings.py`,
+   `tests/test_compile_postings.py`). Still pending: update the chunk-all
+   behavior tests to option A (task #6).
 
 ## 2026-05-27 — Phase 5 two-table rewrite (this session)
 
@@ -55,6 +141,12 @@ the remaining Phase-5 work.**
 
 ### Open questions
 
+> **Resolved 2026-05-28** (see the §"2026-05-28" section above): the chunk-all
+> `write()` shape is **option A** (accept chunk rows; watermark/embedding on the
+> chunk). The §4.3 exclusion-model divergence flagged above is now reconciled —
+> the spec formally drops the limits + `index_exclusion_reason`. The
+> duplicate-content `occurrence` tie-break remains open (spec §10 item 7).
+
 - **chunk-all `write()` shape (undecided).** A small file now produces a chunk
   row, so `write()` returns file + chunk candidates (2N for N small files), and
   embeddings + the `indexed_content_hash` watermark attach to the **chunk**, not
@@ -67,19 +159,21 @@ the remaining Phase-5 work.**
 
 ### Remaining work
 
-1. **`delta+gamma` posting codec** — encode/decode ported from codesearch's exact
-   byte format (gap-from-−1, trailing-zero terminator, `deltaZeroEnc=16`,
-   LSB-first), count-bounded decode + terminator assert.
-2. **Watermarked single-flight flush** — `seq` watermark, LAW fold, resolve
-   surviving adds via `entry_id`→`id` join (drop join-misses), idempotent
-   set-merge into posting rows (UPDATE, or DELETE when emptied), delete the exact
-   folded `seq` set; one transaction. Wire into `index(compile_post_list=True)`.
-3. **Tests** — update the 8 chunk-all behavior tests once (A/B/C) is decided; add
-   codec round-trip, flush fold, and §4.5 read-fold tests.
+> **Updated 2026-05-28.** Items 1 (codec) and 2 (flush, now "compile") are
+> **done** — see the §"2026-05-28" section. Item 5 (spec update) is done. The
+> live remaining list is in §"2026-05-28 → Remaining work"; items 3 (tests) and 4
+> (test migration) carry forward unchanged and are restated there.
+
+1. ~~**`delta+gamma` posting codec**~~ — done (`src/vfs/postings.py`, byte-verified).
+2. ~~**Watermarked single-flight flush**~~ — done as `compile_postings` (server-side
+   fold; range delete, not the exact folded `seq` set — that's deferred to
+   multi-writer). No longer wired through `index()`; it's a standalone phase.
+3. **Tests** — update the chunk-all behavior tests to **option A**; add codec
+   round-trip, compile-fold, and §4.5 read-fold tests.
 4. **Test migration** — ~15 call sites use the removed `_build_entry_table_class`
    (test_models / test_postgres_backend / test_mssql_backend / test_graph);
    redirect to `_build_vfs_tables`, then inline/remove the old helper.
-5. **Spec update** — record the dropped exclusion model in spec §4.3 / §9.
+5. ~~**Spec update**~~ — done (spec §4.3 / §4.6 / §9).
 
 ### Pre-existing breakage (not this story)
 
