@@ -37,17 +37,17 @@ from sqlmodel import Field, SQLModel
 from sqlmodel.main import SQLModelMetaclass
 
 from vfs.bm25 import tokenize as lexical_tokenize
-from vfs.code_grams import GRAM_SIZE, normalize_content
 from vfs.chunking import (
-    grammar_for_extension,
     NOTEBOOK_EXTENSION,
+    grammar_for_extension,
     split_code,
     split_notebook,
     split_with_line_ranges,
 )
 from vfs.paths import (
-    base_path,
     chunk_path,
+    compute_parent_dir,
+    compute_parent_file,
     decompose_edge,
     extract_extension,
     normalize_path,
@@ -55,9 +55,6 @@ from vfs.paths import (
     split_path,
     validate_path,
     version_path,
-)
-from vfs.paths import (
-    parent_path as compute_parent_path,
 )
 from vfs.results import Candidate
 from vfs.vector import NativeEmbeddingConfig, Vector, VectorType
@@ -121,17 +118,17 @@ class VFSEntry(SQLModel):
         primary_key=True,
         sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
     )
-    # Client-side ``uuid4`` entity identity.
     entry_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         max_length=36,
         unique=True,
         index=True,
     )
-    path: str = Field(max_length=1024, unique=True, index=True)
     external_id: str | None = Field(default=None, max_length=1024)
+    path: str = Field(max_length=1024, unique=True, index=True)
     name: str = Field(default="", max_length=255)
-    parent_path: str = Field(default="", max_length=1024, index=True)
+    parent_dir: str = Field(default="", max_length=1024, index=True)
+    parent_file: str | None = Field(default=None, max_length=1024, index=True)
     kind: str = Field(default="", max_length=32, index=True)
 
     # --- Content ------------------------------------------------------------
@@ -157,8 +154,8 @@ class VFSEntry(SQLModel):
 
     # --- Search indexing ---------------------------------------------------
 
-    index_content: bool = Field(default=False, index=True)
-    indexed_content_hash: str | None = Field(default=None, max_length=64)
+    chunked: bool = Field(default=False, index=True)
+    encoded: bool = Field(default=False, index=True)
 
     # --- Version-specific ---------------------------------------------------
 
@@ -214,10 +211,11 @@ class VFSEntry(SQLModel):
         return c
 
     def _rederive_path_fields(self) -> None:
-        """Normalize path and re-derive ``name``, ``parent_path``, and ``ext``."""
+        """Re-derive ``name``, ``parent_dir``, ``parent_file``, and ``ext`` from path."""
         self.path = normalize_path(self.path)
         self.name = split_path(self.path)[1]
-        self.parent_path = compute_parent_path(self.path)
+        self.parent_dir = compute_parent_dir(self.path)
+        self.parent_file = compute_parent_file(self.path)
         self.ext = extract_extension(self.path) if self.kind == "file" else None
 
     def add_prefix(self, prefix: str) -> VFSEntry:
@@ -393,11 +391,11 @@ class VFSEntry(SQLModel):
             raise ValueError(msg)
         self.version_number = version_number
         if self.kind == "version":
-            self.path = version_path(base_path(self.path), version_number)
+            self.path = version_path(compute_parent_file(self.path), version_number)
             self._rederive_path_fields()
         elif self.kind == "chunk":
             name = split_path(self.path)[1]
-            self.path = chunk_path(base_path(self.path), name, version_number)
+            self.path = chunk_path(compute_parent_file(self.path), name, version_number)
             self._rederive_path_fields()
 
     def plan_file_write(
@@ -553,6 +551,8 @@ class VFSEntry(SQLModel):
         self.version_diff = None
         self.content_hash, self.size_bytes, self.lines = self._content_metadata(content)
         self.lexical_tokens = self._lexical_token_count(content)
+        self.chunked = False
+        self.encoded = False
         self.updated_at = datetime.now(UTC)
 
     # --- Chunking -----------------------------------------------------------
@@ -576,19 +576,20 @@ class VFSEntry(SQLModel):
     def chunk(self) -> list[VFSEntry]:
         """Split this file's content into chunk entries.
 
-        Every indexable document is chunked: content of at least ``GRAM_SIZE``
+        Every chunkable document is split: content of at least ``GRAM_SIZE``
         bytes always yields at least one ``kind="chunk"`` row (a whole-file
-        chunk when it fits in one), and ``self.index_content`` flips to
-        ``False`` so only the chunk rows feed content-side indexes. Content
-        under ``GRAM_SIZE`` bytes can form no trigram, so it produces no chunk
-        and is left unindexed (``index_content=False``). Path naming is
-        ``<line_start>_<line_end>`` with an ``@<char_offset>`` suffix only when
-        chunks would otherwise collide on identical line ranges (e.g. a single
-        oversized line producing multiple chunks).
+        chunk when it fits in one). Content under ``GRAM_SIZE`` bytes can form
+        no trigram, so it produces no chunk. Either way ``self.chunked`` flips
+        ``True`` so the chunk phase does not revisit this file until its content
+        changes. Path naming is ``<line_start>_<line_end>`` with an
+        ``@<char_offset>`` suffix only when chunks would otherwise collide on
+        identical line ranges (e.g. a single oversized line producing multiple
+        chunks).
         """
         if self.kind != "file":
             msg = f"chunk() applies only to files: kind={self.kind!r}"
             raise ValueError(msg)
+        self.chunked = True
         content = self.content or ""
         pieces = self.split_content(content, self.ext)
         if not pieces:
@@ -614,12 +615,8 @@ class VFSEntry(SQLModel):
                     offset = cursor
                 cursor = offset + 1
                 name = f"{name}@{offset}"
-            # Run the Pydantic validator via base ``VFSEntry`` first so the
-            # chunk row gets ``content_hash``, ``size_bytes``, ``lines``,
-            # ``lexical_tokens``, and the chunk-default ``index_content=True``.
-            # SQLModel ``table=True`` constructors bypass validators, so
-            # going straight through ``cls(...)`` would leave those fields at
-            # their zero defaults.
+            # Validate through base ``VFSEntry`` first to derive content_hash,
+            # size_bytes, lines, lexical_tokens; table=True ctors skip validators.
             validated = VFSEntry(
                 path=chunk_path(self.path, name, version),
                 kind="chunk",
@@ -638,7 +635,6 @@ class VFSEntry(SQLModel):
                 row._explicit_fields = validated._explicit_fields
                 new_chunks.append(row)
 
-        self.index_content = False
         return new_chunks
 
     # --- Validator ----------------------------------------------------------
@@ -646,7 +642,7 @@ class VFSEntry(SQLModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_and_derive(cls, data: dict[str, object]) -> dict[str, object]:
-        """Normalize path, derive parent_path, infer kind, compute metrics."""
+        """Normalize path, derive parent_dir/parent_file, infer kind, compute metrics."""
         raw_path = data.get("path")
         if not isinstance(raw_path, str):
             return data
@@ -661,11 +657,13 @@ class VFSEntry(SQLModel):
             raise ValueError(msg)
         data["path"] = path
 
-        # Derive name and parent_path from path
+        # Derive name, parent_dir, and parent_file from path
         if not data.get("name"):
             data["name"] = split_path(path)[1]
-        if not data.get("parent_path"):
-            data["parent_path"] = compute_parent_path(path)
+        if not data.get("parent_dir"):
+            data["parent_dir"] = compute_parent_dir(path)
+        if "parent_file" not in data:
+            data["parent_file"] = compute_parent_file(path)
 
         # Infer kind from path markers if not explicitly set
         if not data.get("kind"):
@@ -731,9 +729,6 @@ class VFSEntry(SQLModel):
 
         if isinstance(content, str):
             data["lexical_tokens"] = cls._lexical_token_count(content)
-
-        if "index_content" not in data:
-            data["index_content"] = kind in {"file", "chunk"}
 
         # Ensure timestamps
         now = datetime.now(UTC)

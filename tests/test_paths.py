@@ -18,6 +18,7 @@ from vfs.paths import (
     api_path,
     base_path,
     chunk_path,
+    compute_parent_dir,
     decompose_edge,
     edge_in_path,
     edge_out_path,
@@ -27,7 +28,6 @@ from vfs.paths import (
     meta_root,
     normalize_path,
     owning_file_path,
-    parent_path,
     parse_kind,
     scope_path,
     split_path,
@@ -345,37 +345,37 @@ class TestNamespaceRoots:
 
 
 # =========================================================================
-# parent_path
+# compute_parent_dir
 # =========================================================================
 
 
-class TestParentPath:
+class TestParentDir:
     def test_file(self):
-        assert parent_path("/src/auth.py") == "/src"
+        assert compute_parent_dir("/src/auth.py") == "/src"
 
     def test_root_child(self):
-        assert parent_path("/src") == "/"
+        assert compute_parent_dir("/src") == "/"
 
     def test_root_is_own_parent(self):
-        assert parent_path("/") == "/"
+        assert compute_parent_dir("/") == "/"
 
     def test_chunk(self):
-        assert parent_path("/.vfs/src/auth.py/__meta__/chunks/login") == "/.vfs/src/auth.py/__meta__/chunks"
+        assert compute_parent_dir("/.vfs/src/auth.py/__meta__/chunks/login") == "/.vfs/src/auth.py/__meta__/chunks"
 
     def test_version(self):
-        assert parent_path("/.vfs/src/auth.py/__meta__/versions/3") == "/.vfs/src/auth.py/__meta__/versions"
+        assert compute_parent_dir("/.vfs/src/auth.py/__meta__/versions/3") == "/.vfs/src/auth.py/__meta__/versions"
 
     def test_edge(self):
         assert (
-            parent_path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
+            compute_parent_dir("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
             == "/.vfs/src/auth.py/__meta__/edges/out/imports/src"
         )
 
     def test_api(self):
-        assert parent_path("/.vfs/jira/__meta__/apis/ticket") == "/.vfs/jira/__meta__/apis"
+        assert compute_parent_dir("/.vfs/jira/__meta__/apis/ticket") == "/.vfs/jira/__meta__/apis"
 
     def test_bare_metadata_dir(self):
-        assert parent_path("/.vfs/src/auth.py/__meta__/chunks") == "/.vfs/src/auth.py/__meta__"
+        assert compute_parent_dir("/.vfs/src/auth.py/__meta__/chunks") == "/.vfs/src/auth.py/__meta__"
 
 
 # =========================================================================

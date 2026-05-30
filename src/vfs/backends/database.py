@@ -13,7 +13,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, cast
 
 from sqlalchemy import (
     Boolean,
@@ -48,10 +48,10 @@ from vfs.models import (
     VFSEntry,
     _build_vfs_tables,
 )
-from vfs.postings import decode_postings, encode_postings, merge_postings
 from vfs.paths import (
     METADATA_ROOT,
-    base_path,
+    compute_parent_dir,
+    compute_parent_file,
     edge_out_path,
     meta_root,
     scope_path,
@@ -59,9 +59,9 @@ from vfs.paths import (
     validate_user_id,
     version_path,
 )
-from vfs.paths import parent_path as compute_parent_path
 from vfs.patterns import compile_glob, glob_to_sql_like
 from vfs.permissions import check_writable
+from vfs.postings import decode_postings, encode_postings, merge_postings
 from vfs.replace import replace
 from vfs.results import Candidate, EditOperation, LineMatch, TwoPathOperation, VFSResult
 from vfs.versioning import SNAPSHOT_INTERVAL
@@ -287,6 +287,11 @@ class _WriteAbort(Exception):  # noqa: N818 — phase-abort signal; "Abort" name
         self.payload: str | list[str] = payload
 
 
+# Pipeline-phase ranks for the ``auto_index`` level. Naming a phase enables it
+# and every earlier one (chunk → encode → compile).
+_AUTO_INDEX_LEVELS: dict[str, int] = {"none": 0, "chunk": 1, "encode": 2, "compile": 3}
+
+
 class DatabaseFileSystem(VirtualFileSystem):
     """SQL-backed filesystem — portable baseline using SQLAlchemy.
 
@@ -323,8 +328,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         schema: str | None = None,
         table_name: str = "vfs_entries",
         native_embedding: NativeEmbeddingConfig | None = None,
-        auto_chunk: bool = True,
-        auto_index: bool = True,
+        auto_index: Literal["none", "chunk", "encode", "compile"] = "encode",
         name: str | None = None,
         title: str | None = None,
         description: str | None = None,
@@ -350,8 +354,10 @@ class DatabaseFileSystem(VirtualFileSystem):
         self._graph = RustworkxGraph(model=self._model, user_scoped=user_scoped)
         self._embedding_provider = embedding_provider
         self._vector_store = vector_store
-        self._auto_chunk = bool(auto_chunk)
-        self._auto_index = bool(auto_index)
+        level = _AUTO_INDEX_LEVELS[auto_index]
+        self._auto_chunk = level >= _AUTO_INDEX_LEVELS["chunk"]
+        self._auto_encode = level >= _AUTO_INDEX_LEVELS["encode"]
+        self._auto_compile = level >= _AUTO_INDEX_LEVELS["compile"]
         self._metadata_root_ensured = False
         self._flush_lock = asyncio.Lock()
 
@@ -616,30 +622,21 @@ class DatabaseFileSystem(VirtualFileSystem):
         self,
         existing: VFSEntry,
         incoming: VFSEntry,
-        *,
-        prev_index_content: bool,
     ) -> None:
         """Propagate the incoming embedding to *existing* with correct precedence.
 
         Resolution order:
 
         1. Explicit caller value (including ``None`` to clear) wins.
-        2. Auto-index assigned a vector (``incoming.embedding is not None``)
-           — apply it.
-        3. Otherwise, if the file's ``index_content`` flag flipped from
-           ``True`` to ``False`` (e.g. auto-chunk just chunked it), the
-           file no longer carries the index and any stale embedding is
-           cleared.
-        4. Otherwise, leave ``existing.embedding`` alone.
+        2. The encode phase assigned a vector (``incoming.embedding is not
+           None``) — apply it.
+        3. Otherwise, leave ``existing.embedding`` alone.
         """
         if self._field_was_explicitly_provided(incoming, "embedding"):
             existing.embedding = incoming.embedding
             return
         if incoming.embedding is not None:
             existing.embedding = incoming.embedding
-            return
-        if prev_index_content and not incoming.index_content:
-            existing.embedding = None
 
     # ------------------------------------------------------------------
     # Auto-maintenance hook surface (story 014)
@@ -675,7 +672,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         if not chunk_dirs:
             return []
         cols = {"path", "entry_id", "content_hash", "parent_path", "name", "line_start", "line_end"}
-        if self._auto_index:
+        if self._auto_encode:
             cols.add("content")
         chunks: list[VFSEntry] = []
         for batch in self._chunk_paths(session, list(chunk_dirs), binds_per_item=1):
@@ -1331,14 +1328,14 @@ class DatabaseFileSystem(VirtualFileSystem):
         """
         all_ancestors: set[str] = set()
         for path in paths:
-            current = compute_parent_path(path)
+            current = compute_parent_dir(path)
             while current != "/":
                 if current == METADATA_ROOT:
                     break
                 if current in all_ancestors:
                     break
                 all_ancestors.add(current)
-                current = compute_parent_path(current)
+                current = compute_parent_dir(current)
 
         if not all_ancestors:
             return [], []
@@ -1585,7 +1582,6 @@ class DatabaseFileSystem(VirtualFileSystem):
                 force_snapshot=True,
             )
             incoming.version_number = 1
-            incoming.update_content(new_content)
             session.add(version_obj)
         session.add(incoming)
         return incoming.to_candidate()
@@ -1734,18 +1730,20 @@ class DatabaseFileSystem(VirtualFileSystem):
                 return VFSResult(function="write", success=True, candidates=[])
 
             if self._auto_chunk:
-                self._write_phase_auto_chunk_conflict_check(ctx)
-                await self._write_phase_auto_chunk(ctx)
+                await self.chunk(ctx, session=session)
 
             self._write_phase_validate_chunk_parents(ctx)
 
             await self._write_phase_fetch_existing(ctx, session)
             await self._write_phase_resolve_parent_dirs(ctx, session)
 
-            if self._auto_index:
-                await self.index(ctx, session)
+            if self._auto_encode:
+                await self.encode(ctx, session=session)
 
             out = await self._write_phase_persist(ctx, session)
+
+            if self._auto_compile:
+                await self.compile_postings(session)
 
         except _WriteAbort as abort:
             await session.rollback()
@@ -2047,6 +2045,36 @@ class DatabaseFileSystem(VirtualFileSystem):
                 chunk.set_version(version)
         ctx.write_map = {o.path: o for o in ctx.write_map.values()}
 
+    @staticmethod
+    def _match_chunks(
+        new_chunks: Sequence[VFSEntry],
+        existing_chunks: Sequence[VFSEntry],
+    ) -> tuple[list[tuple[VFSEntry, VFSEntry]], list[VFSEntry], list[VFSEntry]]:
+        """Pair new chunk rows to existing ones by ``(owning file, content_hash)``.
+
+        Content identity is stable across a re-chunk even when paths/versions
+        shift, so this is the keying for carry-forward. Returns
+        ``(carries, news, stale)``: ``carries`` are ``(existing_row, new_chunk)``
+        matches to carry forward (the existing row's ``id``/``entry_id``/
+        ``embedding``/``encoded`` bit and grams all survive); ``news`` are
+        unmatched new chunks to insert; ``stale`` are surplus existing rows to
+        delete. Buckets carry multiplicity, so duplicate-content chunks in one
+        file pair FIFO.
+        """
+        existing_by_key: dict[tuple[str, str | None], deque[VFSEntry]] = defaultdict(deque)
+        for ec in existing_chunks:
+            existing_by_key[(base_path(ec.path), ec.content_hash)].append(ec)
+        carries: list[tuple[VFSEntry, VFSEntry]] = []
+        news: list[VFSEntry] = []
+        for new in new_chunks:
+            bucket = existing_by_key.get((base_path(new.path), new.content_hash))
+            if bucket:
+                carries.append((bucket.popleft(), new))
+            else:
+                news.append(new)
+        stale = [ec for bucket in existing_by_key.values() for ec in bucket]
+        return carries, news, stale
+
     async def _classify_chunks(
         self,
         ctx: _WriteContext,
@@ -2056,9 +2084,8 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         Loads the live chunk rows for every relevant chunk dir — the dirs of
         changed files (so a file that shrank to a single chunk drops its old
-        chunks) plus the dirs of chunks present in ``write_map`` — and within
-        each ``(parent_path, content_hash)`` bucket pairs new chunks to
-        existing rows with multiplicity:
+        chunks) plus the dirs of chunks present in ``write_map`` — pairs them
+        with :meth:`_match_chunks`, then records the outcome on ``ctx``:
 
         - **match** → carry the existing row forward: drop the new row from the
           insert set and (if its position shifted) queue an in-place rename,
@@ -2090,27 +2117,20 @@ class DatabaseFileSystem(VirtualFileSystem):
         ctx.existing_chunks = await self._fetch_existing_chunks(
             sorted(existing_chunk_dirs), session=session
         )
-        # Key by (owning file, content_hash): a re-chunk shifts paths/versions
-        # but content identity is stable across both.
-        existing_by_key: dict[tuple[str, str | None], deque[VFSEntry]] = defaultdict(deque)
-        for ec in ctx.existing_chunks:
-            existing_by_key[(base_path(ec.path), ec.content_hash)].append(ec)
+        carries, news, stale = self._match_chunks(new_chunks, ctx.existing_chunks)
 
         kept_dirs: set[str] = set()
-        for new in new_chunks:
-            bucket = existing_by_key.get((base_path(new.path), new.content_hash))
-            if bucket:
-                existing_row = bucket.popleft()
-                ctx.write_map.pop(new.path, None)
-                ctx.changed_paths.discard(new.path)
-                if existing_row.path != new.path:
-                    ctx.carry_renames.append((existing_row, new))
-                else:
-                    kept_dirs.add(existing_row.parent_path)
+        for existing_row, new in carries:
+            ctx.write_map.pop(new.path, None)
+            ctx.changed_paths.discard(new.path)
+            if existing_row.path != new.path:
+                ctx.carry_renames.append((existing_row, new))
             else:
-                ctx.changed_paths.add(new.path)
+                kept_dirs.add(existing_row.parent_path)
+        for new in news:
+            ctx.changed_paths.add(new.path)
 
-        ctx.stale_chunks = [ec for bucket in existing_by_key.values() for ec in bucket]
+        ctx.stale_chunks = stale
         ctx.vacated_chunk_dirs = [d for d in sorted(existing_chunk_dirs) if d not in kept_dirs]
 
     async def _delete_vacated_chunk_dirs(
@@ -2131,48 +2151,29 @@ class DatabaseFileSystem(VirtualFileSystem):
             for row in result.scalars().all():
                 await session.delete(row)
 
-    def _write_phase_auto_chunk_conflict_check(self, ctx: _WriteContext) -> None:
-        """Reject the whole batch when a file with ``index_content=True``
-        ships alongside pre-built chunks for the same file. The caller
-        intended either auto-chunk OR pre-built chunks, not both — failing
-        the whole batch surfaces the bug instead of half-committing
-        inconsistent state.
-        """
-        conflict_owners: set[str] = set()
-        for obj_path, obj in ctx.write_map.items():
-            if obj.kind != "chunk":
-                continue
-            owner = base_path(obj_path)
-            owner_obj = ctx.write_map.get(owner)
-            if (
-                owner_obj is not None
-                and owner_obj.kind == "file"
-                and owner_obj.index_content
-            ):
-                conflict_owners.add(owner)
+    async def chunk(
+        self,
+        ctx: _WriteContext | None = None,
+        *,
+        session: AsyncSession,
+    ) -> None:
+        """The **chunk** phase — split files into ``kind="chunk"`` rows.
 
-        if not conflict_owners:
+        With *ctx* (inline on ``write()``) it chunks the files staged in the
+        write context, appending chunk rows for the persist phase to write;
+        runs before change detection, so unchanged files produce chunks that
+        ``_classify_chunks`` later carries forward as no-ops. Without *ctx* it
+        scans the database for files whose ``chunked`` bit is still False and
+        chunks them in *session*. Either way ``VFSEntry.chunk()`` flips the
+        file's ``chunked`` bit so the phase does not revisit it.
+        """
+        if ctx is None:
+            await self._chunk_pending(session)
             return
 
-        ctx.errors.extend(
-            f"{owner}: file + chunks both in batch with index_content=True"
-            for owner in sorted(conflict_owners)
-        )
-
-        raise _WriteAbort(ctx.errors)
-
-    async def _write_phase_auto_chunk(self, ctx: _WriteContext) -> None:
-        """Chunk indexable files in-memory and append chunk rows.
-
-        Runs before change detection, so it chunks every ``index_content``
-        file; unchanged files produce chunks that ``_classify_chunks`` later
-        carries forward as no-ops. Iterates a snapshot of ``write_map`` since
-        chunking mutates it. A chunker exception aborts the batch before any
-        DB mutation.
-        """
         for obj_path in list(ctx.write_map.keys()):
             incoming = ctx.write_map[obj_path]
-            if incoming.kind != "file" or not incoming.index_content:
+            if incoming.kind != "file":
                 continue
 
             try:
@@ -2190,39 +2191,145 @@ class DatabaseFileSystem(VirtualFileSystem):
                 ctx.write_map[row.path] = row
                 ctx.changed_paths.add(row.path)
 
+    async def _chunk_pending(self, session: AsyncSession) -> int:
+        """Chunk every file whose ``chunked`` bit is still False.
+
+        The context-free **chunk** phase. Each pending file is split and its new
+        chunks reconciled against its existing chunks by content hash: a match
+        carries the existing row forward (its ``encoded`` bit and grams survive,
+        so encode skips it), an unmatched new chunk inserts fresh
+        (``encoded=False``), and a surplus existing chunk is deleted.
+        ``VFSEntry.chunk()`` flips the file's ``chunked`` bit. Returns the number
+        of files chunked.
+        """
+        cols = frozenset({"id", "path", "content", "ext", "kind", "version_number", "owner_id", "chunked"})
+        stmt = (
+            select(self._model)
+            .where(
+                self._model.kind == "file",  # ty: ignore[unresolved-attribute]
+                self._model.chunked.is_(False),  # ty: ignore[unresolved-attribute]
+                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+            )
+            .options(self._load_only_columns(cols))
+        )
+        pending = (await session.execute(stmt)).scalars().all()
+        if not pending:
+            return 0
+
+        flip_ids = [{"_id": f.id} for f in pending]
+        all_new: list[VFSEntry] = []
+        chunk_dirs: set[str] = set()
+
+        new_chunks: list[VFSEntry] = []
+        for file_row in pending:
+            new_chunks.extend(await asyncio.to_thread(file_row.chunk))
+            version = file_row.version_number or 1
+            chunk_dirs.add(f"{meta_root(file_row.path)}/__meta__/chunks/{version}")
+
+        existing = await self._fetch_existing_chunks(sorted(chunk_dirs), session=session)
+        carries, news, stale = self._match_chunks(new_chunks, existing)
+
+        now = datetime.now(UTC)
+        renames = [
+            {
+                "_id": existing_row.id,
+                "path": new.path,
+                "name": new.name,
+                "parent_path": new.parent_path,
+                "line_start": new.line_start,
+                "line_end": new.line_end,
+                "updated_at": now,
+            }
+            for existing_row, new in carries
+            if existing_row.path != new.path
+        ]
+        to_insert: list[dict[str, object]] = []
+        for new in news:
+            data = new.model_dump()
+            data.pop("id", None)
+            to_insert.append(data)
+        delete_ids = [{"_id": ec.id} for ec in stale]
+
+        # Detach the loaded rows so the ORM does not re-flush the Core writes below.
+        for obj in (*pending, *existing):
+            session.expunge(obj)
+
+        # Deletes and renames precede inserts: chunk paths are unique, so an old
+        # occupant must be gone before its slot is reused.
+        table = self._model.__table__
+        await session.execute(
+            update(table).where(table.c.id == bindparam("_id")).values(chunked=True),
+            flip_ids,
+        )
+        if delete_ids:
+            await session.execute(delete(table).where(table.c.id == bindparam("_id")), delete_ids)
+        if renames:
+            await session.execute(
+                update(table)
+                .where(table.c.id == bindparam("_id"))
+                .values(
+                    path=bindparam("path"),
+                    name=bindparam("name"),
+                    parent_path=bindparam("parent_path"),
+                    line_start=bindparam("line_start"),
+                    line_end=bindparam("line_end"),
+                    updated_at=bindparam("updated_at"),
+                ),
+                renames,
+            )
+        if to_insert:
+            await session.execute(insert(table), to_insert)
+        return len(pending)
+
     async def index(
         self,
-        ctx: _WriteContext,
+        session: AsyncSession,
+        level: Literal["none", "chunk", "encode", "compile"] = "compile",
+    ) -> None:
+        """Run the index pipeline context-free up to *level*: chunk → encode → compile.
+
+        The server/ETL entry point. *level* names the furthest phase to run
+        (each implies the earlier ones), mirroring the ``auto_index`` constructor
+        arg. Each phase re-derives its work from durable state (the ``chunked``/
+        ``encoded`` bits, the staging delta-log), so a re-run after a crash or
+        partial pass converges.
+        """
+        target = _AUTO_INDEX_LEVELS[level]
+        if target >= _AUTO_INDEX_LEVELS["chunk"]:
+            await self.chunk(session=session)
+        if target >= _AUTO_INDEX_LEVELS["encode"]:
+            await self.encode(session=session)
+        if target >= _AUTO_INDEX_LEVELS["compile"]:
+            await self.compile_postings(session)
+
+    async def encode(
+        self,
+        ctx: _WriteContext | None = None,
+        *,
         session: AsyncSession,
     ) -> None:
-        """Stage this write's gram deltas and compute embeddings.
+        """The **encode** phase — stage each chunk's grams and embedding.
 
-        Stages folded trigram deltas (adds for new/changed indexable rows,
-        deletes for de-indexed files and stale chunks), then issues ONE bulk
-        embedding call. A provider failure or vector-count mismatch aborts
-        before any DB mutation — embeddings ride along on the persist phase's
-        per-entry write, so failing here leaves no half-written index.
+        With *ctx* (inline on ``write()``) it encodes the chunk rows staged in
+        the write context — staging folded trigram deltas (adds for new chunks,
+        deletes for stale ones) and one bulk embedding call — then flips each
+        encoded chunk's ``encoded`` bit. Without *ctx* it scans the database for
+        chunks whose ``encoded`` bit is still False and encodes those. A provider
+        failure or vector-count mismatch aborts before any DB mutation.
 
         The staged deltas are folded into the posting list separately by
-        :meth:`compile_postings`, which resolves a new row's ``doc_id`` and so
+        :meth:`compile_postings`, which resolves a new chunk's ``doc_id`` and so
         must run after persist.
         """
-        # Rows leaving the index: stale chunks reconciled away, plus rows whose
-        # flag flipped True → False (e.g. a file that just chunked). Both stage
-        # all-deletes for their current grams, carrying ``doc_id``.
-        deindexed: list[VFSEntry] = list(ctx.stale_chunks)
-        for obj_path in ctx.changed_paths:
-            existing = ctx.existing_map.get(obj_path)
-            incoming = ctx.write_map.get(obj_path)
-            if existing is None or incoming is None:
-                continue
-            if existing.index_content and not incoming.index_content:
-                deindexed.append(existing)
+        if ctx is None:
+            await self._encode_pending(session)
+            return
 
-        indexable_changed = [
+        deindexed: list[VFSEntry] = list(ctx.stale_chunks)
+        changed_chunks = [
             ctx.write_map[p]
             for p in ctx.changed_paths
-            if p in ctx.write_map and ctx.write_map[p].index_content
+            if p in ctx.write_map and ctx.write_map[p].kind == "chunk"
         ]
         old_for_changed = {
             p: ctx.existing_map[p]
@@ -2232,7 +2339,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         try:
             await self._stage_gram_deltas(
-                indexable_changed,
+                changed_chunks,
                 old_for_changed,
                 deindexed,
                 session=session,
@@ -2241,16 +2348,16 @@ class DatabaseFileSystem(VirtualFileSystem):
             ctx.errors.append(f"Trigram maintenance failed: {exc}")
             raise _WriteAbort(ctx.errors) from exc
 
+        for chunk in changed_chunks:
+            chunk.encoded = True
+
         if self._embedding_provider is None:
             return
 
         embed_targets: list[VFSEntry] = [
             obj
-            for p, obj in ctx.write_map.items()
-            if p in ctx.changed_paths
-            and obj.index_content
-            and not self._field_was_explicitly_provided(obj, "embedding")
-            and (obj.content or "")
+            for obj in changed_chunks
+            if not self._field_was_explicitly_provided(obj, "embedding") and (obj.content or "")
         ]
         if not embed_targets:
             return
@@ -2270,6 +2377,62 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         for entry, vector in zip(embed_targets, vectors, strict=True):
             entry.embedding = vector
+
+    async def _encode_pending(self, session: AsyncSession) -> int:
+        """Encode every chunk whose ``encoded`` bit is False.
+
+        The context-free **encode** phase: stages all-add gram deltas for each
+        unencoded chunk (``doc_id`` resolved at compile by the ``entry_id``→
+        ``id`` join), writes embeddings, and flips the ``encoded`` bit — both via
+        ``executemany`` so SQLAlchemy splits the param list under the bind cap.
+        Returns the number of chunks encoded.
+        """
+        cols = frozenset({"id", "entry_id", "path", "content", "kind", "encoded"})
+        stmt = (
+            select(self._model)
+            .where(
+                self._model.kind == "chunk",  # ty: ignore[unresolved-attribute]
+                self._model.encoded.is_(False),  # ty: ignore[unresolved-attribute]
+                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+            )
+            .options(self._load_only_columns(cols))
+        )
+        pending = (await session.execute(stmt)).scalars().all()
+        if not pending:
+            return 0
+
+        await self._stage_gram_deltas(pending, {}, [], session=session)
+
+        embed_params: list[dict[str, object]] = []
+        if self._embedding_provider is not None:
+            targets = [c for c in pending if (c.content or "")]
+            if targets:
+                vectors = await self._embedding_provider.embed_entries(targets)
+                if len(vectors) != len(targets):
+                    msg = (
+                        f"Embedding provider returned {len(vectors)} vectors for "
+                        f"{len(targets)} chunks"
+                    )
+                    raise _WriteAbort(msg)
+                embed_params = [
+                    {"_id": c.id, "embedding": vec} for c, vec in zip(targets, vectors, strict=True)
+                ]
+
+        flip_ids = [{"_id": c.id} for c in pending]
+        for obj in pending:
+            session.expunge(obj)
+
+        table = self._model.__table__
+        await session.execute(
+            update(table).where(table.c.id == bindparam("_id")).values(encoded=True),
+            flip_ids,
+        )
+        if embed_params:
+            await session.execute(
+                update(table).where(table.c.id == bindparam("_id")).values(embedding=bindparam("embedding")),
+                embed_params,
+            )
+        return len(pending)
 
     async def _write_phase_persist(
         self,
@@ -2312,14 +2475,10 @@ class DatabaseFileSystem(VirtualFileSystem):
                         if existing.deleted_at is not None:
                             existing.deleted_at = None
                         if existing.kind != "directory":
-                            prev_index_content = bool(existing.index_content)
                             existing.update_content(new_content)
-                            existing.index_content = incoming.index_content
-                            self._apply_incoming_embedding(
-                                existing,
-                                incoming,
-                                prev_index_content=prev_index_content,
-                            )
+                            existing.chunked = incoming.chunked
+                            existing.encoded = incoming.encoded
+                            self._apply_incoming_embedding(existing, incoming)
                         else:
                             existing.updated_at = datetime.now(UTC)
                         candidate = existing.to_candidate().model_copy(
@@ -2331,7 +2490,6 @@ class DatabaseFileSystem(VirtualFileSystem):
                             update={"status": "created"}
                         )
                 elif existing is not None:
-                    prev_index_content = bool(existing.index_content)
                     candidate = await self._update_existing(
                         existing,
                         incoming,
@@ -2339,20 +2497,13 @@ class DatabaseFileSystem(VirtualFileSystem):
                         ctx.latest_version_hash.get(obj_path),
                         session,
                     )
-                    existing.index_content = incoming.index_content
-                    self._apply_incoming_embedding(
-                        existing,
-                        incoming,
-                        prev_index_content=prev_index_content,
-                    )
+                    existing.chunked = incoming.chunked
+                    existing.encoded = incoming.encoded
+                    self._apply_incoming_embedding(existing, incoming)
                     candidate = candidate.model_copy(update={"status": "updated"})
                 else:
                     candidate = await self._insert_new(incoming, new_content, session)
                     candidate = candidate.model_copy(update={"status": "created"})
-                if self._auto_index:
-                    persisted = existing if existing is not None else incoming
-                    if persisted.index_content:
-                        persisted.indexed_content_hash = persisted.content_hash
                 out.append(candidate)
             except Exception as exc:
                 if existing is not None:

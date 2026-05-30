@@ -255,29 +255,25 @@ def endpoint_root(path: str) -> str:
     return normalized
 
 
-def base_path(path: str) -> str:
-    """Return the owning file path for a metadata path, else *path* itself."""
+def compute_parent_file(path: str) -> str | None:
+    """Return the owning file for a chunk, version, or edge meta path, else ``None``.
+
+    Chunks, versions, and edges all hang off a file under ``__meta__``, so they
+    resolve to that file. Plain files and directories have no parent file and
+    return ``None``.
+    """
     normalized = normalize_path(path)
-    if normalized == METADATA_ROOT:
-        return "/"
-
-    if not is_meta_root_path(normalized):
-        return normalized
-
+    if parse_kind(normalized) not in {"chunk", "version", "edge"}:
+        return None
     stripped = normalized[len(METADATA_ROOT) :]
     marker = stripped.find(f"/{META_SEGMENT}")
     if marker < 0:
-        return stripped
+        return None
     return stripped[:marker] or "/"
 
 
-def owning_file_path(path: str) -> str:
-    """Alias for :func:`base_path` with a more explicit name."""
-    return base_path(path)
-
-
-def parent_path(path: str) -> str:
-    """Return the literal parent path used by the projected namespace."""
+def compute_parent_dir(path: str) -> str:
+    """Return the literal parent directory used by the projected namespace."""
     normalized = normalize_path(path)
     return split_path(normalized)[0]
 
