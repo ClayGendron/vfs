@@ -17,10 +17,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, cast
 
 from sqlalchemy import (
     Boolean,
+    Column,
     DateTime,
     Integer,
     LargeBinary,
+    MetaData,
     Numeric,
+    Row,
     String,
     bindparam,
     case,
@@ -30,10 +33,11 @@ from sqlalchemy import (
     inspect,
     or_,
     select,
-    update,
+    update
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import load_only
+from sqlalchemy.schema import CreateTable
 
 from vfs.base import SessionFactory, VirtualFileSystem
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
@@ -93,6 +97,19 @@ class _InverseEdgeSpec(NamedTuple):
     target_path: str
     edge_type: str | None
     source_prefix: str | None
+
+
+class _ChunkReconcilePlan(NamedTuple):
+    """Pure-data plan from :meth:`_match_chunks` — no ORM instances.
+
+    ``new_chunks`` are unmatched new rows to insert; ``carry_updates`` are
+    bulk-UPDATE param dicts that reposition a moved carry (keyed ``_id``);
+    ``stale_ids`` are ``{"_id": ...}`` dicts for surplus existing rows to delete.
+    """
+
+    new_chunks: list[VFSEntry]
+    carry_updates: list[dict[str, object]]
+    stale_ids: list[dict[str, object]]
 
 
 def _escape_like(term: str) -> str:
@@ -2047,33 +2064,57 @@ class DatabaseFileSystem(VirtualFileSystem):
 
     @staticmethod
     def _match_chunks(
-        new_chunks: Sequence[VFSEntry],
-        existing_chunks: Sequence[VFSEntry],
-    ) -> tuple[list[tuple[VFSEntry, VFSEntry]], list[VFSEntry], list[VFSEntry]]:
-        """Pair new chunk rows to existing ones by ``(owning file, content_hash)``.
+        new: Sequence[VFSEntry],
+        existing: Sequence[Row[Any]],
+        now: datetime,
+    ) -> _ChunkReconcilePlan:
+        """Plan a re-chunk reconciliation by ``(parent_file, content_hash)``.
 
+        Pure and offloadable: *existing* is a sequence of plain snapshot rows
+        ``(id, parent_file, content_hash, path)`` — no session-attached ORM
+        instances cross in — so it is safe to run via ``asyncio.to_thread``.
         Content identity is stable across a re-chunk even when paths/versions
-        shift, so this is the keying for carry-forward. Returns
-        ``(carries, news, stale)``: ``carries`` are ``(existing_row, new_chunk)``
-        matches to carry forward (the existing row's ``id``/``entry_id``/
-        ``embedding``/``encoded`` bit and grams all survive); ``news`` are
-        unmatched new chunks to insert; ``stale`` are surplus existing rows to
-        delete. Buckets carry multiplicity, so duplicate-content chunks in one
-        file pair FIFO.
+        shift, so it keys carry-forward. Returns the plan ``(new_chunks,
+        carry_update_params, stale_ids)``:
+
+        - ``new_chunks`` — unmatched new rows to insert.
+        - ``carry_update_params`` — bulk-UPDATE param dicts (keyed ``_id``) that
+          reposition a matched existing row whose position moved; its
+          ``id``/``entry_id``/``embedding``/``encoded`` bit and grams stay put,
+          so a same-position match contributes no param at all.
+        - ``stale_ids`` — ``{"_id": ...}`` dicts for surplus existing rows to
+          delete.
+
+        Buckets carry multiplicity, so duplicate-content chunks in one file
+        pair FIFO.
         """
-        existing_by_key: dict[tuple[str, str | None], deque[VFSEntry]] = defaultdict(deque)
-        for ec in existing_chunks:
-            existing_by_key[(base_path(ec.path), ec.content_hash)].append(ec)
-        carries: list[tuple[VFSEntry, VFSEntry]] = []
-        news: list[VFSEntry] = []
-        for new in new_chunks:
-            bucket = existing_by_key.get((base_path(new.path), new.content_hash))
-            if bucket:
-                carries.append((bucket.popleft(), new))
-            else:
-                news.append(new)
-        stale = [ec for bucket in existing_by_key.values() for ec in bucket]
-        return carries, news, stale
+        existing_by_key: dict[tuple[str | None, str | None], deque[tuple[int, str]]] = defaultdict(deque)
+        for row in existing:
+            existing_by_key[row.parent_file, row.content_hash].append((row.id, row.path))
+
+        new_chunks: list[VFSEntry] = []
+        carry_update_params: list[dict[str, object]] = []
+        for chunk in new:
+            bucket = existing_by_key.get((chunk.parent_file, chunk.content_hash))
+            if not bucket:
+                new_chunks.append(chunk)
+                continue
+
+            existing_id, existing_path = bucket.popleft()
+            if existing_path != chunk.path:
+                carry_update_params.append(
+                    {
+                        "_id": existing_id,
+                        "path": chunk.path,
+                        "name": chunk.name,
+                        "parent_dir": chunk.parent_dir,
+                        "line_start": chunk.line_start,
+                        "line_end": chunk.line_end,
+                        "updated_at": now,
+                    }
+                )
+        stale_ids = [{"_id": eid} for bucket in existing_by_key.values() for eid, _ in bucket]
+        return _ChunkReconcilePlan(new_chunks, carry_update_params, stale_ids)
 
     async def _classify_chunks(
         self,
@@ -2194,97 +2235,103 @@ class DatabaseFileSystem(VirtualFileSystem):
     async def _chunk_pending(self, session: AsyncSession) -> int:
         """Chunk every file whose ``chunked`` bit is still False.
 
-        The context-free **chunk** phase. Each pending file is split and its new
-        chunks reconciled against its existing chunks by content hash: a match
-        carries the existing row forward (its ``encoded`` bit and grams survive,
-        so encode skips it), an unmatched new chunk inserts fresh
-        (``encoded=False``), and a surplus existing chunk is deleted.
-        ``VFSEntry.chunk()`` flips the file's ``chunked`` bit. Returns the number
-        of files chunked.
+        The context-free **chunk** phase. Pending files are read as trusted
+        column snapshots and rebuilt as detached, unvalidated ``VFSEntry``
+        objects — never session-attached — so ``VFSEntry.chunk()`` runs in a
+        worker thread without dirtying the session. Each file's new chunks are
+        reconciled against its existing chunks by ``(parent_file, content_hash)``
+        in :meth:`_match_chunks`, a pure planner offloaded off the event loop
+        over plain row snapshots:
+
+        - **match** → reposition the existing row in place (``carry_updates``):
+          new path/line range, but its ``id``/``entry_id``/``embedding``/
+          ``encoded`` bit and grams survive, so encode skips it.
+        - **no match** → insert the new chunk fresh (``encoded=False``).
+        - **surplus existing** → delete.
+
+        Writes are batched Core DML; the snapshotted files are flipped to
+        ``chunked=True`` scoped by id. Runs in the caller's transaction — the
+        commit/rollback boundary is owned by :meth:`chunk`/:meth:`index`.
+        Returns the number of files chunked.
         """
-        cols = frozenset({"id", "path", "content", "ext", "kind", "version_number", "owner_id", "chunked"})
-        stmt = (
-            select(self._model)
-            .where(
-                self._model.kind == "file",  # ty: ignore[unresolved-attribute]
-                self._model.chunked.is_(False),  # ty: ignore[unresolved-attribute]
-                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
-            )
-            .options(self._load_only_columns(cols))
+        pending_stmt = select(
+            self._model.id,  # ty: ignore[unresolved-attribute]
+            self._model.path,  # ty: ignore[unresolved-attribute]
+            self._model.content,  # ty: ignore[unresolved-attribute]
+            self._model.ext,  # ty: ignore[unresolved-attribute]
+            self._model.kind,  # ty: ignore[unresolved-attribute]
+            self._model.version_number,  # ty: ignore[unresolved-attribute]
+            self._model.owner_id,  # ty: ignore[unresolved-attribute]
+        ).where(
+            self._model.kind == "file",  # ty: ignore[unresolved-attribute]
+            self._model.chunked.is_(False),  # ty: ignore[unresolved-attribute]
+            self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
-        pending = (await session.execute(stmt)).scalars().all()
-        if not pending:
+        pending_rows = (await session.execute(pending_stmt)).mappings().all()
+        if not pending_rows:
             return 0
 
-        flip_ids = [{"_id": f.id} for f in pending]
-        all_new: list[VFSEntry] = []
-        chunk_dirs: set[str] = set()
+        pending_files = [
+            VFSEntry.model_construct(_fields_set=set(row.keys()), **dict(row))
+            for row in pending_rows
+        ]
 
         new_chunks: list[VFSEntry] = []
-        for file_row in pending:
+        for file_row in pending_files:
             new_chunks.extend(await asyncio.to_thread(file_row.chunk))
-            version = file_row.version_number or 1
-            chunk_dirs.add(f"{meta_root(file_row.path)}/__meta__/chunks/{version}")
 
-        existing = await self._fetch_existing_chunks(sorted(chunk_dirs), session=session)
-        carries, news, stale = self._match_chunks(new_chunks, existing)
+        pending_paths = pending_stmt.with_only_columns(self._model.path).subquery()
+        existing_stmt = (
+            select(
+                self._model.id,  # ty: ignore[unresolved-attribute]
+                self._model.parent_file,  # ty: ignore[unresolved-attribute]
+                self._model.content_hash,  # ty: ignore[unresolved-attribute]
+                self._model.path,  # ty: ignore[unresolved-attribute]
+            )
+            .join(pending_paths, self._model.parent_file == pending_paths.c.path)  # ty: ignore[unresolved-attribute]
+            .where(self._model.kind == "chunk")  # ty: ignore[unresolved-attribute]
+        )
+        existing_rows = (await session.execute(existing_stmt)).all()
 
-        now = datetime.now(UTC)
-        renames = [
-            {
-                "_id": existing_row.id,
-                "path": new.path,
-                "name": new.name,
-                "parent_path": new.parent_path,
-                "line_start": new.line_start,
-                "line_end": new.line_end,
-                "updated_at": now,
-            }
-            for existing_row, new in carries
-            if existing_row.path != new.path
-        ]
-        to_insert: list[dict[str, object]] = []
-        for new in news:
-            data = new.model_dump()
-            data.pop("id", None)
-            to_insert.append(data)
-        delete_ids = [{"_id": ec.id} for ec in stale]
+        plan = await asyncio.to_thread(self._match_chunks, new_chunks, existing_rows, datetime.now(UTC))
 
-        # Detach the loaded rows so the ORM does not re-flush the Core writes below.
-        for obj in (*pending, *existing):
-            session.expunge(obj)
+        to_insert = [chunk.model_dump(exclude={"id"}) for chunk in plan.new_chunks]
 
-        # Deletes and renames precede inserts: chunk paths are unique, so an old
-        # occupant must be gone before its slot is reused.
         table = self._model.__table__
+        flip_ids = [{"_id": f.id} for f in pending_files]
         await session.execute(
             update(table).where(table.c.id == bindparam("_id")).values(chunked=True),
             flip_ids,
         )
-        if delete_ids:
-            await session.execute(delete(table).where(table.c.id == bindparam("_id")), delete_ids)
-        if renames:
+
+        if plan.stale_ids:
+            await session.execute(delete(table).where(table.c.id == bindparam("_id")), plan.stale_ids)
+
+        if plan.carry_updates:
             await session.execute(
                 update(table)
                 .where(table.c.id == bindparam("_id"))
                 .values(
                     path=bindparam("path"),
                     name=bindparam("name"),
-                    parent_path=bindparam("parent_path"),
+                    parent_dir=bindparam("parent_dir"),
                     line_start=bindparam("line_start"),
                     line_end=bindparam("line_end"),
                     updated_at=bindparam("updated_at"),
                 ),
-                renames,
+                plan.carry_updates,
             )
+
         if to_insert:
             await session.execute(insert(table), to_insert)
-        return len(pending)
+            
+        return len(pending_files)
 
     async def index(
         self,
-        session: AsyncSession,
         level: Literal["none", "chunk", "encode", "compile"] = "compile",
+        *,
+        session: AsyncSession | None = None,
     ) -> None:
         """Run the index pipeline context-free up to *level*: chunk → encode → compile.
 
@@ -2293,7 +2340,26 @@ class DatabaseFileSystem(VirtualFileSystem):
         arg. Each phase re-derives its work from durable state (the ``chunked``/
         ``encoded`` bits, the staging delta-log), so a re-run after a crash or
         partial pass converges.
+
+        Without *session* this owns the transaction: it opens one session via
+        ``_use_session`` and runs every phase inside it, so they read each
+        other's uncommitted writes and commit atomically (rollback on error).
+        Pass *session* to run inside a caller-owned transaction instead (e.g.
+        the inline ``write`` path).
         """
+        if session is not None:
+            await self._run_index(session, level)
+
+        else:
+            async with self._use_session() as owned:
+                await self._run_index(owned, level)
+
+    async def _run_index(
+        self,
+        session: AsyncSession,
+        level: Literal["none", "chunk", "encode", "compile"],
+    ) -> None:
+        """Run chunk → encode → compile up to *level* on the given *session*."""
         target = _AUTO_INDEX_LEVELS[level]
         if target >= _AUTO_INDEX_LEVELS["chunk"]:
             await self.chunk(session=session)
