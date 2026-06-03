@@ -808,12 +808,28 @@ class DatabaseFileSystem(VirtualFileSystem):
                 to_insert.append({"gram_key": gram_key, **values})
         return _PostingWritePlan(to_insert, to_update, to_delete)
 
-    async def compile(self, session: AsyncSession) -> None:
-        """Fold staged gram deltas into the per-gram posting list.
+    async def compile(self, ctx: _WriteContext | None = None, *, session: AsyncSession) -> None:
+        """The **compile** phase — fold staged gram deltas into the posting list.
 
-        The **compile** phase of the index pipeline. Runs in the caller's
-        transaction, serialized by ``self._flush_lock``. Returns the number of
-        staged rows folded (0 when staging is empty).
+        Without *ctx* (the server/ETL path) this delegates to
+        :meth:`_compile_pending`, which folds every staged delta up to a
+        captured ``seq`` watermark. The inline ``write`` path will pass *ctx* to
+        fold only the deltas that write produced — scoped to its own chunks,
+        never the rest of staging — but that variant lands with the
+        write-pipeline rework.
+        """
+        if ctx is None:
+            await self._compile_pending(session)
+            return
+        raise NotImplementedError(
+            "Inline write-scoped compile lands with the write-pipeline rework"
+        )
+
+    async def _compile_pending(self, session: AsyncSession) -> None:
+        """Fold every staged gram delta into the per-gram posting list.
+
+        The context-free **compile** phase. Runs in the caller's transaction,
+        serialized by ``self._flush_lock``.
 
         The latest-action-wins fold and the ``doc_id`` resolution happen
         server-side: a ``ROW_NUMBER`` window keyed on ``(gram_key, entry_id)``
@@ -833,7 +849,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
             watermark = await session.scalar(select(func.max(gram.c.seq)))
             if watermark is None:
-                return 0
+                return
 
             rn = (
                 func.row_number()
@@ -1751,7 +1767,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             out = await self._write_phase_persist(ctx, session)
 
             if self._auto_compile:
-                await self.compile(session)
+                await self.compile(session=session)
 
         except _WriteAbort as abort:
             await session.rollback()
@@ -2354,7 +2370,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         if target >= _AUTO_INDEX_LEVELS["encode"]:
             await self.encode(session=session)
         if target >= _AUTO_INDEX_LEVELS["compile"]:
-            await self.compile(session)
+            await self.compile(session=session)
 
     async def encode(
         self,
