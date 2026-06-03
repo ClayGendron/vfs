@@ -49,6 +49,7 @@ from vfs.models import (
     ENCODING_DELTA_GAMMA,
     GRAM_ACTION_ADD,
     GRAM_ACTION_DELETE,
+    GramStagingRow,
     VFSEntry,
     _build_vfs_tables,
 )
@@ -309,6 +310,37 @@ class _WriteAbort(Exception):  # noqa: N818 — phase-abort signal; "Abort" name
 _AUTO_INDEX_LEVELS: dict[str, int] = {"none": 0, "chunk": 1, "encode": 2, "compile": 3}
 
 
+def compute_gram_rows(
+    entries: Sequence[VFSEntry],
+    action: int,
+) -> list[GramStagingRow]:
+    """Map *entries* to folded-trigram staging rows for one *action*.
+
+    Pure and offloadable. Each entry contributes one row per unique folded
+    gram of its content, all stamped with *action*:
+
+    - **add** (``GRAM_ACTION_ADD``) leaves ``doc_id`` null — compile resolves
+      it by the ``entry_id``→``id`` join once the row has its server id.
+    - **delete** (``GRAM_ACTION_DELETE``) carries the captured ``doc_id``
+      (``entry.id``), since the row may be gone by the time compile folds it.
+
+    Reconciliation — deciding which entries are adds and which are deletes —
+    is the caller's job; this only builds the rows for the bulk insert into
+    ``_gram_table``.
+    """
+    is_delete = action == GRAM_ACTION_DELETE
+    return [
+        {
+            "gram_key": gram_key,
+            "entry_id": entry.entry_id,
+            "doc_id": entry.id if is_delete else None,
+            "action": action,
+        }
+        for entry in entries
+        for gram_key in unique_code_grams(entry.content or "", folded=True)
+    ]
+
+
 class DatabaseFileSystem(VirtualFileSystem):
     """SQL-backed filesystem — portable baseline using SQLAlchemy.
 
@@ -564,7 +596,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         User-supplied ``columns`` must be Candidate-backed model column names;
         anything else (including typos like ``size`` for ``size_bytes``,
-        or internal columns like ``parent_path``) raises ``ValueError``
+        or internal columns like ``parent_dir``) raises ``ValueError``
         with the valid set — turning a cryptic ``AttributeError`` from
         SQLAlchemy into a clear contract violation at the boundary.
         """
@@ -665,7 +697,7 @@ class DatabaseFileSystem(VirtualFileSystem):
     def _chunk_cascade_dirs(self, file_entries: Sequence[VFSEntry]) -> list[str]:
         """``__meta__/chunks`` dir paths for the supplied files, sorted+deduped.
 
-        Every chunk row's ``parent_path`` equals this dir (chunk names are a
+        Every chunk row's ``parent_dir`` equals this dir (chunk names are a
         single path segment), so it keys an indexed equality/IN match for a
         file's chunks — no ``LIKE`` prefix scan needed.
         """
@@ -681,14 +713,14 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         Returned as ORM rows so a content match can carry one forward by
         mutating it in place — ``content_hash`` keys the
-        match, ``parent_path`` scopes it per file, ``content`` (loaded only
+        match, ``parent_dir`` scopes it per file, ``content`` (loaded only
         when indexing) feeds stale-chunk de-index deltas. ``embedding`` and
         ``version_diff`` stay deferred so a carry-forward UPDATE never touches
         them.
         """
         if not chunk_dirs:
             return []
-        cols = {"path", "entry_id", "content_hash", "parent_path", "name", "line_start", "line_end"}
+        cols = {"path", "entry_id", "content_hash", "parent_dir", "name", "line_start", "line_end"}
         if self._auto_encode:
             cols.add("content")
         chunks: list[VFSEntry] = []
@@ -697,7 +729,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 select(self._model)
                 .where(
                     self._model.kind == "chunk",  # ty: ignore[unresolved-attribute]
-                    self._model.parent_path.in_(batch),  # ty: ignore[unresolved-attribute]
+                    self._model.parent_dir.in_(batch),  # ty: ignore[unresolved-attribute]
                 )
                 .options(self._load_only_columns(frozenset(cols)))
             )
@@ -705,77 +737,6 @@ class DatabaseFileSystem(VirtualFileSystem):
             chunks.extend(result.scalars().all())
         return chunks
 
-    async def _stage_gram_deltas(
-        self,
-        entries: Sequence[VFSEntry],
-        old_by_path: dict[str, VFSEntry],
-        deindexed: Sequence[VFSEntry],
-        *,
-        session: AsyncSession,
-    ) -> None:
-        """Stage this write's folded-gram deltas in one Core bulk insert.
-
-        Reconciliation drives the deltas — grams are never diffed:
-
-        - **De-indexed rows** (stale chunks, rows leaving the index) all-delete
-          their current grams, carrying ``doc_id``.
-        - A **path-stable edit** (the row persists at its path, present in
-          ``old_by_path``) all-deletes the old row's grams, then all-adds the
-          new grams under the persisted row's ``entry_id`` — latest-action-wins
-          resolves a gram in both to the add.
-        - A **brand-new row** all-adds its grams.
-
-        Carried-forward chunks are absent here and cost nothing. Adds leave
-        ``doc_id`` null (the flush resolves it by ``entry_id``→``id`` join);
-        deletes carry the captured ``doc_id`` since the row may be gone by
-        flush. A Core bulk insert (not per-row ``session.add``) keeps a large
-        file's tens of thousands of deltas cheap.
-        """
-        rows: list[dict[str, object]] = []
-        for entry in deindexed:
-            rows.extend(
-                {
-                    "gram_key": gram_key,
-                    "entry_id": entry.entry_id,
-                    "doc_id": entry.id,
-                    "action": GRAM_ACTION_DELETE,
-                }
-                for gram_key in unique_code_grams(entry.content or "", folded=True)
-            )
-        for entry in entries:
-            new_grams = unique_code_grams(entry.content or "", folded=True)
-            old = old_by_path.get(entry.path)
-            if old is not None:
-                rows.extend(
-                    {
-                        "gram_key": gram_key,
-                        "entry_id": old.entry_id,
-                        "doc_id": old.id,
-                        "action": GRAM_ACTION_DELETE,
-                    }
-                    for gram_key in unique_code_grams(old.content or "", folded=True)
-                )
-                rows.extend(
-                    {
-                        "gram_key": gram_key,
-                        "entry_id": old.entry_id,
-                        "doc_id": None,
-                        "action": GRAM_ACTION_ADD,
-                    }
-                    for gram_key in new_grams
-                )
-            else:
-                rows.extend(
-                    {
-                        "gram_key": gram_key,
-                        "entry_id": entry.entry_id,
-                        "doc_id": None,
-                        "action": GRAM_ACTION_ADD,
-                    }
-                    for gram_key in new_grams
-                )
-        if rows:
-            await session.execute(insert(self._gram_table), rows)
 
     async def compile_postings(self, session: AsyncSession) -> int:
         """Fold staged gram deltas into the per-gram posting list.
@@ -938,7 +899,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         target_path = (
             owner_root
             if "/__meta__/chunks/" in owner_root or "/__meta__/versions/" in owner_root
-            else base_path(owner_root)
+            else compute_parent_file(owner_root) or owner_root
         )
         rest = path[idx + len(marker) :]
         if not rest:
@@ -1419,9 +1380,9 @@ class DatabaseFileSystem(VirtualFileSystem):
         """Batch-fetch children for multiple objects in two queries.
 
         Directories use ``LIKE path/%`` (all descendants).
-        Non-directories use ``parent_path IN (...)`` (direct metadata children).
+        Non-directories use ``parent_dir IN (...)`` (direct metadata children).
 
-        Returns ``{parent_path: [children]}`` grouped by owning parent.
+        Returns ``{parent_dir: [children]}`` grouped by owning parent.
         """
         dirs = {p: o for p, o in objs.items() if o.kind == "directory"}
         files = {p: o for p, o in objs.items() if o.kind != "directory"}
@@ -1880,7 +1841,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         for obj in ctx.write_map.values():
             if obj.kind != "chunk":
                 continue
-            owning_file = base_path(obj.path)
+            owning_file = compute_parent_file(obj.path)
             if owning_file not in ctx.write_map:
                 invalid_chunk_paths.append(obj.path)
                 ctx.errors.append(
@@ -2057,7 +2018,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             return
         for chunk in chunk_rows:
             ctx.changed_paths.discard(chunk.path)
-            version = new_version_by_file.get(base_path(chunk.path))
+            version = new_version_by_file.get(compute_parent_file(chunk.path))
             if version is not None:
                 chunk.set_version(version)
         ctx.write_map = {o.path: o for o in ctx.write_map.values()}
@@ -2138,7 +2099,7 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         # Reconcile files producing new chunks, plus changed files that may
         # still hold stale chunks from a prior version (e.g. shrank to one row).
-        owning_files = {base_path(c.path) for c in new_chunks}
+        owning_files = {compute_parent_file(c.path) for c in new_chunks}
         owning_files |= {
             p
             for p in ctx.changed_paths
@@ -2167,7 +2128,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             if existing_row.path != new.path:
                 ctx.carry_renames.append((existing_row, new))
             else:
-                kept_dirs.add(existing_row.parent_path)
+                kept_dirs.add(existing_row.parent_dir)
         for new in news:
             ctx.changed_paths.add(new.path)
 
@@ -2232,7 +2193,7 @@ class DatabaseFileSystem(VirtualFileSystem):
                 ctx.write_map[row.path] = row
                 ctx.changed_paths.add(row.path)
 
-    async def _chunk_pending(self, session: AsyncSession) -> int:
+    async def _chunk_pending(self, session: AsyncSession) -> None:
         """Chunk every file whose ``chunked`` bit is still False.
 
         The context-free **chunk** phase. Pending files are read as trusted
@@ -2324,13 +2285,10 @@ class DatabaseFileSystem(VirtualFileSystem):
 
         if to_insert:
             await session.execute(insert(table), to_insert)
-            
-        return len(pending_files)
 
     async def index(
         self,
         level: Literal["none", "chunk", "encode", "compile"] = "compile",
-        *,
         session: AsyncSession | None = None,
     ) -> None:
         """Run the index pipeline context-free up to *level*: chunk → encode → compile.
@@ -2348,16 +2306,16 @@ class DatabaseFileSystem(VirtualFileSystem):
         the inline ``write`` path).
         """
         if session is not None:
-            await self._run_index(session, level)
+            await self._run_index(level, session)
 
         else:
             async with self._use_session() as owned:
-                await self._run_index(owned, level)
+                await self._run_index(level, owned)
 
     async def _run_index(
         self,
-        session: AsyncSession,
         level: Literal["none", "chunk", "encode", "compile"],
+        session: AsyncSession,
     ) -> None:
         """Run chunk → encode → compile up to *level* on the given *session*."""
         target = _AUTO_INDEX_LEVELS[level]
@@ -2397,19 +2355,13 @@ class DatabaseFileSystem(VirtualFileSystem):
             for p in ctx.changed_paths
             if p in ctx.write_map and ctx.write_map[p].kind == "chunk"
         ]
-        old_for_changed = {
-            p: ctx.existing_map[p]
-            for p in ctx.changed_paths
-            if p in ctx.existing_map
-        }
 
         try:
-            await self._stage_gram_deltas(
-                changed_chunks,
-                old_for_changed,
-                deindexed,
-                session=session,
+            rows = compute_gram_rows(deindexed, GRAM_ACTION_DELETE) + compute_gram_rows(
+                changed_chunks, GRAM_ACTION_ADD
             )
+            if rows:
+                await session.execute(insert(self._gram_table), rows)
         except Exception as exc:
             ctx.errors.append(f"Trigram maintenance failed: {exc}")
             raise _WriteAbort(ctx.errors) from exc
@@ -2444,61 +2396,58 @@ class DatabaseFileSystem(VirtualFileSystem):
         for entry, vector in zip(embed_targets, vectors, strict=True):
             entry.embedding = vector
 
-    async def _encode_pending(self, session: AsyncSession) -> int:
+    async def _encode_pending(self, session: AsyncSession) -> None:
         """Encode every chunk whose ``encoded`` bit is False.
 
-        The context-free **encode** phase: stages all-add gram deltas for each
-        unencoded chunk (``doc_id`` resolved at compile by the ``entry_id``→
+        The context-free **encode** phase. Pending chunks are read as trusted
+        column snapshots and rebuilt as detached, unvalidated ``VFSEntry``
+        objects — never session-attached — so no dirty ORM state accrues and
+        nothing must be expunged before the bulk writes. Stages all-add gram
+        deltas for each chunk (``doc_id`` resolved at compile by the ``entry_id``→
         ``id`` join), writes embeddings, and flips the ``encoded`` bit — both via
         ``executemany`` so SQLAlchemy splits the param list under the bind cap.
-        Returns the number of chunks encoded.
         """
-        cols = frozenset({"id", "entry_id", "path", "content", "kind", "encoded"})
-        stmt = (
-            select(self._model)
-            .where(
-                self._model.kind == "chunk",  # ty: ignore[unresolved-attribute]
-                self._model.encoded.is_(False),  # ty: ignore[unresolved-attribute]
-                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
-            )
-            .options(self._load_only_columns(cols))
+        pending_stmt = select(
+            self._model.id,  # ty: ignore[unresolved-attribute]
+            self._model.entry_id,  # ty: ignore[unresolved-attribute]
+            self._model.path,  # ty: ignore[unresolved-attribute]
+            self._model.content,  # ty: ignore[unresolved-attribute]
+        ).where(
+            self._model.kind == "chunk",  # ty: ignore[unresolved-attribute]
+            self._model.encoded.is_(False),  # ty: ignore[unresolved-attribute]
+            self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
-        pending = (await session.execute(stmt)).scalars().all()
-        if not pending:
-            return 0
+        pending_rows = (await session.execute(pending_stmt)).mappings().all()
+        if not pending_rows:
+            return
 
-        await self._stage_gram_deltas(pending, {}, [], session=session)
+        pending = [
+            VFSEntry.model_construct(_fields_set=set(row.keys()), **dict(row))
+            for row in pending_rows
+        ]
 
-        embed_params: list[dict[str, object]] = []
-        if self._embedding_provider is not None:
-            targets = [c for c in pending if (c.content or "")]
-            if targets:
-                vectors = await self._embedding_provider.embed_entries(targets)
-                if len(vectors) != len(targets):
-                    msg = (
-                        f"Embedding provider returned {len(vectors)} vectors for "
-                        f"{len(targets)} chunks"
-                    )
-                    raise _WriteAbort(msg)
-                embed_params = [
-                    {"_id": c.id, "embedding": vec} for c, vec in zip(targets, vectors, strict=True)
-                ]
-
-        flip_ids = [{"_id": c.id} for c in pending]
-        for obj in pending:
-            session.expunge(obj)
+        rows = await asyncio.to_thread(compute_gram_rows, pending, GRAM_ACTION_ADD)
+        if rows:
+            await session.execute(insert(self._gram_table), rows)
 
         table = self._model.__table__
-        await session.execute(
-            update(table).where(table.c.id == bindparam("_id")).values(encoded=True),
-            flip_ids,
-        )
-        if embed_params:
+        if self._embedding_provider is None:
             await session.execute(
-                update(table).where(table.c.id == bindparam("_id")).values(embedding=bindparam("embedding")),
-                embed_params,
+                update(table).where(table.c.id == bindparam("_id")).values(encoded=True),
+                [{"_id": c.id} for c in pending],
             )
-        return len(pending)
+            return
+
+        vectors = await self._embedding_provider.embed_entries(pending)
+        await session.execute(
+            update(table)
+            .where(table.c.id == bindparam("_id"))
+            .values(encoded=True, embedding=bindparam("embedding")),
+            [
+                {"_id": c.id, "embedding": vec}
+                for c, vec in zip(pending, vectors, strict=True)
+            ],
+        )
 
     async def _write_phase_persist(
         self,
@@ -2521,7 +2470,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             for existing_row, new_chunk in ctx.carry_renames:
                 existing_row.path = new_chunk.path
                 existing_row.name = new_chunk.name
-                existing_row.parent_path = new_chunk.parent_path
+                existing_row.parent_dir = new_chunk.parent_dir
                 existing_row.line_start = new_chunk.line_start
                 existing_row.line_end = new_chunk.line_end
                 existing_row.version_number = new_chunk.version_number
@@ -2668,22 +2617,22 @@ class DatabaseFileSystem(VirtualFileSystem):
             return VFSResult(function="ls", candidates=[])
 
         dir_set = set(dir_paths)
-        # parent_path + kind are needed for the directory-metadata visibility
+        # parent_dir + kind are needed for the directory-metadata visibility
         # filter; widen the SELECT to include them even if not in the
         # projected columns.
-        select_cols = self._select_columns(cols | {"parent_path", "kind"})
+        select_cols = self._select_columns(cols | {"parent_dir", "kind"})
         out: list[Candidate] = []
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
             stmt = select(*select_cols).where(
-                self._model.parent_path.in_(batch),  # ty: ignore[unresolved-attribute]
+                self._model.parent_dir.in_(batch),  # ty: ignore[unresolved-attribute]
                 self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
             )
             result = await session.execute(stmt)
             for row in result.all():
                 if (
-                    row.parent_path in dir_set
+                    row.parent_dir in dir_set
                     and row.kind not in ("file", "directory")
-                    and not row.parent_path.startswith("/.vfs")
+                    and not row.parent_dir.startswith("/.vfs")
                 ):
                     continue
                 out.append(self._row_to_candidate(row, cols))
@@ -2787,8 +2736,8 @@ class DatabaseFileSystem(VirtualFileSystem):
         # nested rule (e.g. PermissionMap default=read_write with
         # ("/a/b", "read") would let `delete("/a")` cascade through
         # `/a/b/protected.md`).
-        for parent_path, children in children_map.items():
-            if parent_path not in found:
+        for parent_dir, children in children_map.items():
+            if parent_dir not in found:
                 continue
             for child in children:
                 err = check_writable(self, "delete", child.path)
@@ -3032,7 +2981,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         1. Validate source exists, dest available
         2. Fetch all descendants (children, metadata)
         3. Rewrite paths: replace source prefix with dest
-        4. Re-derive parent_path / name on all affected rows
+        4. Re-derive parent_dir / name on all affected rows
         5. Update edge source_path / target_path references
         """
         self._require_user_id(user_id)

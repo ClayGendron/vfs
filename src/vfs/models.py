@@ -17,7 +17,7 @@ import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Final, cast
+from typing import Any, Final, TypedDict, cast
 
 from pydantic import PrivateAttr, model_validator
 from sqlalchemy import (
@@ -792,6 +792,21 @@ GRAM_ACTION_ADD: Final = 1
 ENCODING_DELTA_VARINT: Final = 1
 ENCODING_DELTA_GAMMA: Final = 2
 ENCODING_ROARING: Final = 3
+
+
+class GramStagingRow(TypedDict):
+    """One insertable row of the ``*_grams_staging`` delta-log.
+
+    Mirrors the staging table built in :func:`_build_vfs_tables`, minus its
+    server-assigned ``seq`` primary key. Keep these fields in sync with that
+    ``Column`` set: ``doc_id`` is null on adds (resolved by the ``entry_id``→
+    ``id`` join at flush) and carries the captured id on deletes.
+    """
+
+    gram_key: int
+    entry_id: str
+    doc_id: int | None
+    action: int
 
 
 def _build_vfs_tables(
