@@ -113,6 +113,19 @@ class _ChunkReconcilePlan(NamedTuple):
     stale_ids: list[dict[str, object]]
 
 
+class _PostingWritePlan(NamedTuple):
+    """Pure-data plan from :meth:`_fold_postings` — bulk-DML param lists.
+
+    ``to_insert`` are new posting rows (keyed ``gram_key``); ``to_update`` and
+    ``to_delete`` reference existing rows by ``_gram_key``. A gram that folds to
+    an empty posting list lands in ``to_delete`` when it had a row, else nowhere.
+    """
+
+    to_insert: list[dict[str, object]]
+    to_update: list[dict[str, object]]
+    to_delete: list[dict[str, object]]
+
+
 def _escape_like(term: str) -> str:
     """Escape special characters for a SQL LIKE pattern."""
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -738,7 +751,64 @@ class DatabaseFileSystem(VirtualFileSystem):
         return chunks
 
 
-    async def compile_postings(self, session: AsyncSession) -> int:
+    @staticmethod
+    def _fold_postings(
+        survivors: Sequence[Row[Any]],
+        existing: Sequence[Row[Any]],
+    ) -> _PostingWritePlan:
+        """Fold the latest-action-wins survivors into posting-list write params.
+
+        Pure and offloadable: *survivors* are plain ``(gram_key, action,
+        doc_id, resolved_id)`` snapshot rows — the LAW winners, with each add's
+        ``doc_id`` already resolved server-side — and *existing* are
+        ``(gram_key, postings, doc_count)`` rows for every gram present in
+        staging. No session-attached state crosses in, so it is safe to run via
+        ``asyncio.to_thread``. Buckets the survivors into per-gram add/delete
+        sets, decodes each touched gram's posting list, set-merges, and
+        re-encodes. Returns the ``(to_insert, to_update, to_delete)`` bulk-DML
+        param lists; a gram that folds to empty is deleted when it had a row,
+        else skipped.
+        """
+        adds_by_gram: dict[int, set[int]] = defaultdict(set)
+        dels_by_gram: dict[int, set[int]] = defaultdict(set)
+        for gram_key, action, staged_doc_id, resolved_id in survivors:
+            if action == GRAM_ACTION_ADD:
+                adds_by_gram[gram_key].add(resolved_id)
+            elif staged_doc_id is not None:
+                dels_by_gram[gram_key].add(staged_doc_id)
+
+        current: dict[int, list[int]] = {
+            gram_key: decode_postings(bytes(blob), doc_count)
+            for gram_key, blob, doc_count in existing
+        }
+
+        to_insert: list[dict[str, object]] = []
+        to_update: list[dict[str, object]] = []
+        to_delete: list[dict[str, object]] = []
+        for gram_key in adds_by_gram.keys() | dels_by_gram.keys():
+            merged = merge_postings(
+                current.get(gram_key, ()),
+                adds_by_gram.get(gram_key, ()),
+                dels_by_gram.get(gram_key, frozenset()),
+            )
+            if not merged:
+                if gram_key in current:
+                    to_delete.append({"_gram_key": gram_key})
+                continue
+            blob = encode_postings(merged)
+            values = {
+                "postings": blob,
+                "encoding": ENCODING_DELTA_GAMMA,
+                "doc_count": len(merged),
+                "byte_size": len(blob),
+            }
+            if gram_key in current:
+                to_update.append({"_gram_key": gram_key, **values})
+            else:
+                to_insert.append({"gram_key": gram_key, **values})
+        return _PostingWritePlan(to_insert, to_update, to_delete)
+
+    async def compile(self, session: AsyncSession) -> None:
         """Fold staged gram deltas into the per-gram posting list.
 
         The **compile** phase of the index pipeline. Runs in the caller's
@@ -749,9 +819,10 @@ class DatabaseFileSystem(VirtualFileSystem):
         server-side: a ``ROW_NUMBER`` window keyed on ``(gram_key, entry_id)``
         keeps the latest delta per pair, a ``LEFT JOIN`` to the entry table
         resolves an add's ``doc_id``, and adds whose join missed (entry
-        hard-deleted) are dropped in the same query. Python only buckets the
-        survivors into per-gram add/delete sets, set-merges them into each
-        touched gram's decoded posting list, and re-encodes. Writes go through
+        hard-deleted) are dropped in the same query. The survivors and the
+        posting rows for every gram in staging are read as snapshots and handed
+        to :meth:`_fold_postings`, a pure planner offloaded off the event loop
+        that buckets, set-merges, and re-encodes. Writes go through
         ``executemany`` and the staging cleanup is a range delete, so SQLAlchemy
         manages the bind-parameter cap.
         """
@@ -764,7 +835,6 @@ class DatabaseFileSystem(VirtualFileSystem):
             if watermark is None:
                 return 0
 
-            # Server-side latest-action-wins fold + doc_id resolution.
             rn = (
                 func.row_number()
                 .over(
@@ -802,20 +872,6 @@ class DatabaseFileSystem(VirtualFileSystem):
                 )
             ).all()
 
-            adds_by_gram: dict[int, set[int]] = defaultdict(set)
-            dels_by_gram: dict[int, set[int]] = defaultdict(set)
-            for gram_key, action, staged_doc_id, resolved_id in survivors:
-                if action == GRAM_ACTION_ADD:
-                    adds_by_gram[gram_key].add(resolved_id)
-                elif staged_doc_id is not None:
-                    dels_by_gram[gram_key].add(staged_doc_id)
-
-            # Load the posting rows for every gram present in staging (a superset
-            # of the touched grams) via an IN-subquery so the keys never leave
-            # the database as bind parameters.
-            # Keep each decoded posting list as its ascending list (not a set)
-            # so the merge below can exploit the existing order.
-            current: dict[int, list[int]] = {}
             existing_rows = (
                 await session.execute(
                     select(posting.c.gram_key, posting.c.postings, posting.c.doc_count).where(
@@ -825,37 +881,12 @@ class DatabaseFileSystem(VirtualFileSystem):
                     )
                 )
             ).all()
-            for gram_key, blob, doc_count in existing_rows:
-                current[gram_key] = decode_postings(bytes(blob), doc_count)
 
-            to_insert: list[dict[str, object]] = []
-            to_update: list[dict[str, object]] = []
-            to_delete: list[dict[str, object]] = []
-            for gram_key in adds_by_gram.keys() | dels_by_gram.keys():
-                merged = merge_postings(
-                    current.get(gram_key, ()),
-                    adds_by_gram.get(gram_key, ()),
-                    dels_by_gram.get(gram_key, frozenset()),
-                )
-                if not merged:
-                    if gram_key in current:
-                        to_delete.append({"_gram_key": gram_key})
-                    continue
-                blob = encode_postings(merged)
-                values = {
-                    "postings": blob,
-                    "encoding": ENCODING_DELTA_GAMMA,
-                    "doc_count": len(merged),
-                    "byte_size": len(blob),
-                }
-                if gram_key in current:
-                    to_update.append({"_gram_key": gram_key, **values})
-                else:
-                    to_insert.append({"gram_key": gram_key, **values})
+            plan = await asyncio.to_thread(self._fold_postings, survivors, existing_rows)
 
-            if to_insert:
-                await session.execute(insert(posting), to_insert)
-            if to_update:
+            if plan.to_insert:
+                await session.execute(insert(posting), plan.to_insert)
+            if plan.to_update:
                 await session.execute(
                     update(posting)
                     .where(posting.c.gram_key == bindparam("_gram_key"))
@@ -865,16 +896,15 @@ class DatabaseFileSystem(VirtualFileSystem):
                         doc_count=bindparam("doc_count"),
                         byte_size=bindparam("byte_size"),
                     ),
-                    to_update,
+                    plan.to_update,
                 )
-            if to_delete:
+            if plan.to_delete:
                 await session.execute(
                     delete(posting).where(posting.c.gram_key == bindparam("_gram_key")),
-                    to_delete,
+                    plan.to_delete,
                 )
 
-            result = await session.execute(delete(gram).where(gram.c.seq <= watermark))
-            return result.rowcount
+            await session.execute(delete(gram).where(gram.c.seq <= watermark))
 
     async def _get_object(
         self,
@@ -1721,7 +1751,7 @@ class DatabaseFileSystem(VirtualFileSystem):
             out = await self._write_phase_persist(ctx, session)
 
             if self._auto_compile:
-                await self.compile_postings(session)
+                await self.compile(session)
 
         except _WriteAbort as abort:
             await session.rollback()
@@ -2324,7 +2354,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         if target >= _AUTO_INDEX_LEVELS["encode"]:
             await self.encode(session=session)
         if target >= _AUTO_INDEX_LEVELS["compile"]:
-            await self.compile_postings(session)
+            await self.compile(session)
 
     async def encode(
         self,
@@ -2342,7 +2372,7 @@ class DatabaseFileSystem(VirtualFileSystem):
         failure or vector-count mismatch aborts before any DB mutation.
 
         The staged deltas are folded into the posting list separately by
-        :meth:`compile_postings`, which resolves a new chunk's ``doc_id`` and so
+        :meth:`compile`, which resolves a new chunk's ``doc_id`` and so
         must run after persist.
         """
         if ctx is None:
