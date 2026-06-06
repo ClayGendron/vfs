@@ -181,8 +181,8 @@ class VFSPath(str):
     path (null byte, control char, over-long segment/path). Non-canonical input is
     *canonicalized*, not rejected: ``VFSPath("/a/../b") == "/b"``.
 
-    Validates *structure only*. Whether a path is a legal write target is a
-    separate concern in ``resolve_path(mutation=True)``, never on this type.
+    Validates if path can exist within VFS based on *structure only*. Whether a path
+    is a legal write target is a separate concern in ``resolve_path(mutation=True)``.
 
     Derived strings (slicing, ``+``, ``.lstrip``) return plain ``str`` — the badge
     is intentionally not inherited. Re-mint via ``parent_dir`` / ``parent_file`` /
@@ -329,14 +329,6 @@ def normalize_path(path: str) -> str:
     return "/" + "/".join(resolved)
 
 
-def split_path(path: str) -> tuple[str, str]:
-    """Split a normalized path into ``(directory, name)``."""
-    path = normalize_path(path)
-    if path == "/":
-        return "/", ""
-    return posixpath.split(path)
-
-
 def validate_path(path: str) -> tuple[bool, str]:
     """Check the structural correctness of a path, returning ``(ok, reason)``.
 
@@ -425,10 +417,12 @@ class _EdgePathParts(NamedTuple):
     embedded_path: str
 
 
-def decompose_edge(path: str) -> EdgeParts | None:
-    """Extract source, target, type, and direction from an edge path."""
-    normalized = normalize_path(path)
-    split = _split_edge_path(normalized)
+def decompose_edge(path: VFSPath) -> EdgeParts | None:
+    """Extract source, target, type, and direction from an edge path.
+
+    Takes a canonical :class:`VFSPath` and does not re-normalize.
+    """
+    split = _split_edge_path(path)
     if split is None:
         return None
 
@@ -453,14 +447,6 @@ def decompose_edge(path: str) -> EdgeParts | None:
 # ---------------------------------------------------------------------------
 
 
-def is_meta_path(path: VFSPath) -> bool:
-    """Return whether *path* lies within the reserved ``/.vfs`` tree.
-
-    Takes a canonical :class:`VFSPath` and does not re-normalize.
-    """
-    return _under_meta_root(path)
-
-
 def compute_parent_file(path: VFSPath) -> VFSPath | None:
     """Return the owning file for a chunk, version, or edge meta path, else ``None``.
 
@@ -479,55 +465,7 @@ def compute_parent_file(path: VFSPath) -> VFSPath | None:
 
 def compute_parent_dir(path: VFSPath) -> VFSPath:
     """Return the literal parent directory used by the projected namespace."""
-    return VFSPath(split_path(path)[0])
-
-
-def check_mutable_path(path: VFSPath, *, kind: str | None = None) -> tuple[bool, str]:
-    """Check that *path* is a mutable target, returning ``(ok, reason)``.
-
-    A namespace-grammar check, not a permission check: ordinary paths are valid
-    targets, but the reserved ``/.vfs`` tree admits mutations only at the
-    machine-authored endpoint shapes (chunks, versions, canonical out-edges)
-    and the reserved directory skeleton — never arbitrary content,
-    inverse-edge projections, or the roots. Takes a :class:`VFSPath`, which is
-    canonical by construction — so ``/.vfs/..`` cannot reach here as anything
-    other than the ``/`` it normalizes to.
-
-    Two adjacent concerns live elsewhere: whether the caller *may* mutate
-    (principal permissions), and whether a kind's dependents are minted
-    correctly (e.g. a chunk arriving with its file + version) — the latter is
-    the entry-creation chokepoint's job, not this path check's.
-    """
-    if path == "/":
-        return False, "Cannot mutate root path"
-
-    if not is_meta_path(path):
-        return True, ""
-
-    if path == METADATA_ROOT:
-        return False, "Cannot mutate reserved metadata root '/.vfs'"
-
-    inferred_kind = kind or path.kind
-    if inferred_kind in {"chunk", "version"}:
-        return True, ""
-    if inferred_kind == "edge":
-        edge = decompose_edge(path)
-        if edge is None or edge.direction == "out":
-            return True, ""
-        return False, "Cannot write directly to inverse edge paths; write the canonical edges/out path instead"
-
-    if _is_reserved_metadata_directory(path):
-        return True, ""
-
-    if path.startswith(METADATA_ROOT + "/") and f"/{META_SEGMENT}/" not in path:
-        return False, f"Cannot create arbitrary content in reserved metadata space: {path}"
-
-    return False, f"Cannot create arbitrary content in reserved metadata space: {path}"
-
-
-# ---------------------------------------------------------------------------
-# Kind detection
-# ---------------------------------------------------------------------------
+    return split_path(path)[0]
 
 
 def parse_kind(path: VFSPath) -> ObjectKind:
@@ -583,6 +521,70 @@ def extract_extension(path: VFSPath) -> str | None:
     if not ext or len(ext) > 32:
         return None
     return ext
+
+
+def split_path(path: VFSPath) -> tuple[VFSPath, str]:
+    """Split a path into ``(directory, name)``, the directory re-minted as ``VFSPath``.
+
+    Normalizes first so the split applies to the canonical form. The name is a
+    leaf segment (plain ``str``); the directory is re-gated through ``VFSPath``.
+    """
+    path = normalize_path(path)
+    if path == "/":
+        return VFSPath("/"), ""
+    directory, name = posixpath.split(path)
+    return VFSPath(directory), name
+
+
+def is_meta_path(path: VFSPath) -> bool:
+    """Return whether *path* lies within the reserved ``/.vfs`` tree.
+
+    Takes a canonical :class:`VFSPath` and does not re-normalize.
+    """
+    return _under_meta_root(path)
+
+
+def check_mutable_path(path: VFSPath, *, kind: str | None = None) -> tuple[bool, str]:
+    """Check that *path* is a mutable target, returning ``(ok, reason)``.
+
+    A namespace-grammar check, not a permission check: ordinary paths are valid
+    targets, but the reserved ``/.vfs`` tree admits mutations only at the
+    machine-authored endpoint shapes (chunks, versions, canonical out-edges)
+    and the reserved directory skeleton — never arbitrary content,
+    inverse-edge projections, or the roots. Takes a :class:`VFSPath`, which is
+    canonical by construction — so ``/.vfs/..`` cannot reach here as anything
+    other than the ``/`` it normalizes to.
+
+    Two adjacent concerns live elsewhere: whether the caller *may* mutate
+    (principal permissions), and whether a kind's dependents are minted
+    correctly (e.g. a chunk arriving with its file + version) — the latter is
+    the entry-creation chokepoint's job, not this path check's.
+    """
+    if path == "/":
+        return False, "Cannot mutate root path"
+
+    if not is_meta_path(path):
+        return True, ""
+
+    if path == METADATA_ROOT:
+        return False, "Cannot mutate reserved metadata root '/.vfs'"
+
+    inferred_kind = kind or path.kind
+    if inferred_kind in {"chunk", "version"}:
+        return True, ""
+    if inferred_kind == "edge":
+        edge = decompose_edge(path)
+        if edge is None or edge.direction == "out":
+            return True, ""
+        return False, "Cannot write directly to inverse edge paths; write the canonical edges/out path instead"
+
+    if _is_reserved_metadata_directory(path):
+        return True, ""
+
+    if path.startswith(METADATA_ROOT + "/") and f"/{META_SEGMENT}/" not in path:
+        return False, f"Cannot create arbitrary content in reserved metadata space: {path}"
+
+    return False, f"Cannot create arbitrary content in reserved metadata space: {path}"
 
 
 # ---------------------------------------------------------------------------
