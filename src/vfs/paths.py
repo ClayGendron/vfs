@@ -524,12 +524,7 @@ def extract_extension(path: VFSPath) -> str | None:
 
 
 def split_path(path: VFSPath) -> tuple[VFSPath, str]:
-    """Split a path into ``(directory, name)``, the directory re-minted as ``VFSPath``.
-
-    Normalizes first so the split applies to the canonical form. The name is a
-    leaf segment (plain ``str``); the directory is re-gated through ``VFSPath``.
-    """
-    path = normalize_path(path)
+    """Split a path into ``(directory, name)``, the directory re-minted as ``VFSPath``."""
     if path == "/":
         return VFSPath("/"), ""
     directory, name = posixpath.split(path)
@@ -590,6 +585,79 @@ def check_mutable_path(path: VFSPath, *, kind: str | None = None) -> tuple[bool,
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _forbidden_char_reason(text: str) -> str | None:
+    """Return why *text* contains a forbidden code point, or ``None`` if clean.
+
+    Shared by :func:`validate_path` and :func:`_validate_name` so a whole path and
+    a single name segment reject the same null/control/surrogate/format characters.
+    """
+    if "\x00" in text:
+        return "null bytes"
+    for ch in text:
+        code = ord(ch)
+        if (0x01 <= code <= 0x1F) or code == 0x7F or (0x80 <= code <= 0x9F):
+            return f"control character: U+{code:04X}"
+        if 0xD800 <= code <= 0xDFFF:
+            return f"lone surrogate: U+{code:04X}"
+        if code in _FORBIDDEN_FORMAT_CHARS:
+            return f"disallowed format/bidi character: U+{code:04X}"
+    return None
+
+
+def _under_meta_root(value: str) -> bool:
+    """Whether a *canonical* string lies in the reserved ``/.vfs`` tree.
+
+    The normalization-free str primitive behind :func:`is_meta_path`, also used
+    by the internal parsing layer (which holds canonical-but-unbranded slices).
+    """
+    return value == METADATA_ROOT or value.startswith(METADATA_ROOT + "/")
+
+
+def _is_canonical_version(value: str) -> bool:
+    """Whether *value* is a canonical positive-integer segment (no leading zeros)."""
+    return value.isascii() and value.isdigit() and value == str(int(value)) and int(value) >= 1
+
+
+def _meta_grammar_reason(path: str) -> str | None:
+    """Reason a ``/.vfs`` path violates the metadata grammar, or ``None`` if valid.
+
+    Valid forms are the skeleton directories above an endpoint and the complete
+    endpoints: ``chunks/<int>/<name>``, ``versions/<int>``, and
+    ``edges/<out|in>/<type>/<target...>``. Endpoints are terminal (chunks and
+    versions admit no descendants); versions are canonical positive integers.
+    Edges keep a multi-segment target, so the tail past ``<type>`` is opaque. A
+    meta frame must have a non-empty owner before it.
+    """
+    segments = [segment for segment in path[len(METADATA_ROOT) :].split("/") if segment]
+    if META_SEGMENT not in segments:
+        return None  # an owner directory above the frame (or /.vfs itself)
+    frame_pos = segments.index(META_SEGMENT)
+    if frame_pos == 0:
+        return f"Metadata path requires an owner before '{META_SEGMENT}'"
+    tail = segments[frame_pos + 1 :]
+    if not tail:
+        return None  # a bare '.../__meta__' reserved directory
+    family, rest = tail[0], tail[1:]
+
+    if family == "chunks":
+        if rest and not _is_canonical_version(rest[0]):
+            return f"Chunk version must be a positive integer: '{rest[0]}'"
+        if len(rest) > 2:
+            return f"Chunk endpoints have no descendants: {path}"
+        return None
+    if family == "versions":
+        if rest and not _is_canonical_version(rest[0]):
+            return f"Version must be a positive integer: '{rest[0]}'"
+        if len(rest) > 1:
+            return f"Version endpoints have no descendants: {path}"
+        return None
+    if family == "edges":
+        if rest and rest[0] not in EDGE_DIRECTION_SET:
+            return f"Edge direction must be 'out' or 'in': '{rest[0]}'"
+        return None
+    return f"Unknown metadata family '{family}' under {META_SEGMENT}"
 
 
 def _validate_name(value: str, label: str) -> str:
@@ -704,23 +772,6 @@ def _split_edge_path(path: str) -> _EdgePathParts | None:
     )
 
 
-def _canonical_endpoint_path(path: str) -> str:
-    """Return the canonical endpoint represented by *path*."""
-    normalized = normalize_path(path)
-    if not _under_meta_root(normalized):
-        return normalized
-    if normalized == METADATA_ROOT:
-        msg = "Reserved metadata root is not a canonical endpoint"
-        raise ValueError(msg)
-
-    nested = _split_nested_endpoint(normalized)
-    if nested is not None:
-        return nested
-
-    stripped = normalized[len(METADATA_ROOT) :]
-    return stripped
-
-
 def _split_nested_endpoint(path: str) -> str | None:
     """Return the chunk/version endpoint root if *path* lies within one.
 
@@ -741,94 +792,21 @@ def _split_nested_endpoint(path: str) -> str | None:
     return None
 
 
-def _meta_family_tail(path: str, family: str) -> list[str] | None:
-    """Return the non-empty segments after ``/__meta__/<family>/``, or ``None``.
+def _canonical_endpoint_path(path: str) -> str:
+    """Return the canonical endpoint represented by *path*."""
+    normalized = normalize_path(path)
+    if not _under_meta_root(normalized):
+        return normalized
+    if normalized == METADATA_ROOT:
+        msg = "Reserved metadata root is not a canonical endpoint"
+        raise ValueError(msg)
 
-    Used to gauge endpoint completeness (a chunk needs ``<version>/<name>``).
-    """
-    marker = f"/{META_SEGMENT}/{family}/"
-    idx = path.find(marker)
-    if idx < 0:
-        return None
-    tail = path[idx + len(marker) :]
-    return [segment for segment in tail.split("/") if segment]
+    nested = _split_nested_endpoint(normalized)
+    if nested is not None:
+        return nested
 
-
-def _forbidden_char_reason(text: str) -> str | None:
-    """Return why *text* contains a forbidden code point, or ``None`` if clean.
-
-    Shared by :func:`validate_path` and :func:`_validate_name` so a whole path and
-    a single name segment reject the same null/control/surrogate/format characters.
-    """
-    if "\x00" in text:
-        return "null bytes"
-    for ch in text:
-        code = ord(ch)
-        if (0x01 <= code <= 0x1F) or code == 0x7F or (0x80 <= code <= 0x9F):
-            return f"control character: U+{code:04X}"
-        if 0xD800 <= code <= 0xDFFF:
-            return f"lone surrogate: U+{code:04X}"
-        if code in _FORBIDDEN_FORMAT_CHARS:
-            return f"disallowed format/bidi character: U+{code:04X}"
-    return None
-
-
-def _under_meta_root(value: str) -> bool:
-    """Whether a *canonical* string lies in the reserved ``/.vfs`` tree.
-
-    The normalization-free str primitive behind :func:`is_meta_path`, also used
-    by the internal parsing layer (which holds canonical-but-unbranded slices).
-    """
-    return value == METADATA_ROOT or value.startswith(METADATA_ROOT + "/")
-
-
-def _is_canonical_version(value: str) -> bool:
-    """Whether *value* is a canonical positive-integer segment (no leading zeros)."""
-    return value.isascii() and value.isdigit() and value == str(int(value)) and int(value) >= 1
-
-
-def _meta_grammar_reason(path: str) -> str | None:
-    """Reason a ``/.vfs`` path violates the metadata grammar, or ``None`` if valid.
-
-    Valid forms are the skeleton directories above an endpoint and the complete
-    endpoints: ``chunks/<int>/<name>``, ``versions/<int>``, and
-    ``edges/<out|in>/<type>/<target...>``. Endpoints are terminal (chunks and
-    versions admit no descendants); versions are canonical positive integers.
-    Edges keep a multi-segment target, so the tail past ``<type>`` is opaque. A
-    meta frame must have a non-empty owner before it.
-    """
-    segments = [segment for segment in path[len(METADATA_ROOT) :].split("/") if segment]
-    if META_SEGMENT not in segments:
-        return None  # an owner directory above the frame (or /.vfs itself)
-    frame_pos = segments.index(META_SEGMENT)
-    if frame_pos == 0:
-        return f"Metadata path requires an owner before '{META_SEGMENT}'"
-    tail = segments[frame_pos + 1 :]
-    if not tail:
-        return None  # a bare '.../__meta__' reserved directory
-    family, rest = tail[0], tail[1:]
-
-    if family == "chunks":
-        if rest and not _is_canonical_version(rest[0]):
-            return f"Chunk version must be a positive integer: '{rest[0]}'"
-        if len(rest) > 2:
-            return f"Chunk endpoints have no descendants: {path}"
-        return None
-    if family == "versions":
-        if rest and not _is_canonical_version(rest[0]):
-            return f"Version must be a positive integer: '{rest[0]}'"
-        if len(rest) > 1:
-            return f"Version endpoints have no descendants: {path}"
-        return None
-    if family == "edges":
-        if rest and rest[0] not in EDGE_DIRECTION_SET:
-            return f"Edge direction must be 'out' or 'in': '{rest[0]}'"
-        return None
-    return f"Unknown metadata family '{family}' under {META_SEGMENT}"
-
-
-def _is_projected_edge_path(path: str) -> bool:
-    return _split_edge_path(path) is not None
+    stripped = normalized[len(METADATA_ROOT) :]
+    return stripped
 
 
 def _is_reserved_metadata_directory(path: str) -> bool:
@@ -844,3 +822,20 @@ def _is_reserved_metadata_directory(path: str) -> bool:
         f"/{META_SEGMENT}/edges/in",
     )
     return any(path.endswith(suffix) for suffix in reserved_suffixes)
+
+
+def _meta_family_tail(path: str, family: str) -> list[str] | None:
+    """Return the non-empty segments after ``/__meta__/<family>/``, or ``None``.
+
+    Used to gauge endpoint completeness (a chunk needs ``<version>/<name>``).
+    """
+    marker = f"/{META_SEGMENT}/{family}/"
+    idx = path.find(marker)
+    if idx < 0:
+        return None
+    tail = path[idx + len(marker) :]
+    return [segment for segment in tail.split("/") if segment]
+
+
+def _is_projected_edge_path(path: str) -> bool:
+    return _split_edge_path(path) is not None
