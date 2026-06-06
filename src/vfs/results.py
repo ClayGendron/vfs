@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
-from vfs.paths import split_path, unscope_path
+from vfs.paths import split_path
 
 _T = TypeVar("_T")
 
@@ -410,10 +410,11 @@ class VFSResult(BaseModel):
         return self
 
     def strip_user_scope(self, user_id: str) -> VFSResult:
-        """Strip the ``/{user_id}`` prefix (and any embedded target prefix) from paths."""
-        return self._with_candidates(
-            [c.model_copy(update={"path": unscope_path(c.path, user_id)}) for c in self.candidates],
-        )
+        """No-op: user-scoping was dropped (one global namespace + permission layer).
+
+        Retained as a stub until the scoping rip-out removes the call sites.
+        """
+        return self
 
     def sort(
         self,
