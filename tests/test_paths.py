@@ -12,9 +12,6 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from vfs.paths import (
-    MARKER_KINDS,
-    METADATA_KIND_MAP,
-    METADATA_MARKERS,
     METADATA_ROOT,
     EdgeParts,
     ResolvedPath,
@@ -421,14 +418,26 @@ class TestVFSPath:
     def test_is_mutable_target_matches_helper(self, path):
         assert VFSPath(path).is_mutable_target == check_mutable_path(VFSPath(path))[0]
 
-    def test_join_canonicalizes(self):
-        assert VFSPath("/a").join("b", "c") == "/a/b/c"
+    def test_joinpath_canonicalizes(self):
+        assert VFSPath("/a").joinpath("b", "c") == "/a/b/c"
 
-    def test_join_collapses_dotdot(self):
-        assert VFSPath("/a/b").join("..", "c") == "/a/c"
+    def test_joinpath_collapses_dotdot(self):
+        assert VFSPath("/a/b").joinpath("..", "c") == "/a/c"
 
-    def test_join_returns_vfspath(self):
-        assert isinstance(VFSPath("/a").join("b"), VFSPath)
+    def test_joinpath_absolute_segment_resets(self):
+        assert VFSPath("/a/b").joinpath("/c") == "/c"
+
+    def test_joinpath_returns_vfspath(self):
+        assert isinstance(VFSPath("/a").joinpath("b"), VFSPath)
+
+    def test_truediv_joins_single_segment(self):
+        result = VFSPath("/a") / "b"
+        assert result == "/a/b"
+        assert isinstance(result, VFSPath)
+
+    def test_str_join_is_not_shadowed(self):
+        # ``join`` keeps separator semantics: VFSPath is the separator here.
+        assert VFSPath("/").join(["a", "b"]) == "a/b"
 
     def test_pydantic_field_validates_coerces_and_serializes(self):
         class M(BaseModel):
@@ -746,29 +755,6 @@ class TestDecomposeEdge:
         assert result[1] == result.target
         assert result[2] == result.edge_type
         assert result[3] == result.direction
-
-
-# =========================================================================
-# Derived constants
-# =========================================================================
-
-
-class TestConstants:
-    def test_metadata_kind_map_uses_canonical_families(self):
-        assert METADATA_KIND_MAP == {
-            "chunks": "chunk",
-            "versions": "version",
-            "edges": "edge",
-        }
-
-    def test_marker_kinds_cover_projected_metadata_markers(self):
-        assert MARKER_KINDS["/__meta__/chunks/"] == "chunk"
-        assert MARKER_KINDS["/__meta__/versions/"] == "version"
-        assert MARKER_KINDS["/__meta__/edges/out/"] == "edge"
-        assert MARKER_KINDS["/__meta__/edges/in/"] == "edge"
-
-    def test_metadata_markers_match_marker_keys(self):
-        assert tuple(MARKER_KINDS.keys()) == METADATA_MARKERS
 
 
 # =========================================================================

@@ -32,27 +32,11 @@ class EdgeParts(NamedTuple):
 
 
 ObjectKind = Literal["file", "directory", "chunk", "version", "edge"]
-MetadataKind = Literal["chunks", "versions", "edges"]
 
 METADATA_ROOT = "/.vfs"
 META_SEGMENT = "__meta__"
 EDGE_DIRECTIONS = ("out", "in")
 EDGE_DIRECTION_SET = frozenset(EDGE_DIRECTIONS)
-
-METADATA_KIND_MAP: dict[MetadataKind, ObjectKind] = {
-    "chunks": "chunk",
-    "versions": "version",
-    "edges": "edge",
-}
-
-MARKER_KINDS: dict[str, ObjectKind] = {
-    "/__meta__/chunks/": "chunk",
-    "/__meta__/versions/": "version",
-    "/__meta__/edges/out/": "edge",
-    "/__meta__/edges/in/": "edge",
-}
-
-METADATA_MARKERS = tuple(MARKER_KINDS.keys())
 
 EXTENSIONLESS_FILES = frozenset(
     {
@@ -186,7 +170,7 @@ class VFSPath(str):
 
     Derived strings (slicing, ``+``, ``.lstrip``) return plain ``str`` — the badge
     is intentionally not inherited. Re-mint via ``parent_dir`` / ``parent_file`` /
-    ``join`` / ``resolve_path`` when you need it back.
+    ``joinpath`` / ``resolve_path`` when you need it back.
     """
 
     __slots__ = ()
@@ -248,13 +232,19 @@ class VFSPath(str):
         ok, _ = check_mutable_path(self)
         return ok
 
-    def join(self, *parts: str) -> VFSPath:  # ty: ignore[invalid-method-override]
-        """Join and re-canonicalize through the gate (parts may add ``..``).
+    def joinpath(self, *segments: str) -> VFSPath:
+        """Combine this path with one or more segments, re-gating the result.
 
-        Deliberately shadows ``str.join`` with path-join semantics — a ``VFSPath``
-        is a path handle first, a string second.
+        Mirrors :meth:`pathlib.PurePath.joinpath`: relative segments extend the
+        path; an absolute segment resets it. ``str.join`` is left untouched —
+        joining is named, not bolted onto the separator method. Also available as
+        the ``/`` operator for a single segment.
         """
-        return VFSPath(posixpath.join(self, *parts))
+        return VFSPath(posixpath.join(self, *segments))
+
+    def __truediv__(self, segment: str) -> VFSPath:
+        """``path / "sub"`` — pathlib-style sugar for joining one segment."""
+        return self.joinpath(segment)
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -262,7 +252,7 @@ class VFSPath(str):
         source_type: type,
         handler: GetCoreSchemaHandler,
     ) -> CoreSchema:
-        # Validate-and-coerce at model boundaries; serialize back to a plain str.
+        # Validate-and-coerce str to VFSPath at model boundaries; the str subclass serializes as-is.
         return core_schema.no_info_after_validator_function(
             cls,
             core_schema.str_schema(),
@@ -311,8 +301,10 @@ def normalize_path(path: str) -> str:
 
     A pure, idempotent, single-pass transform: NFC-folds Unicode, makes the path
     absolute, strips per-segment whitespace, and drops empty/``.`` segments while
-    resolving ``..`` (clamped at the root). Always returns a normalized path;
-    structural rejection is the separate job of :func:`validate_path`.
+    resolving ``..`` (clamped at the root). Surrounding whitespace on a segment is
+    insignificant, so ``/a/ b `` and ``/a/b`` collapse to the same canonical path.
+    Always returns a normalized path; structural rejection is the separate job of
+    :func:`validate_path`.
     """
     if not path:
         return "/"
@@ -575,9 +567,6 @@ def check_mutable_path(path: VFSPath, *, kind: str | None = None) -> tuple[bool,
 
     if _is_reserved_metadata_directory(path):
         return True, ""
-
-    if path.startswith(METADATA_ROOT + "/") and f"/{META_SEGMENT}/" not in path:
-        return False, f"Cannot create arbitrary content in reserved metadata space: {path}"
 
     return False, f"Cannot create arbitrary content in reserved metadata space: {path}"
 
