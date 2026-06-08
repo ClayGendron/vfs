@@ -1,12 +1,15 @@
-"""Path utilities for VFS's ``/.vfs/.../__meta__/...`` namespace.
+"""Canonical paths for the VFS namespace.
 
-The canonical metadata layout is rooted at ``/.vfs`` and mirrors the
-logical user path before crossing a reserved ``__meta__`` boundary.
+Every caller-supplied path enters through the gate — :class:`VFSPath` (or
+:func:`resolve_path` for a non-raising result) — which normalizes and validates
+it into a canonical form safe to route and store. The metadata layout is rooted
+at ``/.vfs`` and mirrors the logical user path before crossing a reserved
+``__meta__`` boundary; chunks are version-addressed.
 
 Examples:
 
     /src/auth.py                                              file
-    /.vfs/src/auth.py/__meta__/chunks/login                   chunk
+    /.vfs/src/auth.py/__meta__/chunks/3/login                 chunk
     /.vfs/src/auth.py/__meta__/versions/3                     version
     /.vfs/src/auth.py/__meta__/edges/out/imports/src/util.py  edge
 """
@@ -22,13 +25,6 @@ from pydantic_core import core_schema
 if TYPE_CHECKING:
     from pydantic import GetCoreSchemaHandler
     from pydantic_core import CoreSchema
-
-
-class EdgeParts(NamedTuple):
-    source: str
-    target: str
-    edge_type: str
-    direction: Literal["out", "in"]
 
 
 ObjectKind = Literal["file", "directory", "chunk", "version", "edge"]
@@ -400,6 +396,13 @@ def edge_in_path(source: VFSPath, target: VFSPath, edge_type: str) -> VFSPath:
 # ---------------------------------------------------------------------------
 # Path decomposition
 # ---------------------------------------------------------------------------
+
+
+class EdgeParts(NamedTuple):
+    source: str
+    target: str
+    edge_type: str
+    direction: Literal["out", "in"]
 
 
 class _EdgePathParts(NamedTuple):

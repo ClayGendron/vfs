@@ -31,6 +31,39 @@ those fundamentals are heading, not against keeping the whole tree green.
   top (under a top-level `if TYPE_CHECKING:` block). A real import cycle is a
   structural problem to fix, not to paper over with a deferred import.
 
+## File organization
+
+Lay every module out top-to-bottom in this order:
+
+1. **Module docstring** — what the module is for, with a short example when the
+   shape isn't obvious.
+2. **`from __future__ import annotations`**, then **imports** — stdlib, then
+   third-party, then a trailing `if TYPE_CHECKING:` block (see *Imports* above).
+3. **Module constants and shared types** — type aliases (`ObjectKind`), small
+   `NamedTuple` types used across the module (`EdgeParts`), and hard-coded
+   values (`METADATA_ROOT`, frozensets). A derived or private constant
+   (`_EXTENSIONLESS_FILES_LOWER`) sits directly under the public name it comes
+   from, not down in the helpers.
+4. **Public API, grouped by concern.** Introduce each group with a three-line
+   banner comment:
+
+   ```python
+   # ---------------------------------------------------------------------------
+   # Normalization and validation
+   # ---------------------------------------------------------------------------
+   ```
+
+   Order groups by the flow a caller follows (gate → normalize/validate →
+   construct → decompose → query). A private type bound to a single group
+   (`_EdgePathParts`) lives in that group, beside its user.
+5. **Internal helpers last** — one trailing `# Internal helpers` banner holding
+   the private `_`-prefixed functions, ordered roughly by first use. This keeps
+   the public surface up top and the plumbing out of the way.
+
+The split is by visibility and concern, not by kind: public functions live with
+the section they serve; only private *functions* are deferred to the end —
+private *types and constants* stay next to what they support.
+
 ## Code comments
 
 - Keep comments concise (1–2 lines). State the what/why directly.
