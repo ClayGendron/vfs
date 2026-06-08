@@ -203,6 +203,24 @@ class VFSPath(str):
         return compute_parent_file(self)
 
     @property
+    def source_file(self) -> VFSPath | None:
+        """Edge tail endpoint for an edge path, else ``None``.
+
+        Same derivation as ``VFSEntry.source_file``.
+        """
+        parts = decompose_edge(self)
+        return parts.source if parts is not None else None
+
+    @property
+    def target_file(self) -> VFSPath | None:
+        """Edge head endpoint for an edge path, else ``None``.
+
+        Same derivation as ``VFSEntry.target_file``.
+        """
+        parts = decompose_edge(self)
+        return parts.target if parts is not None else None
+
+    @property
     def name(self) -> str:
         """Leaf segment (mirrors ``VFSEntry.name``)."""
         return split_path(self)[1]
@@ -399,8 +417,8 @@ def edge_in_path(source: VFSPath, target: VFSPath, edge_type: str) -> VFSPath:
 
 
 class EdgeParts(NamedTuple):
-    source: str
-    target: str
+    source: VFSPath
+    target: VFSPath
     edge_type: str
     direction: Literal["out", "in"]
 
@@ -421,16 +439,19 @@ def decompose_edge(path: VFSPath) -> EdgeParts | None:
     if split is None:
         return None
 
-    owner = _canonical_endpoint_path(split.owner_root)
+    # Re-gate both endpoints through the public constructor; branding is
+    # reserved for resolve_path and db-load.
+    owner = VFSPath(_canonical_endpoint_path(split.owner_root))
+    embedded = VFSPath(split.embedded_path)
     if split.direction == "out":
         return EdgeParts(
             source=owner,
-            target=split.embedded_path,
+            target=embedded,
             edge_type=split.edge_type,
             direction="out",
         )
     return EdgeParts(
-        source=split.embedded_path,
+        source=embedded,
         target=owner,
         edge_type=split.edge_type,
         direction="in",
