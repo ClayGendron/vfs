@@ -380,6 +380,28 @@ class TestVFSPath:
         assert isinstance(result, VFSPath)
 
     @pytest.mark.parametrize(
+        "path",
+        [
+            "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py",
+            "/.vfs/src/auth.py/__meta__/edges/in/imports/src/utils.py",
+        ],
+    )
+    def test_source_target_file_match_decompose(self, path):
+        parts = decompose_edge(VFSPath(path))
+        assert parts is not None
+        source = VFSPath(path).source_file
+        target = VFSPath(path).target_file
+        assert source == parts.source
+        assert target == parts.target
+        assert isinstance(source, VFSPath)
+        assert isinstance(target, VFSPath)
+
+    def test_source_target_file_none_for_non_edge(self):
+        for path in ("/src/auth.py", "/.vfs/src/auth.py/__meta__/versions/3"):
+            assert VFSPath(path).source_file is None
+            assert VFSPath(path).target_file is None
+
+    @pytest.mark.parametrize(
         "path,name",
         [("/src/auth.py", "auth.py"), ("/", ""), ("/a", "a")],
     )
@@ -456,6 +478,124 @@ class TestVFSPath:
 
         with pytest.raises(ValidationError):
             M(p="/a\x00b")
+
+
+# =========================================================================
+# VFSPath.with_mount / without_mount  (routing rebase)
+# =========================================================================
+
+
+class TestVFSPathMount:
+    # --- with_mount: local -> global ---
+
+    def test_with_mount_simple(self):
+        assert VFSPath("/bar.py").with_mount("/mnt/foo") == "/mnt/foo/bar.py"
+
+    def test_with_mount_nested(self):
+        assert VFSPath("/a/b/c").with_mount("/mnt") == "/mnt/a/b/c"
+
+    def test_with_mount_root_local_maps_to_mount(self):
+        assert VFSPath("/").with_mount("/mnt/foo") == "/mnt/foo"
+
+    def test_with_mount_root_mount_is_identity(self):
+        assert VFSPath("/bar.py").with_mount("/") == "/bar.py"
+
+    def test_with_mount_empty_mount_is_identity(self):
+        # "" canonicalizes to "/", so an empty mount is the root identity.
+        assert VFSPath("/bar.py").with_mount("") == "/bar.py"
+
+    def test_with_mount_returns_vfspath(self):
+        assert isinstance(VFSPath("/bar.py").with_mount("/mnt"), VFSPath)
+
+    # --- without_mount: global -> local ---
+
+    def test_without_mount_simple(self):
+        assert VFSPath("/mnt/foo/bar.py").without_mount("/mnt/foo") == "/bar.py"
+
+    def test_without_mount_nested(self):
+        assert VFSPath("/mnt/a/b/c").without_mount("/mnt") == "/a/b/c"
+
+    def test_without_mount_exact_match_collapses_to_root(self):
+        assert VFSPath("/mnt/foo").without_mount("/mnt/foo") == "/"
+
+    def test_without_mount_root_mount_is_identity(self):
+        assert VFSPath("/mnt/foo/bar.py").without_mount("/") == "/mnt/foo/bar.py"
+
+    def test_without_mount_returns_vfspath(self):
+        assert isinstance(VFSPath("/mnt/foo/bar.py").without_mount("/mnt"), VFSPath)
+
+    @pytest.mark.parametrize(
+        ("path", "mount"),
+        [
+            ("/mnt/foobar/x", "/mnt/foo"),  # sibling sharing a name prefix
+            ("/ab", "/a"),  # one-level non-boundary prefix
+            ("/a/bc/d", "/a/b"),  # deeper non-boundary prefix
+            ("/other/x", "/mnt/foo"),  # unrelated subtree
+            ("/mnt/fo", "/mnt/foo"),  # mount longer than path
+        ],
+    )
+    def test_without_mount_rejects_non_boundary_prefix(self, path, mount):
+        with pytest.raises(ValueError, match="is not within mount"):
+            VFSPath(path).without_mount(mount)
+
+    # --- mount canonicalization: all forms behave identically ---
+
+    @pytest.mark.parametrize(
+        "mount",
+        ["/mnt/foo", "/mnt/foo/", "mnt/foo", "//mnt//foo", "/mnt/x/../foo", "/mnt/./foo"],
+    )
+    def test_with_mount_canonicalizes_mount(self, mount):
+        assert VFSPath("/bar.py").with_mount(mount) == "/mnt/foo/bar.py"
+
+    @pytest.mark.parametrize(
+        "mount",
+        ["/mnt/foo", "/mnt/foo/", "mnt/foo", "//mnt//foo", "/mnt/x/../foo", "/mnt/./foo"],
+    )
+    def test_without_mount_canonicalizes_mount(self, mount):
+        assert VFSPath("/mnt/foo/bar.py").without_mount(mount) == "/bar.py"
+
+    @pytest.mark.parametrize(
+        "mount",
+        ["/", "/x/..", "/../..", ""],
+    )
+    def test_mounts_that_canonicalize_to_root_are_identity(self, mount):
+        p = VFSPath("/mnt/foo/bar.py")
+        assert p.with_mount(mount) == p
+        assert p.without_mount(mount) == p
+
+    # --- round-trip invariant: with_mount then without_mount is identity ---
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/bar.py",
+            "/",
+            "/a/b/c",
+            "/.vfs/src/auth.py/__meta__/chunks/1/0_5",
+            "/Makefile",
+        ],
+    )
+    @pytest.mark.parametrize("mount", ["/mnt", "/mnt/foo", "/deep/mount/point"])
+    def test_roundtrip_with_then_without(self, path, mount):
+        p = VFSPath(path)
+        assert p.with_mount(mount).without_mount(mount) == p
+
+    def test_roundtrip_without_then_with(self):
+        # Exact-match path collapses to "/" then re-expands to the mount.
+        p = VFSPath("/mnt/foo")
+        assert p.without_mount("/mnt/foo").with_mount("/mnt/foo") == p
+
+    # --- invalid mount argument raises a clean ValueError ---
+
+    @pytest.mark.parametrize("mount", [123, None, b"/mnt", ["/mnt"], "/m\x00nt"])
+    def test_with_mount_invalid_mount_raises_valueerror(self, mount):
+        with pytest.raises(ValueError):
+            VFSPath("/bar.py").with_mount(mount)
+
+    @pytest.mark.parametrize("mount", [123, None, b"/mnt", ["/mnt"], "/m\x00nt"])
+    def test_without_mount_invalid_mount_raises_valueerror(self, mount):
+        with pytest.raises(ValueError):
+            VFSPath("/mnt/foo/bar.py").without_mount(mount)
 
 
 # =========================================================================

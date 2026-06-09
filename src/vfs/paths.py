@@ -260,6 +260,36 @@ class VFSPath(str):
         """``path / "sub"`` — pathlib-style sugar for joining one segment."""
         return self.joinpath(segment)
 
+    def with_mount(self, mount: str) -> VFSPath:
+        """Re-root this mount-local path under *mount* (local → global).
+
+        The outbound half of routing; inverse of :meth:`without_mount`. *mount*
+        is gated first, so ``/mnt/foo/`` and ``mnt/foo`` behave alike; a root
+        mount is the identity.
+        """
+        mount = VFSPath(mount)
+        if mount == "/":
+            return self
+        return mount if self == "/" else mount.joinpath(self[1:])
+
+    def without_mount(self, mount: str) -> VFSPath:
+        """Strip the leading *mount* prefix (global → local).
+
+        The inbound half of routing; inverse of :meth:`with_mount`. *mount* is
+        gated first; the match is boundary-aware (``/mnt/foo`` is not within
+        ``/mnt/foobar``); a root mount is the identity. Raises if this path is
+        not under *mount* — that is a routing bug, not a slice.
+        """
+        mount = VFSPath(mount)
+        if mount == "/":
+            return self
+        if self == mount:
+            return VFSPath("/")
+        if not self.startswith(mount + "/"):
+            msg = f"Path {self!r} is not within mount {mount!r}"
+            raise ValueError(msg)
+        return VFSPath(self[len(mount) :])
+
     @classmethod
     def __get_pydantic_core_schema__(
         cls,
