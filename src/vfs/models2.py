@@ -76,10 +76,10 @@ class Entry(BaseModel):
 
     # --- Identity -----------------------------------------------------------
 
-    external_id: str | None = None
     path: VFSPath
     name: str
     kind: ObjectKind
+    external_id: str | None = None
 
     # --- Content ------------------------------------------------------------
 
@@ -135,9 +135,6 @@ class Entry(BaseModel):
     deleted_at: datetime | None = None
 
     # --- Derived relationship paths -----------------------------------------
-
-    # Gated on this entry's declared ``kind``, not just the path's structure, so
-    # a forced kind/path mismatch never surfaces a projection the kind lacks.
 
     @computed_field
     @property

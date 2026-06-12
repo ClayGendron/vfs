@@ -45,15 +45,12 @@ from vfs.chunking import (
     split_with_line_ranges,
 )
 from vfs.paths import (
+    VFSPath,
     chunk_path,
-    compute_parent_dir,
-    compute_parent_file,
     decompose_edge,
     extract_extension,
     normalize_path,
-    parse_kind,
-    split_path,
-    validate_path,
+    resolve_path,
     version_path,
 )
 from vfs.results import Candidate
@@ -64,30 +61,6 @@ from vfs.versioning import reconstruct_version
 # ---------------------------------------------------------------------------
 # The unified object model
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class VersionWritePlan:
-    """Decision-complete write plan for a file mutation."""
-
-    version_rows: tuple[VFSEntry, ...]
-    final_content: str
-    final_content_hash: str
-    final_size_bytes: int
-    final_lines: int
-    final_version_number: int
-    chain_verified: bool = True
-
-
-@dataclass(frozen=True)
-class PostgresVectorColumnSpec:
-    """Schema metadata for a model-declared native Postgres vector column."""
-
-    column_name: str
-    dimension: int
-    index_method: str
-    operator_class: str
-    index_name: str
 
 
 class VFSEntry(SQLModel):
@@ -117,12 +90,6 @@ class VFSEntry(SQLModel):
         default=None,
         primary_key=True,
         sa_type=BigInteger().with_variant(Integer, "sqlite"),  # ty: ignore[invalid-argument-type]
-    )
-    entry_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        max_length=36,
-        unique=True,
-        index=True,
     )
     external_id: str | None = Field(default=None, max_length=1024)
     path: str = Field(max_length=1024, unique=True, index=True)
@@ -212,11 +179,12 @@ class VFSEntry(SQLModel):
 
     def _rederive_path_fields(self) -> None:
         """Re-derive ``name``, ``parent_dir``, ``parent_file``, and ``ext`` from path."""
-        self.path = normalize_path(self.path)
-        self.name = split_path(self.path)[1]
-        self.parent_dir = compute_parent_dir(self.path)
-        self.parent_file = compute_parent_file(self.path)
-        self.ext = extract_extension(self.path) if self.kind == "file" else None
+        path = VFSPath(self.path)
+        self.path = path
+        self.name = path.name
+        self.parent_dir = path.parent_dir
+        self.parent_file = path.parent_file
+        self.ext = extract_extension(path) if self.kind == "file" else None
 
     def add_prefix(self, prefix: str) -> VFSEntry:
         """Prepend *prefix* to path in place, re-deriving name and parent."""
@@ -317,7 +285,7 @@ class VFSEntry(SQLModel):
         )
         now = datetime.now(UTC)
         entry = VFSEntry(
-            path=version_path(file_path, version_number),
+            path=version_path(VFSPath(file_path), version_number),
             kind="version",
             content=record.content,
             version_diff=record.version_diff,
@@ -390,13 +358,18 @@ class VFSEntry(SQLModel):
             msg = f"set_version applies only to files, versions, and chunks: kind={self.kind!r}"
             raise ValueError(msg)
         self.version_number = version_number
+        if self.kind == "file":
+            return
+        path = VFSPath(self.path)
+        owner = path.parent_file
+        if owner is None:
+            msg = f"{self.kind} path has no owning file: {self.path}"
+            raise ValueError(msg)
         if self.kind == "version":
-            self.path = version_path(compute_parent_file(self.path), version_number)
-            self._rederive_path_fields()
-        elif self.kind == "chunk":
-            name = split_path(self.path)[1]
-            self.path = chunk_path(compute_parent_file(self.path), name, version_number)
-            self._rederive_path_fields()
+            self.path = version_path(owner, version_number)
+        else:  # chunk
+            self.path = chunk_path(owner, path.name, version_number)
+        self._rederive_path_fields()
 
     def plan_file_write(
         self,
@@ -604,6 +577,7 @@ class VFSEntry(SQLModel):
             range_counts[key] = range_counts.get(key, 0) + 1
 
         version = self.version_number or 1
+        file_path = VFSPath(self.path)
         new_chunks: list[VFSEntry] = []
         cursor = 0
         cls = type(self)
@@ -618,7 +592,7 @@ class VFSEntry(SQLModel):
             # Validate through base ``VFSEntry`` first to derive content_hash,
             # size_bytes, lines, lexical_tokens; table=True ctors skip validators.
             validated = VFSEntry(
-                path=chunk_path(self.path, name, version),
+                path=chunk_path(file_path, name, version),
                 kind="chunk",
                 content=text,
                 line_start=line_start,
@@ -647,28 +621,26 @@ class VFSEntry(SQLModel):
         if not isinstance(raw_path, str):
             return data
 
-        path = normalize_path(raw_path)
-        inferred_kind = data.get("kind") or parse_kind(path)
-
-        # Validate and normalize path
-        valid, err = validate_path(raw_path)
-        if not valid:
-            msg = f"Invalid path {raw_path!r}: {err}"
+        # Single gate: normalize and validate, yielding a canonical VFSPath.
+        resolved = resolve_path(raw_path)
+        if resolved.path is None:
+            msg = f"Invalid path {raw_path!r}: {resolved.error}"
             raise ValueError(msg)
+        path = resolved.path
         data["path"] = path
 
-        # Derive name, parent_dir, and parent_file from path
+        # Derive name, parent_dir, and parent_file from the canonical path
         if not data.get("name"):
-            data["name"] = split_path(path)[1]
+            data["name"] = path.name
         if not data.get("parent_dir"):
-            data["parent_dir"] = compute_parent_dir(path)
+            data["parent_dir"] = path.parent_dir
         if "parent_file" not in data:
-            data["parent_file"] = compute_parent_file(path)
+            data["parent_file"] = path.parent_file
 
         # Infer kind from path markers if not explicitly set
         if not data.get("kind"):
-            data["kind"] = inferred_kind
-        elif data["kind"] not in {"file", "directory", "chunk", "version", "edge", "api"}:
+            data["kind"] = path.kind
+        elif data["kind"] not in {"file", "directory", "chunk", "version", "edge"}:
             msg = f"Unknown kind: {data['kind']!r}"
             raise ValueError(msg)
 
@@ -738,6 +710,30 @@ class VFSEntry(SQLModel):
             data["updated_at"] = now
 
         return data
+
+
+@dataclass(frozen=True)
+class VersionWritePlan:
+    """Decision-complete write plan for a file mutation."""
+
+    version_rows: tuple[VFSEntry, ...]
+    final_content: str
+    final_content_hash: str
+    final_size_bytes: int
+    final_lines: int
+    final_version_number: int
+    chain_verified: bool = True
+
+
+@dataclass(frozen=True)
+class PostgresVectorColumnSpec:
+    """Schema metadata for a model-declared native Postgres vector column."""
+
+    column_name: str
+    dimension: int
+    index_method: str
+    operator_class: str
+    index_name: str
 
 
 def resolve_embedding_vector_type(model: type[VFSEntry]) -> VectorType:
