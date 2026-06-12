@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import UnionType
 from typing import Union, get_args, get_origin
 
@@ -15,7 +16,7 @@ from vfs.models2 import (
     Match,
     Observation,
 )
-from vfs.paths import VFSPath, chunk_path, version_path
+from vfs.paths import VFSPath, chunk_path, edge_out_path, version_path
 
 # ---------------------------------------------------------------------------
 # model_fields_set — the repo-wide explicitness contract
@@ -54,6 +55,63 @@ class TestModelFieldsSet:
         directory = Entry(path="/docs")
         assert directory.content is None
         assert "content" in directory.model_fields_set
+
+
+# ---------------------------------------------------------------------------
+# Construction validation
+# ---------------------------------------------------------------------------
+
+
+class TestConstructionValidation:
+    def test_null_bytes_in_content_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="null bytes"):
+            Entry(path="/a.md", content="a\x00b")
+
+    def test_null_bytes_in_version_diff_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="null bytes"):
+            Entry(path=version_path(VFSPath("/a.md"), 2), version_diff="a\x00b")
+
+    def test_non_mapping_input_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            Entry.model_validate("not a mapping")
+
+    def test_path_is_required(self) -> None:
+        with pytest.raises(ValidationError):
+            Entry(content="x")  # type: ignore[call-arg]
+
+    def test_version_row_rejects_content_and_diff_together(self) -> None:
+        with pytest.raises(ValidationError, match="must not set both"):
+            Entry(path=version_path(VFSPath("/a.md"), 1), content="x", version_diff="y")
+
+
+# ---------------------------------------------------------------------------
+# Derived relationship projections
+# ---------------------------------------------------------------------------
+
+
+class TestDerivedProjections:
+    def test_file_projections(self) -> None:
+        file = Entry(path="/docs/a.md", content="x")
+        assert file.parent_dir == "/docs"
+        assert isinstance(file.parent_dir, VFSPath)
+        assert file.parent_file is None  # files own chunks; nothing owns them
+        assert file.source_file is None
+        assert file.target_file is None
+
+    def test_edge_identity_and_endpoints_derive_from_path(self) -> None:
+        edge = Entry(path=edge_out_path(VFSPath("/a.md"), VFSPath("/b.md"), "references"))
+        assert edge.kind == "edge"
+        assert edge.edge_type == "references"
+        assert edge.source_file == "/a.md"
+        assert edge.target_file == "/b.md"
+        assert edge.parent_file == "/a.md"
+
+    def test_explicit_edge_type_is_preserved(self) -> None:
+        edge = Entry(
+            path=edge_out_path(VFSPath("/a.md"), VFSPath("/b.md"), "references"),
+            edge_type="custom",
+        )
+        assert edge.edge_type == "custom"
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +353,61 @@ class TestVersioning:
         with pytest.raises(ValueError, match="applies only to"):
             Entry(path="/docs").with_version(2)
 
+    def test_with_version_requires_an_owning_file(self) -> None:
+        rootless = Entry(path="/a.md", kind="version")  # forced kind, plain file path
+        with pytest.raises(ValueError, match="no owning file"):
+            rootless.with_version(2)
+
+    def test_stored_payload_requires_version_kind(self) -> None:
+        with pytest.raises(ValueError, match="non-version"):
+            Entry(path="/a.md", content="x")._stored_version_payload()
+
+    def test_stored_payload_must_exist(self) -> None:
+        hollow = Entry(path=version_path(VFSPath("/a.md"), 1), is_snapshot=True)
+        with pytest.raises(ValueError, match="missing stored payload"):
+            hollow._stored_version_payload()
+
+    def test_reconstruction_requires_a_snapshot(self) -> None:
+        diff_only = Entry.create_version_row(
+            file_path="/a.md",
+            version_number=2,
+            version_content="two",
+            prev_content="one",
+            created_by="auto",
+        )
+        with pytest.raises(ValueError, match="Missing snapshot"):
+            Entry._reconstruct_file_version([diff_only], 2)
+
+    def test_reconstruction_detects_gap_in_diff_chain(self) -> None:
+        v1 = Entry.create_version_row(
+            file_path="/a.md",
+            version_number=1,
+            version_content="one",
+            prev_content=None,
+            created_by="auto",
+        )
+        v3 = Entry.create_version_row(
+            file_path="/a.md",
+            version_number=3,
+            version_content="three",
+            prev_content="two",
+            created_by="auto",
+        )
+        with pytest.raises(ValueError, match="Missing version row for v2"):
+            Entry._reconstruct_file_version([v1, v3], 3)
+
+    def test_reconstruction_verifies_content_hash(self) -> None:
+        v1 = Entry.create_version_row(
+            file_path="/a.md",
+            version_number=1,
+            version_content="one",
+            prev_content=None,
+            created_by="auto",
+        )
+        tampered = v1.model_copy(update={"content_hash": "0" * 64})
+        with pytest.raises(ValueError, match="Hash mismatch"):
+            Entry._reconstruct_file_version([tampered], 1)
+
 
 # ---------------------------------------------------------------------------
 # Chunking — pure derivation of chunk entries
@@ -342,6 +455,30 @@ class TestChunking:
     def test_non_file_rejected(self) -> None:
         with pytest.raises(ValueError, match="applies only to files"):
             Entry(path="/docs").chunk()
+
+    def test_notebooks_split_by_cell_source(self) -> None:
+        notebook = json.dumps(
+            {
+                "cells": [
+                    {"cell_type": "code", "source": ["print('hello')\n", "print('world')\n"]},
+                    {"cell_type": "markdown", "source": ["# Title\n"]},
+                ],
+                "metadata": {},
+                "nbformat": 4,
+            },
+        )
+        chunks = Entry(path="/nb.ipynb", content=notebook).chunk()
+        assert chunks
+        joined = "\n".join(c.content or "" for c in chunks)
+        assert "print('hello')" in joined
+        assert '"cells"' not in joined  # cell sources, never the raw JSON
+
+    def test_unfindable_duplicate_text_falls_back_to_cursor_offset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Two identical pieces over one occurrence: the second find() misses
+        # and the cursor stands in as the disambiguating offset.
+        monkeypatch.setattr(Entry, "split_content", staticmethod(lambda content, ext: [("ab", 1, 1), ("ab", 1, 1)]))
+        chunks = Entry(path="/a.md", content="ab").chunk()
+        assert [c.name for c in chunks] == ["1_1@0", "1_1@1"]
 
 
 # ---------------------------------------------------------------------------
