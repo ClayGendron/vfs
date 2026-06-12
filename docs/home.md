@@ -1,12 +1,16 @@
 # VFS: The Context Engineering Platform for AI Agents
 
-VFS exists because building effective AI agents, from small-scale local development to enterprise-scale, is first and foremost a **data engineering** problem. This conviction comes from experience building and working with agents, and learning how to engineer the context window to get the best outputs from those agents. The following beliefs, informed by that experience, drive the development of VFS.
+VFS exists because it is our beleif that building effective AI agents, from the scale of small local development to the size of an enterprise, is first and foremost a **data engineering** problem. This conviction comes from our experience of noticing how AI agents complete tasks and learning how to engineer the context window to get the best outputs from those agents. The following beliefs, informed by that experience, drive the development of VFS.
 
-## 1. File Systems Create an Environment for AI Agents
+## 1. LLMs Output Two Things, Human Consumable Content and Code
+
+
+
+## 2. File Systems Create an Environment for AI Agents
 
 Every blog or tutorial about AI agents will describe the simplest form of them as something like the following.
 
-> *"An AI agent is an LLM that operates in a loop by using tools to interact with its environment."*
+> *"An AI agent is an LLM that operates in a loop by using tools to interact with an environment."*
 
 This definition is fair, but the term **environment** is the least understood term in this phrase — and often not considered at all. Developers, and people generally, think about agents as an LLM with tools, not an LLM in an environment — but Claude Code has demonstrated to us all what an LLM is capable of doing inside the well-defined environment of a computer terminal. 
 
@@ -24,7 +28,7 @@ This framing helps explain why coding agents generally perform better than other
 
 This is why VFS adopts the file system as its core abstraction. File systems produce environments well-suited for LLMs to act as agents.
 
-## 2. Agentic Search has Four Verbs
+## 3. Agentic Search has Four Verbs
 
 Agentic search is autonomous knowledge retervial where an LLM is identfying the intent of a task, planning a multi-step retrieval strategy, executing searches, evaluating results, and then applying that knowledge to copmlete the task. Agentic search is seperate and different from RAG (retrival augmented generation) with RAG being a non-autonomous search where knowledge is injected into context without action by an LLM.
 
@@ -45,7 +49,7 @@ Three of these verbs are already familiar — `glob` and `grep` from any Unix te
 
 Together, these four verbs cover every dimension along which a file carries information, and thus these verbs cover the needs of agentic search. Additionally, the outputs of one search method can be used as input to the next because everything is addressable by a file path. A file system with these four verbs allows agents to navigate and search an environment in an interative and preditable fashion. This meets the definition of agentic search, and thus provides us with a framework for how to engineer data for it.
 
-## 3. Web Agents Need a Workspace
+## 4. Web Agents Need a Workspace
 
 The majority of agents today are personal agents supporting individual requests, not enterprise agents that are always on and able to work unprompted in the background. These personal agents operate in two types of workspaces.
 
@@ -58,7 +62,7 @@ For both of these workspaces, the agent is not accessible unless a user is logge
 
 
 
-## 4. Knowledge and Capabilities are Distributed
+## 5. Knowledge and Capabilities are Distributed
 
 
 
