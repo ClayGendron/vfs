@@ -6,11 +6,6 @@ The filesystem object itself owns ``/`` — mounting at ``"/"`` is illegal.
 Public methods are routers.  They resolve the terminal filesystem via
 longest-prefix mount matching, delegate to ``_*_impl`` methods for actual
 storage work, then rebase paths before returning.
-
-Subclasses override ``_*_impl`` for their storage backend:
-- ``DatabaseFileSystem`` — SQL via ``VFSEntry``
-- ``LocalFileSystem`` — disk bytes + SQL metadata
-- ``VFSClientAsync`` — no storage, mount-only async router (``storage=False``)
 """
 
 from __future__ import annotations

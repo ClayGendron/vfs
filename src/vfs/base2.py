@@ -15,8 +15,28 @@ longest-prefix mount matching, then dispatch across the mount boundary:
 
 from __future__ import annotations
 
-from vfs.paths import METADATA_ROOT, normalize_path, validate_path
-from vfs.permissions import Permission, PermissionMap, coerce_permissions
+import asyncio
+from typing import TYPE_CHECKING
+
+from vfs.exceptions import _classify_error
+from vfs.paths import METADATA_ROOT, normalize_path, resolve_path
+from vfs.permissions import (
+    Permission,
+    PermissionMap,
+    check_writable,
+    coerce_permissions,
+)
+from vfs.results import Candidate, VFSResult
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from vfs.models import VFSEntry
+
+
+# Ops that author or rewrite entries; their paths get the namespace-write
+# authorization check at the gate. Read-family ops (read/stat/ls/grep) skip it.
+_MUTATION_OPS = frozenset({"write", "edit", "move", "copy", "mkedge", "rm", "delete"})
 
 
 class VirtualFileSystem:
@@ -172,22 +192,24 @@ class VirtualFileSystem:
     def _normalize_mount_path(path: str) -> str:
         """Normalize and validate a mount path.
 
-        Mount paths may be nested (``"/data/tmp"``).  Rejects empty/root,
-        control characters, stray leading/trailing whitespace, relative
-        segments (``"."`` / ``".."``) that would never survive resolution,
-        and the reserved metadata segment (``".vfs"``).  Interior spaces
-        within a segment (``"/My Documents"``) are permitted.
+        A mount path is a canonical path with extra constraints.  It shares the
+        validate+normalize gate with operations via :func:`resolve_path`, then
+        adds the mount-specific rules: rejects empty/root, non-canonical input
+        (relative ``"."`` / ``".."`` segments or stray whitespace, which mounts
+        reject rather than silently collapse), whitespace-only segments, and the
+        reserved metadata segment (``".vfs"``).  Interior spaces within a
+        segment (``"/My Documents"``) are permitted.
         """
         stripped = path.strip("/")
         if not stripped:
             msg = "Mount path must not be empty or root"
             raise ValueError(msg)
         mount_path = f"/{stripped}"
-        valid, reason = validate_path(mount_path)
-        if not valid:
-            msg = f"Invalid mount path {path!r}: {reason}"
+        resolved = resolve_path(mount_path)
+        if resolved.path is None:
+            msg = f"Invalid mount path {path!r}: {resolved.error}"
             raise ValueError(msg)
-        if normalize_path(mount_path) != mount_path:
+        if resolved.path != mount_path:
             msg = f"Mount path must be a normalized path (no '.', '..', or stray whitespace): {path!r}"
             raise ValueError(msg)
         segments = mount_path.split("/")[1:]
@@ -280,3 +302,215 @@ class VirtualFileSystem:
         - any descendant already exists and would be shadowed by the mount.
         """
         return True
+
+    # -------------------------------------------------------------------
+    # candidate grouping
+    # -------------------------------------------------------------------
+
+    def _group_candidates_by_terminal(
+        self,
+        candidates: VFSResult,
+    ) -> list[tuple[VirtualFileSystem, str, VFSResult]]:
+        """Group candidates by terminal filesystem, rebasing paths.
+
+        Returns ``[(filesystem, prefix, rebased_candidates)]`` where each
+        ``VFSResult`` carries candidates with paths relative to that terminal
+        filesystem.
+        """
+        groups: dict[tuple[int, str], tuple[VirtualFileSystem, list[Candidate]]] = {}
+        for c in candidates.candidates:
+            fs, rel, prefix = self._resolve_terminal(c.path)
+            key = (id(fs), prefix)
+            if key not in groups:
+                groups[key] = (fs, [])
+            groups[key][1].append(c.model_copy(update={"path": rel}))
+        return [
+            (fs, pfx, VFSResult(function=candidates.function, candidates=cands))
+            for ((_id, pfx), (fs, cands)) in groups.items()
+        ]
+
+    # -------------------------------------------------------------------
+    # dispatch across the mount boundary
+    # -------------------------------------------------------------------
+
+    async def _call_local_impl(
+        self,
+        op: str,
+        *,
+        user_id: str | None = None,
+        **kwargs: object,
+    ) -> VFSResult:
+        """The one seam from the router down to *self*'s own storage.
+
+        This is the *only* place a filesystem reaches its own ``_*_impl``.
+        It is valid for ``self`` alone — a child mount is always reached
+        through its public method, never through this helper.
+
+        The pure router has no storage, so the base implementation errors.
+        Storage backends override it to open their own transaction and pass
+        the resulting handle (e.g. a SQL session) to ``_{op}_impl`` — the
+        session contract is a backend internal the router never sees.
+        """
+        if not self._storage:
+            return self._error(f"No storage backend for operation: {op}")
+        impl = getattr(self, f"_{op}_impl")
+        return await impl(user_id=user_id, **kwargs)
+
+    async def _dispatch_grouped_candidates(
+        self,
+        op: str,
+        candidates: VFSResult,
+        *,
+        user_id: str | None = None,
+        **kwargs: object,
+    ) -> VFSResult:
+        """Route pre-grouped candidate operations to terminal filesystems.
+
+        Each group runs against its terminal filesystem: ``self`` through the
+        local seam, a child mount through its public method.  Results are
+        rebased and merged.
+        """
+        for cand in candidates.candidates:
+            resolved = resolve_path(cand.path, mutation=op in _MUTATION_OPS)
+            if resolved.path is None:
+                return self._error(resolved.error or f"Invalid path: {cand.path!r}")
+
+        groups = self._group_candidates_by_terminal(candidates)
+        if not groups:
+            return VFSResult(
+                function=op,
+                success=candidates.success,
+                errors=list(candidates.errors),
+                candidates=[],
+            )
+
+        for fs, prefix, gc in groups:
+            for cand in gc.candidates:
+                err = check_writable(fs, op, cand.path, mount_prefix=prefix)
+                if err is not None:
+                    return err
+
+        async def _run_group(
+            fs: VirtualFileSystem,
+            prefix: str,
+            group_cands: VFSResult,
+        ) -> VFSResult:
+            if fs is self:
+                r = await self._call_local_impl(op, candidates=group_cands, user_id=user_id, **kwargs)
+            else:
+                r = await getattr(fs, op)(candidates=group_cands, user_id=user_id, **kwargs)
+            return r.add_prefix(prefix)
+
+        results = await asyncio.gather(
+            *(_run_group(fs, pfx, gc) for fs, pfx, gc in groups),
+        )
+        return self._merge_results(list(results))
+
+    async def _route_single(
+        self,
+        op: str,
+        path: str | None,
+        candidates: VFSResult | None,
+        *,
+        user_id: str | None = None,
+        **kwargs: object,
+    ) -> VFSResult:
+        """Route a single-path or candidate-based operation.
+
+        With candidates: group by filesystem, dispatch in parallel.
+        With path: resolve one terminal and dispatch once — to ``self``
+        through the local seam, or to a child mount through its public method.
+        """
+        if (path is None) == (candidates is None):
+            msg = "Exactly one of path or candidates must be provided"
+            raise ValueError(msg)
+
+        if candidates is not None:
+            return await self._dispatch_grouped_candidates(op, candidates, user_id=user_id, **kwargs)
+
+        assert path is not None
+        resolved = resolve_path(path, mutation=op in _MUTATION_OPS)
+        if resolved.path is None:
+            return self._error(resolved.error or f"Invalid path: {path!r}")
+        path = resolved.path
+
+        fs, rel, prefix = self._resolve_terminal(path)
+
+        if fs is self and not self._storage:
+            return self._error(f"No mount found for path: {path}")
+
+        err = check_writable(fs, op, rel, mount_prefix=prefix)
+        if err is not None:
+            return err
+
+        if fs is self:
+            result = await self._call_local_impl(op, path=rel, user_id=user_id, **kwargs)
+        else:
+            result = await getattr(fs, op)(path=rel, user_id=user_id, **kwargs)
+
+        return result.add_prefix(prefix)
+
+    @staticmethod
+    def _merge_results(results: list[VFSResult]) -> VFSResult:
+        """Merge multiple results — any failure makes the whole a failure.
+
+        ``|`` propagates ``success=False`` and concatenates ``errors`` while
+        preserving all successful candidates.
+        """
+        if not results:
+            return VFSResult(success=True, candidates=[])
+        merged = results[0]
+        for r in results[1:]:
+            merged = merged | r
+        return merged
+
+    # -------------------------------------------------------------------
+    # errors
+    # -------------------------------------------------------------------
+
+    def _error(self, errors: str | list[str]) -> VFSResult:
+        """Compose a failed ``VFSResult``, or raise if ``raise_on_error`` is set.
+
+        Pass the raw error message(s); this composes the result and either
+        returns it or raises a classified exception.  Callers that already
+        hold a shaped ``VFSResult`` should return it directly.
+        """
+        error_list = [errors] if isinstance(errors, str) else errors
+        result = VFSResult(success=False, errors=error_list)
+        if not self._raise_on_error:
+            return result
+        raise _classify_error(result.error_message, result.errors, result)
+
+    # -------------------------------------------------------------------
+    # public methods
+    # -------------------------------------------------------------------
+
+    async def read(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> VFSResult:
+        return await self._route_single("read", path, candidates, columns=columns, user_id=user_id)
+
+    async def stat(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> VFSResult:
+        return await self._route_single("stat", path, candidates, columns=columns, user_id=user_id)
+
+    async def ls(
+        self,
+        path: str | None = None,
+        candidates: VFSResult | None = None,
+        *,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> VFSResult:
+        return await self._route_single("ls", path, candidates, columns=columns, user_id=user_id)

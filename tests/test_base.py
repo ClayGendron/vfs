@@ -263,6 +263,13 @@ async def test_add_mount_mountable_check_runs_after_delegation() -> None:
     assert set(data._mounts) == set()
 
 
+async def test_is_path_mountable_default_true() -> None:
+    # The pure router has no storage, so the base policy admits any path;
+    # add_mount only consults it when self._storage is set.
+    fs = VirtualFileSystem()
+    assert await fs._is_path_mountable("/anything/at/all") is True
+
+
 async def test_add_mount_on_subnode_checks_whole_graph() -> None:
     # add_mount on an already-mounted sub-node still sees the whole tree
     # (via parent links), not just that node's own subtree.
@@ -403,6 +410,20 @@ async def test_no_cycle_means_close_terminates() -> None:
         await child.add_mount("back", root)
     await root.close()
     assert root._mounts == {}
+
+
+async def test_reachable_ids_dedups_shared_node() -> None:
+    # The visited-guard makes _reachable_ids dedup and terminate even on a
+    # malformed graph where one fs is reachable by two paths — a diamond the
+    # public API refuses, so wire _mounts directly to build it.
+    root = VirtualFileSystem()
+    a = VirtualFileSystem()
+    b = VirtualFileSystem()
+    shared = VirtualFileSystem()
+    root._mounts = {"/a": a, "/b": b}
+    a._mounts = {"/s": shared}
+    b._mounts = {"/s": shared}
+    assert root._reachable_ids() == {id(root), id(a), id(b), id(shared)}
 
 
 async def test_add_mount_allows_deep_acyclic_tree() -> None:
