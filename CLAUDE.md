@@ -11,6 +11,15 @@ The goal of the refactor is to land solid fundamentals — **paths, models,
 base, and database** — built around an MCP design. Evaluate work against where
 those fundamentals are heading, not against keeping the whole tree green.
 
+### Tests: `tests/` vs `tests2/`
+
+- **`tests/` is the live suite** being rebuilt for the new design — this is
+  where new and updated tests go, and the only suite worth running.
+- **`tests2/` is stale reference only.** It holds the pre-refactor tests, kept
+  around as a quarry to mine when building out `tests/`. Do **not** run it, fix
+  it, or treat its failures/imports as meaningful — it imports names that no
+  longer exist by design. When a `tests2/` file has been ported, it can go.
+
 ## Tooling
 
 - This is a **uv** project. Run Python and tooling through `uv` — e.g.
