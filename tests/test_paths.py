@@ -422,6 +422,22 @@ class TestVFSPath:
         assert VFSPath(path).kind == parse_kind(path)
 
     @pytest.mark.parametrize(
+        "path,ext",
+        [
+            ("/src/auth.py", "py"),
+            ("/src/Foo.PY", "py"),  # lowercased
+            ("/Makefile", None),  # extensionless file
+            ("/.env", None),  # dotfile
+            ("/src", None),  # directory
+            ("/.vfs/src/auth.py/__meta__/chunks/1/login", None),  # chunk
+            ("/.vfs/src/auth.py/__meta__/versions/3", None),  # version
+            ("/.vfs/a.py/__meta__/edges/out/imports/src/utils.py", None),  # edge: .py leaf gated to None
+        ],
+    )
+    def test_ext_is_kind_gated(self, path, ext):
+        assert VFSPath(path).ext == ext
+
+    @pytest.mark.parametrize(
         "path,expected",
         [("/src/auth.py", False), ("/.vfs/src/auth.py", True), ("/.vfs", True)],
     )

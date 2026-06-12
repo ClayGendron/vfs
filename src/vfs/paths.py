@@ -231,6 +231,16 @@ class VFSPath(str):
         return parse_kind(self)
 
     @property
+    def ext(self) -> str | None:
+        """Lowercased file extension for a file path, else ``None``.
+
+        Kind-gated like ``VFSEntry.ext``: only ``file`` paths carry an extension
+        — chunks, versions, edges, and directories are ``None`` even when their
+        leaf ends in a dotted suffix.
+        """
+        return extract_extension(self) if self.kind == "file" else None
+
+    @property
     def is_meta(self) -> bool:
         """Whether this path is under the reserved ``/.vfs`` tree."""
         return is_meta_path(self)
