@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>vfs favicon contrast preview</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font:14px/1.5 system-ui,sans-serif; margin:0; padding:32px;
+         background:#fafafa; color:#111; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p.lead { color:#666; margin:0 0 28px; max-width:60ch; }
+  section { margin:0 0 32px; }
+  h2 { font-size:15px; display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+  .sw { width:18px; height:18px; border-radius:4px; box-shadow:0 0 0 1px #0002; }
+  .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+  .cell { border-radius:10px; padding:18px 16px; box-shadow:0 0 0 1px #0001;
+          display:flex; flex-direction:column; gap:14px; }
+  .sizes { display:flex; align-items:flex-end; gap:16px; min-height:64px; }
+  .glyph { background:var(--c); -webkit-mask:var(--m) center/contain no-repeat;
+           mask:var(--m) center/contain no-repeat; }
+  .meta { display:flex; flex-direction:column; gap:6px; font-size:12px; }
+  .bgname { opacity:.7; }
+  .ratio { align-self:flex-start; color:#fff; padding:2px 8px; border-radius:999px;
+           font-weight:600; letter-spacing:.02em; }
+  .picker { background:#fff; border-radius:12px; padding:20px; margin:0 0 36px;
+            box-shadow:0 0 0 1px #0001; }
+  .controls { display:flex; align-items:center; gap:12px; margin:0 0 16px; }
+  .controls input[type=color] { width:48px; height:36px; padding:0; border:none;
+            border-radius:8px; background:none; cursor:pointer; }
+  .controls input[type=text] { font:600 14px ui-monospace,monospace; width:9ch;
+            padding:8px 10px; border:1px solid #0002; border-radius:8px;
+            text-transform:uppercase; }
+  @media (prefers-color-scheme: dark) {
+    body { background:#161616; color:#eee; }
+    p.lead { color:#aaa; }
+    .picker { background:#222; }
+    .controls input[type=text] { background:#111; color:#eee; border-color:#fff3; }
+  }
+</style></head>
+<body>
+  <h1>vfs favicon — cobalt contrast across tab backgrounds</h1>
+  <p class="lead">Each transparent icon shown at 16 / 32 / 64&nbsp;px on the
+  light and dark tab colors it will actually sit on. Badge = WCAG non-text
+  (graphic) contrast; ≥3:1 is the bar for a legible icon.</p>
+
+  <section class="picker">
+    <h2>Try a color</h2>
+    <div class="controls">
+      <input type="color" id="pick" value="#3E6BEF">
+      <input type="text" id="hex" value="#3E6BEF" maxlength="7">
+    </div>
+    <div class="grid" id="live"></div>
+  </section>
+  
+      <section>
+        <h2><span class="sw" style="background:#2F58CF"></span>brand #2F58CF</h2>
+        <div class="grid">
+        <div class="cell" style="background:#FFFFFF;color:#0b0b0d">
+          <div class="sizes">
+            <img src="vfs-2F58CF.png" width="16" height="16" alt="">
+            <img src="vfs-2F58CF.png" width="32" height="32" alt="">
+            <img src="vfs-2F58CF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">white #FFFFFF</span>
+            <span class="ratio" style="background:#16a34a">6.14:1 · PASS ≥3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#DEE1E6;color:#0b0b0d">
+          <div class="sizes">
+            <img src="vfs-2F58CF.png" width="16" height="16" alt="">
+            <img src="vfs-2F58CF.png" width="32" height="32" alt="">
+            <img src="vfs-2F58CF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">chrome light #DEE1E6</span>
+            <span class="ratio" style="background:#16a34a">4.69:1 · PASS ≥3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#202124;color:#f1f1ee">
+          <div class="sizes">
+            <img src="vfs-2F58CF.png" width="16" height="16" alt="">
+            <img src="vfs-2F58CF.png" width="32" height="32" alt="">
+            <img src="vfs-2F58CF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">chrome dark #202124</span>
+            <span class="ratio" style="background:#dc2626">2.62:1 · FAIL <3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#0B0B0D;color:#f1f1ee">
+          <div class="sizes">
+            <img src="vfs-2F58CF.png" width="16" height="16" alt="">
+            <img src="vfs-2F58CF.png" width="32" height="32" alt="">
+            <img src="vfs-2F58CF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">night #0B0B0D</span>
+            <span class="ratio" style="background:#16a34a">3.20:1 · PASS ≥3</span>
+          </div>
+        </div></div>
+      </section>
+      <section>
+        <h2><span class="sw" style="background:#3661DF"></span>mid   #3661DF</h2>
+        <div class="grid">
+        <div class="cell" style="background:#FFFFFF;color:#0b0b0d">
+          <div class="sizes">
+            <img src="vfs-3661DF.png" width="16" height="16" alt="">
+            <img src="vfs-3661DF.png" width="32" height="32" alt="">
+            <img src="vfs-3661DF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">white #FFFFFF</span>
+            <span class="ratio" style="background:#16a34a">5.34:1 · PASS ≥3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#DEE1E6;color:#0b0b0d">
+          <div class="sizes">
+            <img src="vfs-3661DF.png" width="16" height="16" alt="">
+            <img src="vfs-3661DF.png" width="32" height="32" alt="">
+            <img src="vfs-3661DF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">chrome light #DEE1E6</span>
+            <span class="ratio" style="background:#16a34a">4.07:1 · PASS ≥3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#202124;color:#f1f1ee">
+          <div class="sizes">
+            <img src="vfs-3661DF.png" width="16" height="16" alt="">
+            <img src="vfs-3661DF.png" width="32" height="32" alt="">
+            <img src="vfs-3661DF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">chrome dark #202124</span>
+            <span class="ratio" style="background:#16a34a">3.01:1 · PASS ≥3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#0B0B0D;color:#f1f1ee">
+          <div class="sizes">
+            <img src="vfs-3661DF.png" width="16" height="16" alt="">
+            <img src="vfs-3661DF.png" width="32" height="32" alt="">
+            <img src="vfs-3661DF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">night #0B0B0D</span>
+            <span class="ratio" style="background:#16a34a">3.68:1 · PASS ≥3</span>
+          </div>
+        </div></div>
+      </section>
+      <section>
+        <h2><span class="sw" style="background:#3E6BEF"></span>balanced #3E6BEF</h2>
+        <div class="grid">
+        <div class="cell" style="background:#FFFFFF;color:#0b0b0d">
+          <div class="sizes">
+            <img src="vfs-3E6BEF.png" width="16" height="16" alt="">
+            <img src="vfs-3E6BEF.png" width="32" height="32" alt="">
+            <img src="vfs-3E6BEF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">white #FFFFFF</span>
+            <span class="ratio" style="background:#16a34a">4.61:1 · PASS ≥3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#DEE1E6;color:#0b0b0d">
+          <div class="sizes">
+            <img src="vfs-3E6BEF.png" width="16" height="16" alt="">
+            <img src="vfs-3E6BEF.png" width="32" height="32" alt="">
+            <img src="vfs-3E6BEF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">chrome light #DEE1E6</span>
+            <span class="ratio" style="background:#16a34a">3.52:1 · PASS ≥3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#202124;color:#f1f1ee">
+          <div class="sizes">
+            <img src="vfs-3E6BEF.png" width="16" height="16" alt="">
+            <img src="vfs-3E6BEF.png" width="32" height="32" alt="">
+            <img src="vfs-3E6BEF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">chrome dark #202124</span>
+            <span class="ratio" style="background:#16a34a">3.49:1 · PASS ≥3</span>
+          </div>
+        </div>
+        <div class="cell" style="background:#0B0B0D;color:#f1f1ee">
+          <div class="sizes">
+            <img src="vfs-3E6BEF.png" width="16" height="16" alt="">
+            <img src="vfs-3E6BEF.png" width="32" height="32" alt="">
+            <img src="vfs-3E6BEF.png" width="64" height="64" alt="">
+          </div>
+          <div class="meta">
+            <span class="bgname">night #0B0B0D</span>
+            <span class="ratio" style="background:#16a34a">4.26:1 · PASS ≥3</span>
+          </div>
+        </div></div>
+      </section>
+
+<script>
+  const MASK = "url(vfs-2F58CF.png)";
+  const TABS = [{name:"white #FFFFFF",hex:"#FFFFFF",dark:false},{name:"chrome light #DEE1E6",hex:"#DEE1E6",dark:false},{name:"chrome dark #202124",hex:"#202124",dark:true},{name:"night #0B0B0D",hex:"#0B0B0D",dark:true}];
+  const lin = c => (c/=255, c<=0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055,2.4));
+  const lum = ([r,g,b]) => 0.2126*lin(r)+0.7152*lin(g)+0.0722*lin(b);
+  const rgb = h => [1,3,5].map(i => parseInt(h.slice(i,i+2),16));
+  const ratio = (a,b) => {
+    const la=lum(a), lb=lum(b), hi=Math.max(la,lb), lo=Math.min(la,lb);
+    return (hi+0.05)/(lo+0.05);
+  };
+  const live = document.getElementById("live");
+  const pick = document.getElementById("pick");
+  const hex  = document.getElementById("hex");
+
+  function render(h) {
+    if (!/^#[0-9a-fA-F]{6}$/.test(h)) return;
+    const c = rgb(h);
+    live.innerHTML = TABS.map(t => {
+      const r = ratio(c, rgb(t.hex)), ok = r >= 3;
+      const fg = t.dark ? "#f1f1ee" : "#0b0b0d";
+      const badge = ok ? "#16a34a" : "#dc2626";
+      const glyph = px =>
+        `<div class="glyph" style="--c:${h};--m:${MASK};width:${px}px;height:${px}px"></div>`;
+      return `<div class="cell" style="background:${t.hex};color:${fg}">
+        <div class="sizes">${glyph(16)}${glyph(32)}${glyph(64)}</div>
+        <div class="meta"><span class="bgname">${t.name}</span>
+        <span class="ratio" style="background:${badge}">${r.toFixed(2)}:1 · ${ok?"PASS ≥3":"FAIL <3"}</span>
+        </div></div>`;
+    }).join("");
+  }
+  pick.addEventListener("input", e => { hex.value = e.target.value.toUpperCase(); render(hex.value); });
+  hex.addEventListener("input", e => {
+    const v = e.target.value.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) { pick.value = v; render(v); }
+  });
+  render(hex.value);
+</script>
+</body></html>
