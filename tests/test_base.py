@@ -10,6 +10,14 @@ from __future__ import annotations
 import pytest
 
 from vfs.base2 import VirtualFileSystem
+from vfs.exceptions import (
+    NotFoundError,
+    ValidationError,
+    VFSError,
+    WriteConflictError,
+    exception_for_kind,
+)
+from vfs.results2 import VFSErrorKind
 
 
 class SpyFS(VirtualFileSystem):
@@ -620,3 +628,43 @@ async def test_resolve_terminal_mount_root() -> None:
     assert fs is child
     assert rel == "/"
     assert prefix == "/data"
+
+
+# ----------------------------------------------------------------------
+# _error and kind-based exception dispatch
+# ----------------------------------------------------------------------
+
+
+def test_exception_for_kind_maps_known_kinds() -> None:
+    assert exception_for_kind(VFSErrorKind.not_found) is NotFoundError
+    assert exception_for_kind(VFSErrorKind.read_only) is WriteConflictError
+    assert exception_for_kind(VFSErrorKind.invalid) is ValidationError
+
+
+def test_exception_for_kind_unmapped_and_unknown_fall_back_to_base() -> None:
+    # internal is a real kind with no explicit mapping; the str is a newer peer's kind.
+    assert exception_for_kind(VFSErrorKind.internal) is VFSError
+    assert exception_for_kind("vfs.quota_exceeded") is VFSError
+
+
+def test_error_returns_failed_result_by_default() -> None:
+    fs = VirtualFileSystem()
+    r = fs._error("gone", kind=VFSErrorKind.not_found, path="/x")
+    assert r.success is False
+    assert r.errors[0].kind is VFSErrorKind.not_found
+    assert r.errors[0].path == "/x"
+
+
+def test_error_attaches_structured_data() -> None:
+    fs = VirtualFileSystem()
+    r = fs._error("stale", kind=VFSErrorKind.conflict, data={"expected": 1})
+    assert r.errors[0].data == {"expected": 1}
+
+
+def test_error_raises_classified_exception_when_configured() -> None:
+    fs = VirtualFileSystem(raise_on_error=True)
+    with pytest.raises(NotFoundError) as exc:
+        fs._error("gone", kind=VFSErrorKind.not_found)
+    # the raised exception still carries the full failed result
+    assert exc.value.result is not None
+    assert exc.value.result.success is False

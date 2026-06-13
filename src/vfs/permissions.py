@@ -117,6 +117,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from vfs.paths import normalize_path
+from vfs.results2 import VFSErrorKind
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -275,11 +276,11 @@ def check_writable(
     ``fs._error(...)`` — when the operation would mutate a read-only
     path.
 
-    The returned result's error message starts with the substring
-    ``"Cannot write"``, which the existing ``_classify_error`` mapping
-    routes to :class:`~vfs.exceptions.WriteConflictError`.  When the
-    filesystem has ``raise_on_error=True``, ``fs._error(...)`` raises
-    the classified exception directly instead of returning a result.
+    The error carries ``kind=read_only``, which
+    :func:`~vfs.exceptions.exception_for_kind` maps to
+    :class:`~vfs.exceptions.WriteConflictError`.  When the filesystem has
+    ``raise_on_error=True``, ``fs._error(...)`` raises that exception
+    directly instead of returning a result.
     """
     if op not in MUTATING_OPS:
         return None
@@ -295,9 +296,13 @@ def check_writable(
         return None
     full = _join(mount_prefix, rel)
     if resolved.rule_prefix is None:
-        return fs._error(f"Cannot write to read-only path '{full}' (mount default)")
+        return fs._error(
+            f"Cannot write to read-only path '{full}' (mount default)",
+            kind=VFSErrorKind.read_only,
+        )
     return fs._error(
         f"Cannot write to read-only path '{full}' (read-only by mount rule '{resolved.rule_prefix}')",
+        kind=VFSErrorKind.read_only,
     )
 
 

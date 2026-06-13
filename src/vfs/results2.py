@@ -55,7 +55,8 @@ class VFSErrorKind(StrEnum):
     not_empty = "vfs.not_empty"  # ENOTEMPTY
 
     # — authorization —
-    permission_denied = "vfs.permission_denied"  # EACCES / EPERM / EROFS
+    permission_denied = "vfs.permission_denied"  # EACCES / EPERM
+    read_only = "vfs.read_only"  # EROFS — read-only target, distinct from authorization
 
     # — capability / method discovery —
     unsupported = "vfs.unsupported"  # ENOSYS / ENOTSUP
@@ -72,6 +73,7 @@ class VFSErrorKind(StrEnum):
     unavailable = "vfs.unavailable"  # EIO / ECONNREFUSED / ENOSPC
     timeout = "vfs.timeout"  # ETIMEDOUT
     cancelled = "vfs.cancelled"  # ECANCELED / EINTR
+    internal = "vfs.internal"  # JSON-RPC INTERNAL_ERROR — the VFS itself broke
 
 
 class ResultError(BaseModel):
@@ -79,11 +81,14 @@ class ResultError(BaseModel):
 
     ``kind`` is for code (dispatch, retry policy, the raise rule); ``message``
     is the prose an agent reads; ``path`` pins the failure to an entry when
-    one is implicated. The kind travels in the payload — a remote mount's
-    error must keep its kind across the MCP hop — but text rendering shows
-    prose only. A kind outside this client's ``VFSErrorKind`` vocabulary is
-    kept as its raw string (round-trip safe); consumers should treat unknown
-    kinds as ``unrecognized``. Producers construct from the enum.
+    one is implicated; ``data`` carries optional machine-readable detail that
+    does not belong in prose (the conflicting revision, a ``retry_after``) —
+    the JSON-RPC / MCP ``error.data`` analogue. The kind travels in the
+    payload — a remote mount's error must keep its kind across the MCP hop —
+    but text rendering shows prose only. A kind outside this client's
+    ``VFSErrorKind`` vocabulary is kept as its raw string (round-trip safe);
+    consumers should treat unknown kinds as ``unrecognized``. Producers
+    construct from the enum.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -91,6 +96,7 @@ class ResultError(BaseModel):
     kind: VFSErrorKind | str
     message: str
     path: Path | None = None
+    data: dict[str, Any] | None = None
 
     @field_validator("kind", mode="before")
     @classmethod

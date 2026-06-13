@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from vfs.results2 import VFSErrorKind
+
 if TYPE_CHECKING:
     from vfs.results import VFSResult
 
@@ -45,6 +47,35 @@ class GraphError(VFSError):
 
 class SchemaMismatchError(VFSError):
     """The live database schema does not match the in-memory table definitions."""
+
+
+# Kind → exception class. The structured ``VFSErrorKind`` is the dispatch key
+# (replacing message-substring matching); an unmapped kind
+# (``unavailable``/``timeout``/``cancelled``/``internal``) or an unknown
+# peer-supplied string falls back to the base ``VFSError``.
+_KIND_TO_EXC: dict[VFSErrorKind, type[VFSError]] = {
+    VFSErrorKind.not_found: NotFoundError,
+    VFSErrorKind.wrong_kind: NotFoundError,
+    VFSErrorKind.exists: WriteConflictError,
+    VFSErrorKind.not_empty: WriteConflictError,
+    VFSErrorKind.conflict: WriteConflictError,
+    VFSErrorKind.cross_mount: WriteConflictError,
+    VFSErrorKind.permission_denied: WriteConflictError,
+    VFSErrorKind.read_only: WriteConflictError,
+    VFSErrorKind.invalid: ValidationError,
+    VFSErrorKind.unsupported: ValidationError,
+    VFSErrorKind.unrecognized: ValidationError,
+}
+
+
+def exception_for_kind(kind: VFSErrorKind | str) -> type[VFSError]:
+    """Return the exception class for a structured error *kind*.
+
+    Dispatches on the ``VFSErrorKind`` directly — no message inspection. An
+    unmapped kind or an unknown peer-supplied string falls back to the base
+    ``VFSError``.
+    """
+    return _KIND_TO_EXC.get(kind, VFSError)
 
 
 def _classify_error(

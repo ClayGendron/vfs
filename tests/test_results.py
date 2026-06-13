@@ -42,6 +42,20 @@ class TestResultError:
         with pytest.raises(Exception, match="frozen"):
             err.message = "other"  # type: ignore[misc]
 
+    def test_data_defaults_none(self) -> None:
+        assert ResultError(kind=VFSErrorKind.invalid, message="x").data is None
+
+    def test_data_round_trips_on_the_wire(self) -> None:
+        err = ResultError(
+            kind=VFSErrorKind.conflict,
+            message="stale revision",
+            path="/a.md",
+            data={"expected": 3, "actual": 5},
+        )
+        restored = ResultError.model_validate(err.model_dump(mode="json"))
+        assert restored.data == {"expected": 3, "actual": 5}
+        assert restored == err
+
     def test_mount_rebase_round_trip(self) -> None:
         err = ResultError(kind=VFSErrorKind.not_found, message="gone", path="/docs/a.md")
         rebased = err.with_mount("/data")
@@ -184,6 +198,11 @@ class TestEnrichment:
     def test_top_rejects_non_positive_k(self) -> None:
         with pytest.raises(ValueError, match="k must be >= 1"):
             VFSResult().top(0)
+
+    def test_sort_honors_custom_key(self) -> None:
+        result = VFSResult(observations=[obs("/b.md"), obs("/a.md"), obs("/c.md")])
+        ordered = result.sort(key=lambda o: o.path, reverse=False)
+        assert ordered.paths == ("/a.md", "/b.md", "/c.md")
 
     def test_sort_treats_nan_score_as_lowest(self) -> None:
         # NaN compares false against everything; an unguarded key corrupts the

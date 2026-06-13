@@ -16,8 +16,9 @@ longest-prefix mount matching, then dispatch across the mount boundary:
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING, Any
 
-from vfs.exceptions import _classify_error
+from vfs.exceptions import exception_for_kind
 from vfs.paths import METADATA_ROOT, Path, normalize_path, resolve_path
 from vfs.permissions import (
     Permission,
@@ -25,7 +26,10 @@ from vfs.permissions import (
     check_writable,
     coerce_permissions,
 )
-from vfs.results import Candidate, VFSResult
+from vfs.results2 import ResultError, VFSErrorKind, VFSResult
+
+if TYPE_CHECKING:
+    from vfs.models2 import Observation
 
 # Ops that author or rewrite entries; their paths get the namespace-write
 # authorization check at the gate. Read-family ops (read/stat/ls/grep) skip it.
@@ -290,30 +294,27 @@ class VirtualFileSystem:
         return True
 
     # -------------------------------------------------------------------
-    # candidate grouping
+    # observation grouping
     # -------------------------------------------------------------------
 
-    def _group_candidates_by_terminal(
+    def _group_observations_by_terminal(
         self,
-        candidates: VFSResult,
-    ) -> list[tuple[VirtualFileSystem, str, VFSResult]]:
-        """Group candidates by terminal filesystem, rebasing paths.
+        observations: list[Observation],
+    ) -> list[tuple[VirtualFileSystem, str, list[Observation]]]:
+        """Group observations by terminal filesystem, rebasing paths.
 
-        Returns ``[(filesystem, prefix, rebased_candidates)]`` where each
-        ``VFSResult`` carries candidates with paths relative to that terminal
-        filesystem.
+        Returns ``[(filesystem, prefix, rebased_observations)]`` where each
+        observation's path is relative to its terminal filesystem (the mount
+        prefix stripped via :meth:`Observation.without_mount`).
         """
-        groups: dict[tuple[int, str], tuple[VirtualFileSystem, list[Candidate]]] = {}
-        for c in candidates.candidates:
-            fs, rel, prefix = self._resolve_terminal(c.path)
+        groups: dict[tuple[int, str], tuple[VirtualFileSystem, list[Observation]]] = {}
+        for obs in observations:
+            fs, _rel, prefix = self._resolve_terminal(obs.path)
             key = (id(fs), prefix)
             if key not in groups:
                 groups[key] = (fs, [])
-            groups[key][1].append(c.model_copy(update={"path": rel}))
-        return [
-            (fs, pfx, VFSResult(function=candidates.function, candidates=cands))
-            for ((_id, pfx), (fs, cands)) in groups.items()
-        ]
+            groups[key][1].append(obs.without_mount(prefix))
+        return [(fs, pfx, obs_list) for ((_id, pfx), (fs, obs_list)) in groups.items()]
 
     # -------------------------------------------------------------------
     # dispatch across the mount boundary
@@ -338,57 +339,52 @@ class VirtualFileSystem:
         session contract is a backend internal the router never sees.
         """
         if not self._storage:
-            return self._error(f"No storage backend for operation: {op}")
+            return self._error(f"No storage backend for operation: {op}", kind=VFSErrorKind.unsupported)
         impl = getattr(self, f"_{op}_impl")
         return await impl(user_id=user_id, **kwargs)
 
-    async def _dispatch_grouped_candidates(
+    async def _dispatch_grouped_observations(
         self,
         op: str,
-        candidates: VFSResult,
+        observations: list[Observation],
         *,
         user_id: str | None = None,
         **kwargs: object,
     ) -> VFSResult:
-        """Route pre-grouped candidate operations to terminal filesystems.
+        """Route pre-grouped observation operations to terminal filesystems.
 
         Each group runs against its terminal filesystem: ``self`` through the
         local seam, a child mount through its public method.  Results are
         rebased and merged.
         """
-        for cand in candidates.candidates:
-            resolved = resolve_path(cand.path, mutation=op in _MUTATION_OPS)
+        for obs in observations:
+            resolved = resolve_path(obs.path, mutation=op in _MUTATION_OPS)
             if resolved.path is None:
-                return self._error(resolved.error or f"Invalid path: {cand.path!r}")
+                return self._error(resolved.error or f"Invalid path: {obs.path!r}", kind=VFSErrorKind.invalid)
 
-        groups = self._group_candidates_by_terminal(candidates)
+        groups = self._group_observations_by_terminal(observations)
         if not groups:
-            return VFSResult(
-                function=op,
-                success=candidates.success,
-                errors=list(candidates.errors),
-                candidates=[],
-            )
+            return VFSResult(function=op, observations=[])
 
-        for fs, prefix, gc in groups:
-            for cand in gc.candidates:
-                err = check_writable(fs, op, cand.path, mount_prefix=prefix)
+        for fs, prefix, group in groups:
+            for obs in group:
+                err = check_writable(fs, op, obs.path, mount_prefix=prefix)
                 if err is not None:
                     return err
 
         async def _run_group(
             fs: VirtualFileSystem,
             prefix: str,
-            group_cands: VFSResult,
+            group: list[Observation],
         ) -> VFSResult:
             if fs is self:
-                r = await self._call_local_impl(op, candidates=group_cands, user_id=user_id, **kwargs)
+                r = await self._call_local_impl(op, observations=group, user_id=user_id, **kwargs)
             else:
-                r = await getattr(fs, op)(candidates=group_cands, user_id=user_id, **kwargs)
-            return r.add_prefix(prefix)
+                r = await getattr(fs, op)(observations=group, user_id=user_id, **kwargs)
+            return r.with_mount(prefix)
 
         results = await asyncio.gather(
-            *(_run_group(fs, pfx, gc) for fs, pfx, gc in groups),
+            *(_run_group(fs, pfx, group) for fs, pfx, group in groups),
         )
         return self._merge_results(list(results))
 
@@ -396,34 +392,34 @@ class VirtualFileSystem:
         self,
         op: str,
         path: str | None,
-        candidates: VFSResult | None,
+        observations: list[Observation] | None,
         *,
         user_id: str | None = None,
         **kwargs: object,
     ) -> VFSResult:
-        """Route a single-path or candidate-based operation.
+        """Route a single-path or observation-based operation.
 
-        With candidates: group by filesystem, dispatch in parallel.
+        With observations: group by filesystem, dispatch in parallel.
         With path: resolve one terminal and dispatch once — to ``self``
         through the local seam, or to a child mount through its public method.
         """
-        if (path is None) == (candidates is None):
-            msg = "Exactly one of path or candidates must be provided"
+        if (path is None) == (observations is None):
+            msg = "Exactly one of path or observations must be provided"
             raise ValueError(msg)
 
-        if candidates is not None:
-            return await self._dispatch_grouped_candidates(op, candidates, user_id=user_id, **kwargs)
+        if observations is not None:
+            return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
 
         assert path is not None
         resolved = resolve_path(path, mutation=op in _MUTATION_OPS)
         if resolved.path is None:
-            return self._error(resolved.error or f"Invalid path: {path!r}")
+            return self._error(resolved.error or f"Invalid path: {path!r}", kind=VFSErrorKind.invalid)
         path = resolved.path
 
         fs, rel, prefix = self._resolve_terminal(path)
 
         if fs is self and not self._storage:
-            return self._error(f"No mount found for path: {path}")
+            return self._error(f"No mount found for path: {path}", kind=VFSErrorKind.not_found)
 
         err = check_writable(fs, op, rel, mount_prefix=prefix)
         if err is not None:
@@ -434,17 +430,17 @@ class VirtualFileSystem:
         else:
             result = await getattr(fs, op)(path=rel, user_id=user_id, **kwargs)
 
-        return result.add_prefix(prefix)
+        return result.with_mount(prefix)
 
     @staticmethod
     def _merge_results(results: list[VFSResult]) -> VFSResult:
         """Merge multiple results — any failure makes the whole a failure.
 
         ``|`` propagates ``success=False`` and concatenates ``errors`` while
-        preserving all successful candidates.
+        preserving all successful observations.
         """
         if not results:
-            return VFSResult(success=True, candidates=[])
+            return VFSResult(observations=[])
         merged = results[0]
         for r in results[1:]:
             merged = merged | r
@@ -454,18 +450,26 @@ class VirtualFileSystem:
     # errors
     # -------------------------------------------------------------------
 
-    def _error(self, errors: str | list[str]) -> VFSResult:
+    def _error(
+        self,
+        message: str,
+        *,
+        kind: VFSErrorKind,
+        path: Path | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> VFSResult:
         """Compose a failed ``VFSResult``, or raise if ``raise_on_error`` is set.
 
-        Pass the raw error message(s); this composes the result and either
-        returns it or raises a classified exception.  Callers that already
-        hold a shaped ``VFSResult`` should return it directly.
+        Pass the prose *message* and the structured *kind* (required), plus an
+        optional *path* and machine-readable *data*; this wraps them in a
+        :class:`ResultError` and either returns the failed result or raises the
+        exception the kind maps to.  Callers that already hold a shaped
+        ``VFSResult`` should return it directly.
         """
-        error_list = [errors] if isinstance(errors, str) else errors
-        result = VFSResult(success=False, errors=error_list)
+        result = VFSResult(success=False, errors=[ResultError(kind=kind, message=message, path=path, data=data)])
         if not self._raise_on_error:
             return result
-        raise _classify_error(result.error_message, result.errors, result)
+        raise exception_for_kind(kind)(message, result)
 
     # -------------------------------------------------------------------
     # public methods
@@ -474,29 +478,29 @@ class VirtualFileSystem:
     async def read(
         self,
         path: str | None = None,
-        candidates: VFSResult | None = None,
+        observations: list[Observation] | None = None,
         *,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
-        return await self._route_single("read", path, candidates, columns=columns, user_id=user_id)
+        return await self._route_single("read", path, observations, columns=columns, user_id=user_id)
 
     async def stat(
         self,
         path: str | None = None,
-        candidates: VFSResult | None = None,
+        observations: list[Observation] | None = None,
         *,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
-        return await self._route_single("stat", path, candidates, columns=columns, user_id=user_id)
+        return await self._route_single("stat", path, observations, columns=columns, user_id=user_id)
 
     async def ls(
         self,
         path: str | None = None,
-        candidates: VFSResult | None = None,
+        observations: list[Observation] | None = None,
         *,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> VFSResult:
-        return await self._route_single("ls", path, candidates, columns=columns, user_id=user_id)
+        return await self._route_single("ls", path, observations, columns=columns, user_id=user_id)
