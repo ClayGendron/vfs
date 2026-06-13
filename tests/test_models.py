@@ -16,7 +16,7 @@ from vfs.models2 import (
     Match,
     Observation,
 )
-from vfs.paths import VFSPath, chunk_path, edge_out_path, version_path
+from vfs.paths import Path, chunk_path, edge_out_path, version_path
 
 # ---------------------------------------------------------------------------
 # model_fields_set — the repo-wide explicitness contract
@@ -69,7 +69,7 @@ class TestConstructionValidation:
 
     def test_null_bytes_in_version_diff_rejected(self) -> None:
         with pytest.raises(ValidationError, match="null bytes"):
-            Entry(path=version_path(VFSPath("/a.md"), 2), version_diff="a\x00b")
+            Entry(path=version_path(Path("/a.md"), 2), version_diff="a\x00b")
 
     def test_non_mapping_input_rejected(self) -> None:
         with pytest.raises(ValidationError):
@@ -81,7 +81,7 @@ class TestConstructionValidation:
 
     def test_version_row_rejects_content_and_diff_together(self) -> None:
         with pytest.raises(ValidationError, match="must not set both"):
-            Entry(path=version_path(VFSPath("/a.md"), 1), content="x", version_diff="y")
+            Entry(path=version_path(Path("/a.md"), 1), content="x", version_diff="y")
 
 
 # ---------------------------------------------------------------------------
@@ -93,13 +93,13 @@ class TestDerivedProjections:
     def test_file_projections(self) -> None:
         file = Entry(path="/docs/a.md", content="x")
         assert file.parent_dir == "/docs"
-        assert isinstance(file.parent_dir, VFSPath)
+        assert isinstance(file.parent_dir, Path)
         assert file.parent_file is None  # files own chunks; nothing owns them
         assert file.source_file is None
         assert file.target_file is None
 
     def test_edge_identity_and_endpoints_derive_from_path(self) -> None:
-        edge = Entry(path=edge_out_path(VFSPath("/a.md"), VFSPath("/b.md"), "references"))
+        edge = Entry(path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"))
         assert edge.kind == "edge"
         assert edge.edge_type == "references"
         assert edge.source_file == "/a.md"
@@ -108,7 +108,7 @@ class TestDerivedProjections:
 
     def test_explicit_edge_type_is_preserved(self) -> None:
         edge = Entry(
-            path=edge_out_path(VFSPath("/a.md"), VFSPath("/b.md"), "references"),
+            path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"),
             edge_type="custom",
         )
         assert edge.edge_type == "custom"
@@ -191,7 +191,7 @@ class TestMountRebasing:
         entry = Entry(path="/docs/a.md", content="x")
         rebased = entry.with_mount("/data")
         assert rebased.path == "/data/docs/a.md"
-        assert isinstance(rebased.path, VFSPath)
+        assert isinstance(rebased.path, Path)
         assert rebased.name == "a.md"
         assert rebased.content_hash == entry.content_hash
         assert entry.path == "/docs/a.md"  # original untouched
@@ -338,14 +338,14 @@ class TestVersioning:
             created_by="auto",
         )
         v2 = v1.with_version(2)
-        assert v2.path == version_path(VFSPath("/a.md"), 2)
+        assert v2.path == version_path(Path("/a.md"), 2)
         assert v2.name == "2"
         assert v1.name == "1"  # original untouched
 
     def test_with_version_moves_chunk_keeping_leaf(self) -> None:
-        chunk = Entry(path=chunk_path(VFSPath("/a.md"), "10_42", 1), content="seg")
+        chunk = Entry(path=chunk_path(Path("/a.md"), "10_42", 1), content="seg")
         moved = chunk.with_version(2)
-        assert moved.path == chunk_path(VFSPath("/a.md"), "10_42", 2)
+        assert moved.path == chunk_path(Path("/a.md"), "10_42", 2)
         assert moved.name == "10_42"
         assert moved.version_number == 2
 
@@ -363,7 +363,7 @@ class TestVersioning:
             Entry(path="/a.md", content="x")._stored_version_payload()
 
     def test_stored_payload_must_exist(self) -> None:
-        hollow = Entry(path=version_path(VFSPath("/a.md"), 1), is_snapshot=True)
+        hollow = Entry(path=version_path(Path("/a.md"), 1), is_snapshot=True)
         with pytest.raises(ValueError, match="missing stored payload"):
             hollow._stored_version_payload()
 
@@ -494,7 +494,7 @@ class TestObservation:
 
     def test_path_is_branded_and_canonical(self) -> None:
         obs = Observation(path="docs/../a.md")
-        assert isinstance(obs.path, VFSPath)
+        assert isinstance(obs.path, Path)
         assert obs.path == "/a.md"
         assert obs.path.name == "a.md"
 

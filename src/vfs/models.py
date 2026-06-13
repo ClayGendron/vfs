@@ -45,7 +45,7 @@ from vfs.chunking import (
     split_with_line_ranges,
 )
 from vfs.paths import (
-    VFSPath,
+    Path,
     chunk_path,
     decompose_edge,
     extract_extension,
@@ -179,7 +179,7 @@ class VFSEntry(SQLModel):
 
     def _rederive_path_fields(self) -> None:
         """Re-derive ``name``, ``parent_dir``, ``parent_file``, and ``ext`` from path."""
-        path = VFSPath(self.path)
+        path = Path(self.path)
         self.path = path
         self.name = path.name
         self.parent_dir = path.parent_dir
@@ -285,7 +285,7 @@ class VFSEntry(SQLModel):
         )
         now = datetime.now(UTC)
         entry = VFSEntry(
-            path=version_path(VFSPath(file_path), version_number),
+            path=version_path(Path(file_path), version_number),
             kind="version",
             content=record.content,
             version_diff=record.version_diff,
@@ -360,7 +360,7 @@ class VFSEntry(SQLModel):
         self.version_number = version_number
         if self.kind == "file":
             return
-        path = VFSPath(self.path)
+        path = Path(self.path)
         owner = path.parent_file
         if owner is None:
             msg = f"{self.kind} path has no owning file: {self.path}"
@@ -577,7 +577,7 @@ class VFSEntry(SQLModel):
             range_counts[key] = range_counts.get(key, 0) + 1
 
         version = self.version_number or 1
-        file_path = VFSPath(self.path)
+        file_path = Path(self.path)
         new_chunks: list[VFSEntry] = []
         cursor = 0
         cls = type(self)
@@ -621,7 +621,7 @@ class VFSEntry(SQLModel):
         if not isinstance(raw_path, str):
             return data
 
-        # Single gate: normalize and validate, yielding a canonical VFSPath.
+        # Single gate: normalize and validate, yielding a canonical Path.
         resolved = resolve_path(raw_path)
         if resolved.path is None:
             msg = f"Invalid path {raw_path!r}: {resolved.error}"

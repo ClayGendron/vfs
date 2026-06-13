@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from vfs.models2 import Observation
-from vfs.paths import VFSPath  # noqa: TC001 — Pydantic needs this at runtime for field resolution
+from vfs.paths import Path  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 from vfs.render import render_result
 
 if TYPE_CHECKING:
@@ -90,7 +90,7 @@ class ResultError(BaseModel):
 
     kind: VFSErrorKind | str
     message: str
-    path: VFSPath | None = None
+    path: Path | None = None
 
     @field_validator("kind", mode="before")
     @classmethod
@@ -165,7 +165,7 @@ class VFSResult(BaseModel):
         return "; ".join(e.message for e in self.errors)
 
     @property
-    def paths(self) -> tuple[VFSPath, ...]:
+    def paths(self) -> tuple[Path, ...]:
         """All observation paths as a tuple."""
         return tuple(o.path for o in self.observations)
 
@@ -354,7 +354,7 @@ class VFSResult(BaseModel):
     def without_mount(self, mount: str) -> VFSResult:
         """New result with the *mount* prefix stripped from every row and error path.
 
-        The inbound rebase; raising like :meth:`VFSPath.without_mount` — a
+        The inbound rebase; raising like :meth:`Path.without_mount` — a
         path outside *mount* is a routing bug, not a slice.
         """
         if not mount or mount == "/":

@@ -36,7 +36,7 @@ from vfs.chunking import (
     split_notebook,
     split_with_line_ranges,
 )
-from vfs.paths import ObjectKind, VFSPath, chunk_path, decompose_edge, version_path
+from vfs.paths import ObjectKind, Path, chunk_path, decompose_edge, version_path
 from vfs.vector import Vector  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 from vfs.versioning import create_version as create_version_record
 from vfs.versioning import reconstruct_version
@@ -76,7 +76,7 @@ class Entry(BaseModel):
 
     # --- Identity -----------------------------------------------------------
 
-    path: VFSPath
+    path: Path
     name: str
     kind: ObjectKind
     external_id: str | None = None
@@ -138,13 +138,13 @@ class Entry(BaseModel):
 
     @computed_field
     @property
-    def parent_dir(self) -> VFSPath:
+    def parent_dir(self) -> Path:
         """Directory containing this node (every kind has one)."""
         return self.path.parent_dir
 
     @computed_field
     @property
-    def parent_file(self) -> VFSPath | None:
+    def parent_file(self) -> Path | None:
         """Owning file for a chunk/version/edge, else None."""
         if self.kind not in {"chunk", "version", "edge"}:
             return None
@@ -152,13 +152,13 @@ class Entry(BaseModel):
 
     @computed_field
     @property
-    def source_file(self) -> VFSPath | None:
+    def source_file(self) -> Path | None:
         """Edge tail endpoint, else None."""
         return self.path.source_file if self.kind == "edge" else None
 
     @computed_field
     @property
-    def target_file(self) -> VFSPath | None:
+    def target_file(self) -> Path | None:
         """Edge head endpoint, else None."""
         return self.path.target_file if self.kind == "edge" else None
 
@@ -210,7 +210,7 @@ class Entry(BaseModel):
         raw = data.get("path")
         if not isinstance(raw, str):
             return data
-        path = VFSPath(raw)
+        path = Path(raw)
         data["path"] = path
         # Gate on ``is None``, not truthiness: an explicit "" is a caller value,
         # not an omission — it should reach field validation, not be derived over.
@@ -224,7 +224,7 @@ class Entry(BaseModel):
     def _derive_and_measure(self) -> Entry:
         """Derive ext/edge_type, enforce content invariants, measure, stamp times.
 
-        Reads the already-canonical ``self.path`` (gated by the ``VFSPath`` field
+        Reads the already-canonical ``self.path`` (gated by the ``Path`` field
         type). ``model_fields_set`` preserves caller-provided values: an explicit
         ``ext`` is kept, and a version row that arrives with precomputed metrics
         is not re-measured — a non-snapshot version stores a diff, so re-hashing
@@ -312,7 +312,7 @@ class Entry(BaseModel):
     def with_mount(self, mount: str) -> Entry:
         """Copy of this entry re-rooted under *mount* (local → global).
 
-        Delegates to :meth:`VFSPath.with_mount`. Only ``path`` and ``name``
+        Delegates to :meth:`Path.with_mount`. Only ``path`` and ``name``
         change — and ``name`` only when the root entry takes the mount's
         leaf. The original is untouched.
         """
@@ -322,7 +322,7 @@ class Entry(BaseModel):
     def without_mount(self, mount: str) -> Entry:
         """Copy of this entry with the *mount* prefix stripped (global → local).
 
-        Boundary-aware and raising, like :meth:`VFSPath.without_mount` — a
+        Boundary-aware and raising, like :meth:`Path.without_mount` — a
         path outside *mount* is a routing bug, not a slice.
         """
         path = self.path.without_mount(mount)
@@ -419,7 +419,7 @@ class Entry(BaseModel):
         )
         now = datetime.now(UTC)
         return cls(
-            path=version_path(VFSPath(file_path), version_number),
+            path=version_path(Path(file_path), version_number),
             kind="version",
             content=record.content,
             version_diff=record.version_diff,
@@ -594,7 +594,7 @@ class Observation(BaseModel):
     persisted ``Entry`` fields and are held in type-lockstep by a drift test;
     query fields are facts about *(entry, operation)* — a score, the matched
     regions, a write status — and are never persisted. ``name`` / ``ext`` /
-    ``parent_dir`` need no mirrors: ``path`` is a :class:`VFSPath`, so they
+    ``parent_dir`` need no mirrors: ``path`` is a :class:`Path`, so they
     come free (``obs.path.name``).
     """
 
@@ -602,7 +602,7 @@ class Observation(BaseModel):
 
     # --- Entry mirrors -------------------------------------------------------
 
-    path: VFSPath
+    path: Path
     kind: ObjectKind | None = None
     content: str | None = None
     description: str | None = None

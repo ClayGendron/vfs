@@ -1,6 +1,6 @@
 """Canonical paths for the VFS namespace.
 
-Every caller-supplied path enters through the gate — :class:`VFSPath` (or
+Every caller-supplied path enters through the gate — :class:`Path` (or
 :func:`resolve_path` for a non-raising result) — which normalizes and validates
 it into a canonical form safe to route and store. The metadata layout is rooted
 at ``/.vfs`` and mirrors the logical user path before crossing a reserved
@@ -152,14 +152,14 @@ _FORBIDDEN_FORMAT_CHARS = frozenset(
 # ---------------------------------------------------------------------------
 
 
-class VFSPath(str):
+class Path(str):
     """A path that has passed the gate: canonical, validated, safe to route.
 
     A ``str`` subclass — binds into SQL, f-strings, and dict keys unchanged. One
-    constructor, ``VFSPath(value)``: it canonicalizes and validates through
+    constructor, ``Path(value)``: it canonicalizes and validates through
     :func:`resolve_path` and raises ``ValueError`` only on a structurally invalid
     path (null byte, control char, over-long segment/path). Non-canonical input is
-    *canonicalized*, not rejected: ``VFSPath("/a/../b") == "/b"``.
+    *canonicalized*, not rejected: ``Path("/a/../b") == "/b"``.
 
     Validates if path can exist within VFS based on *structure only*. Whether a path
     is a legal write target is a separate concern in ``resolve_path(mutation=True)``.
@@ -171,7 +171,7 @@ class VFSPath(str):
 
     __slots__ = ()
 
-    def __new__(cls, value: str) -> VFSPath:
+    def __new__(cls, value: str) -> Path:
         # Validate through the one gate; resolve_path mints the branded instance.
         resolved = resolve_path(value)
         if resolved.path is None:
@@ -179,23 +179,23 @@ class VFSPath(str):
         return resolved.path
 
     @classmethod
-    def _brand(cls, canonical: str) -> VFSPath:
-        """Stamp an already-canonical string as a ``VFSPath`` without re-validating.
+    def _brand(cls, canonical: str) -> Path:
+        """Stamp an already-canonical string as a ``Path`` without re-validating.
 
         The single unchecked construction site. Only :func:`resolve_path` calls
         it, on a string it has just normalized and validated — going through the
-        public ``VFSPath(...)`` constructor here would recurse back into the gate.
+        public ``Path(...)`` constructor here would recurse back into the gate.
         Every other mint runs the full validation.
         """
         return str.__new__(cls, canonical)
 
     @property
-    def parent_dir(self) -> VFSPath:
+    def parent_dir(self) -> Path:
         """Literal parent directory — same derivation as ``VFSEntry.parent_dir``."""
         return compute_parent_dir(self)
 
     @property
-    def parent_file(self) -> VFSPath | None:
+    def parent_file(self) -> Path | None:
         """Owning file for a chunk/version/edge meta path, else ``None``.
 
         Same derivation as ``VFSEntry.parent_file``.
@@ -203,7 +203,7 @@ class VFSPath(str):
         return compute_parent_file(self)
 
     @property
-    def source_file(self) -> VFSPath | None:
+    def source_file(self) -> Path | None:
         """Edge tail endpoint for an edge path, else ``None``.
 
         Same derivation as ``VFSEntry.source_file``.
@@ -212,7 +212,7 @@ class VFSPath(str):
         return parts.source if parts is not None else None
 
     @property
-    def target_file(self) -> VFSPath | None:
+    def target_file(self) -> Path | None:
         """Edge head endpoint for an edge path, else ``None``.
 
         Same derivation as ``VFSEntry.target_file``.
@@ -256,7 +256,7 @@ class VFSPath(str):
         ok, _ = check_mutable_path(self)
         return ok
 
-    def joinpath(self, *segments: str) -> VFSPath:
+    def joinpath(self, *segments: str) -> Path:
         """Combine this path with one or more segments, re-gating the result.
 
         Mirrors :meth:`pathlib.PurePath.joinpath`: relative segments extend the
@@ -264,25 +264,25 @@ class VFSPath(str):
         joining is named, not bolted onto the separator method. Also available as
         the ``/`` operator for a single segment.
         """
-        return VFSPath(posixpath.join(self, *segments))
+        return Path(posixpath.join(self, *segments))
 
-    def __truediv__(self, segment: str) -> VFSPath:
+    def __truediv__(self, segment: str) -> Path:
         """``path / "sub"`` — pathlib-style sugar for joining one segment."""
         return self.joinpath(segment)
 
-    def with_mount(self, mount: str) -> VFSPath:
+    def with_mount(self, mount: str) -> Path:
         """Re-root this mount-local path under *mount* (local → global).
 
         The outbound half of routing; inverse of :meth:`without_mount`. *mount*
         is gated first, so ``/mnt/foo/`` and ``mnt/foo`` behave alike; a root
         mount is the identity.
         """
-        mount = VFSPath(mount)
+        mount = Path(mount)
         if mount == "/":
             return self
         return mount if self == "/" else mount.joinpath(self[1:])
 
-    def without_mount(self, mount: str) -> VFSPath:
+    def without_mount(self, mount: str) -> Path:
         """Strip the leading *mount* prefix (global → local).
 
         The inbound half of routing; inverse of :meth:`with_mount`. *mount* is
@@ -290,15 +290,15 @@ class VFSPath(str):
         ``/mnt/foobar``); a root mount is the identity. Raises if this path is
         not under *mount* — that is a routing bug, not a slice.
         """
-        mount = VFSPath(mount)
+        mount = Path(mount)
         if mount == "/":
             return self
         if self == mount:
-            return VFSPath("/")
+            return Path("/")
         if not self.startswith(mount + "/"):
             msg = f"Path {self!r} is not within mount {mount!r}"
             raise ValueError(msg)
-        return VFSPath(self[len(mount) :])
+        return Path(self[len(mount) :])
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -306,7 +306,7 @@ class VFSPath(str):
         source_type: type,
         handler: GetCoreSchemaHandler,
     ) -> CoreSchema:
-        # Validate-and-coerce str to VFSPath at model boundaries; the str subclass serializes as-is.
+        # Validate-and-coerce str to Path at model boundaries; the str subclass serializes as-is.
         return core_schema.no_info_after_validator_function(
             cls,
             core_schema.str_schema(),
@@ -316,7 +316,7 @@ class VFSPath(str):
 class ResolvedPath(NamedTuple):
     """Outcome of the path gate: a canonical path, or a rejection reason."""
 
-    path: VFSPath | None
+    path: Path | None
     error: str | None
 
 
@@ -336,8 +336,8 @@ def resolve_path(path: str, *, mutation: bool = False) -> ResolvedPath:
     valid, reason = validate_path(canonical)
     if not valid:
         return ResolvedPath(None, reason)
-    # Stamp the validated string; VFSPath(canonical) would re-enter the gate.
-    branded = VFSPath._brand(canonical)
+    # Stamp the validated string; Path(canonical) would re-enter the gate.
+    branded = Path._brand(canonical)
     if mutation:
         ok, reason = check_mutable_path(branded)
         if not ok:
@@ -415,7 +415,7 @@ def validate_path(path: str) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 
-def chunk_path(file_path: VFSPath, chunk_name: str, version: int) -> VFSPath:
+def chunk_path(file_path: Path, chunk_name: str, version: int) -> Path:
     """Build a chunk path under the hidden root metadata tree.
 
     Chunks are tied to the owning file's version:
@@ -425,30 +425,30 @@ def chunk_path(file_path: VFSPath, chunk_name: str, version: int) -> VFSPath:
     base = _validate_file_base(file_path)
     _validate_name(chunk_name, "chunk_name")
     _validate_version(version, "version")
-    return VFSPath(f"{METADATA_ROOT}{base}/{META_SEGMENT}/chunks/{version}/{chunk_name}")
+    return Path(f"{METADATA_ROOT}{base}/{META_SEGMENT}/chunks/{version}/{chunk_name}")
 
 
-def version_path(file_path: VFSPath, version_number: int) -> VFSPath:
+def version_path(file_path: Path, version_number: int) -> Path:
     """Build a version path under the hidden root metadata tree."""
     base = _validate_file_base(file_path)
     _validate_version(version_number, "version_number")
-    return VFSPath(f"{METADATA_ROOT}{base}/{META_SEGMENT}/versions/{version_number}")
+    return Path(f"{METADATA_ROOT}{base}/{META_SEGMENT}/versions/{version_number}")
 
 
-def edge_out_path(source: VFSPath, target: VFSPath, edge_type: str) -> VFSPath:
+def edge_out_path(source: Path, target: Path, edge_type: str) -> Path:
     """Build the canonical writable edge projection path."""
     src = _validate_edge_endpoint(source, "source")
     tgt = _validate_edge_endpoint(target, "target")
     _validate_name(edge_type, "edge_type")
-    return VFSPath(f"{METADATA_ROOT}{src}/{META_SEGMENT}/edges/out/{edge_type}/{tgt.lstrip('/')}")
+    return Path(f"{METADATA_ROOT}{src}/{META_SEGMENT}/edges/out/{edge_type}/{tgt.lstrip('/')}")
 
 
-def edge_in_path(source: VFSPath, target: VFSPath, edge_type: str) -> VFSPath:
+def edge_in_path(source: Path, target: Path, edge_type: str) -> Path:
     """Build the inverse readable edge projection path."""
     src = _validate_edge_endpoint(source, "source")
     tgt = _validate_edge_endpoint(target, "target")
     _validate_name(edge_type, "edge_type")
-    return VFSPath(f"{METADATA_ROOT}{tgt}/{META_SEGMENT}/edges/in/{edge_type}/{src.lstrip('/')}")
+    return Path(f"{METADATA_ROOT}{tgt}/{META_SEGMENT}/edges/in/{edge_type}/{src.lstrip('/')}")
 
 
 # ---------------------------------------------------------------------------
@@ -457,8 +457,8 @@ def edge_in_path(source: VFSPath, target: VFSPath, edge_type: str) -> VFSPath:
 
 
 class EdgeParts(NamedTuple):
-    source: VFSPath
-    target: VFSPath
+    source: Path
+    target: Path
     edge_type: str
     direction: Literal["out", "in"]
 
@@ -470,10 +470,10 @@ class _EdgePathParts(NamedTuple):
     embedded_path: str
 
 
-def decompose_edge(path: VFSPath) -> EdgeParts | None:
+def decompose_edge(path: Path) -> EdgeParts | None:
     """Extract source, target, type, and direction from an edge path.
 
-    Takes a canonical :class:`VFSPath` and does not re-normalize.
+    Takes a canonical :class:`Path` and does not re-normalize.
     """
     split = _split_edge_path(path)
     if split is None:
@@ -481,8 +481,8 @@ def decompose_edge(path: VFSPath) -> EdgeParts | None:
 
     # Re-gate both endpoints through the public constructor; branding is
     # reserved for resolve_path and db-load.
-    owner = VFSPath(_canonical_endpoint_path(split.owner_root))
-    embedded = VFSPath(split.embedded_path)
+    owner = Path(_canonical_endpoint_path(split.owner_root))
+    embedded = Path(split.embedded_path)
     if split.direction == "out":
         return EdgeParts(
             source=owner,
@@ -503,12 +503,12 @@ def decompose_edge(path: VFSPath) -> EdgeParts | None:
 # ---------------------------------------------------------------------------
 
 
-def compute_parent_file(path: VFSPath) -> VFSPath | None:
+def compute_parent_file(path: Path) -> Path | None:
     """Return the owning file for a chunk, version, or edge meta path, else ``None``.
 
     Chunks, versions, and edges all hang off a file under ``__meta__``, so they
     resolve to that file. Plain files and directories have no parent file and
-    return ``None``. Takes a canonical :class:`VFSPath` and returns one.
+    return ``None``. Takes a canonical :class:`Path` and returns one.
     """
     if path.kind not in {"chunk", "version", "edge"}:
         return None
@@ -516,15 +516,15 @@ def compute_parent_file(path: VFSPath) -> VFSPath | None:
     # carries a /__meta__ frame, so the marker is always present after stripping.
     stripped = path[len(METADATA_ROOT) :]
     marker = stripped.find(f"/{META_SEGMENT}")
-    return VFSPath(stripped[:marker] or "/")
+    return Path(stripped[:marker] or "/")
 
 
-def compute_parent_dir(path: VFSPath) -> VFSPath:
+def compute_parent_dir(path: Path) -> Path:
     """Return the literal parent directory used by the projected namespace."""
     return split_path(path)[0]
 
 
-def parse_kind(path: VFSPath) -> ObjectKind:
+def parse_kind(path: Path) -> ObjectKind:
     """Detect the entity kind from a canonical path.
 
     Metadata markers are only meaningful inside the reserved ``/.vfs`` tree; an
@@ -532,7 +532,7 @@ def parse_kind(path: VFSPath) -> ObjectKind:
     directory. Chunks are version-addressed (``chunks/<version>/<name>``), so a
     bare ``chunks/<version>`` is the version-scoped directory, not a chunk.
 
-    Takes a :class:`VFSPath` (canonical by construction) and does not re-normalize.
+    Takes a :class:`Path` (canonical by construction) and does not re-normalize.
     """
     if is_meta_path(path):
         if _is_projected_edge_path(path):
@@ -562,10 +562,10 @@ def parse_kind(path: VFSPath) -> ObjectKind:
     return "directory"
 
 
-def extract_extension(path: VFSPath) -> str | None:
+def extract_extension(path: Path) -> str | None:
     """Return the lowercased trailing file extension, or ``None``.
 
-    Takes a canonical :class:`VFSPath`; the return is an extension, not a path.
+    Takes a canonical :class:`Path`; the return is an extension, not a path.
     """
     _, name = split_path(path)
     if not name:
@@ -579,30 +579,30 @@ def extract_extension(path: VFSPath) -> str | None:
     return ext
 
 
-def split_path(path: VFSPath) -> tuple[VFSPath, str]:
-    """Split a path into ``(directory, name)``, the directory re-minted as ``VFSPath``."""
+def split_path(path: Path) -> tuple[Path, str]:
+    """Split a path into ``(directory, name)``, the directory re-minted as ``Path``."""
     if path == "/":
-        return VFSPath("/"), ""
+        return Path("/"), ""
     directory, name = posixpath.split(path)
-    return VFSPath(directory), name
+    return Path(directory), name
 
 
-def is_meta_path(path: VFSPath) -> bool:
+def is_meta_path(path: Path) -> bool:
     """Return whether *path* lies within the reserved ``/.vfs`` tree.
 
-    Takes a canonical :class:`VFSPath` and does not re-normalize.
+    Takes a canonical :class:`Path` and does not re-normalize.
     """
     return _under_meta_root(path)
 
 
-def check_mutable_path(path: VFSPath, *, kind: str | None = None) -> tuple[bool, str]:
+def check_mutable_path(path: Path, *, kind: str | None = None) -> tuple[bool, str]:
     """Check that *path* is a mutable target, returning ``(ok, reason)``.
 
     A namespace-grammar check, not a permission check: ordinary paths are valid
     targets, but the reserved ``/.vfs`` tree admits mutations only at the
     machine-authored endpoint shapes (chunks, versions, canonical out-edges)
     and the reserved directory skeleton — never arbitrary content,
-    inverse-edge projections, or the roots. Takes a :class:`VFSPath`, which is
+    inverse-edge projections, or the roots. Takes a :class:`Path`, which is
     canonical by construction — so ``/.vfs/..`` cannot reach here as anything
     other than the ``/`` it normalizes to.
 
@@ -758,10 +758,10 @@ def _reject_embedded_meta_segment(normalized: str, label: str) -> None:
         raise ValueError(msg)
 
 
-def _validate_file_base(path: VFSPath) -> VFSPath:
+def _validate_file_base(path: Path) -> Path:
     """Reject root, reserved, or metadata bases for file metadata.
 
-    Takes a canonical :class:`VFSPath`; only the namespace rules a ``VFSPath``
+    Takes a canonical :class:`Path`; only the namespace rules a ``Path``
     does not itself imply are checked here.
     """
     if path in {"/", METADATA_ROOT}:
@@ -774,7 +774,7 @@ def _validate_file_base(path: VFSPath) -> VFSPath:
     return path
 
 
-def _validate_edge_endpoint(path: VFSPath, label: str) -> VFSPath:
+def _validate_edge_endpoint(path: Path, label: str) -> Path:
     """Validate *path* as a canonical, non-metadata edge endpoint.
 
     Edge endpoints are user-space entities, never reserved ``/.vfs`` paths — so
