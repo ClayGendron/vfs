@@ -17,7 +17,9 @@ from vfs.exceptions import (
     WriteConflictError,
     exception_for_kind,
 )
-from vfs.results2 import VFSErrorKind
+from vfs.models2 import Observation
+from vfs.paths import Path
+from vfs.results2 import VFSErrorKind, VFSResult
 
 
 class SpyFS(VirtualFileSystem):
@@ -668,3 +670,74 @@ def test_error_raises_classified_exception_when_configured() -> None:
     # the raised exception still carries the full failed result
     assert exc.value.result is not None
     assert exc.value.result.success is False
+
+
+# ----------------------------------------------------------------------
+# capabilities gate + run verb
+# ----------------------------------------------------------------------
+
+
+class RunnerFS(VirtualFileSystem):
+    """A storage-less leaf that answers read/run and records the calls it gets."""
+
+    def __init__(self, *, caps: frozenset[str] | None = None, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._caps = caps
+        self.calls: list[tuple[str, str, object]] = []
+
+    def capabilities(self) -> frozenset[str] | None:
+        return self._caps
+
+    async def read(self, path=None, observations=None, *, columns=None, user_id=None) -> VFSResult:
+        self.calls.append(("read", path, columns))
+        return VFSResult(function="read", observations=[Observation(path=Path(path), kind="tool")])
+
+    async def run(self, path=None, *, arguments=None, user_id=None) -> VFSResult:
+        self.calls.append(("run", path, arguments))
+        return VFSResult(function="run", observations=[Observation(path=Path(path), kind="tool")])
+
+
+async def test_run_on_pure_router_is_not_found() -> None:
+    root = VirtualFileSystem()
+    r = await root.run("/nope/tool")
+    assert r.success is False
+    assert r.errors[0].kind is VFSErrorKind.not_found
+
+
+async def test_run_routes_to_child_and_rebases() -> None:
+    root = VirtualFileSystem()
+    catalog = RunnerFS()
+    await root.add_mount(catalog, "/nonvfs")
+    r = await root.run("/nonvfs/clone-repo", arguments={"repo": "org/proj"})
+    assert catalog.calls == [("run", "/clone-repo", {"repo": "org/proj"})]
+    assert r.success is True
+    assert r.paths == ("/nonvfs/clone-repo",)
+
+
+async def test_capabilities_gate_blocks_unsupported_op() -> None:
+    root = VirtualFileSystem()
+    catalog = RunnerFS(caps=frozenset({"read"}))
+    await root.add_mount(catalog, "/nonvfs")
+    blocked = await root.run("/nonvfs/clone-repo")
+    assert blocked.success is False
+    assert blocked.errors[0].kind is VFSErrorKind.unsupported
+    assert catalog.calls == []  # never dispatched
+
+
+async def test_capabilities_gate_allows_supported_op() -> None:
+    root = VirtualFileSystem()
+    catalog = RunnerFS(caps=frozenset({"read"}))
+    await root.add_mount(catalog, "/nonvfs")
+    ok = await root.read("/nonvfs/clone-repo")
+    assert ok.success is True
+    assert ok.paths == ("/nonvfs/clone-repo",)
+    assert catalog.calls == [("read", "/clone-repo", None)]
+
+
+async def test_capabilities_none_imposes_no_gate() -> None:
+    # A plain child (capabilities() is None) answers run with no restriction.
+    root = VirtualFileSystem()
+    catalog = RunnerFS()
+    await root.add_mount(catalog, "/nonvfs")
+    r = await root.run("/nonvfs/x")
+    assert r.success is True

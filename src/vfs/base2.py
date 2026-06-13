@@ -320,6 +320,23 @@ class VirtualFileSystem:
     # dispatch across the mount boundary
     # -------------------------------------------------------------------
 
+    def capabilities(self) -> frozenset[str] | None:
+        """Operations this filesystem answers as a terminal, or ``None`` for no limit.
+
+        The router consults the terminal's set before dispatch and returns
+        ``unsupported`` without a wire call when an op is absent (the no-probe
+        rule). The base router imposes no limit; capability-limited leaves (an
+        MCP tool catalog) override with an explicit set.
+        """
+        return None
+
+    def _capability_error(self, fs: VirtualFileSystem, op: str, path: Path | None) -> VFSResult | None:
+        """Return an ``unsupported`` result if *fs* does not answer *op*, else ``None``."""
+        caps = fs.capabilities()
+        if caps is not None and op not in caps:
+            return self._error(f"Operation {op!r} is not supported here", kind=VFSErrorKind.unsupported, path=path)
+        return None
+
     async def _call_local_impl(
         self,
         op: str,
@@ -377,6 +394,9 @@ class VirtualFileSystem:
             prefix: str,
             group: list[Observation],
         ) -> VFSResult:
+            cap_err = self._capability_error(fs, op, None)
+            if cap_err is not None:
+                return cap_err.with_mount(prefix)
             if fs is self:
                 r = await self._call_local_impl(op, observations=group, user_id=user_id, **kwargs)
             else:
@@ -420,6 +440,10 @@ class VirtualFileSystem:
 
         if fs is self and not self._storage:
             return self._error(f"No mount found for path: {path}", kind=VFSErrorKind.not_found)
+
+        cap_err = self._capability_error(fs, op, path)
+        if cap_err is not None:
+            return cap_err
 
         err = check_writable(fs, op, rel, mount_prefix=prefix)
         if err is not None:
@@ -504,3 +528,18 @@ class VirtualFileSystem:
         user_id: str | None = None,
     ) -> VFSResult:
         return await self._route_single("ls", path, observations, columns=columns, user_id=user_id)
+
+    async def run(
+        self,
+        path: str,
+        *,
+        arguments: dict[str, Any] | None = None,
+        user_id: str | None = None,
+    ) -> VFSResult:
+        """Execute the tool at *path* with *arguments* — the execution verb.
+
+        ``read``/``stat``/``ls`` discover a tool's definition; ``run`` is the only
+        verb that executes it. Not a namespace mutation, so it takes no
+        write-authorization gate.
+        """
+        return await self._route_single("run", path, None, arguments=arguments, user_id=user_id)
