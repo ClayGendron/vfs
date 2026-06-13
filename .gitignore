@@ -221,7 +221,12 @@ tests/fixtures/repos/
 tests_old/fixtures/repos/
 
 # Test Notebooks
-*test.ipynb
+*test*.ipynb
 
 # Node modules (vfs-app and any other JS subprojects)
 node_modules/
+
+# SQLite databases (local test/dev artifacts)
+*.db
+*.db-wal
+*.db-shm
