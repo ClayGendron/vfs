@@ -87,10 +87,23 @@ def test_normalize_mount_path_allows_nested(raw: str, expected: str) -> None:
     assert VirtualFileSystem._normalize_mount_path(raw) == expected
 
 
-@pytest.mark.parametrize("raw", [" /data", "/ /data", "/data/ ", "/data/ x", "/x /y", "/a/ /b"])
-def test_normalize_mount_path_rejects_whitespace_segments(raw: str) -> None:
-    with pytest.raises(ValueError):
-        VirtualFileSystem._normalize_mount_path(raw)
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (" /data", "/data"),
+        ("/ /data", "/data"),
+        ("/data/ ", "/data"),
+        ("/data/ x", "/data/x"),
+        ("/x /y", "/x/y"),
+        ("/a/ /b", "/a/b"),
+        ("/\tdata", "/data"),
+        ("/data\n", "/data"),
+    ],
+)
+def test_normalize_mount_path_canonicalizes_stray_whitespace(raw: str, expected: str) -> None:
+    # Leading/trailing per-segment whitespace (incl. tab/newline) is canonicalized
+    # by the Path gate, not rejected.
+    assert VirtualFileSystem._normalize_mount_path(raw) == expected
 
 
 @pytest.mark.parametrize("raw", ["/My Documents", "/a/My Documents/b"])
@@ -111,8 +124,9 @@ def test_normalize_mount_path_rejects_reserved_metadata_root(raw: str) -> None:
         VirtualFileSystem._normalize_mount_path(raw)
 
 
-@pytest.mark.parametrize("raw", [" ", "/ ", "/\tdata", "/data\n", "/da\tta", "/data\x7f"])
+@pytest.mark.parametrize("raw", [" ", "/ ", "/da\tta", "/data\x7f"])
 def test_normalize_mount_path_rejects_whitespace_and_control(raw: str) -> None:
+    # " " and "/ " collapse to root; interior control chars are structurally invalid.
     with pytest.raises(ValueError):
         VirtualFileSystem._normalize_mount_path(raw)
 
@@ -124,31 +138,51 @@ def test_normalize_mount_path_rejects_whitespace_and_control(raw: str) -> None:
 
 async def test_add_mount_accepts_bare_and_slashed() -> None:
     parent = VirtualFileSystem()
-    await parent.add_mount("data", VirtualFileSystem())
-    await parent.add_mount("/docs", VirtualFileSystem())
+    await parent.add_mount(VirtualFileSystem(), "data")
+    await parent.add_mount(VirtualFileSystem(), "/docs")
     assert set(parent._mounts) == {"/data", "/docs"}
+
+
+async def test_add_mount_uses_filesystem_name_when_path_omitted() -> None:
+    parent = VirtualFileSystem()
+    child = VirtualFileSystem(name="data")
+    await parent.add_mount(child)
+    assert set(parent._mounts) == {"/data"}
+
+
+async def test_add_mount_explicit_path_overrides_name() -> None:
+    parent = VirtualFileSystem()
+    child = VirtualFileSystem(name="data")
+    await parent.add_mount(child, "/elsewhere")
+    assert set(parent._mounts) == {"/elsewhere"}
+
+
+async def test_add_mount_requires_path_or_named_filesystem() -> None:
+    parent = VirtualFileSystem()
+    with pytest.raises(ValueError, match="path or a named filesystem"):
+        await parent.add_mount(VirtualFileSystem())
 
 
 async def test_add_mount_rejects_duplicate() -> None:
     parent = VirtualFileSystem()
-    await parent.add_mount("data", VirtualFileSystem())
+    await parent.add_mount(VirtualFileSystem(), "data")
     with pytest.raises(ValueError, match="already exists"):
-        await parent.add_mount("/data", VirtualFileSystem())
+        await parent.add_mount(VirtualFileSystem(), "/data")
 
 
 async def test_add_mount_propagates_raise_on_error() -> None:
     parent = VirtualFileSystem(raise_on_error=True)
     child = VirtualFileSystem()
-    await parent.add_mount("data", child)
+    await parent.add_mount(child, "data")
     assert child._raise_on_error is True
 
 
 async def test_add_mount_rejects_same_instance_twice() -> None:
     parent = VirtualFileSystem()
     child = VirtualFileSystem()
-    await parent.add_mount("here", child)
+    await parent.add_mount(child, "here")
     with pytest.raises(ValueError, match="already mounted"):
-        await parent.add_mount("there", child)
+        await parent.add_mount(child, "there")
     assert set(parent._mounts) == {"/here"}
 
 
@@ -157,17 +191,17 @@ async def test_add_mount_rejects_same_instance_nested_elsewhere() -> None:
     root = VirtualFileSystem()
     data = VirtualFileSystem()
     shared = VirtualFileSystem()
-    await root.add_mount("/data", data)
-    await root.add_mount("/x", shared)
+    await root.add_mount(data, "/data")
+    await root.add_mount(shared, "/x")
     with pytest.raises(ValueError, match="already mounted"):
-        await root.add_mount("/data/shared", shared)  # would delegate into data
+        await root.add_mount(shared, "/data/shared")  # would delegate into data
     assert set(data._mounts) == set()
 
 
 async def test_add_mount_denied_when_disallowed() -> None:
     root = VirtualFileSystem(allow_child_mounts=False)
     with pytest.raises(ValueError, match="does not allow child mounts"):
-        await root.add_mount("/data", VirtualFileSystem())
+        await root.add_mount(VirtualFileSystem(), "/data")
     assert set(root._mounts) == set()
 
 
@@ -176,9 +210,9 @@ async def test_add_mount_delegation_respects_child_policy() -> None:
     # adapter): a delegated add into it is refused.
     root = VirtualFileSystem()
     remote = VirtualFileSystem(allow_child_mounts=False)
-    await root.add_mount("/remote", remote)
+    await root.add_mount(remote, "/remote")
     with pytest.raises(ValueError, match="does not allow child mounts"):
-        await root.add_mount("/remote/cache", VirtualFileSystem())
+        await root.add_mount(VirtualFileSystem(), "/remote/cache")
     assert set(remote._mounts) == set()
     assert set(root._mounts) == {"/remote"}
 
@@ -186,7 +220,7 @@ async def test_add_mount_delegation_respects_child_policy() -> None:
 async def test_add_mount_rejects_self_mount() -> None:
     parent = VirtualFileSystem()
     with pytest.raises(ValueError, match="into itself"):
-        await parent.add_mount("loop", parent)
+        await parent.add_mount(parent, "loop")
 
 
 async def test_add_mount_nested_delegates_to_parent_mount() -> None:
@@ -194,8 +228,8 @@ async def test_add_mount_nested_delegates_to_parent_mount() -> None:
     root = VirtualFileSystem()
     data = VirtualFileSystem()
     tmp = VirtualFileSystem()
-    await root.add_mount("/data", data)
-    await root.add_mount("/data/tmp", tmp)
+    await root.add_mount(data, "/data")
+    await root.add_mount(tmp, "/data/tmp")
     assert set(root._mounts) == {"/data"}
     assert set(data._mounts) == {"/tmp"}
     fs, rel, prefix = root._resolve_terminal("/data/tmp/file.txt")
@@ -207,10 +241,10 @@ async def test_add_mount_nested_delegates_to_parent_mount() -> None:
 async def test_add_mount_reverse_order_conflict() -> None:
     # Reverse order: /data/tmp first, then /data is owned by the deeper mount.
     root = VirtualFileSystem()
-    await root.add_mount("/data/tmp", VirtualFileSystem())
+    await root.add_mount(VirtualFileSystem(), "/data/tmp")
     assert set(root._mounts) == {"/data/tmp"}
     with pytest.raises(ValueError, match="deeper mount"):
-        await root.add_mount("/data", VirtualFileSystem())
+        await root.add_mount(VirtualFileSystem(), "/data")
     assert set(root._mounts) == {"/data/tmp"}
 
 
@@ -219,9 +253,9 @@ async def test_add_mount_deep_nested_delegation() -> None:
     a = VirtualFileSystem()
     b = VirtualFileSystem()
     leaf = VirtualFileSystem()
-    await root.add_mount("/a", a)
-    await a.add_mount("/b", b)
-    await root.add_mount("/a/b/leaf", leaf)  # delegates root -> a -> b
+    await root.add_mount(a, "/a")
+    await a.add_mount(b, "/b")
+    await root.add_mount(leaf, "/a/b/leaf")  # delegates root -> a -> b
     assert set(b._mounts) == {"/leaf"}
     fs, _rel, prefix = root._resolve_terminal("/a/b/leaf/x")
     assert fs is leaf
@@ -232,8 +266,8 @@ async def test_remove_mount_nested_delegates() -> None:
     root = VirtualFileSystem()
     data = VirtualFileSystem()
     tmp = VirtualFileSystem()
-    await root.add_mount("/data", data)
-    await root.add_mount("/data/tmp", tmp)
+    await root.add_mount(data, "/data")
+    await root.add_mount(tmp, "/data/tmp")
     await root.remove_mount("/data/tmp")
     assert set(data._mounts) == set()
     assert set(root._mounts) == {"/data"}
@@ -241,15 +275,15 @@ async def test_remove_mount_nested_delegates() -> None:
 
 async def test_add_mount_storageless_allows_sparse_nested() -> None:
     root = VirtualFileSystem()
-    await root.add_mount("/a/b/c", VirtualFileSystem())
+    await root.add_mount(VirtualFileSystem(), "/a/b/c")
     assert set(root._mounts) == {"/a/b/c"}
 
 
 async def test_add_mount_rejects_unmountable_storage_path() -> None:
     root = MountPolicyFS({"/projects"})
     with pytest.raises(ValueError, match="conflict"):
-        await root.add_mount("/projects", VirtualFileSystem())
-    await root.add_mount("/free", VirtualFileSystem())  # mountable path is fine
+        await root.add_mount(VirtualFileSystem(), "/projects")
+    await root.add_mount(VirtualFileSystem(), "/free")  # mountable path is fine
     assert set(root._mounts) == {"/free"}
 
 
@@ -257,9 +291,9 @@ async def test_add_mount_mountable_check_runs_after_delegation() -> None:
     # The policy check runs on the fs that ultimately owns the mount.
     root = VirtualFileSystem()
     data = MountPolicyFS({"/tmp"})
-    await root.add_mount("/data", data)
+    await root.add_mount(data, "/data")
     with pytest.raises(ValueError, match="conflict"):
-        await root.add_mount("/data/tmp", VirtualFileSystem())
+        await root.add_mount(VirtualFileSystem(), "/data/tmp")
     assert set(data._mounts) == set()
 
 
@@ -276,10 +310,10 @@ async def test_add_mount_on_subnode_checks_whole_graph() -> None:
     root = VirtualFileSystem()
     a = VirtualFileSystem()
     b = SpyFS()
-    await root.add_mount("/a", a)
-    await root.add_mount("/b", b)
+    await root.add_mount(a, "/a")
+    await root.add_mount(b, "/b")
     with pytest.raises(ValueError, match="already mounted"):
-        await a.add_mount("/shared", b)  # b already lives at /b
+        await a.add_mount(b, "/shared")  # b already lives at /b
     assert set(a._mounts) == set()
     await root.close()
     assert b.close_count == 1  # not double-closed
@@ -291,9 +325,9 @@ async def test_add_mount_rejects_filesystem_mounted_in_another_tree() -> None:
     root1 = VirtualFileSystem()
     root2 = VirtualFileSystem()
     child = SpyFS()
-    await root1.add_mount("/c", child)
+    await root1.add_mount(child, "/c")
     with pytest.raises(ValueError, match="already mounted"):
-        await root2.add_mount("/c", child)
+        await root2.add_mount(child, "/c")
     assert set(root2._mounts) == set()
     await root1.close()
     await root2.close()
@@ -306,8 +340,8 @@ async def test_add_mount_on_subnode_is_node_relative() -> None:
     root = VirtualFileSystem()
     data = VirtualFileSystem()
     tmp = VirtualFileSystem()
-    await root.add_mount("/data", data)
-    await data.add_mount("/tmp", tmp)
+    await root.add_mount(data, "/data")
+    await data.add_mount(tmp, "/tmp")
     fs, _rel, prefix = root._resolve_terminal("/data/tmp/x")
     assert fs is tmp
     assert prefix == "/data/tmp"
@@ -318,8 +352,8 @@ async def test_add_mount_allows_unmounted_fs_carrying_its_own_mounts() -> None:
     root = VirtualFileSystem()
     sub = VirtualFileSystem()
     leaf = VirtualFileSystem()
-    await sub.add_mount("/leaf", leaf)
-    await root.add_mount("/sub", sub)
+    await sub.add_mount(leaf, "/leaf")
+    await root.add_mount(sub, "/sub")
     assert sub._parent is root
     assert leaf._parent is sub
     fs, _rel, prefix = root._resolve_terminal("/sub/leaf/x")
@@ -330,7 +364,7 @@ async def test_add_mount_allows_unmounted_fs_carrying_its_own_mounts() -> None:
 async def test_parent_pointer_set_and_cleared() -> None:
     root = VirtualFileSystem()
     child = VirtualFileSystem()
-    await root.add_mount("/data", child)
+    await root.add_mount(child, "/data")
     assert child._parent is root
     await root.remove_mount("/data")
     assert child._parent is None
@@ -340,8 +374,8 @@ async def test_parent_pointer_for_nested_delegation() -> None:
     root = VirtualFileSystem()
     data = VirtualFileSystem()
     tmp = VirtualFileSystem()
-    await root.add_mount("/data", data)
-    await root.add_mount("/data/tmp", tmp)  # delegated into data
+    await root.add_mount(data, "/data")
+    await root.add_mount(tmp, "/data/tmp")  # delegated into data
     assert data._parent is root
     assert tmp._parent is data
     assert tmp._root() is root
@@ -350,7 +384,7 @@ async def test_parent_pointer_for_nested_delegation() -> None:
 async def test_close_clears_parent_pointers() -> None:
     root = VirtualFileSystem()
     child = VirtualFileSystem()
-    await root.add_mount("/data", child)
+    await root.add_mount(child, "/data")
     await root.close()
     assert child._parent is None
 
@@ -362,10 +396,10 @@ async def test_add_mount_duplicate_across_delegation_does_not_double_close() -> 
     root = VirtualFileSystem()
     data = VirtualFileSystem()
     leaf = SpyFS()
-    await root.add_mount("/data", data)
-    await root.add_mount("/other", leaf)
+    await root.add_mount(data, "/data")
+    await root.add_mount(leaf, "/other")
     with pytest.raises(ValueError, match="already mounted"):
-        await root.add_mount("/data/tmp", leaf)
+        await root.add_mount(leaf, "/data/tmp")
     assert set(data._mounts) == set()
     await root.close()
     assert leaf.close_count == 1
@@ -374,8 +408,8 @@ async def test_add_mount_duplicate_across_delegation_does_not_double_close() -> 
 async def test_add_mount_allows_distinct_instances() -> None:
     # Two distinct instances (e.g. BindFS wrappers over one upstream) are fine.
     parent = VirtualFileSystem()
-    await parent.add_mount("a", VirtualFileSystem())
-    await parent.add_mount("b", VirtualFileSystem())
+    await parent.add_mount(VirtualFileSystem(), "a")
+    await parent.add_mount(VirtualFileSystem(), "b")
     assert set(parent._mounts) == {"/a", "/b"}
 
 
@@ -383,9 +417,9 @@ async def test_add_mount_rejects_direct_cycle() -> None:
     # root -> child -> root
     root = VirtualFileSystem()
     child = VirtualFileSystem()
-    await root.add_mount("child", child)
+    await root.add_mount(child, "child")
     with pytest.raises(ValueError, match="cycle"):
-        await child.add_mount("back", root)
+        await child.add_mount(root, "back")
     assert child._mounts == {}
 
 
@@ -394,10 +428,10 @@ async def test_add_mount_rejects_indirect_cycle() -> None:
     root = VirtualFileSystem()
     a = VirtualFileSystem()
     b = VirtualFileSystem()
-    await root.add_mount("a", a)
-    await a.add_mount("b", b)
+    await root.add_mount(a, "a")
+    await a.add_mount(b, "b")
     with pytest.raises(ValueError, match="cycle"):
-        await b.add_mount("back", root)
+        await b.add_mount(root, "back")
     assert b._mounts == {}
 
 
@@ -405,9 +439,9 @@ async def test_no_cycle_means_close_terminates() -> None:
     # Once the cycle is refused, the acyclic tree closes cleanly.
     root = VirtualFileSystem()
     child = VirtualFileSystem()
-    await root.add_mount("child", child)
+    await root.add_mount(child, "child")
     with pytest.raises(ValueError, match="cycle"):
-        await child.add_mount("back", root)
+        await child.add_mount(root, "back")
     await root.close()
     assert root._mounts == {}
 
@@ -430,8 +464,8 @@ async def test_add_mount_allows_deep_acyclic_tree() -> None:
     root = VirtualFileSystem()
     a = VirtualFileSystem()
     b = VirtualFileSystem()
-    await root.add_mount("a", a)
-    await a.add_mount("b", b)
+    await root.add_mount(a, "a")
+    await a.add_mount(b, "b")
     fs, rel, prefix = root._resolve_terminal("/a/b/file.txt")
     assert fs is b
     assert rel == "/file.txt"
@@ -440,9 +474,9 @@ async def test_add_mount_allows_deep_acyclic_tree() -> None:
 
 async def test_add_mount_rebuilds_sorted_list_longest_first() -> None:
     parent = VirtualFileSystem()
-    await parent.add_mount("a", VirtualFileSystem())
-    await parent.add_mount("abc", VirtualFileSystem())
-    await parent.add_mount("ab", VirtualFileSystem())
+    await parent.add_mount(VirtualFileSystem(), "a")
+    await parent.add_mount(VirtualFileSystem(), "abc")
+    await parent.add_mount(VirtualFileSystem(), "ab")
     assert parent._sorted_mount_paths == ["/abc", "/ab", "/a"]
 
 
@@ -453,8 +487,8 @@ async def test_add_mount_rebuilds_sorted_list_longest_first() -> None:
 
 async def test_remove_mount_updates_table() -> None:
     parent = VirtualFileSystem()
-    await parent.add_mount("data", VirtualFileSystem())
-    await parent.add_mount("docs", VirtualFileSystem())
+    await parent.add_mount(VirtualFileSystem(), "data")
+    await parent.add_mount(VirtualFileSystem(), "docs")
     await parent.remove_mount("/data")
     assert set(parent._mounts) == {"/docs"}
     assert parent._sorted_mount_paths == ["/docs"]
@@ -470,7 +504,7 @@ async def test_remove_mount_does_not_close_child() -> None:
     # Lifecycle is the caller's concern — unmounting must not close the child.
     parent = VirtualFileSystem()
     child = SpyFS()
-    await parent.add_mount("data", child)
+    await parent.add_mount(child, "data")
     await parent.remove_mount("/data")
     assert child.close_count == 0
 
@@ -484,8 +518,8 @@ async def test_close_is_polymorphic_and_clears() -> None:
     parent = VirtualFileSystem()
     child_a = SpyFS()
     child_b = SpyFS()
-    await parent.add_mount("a", child_a)
-    await parent.add_mount("b", child_b)
+    await parent.add_mount(child_a, "a")
+    await parent.add_mount(child_b, "b")
     await parent.close()
     assert child_a.close_count == 1
     assert child_b.close_count == 1
@@ -497,8 +531,8 @@ async def test_close_recurses_into_nested_mounts() -> None:
     parent = VirtualFileSystem()
     child = VirtualFileSystem()
     grandchild = SpyFS()
-    await child.add_mount("sub", grandchild)
-    await parent.add_mount("data", child)
+    await child.add_mount(grandchild, "sub")
+    await parent.add_mount(child, "data")
     await parent.close()
     assert grandchild.close_count == 1
 
@@ -514,8 +548,8 @@ async def test_close_attempts_all_and_clears_on_failure() -> None:
     # One failing child must not strand siblings or leave the table populated.
     parent = VirtualFileSystem()
     good = SpyFS()
-    await parent.add_mount("a", BadCloseFS())
-    await parent.add_mount("b", good)
+    await parent.add_mount(BadCloseFS(), "a")
+    await parent.add_mount(good, "b")
     with pytest.raises(RuntimeError, match="boom"):
         await parent.close()
     assert good.close_count == 1
@@ -525,8 +559,8 @@ async def test_close_attempts_all_and_clears_on_failure() -> None:
 
 async def test_close_groups_multiple_failures() -> None:
     parent = VirtualFileSystem()
-    await parent.add_mount("a", BadCloseFS())
-    await parent.add_mount("b", BadCloseFS())
+    await parent.add_mount(BadCloseFS(), "a")
+    await parent.add_mount(BadCloseFS(), "b")
     with pytest.raises(ExceptionGroup):
         await parent.close()
     assert parent._mounts == {}
@@ -541,8 +575,8 @@ async def test_match_mount_longest_prefix() -> None:
     parent = VirtualFileSystem()
     short = VirtualFileSystem()
     long = VirtualFileSystem()
-    await parent.add_mount("a", short)
-    await parent.add_mount("ab", long)
+    await parent.add_mount(short, "a")
+    await parent.add_mount(long, "ab")
     assert parent._match_mount("/ab/x") == ("/ab", long)
     assert parent._match_mount("/a/x") == ("/a", short)
     assert parent._match_mount("/other") is None
@@ -559,7 +593,7 @@ async def test_resolve_terminal_self() -> None:
 async def test_resolve_terminal_single_mount() -> None:
     parent = VirtualFileSystem()
     child = VirtualFileSystem()
-    await parent.add_mount("data", child)
+    await parent.add_mount(child, "data")
     fs, rel, prefix = parent._resolve_terminal("/data/file.txt")
     assert fs is child
     assert rel == "/file.txt"
@@ -570,8 +604,8 @@ async def test_resolve_terminal_nested_mounts() -> None:
     parent = VirtualFileSystem()
     child = VirtualFileSystem()
     grandchild = VirtualFileSystem()
-    await child.add_mount("sub", grandchild)
-    await parent.add_mount("data", child)
+    await child.add_mount(grandchild, "sub")
+    await parent.add_mount(child, "data")
     fs, rel, prefix = parent._resolve_terminal("/data/sub/file.txt")
     assert fs is grandchild
     assert rel == "/file.txt"
@@ -581,7 +615,7 @@ async def test_resolve_terminal_nested_mounts() -> None:
 async def test_resolve_terminal_mount_root() -> None:
     parent = VirtualFileSystem()
     child = VirtualFileSystem()
-    await parent.add_mount("data", child)
+    await parent.add_mount(child, "data")
     fs, rel, prefix = parent._resolve_terminal("/data")
     assert fs is child
     assert rel == "/"

@@ -16,10 +16,9 @@ longest-prefix mount matching, then dispatch across the mount boundary:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
 
 from vfs.exceptions import _classify_error
-from vfs.paths import METADATA_ROOT, normalize_path, resolve_path
+from vfs.paths import METADATA_ROOT, Path, normalize_path, resolve_path
 from vfs.permissions import (
     Permission,
     PermissionMap,
@@ -27,12 +26,6 @@ from vfs.permissions import (
     coerce_permissions,
 )
 from vfs.results import Candidate, VFSResult
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from vfs.models import VFSEntry
-
 
 # Ops that author or rewrite entries; their paths get the namespace-write
 # authorization check at the gate. Read-family ops (read/stat/ls/grep) skip it.
@@ -61,52 +54,55 @@ class VirtualFileSystem:
         self._raise_on_error = raise_on_error
         self._permission_map: PermissionMap = coerce_permissions(permissions)
         self._parent: VirtualFileSystem | None = None
-        self._mounts: dict[str, VirtualFileSystem] = {}
-        self._sorted_mount_paths: list[str] = []
+        self._mounts: dict[Path, VirtualFileSystem] = {}
+        self._sorted_mount_paths: list[Path] = []
         self._class_name = self.__class__.__name__
 
     # -------------------------------------------------------------------
     # mounts and routing
     # -------------------------------------------------------------------
 
-    async def add_mount(self, path: str, filesystem: VirtualFileSystem) -> None:
-        """Mount a child filesystem at *path*, which may be nested.
+    async def add_mount(self, filesystem: VirtualFileSystem, path: str | None = None) -> None:
+        """Mount a child *filesystem* at *path*, which may be nested.
+
+        *path* is optional: when omitted, the filesystem's ``name`` is used as
+        the mount point, so a named filesystem can mount itself
+        (``root.add_mount(VirtualFileSystem(name="data"))`` lands at ``/data``).
+        An explicit *path* takes precedence; if neither *path* nor the
+        filesystem's name is available, the call raises.
 
         *path* is interpreted relative to this filesystem: the namespace
         root is the global origin, and calling on a sub-node treats *path*
-        as local to that node (so ``data.add_mount("/tmp")`` lands at the
+        as local to that node (so ``data.add_mount(fs, "/tmp")`` lands at the
         data-local ``/tmp``).
 
         Routing:
 
         - If *path* falls under an existing mount, the request is delegated
-          to that mount — with ``/data`` mounted, ``add_mount("/data/tmp")``
-          becomes ``data_fs.add_mount("/tmp")``.  This recurses to any depth.
+          to that mount — with ``/data`` mounted, ``add_mount(fs, "/data/tmp")``
+          becomes ``data_fs.add_mount(fs, "/tmp")``.  This recurses to any depth.
         - Otherwise *self* owns the mount.  It is rejected when a deeper
           mount already sits beneath *path* (the reverse order: ``/data/tmp``
           first, then ``/data``), when it duplicates an instance or would
           form a cycle, or — if *self* has storage — when stored contents
           conflict with the mount point (see ``_is_path_mountable``).
 
-        Aliasing is done with a distinct ``BindFS`` wrapper, not by reusing
-        an instance, so the duplicate-instance guard does not block binds.
-
         A filesystem created with ``allow_child_mounts=False`` (e.g. a mount
         that proxies a remote/external namespace) rejects any mount whose
         owner it would be — including a delegated one — so a parent cannot
         mutate the remote's local mount table without an explicit opt-in.
         """
-        mount_path = self._normalize_mount_path(path)
+        mount_name = path or filesystem.name
+        if not mount_name:
+            msg = "add_mount needs a path or a named filesystem"
+            raise ValueError(msg)
+        mount_path = self._normalize_mount_path(mount_name)
 
         if not self._allow_child_mounts:
             msg = f"{self._class_name} does not allow child mounts"
             raise ValueError(msg)
 
-        # A filesystem is mounted in at most one place, so a non-None parent
-        # means it already lives in some tree (here or under another root) —
-        # reject rather than re-parent it and double-close on teardown.  The
-        # cycle check runs against the true root (via parent links) so it
-        # holds no matter which node add_mount is called on.
+        # A filesystem lives in one place only: reject self-mounts, re-mounts, or cycles (checked at the true root).
         if filesystem is self:
             msg = "Cannot mount a filesystem into itself"
             raise ValueError(msg)
@@ -114,7 +110,10 @@ class VirtualFileSystem:
             msg = f"Cannot mount at {mount_path}: that filesystem is already mounted elsewhere"
             raise ValueError(msg)
         if id(self._root()) in filesystem._reachable_ids():
-            msg = f"Mounting at {mount_path} would create a cycle: that filesystem already contains this namespace's root"
+            msg = (
+                f"Mounting at {mount_path} would create a cycle: "
+                "that filesystem already contains this namespace's root"
+            )
             raise ValueError(msg)
 
         matched = self._match_mount(mount_path)
@@ -123,7 +122,7 @@ class VirtualFileSystem:
             if mount_at == mount_path:
                 msg = f"Mount already exists at: {mount_path}"
                 raise ValueError(msg)
-            await mount_fs.add_mount(mount_path[len(mount_at) :], filesystem)
+            await mount_fs.add_mount(filesystem, mount_path[len(mount_at) :])
             return
 
         # self owns mount_path
@@ -178,7 +177,7 @@ class VirtualFileSystem:
         for fs in list(self._mounts.values()):
             try:
                 await fs.close()
-            except Exception as exc:  # noqa: BLE001 - surface after closing all
+            except Exception as exc:
                 errors.append(exc)
             fs._parent = None
         self._mounts.clear()
@@ -189,36 +188,23 @@ class VirtualFileSystem:
             raise ExceptionGroup("errors while closing mounts", errors)
 
     @staticmethod
-    def _normalize_mount_path(path: str) -> str:
-        """Normalize and validate a mount path.
+    def _normalize_mount_path(path: str) -> Path:
+        """Canonicalize and validate a mount path through the :class:`Path` gate.
 
-        A mount path is a canonical path with extra constraints.  It shares the
-        validate+normalize gate with operations via :func:`resolve_path`, then
-        adds the mount-specific rules: rejects empty/root, non-canonical input
-        (relative ``"."`` / ``".."`` segments or stray whitespace, which mounts
-        reject rather than silently collapse), whitespace-only segments, and the
-        reserved metadata segment (``".vfs"``).  Interior spaces within a
-        segment (``"/My Documents"``) are permitted.
+        The gate does the normalization and structural validation (make
+        absolute, drop ``.``/``..``, strip per-segment whitespace, reject
+        control characters and over-long segments).  A mount path adds only
+        two policy rules the generic gate cannot know: it is never the root,
+        and it never uses the reserved metadata segment (``".vfs"``).  Stray
+        whitespace is canonicalized like any other path, not rejected;
+        interior spaces (``"/My Documents"``) are preserved.
         """
-        stripped = path.strip("/")
-        if not stripped:
+        mount_path = Path(path)
+        if mount_path == "/":
             msg = "Mount path must not be empty or root"
             raise ValueError(msg)
-        mount_path = f"/{stripped}"
-        resolved = resolve_path(mount_path)
-        if resolved.path is None:
-            msg = f"Invalid mount path {path!r}: {resolved.error}"
-            raise ValueError(msg)
-        if resolved.path != mount_path:
-            msg = f"Mount path must be a normalized path (no '.', '..', or stray whitespace): {path!r}"
-            raise ValueError(msg)
-        segments = mount_path.split("/")[1:]
-        for segment in segments:
-            if not segment.strip() or segment != segment.strip():
-                msg = f"Mount path segment {segment!r} is whitespace-only or has stray whitespace: {path!r}"
-                raise ValueError(msg)
         meta_segment = METADATA_ROOT.strip("/")
-        if meta_segment in segments:
+        if meta_segment in mount_path.split("/")[1:]:
             msg = f"Mount path may not use the reserved metadata segment {meta_segment!r}: {path!r}"
             raise ValueError(msg)
         return mount_path
@@ -227,7 +213,7 @@ class VirtualFileSystem:
         """Rebuild the pre-sorted mount path list (longest first)."""
         self._sorted_mount_paths = sorted(self._mounts.keys(), key=len, reverse=True)
 
-    def _match_mount(self, path: str) -> tuple[str, VirtualFileSystem] | None:
+    def _match_mount(self, path: str) -> tuple[Path, VirtualFileSystem] | None:
         """Longest-prefix mount match for *path*."""
         for mount_path in self._sorted_mount_paths:
             if path == mount_path or path.startswith(mount_path + "/"):
