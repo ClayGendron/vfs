@@ -12,6 +12,8 @@ Examples:
     /.vfs/src/auth.py/__meta__/chunks/3/login                 chunk
     /.vfs/src/auth.py/__meta__/versions/3                     version
     /.vfs/src/auth.py/__meta__/edges/out/imports/src/util.py  edge
+    /.agents/tools/clone-repo                                 tool
+    /.agents/skills/pdf-processing                            skill
 """
 
 from __future__ import annotations
@@ -27,12 +29,21 @@ if TYPE_CHECKING:
     from pydantic_core import CoreSchema
 
 
-ObjectKind = Literal["file", "directory", "chunk", "version", "edge"]
+# "tool"/"skill" are user-space capability kinds: the unit is a directory under
+# /.agents, while its TOOL.md/SKILL.md manifest stays a plain indexable file.
+ObjectKind = Literal["file", "directory", "chunk", "version", "edge", "tool", "skill"]
 
 METADATA_ROOT = "/.vfs"
 META_SEGMENT = "__meta__"
 EDGE_DIRECTIONS = ("out", "in")
 EDGE_DIRECTION_SET = frozenset(EDGE_DIRECTIONS)
+
+# Reserved user-space capability root. Unlike METADATA_ROOT (derived, no indexable
+# content), /.agents holds real files, so a tool's/skill's manifest indexes normally.
+AGENTS_ROOT = "/.agents"
+AGENT_FAMILY_TO_KIND: dict[str, ObjectKind] = {"tools": "tool", "skills": "skill"}
+TOOL_MANIFEST = "TOOL.md"
+SKILL_MANIFEST = "SKILL.md"
 
 EXTENSIONLESS_FILES = frozenset(
     {
@@ -452,6 +463,36 @@ def edge_in_path(source: Path, target: Path, edge_type: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Agent namespace construction
+# ---------------------------------------------------------------------------
+
+
+def tool_path(name: str) -> Path:
+    """Build a tool's unit directory: ``/.agents/tools/<name>`` (``kind="tool"``).
+
+    The directory is the tool; its ``TOOL.md`` manifest is a plain indexable file.
+    """
+    _validate_name(name, "tool name")
+    return Path(f"{AGENTS_ROOT}/tools/{name}")
+
+
+def skill_path(name: str) -> Path:
+    """Build a skill's unit directory: ``/.agents/skills/<name>`` (``kind="skill"``)."""
+    _validate_name(name, "skill name")
+    return Path(f"{AGENTS_ROOT}/skills/{name}")
+
+
+def tool_manifest_path(name: str) -> Path:
+    """Build the indexable manifest path ``/.agents/tools/<name>/TOOL.md``."""
+    return tool_path(name).joinpath(TOOL_MANIFEST)
+
+
+def skill_manifest_path(name: str) -> Path:
+    """Build the indexable manifest path ``/.agents/skills/<name>/SKILL.md``."""
+    return skill_path(name).joinpath(SKILL_MANIFEST)
+
+
+# ---------------------------------------------------------------------------
 # Path decomposition
 # ---------------------------------------------------------------------------
 
@@ -544,6 +585,10 @@ def parse_kind(path: Path) -> ObjectKind:
         if version_tail is not None:
             return "version" if version_tail else "directory"
         return "directory"
+
+    agent_kind = _agent_namespace_kind(path)
+    if agent_kind is not None:
+        return agent_kind
 
     _, name = split_path(path)
     if not name:
@@ -892,3 +937,22 @@ def _meta_family_tail(path: str, family: str) -> list[str] | None:
 
 def _is_projected_edge_path(path: str) -> bool:
     return _split_edge_path(path) is not None
+
+
+def _agent_namespace_kind(path: str) -> ObjectKind | None:
+    """Kind for the reserved ``/.agents`` capability namespace, else ``None``.
+
+    The root is a directory (its dotfile leaf would otherwise read as a file); a
+    unit directory directly under a family — ``/.agents/tools/<name>`` →
+    ``tool``, ``/.agents/skills/<name>`` → ``skill`` — takes the family kind.
+    Family roots and anything deeper return ``None``, so they fall through to the
+    ordinary rules and a ``TOOL.md``/``SKILL.md`` manifest stays a plain file.
+    """
+    if path == AGENTS_ROOT:
+        return "directory"
+    if not path.startswith(AGENTS_ROOT + "/"):
+        return None
+    segments = [segment for segment in path[len(AGENTS_ROOT) :].split("/") if segment]
+    if len(segments) == 2:
+        return AGENT_FAMILY_TO_KIND.get(segments[0])
+    return None

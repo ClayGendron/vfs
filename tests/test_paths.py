@@ -32,7 +32,11 @@ from vfs.paths import (
     normalize_path,
     parse_kind,
     resolve_path,
+    skill_manifest_path,
+    skill_path,
     split_path,
+    tool_manifest_path,
+    tool_path,
     validate_path,
     version_path,
 )
@@ -703,6 +707,69 @@ class TestParseKind:
 
     def test_metadata_tree_paths_are_classified_as_directories(self):
         assert parse_kind("/.vfs/src/auth.py") == "directory"
+
+
+# =========================================================================
+# Agent namespace (/.agents tools + skills)
+# =========================================================================
+
+
+class TestAgentNamespace:
+    # --- parse_kind ---
+
+    def test_tool_unit_directory(self):
+        assert parse_kind("/.agents/tools/clone-repo") == "tool"
+
+    def test_skill_unit_directory(self):
+        assert parse_kind("/.agents/skills/pdf-processing") == "skill"
+
+    def test_agents_root_is_a_directory(self):
+        # Its dotfile leaf would otherwise read as a file.
+        assert parse_kind("/.agents") == "directory"
+
+    @pytest.mark.parametrize("path", ["/.agents/tools", "/.agents/skills"])
+    def test_family_roots_are_directories(self, path):
+        assert parse_kind(path) == "directory"
+
+    def test_tool_manifest_is_a_plain_indexable_file(self):
+        # The manifest is a file, not the unit — so it chunks/indexes like any file.
+        assert parse_kind("/.agents/tools/clone-repo/TOOL.md") == "file"
+
+    def test_skill_manifest_is_a_plain_indexable_file(self):
+        assert parse_kind("/.agents/skills/pdf-processing/SKILL.md") == "file"
+
+    def test_bundled_resource_is_a_plain_file(self):
+        assert parse_kind("/.agents/tools/clone-repo/scripts/run.py") == "file"
+
+    def test_unknown_family_is_a_plain_directory(self):
+        assert parse_kind("/.agents/memories/notes") == "directory"
+
+    def test_agents_lookalike_user_path_not_misclassified(self):
+        assert parse_kind("/.agents-archive/tools/x") == "directory"
+
+    # --- builders ---
+
+    def test_tool_path(self):
+        assert tool_path("clone-repo") == "/.agents/tools/clone-repo"
+
+    def test_skill_path(self):
+        assert skill_path("pdf-processing") == "/.agents/skills/pdf-processing"
+
+    def test_tool_manifest_path(self):
+        assert tool_manifest_path("clone-repo") == "/.agents/tools/clone-repo/TOOL.md"
+
+    def test_skill_manifest_path(self):
+        assert skill_manifest_path("pdf-processing") == "/.agents/skills/pdf-processing/SKILL.md"
+
+    def test_builder_kind_roundtrip(self):
+        assert parse_kind(tool_path("x")) == "tool"
+        assert parse_kind(skill_path("y")) == "skill"
+        assert parse_kind(tool_manifest_path("x")) == "file"
+
+    @pytest.mark.parametrize("bad", ["", "a/b", ".", ".."])
+    def test_builders_reject_bad_names(self, bad):
+        with pytest.raises(ValueError):
+            tool_path(bad)
 
 
 # =========================================================================
