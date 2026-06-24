@@ -16,7 +16,7 @@ from vfs.models2 import (
     Match,
     Observation,
 )
-from vfs.paths import Path, chunk_path, edge_out_path, version_path
+from vfs.paths import Path, chunk_path, edge_out_path, skill_path, tool_path, version_path
 
 # ---------------------------------------------------------------------------
 # model_fields_set — the repo-wide explicitness contract
@@ -40,7 +40,6 @@ class TestModelFieldsSet:
             "content_hash",
             "size_bytes",
             "lines",
-            "lexical_tokens",
             "created_at",
             "updated_at",
         }
@@ -82,6 +81,18 @@ class TestConstructionValidation:
     def test_version_row_rejects_content_and_diff_together(self) -> None:
         with pytest.raises(ValidationError, match="must not set both"):
             Entry(path=version_path(Path("/a.md"), 1), content="x", version_diff="y")
+
+    def test_tool_and_skill_are_content_free_like_directories(self) -> None:
+        for path in (tool_path("clone-repo"), skill_path("pdf-processing")):
+            entry = Entry(path=path, content="ignored")
+            assert entry.kind in {"tool", "skill"}
+            assert entry.content is None
+            assert entry.parent_file is None
+            assert entry.ext is None
+
+    def test_with_content_rejected_on_tool(self) -> None:
+        with pytest.raises(ValueError, match="Cannot set content on a tool"):
+            Entry(path=tool_path("clone-repo")).with_content("x")
 
 
 # ---------------------------------------------------------------------------
@@ -150,18 +161,29 @@ class TestObservationMirrorsEntry:
 
 class TestEntryToObservation:
     def test_projection_covers_every_mirror_field(self) -> None:
-        entry = Entry(
+        # No single kind populates every mirror — a file carries content
+        # metrics, an edge carries edge metadata. Across both, every mirror
+        # projects, and their union covers the whole mirror set.
+        file = Entry(
             path="/docs/a.md",
             content="hello",
             description="greeting",
             mime_type="text/markdown",
             version_number=3,
         )
-        obs = entry.to_observation()
-        for name in OBSERVATION_MIRROR_FIELDS:
-            entry_value = getattr(entry, name)
-            assert entry_value is not None, f"test setup must populate {name!r}"
-            assert getattr(obs, name) == entry_value, f"mirror {name!r} not projected"
+        edge = Entry(
+            path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"),
+            edge_weight=0.5,
+            edge_distance=1.5,
+        )
+        populated: set[str] = set()
+        for entry in (file, edge):
+            obs = entry.to_observation()
+            for name in OBSERVATION_MIRROR_FIELDS:
+                assert getattr(obs, name) == getattr(entry, name), f"mirror {name!r} not projected"
+                if getattr(entry, name) is not None:
+                    populated.add(name)
+        assert populated == OBSERVATION_MIRROR_FIELDS, f"unpopulated mirrors: {OBSERVATION_MIRROR_FIELDS - populated}"
 
     def test_query_fields_come_from_the_operation(self) -> None:
         entry = Entry(path="/a.md", content="x")
@@ -244,7 +266,7 @@ class TestWithContent:
     def test_metrics_match_fresh_construction(self) -> None:
         updated = Entry(path="/a.md", content="seed").with_content("hello\nworld")
         fresh = Entry(path="/a.md", content="hello\nworld")
-        for field in ("content_hash", "size_bytes", "lines", "lexical_tokens"):
+        for field in ("content_hash", "size_bytes", "lines"):
             assert getattr(updated, field) == getattr(fresh, field), field
 
     def test_directory_rejected(self) -> None:
@@ -497,6 +519,17 @@ class TestObservation:
         assert isinstance(obs.path, Path)
         assert obs.path == "/a.md"
         assert obs.path.name == "a.md"
+
+    def test_edge_fields_surface_on_observation(self) -> None:
+        edge = Entry(
+            path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"),
+            edge_weight=0.5,
+            edge_distance=1.5,
+        )
+        obs = edge.to_observation()
+        assert obs.edge_type == "references"
+        assert obs.edge_weight == 0.5
+        assert obs.edge_distance == 1.5
 
     def test_match_regions_carry_their_own_text(self) -> None:
         chunk_hit = Match(start=10, end=42, content="def login(): ...", score=0.91)

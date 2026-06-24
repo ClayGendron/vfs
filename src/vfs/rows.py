@@ -138,8 +138,6 @@ def build_vfs_tables(
         # Metrics.
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
-        Column("tokens", Integer, nullable=False, default=0),
-        Column("lexical_tokens", Integer, nullable=False, default=0),
         # Chunk-specific.
         Column("line_start", Integer),
         Column("line_end", Integer),

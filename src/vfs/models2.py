@@ -28,7 +28,6 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationInfo, computed_field, field_validator, model_validator
 
-from vfs.bm25 import tokenize as lexical_tokenize
 from vfs.chunking import (
     NOTEBOOK_EXTENSION,
     grammar_for_extension,
@@ -94,8 +93,6 @@ class Entry(BaseModel):
 
     lines: int = 0
     size_bytes: int = 0
-    tokens: int = 0
-    lexical_tokens: int = 0
 
     # --- Chunk-specific -----------------------------------------------------
 
@@ -176,11 +173,6 @@ class Entry(BaseModel):
             content.count("\n") + 1 if content else 0,
         )
 
-    @staticmethod
-    def _lexical_token_count(content: str) -> int:
-        """Return the lexical BM25 token count for *content*."""
-        return len(lexical_tokenize(content))
-
     # -----------------------------------------------------------------------
     # Construction and validation
     # -----------------------------------------------------------------------
@@ -245,7 +237,7 @@ class Entry(BaseModel):
                 self.edge_type = parts.edge_type
 
         # Kind-specific content invariants.
-        if self.kind == "directory":
+        if self.kind in {"directory", "tool", "skill"}:
             self.content = None
         elif self.kind == "file" and self.content is None:
             self.content = ""
@@ -259,7 +251,6 @@ class Entry(BaseModel):
             version_explicit = self.kind == "version" and bool({"content_hash", "size_bytes", "lines"} & fields)
             if not version_explicit:
                 self.content_hash, self.size_bytes, self.lines = self._content_metadata(self.content)
-            self.lexical_tokens = self._lexical_token_count(self.content)
 
         # Timestamps default to now.
         now = datetime.now(UTC)
@@ -298,6 +289,9 @@ class Entry(BaseModel):
             mime_type=self.mime_type,
             size_bytes=self.size_bytes,
             version_number=self.version_number,
+            edge_type=self.edge_type,
+            edge_weight=self.edge_weight,
+            edge_distance=self.edge_distance,
             created_at=self.created_at,
             updated_at=self.updated_at,
             score=score,
@@ -341,8 +335,8 @@ class Entry(BaseModel):
         ``version_number`` belongs to write planning. ``model_copy`` bypasses
         field validation, so the null-byte invariant is enforced here.
         """
-        if self.kind == "directory":
-            msg = f"Cannot set content on a directory: {self.path}"
+        if self.kind in {"directory", "tool", "skill"}:
+            msg = f"Cannot set content on a {self.kind}: {self.path}"
             raise ValueError(msg)
         if "\x00" in content:
             msg = f"content contains null bytes (path={self.path!r})"
@@ -355,7 +349,6 @@ class Entry(BaseModel):
                 "content_hash": content_hash,
                 "size_bytes": size_bytes,
                 "lines": lines,
-                "lexical_tokens": self._lexical_token_count(content),
                 "chunked": False,
                 "encoded": False,
                 "updated_at": datetime.now(UTC),
@@ -429,7 +422,6 @@ class Entry(BaseModel):
             content_hash=content_hash,
             size_bytes=size_bytes,
             lines=lines,
-            lexical_tokens=cls._lexical_token_count(version_content),
             created_at=now,
             updated_at=now,
         )
@@ -610,6 +602,9 @@ class Observation(BaseModel):
     mime_type: str | None = None
     size_bytes: int | None = None
     version_number: int | None = None
+    edge_type: str | None = None
+    edge_weight: float | None = None
+    edge_distance: float | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
