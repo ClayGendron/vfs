@@ -6,6 +6,7 @@
 @import "@fontsource-variable/space-grotesk";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource/saira-stencil/latin-600-italic.css";
 
 @import "./styles/syntax.css";
 @import "./styles/brand.css";
@@ -35,6 +36,7 @@
 
   /* type stack */
   --font-brand:   "Saira Variable", "Space Grotesk Variable", system-ui, sans-serif;
+  --font-stencil: "Saira Stencil", "Saira Variable", system-ui, sans-serif;
   --font-display: "Space Grotesk Variable", system-ui, sans-serif;
   --font-body:    "Geist Variable", system-ui, sans-serif;
   --font-mono:    "JetBrains Mono Variable", ui-monospace, "Menlo", monospace;

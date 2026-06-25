@@ -191,7 +191,8 @@ ranked = g.pagerank(candidates=expanded)`}
 
         <p className="text-[15px] leading-relaxed text-[var(--muted)] max-w-prose mb-8">
           The core file system, CLI query engine, graph algorithms, and BM25 lexical
-          search are implemented and tested. <strong className="text-[var(--fg)] font-semibold">2,157 tests · 99% coverage.</strong>
+          search are implemented and proven, now being re-landed on a new MCP-native
+          core. <strong className="text-[var(--fg)] font-semibold">718 tests green on that core</strong>; SQLite, Postgres, and MSSQL tested against real databases.
         </p>
 
         <Separator className="bg-[var(--rule)] mb-8" />
@@ -201,9 +202,9 @@ ranked = g.pagerank(candidates=expanded)`}
         </div>
         <ul className="grid md:grid-cols-2 gap-x-10 gap-y-2 max-w-5xl">
           {[
-            "MCP single-tool interface — progressive discovery via --help",
+            "MCP-native mounts — mount a remote MCP server into the namespace",
+            "Tools & skills as files — /.agents/tools, run as the one execution verb",
             "Shell entrypoint — vfs 'grep \"auth\" | pagerank | top 15'",
-            ".api/ control plane — live API pass-through for Jira, Slack, GitHub",
             "LocalFileSystem — mount local dirs, metadata in SQLite",
             "More analyzers — Markdown, PDF, email, Slack, Jira, CSV/JSON",
             "Automatic embedding on write — background indexing",

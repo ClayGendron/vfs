@@ -47,9 +47,10 @@
 .vfs-spec-word {
   padding: 16px 22px;
   gap: 10px;
-  font-family: var(--font-brand);
+  font-family: var(--font-stencil);
   font-weight: 600;
-  font-size: 22px;
+  font-style: italic;
+  font-size: 24px;
   letter-spacing: -0.01em;
   color: var(--fg);
   text-transform: lowercase;
