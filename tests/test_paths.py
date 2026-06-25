@@ -14,8 +14,10 @@ from pydantic import BaseModel, ValidationError
 from vfs.paths import (
     METADATA_ROOT,
     EdgeParts,
-    ResolvedPath,
     Path,
+    RelativePath,
+    ResolvedPath,
+    ResolvedRelativePath,
     _canonical_endpoint_path,
     _is_reserved_metadata_directory,
     _split_edge_path,
@@ -30,14 +32,17 @@ from vfs.paths import (
     extract_extension,
     is_meta_path,
     normalize_path,
+    normalize_relative_path,
     parse_kind,
     resolve_path,
+    resolve_relative_path,
     skill_manifest_path,
     skill_path,
     split_path,
     tool_manifest_path,
     tool_path,
     validate_path,
+    validate_relative_path,
     version_path,
 )
 
@@ -1464,3 +1469,90 @@ class TestEntryDerivationPath:
     def test_extract_extension_accepts_vfspath(self):
         assert extract_extension(Path("/src/auth.py")) == "py"
         assert extract_extension(Path("/Makefile")) is None
+
+
+# =========================================================================
+# RelativePath — the relative, contained path gate
+# =========================================================================
+
+
+class TestRelativePath:
+    def test_plain_relative_path_is_kept(self):
+        rel = RelativePath("scripts/extract.py")
+        assert rel == "scripts/extract.py"
+        assert isinstance(rel, RelativePath)
+        assert isinstance(rel, str)
+
+    def test_canonicalizes_dots_slashes_and_whitespace(self):
+        assert RelativePath("scripts//extract.py") == "scripts/extract.py"
+        assert RelativePath("scripts/./extract.py") == "scripts/extract.py"
+        assert RelativePath(" scripts / extract.py ") == "scripts/extract.py"
+        assert RelativePath("scripts/extract.py/") == "scripts/extract.py"
+
+    def test_name_is_the_leaf(self):
+        assert RelativePath("references/api/REFERENCE.md").name == "REFERENCE.md"
+        assert RelativePath("TOP").name == "TOP"
+
+    def test_absolute_input_is_rejected(self):
+        with pytest.raises(ValueError, match="must not be absolute"):
+            RelativePath("/scripts/extract.py")
+
+    def test_parent_traversal_is_rejected(self):
+        with pytest.raises(ValueError, match=r"must not contain '\.\.'"):
+            RelativePath("../escape")
+        with pytest.raises(ValueError, match=r"must not contain '\.\.'"):
+            RelativePath("scripts/../../escape")
+
+    def test_empty_after_normalization_is_rejected(self):
+        # "//" starts with a slash, so it is rejected as absolute, not empty.
+        for bad in ("", "   ", ".", "./."):
+            with pytest.raises(ValueError, match="must not be empty"):
+                RelativePath(bad)
+
+    def test_control_chars_and_overlong_segments_rejected(self):
+        with pytest.raises(ValueError, match="control character"):
+            RelativePath("scripts/ex\x01tract.py")
+        with pytest.raises(ValueError, match="segment too long"):
+            RelativePath("a" * 256)
+
+    def test_total_path_over_limit_is_rejected(self):
+        # Segments each within the 255 cap, but the whole path exceeds 1024.
+        with pytest.raises(ValueError, match="Path too long"):
+            RelativePath("/".join(["a" * 250] * 5))
+
+    def test_joining_onto_a_root_stays_contained(self):
+        root = Path("/.agents/skills/pdf-processing")
+        joined = root.joinpath(RelativePath("scripts/extract.py"))
+        assert joined == "/.agents/skills/pdf-processing/scripts/extract.py"
+        assert joined.startswith(root + "/")
+
+    def test_resolve_is_non_raising(self):
+        ok = resolve_relative_path("scripts/x.py")
+        assert isinstance(ok, ResolvedRelativePath)
+        assert ok.path == "scripts/x.py"
+        assert ok.error is None
+        bad = resolve_relative_path("/abs")
+        assert bad.path is None
+        assert "absolute" in bad.error
+
+    def test_resolve_rejects_non_string(self):
+        result = resolve_relative_path(123)  # type: ignore[arg-type]
+        assert result.path is None
+        assert "must be a string" in result.error
+
+    def test_primitives_match_the_gate(self):
+        assert normalize_relative_path(" a/./b// ") == "a/b"
+        ok, _ = validate_relative_path("a/b")
+        assert ok
+        bad, reason = validate_relative_path("a/../b")
+        assert not bad
+        assert ".." in reason
+
+    def test_coerces_at_model_boundary(self):
+        class M(BaseModel):
+            path: RelativePath
+
+        assert M(path="scripts//x.py").path == "scripts/x.py"
+        assert isinstance(M(path="scripts/x.py").path, RelativePath)
+        with pytest.raises(ValidationError):
+            M(path="/absolute")

@@ -70,6 +70,18 @@ class TestConstructionValidation:
         with pytest.raises(ValidationError, match="null bytes"):
             Entry(path=version_path(Path("/a.md"), 2), version_diff="a\x00b")
 
+    def test_null_bytes_in_description_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="null bytes"):
+            Entry(path="/a.md", description="a\x00b")
+
+    def test_empty_name_rejected_for_non_root(self) -> None:
+        with pytest.raises(ValidationError, match="name must not be empty"):
+            Entry(path="/src/auth.py", name="")
+
+    def test_name_default_does_not_leak_empty(self) -> None:
+        assert Entry(path="/src/auth.py").name == "auth.py"
+        assert Entry(path="/").name == ""
+
     def test_non_mapping_input_rejected(self) -> None:
         with pytest.raises(ValidationError):
             Entry.model_validate("not a mapping")

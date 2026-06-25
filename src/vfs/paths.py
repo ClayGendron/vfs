@@ -357,6 +357,92 @@ def resolve_path(path: str, *, mutation: bool = False) -> ResolvedPath:
 
 
 # ---------------------------------------------------------------------------
+# Relative path gate
+# ---------------------------------------------------------------------------
+
+
+class RelativePath(str):
+    """A relative path that has passed the gate: canonical, contained, safe to join.
+
+    The relative counterpart of :class:`Path`. A ``str`` subclass holding a
+    forward-slash path with *no* leading slash and *no* ``.``/``..`` segments, so
+    joining it onto any absolute :class:`Path` can only descend — it can never
+    reset to an absolute root (an absolute right-hand side resets the join) nor
+    climb out (``..`` clamps silently). Construction canonicalizes (NFC-folds,
+    strips per-segment whitespace, drops ``.`` and empty segments) and raises
+    ``ValueError`` on an absolute input, a ``..`` segment, an over-long
+    segment/path, or a forbidden character.
+
+    Use it wherever a path is addressed *relative to* a known root — a skill's
+    bundled files, an archive member: the badge certifies the value is safe to
+    feed to :meth:`Path.joinpath`. Derived strings (slicing, ``+``) return plain
+    ``str``; re-mint via the constructor when the badge is needed back.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, value: str) -> RelativePath:
+        resolved = resolve_relative_path(value)
+        if resolved.path is None:
+            raise ValueError(resolved.error)
+        return resolved.path
+
+    @classmethod
+    def _brand(cls, canonical: str) -> RelativePath:
+        """Stamp an already-canonical string as a ``RelativePath`` without re-validating.
+
+        The single unchecked construction site; only :func:`resolve_relative_path`
+        calls it, on a string it has just normalized and validated.
+        """
+        return str.__new__(cls, canonical)
+
+    @property
+    def name(self) -> str:
+        """Leaf segment (mirrors :attr:`Path.name`)."""
+        return self.rsplit("/", 1)[-1]
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: type,
+        handler: GetCoreSchemaHandler,
+    ) -> CoreSchema:
+        # Validate-and-coerce str to RelativePath at model boundaries; the str subclass serializes as-is.
+        return core_schema.no_info_after_validator_function(
+            cls,
+            core_schema.str_schema(),
+        )
+
+
+class ResolvedRelativePath(NamedTuple):
+    """Outcome of the relative-path gate: a canonical relative path, or a rejection reason."""
+
+    path: RelativePath | None
+    error: str | None
+
+
+def resolve_relative_path(path: str) -> ResolvedRelativePath:
+    """Turn a caller-supplied relative path into a canonical, contained path.
+
+    The single gate every relative path passes before it is joined onto a root.
+    Normalizes once, then validates the canonical form; an absolute input is a
+    category error, rejected up front (it would reset the join and discard the
+    root). Returns the canonical relative path, or an error reason with
+    ``path=None``. Never raises — non-``str`` input is reported as a rejection,
+    not a ``TypeError``.
+    """
+    if not isinstance(path, str):
+        return ResolvedRelativePath(None, f"Path must be a string, got {type(path).__name__}")
+    if path.startswith("/"):
+        return ResolvedRelativePath(None, f"Relative path must not be absolute: {path!r}")
+    canonical = normalize_relative_path(path)
+    valid, reason = validate_relative_path(canonical)
+    if not valid:
+        return ResolvedRelativePath(None, reason)
+    return ResolvedRelativePath(RelativePath._brand(canonical), None)
+
+
+# ---------------------------------------------------------------------------
 # Normalization and validation
 # ---------------------------------------------------------------------------
 
@@ -418,6 +504,43 @@ def validate_path(path: str) -> tuple[bool, str]:
         if reason is not None:
             return False, reason
 
+    return True, ""
+
+
+def normalize_relative_path(path: str) -> str:
+    """Normalize a relative path.
+
+    A pure, idempotent transform mirroring :func:`normalize_path` without
+    absolutizing: NFC-folds Unicode, strips per-segment whitespace, and drops
+    empty and ``.`` segments. ``..`` is *preserved* — there is no root to clamp
+    it against, so :func:`validate_relative_path` rejects it. The result carries
+    no leading slash; structural rejection is the separate job of
+    :func:`validate_relative_path`.
+    """
+    segments = [segment.strip() for segment in unicodedata.normalize("NFC", path).split("/")]
+    return "/".join(segment for segment in segments if segment and segment != ".")
+
+
+def validate_relative_path(path: str) -> tuple[bool, str]:
+    """Check the structural correctness of a canonical relative path.
+
+    Rejects the empty path, ``..`` segments (which would climb out of the join
+    root), over-length paths and segments, and the same null/control/surrogate/
+    format characters :func:`validate_path` rejects. Expects a
+    :func:`normalize_relative_path`-d path (the gate normalizes before calling).
+    """
+    if not path:
+        return False, "Relative path must not be empty"
+    reason = _forbidden_char_reason(path)
+    if reason is not None:
+        return False, f"Path contains {reason}"
+    if len(path) > 1024:
+        return False, "Path too long (max 1024 characters)"
+    for segment in path.split("/"):
+        if segment == "..":
+            return False, "Relative path must not contain '..' segments"
+        if len(segment) > 255:
+            return False, f"Path segment too long (max 255): '{segment[:40]}...'"
     return True, ""
 
 

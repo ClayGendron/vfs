@@ -76,8 +76,8 @@ class Entry(BaseModel):
     # --- Identity -----------------------------------------------------------
 
     path: Path
-    name: str
-    kind: ObjectKind
+    name: str = ""
+    kind: ObjectKind = "file"
     external_id: str | None = None
 
     # --- Content ------------------------------------------------------------
@@ -177,7 +177,7 @@ class Entry(BaseModel):
     # Construction and validation
     # -----------------------------------------------------------------------
 
-    @field_validator("content", "version_diff")
+    @field_validator("content", "description", "version_diff")
     @classmethod
     def _reject_null_bytes(cls, value: str | None, info: ValidationInfo) -> str | None:
         """Reject null bytes in stored text — they are invalid in SQL text columns."""
@@ -225,6 +225,10 @@ class Entry(BaseModel):
         ``model_fields_set``.
         """
         fields = self.model_fields_set
+
+        if not self.name and self.path != "/":
+            msg = f"name must not be empty (path={self.path!r})"
+            raise ValueError(msg)
 
         # ext: files only (declared kind authoritative); others stay None.
         if "ext" not in fields:

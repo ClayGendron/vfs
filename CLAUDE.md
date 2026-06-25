@@ -25,6 +25,9 @@ those fundamentals are heading, not against keeping the whole tree green.
 - This is a **uv** project. Run Python and tooling through `uv` — e.g.
   `uv run python ...`, `uv run pytest ...`. Do not invoke the interpreter or
   `pip` directly, and do not manually `source .venv`.
+- **`ruff` and `ty` only need to pass for files that have test coverage** in
+  the live `tests/` suite. Lint and type errors in un-covered, pre-refactor
+  files are expected mid-refactor and are not blockers — don't chase them.
 
 ## Git workflow
 
