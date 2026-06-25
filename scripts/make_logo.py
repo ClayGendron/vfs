@@ -133,18 +133,27 @@ def render_pixel_perfect(
     return canvas
 
 
+# Tab-icon padding. The glyph fill fraction is 1 / (1 + 2 * pad_frac); these
+# values make the "vfs" glyph ~20% larger in the square than the previous
+# 0.12 / 0.22 padding (i.e. fill fraction scaled by 1.2).
+FAVICON_PAD = 0.017   # was 0.12
+APPLE_PAD = 0.10      # was 0.22
+
+
 def write_favicons(font: ImageFont.FreeTypeFont, out: Path) -> list[Path]:
     """Emit browser tab-icon assets (balanced cobalt) into the Vite public dir.
 
     The glyph is rendered frameless and tightly padded so it stays legible at
-    16 px — unlike the padded, crop-marked logo files.
+    16 px — unlike the padded, crop-marked logo files. All tab icons are
+    transparent; note iOS composites the apple-touch-icon onto black, so the
+    cobalt glyph there will sit on black on a home screen.
     """
     out.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
     # Transparent master for the .ico / .png tab icons.
     master = render_pixel_perfect(
-        font, TEXT, PLUTO_BLUE_BRIGHT, None, pad_frac=0.12, frame=False
+        font, TEXT, PLUTO_BLUE_BRIGHT, None, pad_frac=FAVICON_PAD, frame=False
     )
     ico = out / "favicon.ico"
     master.save(ico, sizes=[(16, 16), (32, 32), (48, 48)])
@@ -154,9 +163,9 @@ def write_favicons(font: ImageFont.FreeTypeFont, out: Path) -> list[Path]:
     master.resize((96, 96), Image.LANCZOS).save(png)
     written.append(png)
 
-    # Apple touch icon: iOS drops transparency, so render on frost paper.
+    # Apple touch icon: transparent, like the rest of the tab icons.
     apple = render_pixel_perfect(
-        font, TEXT, PLUTO_BLUE_BRIGHT, WHITE, pad_frac=0.22, frame=False
+        font, TEXT, PLUTO_BLUE_BRIGHT, None, pad_frac=APPLE_PAD, frame=False
     )
     apple_png = out / "apple-touch-icon.png"
     apple.resize((180, 180), Image.LANCZOS).save(apple_png)
