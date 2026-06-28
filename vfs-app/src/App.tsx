@@ -5,10 +5,14 @@ import { About } from "@/routes/About"
 import { Blog } from "@/routes/Blog"
 import { Terminal } from "@/routes/Terminal"
 import { NotFound } from "@/routes/NotFound"
+import { RouteError } from "@/routes/RouteError"
 
 const router = createBrowserRouter([
   {
     element: <RootLayout />,
+    // Catches render-time throws from the layout and any child route, so an
+    // error renders the branded page instead of React Router's default.
+    errorElement: <RouteError />,
     children: [
       { path: "/", element: <Home /> },
       { path: "/about", element: <About /> },

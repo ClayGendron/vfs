@@ -1,14 +1,17 @@
 import { Link } from "react-router-dom"
 import {
+  CapabilityTape,
   IntegrationsGrid,
+  MountMap,
+  NamespaceTree,
   Positioning,
   Sample,
+  SearchVerbs,
   Section,
   SectionGrid,
+  SectionHead,
   SpecHero,
   SpecStrip,
-  TerminalTape,
-  Values,
 } from "@/components/brand"
 import { SITE } from "@/lib/site"
 
@@ -37,7 +40,7 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
   return (
     <>
       <SpecHero
-        headline={"The Operating Environment\nfor Agents."}
+        headline={"Agentic Search on\nany SQL Database"}
         lede={SITE.description}
         code={heroCode}
         install={{ cmd: SITE.install.python }}
@@ -45,135 +48,75 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
 
       <SpecStrip metrics={SITE.metrics} />
 
-      <Section label="vfs / 01 · on-wire">
+      <Section label="vfs / 01 · everything is a file" pillar="01">
+        <SectionGrid taglineSize="lg" tagline="Everything is a file.">
+          <p>
+            More than fifty years ago, Bell Labs settled on one idea:
+            everything is a file, and you act on it with small programs that
+            pipe together. Unix outlasted every platform built since because
+            that held — a uniform namespace, composable tools, no special
+            cases. VFS takes the same bet for agents. One namespace over every
+            store, one <code className="mono">VFSResult</code> out of every
+            operation, and verbs that compose with set algebra (
+            <code className="mono">&amp;</code>, <code className="mono">|</code>,{" "}
+            <code className="mono">−</code>) — so pipelines are expressions, not
+            bespoke tools.
+          </p>
+          <div style={{ marginTop: 24 }}>
+            <NamespaceTree />
+          </div>
+        </SectionGrid>
+      </Section>
+
+      <Section label="vfs / 02 · search from every angle" pillar="02">
+        <SectionHead tagline="Search from every angle.">
+          A file carries information four ways: where it sits, what it says,
+          what it means, and what it connects to. VFS gives agents one verb per
+          dimension — and because every result is a set of paths, one
+          verb&rsquo;s output feeds the next.
+        </SectionHead>
+        <SearchVerbs />
+      </Section>
+
+      <Section label="vfs / 03 · one namespace" pillar="03">
         <SectionGrid
           taglineSize="lg"
-          tagline={
-            <>
-              One result contract.
-              <br />
-              One method per verb.
-            </>
-          }
+          tagline="One namespace for all agentic capabilities"
         >
           <p>
-            Every operation — read, write, list, search, traverse — returns a{" "}
-            <code className="mono">VFSResult</code>. Results compose with set
-            algebra (<code className="mono">&amp;</code>,{" "}
-            <code className="mono">|</code>,{" "}
-            <code className="mono">−</code>) so pipelines are just expressions
-            over one envelope.
+            Capabilities live in the namespace too. Tools and skills are files
+            under <code className="mono">/.agents</code> — manifests that chunk
+            and index like any document — so the same{" "}
+            <code className="mono">grep</code> and{" "}
+            <code className="mono">glean</code> that surface a policy surface
+            the tool that acts on it. An agent finds a capability the way it
+            finds a file, then <code className="mono">run</code>s it. Search and
+            action share one namespace, so the agent that can retrieve can also
+            do the work.
           </p>
           <div style={{ marginTop: 24 }}>
-            <Sample label="async client · result envelope" kind="protocol">
-{`async with `}<span className="call">{`VFSClient`}</span>{`() as g:
-    auth   = `}<span className="kw">{`await`}</span>{` g.`}<span className="call">{`semantic_search`}</span>{`(`}<span className="str">{`"authenticate"`}</span>{`, k=`}<span className="num">{`20`}</span>{`)
-    policy = `}<span className="kw">{`await`}</span>{` g.`}<span className="call">{`glob`}</span>{`(`}<span className="str">{`"/enterprise/**/*.md"`}</span>{`)
-    nearby = `}<span className="kw">{`await`}</span>{` g.`}<span className="call">{`neighborhood`}</span>{`(auth.paths, depth=`}<span className="num">{`2`}</span>{`)
-
-    ranked = (auth | nearby) - policy
-    top    = (`}<span className="kw">{`await`}</span>{` g.`}<span className="call">{`pagerank`}</span>{`(candidates=ranked)).`}<span className="call">{`top`}</span>{`(`}<span className="num">{`10`}</span>{`)
-
-    `}<span className="kw">{`for`}</span>{` obs `}<span className="kw">{`in`}</span>{` top:
-        `}<span className="call">{`print`}</span>{`(obs.path, obs.score, obs.content_hash)`}
-            </Sample>
+            <CapabilityTape cta="open the repl" to="/terminal" />
           </div>
         </SectionGrid>
       </Section>
 
-      <Section label="vfs / 02 · integrations">
-        <SectionGrid tagline="Mount the stack you already run.">
-          <p>
-            vfs is the protocol, not the database. Bring postgres, mssql,
-            sqlite, your retrievers, your graph. We give you one namespace and
-            one envelope across all of them.
-          </p>
-          <div style={{ marginTop: 24 }}>
-            <IntegrationsGrid groups={SITE.integrations} />
-          </div>
-        </SectionGrid>
+      <Section label="vfs / 04 · mount on your stack" pillar="04">
+        <SectionHead tagline="Mount on your stack.">
+          VFS is the protocol, not the database. Mount Postgres, MSSQL, SQLite,
+          your retrievers, your graph — in-process with your app or as an MCP
+          server. One namespace and one envelope across every mount, with no
+          migration and no new infrastructure to stand up.
+        </SectionHead>
+        <MountMap />
+        <div style={{ marginTop: 24 }}>
+          <IntegrationsGrid groups={SITE.integrations} />
+        </div>
+        <div style={{ marginTop: 24 }}>
+          <Positioning rows={SITE.positioning} />
+        </div>
       </Section>
 
-      <Section label="vfs / 03 · why vfs?">
-        <SectionGrid
-          tagline={
-            <>
-              Not a vector DB.
-              <br />
-              Not a retriever.
-              <br />
-              A namespace.
-            </>
-          }
-        >
-          <p>
-            Developers reach for the closest analogue first. vfs sits next to
-            the tools you already use — and gives you a substrate that composes
-            them.
-          </p>
-          <div style={{ marginTop: 24 }}>
-            <Positioning rows={SITE.positioning} />
-          </div>
-        </SectionGrid>
-      </Section>
-
-      <Section label="vfs / 04 · the interface agents already know">
-        <SectionGrid
-          tagline={
-            <>
-              grep. neighborhood.
-              <br />
-              pagerank.
-            </>
-          }
-        >
-          <p>
-            An LLM was already trained on Unix. vfs gives it a shell over
-            enterprise data — pasteable in chat, scriptable in code, identical
-            results in either.
-          </p>
-          <div style={{ marginTop: 24 }}>
-            <TerminalTape cta="open the repl" to="/terminal" />
-          </div>
-        </SectionGrid>
-      </Section>
-
-      <Section label="vfs / 05 · principles">
-        <SectionGrid tagline="Capabilities, not features.">
-          <p>
-            The product story has three load-bearing claims. The principles
-            below describe how those claims hold up under stress.
-          </p>
-          <div style={{ marginTop: 24 }}>
-            <Values
-              items={[
-                {
-                  title: "Agent-first",
-                  body:
-                    "An LLM already knows how to use a shell. vfs gives it one over enterprise data.",
-                },
-                {
-                  title: "Everything is a file",
-                  body:
-                    "One Unix-style namespace over heterogeneous stores. No probing. No special cases.",
-                },
-                {
-                  title: "Small composable tools",
-                  body:
-                    "grep, neighborhood, pagerank, top — pipe results across one envelope.",
-                },
-                {
-                  title: "Bring your own infra",
-                  body:
-                    "Mount what you already run. vfs is the protocol, not the database.",
-                },
-              ]}
-            />
-          </div>
-        </SectionGrid>
-      </Section>
-
-      <Section label="vfs / 06 · status" tight>
+      <Section label="vfs / 05 · status" tight>
         <SectionGrid tagline={<><em>alpha</em> · v0.0.x</>}>
           <p>
             The core file system, CLI query engine, graph algorithms, and BM25

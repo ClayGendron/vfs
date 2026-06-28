@@ -796,6 +796,365 @@
   .vfs-fs-footer { grid-template-columns: 1fr; }
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   homepage pillars · §1–§4 structural visuals
+   Cobalt stays the primary wire. Signal colors appear ONLY as per-verb
+   diagram strokes (§2) and the leading tick on each section label.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* signal accents — restrained, used as ticks + verb strokes only */
+:root {
+  --sig-cyan:   #4abce8;   /* filesystem / location */
+  --sig-violet: #8b6cc1;   /* vectors / meaning */
+  --sig-ember:  #e8734a;   /* entry / action */
+  --sig-sage:   #7bae8e;   /* the stack */
+}
+
+/* ── per-pillar tick on the section label ── */
+.vfs-section[data-pillar] { --pillar: var(--quiet); }
+.vfs-section[data-pillar="01"] { --pillar: var(--sig-cyan); }
+.vfs-section[data-pillar="02"] { --pillar: var(--accent); }
+.vfs-section[data-pillar="03"] { --pillar: var(--sig-ember); }
+.vfs-section[data-pillar="04"] { --pillar: var(--sig-sage); }
+.vfs-section[data-pillar] .vfs-section-label::before {
+  width: 18px;
+  height: 3px;
+  background: var(--pillar);
+  opacity: 1;
+}
+
+/* ── full-bleed section header (§2, §4) ── */
+.vfs-section-widehead {
+  max-width: 62ch;
+  margin: 0 0 44px;
+}
+.vfs-section-widehead .vfs-section-tagline {
+  max-width: 24ch;
+  margin: 0 0 16px;
+}
+.vfs-section-lede {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.7;
+  margin: 0;
+}
+.vfs-section-lede code,
+.vfs-section-body code.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--fg);
+}
+
+/* ── §1 · namespace tree ── */
+.vfs-tree {
+  border: 1px solid var(--rule);
+  border-radius: var(--r2);
+  background: var(--bg);
+  padding: 22px 24px 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.vfs-tree-row {
+  display: grid;
+  grid-template-columns: 2.4ch 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 7px 0;
+}
+.vfs-tree-branch { color: var(--quiet); white-space: pre; }
+.vfs-tree-path { color: var(--fg); }
+.vfs-tree-root .vfs-tree-path { color: var(--accent); }
+.vfs-tree-mount {
+  justify-self: end;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+.vfs-tree-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  margin-top: 14px;
+  padding: 16px 0;
+  border-top: 1px dashed var(--rule);
+  flex-wrap: wrap;
+}
+.vfs-tree-expr { color: var(--fg); }
+.vfs-tree-expr .op { color: var(--accent); font-weight: 500; }
+.vfs-tree-note {
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+
+/* ── §2 · search verbs (four diagrams) ── */
+.vfs-verbs-wrap { display: flex; flex-direction: column; }
+.vfs-verbs {
+  border: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+.vfs-verb {
+  padding: 26px 26px 24px;
+  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg);
+  transition: background .2s;
+}
+.vfs-verb:hover { background: var(--hover-tint); }
+.vfs-verb:nth-child(2n) { border-right: 0; }
+.vfs-verb:nth-last-child(-n+2) { border-bottom: 0; }
+.vfs-verb-dim {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+.vfs-verb-name {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.vfs-verb-art {
+  /* `color` here is the per-verb signal stroke (set inline via --verb) */
+  color: var(--verb, var(--accent));
+  margin: 10px 0 4px;
+  height: 150px;
+}
+.vfs-field { width: 100%; height: 100%; display: block; }
+
+/* glob · file tree — path to the matched file resolves in colour on hover */
+.gb {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.gb-row { white-space: pre; }
+.gb-prefix { color: var(--quiet); }
+.gb-name { color: var(--muted); transition: color 0.2s ease-out; }
+.gb-name.is-dir { color: var(--fg); }
+.gb-name.is-match { color: color-mix(in oklab, var(--sig-cyan) 50%, var(--muted)); }
+.gb.is-on .gb-name.is-path {
+  color: var(--sig-cyan);
+  transition-delay: calc(var(--d) * 110ms);
+}
+
+/* grep · text rows — a scan line sweeps and matches flare on hover */
+.gp-word { fill: color-mix(in oklab, var(--fg) 20%, transparent); }
+.gp-word.is-match { fill: color-mix(in oklab, var(--accent) 32%, var(--bg)); }
+.gp.is-on .gp-word.is-match {
+  fill: var(--accent);
+  animation: gp-flare 0.5s ease-out backwards;
+  animation-delay: calc(var(--d) * 130ms + 200ms);
+}
+.gp-scan { fill: var(--accent); opacity: 0; }
+.gp.is-on .gp-scan { animation: gp-scan 1.15s ease-in-out; }
+@keyframes gp-scan {
+  0%   { transform: translateY(0);   opacity: 0; }
+  12%  { opacity: 0.5; }
+  88%  { opacity: 0.5; }
+  100% { transform: translateY(120px); opacity: 0; }
+}
+@keyframes gp-flare { from { opacity: 0.35; } to { opacity: 1; } }
+
+/* glean · vector space — query's neighbour links redraw in colour on hover */
+.gf-pt { fill: color-mix(in oklab, var(--fg) 22%, transparent); transition: fill .3s; }
+.gf-pt.is-nn { fill: color-mix(in oklab, var(--fg) 42%, transparent); }
+.gf-pt.is-nn.is-on { fill: var(--sig-violet); }
+.gf-q { fill: color-mix(in oklab, var(--fg) 70%, transparent); transition: fill .3s; }
+.gf-q.is-on { fill: var(--sig-violet); }
+.gf-link { stroke: color-mix(in oklab, var(--fg) 26%, transparent); stroke-width: 1; stroke-dasharray: 1.5 3; }
+.gf-links.is-on .gf-link {
+  stroke: var(--sig-violet);
+  stroke-width: 1.25;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: gf-draw 0.5s ease-out forwards;
+  animation-delay: calc(var(--d) * 70ms);
+}
+@keyframes gf-draw { to { stroke-dashoffset: 0; } }
+
+/* graph · two-community network — frozen d3-force layout, SVG + BFS traversal */
+.gr-edge {
+  stroke: color-mix(in oklab, var(--fg) 22%, transparent);
+  stroke-width: 1;
+  fill: none;
+  transition: stroke 0.2s, stroke-width 0.2s;
+}
+.gr-edge.is-lit { stroke: var(--sig-ember); stroke-width: 2.2; }
+.gr-node {
+  fill: color-mix(in oklab, var(--fg) 40%, transparent);
+  transition: fill 0.2s, r 0.2s;
+}
+.gr-node.is-lit,
+.gr-node.is-meeting { fill: var(--sig-ember); }
+.vfs-verb-gloss {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: auto;
+}
+.vfs-verbs-compose {
+  border: 1px solid var(--rule);
+  border-top: 0;
+  background: var(--card-strong);
+  color: #d6d6d4;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  padding: 16px 24px;
+  white-space: pre;
+  overflow-x: auto;
+  border-radius: 0 0 var(--r2) var(--r2);
+}
+.vfs-verbs-prompt { color: var(--accent); user-select: none; }
+.vfs-verbs-cmd { color: #f1f1ee; }
+.vfs-verbs-arg { color: rgba(214,214,212,0.7); }
+.vfs-verbs-str { color: #a8d99a; }
+.vfs-verbs-pipe { color: color-mix(in oklab, var(--accent) 70%, transparent); }
+.vfs-verbs-cmd.is-lit { color: var(--accent); }
+
+/* ── §2 motion ── hover spotlight only; diagrams rest static ── */
+
+/* spotlight: the hovered verb gets a wash + an underline sweep on its name */
+.vfs-verb.is-active { background: var(--hover-tint); }
+.vfs-verb-name { position: relative; width: max-content; }
+.vfs-verb-name::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -4px;
+  height: 2px;
+  background: var(--verb, var(--accent));
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.vfs-verb.is-active .vfs-verb-name::after { transform: scaleX(1); }
+
+/* respect reduced-motion: hold a clean static end state, no draw-in */
+@media (prefers-reduced-motion: reduce) {
+  .gb.is-on .gb-path,
+  .gp.is-on .gp-word.is-match,
+  .gp.is-on .gp-scan,
+  .gf-links.is-on .gf-link,
+  .gr-edge.is-lit {
+    animation: none !important;
+  }
+  .gb.is-on .gb-path,
+  .gf-links.is-on .gf-link,
+  .gr-edge.is-lit { stroke-dashoffset: 0; }
+  .gp.is-on .gp-scan { opacity: 0; }
+}
+
+@media (max-width: 720px) {
+  .vfs-verbs { grid-template-columns: 1fr; }
+  .vfs-verb { border-right: 0; }
+  .vfs-verb:nth-last-child(-n+2) { border-bottom: 1px solid var(--rule); }
+  .vfs-verb:last-child { border-bottom: 0; }
+}
+
+/* ── §3 · capability tape additions (doc + tool in one result) ── */
+.vfs-tape-kind {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(214,214,212,0.45);
+}
+.vfs-tape-run {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ── §4 · mount map (fstab) ── */
+.vfs-mounts {
+  border: 1px solid var(--rule);
+  width: 100%;
+  background: var(--bg);
+}
+.vfs-mounts-head,
+.vfs-mounts-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.5fr) minmax(0, 0.6fr);
+}
+.vfs-mounts-head {
+  background: color-mix(in oklab, var(--fg) 5%, transparent);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+.vfs-mounts-head > div {
+  padding: 15px 22px;
+  border-right: 1px solid var(--rule);
+}
+.vfs-mounts-head > div:last-child { border-right: 0; }
+.vfs-mounts-row {
+  border-bottom: 1px solid var(--rule);
+  transition: background .2s;
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+.vfs-mounts-row:last-child { border-bottom: 0; }
+.vfs-mounts-row:hover { background: var(--hover-tint); }
+.vfs-mounts-mount {
+  padding: 16px 22px;
+  border-right: 1px solid var(--rule);
+  color: var(--fg);
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.vfs-mounts-arrow { color: var(--accent); user-select: none; flex-shrink: 0; }
+.vfs-mounts-backend {
+  padding: 16px 22px;
+  border-right: 1px solid var(--rule);
+  color: var(--muted);
+  align-self: center;
+}
+.vfs-mounts-modecell { padding: 16px 22px; align-self: center; }
+.vfs-mounts-tag {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--quiet);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 4px 11px;
+  white-space: nowrap;
+}
+.vfs-mounts-tag.is-mcp {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--rule));
+}
+@media (max-width: 680px) {
+  .vfs-mounts-head { display: none; }
+  .vfs-mounts-row { grid-template-columns: 1fr auto; }
+  .vfs-mounts-backend {
+    grid-column: 1 / -1;
+    border-right: 0;
+    border-top: 1px dashed var(--rule);
+    font-size: 13px;
+  }
+}
+
 /* ═════════════════════════════════════════════════════════════
    Terminal route
    ═════════════════════════════════════════════════════════════ */

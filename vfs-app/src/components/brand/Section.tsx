@@ -7,21 +7,45 @@ export function Section({
   tight,
   className,
   id,
+  pillar,
 }: {
   label?: ReactNode
   children: ReactNode
   tight?: boolean
   className?: string
   id?: string
+  /** Two-digit pillar id ("01"–"05") — drives the leading color tick on the label. */
+  pillar?: string
 }) {
   return (
     <section
       id={id}
+      data-pillar={pillar}
       className={cn("vfs-section", tight && "tight", className)}
     >
       {label && <div className="vfs-section-label">{label}</div>}
       {children}
     </section>
+  )
+}
+
+/**
+ * Full-bleed section header — a Display tagline + lede that spans the content
+ * width, used when the section body is a wide grid/table rather than the
+ * standard 1fr / 2.4fr rail.
+ */
+export function SectionHead({
+  tagline,
+  children,
+}: {
+  tagline: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <div className="vfs-section-widehead">
+      <h2 className="vfs-section-tagline lg">{tagline}</h2>
+      {children && <p className="vfs-section-lede">{children}</p>}
+    </div>
   )
 }
 
