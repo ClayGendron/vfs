@@ -991,7 +991,7 @@
 }
 @keyframes gp-light {
   from { fill: color-mix(in oklab, var(--fg) 22%, transparent); }
-  to   { fill: color-mix(in oklab, var(--accent) 62%, white); }
+  to   { fill: var(--accent); }
 }
 
 /* glean · vector space — query's neighbour links redraw in colour on hover */
@@ -1089,7 +1089,7 @@
   .gr-edge.is-lit { stroke-dashoffset: 0; }
   .gp.is-on .gp-scan { opacity: 0; }
   /* matches hold the lit colour instantly when the scan animation is off */
-  .gp.is-on .gp-word.is-match { fill: color-mix(in oklab, var(--accent) 62%, white); }
+  .gp.is-on .gp-word.is-match { fill: var(--accent); }
 }
 
 @media (max-width: 720px) {

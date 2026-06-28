@@ -60,24 +60,29 @@ export function GlobField({ active }: { active: boolean }) {
       preserveAspectRatio="xMidYMid meet"
       aria-hidden="true"
     >
-      {/* connector guides: an elbow from each row up to its parent */}
+      {/* connector guides: an elbow from each row up to its parent. Drawn with
+          non-path elbows first so the lit (on-path) ones paint on top — sibling
+          verticals share a column, and a later gray stroke would otherwise
+          cover the blue segment beneath it. */}
       {ROWS.map((r, i) => {
-        if (r.level === 0) return null
-        const p = parentOf(i)
+        const p = r.level > 0 ? parentOf(i) : -1
         if (p < 0) return null
         const gx = glyphX(r.level - 1) + GLYPH / 2
         const py = rowY(p) + GLYPH
         const y = rowY(i) + GLYPH / 2
         const onPath = r.step !== undefined
-        return (
+        return { i, onPath, step: r.step, d: `M${gx},${py} V${y} H${glyphX(r.level)}` }
+      })
+        .filter((g): g is NonNullable<typeof g> => g !== null)
+        .sort((a, b) => Number(a.onPath) - Number(b.onPath))
+        .map((g) => (
           <path
-            key={`g${i}`}
-            className={cn("gb-guide", onPath && "is-path")}
-            style={onPath ? ({ "--d": r.step } as CSSProperties) : undefined}
-            d={`M${gx},${py} V${y} H${glyphX(r.level)}`}
+            key={`g${g.i}`}
+            className={cn("gb-guide", g.onPath && "is-path")}
+            style={g.onPath ? ({ "--d": g.step } as CSSProperties) : undefined}
+            d={g.d}
           />
-        )
-      })}
+        ))}
 
       {/* selection box behind each match — fills in on hover */}
       {ROWS.map((r, i) =>
