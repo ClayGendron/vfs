@@ -193,7 +193,7 @@ export function GraphField({ active }: { active: boolean }) {
             key={i}
             cx={n.x}
             cy={n.y}
-            r={isMeeting ? 6.5 : isSource && active ? 5.2 : 3.4}
+            r={isSource && active ? 6.8 : 4.6}
             className={cn(
               "gr-node",
               lit && "is-lit",

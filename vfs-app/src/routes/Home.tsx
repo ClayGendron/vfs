@@ -48,8 +48,8 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
 
       <SpecStrip metrics={SITE.metrics} />
 
-      <Section label="vfs / 01 · everything is a file" pillar="01">
-        <SectionGrid taglineSize="lg" tagline="Everything is a file.">
+      <Section>
+        <SectionGrid taglineSize="lg" tagline="Treat everything as a file.">
           <p>
             More than fifty years ago, Bell Labs settled on one idea:
             everything is a file, and you act on it with small programs that
@@ -68,7 +68,7 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
         </SectionGrid>
       </Section>
 
-      <Section label="vfs / 02 · search from every angle" pillar="02">
+      <Section>
         <SectionHead tagline="Search from every angle.">
           A file carries information four ways: where it sits, what it says,
           what it means, and what it connects to. VFS gives agents one verb per
@@ -78,10 +78,10 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
         <SearchVerbs />
       </Section>
 
-      <Section label="vfs / 03 · one namespace" pillar="03">
+      <Section>
         <SectionGrid
           taglineSize="lg"
-          tagline="One namespace for all agentic capabilities"
+          tagline="Create one namespace for all agentic capabilities."
         >
           <p>
             Capabilities live in the namespace too. Tools and skills are files
@@ -100,7 +100,7 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
         </SectionGrid>
       </Section>
 
-      <Section label="vfs / 04 · mount on your stack" pillar="04">
+      <Section>
         <SectionHead tagline="Mount on your stack.">
           VFS is the protocol, not the database. Mount Postgres, MSSQL, SQLite,
           your retrievers, your graph — in-process with your app or as an MCP
@@ -116,7 +116,7 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
         </div>
       </Section>
 
-      <Section label="vfs / 05 · status" tight>
+      <Section tight>
         <SectionGrid tagline={<><em>alpha</em> · v0.0.x</>}>
           <p>
             The core file system, CLI query engine, graph algorithms, and BM25

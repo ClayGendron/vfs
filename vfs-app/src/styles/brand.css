@@ -897,6 +897,10 @@
   border: 1px solid var(--rule);
   display: grid;
   grid-template-columns: repeat(2, 1fr);
+  /* cap the total width so each of the four cards reads roughly square */
+  width: 100%;
+  max-width: 840px;
+  margin-inline: auto;
 }
 .vfs-verb {
   padding: 26px 26px 24px;
@@ -925,62 +929,86 @@
   color: var(--fg);
 }
 .vfs-verb-art {
-  /* `color` here is the per-verb signal stroke (set inline via --verb) */
+  /* the shared cobalt accent the diagrams colour in with on hover */
   color: var(--verb, var(--accent));
   margin: 10px 0 4px;
   height: 150px;
 }
 .vfs-field { width: 100%; height: 100%; display: block; }
 
-/* glob · file tree — path to the matched file resolves in colour on hover */
-.gb {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.7;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+/* glob · abstract file tree — matched paths fill in on hover */
+.gb-guide {
+  fill: none;
+  /* opaque (mixed with --bg, not transparent) so overlapping sibling spines
+     don't compound into a darker stroke where they stack */
+  stroke: color-mix(in oklab, var(--fg) 22%, var(--bg));
+  stroke-width: 1;
+  transition: stroke 0.25s ease-out;
 }
-.gb-row { white-space: pre; }
-.gb-prefix { color: var(--quiet); }
-.gb-name { color: var(--muted); transition: color 0.2s ease-out; }
-.gb-name.is-dir { color: var(--fg); }
-.gb-name.is-match { color: color-mix(in oklab, var(--sig-cyan) 50%, var(--muted)); }
-.gb.is-on .gb-name.is-path {
-  color: var(--sig-cyan);
-  transition-delay: calc(var(--d) * 110ms);
+.gb-glyph { fill: color-mix(in oklab, var(--fg) 22%, transparent); transition: fill 0.25s ease-out; }
+.gb-bar { fill: color-mix(in oklab, var(--fg) 22%, transparent); transition: fill 0.25s ease-out; }
+
+/* selection box behind each match — hidden at rest, fills left-to-right on hover */
+.gb-sel {
+  fill: color-mix(in oklab, var(--accent) 14%, transparent);
+  stroke: color-mix(in oklab, var(--accent) 45%, transparent);
+  stroke-width: 1;
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transform-box: fill-box;
+}
+
+/* hover: the branch resolves in cobalt, selection boxes fill in, staggered by --d */
+.gb.is-on .gb-guide.is-path { stroke: var(--accent); transition-delay: calc(var(--d) * 120ms); }
+.gb.is-on .gb-glyph.is-path,
+.gb.is-on .gb-bar.is-path { fill: var(--accent); transition-delay: calc(var(--d) * 120ms); }
+.gb.is-on .gb-sel {
+  animation: gb-fill 0.45s ease-out forwards;
+  animation-delay: calc(var(--d) * 120ms);
+}
+@keyframes gb-fill {
+  from { opacity: 0; transform: scaleX(0); }
+  to   { opacity: 1; transform: scaleX(1); }
 }
 
 /* grep · text rows — a scan line sweeps and matches flare on hover */
-.gp-word { fill: color-mix(in oklab, var(--fg) 20%, transparent); }
-.gp-word.is-match { fill: color-mix(in oklab, var(--accent) 32%, var(--bg)); }
+.gp-word { fill: color-mix(in oklab, var(--fg) 22%, transparent); }
+/* each match shifts neutral → lighter cobalt as the scan line reaches it */
 .gp.is-on .gp-word.is-match {
-  fill: var(--accent);
-  animation: gp-flare 0.5s ease-out backwards;
-  animation-delay: calc(var(--d) * 130ms + 200ms);
+  animation: gp-light 0.4s ease-out both;
+  animation-delay: calc(var(--d) * 130ms + 260ms);
 }
-.gp-scan { fill: var(--accent); opacity: 0; }
+/* scan line descends, fading in and shifting from neutral to cobalt */
+.gp-scan { fill: color-mix(in oklab, var(--fg) 22%, transparent); opacity: 0; }
 .gp.is-on .gp-scan { animation: gp-scan 1.15s ease-in-out; }
 @keyframes gp-scan {
-  0%   { transform: translateY(0);   opacity: 0; }
-  12%  { opacity: 0.5; }
-  88%  { opacity: 0.5; }
-  100% { transform: translateY(120px); opacity: 0; }
+  0%   { transform: translateY(0);   opacity: 0; fill: color-mix(in oklab, var(--fg) 28%, transparent); }
+  12%  { opacity: 0.6; }
+  55%  { fill: var(--accent); }
+  88%  { opacity: 0.6; }
+  100% { transform: translateY(120px); opacity: 0; fill: var(--accent); }
 }
-@keyframes gp-flare { from { opacity: 0.35; } to { opacity: 1; } }
+@keyframes gp-light {
+  from { fill: color-mix(in oklab, var(--fg) 22%, transparent); }
+  to   { fill: color-mix(in oklab, var(--accent) 62%, white); }
+}
 
 /* glean · vector space — query's neighbour links redraw in colour on hover */
+/* every point rests uniform; only the hovered query + its neighbours light up */
 .gf-pt { fill: color-mix(in oklab, var(--fg) 22%, transparent); transition: fill .3s; }
-.gf-pt.is-nn { fill: color-mix(in oklab, var(--fg) 42%, transparent); }
-.gf-pt.is-nn.is-on { fill: var(--sig-violet); }
-.gf-q { fill: color-mix(in oklab, var(--fg) 70%, transparent); transition: fill .3s; }
-.gf-q.is-on { fill: var(--sig-violet); }
-.gf-link { stroke: color-mix(in oklab, var(--fg) 26%, transparent); stroke-width: 1; stroke-dasharray: 1.5 3; }
-.gf-links.is-on .gf-link {
-  stroke: var(--sig-violet);
+.gf-pt.is-nn.is-on { fill: var(--accent); }
+.gf-q { fill: color-mix(in oklab, var(--fg) 22%, transparent); transition: fill .3s; }
+.gf-q.is-on { fill: var(--accent); }
+/* links are hidden at rest — they only exist while a query is active */
+.gf-link {
+  stroke: var(--accent);
   stroke-width: 1.25;
   stroke-dasharray: 1;
+  opacity: 0;
+}
+.gf-links.is-on .gf-link {
+  opacity: 1;
   stroke-dashoffset: 1;
   animation: gf-draw 0.5s ease-out forwards;
   animation-delay: calc(var(--d) * 70ms);
@@ -994,13 +1022,13 @@
   fill: none;
   transition: stroke 0.2s, stroke-width 0.2s;
 }
-.gr-edge.is-lit { stroke: var(--sig-ember); stroke-width: 2.2; }
+.gr-edge.is-lit { stroke: var(--accent); stroke-width: 2.2; }
 .gr-node {
-  fill: color-mix(in oklab, var(--fg) 40%, transparent);
+  fill: color-mix(in oklab, var(--fg) 22%, transparent);
   transition: fill 0.2s, r 0.2s;
 }
 .gr-node.is-lit,
-.gr-node.is-meeting { fill: var(--sig-ember); }
+.gr-node.is-meeting { fill: var(--accent); }
 .vfs-verb-gloss {
   font-size: 13px;
   line-height: 1.5;
@@ -1045,17 +1073,23 @@
 
 /* respect reduced-motion: hold a clean static end state, no draw-in */
 @media (prefers-reduced-motion: reduce) {
-  .gb.is-on .gb-path,
+  .gb.is-on .gb-sel,
   .gp.is-on .gp-word.is-match,
   .gp.is-on .gp-scan,
   .gf-links.is-on .gf-link,
   .gr-edge.is-lit {
     animation: none !important;
   }
-  .gb.is-on .gb-path,
+  /* hold the lit end state instantly, no draw-in or stagger */
+  .gb.is-on .gb-guide.is-path,
+  .gb.is-on .gb-glyph.is-path,
+  .gb.is-on .gb-bar.is-path { transition-delay: 0s; }
+  .gb.is-on .gb-sel { opacity: 1; transform: scaleX(1); }
   .gf-links.is-on .gf-link,
   .gr-edge.is-lit { stroke-dashoffset: 0; }
   .gp.is-on .gp-scan { opacity: 0; }
+  /* matches hold the lit colour instantly when the scan animation is off */
+  .gp.is-on .gp-word.is-match { fill: color-mix(in oklab, var(--accent) 62%, white); }
 }
 
 @media (max-width: 720px) {

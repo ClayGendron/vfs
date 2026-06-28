@@ -5,10 +5,10 @@ import { cn } from "@/lib/utils"
 /**
  * glean · meaning — a vector space.
  *
- * A scattered point cloud sits static by default: one larger query dot with
- * dotted links to its five nearest neighbors. On hover a *new* query point is
- * chosen at random and its neighbor links redraw in colour — the gesture of a
- * semantic lookup landing somewhere new in the embedding space.
+ * A scattered point cloud sits fully uniform at rest — no query, no links. On
+ * hover a query point is chosen at random, grows, and draws links to its five
+ * nearest neighbors in colour — the gesture of a semantic lookup landing
+ * somewhere in the embedding space.
  */
 
 type Pt = { x: number; y: number }
@@ -96,14 +96,14 @@ export function GleanField({ active }: { active: boolean }) {
             key={i}
             cx={p.x}
             cy={p.y}
-            r={nnSet.has(i) ? 2.9 : 2.1}
+            r={active && nnSet.has(i) ? 3.8 : 2.9}
             className={cn("gf-pt", nnSet.has(i) && "is-nn", active && "is-on")}
           />
         ),
       )}
 
-      {/* query node on top */}
-      <circle cx={q.x} cy={q.y} r={active ? 6 : 5} className={cn("gf-q", active && "is-on")} />
+      {/* query node on top — a plain point until hover picks it out */}
+      <circle cx={q.x} cy={q.y} r={active ? 7.5 : 2.9} className={cn("gf-q", active && "is-on")} />
     </svg>
   )
 }
