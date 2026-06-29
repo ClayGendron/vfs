@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import type { CSSProperties } from "react"
 import { cn } from "@/lib/utils"
 
@@ -5,26 +6,24 @@ import { cn } from "@/lib/utils"
  * glob · location — an abstract file tree.
  *
  * Folder/file rows with tree guides and blank name bars (no literal names),
- * stripped back to match grep's rectangle language. The tree rests static; on
- * hover a selection box fills in left-to-right behind each matched leaf and the
- * branch from root down to it resolves in colour, segment by segment — a glob
- * pattern retrieving the paths that match.
+ * stripped back to match grep's rectangle language. The tree rests neutral;
+ * on each play 1–3 leaves are chosen at random, a selection box fills in behind
+ * each, and the branch from root down to it resolves in colour segment by
+ * segment — a glob pattern retrieving the paths that match.
  */
 
 type Row = {
   level: number
   dir?: boolean
   w: number // name-bar width
-  match?: boolean
-  step?: number // present when on the resolved path (drives the stagger)
 }
 
 const ROWS: Row[] = [
-  { level: 0, dir: true, w: 44, step: 0 }, // root/
-  { level: 1, dir: true, w: 36, step: 1 }, //  matched dir/
-  { level: 2, dir: true, w: 32, step: 2 }, //   matched sub/
-  { level: 3, w: 38, match: true, step: 3 }, //    file ✓
-  { level: 3, w: 28, match: true, step: 3 }, //    file ✓
+  { level: 0, dir: true, w: 44 }, // root/
+  { level: 1, dir: true, w: 36 }, //  dir/
+  { level: 2, dir: true, w: 32 }, //   sub/
+  { level: 3, w: 38 }, //    file
+  { level: 3, w: 28 }, //    file
   { level: 2, w: 34 }, //   file
   { level: 1, dir: true, w: 40 }, //  dir/
   { level: 2, w: 30 }, //   file
@@ -52,7 +51,34 @@ function parentOf(i: number): number {
   return -1
 }
 
+// file (leaf) rows — the paths a glob can land on
+const LEAVES = ROWS.flatMap((r, i) => (r.dir ? [] : [i]))
+
+type Selection = { matched: Set<number>; onPath: Set<number> }
+const EMPTY: Selection = { matched: new Set(), onPath: new Set() }
+
+// pick 1–3 leaves at random; the resolved path is the union of their ancestors
+function pickSelection(): Selection {
+  const k = 1 + Math.floor(Math.random() * 3)
+  const matched = new Set<number>()
+  while (matched.size < k && matched.size < LEAVES.length) {
+    matched.add(LEAVES[Math.floor(Math.random() * LEAVES.length)])
+  }
+  const onPath = new Set<number>()
+  for (const leaf of matched) {
+    for (let cur = leaf; cur >= 0; cur = parentOf(cur)) onPath.add(cur)
+  }
+  return { matched, onPath }
+}
+
 export function GlobField({ active }: { active: boolean }) {
+  const [sel, setSel] = useState<Selection>(EMPTY)
+
+  // fresh paths on each play; clears back to neutral when the spotlight leaves
+  useEffect(() => {
+    setSel(active ? pickSelection() : EMPTY)
+  }, [active])
+
   return (
     <svg
       viewBox={`0 0 ${VB_W} ${VB_H}`}
@@ -63,15 +89,16 @@ export function GlobField({ active }: { active: boolean }) {
       {/* connector guides: an elbow from each row up to its parent. Drawn with
           non-path elbows first so the lit (on-path) ones paint on top — sibling
           verticals share a column, and a later gray stroke would otherwise
-          cover the blue segment beneath it. */}
+          cover the blue segment beneath it. The stagger (--d) tracks tree depth
+          so the branch resolves root-first. */}
       {ROWS.map((r, i) => {
         const p = r.level > 0 ? parentOf(i) : -1
         if (p < 0) return null
         const gx = glyphX(r.level - 1) + GLYPH / 2
         const py = rowY(p) + GLYPH
         const y = rowY(i) + GLYPH / 2
-        const onPath = r.step !== undefined
-        return { i, onPath, step: r.step, d: `M${gx},${py} V${y} H${glyphX(r.level)}` }
+        const onPath = sel.onPath.has(i)
+        return { i, onPath, step: r.level, d: `M${gx},${py} V${y} H${glyphX(r.level)}` }
       })
         .filter((g): g is NonNullable<typeof g> => g !== null)
         .sort((a, b) => Number(a.onPath) - Number(b.onPath))
@@ -86,7 +113,7 @@ export function GlobField({ active }: { active: boolean }) {
 
       {/* selection box behind each match — fills in on hover */}
       {ROWS.map((r, i) =>
-        r.match ? (
+        sel.matched.has(i) ? (
           <rect
             key={`s${i}`}
             className="gb-sel"
@@ -95,7 +122,7 @@ export function GlobField({ active }: { active: boolean }) {
             width={GLYPH + BAR_GAP + r.w + 7}
             height={GLYPH + 6}
             rx="2.5"
-            style={{ "--d": r.step ?? 0 } as CSSProperties}
+            style={{ "--d": r.level } as CSSProperties}
           />
         ) : null,
       )}
@@ -104,17 +131,13 @@ export function GlobField({ active }: { active: boolean }) {
       {ROWS.map((r, i) => {
         const gx = glyphX(r.level)
         const y = rowY(i)
-        const onPath = r.step !== undefined
+        const onPath = sel.onPath.has(i)
+        const isMatch = sel.matched.has(i)
         return (
           <g key={`r${i}`}>
             <rect
-              className={cn(
-                "gb-glyph",
-                r.dir && "is-dir",
-                r.match && "is-match",
-                onPath && "is-path",
-              )}
-              style={onPath ? ({ "--d": r.step } as CSSProperties) : undefined}
+              className={cn("gb-glyph", isMatch && "is-match", onPath && "is-path")}
+              style={onPath ? ({ "--d": r.level } as CSSProperties) : undefined}
               x={gx}
               y={y}
               width={GLYPH}
@@ -122,12 +145,8 @@ export function GlobField({ active }: { active: boolean }) {
               rx="1.5"
             />
             <rect
-              className={cn(
-                "gb-bar",
-                r.match && "is-match",
-                onPath && "is-path",
-              )}
-              style={onPath ? ({ "--d": r.step } as CSSProperties) : undefined}
+              className={cn("gb-bar", isMatch && "is-match", onPath && "is-path")}
+              style={onPath ? ({ "--d": r.level } as CSSProperties) : undefined}
               x={gx + GLYPH + BAR_GAP}
               y={y + (GLYPH - BAR_H) / 2}
               width={r.w}

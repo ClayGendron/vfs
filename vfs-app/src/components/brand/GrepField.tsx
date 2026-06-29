@@ -1,23 +1,22 @@
+import { useEffect, useState } from "react"
 import type { CSSProperties } from "react"
 import { cn } from "@/lib/utils"
 
 /**
  * grep · content — literal matches in text.
  *
- * Rows of "words" with a few matches, static by default. On hover a scan line
- * sweeps the rows and the matches flare — the feel of a regex pass landing on
- * exact hits.
+ * Rows of blank "words" rest neutral. On each play 1–5 of them are chosen at
+ * random as matches; a scan line sweeps top-to-bottom and each match lights
+ * cobalt as the line reaches it — the feel of a regex pass landing on hits.
  */
 
-type Word = { w: number; match?: boolean }
-
-const ROWS: Word[][] = [
-  [{ w: 26 }, { w: 34, match: true }, { w: 18 }],
-  [{ w: 16 }, { w: 22 }, { w: 40 }, { w: 14 }],
-  [{ w: 30, match: true }, { w: 20 }, { w: 28 }],
-  [{ w: 18 }, { w: 24 }, { w: 16 }, { w: 30, match: true }],
-  [{ w: 36 }, { w: 18 }, { w: 22 }],
-  [{ w: 20 }, { w: 28 }, { w: 16 }, { w: 24 }],
+const ROW_WIDTHS: number[][] = [
+  [26, 34, 18],
+  [16, 22, 40, 14],
+  [30, 20, 28],
+  [18, 24, 16, 30],
+  [36, 18, 22],
+  [20, 28, 16, 24],
 ]
 
 const X0 = 16
@@ -26,8 +25,45 @@ const Y0 = 20
 const ROW_H = 22
 const WORD_H = 7
 
+type Word = { x: number; y: number; w: number }
+
+// flatten the row widths into positioned word rects once
+const WORDS: Word[] = (() => {
+  const out: Word[] = []
+  ROW_WIDTHS.forEach((row, r) => {
+    let x = X0
+    const y = Y0 + r * ROW_H
+    for (const w of row) {
+      out.push({ x, y, w })
+      x += w + GAP
+    }
+  })
+  return out
+})()
+
+// pick 1–5 words at random, ordered top-to-bottom so the stagger tracks the scan
+function pickMatches(): number[] {
+  const k = 1 + Math.floor(Math.random() * 5)
+  const chosen = new Set<number>()
+  while (chosen.size < k && chosen.size < WORDS.length) {
+    chosen.add(Math.floor(Math.random() * WORDS.length))
+  }
+  return [...chosen].sort(
+    (a, b) => WORDS[a].y - WORDS[b].y || WORDS[a].x - WORDS[b].x,
+  )
+}
+
 export function GrepField({ active }: { active: boolean }) {
-  let matchOrder = 0
+  const [matches, setMatches] = useState<number[]>([])
+
+  // fresh matches on each play; clears back to neutral when the spotlight leaves
+  useEffect(() => {
+    setMatches(active ? pickMatches() : [])
+  }, [active])
+
+  // word index → flare order, for the staggered reveal
+  const rank = new Map(matches.map((wi, r) => [wi, r]))
+
   return (
     <svg
       viewBox="0 0 260 150"
@@ -35,27 +71,21 @@ export function GrepField({ active }: { active: boolean }) {
       preserveAspectRatio="xMidYMid meet"
       aria-hidden="true"
     >
-      {ROWS.map((row, r) => {
-        let x = X0
-        const y = Y0 + r * ROW_H
-        return row.map((word, c) => {
-          const rect = (
-            <rect
-              key={`${r}-${c}`}
-              className={cn("gp-word", word.match && "is-match")}
-              x={x}
-              y={y}
-              width={word.w}
-              height={WORD_H}
-              rx="2"
-              style={
-                word.match ? ({ "--d": matchOrder++ } as CSSProperties) : undefined
-              }
-            />
-          )
-          x += word.w + GAP
-          return rect
-        })
+      {WORDS.map((word, i) => {
+        const order = rank.get(i)
+        const isMatch = order !== undefined
+        return (
+          <rect
+            key={i}
+            className={cn("gp-word", isMatch && "is-match")}
+            x={word.x}
+            y={word.y}
+            width={word.w}
+            height={WORD_H}
+            rx="2"
+            style={isMatch ? ({ "--d": order } as CSSProperties) : undefined}
+          />
+        )
       })}
       <rect className="gp-scan" x="12" y="14" width="120" height="2" rx="1" />
     </svg>
