@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom"
 import {
-  CapabilityTape,
   IntegrationsGrid,
   MountMap,
   NamespaceTree,
@@ -76,28 +75,6 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
           verb&rsquo;s output feeds the next.
         </SectionHead>
         <SearchVerbs />
-      </Section>
-
-      <Section>
-        <SectionGrid
-          taglineSize="lg"
-          tagline="Create one namespace for all agentic capabilities."
-        >
-          <p>
-            Capabilities live in the namespace too. Tools and skills are files
-            under <code className="mono">/.agents</code> — manifests that chunk
-            and index like any document — so the same{" "}
-            <code className="mono">grep</code> and{" "}
-            <code className="mono">glean</code> that surface a policy surface
-            the tool that acts on it. An agent finds a capability the way it
-            finds a file, then <code className="mono">run</code>s it. Search and
-            action share one namespace, so the agent that can retrieve can also
-            do the work.
-          </p>
-          <div style={{ marginTop: 24 }}>
-            <CapabilityTape cta="open the repl" to="/terminal" />
-          </div>
-        </SectionGrid>
       </Section>
 
       <Section>
