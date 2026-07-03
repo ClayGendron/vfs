@@ -34,9 +34,8 @@ uses for routing — one mental model covers both.
 
 The rejection is structured: the error carries ``kind=read_only``,
 which :func:`vfs.exceptions.exception_for_kind` maps to
-:class:`~vfs.exceptions.WriteConflictError` when the filesystem is
-configured with ``raise_on_error=True``.  No message inspection is
-involved.
+:class:`~vfs.exceptions.WriteConflictError` at the call boundary
+(``raise_if_failed``).  No message inspection is involved.
 
 Helpers
 -------
@@ -269,11 +268,10 @@ def check_writable(
     ``fs._error(...)`` — when the operation would mutate a read-only
     path.
 
-    The error carries ``kind=read_only``, which
-    :func:`~vfs.exceptions.exception_for_kind` maps to
-    :class:`~vfs.exceptions.WriteConflictError`.  When the filesystem has
-    ``raise_on_error=True``, ``fs._error(...)`` raises that exception
-    directly instead of returning a result.
+    The error carries ``kind=read_only`` and reports *op* as the failed
+    result's ``function``; :func:`~vfs.exceptions.exception_for_kind`
+    maps the kind to :class:`~vfs.exceptions.WriteConflictError` when a
+    boundary caller applies ``raise_if_failed``.
     """
     if op not in MUTATING_OPS:
         return None
@@ -292,10 +290,12 @@ def check_writable(
         return fs._error(
             f"Cannot write to read-only path '{full}' (mount default)",
             kind=VFSErrorKind.read_only,
+            function=op,
         )
     return fs._error(
         f"Cannot write to read-only path '{full}' (read-only by mount rule '{resolved.rule_prefix}')",
         kind=VFSErrorKind.read_only,
+        function=op,
     )
 
 

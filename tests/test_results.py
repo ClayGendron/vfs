@@ -75,8 +75,10 @@ class TestResultError:
 
 class TestRowAccess:
     def test_empty_result(self) -> None:
+        # Truthiness is success alone: a successful glob with zero matches
+        # is truthy — emptiness is len()'s fact, not __bool__'s.
         result = Result()
-        assert not result
+        assert result
         assert len(result) == 0
         assert result.first() is None
         assert result.paths == ()

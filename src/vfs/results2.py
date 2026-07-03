@@ -87,8 +87,9 @@ class ResultError(BaseModel):
     payload — a remote mount's error must keep its kind across the MCP hop —
     but text rendering shows prose only. A kind outside this client's
     ``VFSErrorKind`` vocabulary is kept as its raw string (round-trip safe);
-    consumers should treat unknown kinds as ``unrecognized``. Producers
-    construct from the enum.
+    kind-dispatching consumers fall back to their broadest handling — the
+    boundary adapter raises it as base ``VFSError``, never a narrower class
+    that would misstate an unknown failure. Producers construct from the enum.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -135,9 +136,9 @@ class Result(BaseModel):
     """Unified result from every VFS operation.
 
     - **Envelope:** ``function`` identifies how the rows were produced;
-      renderers and consumers dispatch on it. It is a free string validated
-      against ``vfs.projection.KNOWN_FUNCTIONS`` — unknown names render with
-      a fallback arrangement rather than failing.
+      renderers and consumers dispatch on it. It is a free, unvalidated
+      string (``""`` when unknown) — a name outside the rendering vocabulary
+      falls back to a generic arrangement rather than failing.
     - **Rows:** ``observations`` is the frozen row list (``Observation``).
     - **Errors:** ``success`` / ``errors`` carry structured status
       independent of the rows.
@@ -191,7 +192,7 @@ class Result(BaseModel):
     # Sequence protocol
     # -------------------------------------------------------------------
 
-    def __iter__(self) -> Iterator[Observation]:  # type: ignore[override]
+    def __iter__(self) -> Iterator[Observation]:  # ty: ignore[invalid-method-override]
         # Overrides BaseModel's (key, value) iteration: a result reads as a
         # sequence of rows. model_dump/model_dump_json are unaffected.
         return iter(self.observations)
@@ -203,7 +204,9 @@ class Result(BaseModel):
         return len(self.observations)
 
     def __bool__(self) -> bool:
-        return self.success and len(self.observations) > 0
+        # Truthiness is success, nothing more: a successful glob with zero
+        # matches is truthy. Emptiness is a separate fact — use len()/first().
+        return self.success
 
     def __contains__(self, path: str) -> bool:
         return path in self.paths

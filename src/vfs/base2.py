@@ -29,7 +29,6 @@ import asyncio
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
-from vfs.exceptions import NotFoundError, VFSError, exception_for_kind
 from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS
 from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
@@ -82,7 +81,6 @@ class VirtualFileSystem:
         description: str | None = None,
         storage: bool = False,
         allow_child_mounts: bool = True,
-        raise_on_error: bool = False,
         permissions: Permission | PermissionMap = "read_write",
     ) -> None:
         self.name = name
@@ -90,7 +88,6 @@ class VirtualFileSystem:
         self.description = description
         self._storage = storage
         self._allow_child_mounts = allow_child_mounts
-        self._raise_on_error = raise_on_error
         self._permission_map: PermissionMap = coerce_permissions(permissions)
         self._parent: VirtualFileSystem | None = None
         self._mounts: dict[Path, VirtualFileSystem] = {}
@@ -174,13 +171,6 @@ class VirtualFileSystem:
             raise ValueError(msg)
 
         filesystem._parent = self
-        # Propagate raise-on-error to the whole incoming subtree, not just the
-        # child — each terminal's own flag decides raise vs return, never a stale one.
-        stack: list[VirtualFileSystem] = [filesystem]
-        while stack:
-            node = stack.pop()
-            node._raise_on_error = self._raise_on_error
-            stack.extend(node._mounts.values())
         self._mounts[mount_path] = filesystem
         self._rebuild_sorted_mounts()
 
@@ -361,20 +351,12 @@ class VirtualFileSystem:
 
         Returns the rows found; ``[]`` when everything was ``not_found`` (pure
         absence — the mountable case); ``None`` on a *classified* read failure,
-        which the caller must treat as "cannot verify" and reject.  Handles the
-        two documented failure channels of a read verb — a failed ``Result`` and,
-        under ``raise_on_error=True``, the kind-mapped ``VFSError`` — identically.
-
-        A raw non-``VFSError`` from an impl is an impl bug, not a "cannot verify"
-        condition, so it propagates with its real traceback rather than being
-        masked as a mount conflict.
+        which the caller must treat as "cannot verify" and reject.  ``Result``
+        is the only failure channel a verb has, so no exception handling is
+        needed: a raw exception from an impl is an impl bug and propagates
+        with its real traceback rather than being masked as a mount conflict.
         """
-        try:
-            result = await call
-        except NotFoundError:
-            return []
-        except VFSError:
-            return None
+        result = await call
         if result.success:
             return list(result.observations)
         if all(e.kind == VFSErrorKind.not_found for e in result.errors):
@@ -434,7 +416,12 @@ class VirtualFileSystem:
         """Return an ``unsupported`` result if *fs* does not answer *op*, else ``None``."""
         caps = fs.capabilities()
         if caps is not None and op not in caps:
-            return self._error(f"Operation {op!r} is not supported here", kind=VFSErrorKind.unsupported, path=path)
+            return self._error(
+                f"Operation {op!r} is not supported here",
+                kind=VFSErrorKind.unsupported,
+                function=op,
+                path=path,
+            )
         return None
 
     async def _call_local_impl(
@@ -456,7 +443,7 @@ class VirtualFileSystem:
         session contract is a backend internal the router never sees.
         """
         if not self._storage:
-            return self._error(f"No storage backend for operation: {op}", kind=VFSErrorKind.unsupported)
+            return self._error(f"No storage backend for operation: {op}", kind=VFSErrorKind.unsupported, function=op)
         impl = getattr(self, f"_{op}_impl")
         return await impl(user_id=user_id, **kwargs)
 
@@ -479,16 +466,22 @@ class VirtualFileSystem:
             return self._error(
                 f"observations must be an iterable of Observation, got {type(observations).__name__}",
                 kind=VFSErrorKind.invalid,
+                function=op,
             )
         for obs in rows:
             if not isinstance(obs, Observation):
                 return self._error(
                     f"observations must be Observation instances, got {type(obs).__name__}",
                     kind=VFSErrorKind.invalid,
+                    function=op,
                 )
             resolved = resolve_path(obs.path, mutation=op in MUTATING_OPS)
             if resolved.path is None:
-                return self._error(resolved.error or f"Invalid path: {obs.path!r}", kind=VFSErrorKind.invalid)
+                return self._error(
+                    resolved.error or f"Invalid path: {obs.path!r}",
+                    kind=VFSErrorKind.invalid,
+                    function=op,
+                )
 
         groups = self._group_observations_by_terminal(rows)
         if not groups:
@@ -498,7 +491,11 @@ class VirtualFileSystem:
         # so a batch touching a bad terminal is rejected whole, nothing dispatched.
         for fs, prefix, group in groups:
             if fs is self and not self._storage:
-                return self._error(f"No mount found for path: {group[0].path}", kind=VFSErrorKind.not_found)
+                return self._error(
+                    f"No mount found for path: {group[0].path}",
+                    kind=VFSErrorKind.not_found,
+                    function=op,
+                )
             cap_err = self._capability_error(fs, op, None)
             if cap_err is not None:
                 return cap_err.with_mount(prefix)
@@ -518,10 +515,8 @@ class VirtualFileSystem:
                 r = await getattr(fs, op)(observations=group, user_id=user_id, **kwargs)
             return r.with_mount(prefix)
 
-        results = await asyncio.gather(
-            *(_run_group(fs, pfx, group) for fs, pfx, group in groups),
-        )
-        return self._merge_results(list(results))
+        results = await self._gather_settled(_run_group(fs, pfx, group) for fs, pfx, group in groups)
+        return self._merge_results(results)
 
     async def _route_single(
         self,
@@ -546,6 +541,7 @@ class VirtualFileSystem:
             return self._error(
                 "Exactly one of path or observations must be provided",
                 kind=VFSErrorKind.invalid,
+                function=op,
             )
 
         if observations is not None:
@@ -554,13 +550,13 @@ class VirtualFileSystem:
         assert path is not None
         resolved = resolve_path(path, mutation=op in MUTATING_OPS)
         if resolved.path is None:
-            return self._error(resolved.error or f"Invalid path: {path!r}", kind=VFSErrorKind.invalid)
+            return self._error(resolved.error or f"Invalid path: {path!r}", kind=VFSErrorKind.invalid, function=op)
         path = resolved.path
 
         fs, rel, prefix = self._resolve_terminal(path)
 
         if fs is self and not self._storage:
-            return self._error(f"No mount found for path: {path}", kind=VFSErrorKind.not_found)
+            return self._error(f"No mount found for path: {path}", kind=VFSErrorKind.not_found, function=op)
 
         cap_err = self._capability_error(fs, op, path)
         if cap_err is not None:
@@ -609,10 +605,10 @@ class VirtualFileSystem:
         for pair in operations:
             src = resolve_path(pair.src, mutation=op == "move")
             if src.path is None:
-                return self._error(src.error or f"Invalid path: {pair.src!r}", kind=VFSErrorKind.invalid)
+                return self._error(src.error or f"Invalid path: {pair.src!r}", kind=VFSErrorKind.invalid, function=op)
             dest = resolve_path(pair.dest, mutation=True)
             if dest.path is None:
-                return self._error(dest.error or f"Invalid path: {pair.dest!r}", kind=VFSErrorKind.invalid)
+                return self._error(dest.error or f"Invalid path: {pair.dest!r}", kind=VFSErrorKind.invalid, function=op)
 
             src_fs, src_rel, src_prefix = self._resolve_terminal(src.path)
             dest_fs, dest_rel, _ = self._resolve_terminal(dest.path)
@@ -621,9 +617,10 @@ class VirtualFileSystem:
                     f"Cross-mount {op} is not supported: {src.path} and {dest.path} "
                     "resolve to different filesystems",
                     kind=VFSErrorKind.cross_mount,
+                    function=op,
                 )
             if src_fs is self and not self._storage:
-                return self._error(f"No mount found for path: {src.path}", kind=VFSErrorKind.not_found)
+                return self._error(f"No mount found for path: {src.path}", kind=VFSErrorKind.not_found, function=op)
             cap_err = self._capability_error(src_fs, op, src.path)
             if cap_err is not None:
                 return cap_err
@@ -653,10 +650,8 @@ class VirtualFileSystem:
                 r = await getattr(fs, op)(**{batch_kwarg: group}, user_id=user_id, **kwargs)
             return r.with_mount(prefix)
 
-        results = await asyncio.gather(
-            *(_run_group(fs, pfx, group) for fs, pfx, group in groups.values()),
-        )
-        return self._merge_results(list(results))
+        results = await self._gather_settled(_run_group(fs, pfx, group) for fs, pfx, group in groups.values())
+        return self._merge_results(results)
 
     async def _route_fanout(
         self,
@@ -685,6 +680,7 @@ class VirtualFileSystem:
             return self._error(
                 f"{op} takes paths or observations, not both",
                 kind=VFSErrorKind.invalid,
+                function=op,
             )
         if observations is not None:
             return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
@@ -694,10 +690,18 @@ class VirtualFileSystem:
             for raw in paths:
                 resolved = resolve_path(raw)
                 if resolved.path is None:
-                    return self._error(resolved.error or f"Invalid path: {raw!r}", kind=VFSErrorKind.invalid)
+                    return self._error(
+                        resolved.error or f"Invalid path: {raw!r}",
+                        kind=VFSErrorKind.invalid,
+                        function=op,
+                    )
                 fs, rel, prefix = self._resolve_terminal(resolved.path)
                 if fs is self and not self._storage:
-                    return self._error(f"No mount found for path: {resolved.path}", kind=VFSErrorKind.not_found)
+                    return self._error(
+                        f"No mount found for path: {resolved.path}",
+                        kind=VFSErrorKind.not_found,
+                        function=op,
+                    )
                 cap_err = self._capability_error(fs, op, resolved.path)
                 if cap_err is not None:
                     return cap_err
@@ -716,10 +720,8 @@ class VirtualFileSystem:
                     r = await getattr(fs, op)(paths=tuple(rels), user_id=user_id, **kwargs)
                 return r.with_mount(prefix)
 
-            results = await asyncio.gather(
-                *(_run_scoped(fs, pfx, rels) for fs, pfx, rels in groups.values()),
-            )
-            return self._merge_results(list(results))
+            results = await self._gather_settled(_run_scoped(fs, pfx, rels) for fs, pfx, rels in groups.values())
+            return self._merge_results(results)
 
         targets: list[tuple[VirtualFileSystem, Path]] = []
         own_caps = self.capabilities()
@@ -740,8 +742,8 @@ class VirtualFileSystem:
                 r = await getattr(fs, op)(user_id=user_id, **kwargs)
             return r.with_mount(prefix)
 
-        results = await asyncio.gather(*(_run_target(fs, pfx) for fs, pfx in targets))
-        return self._merge_results(list(results))
+        results = await self._gather_settled(_run_target(fs, pfx) for fs, pfx in targets)
+        return self._merge_results(results)
 
     async def _route_entry_batch(
         self,
@@ -762,6 +764,7 @@ class VirtualFileSystem:
             return self._error(
                 f"write entries must be an iterable of Entry, got {type(entries).__name__}",
                 kind=VFSErrorKind.invalid,
+                function="write",
             )
         if not rows:
             return Result(function="write", observations=[])
@@ -772,13 +775,22 @@ class VirtualFileSystem:
                 return self._error(
                     f"write entries must be Entry instances, got {type(entry).__name__}",
                     kind=VFSErrorKind.invalid,
+                    function="write",
                 )
             resolved = resolve_path(entry.path, mutation=True)
             if resolved.path is None:
-                return self._error(resolved.error or f"Invalid path: {entry.path!r}", kind=VFSErrorKind.invalid)
+                return self._error(
+                    resolved.error or f"Invalid path: {entry.path!r}",
+                    kind=VFSErrorKind.invalid,
+                    function="write",
+                )
             fs, rel, prefix = self._resolve_terminal(resolved.path)
             if fs is self and not self._storage:
-                return self._error(f"No mount found for path: {resolved.path}", kind=VFSErrorKind.not_found)
+                return self._error(
+                    f"No mount found for path: {resolved.path}",
+                    kind=VFSErrorKind.not_found,
+                    function="write",
+                )
             cap_err = self._capability_error(fs, "write", resolved.path)
             if cap_err is not None:
                 return cap_err
@@ -800,10 +812,36 @@ class VirtualFileSystem:
                 r = await fs.write(entries=group, overwrite=overwrite, user_id=user_id)
             return r.with_mount(prefix)
 
-        results = await asyncio.gather(
-            *(_run_group(fs, pfx, group) for fs, pfx, group in groups.values()),
-        )
-        return self._merge_results(list(results))
+        results = await self._gather_settled(_run_group(fs, pfx, group) for fs, pfx, group in groups.values())
+        return self._merge_results(results)
+
+    @staticmethod
+    async def _gather_settled(coros: Iterable[Coroutine[Any, Any, Result]]) -> list[Result]:
+        """Run dispatch coroutines to completion — every sibling settles.
+
+        ``Result`` is the only failure channel a verb has, so an exception
+        here is an impl bug (or cancellation, which re-raises untouched).  A
+        bug propagates only *after* all siblings finish: a partial batch can
+        never keep mutating behind a caller who already saw a failure, and
+        any retry logic upstream sees a settled world.
+
+        Precedence is deliberate: cancellation outranks impl bugs.  When a
+        settled batch holds both, the ``CancelledError`` re-raises and the
+        bug is dropped — suppressing cancellation to surface a bug would
+        break task-teardown semantics, and everything has settled either way.
+        """
+        settled = await asyncio.gather(*coros, return_exceptions=True)
+        bugs: list[Exception] = []
+        for item in settled:
+            if isinstance(item, BaseException) and not isinstance(item, Exception):
+                raise item
+            if isinstance(item, Exception):
+                bugs.append(item)
+        if len(bugs) == 1:
+            raise bugs[0]
+        if bugs:
+            raise ExceptionGroup("impl errors during dispatch", bugs)
+        return [item for item in settled if isinstance(item, Result)]
 
     @staticmethod
     def _merge_results(results: list[Result]) -> Result:
@@ -830,21 +868,23 @@ class VirtualFileSystem:
         message: str,
         *,
         kind: VFSErrorKind,
+        function: str = "",
         path: Path | None = None,
         data: dict[str, Any] | None = None,
     ) -> Result:
-        """Compose a failed ``Result``, or raise if ``raise_on_error`` is set.
+        """Compose a failed ``Result``.  The router never raises — values in,
+        ``Result`` out; raising is the call boundary's job (``raise_if_failed``).
 
-        Pass the prose *message* and the structured *kind* (required), plus an
-        optional *path* and machine-readable *data*; this wraps them in a
-        :class:`ResultError` and either returns the failed result or raises the
-        exception the kind maps to.  Callers that already hold a shaped
-        ``Result`` should return it directly.
+        Pass the prose *message* and the structured *kind* (required), the op
+        as *function* so a failure reports which verb produced it, plus an
+        optional *path* and machine-readable *data*.  Callers that already
+        hold a shaped ``Result`` should return it directly.
         """
-        result = Result(success=False, errors=[ResultError(kind=kind, message=message, path=path, data=data)])
-        if not self._raise_on_error:
-            return result
-        raise exception_for_kind(kind)(message, result)
+        return Result(
+            function=function,
+            success=False,
+            errors=[ResultError(kind=kind, message=message, path=path, data=data)],
+        )
 
     # -------------------------------------------------------------------
     # public methods — reads
@@ -1008,6 +1048,7 @@ class VirtualFileSystem:
             return self._error(
                 f"Unknown graph method {method!r}; expected one of {sorted(TRAVERSAL_FUNCTIONS)}",
                 kind=VFSErrorKind.invalid,
+                function="graph",
             )
         return await self._route_single("graph", path, observations, method=method, depth=depth, user_id=user_id)
 
@@ -1035,6 +1076,7 @@ class VirtualFileSystem:
                 return self._error(
                     "write takes entries or path/content, not both",
                     kind=VFSErrorKind.invalid,
+                    function="write",
                 )
             return await self._route_entry_batch(entries, overwrite=overwrite, user_id=user_id)
         return await self._route_single("write", path, None, content=content, overwrite=overwrite, user_id=user_id)
@@ -1063,12 +1105,14 @@ class VirtualFileSystem:
                 return self._error(
                     "edit takes old/new or an edits list, not both",
                     kind=VFSErrorKind.invalid,
+                    function="edit",
                 )
             ops = self._as_list(edits)
             if ops is None or not all(isinstance(e, EditOperation) for e in ops):
                 return self._error(
                     "edit edits must be an iterable of EditOperation",
                     kind=VFSErrorKind.invalid,
+                    function="edit",
                 )
             edits = ops
         else:
@@ -1076,6 +1120,7 @@ class VirtualFileSystem:
                 return self._error(
                     "edit requires old and new strings, or an edits list",
                     kind=VFSErrorKind.invalid,
+                    function="edit",
                 )
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
         return await self._route_single("edit", path, observations, edits=edits, user_id=user_id)
@@ -1120,13 +1165,14 @@ class VirtualFileSystem:
             return self._error(
                 f"edge_type must be a string, got {type(edge_type).__name__}",
                 kind=VFSErrorKind.invalid,
+                function="mkedge",
             )
         src = resolve_path(source)
         if src.path is None:
-            return self._error(src.error or f"Invalid path: {source!r}", kind=VFSErrorKind.invalid)
+            return self._error(src.error or f"Invalid path: {source!r}", kind=VFSErrorKind.invalid, function="mkedge")
         tgt = resolve_path(target)
         if tgt.path is None:
-            return self._error(tgt.error or f"Invalid path: {target!r}", kind=VFSErrorKind.invalid)
+            return self._error(tgt.error or f"Invalid path: {target!r}", kind=VFSErrorKind.invalid, function="mkedge")
 
         src_fs, src_rel, src_prefix = self._resolve_terminal(src.path)
         tgt_fs, tgt_rel, _ = self._resolve_terminal(tgt.path)
@@ -1135,9 +1181,10 @@ class VirtualFileSystem:
                 f"Cross-mount edges are not supported: {src.path} and {tgt.path} "
                 "resolve to different filesystems",
                 kind=VFSErrorKind.cross_mount,
+                function="mkedge",
             )
         if src_fs is self and not self._storage:
-            return self._error(f"No mount found for path: {src.path}", kind=VFSErrorKind.not_found)
+            return self._error(f"No mount found for path: {src.path}", kind=VFSErrorKind.not_found, function="mkedge")
         cap_err = self._capability_error(src_fs, "mkedge", src.path)
         if cap_err is not None:
             return cap_err
@@ -1151,7 +1198,7 @@ class VirtualFileSystem:
         try:
             edge_path = edge_out_path(src_rel, tgt_rel, edge_type)
         except ValueError as exc:
-            return self._error(str(exc), kind=VFSErrorKind.invalid)
+            return self._error(str(exc), kind=VFSErrorKind.invalid, function="mkedge")
         err = check_writable(self, "mkedge", edge_path, mount_prefix=src_prefix)
         if err is not None:
             return err
@@ -1221,22 +1268,35 @@ class VirtualFileSystem:
         """
         if batch is not None:
             if src is not None or dest is not None:
-                return self._error(f"{op} takes src/dest or a batch list, not both", kind=VFSErrorKind.invalid)
+                return self._error(
+                    f"{op} takes src/dest or a batch list, not both",
+                    kind=VFSErrorKind.invalid,
+                    function=op,
+                )
             pairs = self._as_list(batch)
             if pairs is None:
                 return self._error(
                     f"{op} batch must be an iterable of (src, dest) pairs, got {type(batch).__name__}",
                     kind=VFSErrorKind.invalid,
+                    function=op,
                 )
         else:
             if not src or not dest:
-                return self._error(f"{op} requires src and dest, or a batch list", kind=VFSErrorKind.invalid)
+                return self._error(
+                    f"{op} requires src and dest, or a batch list",
+                    kind=VFSErrorKind.invalid,
+                    function=op,
+                )
             pairs = [TwoPathOperation(src=src, dest=dest)]
         operations: list[TwoPathOperation] = []
         for item in pairs:
             pair = self._coerce_two_path(item)
             if pair is None:
-                return self._error(f"{op} pair must be (src, dest) of two strings: {item!r}", kind=VFSErrorKind.invalid)
+                return self._error(
+                    f"{op} pair must be (src, dest) of two strings: {item!r}",
+                    kind=VFSErrorKind.invalid,
+                    function=op,
+                )
             operations.append(pair)
         return await self._route_two_path(op, operations, overwrite=overwrite, user_id=user_id)
 

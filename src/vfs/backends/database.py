@@ -17,11 +17,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, cast
 
 from sqlalchemy import (
     Boolean,
-    Column,
     DateTime,
     Integer,
     LargeBinary,
-    MetaData,
     Numeric,
     Row,
     String,
@@ -33,17 +31,16 @@ from sqlalchemy import (
     inspect,
     or_,
     select,
-    update
+    update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import load_only
-from sqlalchemy.schema import CreateTable
 
-from vfs.base import SessionFactory, VirtualFileSystem
+from vfs.base import SessionFactory, VirtualFileSystem, _classify_error
 from vfs.bm25 import BM25Scorer, tokenize, tokenize_query
 from vfs.code_grams import unique_code_grams
 from vfs.columns import CANDIDATE_BACKED_MODEL_COLUMNS, default_columns
-from vfs.exceptions import SchemaMismatchError, _classify_error
+from vfs.exceptions import SchemaMismatchError
 from vfs.graph import RustworkxGraph
 from vfs.models import (
     ENCODING_DELTA_GAMMA,

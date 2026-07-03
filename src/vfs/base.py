@@ -17,7 +17,14 @@ from typing import TYPE_CHECKING, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from vfs.exceptions import _classify_error
+from vfs.exceptions import (
+    GraphError,
+    MountError,
+    NotFoundError,
+    ValidationError,
+    VFSError,
+    WriteConflictError,
+)
 from vfs.paths import edge_out_path, extract_extension, normalize_path
 from vfs.patterns import compile_glob
 from vfs.permissions import (
@@ -1863,3 +1870,27 @@ class VirtualFileSystem:
         session: AsyncSession,
     ) -> VFSResult:
         raise NotImplementedError
+
+
+def _classify_error(
+    message: str,
+    errors: list[str],
+    result: VFSResult,
+) -> VFSError:
+    """Map error messages to the appropriate exception type.
+
+    Legacy message-substring dispatch, superseded by the structured
+    ``exception_for_kind``; lives here so it is deleted with the old base.
+    """
+    first = errors[0] if errors else message
+    if "Not found:" in first or "Not a directory:" in first:
+        return NotFoundError(message, result)
+    if "No mount found" in first:
+        return MountError(message, result)
+    if "Already exists" in first or "Cannot write" in first or "Cannot delete" in first:
+        return WriteConflictError(message, result)
+    if "failed:" in first:
+        return GraphError(message, result)
+    if any(kw in first for kw in ("requires", "Invalid", "Duplicate", "Source not found")):
+        return ValidationError(message, result)
+    return VFSError(message, result)

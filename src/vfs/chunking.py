@@ -437,11 +437,11 @@ def _atomic_spans(content: str, grammar: str, chunk_size: int) -> list[tuple[int
     """
     root = _call(_parser(grammar).parse(content).root_node)
     spans: list[tuple[int, int]] = []
-    stack: list[tuple[bool, object]] = [(False, root)]
+    stack: list[tuple[bool, typing.Any]] = [(False, root)]
     while stack:
         is_span, payload = stack.pop()
         if is_span:
-            spans.append(payload)  # type: ignore[arg-type]
+            spans.append(payload)
             continue
         node = payload
         start, end = _call(node.start_byte), _call(node.end_byte)
@@ -449,7 +449,7 @@ def _atomic_spans(content: str, grammar: str, chunk_size: int) -> list[tuple[int
         if end - start <= chunk_size or count == 0:
             spans.append((start, end))
             continue
-        items: list[tuple[bool, object]] = []
+        items: list[tuple[bool, typing.Any]] = []
         cursor = start
         for i in range(count):
             child = node.named_child(i)

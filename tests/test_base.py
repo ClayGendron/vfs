@@ -7,6 +7,7 @@ belongs to ``DatabaseFileSystem`` and is tested elsewhere.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -18,6 +19,7 @@ from vfs.exceptions import (
     VFSError,
     WriteConflictError,
     exception_for_kind,
+    raise_if_failed,
 )
 from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS
@@ -80,7 +82,6 @@ class DictStorageFS(VirtualFileSystem):
 def test_init_defaults() -> None:
     fs = VirtualFileSystem()
     assert fs._storage is False
-    assert fs._raise_on_error is False
     assert fs.name is None
     assert fs.title is None
     assert fs.description is None
@@ -91,10 +92,16 @@ def test_init_defaults() -> None:
 
 def test_init_no_engine_required() -> None:
     # The pure router needs no engine/session_factory — that was the point.
-    fs = VirtualFileSystem(name="root", storage=True, raise_on_error=True)
+    fs = VirtualFileSystem(name="root", storage=True)
     assert fs.name == "root"
     assert fs._storage is True
-    assert fs._raise_on_error is True
+
+
+def test_init_rejects_removed_raise_on_error_kwarg() -> None:
+    # Result is the only node-level failure channel; raising is the call
+    # boundary's job (raise_if_failed) and the old kwarg is gone for good.
+    with pytest.raises(TypeError):
+        VirtualFileSystem(raise_on_error=True)  # ty: ignore[unknown-argument]
 
 
 # ----------------------------------------------------------------------
@@ -205,13 +212,6 @@ async def test_add_mount_rejects_duplicate() -> None:
     await parent.add_mount(VirtualFileSystem(), "data")
     with pytest.raises(ValueError, match="already exists"):
         await parent.add_mount(VirtualFileSystem(), "/data")
-
-
-async def test_add_mount_propagates_raise_on_error() -> None:
-    parent = VirtualFileSystem(raise_on_error=True)
-    child = VirtualFileSystem()
-    await parent.add_mount(child, "data")
-    assert child._raise_on_error is True
 
 
 async def test_add_mount_rejects_same_instance_twice() -> None:
@@ -368,8 +368,7 @@ async def test_mountable_allows_clean_sparse_point() -> None:
 
 
 async def test_mountable_conservative_on_backend_error() -> None:
-    # "Cannot verify" rejects the mount, never permits it — as a failed
-    # result, and as the raised exception under raise_on_error.
+    # "Cannot verify" rejects the mount, never permits it.
     class BrokenFS(VirtualFileSystem):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(storage=True, **kwargs)
@@ -379,13 +378,11 @@ async def test_mountable_conservative_on_backend_error() -> None:
 
     with pytest.raises(ValueError, match="conflict"):
         await BrokenFS().add_mount(VirtualFileSystem(), "/data")
-    with pytest.raises(ValueError, match="conflict"):
-        await BrokenFS(raise_on_error=True).add_mount(VirtualFileSystem(), "/data")
 
 
 async def test_mountable_treats_not_found_as_absence() -> None:
-    # A backend reporting lineage misses as not_found — failed result or
-    # raised NotFoundError — reads as pure absence: mountable.
+    # A backend reporting lineage misses as a not_found result reads as
+    # pure absence: mountable.
     class SparseFS(DictStorageFS):
         async def _stat_impl(self, **_: object) -> Result:
             return self._error("nothing here", kind=VFSErrorKind.not_found)
@@ -393,9 +390,6 @@ async def test_mountable_treats_not_found_as_absence() -> None:
     plain = SparseFS({})
     await plain.add_mount(VirtualFileSystem(), "/data")
     assert set(plain._mounts) == {"/data"}
-    raising = SparseFS({}, raise_on_error=True)
-    await raising.add_mount(VirtualFileSystem(), "/data")
-    assert set(raising._mounts) == {"/data"}
 
 
 async def test_add_mount_on_subnode_checks_whole_graph() -> None:
@@ -747,13 +741,47 @@ def test_error_attaches_structured_data() -> None:
     assert r.errors[0].data == {"expected": 1}
 
 
-def test_error_raises_classified_exception_when_configured() -> None:
-    fs = VirtualFileSystem(raise_on_error=True)
+def test_error_never_raises_and_carries_function() -> None:
+    # The node layer has one failure channel: a returned Result. The op
+    # travels as function so a wire consumer can tell which verb failed.
+    fs = VirtualFileSystem()
+    r = fs._error("gone", kind=VFSErrorKind.not_found, function="read")
+    assert r.success is False
+    assert r.function == "read"
+
+
+def test_raise_if_failed_passes_success_through() -> None:
+    ok = Result(function="read", observations=[])
+    assert raise_if_failed(ok) is ok
+
+
+def test_raise_if_failed_maps_single_error_to_kind_exception() -> None:
+    failed = VirtualFileSystem()._error("gone", kind=VFSErrorKind.not_found, function="read")
     with pytest.raises(NotFoundError) as exc:
-        fs._error("gone", kind=VFSErrorKind.not_found)
+        raise_if_failed(failed)
     # the raised exception still carries the full failed result
-    assert exc.value.result is not None
+    assert exc.value.result is failed
     assert exc.value.result.success is False
+
+
+def test_raise_if_failed_groups_multiple_errors() -> None:
+    # A fan-out failure reports every downed terminal, not just the first.
+    failed = Result(
+        success=False,
+        errors=[
+            ResultError(kind=VFSErrorKind.not_found, message="gone"),
+            ResultError(kind=VFSErrorKind.read_only, message="frozen"),
+        ],
+    )
+    with pytest.raises(ExceptionGroup) as exc:
+        raise_if_failed(failed)
+    matched = {type(e) for e in exc.value.exceptions}
+    assert matched == {NotFoundError, WriteConflictError}
+
+
+def test_raise_if_failed_handles_errorless_failure() -> None:
+    with pytest.raises(VFSError):
+        raise_if_failed(Result(success=False))
 
 
 # ----------------------------------------------------------------------
@@ -1504,7 +1532,7 @@ async def test_fanout_rejects_paths_and_observations_together(op: str) -> None:
 
 
 # ----------------------------------------------------------------------
-# audit round 2 — batch containers, generators, edit/raise_on_error
+# audit round 2 — batch containers, generators, edit hardening
 # ----------------------------------------------------------------------
 
 
@@ -1563,14 +1591,151 @@ async def test_observation_dispatch_unroutable_path_is_not_found() -> None:
     assert batch.errors[0].kind is VFSErrorKind.not_found
 
 
-async def test_raise_on_error_propagates_to_prebuilt_subtree() -> None:
-    # F5: a grandchild mounted before its parent joins a raise_on_error root
-    # must still inherit the policy.
+async def test_prebuilt_subtree_denial_is_a_result_until_the_boundary() -> None:
+    # A read-only grandchild deep in a prebuilt subtree denies as a Result;
+    # only the caller-applied boundary adapter turns it into an exception.
     grandchild = RecorderFS(permissions="read")
     parent = VirtualFileSystem()
     await parent.add_mount(grandchild, "/c")
-    root = VirtualFileSystem(raise_on_error=True)
+    root = VirtualFileSystem()
     await root.add_mount(parent, "/b")
-    assert grandchild._raise_on_error is True
+    denied = await root.write(path="/b/c/f.txt", content="x")
+    assert denied.success is False
+    assert denied.errors[0].kind is VFSErrorKind.read_only
+    assert denied.function == "write"
     with pytest.raises(WriteConflictError):
-        await root.write(path="/b/c/f.txt", content="x")
+        raise_if_failed(denied)
+
+
+# ----------------------------------------------------------------------
+# settled dispatch — every sibling finishes before the router reports
+# ----------------------------------------------------------------------
+
+
+class SlowWriteFS(VirtualFileSystem):
+    """Storage fake whose write is slow and logged — for settle-order proof."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(storage=True, **kwargs)
+        self.write_log: list[str] = []
+
+    async def _write_impl(self, *, entries=None, overwrite=True, user_id=None, **_: object) -> Result:
+        await asyncio.sleep(0.02)
+        rows = []
+        for entry in entries or []:
+            self.write_log.append(entry.path)
+            rows.append(Observation(path=entry.path, kind="file", status="created"))
+        return Result(function="write", observations=rows)
+
+
+class FailingWriteFS(VirtualFileSystem):
+    """Storage fake whose write fails fast with a classified Result."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(storage=True, **kwargs)
+
+    async def _write_impl(self, **_: object) -> Result:
+        return self._error("boom", kind=VFSErrorKind.unavailable, function="write")
+
+
+class BuggyWriteFS(VirtualFileSystem):
+    """Storage fake whose write raises a raw exception — an impl bug."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(storage=True, **kwargs)
+
+    async def _write_impl(self, **_: object) -> Result:
+        msg = "impl bug"
+        raise RuntimeError(msg)
+
+
+async def test_sibling_writes_settle_before_failure_is_reported() -> None:
+    # One terminal fails fast, the other writes slowly: the returned Result
+    # must already contain the slow sibling's outcome — never a write that
+    # lands behind a caller who has already seen the failure.
+    root = VirtualFileSystem()
+    ok, bad = SlowWriteFS(), FailingWriteFS()
+    await root.add_mount(ok, "/ok")
+    await root.add_mount(bad, "/bad")
+    result = await root.write(
+        entries=[Entry(path=Path("/ok/a.txt"), content="A"), Entry(path=Path("/bad/b.txt"), content="B")],
+    )
+    assert result.success is False
+    assert ok.write_log == ["/a.txt"]  # completed before the router returned
+    assert "/ok/a.txt" in result.paths  # and its outcome is reported, not dropped
+    assert any(e.kind is VFSErrorKind.unavailable for e in result.errors)
+
+
+async def test_impl_bug_propagates_only_after_siblings_settle() -> None:
+    # A raw exception is an impl bug: it propagates with its traceback, but
+    # only after every sibling group has finished mutating.
+    root = VirtualFileSystem()
+    ok, buggy = SlowWriteFS(), BuggyWriteFS()
+    await root.add_mount(ok, "/ok")
+    await root.add_mount(buggy, "/bug")
+    with pytest.raises(RuntimeError, match="impl bug"):
+        await root.write(
+            entries=[Entry(path=Path("/ok/a.txt"), content="A"), Entry(path=Path("/bug/b.txt"), content="B")],
+        )
+    assert ok.write_log == ["/a.txt"]  # the world had settled before the raise
+
+
+async def test_cancellation_reraises_untouched() -> None:
+    # Cancellation is not an impl bug: it re-raises as-is, never collected
+    # into an ExceptionGroup, so task teardown semantics stay intact.
+    class CancelledWriteFS(VirtualFileSystem):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(storage=True, **kwargs)
+
+        async def _write_impl(self, **_: object) -> Result:
+            raise asyncio.CancelledError
+
+    root = VirtualFileSystem()
+    await root.add_mount(CancelledWriteFS(), "/c")
+    with pytest.raises(asyncio.CancelledError):
+        await root.write(entries=[Entry(path=Path("/c/a.txt"), content="A")])
+
+
+async def test_multiple_impl_bugs_raise_an_exception_group() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(BuggyWriteFS(), "/bug1")
+    await root.add_mount(BuggyWriteFS(), "/bug2")
+    with pytest.raises(ExceptionGroup) as exc:
+        await root.write(
+            entries=[Entry(path=Path("/bug1/a.txt"), content="A"), Entry(path=Path("/bug2/b.txt"), content="B")],
+        )
+    assert len(exc.value.exceptions) == 2
+
+
+# ----------------------------------------------------------------------
+# failed results report their verb in function
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("verb", "call"),
+    [
+        ("read", lambda fs: fs.read("/nope")),
+        ("stat", lambda fs: fs.stat("/nope")),
+        ("ls", lambda fs: fs.ls("/nope")),
+        ("tree", lambda fs: fs.tree("/nope")),
+        ("write", lambda fs: fs.write(path="/nope", content="x")),
+        ("edit", lambda fs: fs.edit(path="/nope", old="a", new="b")),
+        ("delete", lambda fs: fs.delete("/nope")),
+        ("mkdir", lambda fs: fs.mkdir("/nope/d")),
+        ("mkedge", lambda fs: fs.mkedge("/a.txt", "/b.txt", "ref")),
+        ("move", lambda fs: fs.move("/a", "/b")),
+        ("copy", lambda fs: fs.copy("/a", "/b")),
+        ("graph", lambda fs: fs.graph("descendants", "/nope")),
+        ("run", lambda fs: fs.run("/nope")),
+        ("glob", lambda fs: fs.glob("*", paths=("/nope",))),
+        ("grep", lambda fs: fs.grep("x", paths=("/nope",))),
+        ("glean", lambda fs: fs.glean("q", paths=("/nope",))),
+    ],
+)
+async def test_unroutable_failure_reports_its_verb(verb: str, call: Any) -> None:
+    # Storageless, mountless root: every verb fails as unroutable — and the
+    # failed result names the verb, so a wire consumer knows what failed.
+    result = await call(VirtualFileSystem())
+    assert result.success is False
+    assert result.function == verb
