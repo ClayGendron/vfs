@@ -292,3 +292,57 @@ preserved while the diamond still dedups, malformed-pair/non-Entry/
 non-Observation/non-str-edge_type → `invalid`, and every
 both-inputs-given → `invalid`); `base2.py` and `results2.py` reach 100%
 line coverage; suite green with zero xfail/skip.
+
+### Second audit round — batch containers and policy propagation
+
+A follow-up five-agent pass (which re-verified round 1 and the result
+algebra as sound) found six more, fixed the same way:
+
+6. **Batch inputs are materialized once through `_as_list`.** The
+   element guards checked *contents* but not the *container*: a
+   non-iterable (`observations=5`, `entries=5`, `moves=5`) leaked a raw
+   `TypeError`, and — worse — a single-use **generator** of observations
+   was silently dropped, because `_dispatch_grouped_observations`
+   iterates twice (validate, then group) and the generator was exhausted
+   by the first pass, returning `success=True` with nothing dispatched: a
+   false-success on a mutation. Fix: `_as_list(items)` — a batch is a
+   non-`str`/`bytes` `Iterable`, materialized to a list once (rejecting a
+   non-iterable as `invalid`, and letting the two passes see the same
+   data). Applied at all three batch chokepoints
+   (`_dispatch_grouped_observations`, `_route_entry_batch`,
+   `_route_pairs`). **Contract:** any iterable — generator included — is a
+   valid batch; a non-iterable is `invalid`, never a crash, and a batch
+   is never silently emptied by re-iteration.
+
+7. **`edit` validates its `edits` like the other batch verbs.** `write`
+   guarded `entries` and `move`/`copy` guarded pairs, but `edit`
+   forwarded `edits` opaquely — `edits="foo"` splattered to characters
+   and `[non-EditOperation]` reached the backend. Fix: `edits` is
+   materialized via `_as_list` and every element must be an
+   `EditOperation`, else `invalid`.
+
+8. **`raise_on_error` propagates to the whole mounted subtree.**
+   `add_mount` set the policy on the immediate child only; a *pre-built*
+   subtree's grandchildren kept their stale flag, so whether a deep
+   read-only violation raised or returned depended on mount-assembly
+   order (each terminal's own flag decides raise-vs-return). Fix:
+   `add_mount` walks the incoming subtree and sets every node's flag.
+   **Contract:** a node's raise-vs-return behavior is its root's policy,
+   independent of the order the tree was assembled.
+
+9. **Observation dispatch reports `not_found` for an unroutable path,**
+   matching the single-path shape (it previously fell through to
+   `unsupported`). Fix: the pre-dispatch loop rejects a group that
+   resolves to a storageless `self` with `not_found`.
+
+Not fixed (recorded, deferred): numeric bounds (`glean` `limit`, `grep`
+`max_count`/`before_context`, `tree` `max_depth`) and non-str `content`
+pass through the router opaquely to the backend. The router does not own
+their semantics; validating them is the `DatabaseFileSystem` story's
+`_{op}_impl` contract.
+
+Acceptance for round 2: regression tests cover non-iterable batch args →
+`invalid` across every batch verb, generator observations/entries
+surviving to dispatch, malformed `edits` → `invalid`, unroutable
+observation dispatch → `not_found`, and `raise_on_error` reaching a
+pre-built grandchild; coverage and green-suite bars unchanged.

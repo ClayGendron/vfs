@@ -1418,3 +1418,76 @@ async def test_fanout_rejects_paths_and_observations_together(op: str) -> None:
     result = await _fan(root, op, paths=("/m/x",), observations=[Observation(path=Path("/m/y"))])
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+# ----------------------------------------------------------------------
+# audit round 2 — batch containers, generators, edit/raise_on_error
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("verb", "kwargs"),
+    [
+        ("delete", {"observations": 5}),
+        ("read", {"observations": 5}),
+        ("write", {"entries": 5}),
+        ("move", {"moves": 5}),
+        ("copy", {"copies": 5}),
+        ("edit", {"path": "/f.txt", "edits": 5}),
+    ],
+)
+async def test_non_iterable_batch_arg_is_invalid_not_crash(verb: str, kwargs: dict[str, Any]) -> None:
+    result = await getattr(RecorderFS(), verb)(**kwargs)
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_generator_observations_are_not_silently_dropped() -> None:
+    # F2: a single-use generator must survive the validate + group passes.
+    root = VirtualFileSystem()
+    child = RecorderFS()
+    await root.add_mount(child, "/m")
+    gen = (Observation(path=Path(p)) for p in ("/m/a.txt", "/m/b.txt"))
+    result = await root.delete(observations=gen)  # ty: ignore[invalid-argument-type]
+    assert result.success is True
+    assert len(child.calls) == 1
+    assert len(child.calls[0][1]["observations"]) == 2  # both rows dispatched
+
+
+async def test_generator_entries_survive() -> None:
+    root = VirtualFileSystem()
+    child = RecorderFS()
+    await root.add_mount(child, "/m")
+    gen = (Entry(path=Path(p), content="x") for p in ("/m/a.txt", "/m/b.txt"))
+    result = await root.write(gen)  # ty: ignore[invalid-argument-type]
+    assert result.success is True
+    assert len(child.calls[0][1]["entries"]) == 2
+
+
+@pytest.mark.parametrize("bad", ["foo", [None], ["notanedit"], [EditOperation(old="a", new="b"), None]])
+async def test_edit_rejects_malformed_edits(bad: object) -> None:
+    result = await RecorderFS().edit(path="/f.txt", edits=bad)  # ty: ignore[invalid-argument-type]
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_observation_dispatch_unroutable_path_is_not_found() -> None:
+    # F6: obs dispatch matches single-path — storageless self → not_found.
+    fs = VirtualFileSystem()
+    single = await fs.read("/nope")
+    batch = await fs.read(observations=[Observation(path=Path("/nope"))])
+    assert single.errors[0].kind is VFSErrorKind.not_found
+    assert batch.errors[0].kind is VFSErrorKind.not_found
+
+
+async def test_raise_on_error_propagates_to_prebuilt_subtree() -> None:
+    # F5: a grandchild mounted before its parent joins a raise_on_error root
+    # must still inherit the policy.
+    grandchild = RecorderFS(permissions="read")
+    parent = VirtualFileSystem()
+    await parent.add_mount(grandchild, "/c")
+    root = VirtualFileSystem(raise_on_error=True)
+    await root.add_mount(parent, "/b")
+    assert grandchild._raise_on_error is True
+    with pytest.raises(WriteConflictError):
+        await root.write(path="/b/c/f.txt", content="x")

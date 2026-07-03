@@ -21,6 +21,7 @@ pairs (``move``/``copy``), the endpoint pair (``mkedge``), and fan-out
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from vfs.exceptions import exception_for_kind
@@ -156,8 +157,17 @@ class VirtualFileSystem:
             msg = f"Cannot mount at {mount_path}: storage contents conflict with that mount point"
             raise ValueError(msg)
 
-        filesystem._raise_on_error = self._raise_on_error
         filesystem._parent = self
+        # Propagate the raise-on-error policy across the whole incoming subtree,
+        # not just the immediate child — each terminal's own flag decides raise
+        # vs return, so a pre-built subtree's descendants must not keep a stale
+        # one. The subtree is a tree (no instance mounts twice), so a plain walk
+        # terminates.
+        stack: list[VirtualFileSystem] = [filesystem]
+        while stack:
+            node = stack.pop()
+            node._raise_on_error = self._raise_on_error
+            stack.extend(node._mounts.values())
         self._mounts[mount_path] = filesystem
         self._rebuild_sorted_mounts()
 
@@ -338,6 +348,19 @@ class VirtualFileSystem:
     # dispatch across the mount boundary
     # -------------------------------------------------------------------
 
+    @staticmethod
+    def _as_list(items: object) -> list[Any] | None:
+        """Materialize a batch input (observations/entries/pairs) to a list, or
+        ``None`` if it is not a batch — a non-iterable, or a bare ``str``/``bytes``.
+
+        Materializing once rejects a non-iterable without leaking ``TypeError``,
+        and lets the batch be walked more than once: a generator would otherwise
+        be exhausted by the validation pass and vanish before dispatch.
+        """
+        if isinstance(items, (str, bytes)) or not isinstance(items, Iterable):
+            return None
+        return list(items)
+
     def capabilities(self) -> frozenset[str] | None:
         """Operations this filesystem answers as a terminal, or ``None`` for no limit.
 
@@ -392,7 +415,13 @@ class VirtualFileSystem:
         local seam, a child mount through its public method.  Results are
         rebased and merged.
         """
-        for obs in observations:
+        rows = self._as_list(observations)
+        if rows is None:
+            return self._error(
+                f"observations must be an iterable of Observation, got {type(observations).__name__}",
+                kind=VFSErrorKind.invalid,
+            )
+        for obs in rows:
             if not isinstance(obs, Observation):
                 return self._error(
                     f"observations must be Observation instances, got {type(obs).__name__}",
@@ -402,15 +431,15 @@ class VirtualFileSystem:
             if resolved.path is None:
                 return self._error(resolved.error or f"Invalid path: {obs.path!r}", kind=VFSErrorKind.invalid)
 
-        groups = self._group_observations_by_terminal(observations)
+        groups = self._group_observations_by_terminal(rows)
         if not groups:
             return Result(function=op, observations=[])
 
-        # Every gate runs before any dispatch — capability then permission —
-        # so a batch spanning an incapable or read-only terminal is rejected
-        # whole, with nothing dispatched. Matches the other chokepoints; the
-        # capability check must not sit inside the fanned-out _run_group.
+        # All gates run before any dispatch (routability, capability, permission)
+        # so a batch touching a bad terminal is rejected whole, nothing dispatched.
         for fs, prefix, group in groups:
+            if fs is self and not self._storage:
+                return self._error(f"No mount found for path: {group[0].path}", kind=VFSErrorKind.not_found)
             cap_err = self._capability_error(fs, op, None)
             if cap_err is not None:
                 return cap_err.with_mount(prefix)
@@ -669,11 +698,17 @@ class VirtualFileSystem:
         dispatches, then each terminal receives its entries rebased into
         local coordinates via :meth:`Entry.without_mount`.
         """
-        if not entries:
+        rows = self._as_list(entries)
+        if rows is None:
+            return self._error(
+                f"write entries must be an iterable of Entry, got {type(entries).__name__}",
+                kind=VFSErrorKind.invalid,
+            )
+        if not rows:
             return Result(function="write", observations=[])
 
         groups: dict[int, tuple[VirtualFileSystem, str, list[Entry]]] = {}
-        for entry in entries:
+        for entry in rows:
             if not isinstance(entry, Entry):
                 return self._error(
                     f"write entries must be Entry instances, got {type(entry).__name__}",
@@ -969,6 +1004,13 @@ class VirtualFileSystem:
                     "edit takes old/new or an edits list, not both",
                     kind=VFSErrorKind.invalid,
                 )
+            ops = self._as_list(edits)
+            if ops is None or not all(isinstance(e, EditOperation) for e in ops):
+                return self._error(
+                    "edit edits must be an iterable of EditOperation",
+                    kind=VFSErrorKind.invalid,
+                )
+            edits = ops
         else:
             if old is None or new is None:
                 return self._error(
@@ -1120,12 +1162,18 @@ class VirtualFileSystem:
         if batch is not None:
             if src is not None or dest is not None:
                 return self._error(f"{op} takes src/dest or a batch list, not both", kind=VFSErrorKind.invalid)
+            pairs = self._as_list(batch)
+            if pairs is None:
+                return self._error(
+                    f"{op} batch must be an iterable of (src, dest) pairs, got {type(batch).__name__}",
+                    kind=VFSErrorKind.invalid,
+                )
         else:
             if not src or not dest:
                 return self._error(f"{op} requires src and dest, or a batch list", kind=VFSErrorKind.invalid)
-            batch = [TwoPathOperation(src=src, dest=dest)]
+            pairs = [TwoPathOperation(src=src, dest=dest)]
         operations: list[TwoPathOperation] = []
-        for item in batch:
+        for item in pairs:
             pair = self._coerce_two_path(item)
             if pair is None:
                 return self._error(f"{op} pair must be (src, dest) of two strings: {item!r}", kind=VFSErrorKind.invalid)
