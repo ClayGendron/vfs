@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import type { KeyboardEvent } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { SITE } from "@/lib/site"
+import { Seo } from "@/components/Seo"
+import { routeMeta, SITE } from "@/lib/site"
 
 type Line =
   | { kind: "echo"; text: string }
@@ -89,15 +90,16 @@ export function NotFound() {
 
     const m = cmd.match(/^cd\s+(.+)$/)
     if (m) {
-      const target = m[1].trim()
+      const target = (m[1] ?? "").trim()
       if (target === "github" || target === "/github") {
         append([echo, { kind: "out", text: "→ opening github.com/ClayGendron/vfs" }])
         window.open(SITE.github, "_blank", "noopener,noreferrer")
         return
       }
-      if (target in ROUTES) {
-        append([echo, { kind: "out", text: `→ ${ROUTES[target]}` }])
-        setTimeout(() => navigate(ROUTES[target]), 220)
+      const to = ROUTES[target]
+      if (to) {
+        append([echo, { kind: "out", text: `→ ${to}` }])
+        setTimeout(() => navigate(to), 220)
         return
       }
       append([echo, { kind: "err", text: "vfs: No such file or directory" }])
@@ -131,7 +133,7 @@ export function NotFound() {
         setValue("")
       } else {
         setRecallIdx(next)
-        setValue(recall[next])
+        setValue(recall[next] ?? "")
       }
       return
     }
@@ -139,15 +141,18 @@ export function NotFound() {
       e.preventDefault()
       const m = value.match(/^cd\s+(.*)$/)
       if (!m) return
-      const stub = m[1]
+      const stub = m[1] ?? ""
       const targets = ["/", "home", "about", "blog", "terminal", "github"]
       const matches = targets.filter((t) => t.startsWith(stub))
-      if (matches.length === 1) setValue("cd " + matches[0])
+      if (matches[0] && matches.length === 1) setValue("cd " + matches[0])
     }
   }
 
   return (
+    // click anywhere focuses the input; keyboard users tab straight to it, so no key handler needed
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
     <main className="vfs-404" onClick={() => inputRef.current?.focus()}>
+      <Seo {...routeMeta.notFound} />
       <div className="cap">404 · no such entry</div>
       <h1 className="title">/404</h1>
 

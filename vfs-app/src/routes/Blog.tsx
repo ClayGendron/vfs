@@ -1,4 +1,5 @@
-import { SITE } from "@/lib/site"
+import { Seo } from "@/components/Seo"
+import { routeMeta, SITE } from "@/lib/site"
 
 type Post = {
   slug: string
@@ -36,6 +37,7 @@ const POSTS: Post[] = [
 export function Blog() {
   return (
     <section className="vfs-blog">
+      <Seo {...routeMeta.blog} />
       <header className="vfs-blog-head">
         <h1 className="vfs-blog-title">blog</h1>
         <div className="vfs-blog-meta">
@@ -52,9 +54,6 @@ export function Blog() {
           <article
             key={p.slug}
             className="vfs-blog-item"
-            role="link"
-            tabIndex={-1}
-            aria-disabled
             title="Coming soon"
           >
             <div className="vfs-blog-item-date">{p.date}</div>

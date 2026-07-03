@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://vfs.dev/sitemap.xml
