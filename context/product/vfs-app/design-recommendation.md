@@ -1,3 +1,6 @@
+> **Provenance.** Moved from `vfs-app/` on 2026-07-03; kept as design history.
+> An April 2026 strategy memo whose recommendations are already implemented.
+
 # Design recommendation for vfs.dev
 
 Based on:

@@ -1,3 +1,8 @@
+> **Provenance.** Moved from `vfs-app/` on 2026-07-03; kept as design history.
+> This as-built handoff predates later changes: sections describing the
+> TerminalTape/Values homepage components and the Topbar "pill nav", and some
+> `clamp()` values, no longer match the code.
+
 # vfs.dev · design & brand handoff
 
 A complete description of what is currently shipping at `vfs-app/`. A designer

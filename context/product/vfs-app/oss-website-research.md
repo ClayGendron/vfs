@@ -1,3 +1,6 @@
+> **Provenance.** Moved from `vfs-app/` on 2026-07-03; kept as design history.
+> An April 2026 OSS-website research memo behind the design recommendation.
+
 # What makes great open-source package websites
 
 Research memo, refreshed from primary site reviews on April 26, 2026.
