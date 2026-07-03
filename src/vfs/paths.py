@@ -340,7 +340,17 @@ def resolve_path(path: str, *, mutation: bool = False) -> ResolvedPath:
     and reserved metadata space). Returns the canonical path, or an error
     reason with ``path=None``. Never raises — non-``str`` input is reported as
     a rejection, not a ``TypeError``.
+
+    Idempotent on branded input: a :class:`Path` is canonical and validated by
+    construction, so it passes through unchanged (making ``Path(p)`` an
+    identity) — only the mutation authorization still runs.
     """
+    if isinstance(path, Path):
+        if mutation:
+            ok, reason = check_mutable_path(path)
+            if not ok:
+                return ResolvedPath(None, reason)
+        return ResolvedPath(path, None)
     if not isinstance(path, str):
         return ResolvedPath(None, f"Path must be a string, got {type(path).__name__}")
     canonical = normalize_path(path)

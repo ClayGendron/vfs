@@ -312,6 +312,23 @@ class TestResolvePath:
             assert result.path is None
             assert result.error
 
+    def test_branded_input_passes_through_unchanged(self):
+        # Idempotent gate: a Path carries its proof, so it returns as-is.
+        p = Path("/src/auth.py")
+        result = resolve_path(p)
+        assert result.path is p
+        assert result.error is None
+
+    def test_branded_input_still_runs_mutation_check(self):
+        # The one thing construction does not prove: mutation authorization.
+        assert resolve_path(Path("/"), mutation=True).path is None
+        assert resolve_path(Path("/"), mutation=True).error == "Cannot mutate root path"
+        assert resolve_path(Path("/src/auth.py"), mutation=True).path == "/src/auth.py"
+
+    def test_path_constructor_is_identity_on_branded_input(self):
+        p = Path("/src/auth.py")
+        assert Path(p) is p
+
 
 # =========================================================================
 # Path
