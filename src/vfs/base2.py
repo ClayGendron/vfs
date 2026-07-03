@@ -255,8 +255,13 @@ class VirtualFileSystem:
         return mount_path
 
     def _rebuild_sorted_mounts(self) -> None:
-        """Rebuild the pre-sorted mount path list (longest first)."""
-        self._sorted_mount_paths = sorted(self._mounts.keys(), key=lambda p: len(p), reverse=True)
+        """Rebuild the pre-sorted mount path list, longest prefix first.
+
+        Reverse-lexicographic is enough: only mounts matching the same path
+        need relative order, and those are always prefix-chains, where the
+        proper prefix sorts strictly lower.
+        """
+        self._sorted_mount_paths = sorted(self._mounts.keys(), reverse=True)
 
     def _match_mount(self, path: Path) -> tuple[Path, VirtualFileSystem] | None:
         """Longest-prefix mount match for *path*."""
