@@ -1,14 +1,8 @@
-import { StrictMode } from "react"
-import { createRoot } from "react-dom/client"
+import { ViteReactSSG } from "vite-react-ssg"
 
 import "./index.css"
-import App from "./App.tsx"
-import { ThemeProvider } from "@/components/theme-provider.tsx"
+import { routes } from "./App"
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <ThemeProvider>
-      <App />
-    </ThemeProvider>
-  </StrictMode>
-)
+// Single entry for both sides: ViteReactSSG hydrates in the browser and drives
+// the static render at build time. StrictMode + ThemeProvider live in `routes`.
+export const createRoot = ViteReactSSG({ routes })
