@@ -124,6 +124,11 @@ coordinates). A one-line comment at the site says exactly that.
 `MUTATING_OPS`), so passing `write_rels` uniformly at read sites costs
 nothing and keeps the call shape identical everywhere.
 
+`_capability_error` is inlined into the gate: after this story it has no
+other callers, and one fewer seam wins. If a future remote-catalog story
+wants a standalone capability probe, it re-extracts then — a two-line
+refactor is not worth carrying a dead seam against.
+
 ### D2 — every gate error carries a structured `path`
 
 The rule, stated once and enforced by the helper: **the `path` on a gate
@@ -190,7 +195,5 @@ given. Private seam, no public surface change.
 
 ## Open questions
 
-- Should `_capability_error` fold into `_gate_terminal` entirely (it has
-  no other callers after this story)? Current call: yes, inline it —
-  one fewer seam. Flagged in case a future remote-catalog story wants a
-  standalone capability probe.
+None — the `_capability_error` fold-in is settled in D1 (inlined; a
+future standalone probe re-extracts if ever needed).

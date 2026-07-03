@@ -265,14 +265,17 @@ every-node-answers-its-own-spine recursion (D2) pays off.
    with the router-side path in the structured `path` field; the same
    verbs on a genuinely absent path keep `not_found` — the two kinds
    never blur.
+10. **No double-cover leakage:** `tree` on a *storage* spine path where
+    the storage impl also returns rows under the mount ancestors it
+    stores — left-wins merge absorbs the overlap, and no row inside a
+    mount's territory ever originates from parent storage (those paths
+    route away before reaching the impl; this test pins that argument
+    as executable fact rather than prose).
 
 ## Open questions
 
-- Should mount-point rows expose the mount's `title` (Observation has no
-  such column today)? Current call: no new Observation fields; `description`
-  is enough for discovery. Revisit if agent evals want more.
-- `tree` on a *storage* spine path currently double-covers: the storage
-  impl may itself return rows under the mount ancestors it stores.
-  Left-wins merge absorbs it; confirm no impl returns rows *inside* a
-  mount's territory (it cannot — those paths route away before reaching
-  storage).
+None. Mount-point rows expose no `title` — decided: no new
+`Observation` fields; `description` is enough for discovery (revisit
+only if agent evals demand more, and note 044's rights-visibility
+surface rides the same rows under the same constraint). The
+storage-double-cover concern is now test-plan item 10.

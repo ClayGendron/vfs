@@ -1,6 +1,7 @@
 # 039 — Execute Permission Tier for the `run` Verb
 
-- **Status:** draft — the default-grant decision below needs sign-off
+- **Status:** draft — default-grant decision signed off 2026-07-03
+  (execute defaults to granted); ready for plan.md
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** feature (permission model) + policy decision
@@ -36,7 +37,7 @@ like every mutation, and the string sugar keeps today's ergonomics.
   "discoverable but not runnable" (`read`, no execute) and "runnable
   except these" (execute with carve-outs). Neither is expressible today.
 
-## Decided policy (pending sign-off)
+## Decided policy (signed off 2026-07-03)
 
 **Execute defaults to granted.** Both string forms — `"read"` and
 `"read_write"` — include `execute`, so every existing construction keeps
@@ -222,10 +223,9 @@ denial.
 
 ## Open questions
 
-- Should `read` sugar *really* imply execute, or should we force every
-  catalog mount to say `execute` explicitly for one release and observe
-  the friction? (Current call: implicit grant; revisit if a real
-  deployment wants deny-by-default.)
-- Per-user execution (a `user_id`-aware rights resolution) is explicitly
-  out — that's the ReBAC/share layer's job, mirroring the existing
-  user-scoping doctrine in this module's docstring.
+None — the implicit-grant question was signed off 2026-07-03 (`read`
+implies execute; revisit only if a real deployment asks for
+deny-by-default), and per-user execution is out by doctrine: rights
+resolution here is user-blind, and per-user policy belongs to the
+ReBAC/share layer, mirroring the user-scoping doctrine in this module's
+docstring.

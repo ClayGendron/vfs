@@ -157,9 +157,12 @@ async def call(self, tool_name, arguments=None) -> VFSResult:
                      observations=[Observation(path=tool_path(tool_name), kind="tool", content=text)])
 ```
 
-[NEEDS CLARIFICATION: `tools/call` `structuredContent` is richer than text — does
-the run result keep it (a new `Observation`/`VFSResult` slot), or render to text
-for v1?]
+Decided 2026-07-03: **the run result keeps `structuredContent`.** `Observation`
+gains a structured-payload slot for it (shape settled in this story's plan —
+likely a JSON-safe `data`-style field mirroring `ResultError.data`), text
+rendering stays the human/agent projection of it, and the drift tests that pin
+`Observation`'s field partition are updated in the same change. No information
+loss at the boundary; the payload rides `to_payload()` like every other field.
 
 ## 6. Lifecycle
 

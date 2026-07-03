@@ -21,20 +21,25 @@ Make VFS mount remote MCP servers as first-class members of its namespace, with
    delegated to: the parent forwards public verbs (`read`/`grep`/`run`/…) to the
    server and rebases the `VFSResult` it returns. Nothing is copied on mount.
 2. **Materializing provider** — any other MCP server cannot answer VFS search, so
-   its tool catalog is **pulled into the parent's storage** at `/.agents/tools`
-   by an explicit `index` pass, where each tool becomes a `TOOL.md` file that
-   chunks and indexes like any other. The live session is kept only to serve
-   `run`. This is the `updatedb`/`locate` model: the session is the source of
-   truth, `/.agents/tools` is its rebuilt index.
+   its tool catalog is **materialized into the mount's own storage** under its
+   local `/.agents/tools` by an explicit `index` pass, where each tool becomes a
+   `TOOL.md` file that chunks and indexes like any other (decided 2026-07-03,
+   superseding an earlier parent's-storage phrasing: the provider mount *is* the
+   index — a small storage filesystem fan-out reaches like any other terminal,
+   and provider collisions are impossible by construction because each
+   provider's tools live in its own subtree). The live session is kept only to
+   serve `run`. This is the `updatedb`/`locate` model: the session is the source
+   of truth, the mount's `/.agents/tools` is its rebuilt index.
 
 The whole inbound direction reduces to one class — `MCPFileSystem` — whose
 projection is chosen at `attach` time from the server's declaration.
 
 > This story is the inbound (client) half. The outbound half — `vfs serve`,
-> exposing a `VirtualFileSystem` *as* an MCP server — is a sibling story; the two
-> share the same wire contract (a VFS server is what `vfs serve` produces and
-> what a routing mount consumes). [NEEDS CLARIFICATION: split into 035, or fold
-> the serve direction in here?]
+> exposing a `VirtualFileSystem` *as* an MCP server — is a sibling story
+> (decided 2026-07-03: split, not folded; it takes the next free story number
+> when drafted). The two share the wire contract, which is now story 045's
+> deliverable: a VFS server is what `vfs serve` produces and what a routing
+> mount consumes.
 
 ## Why — the friction
 
@@ -168,16 +173,28 @@ arguments + `VFSResult`-shaped `structuredContent`) is specified in
 7. (Deferred-gated) `add_mount` of an `MCPFileSystem` performs **no** network I/O;
    materialization happens only on an explicit `index` call.
 
-## Open questions
+## Decisions (2026-07-03) — formerly open questions
 
-- **Provider/tool naming under `/.agents/tools`.** Flat `/.agents/tools/<tool>`
-  collides across servers; the grammar makes the unit depth-1. Encode the
-  provider in the segment (`<provider>.<tool>`) or revisit the grammar to allow
-  `/.agents/tools/<provider>/<tool>`? [NEEDS CLARIFICATION]
-- **Declaration payload.** Is `{"version": "1"}` enough, or should the server also
-  advertise its verb set and per-verb schemas in the declaration (so
-  `capabilities()` needs no separate probe)? [NEEDS CLARIFICATION]
-- **Resources vs tools** for a generic server — do we also materialize MCP
-  resources as `kind="file"` reads, or tools only for now?
-- **Run reconnect identity** — when reconnecting from provenance, how is the
-  session keyed/cached, and what auth context is reused?
+- **Provider/tool naming: per-mount, not shared-root.** Tool files live in
+  each provider mount's *own* `/.agents/tools/<tool>` — the mount point is the
+  provider namespace, so collisions are impossible by construction and the
+  depth-1 unit grammar in `paths.py` is untouched. Agent-facing ergonomics are
+  the CLI's job: `exe <provider>.<tool> {**kwargs}` is sugar the CLI resolves
+  (provider → mount, tool → the mount-local unit path) before re-entering
+  through the public `run` verb, per the cli-is-a-front-door rule in
+  `vfs.ops`. One consequence to carry into the design: `kind` for these rows
+  is authored at the terminal in mount-local coordinates and travels on the
+  row — global-path kind inference does not see a nested `/.agents`, and
+  nothing may rely on it.
+- **Declaration payload: protocol version + op set.** `capabilities()` reads
+  the declared op names with no separate probe; per-verb param schemas are
+  *not* advertised — they are fixed by the versioned wire contract (story
+  045), which also settled op-level-only granularity.
+- **Resources: tools only for v1.** MCP resources as `kind="file"` reads are
+  a follow-up story once the tool pipeline (index → `TOOL.md` → chunk → run)
+  is proven; they reuse the same materialization machinery.
+- **Run reconnect identity: OAuth-native, per connection.** Sessions are
+  keyed by the provider's stored connection config; auth is re-derived from
+  that connection's OAuth/credentials at reconnect. Never keyed or reused by
+  caller-asserted `user_id` — identity is connection-derived and `user_id`
+  does not cross the wire (story 045).
