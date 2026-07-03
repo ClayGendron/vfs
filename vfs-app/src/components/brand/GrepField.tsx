@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react"
 import type { CSSProperties } from "react"
 import { cn } from "@/lib/utils"
+import { pickDistinct, randInt } from "@/lib/pickDistinct"
+import { Field } from "./Field"
 
 /**
  * grep · content — literal matches in text.
@@ -43,34 +45,26 @@ const WORDS: Word[] = (() => {
 
 // pick 1–5 words at random, ordered top-to-bottom so the stagger tracks the scan
 function pickMatches(): number[] {
-  const k = 1 + Math.floor(Math.random() * 5)
-  const chosen = new Set<number>()
-  while (chosen.size < k && chosen.size < WORDS.length) {
-    chosen.add(Math.floor(Math.random() * WORDS.length))
-  }
-  return [...chosen].sort(
-    (a, b) => WORDS[a].y - WORDS[b].y || WORDS[a].x - WORDS[b].x,
+  return pickDistinct(randInt(1, 5), WORDS.length).sort(
+    (a, b) => WORDS[a]!.y - WORDS[b]!.y || WORDS[a]!.x - WORDS[b]!.x,
   )
 }
 
 export function GrepField({ active }: { active: boolean }) {
   const [matches, setMatches] = useState<number[]>([])
 
-  // fresh matches on each play; clears back to neutral when the spotlight leaves
+  // fresh matches on each play; clears back to neutral when the spotlight leaves.
+  // deferred a frame so the re-roll lands outside render, not synchronously.
   useEffect(() => {
-    setMatches(active ? pickMatches() : [])
+    const id = requestAnimationFrame(() => setMatches(active ? pickMatches() : []))
+    return () => cancelAnimationFrame(id)
   }, [active])
 
   // word index → flare order, for the staggered reveal
   const rank = new Map(matches.map((wi, r) => [wi, r]))
 
   return (
-    <svg
-      viewBox="0 0 260 150"
-      className={cn("vfs-field gp", active && "is-on")}
-      preserveAspectRatio="xMidYMid meet"
-      aria-hidden="true"
-    >
+    <Field code="gp" viewBox="0 0 260 150" active={active}>
       {WORDS.map((word, i) => {
         const order = rank.get(i)
         const isMatch = order !== undefined
@@ -88,6 +82,6 @@ export function GrepField({ active }: { active: boolean }) {
         )
       })}
       <rect className="gp-scan" x="12" y="14" width="120" height="2" rx="1" />
-    </svg>
+    </Field>
   )
 }

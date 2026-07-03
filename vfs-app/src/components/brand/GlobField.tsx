@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react"
 import type { CSSProperties } from "react"
 import { cn } from "@/lib/utils"
+import { pickDistinct, randInt } from "@/lib/pickDistinct"
+import { Field } from "./Field"
 
 /**
  * glob · location — an abstract file tree.
@@ -45,8 +47,10 @@ const rowY = (i: number) => Y0 + i * ROW_H
 
 // nearest preceding row one level up — the row's parent in the tree
 function parentOf(i: number): number {
+  const ri = ROWS[i]
+  if (!ri) return -1
   for (let j = i - 1; j >= 0; j--) {
-    if (ROWS[j].level === ROWS[i].level - 1) return j
+    if (ROWS[j]?.level === ri.level - 1) return j
   }
   return -1
 }
@@ -59,11 +63,11 @@ const EMPTY: Selection = { matched: new Set(), onPath: new Set() }
 
 // pick 1–3 leaves at random; the resolved path is the union of their ancestors
 function pickSelection(): Selection {
-  const k = 1 + Math.floor(Math.random() * 3)
-  const matched = new Set<number>()
-  while (matched.size < k && matched.size < LEAVES.length) {
-    matched.add(LEAVES[Math.floor(Math.random() * LEAVES.length)])
-  }
+  const matched = new Set(
+    pickDistinct(randInt(1, 3), LEAVES.length)
+      .map((i) => LEAVES[i])
+      .filter((n): n is number => n !== undefined),
+  )
   const onPath = new Set<number>()
   for (const leaf of matched) {
     for (let cur = leaf; cur >= 0; cur = parentOf(cur)) onPath.add(cur)
@@ -74,18 +78,15 @@ function pickSelection(): Selection {
 export function GlobField({ active }: { active: boolean }) {
   const [sel, setSel] = useState<Selection>(EMPTY)
 
-  // fresh paths on each play; clears back to neutral when the spotlight leaves
+  // fresh paths on each play; clears back to neutral when the spotlight leaves.
+  // deferred a frame so the re-roll lands outside render, not synchronously.
   useEffect(() => {
-    setSel(active ? pickSelection() : EMPTY)
+    const id = requestAnimationFrame(() => setSel(active ? pickSelection() : EMPTY))
+    return () => cancelAnimationFrame(id)
   }, [active])
 
   return (
-    <svg
-      viewBox={`0 0 ${VB_W} ${VB_H}`}
-      className={cn("vfs-field gb", active && "is-on")}
-      preserveAspectRatio="xMidYMid meet"
-      aria-hidden="true"
-    >
+    <Field code="gb" viewBox={`0 0 ${VB_W} ${VB_H}`} active={active}>
       {/* connector guides: an elbow from each row up to its parent. Drawn with
           non-path elbows first so the lit (on-path) ones paint on top — sibling
           verticals share a column, and a later gray stroke would otherwise
@@ -156,6 +157,6 @@ export function GlobField({ active }: { active: boolean }) {
           </g>
         )
       })}
-    </svg>
+    </Field>
   )
 }
