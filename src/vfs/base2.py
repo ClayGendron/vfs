@@ -16,6 +16,11 @@ Five dispatch shapes cover the whole verb surface: single-path (most verbs),
 grouped observations (chained rows, and ``graph`` over row sets), two-path
 pairs (``move``/``copy``), the endpoint pair (``mkedge``), and fan-out
 (``glob``/``grep``/``glean`` with no scope reach every mount in parallel).
+
+Paths cross the public boundary as plain ``str``; the resolve gate mints
+:class:`~vfs.paths.Path` once, and everything below it — routing, gating,
+impl dispatch — carries the branded type.  Any path an ``_*_impl`` receives
+is already proven.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from vfs.exceptions import exception_for_kind
 from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS
-from vfs.paths import METADATA_ROOT, Path, edge_out_path, normalize_path, resolve_path
+from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
 from vfs.permissions import (
     Permission,
     PermissionMap,
@@ -49,10 +54,21 @@ GrepOutputMode = Literal["lines", "files", "count"]
 
 
 class TwoPathOperation(NamedTuple):
-    """A source/destination pair for move or copy — a router-owned shape."""
+    """A source/destination pair for move or copy — the caller-facing input shape."""
 
     src: str
     dest: str
+
+
+class ResolvedPair(NamedTuple):
+    """A gated, terminal-relative src/dest pair — what move/copy impls receive.
+
+    Distinct from :class:`TwoPathOperation` so the annotation says which side
+    of the resolve gate a pair is on: raw caller strings in, minted paths out.
+    """
+
+    src: Path
+    dest: Path
 
 
 class VirtualFileSystem:
@@ -145,7 +161,7 @@ class VirtualFileSystem:
             if mount_at == mount_path:
                 msg = f"Mount already exists at: {mount_path}"
                 raise ValueError(msg)
-            await mount_fs.add_mount(filesystem, mount_path[len(mount_at) :])
+            await mount_fs.add_mount(filesystem, mount_path.without_mount(mount_at))
             return
 
         # self owns mount_path
@@ -158,11 +174,8 @@ class VirtualFileSystem:
             raise ValueError(msg)
 
         filesystem._parent = self
-        # Propagate the raise-on-error policy across the whole incoming subtree,
-        # not just the immediate child — each terminal's own flag decides raise
-        # vs return, so a pre-built subtree's descendants must not keep a stale
-        # one. The subtree is a tree (no instance mounts twice), so a plain walk
-        # terminates.
+        # Propagate raise-on-error to the whole incoming subtree, not just the
+        # child — each terminal's own flag decides raise vs return, never a stale one.
         stack: list[VirtualFileSystem] = [filesystem]
         while stack:
             node = stack.pop()
@@ -185,7 +198,7 @@ class VirtualFileSystem:
         matched = self._match_mount(mount_path)
         if matched is not None and matched[0] != mount_path:
             mount_at, mount_fs = matched
-            await mount_fs.remove_mount(mount_path[len(mount_at) :])
+            await mount_fs.remove_mount(mount_path.without_mount(mount_at))
             return
         if mount_path not in self._mounts:
             msg = f"No mount at: {mount_path!r}"
@@ -243,26 +256,28 @@ class VirtualFileSystem:
 
     def _rebuild_sorted_mounts(self) -> None:
         """Rebuild the pre-sorted mount path list (longest first)."""
-        self._sorted_mount_paths = sorted(self._mounts.keys(), key=len, reverse=True)
+        self._sorted_mount_paths = sorted(self._mounts.keys(), key=lambda p: len(p), reverse=True)
 
-    def _match_mount(self, path: str) -> tuple[Path, VirtualFileSystem] | None:
+    def _match_mount(self, path: Path) -> tuple[Path, VirtualFileSystem] | None:
         """Longest-prefix mount match for *path*."""
         for mount_path in self._sorted_mount_paths:
             if path == mount_path or path.startswith(mount_path + "/"):
                 return mount_path, self._mounts[mount_path]
         return None
 
-    def _resolve_terminal(self, path: str) -> tuple[VirtualFileSystem, str, str]:
+    def _resolve_terminal(self, path: Path) -> tuple[VirtualFileSystem, Path, Path]:
         """Walk the mount chain to find the terminal filesystem.
 
-        Returns ``(terminal_fs, relative_path, prefix)`` where:
+        Takes a gated :class:`Path` — callers resolve first.  Returns
+        ``(terminal_fs, relative_path, prefix)`` where:
         - *terminal_fs* is the filesystem that owns the path
         - *relative_path* is the path within that filesystem
-        - *prefix* is the accumulated mount path for rebasing results
+        - *prefix* is the accumulated mount path for rebasing results;
+          ``/`` when *self* owns the path (the rebase identity)
         """
         fs = self
-        prefix = ""
-        rel = normalize_path(path)
+        prefix = Path("/")
+        rel = path
         while True:
             matched = fs._match_mount(rel)
             if matched is None:
@@ -270,8 +285,8 @@ class VirtualFileSystem:
             mount_path, mount_fs = matched
 
             fs = mount_fs
-            prefix = prefix + mount_path
-            rel = rel[len(mount_path) :] or "/"
+            prefix = mount_path.with_mount(prefix)
+            rel = rel.without_mount(mount_path)
         return fs, rel, prefix
 
     def _root(self) -> VirtualFileSystem:
@@ -308,7 +323,7 @@ class VirtualFileSystem:
             stack.extend(fs._mounts.values())
         return ids
 
-    async def _is_path_mountable(self, path: str) -> bool:
+    async def _is_path_mountable(self, path: Path) -> bool:
         """Return whether a mount may be attached at *path* inside this filesystem.
 
         The pure router has no storage, so any path is mountable.  Storage
@@ -328,14 +343,14 @@ class VirtualFileSystem:
     def _group_observations_by_terminal(
         self,
         observations: list[Observation],
-    ) -> list[tuple[VirtualFileSystem, str, list[Observation]]]:
+    ) -> list[tuple[VirtualFileSystem, Path, list[Observation]]]:
         """Group observations by terminal filesystem, rebasing paths.
 
         Returns ``[(filesystem, prefix, rebased_observations)]`` where each
         observation's path is relative to its terminal filesystem (the mount
         prefix stripped via :meth:`Observation.without_mount`).
         """
-        groups: dict[tuple[int, str], tuple[VirtualFileSystem, list[Observation]]] = {}
+        groups: dict[tuple[int, Path], tuple[VirtualFileSystem, list[Observation]]] = {}
         for obs in observations:
             fs, _rel, prefix = self._resolve_terminal(obs.path)
             key = (id(fs), prefix)
@@ -450,7 +465,7 @@ class VirtualFileSystem:
 
         async def _run_group(
             fs: VirtualFileSystem,
-            prefix: str,
+            prefix: Path,
             group: list[Observation],
         ) -> Result:
             if fs is self:
@@ -528,7 +543,9 @@ class VirtualFileSystem:
     ) -> Result:
         """Route src/dest pair mutations, gating every pair before any dispatch.
 
-        Both endpoints of a pair must resolve to the same terminal — a pair
+        Pairs arrive as caller-facing :class:`TwoPathOperation` and dispatch
+        as gated, terminal-relative :class:`ResolvedPair` groups.  Both
+        endpoints of a pair must resolve to the same terminal — a pair
         spanning mounts is ``cross_mount``, never a partial execution.
         ``move`` mutates both endpoints, so both are write-gated; ``copy``
         only writes ``dest``, so its source needs no mutation resolution or
@@ -544,7 +561,7 @@ class VirtualFileSystem:
         if not operations:
             return Result(function=op, observations=[])
 
-        groups: dict[int, tuple[VirtualFileSystem, str, list[TwoPathOperation]]] = {}
+        groups: dict[int, tuple[VirtualFileSystem, Path, list[ResolvedPair]]] = {}
         for pair in operations:
             src = resolve_path(pair.src, mutation=op == "move")
             if src.path is None:
@@ -578,14 +595,14 @@ class VirtualFileSystem:
             key = id(src_fs)
             if key not in groups:
                 groups[key] = (src_fs, src_prefix, [])
-            groups[key][2].append(TwoPathOperation(src=src_rel, dest=dest_rel))
+            groups[key][2].append(ResolvedPair(src=src_rel, dest=dest_rel))
 
         batch_kwarg = "moves" if op == "move" else "copies"
 
         async def _run_group(
             fs: VirtualFileSystem,
-            prefix: str,
-            group: list[TwoPathOperation],
+            prefix: Path,
+            group: list[ResolvedPair],
         ) -> Result:
             if fs is self:
                 r = await self._call_local_impl(op, operations=group, user_id=user_id, **kwargs)
@@ -630,7 +647,7 @@ class VirtualFileSystem:
             return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
 
         if paths:
-            groups: dict[int, tuple[VirtualFileSystem, str, list[str]]] = {}
+            groups: dict[int, tuple[VirtualFileSystem, Path, list[Path]]] = {}
             for raw in paths:
                 resolved = resolve_path(raw)
                 if resolved.path is None:
@@ -648,8 +665,8 @@ class VirtualFileSystem:
 
             async def _run_scoped(
                 fs: VirtualFileSystem,
-                prefix: str,
-                rels: list[str],
+                prefix: Path,
+                rels: list[Path],
             ) -> Result:
                 if fs is self:
                     r = await self._call_local_impl(op, paths=tuple(rels), user_id=user_id, **kwargs)
@@ -662,10 +679,10 @@ class VirtualFileSystem:
             )
             return self._merge_results(list(results))
 
-        targets: list[tuple[VirtualFileSystem, str]] = []
+        targets: list[tuple[VirtualFileSystem, Path]] = []
         own_caps = self.capabilities()
         if self._storage and (own_caps is None or op in own_caps):
-            targets.append((self, ""))
+            targets.append((self, Path("/")))
         for mount_path, fs in self._mounts.items():
             child_caps = fs.capabilities()
             if child_caps is not None and op not in child_caps:
@@ -674,7 +691,7 @@ class VirtualFileSystem:
         if not targets:
             return Result(function=op, observations=[])
 
-        async def _run_target(fs: VirtualFileSystem, prefix: str) -> Result:
+        async def _run_target(fs: VirtualFileSystem, prefix: Path) -> Result:
             if fs is self:
                 r = await self._call_local_impl(op, paths=(), user_id=user_id, **kwargs)
             else:
@@ -707,7 +724,7 @@ class VirtualFileSystem:
         if not rows:
             return Result(function="write", observations=[])
 
-        groups: dict[int, tuple[VirtualFileSystem, str, list[Entry]]] = {}
+        groups: dict[int, tuple[VirtualFileSystem, Path, list[Entry]]] = {}
         for entry in rows:
             if not isinstance(entry, Entry):
                 return self._error(
@@ -733,7 +750,7 @@ class VirtualFileSystem:
 
         async def _run_group(
             fs: VirtualFileSystem,
-            prefix: str,
+            prefix: Path,
             group: list[Entry],
         ) -> Result:
             if fs is self:
@@ -1089,7 +1106,7 @@ class VirtualFileSystem:
             return result.with_mount(src_prefix)
 
         try:
-            edge_path = edge_out_path(Path(src_rel), Path(tgt_rel), edge_type)
+            edge_path = edge_out_path(src_rel, tgt_rel, edge_type)
         except ValueError as exc:
             return self._error(str(exc), kind=VFSErrorKind.invalid)
         err = check_writable(self, "mkedge", edge_path, mount_prefix=src_prefix)

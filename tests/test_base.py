@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from vfs.base2 import TwoPathOperation, VirtualFileSystem
+from vfs.base2 import ResolvedPair, TwoPathOperation, VirtualFileSystem
 from vfs.exceptions import (
     NotFoundError,
     ValidationError,
@@ -46,7 +46,7 @@ class MountPolicyFS(VirtualFileSystem):
         super().__init__(storage=True)
         self._blocked = set(blocked)
 
-    async def _is_path_mountable(self, path: str) -> bool:
+    async def _is_path_mountable(self, path: Path) -> bool:
         return path not in self._blocked
 
 
@@ -247,7 +247,7 @@ async def test_add_mount_nested_delegates_to_parent_mount() -> None:
     await root.add_mount(tmp, "/data/tmp")
     assert set(root._mounts) == {"/data"}
     assert set(data._mounts) == {"/tmp"}
-    fs, rel, prefix = root._resolve_terminal("/data/tmp/file.txt")
+    fs, rel, prefix = root._resolve_terminal(Path("/data/tmp/file.txt"))
     assert fs is tmp
     assert rel == "/file.txt"
     assert prefix == "/data/tmp"
@@ -272,7 +272,7 @@ async def test_add_mount_deep_nested_delegation() -> None:
     await a.add_mount(b, "/b")
     await root.add_mount(leaf, "/a/b/leaf")  # delegates root -> a -> b
     assert set(b._mounts) == {"/leaf"}
-    fs, _rel, prefix = root._resolve_terminal("/a/b/leaf/x")
+    fs, _rel, prefix = root._resolve_terminal(Path("/a/b/leaf/x"))
     assert fs is leaf
     assert prefix == "/a/b/leaf"
 
@@ -316,7 +316,7 @@ async def test_is_path_mountable_default_true() -> None:
     # The pure router has no storage, so the base policy admits any path;
     # add_mount only consults it when self._storage is set.
     fs = VirtualFileSystem()
-    assert await fs._is_path_mountable("/anything/at/all") is True
+    assert await fs._is_path_mountable(Path("/anything/at/all")) is True
 
 
 async def test_add_mount_on_subnode_checks_whole_graph() -> None:
@@ -357,7 +357,7 @@ async def test_add_mount_on_subnode_is_node_relative() -> None:
     tmp = VirtualFileSystem()
     await root.add_mount(data, "/data")
     await data.add_mount(tmp, "/tmp")
-    fs, _rel, prefix = root._resolve_terminal("/data/tmp/x")
+    fs, _rel, prefix = root._resolve_terminal(Path("/data/tmp/x"))
     assert fs is tmp
     assert prefix == "/data/tmp"
 
@@ -371,7 +371,7 @@ async def test_add_mount_allows_unmounted_fs_carrying_its_own_mounts() -> None:
     await root.add_mount(sub, "/sub")
     assert sub._parent is root
     assert leaf._parent is sub
-    fs, _rel, prefix = root._resolve_terminal("/sub/leaf/x")
+    fs, _rel, prefix = root._resolve_terminal(Path("/sub/leaf/x"))
     assert fs is leaf
     assert prefix == "/sub/leaf"
 
@@ -481,7 +481,7 @@ async def test_add_mount_allows_deep_acyclic_tree() -> None:
     b = VirtualFileSystem()
     await root.add_mount(a, "a")
     await a.add_mount(b, "b")
-    fs, rel, prefix = root._resolve_terminal("/a/b/file.txt")
+    fs, rel, prefix = root._resolve_terminal(Path("/a/b/file.txt"))
     assert fs is b
     assert rel == "/file.txt"
     assert prefix == "/a/b"
@@ -592,24 +592,24 @@ async def test_match_mount_longest_prefix() -> None:
     long = VirtualFileSystem()
     await parent.add_mount(short, "a")
     await parent.add_mount(long, "ab")
-    assert parent._match_mount("/ab/x") == ("/ab", long)
-    assert parent._match_mount("/a/x") == ("/a", short)
-    assert parent._match_mount("/other") is None
+    assert parent._match_mount(Path("/ab/x")) == ("/ab", long)
+    assert parent._match_mount(Path("/a/x")) == ("/a", short)
+    assert parent._match_mount(Path("/other")) is None
 
 
 async def test_resolve_terminal_self() -> None:
     parent = VirtualFileSystem()
-    fs, rel, prefix = parent._resolve_terminal("/other/file.txt")
+    fs, rel, prefix = parent._resolve_terminal(Path("/other/file.txt"))
     assert fs is parent
     assert rel == "/other/file.txt"
-    assert prefix == ""
+    assert prefix == "/"
 
 
 async def test_resolve_terminal_single_mount() -> None:
     parent = VirtualFileSystem()
     child = VirtualFileSystem()
     await parent.add_mount(child, "data")
-    fs, rel, prefix = parent._resolve_terminal("/data/file.txt")
+    fs, rel, prefix = parent._resolve_terminal(Path("/data/file.txt"))
     assert fs is child
     assert rel == "/file.txt"
     assert prefix == "/data"
@@ -621,7 +621,7 @@ async def test_resolve_terminal_nested_mounts() -> None:
     grandchild = VirtualFileSystem()
     await child.add_mount(grandchild, "sub")
     await parent.add_mount(child, "data")
-    fs, rel, prefix = parent._resolve_terminal("/data/sub/file.txt")
+    fs, rel, prefix = parent._resolve_terminal(Path("/data/sub/file.txt"))
     assert fs is grandchild
     assert rel == "/file.txt"
     assert prefix == "/data/sub"
@@ -631,7 +631,7 @@ async def test_resolve_terminal_mount_root() -> None:
     parent = VirtualFileSystem()
     child = VirtualFileSystem()
     await parent.add_mount(child, "data")
-    fs, rel, prefix = parent._resolve_terminal("/data")
+    fs, rel, prefix = parent._resolve_terminal(Path("/data"))
     assert fs is child
     assert rel == "/"
     assert prefix == "/data"
@@ -911,7 +911,7 @@ async def test_move_same_terminal_dispatches_localized_pair() -> None:
     result = await root.move(src="/m/a.txt", dest="/m/b.txt")
     assert result.success is True
     assert child.calls == [
-        ("move", {"operations": [TwoPathOperation(src="/a.txt", dest="/b.txt")], "overwrite": True}),
+        ("move", {"operations": [ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], "overwrite": True}),
     ]
 
 
@@ -933,7 +933,7 @@ async def test_two_path_batch_one_bad_pair_rejects_all() -> None:
     a, b = RecorderFS(), RecorderFS()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
-    result = await root.move(moves=[("/a/x.txt", "/a/y.txt"), ("/a/z.txt", "/b/w.txt")])
+    result = await root.move(moves=[TwoPathOperation(src="/a/x.txt", dest="/a/y.txt"), ("/a/z.txt", "/b/w.txt")])
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.cross_mount
     assert a.calls == [] and b.calls == []  # nothing half-executes
@@ -957,7 +957,7 @@ async def test_copy_gates_dest_only() -> None:
     result = await root.copy(src="/m/frozen/a.txt", dest="/m/b.txt")
     assert result.success is True  # read-only source is fine for copy
     assert child.calls == [
-        ("copy", {"operations": [TwoPathOperation(src="/frozen/a.txt", dest="/b.txt")], "overwrite": True}),
+        ("copy", {"operations": [ResolvedPair(src=Path("/frozen/a.txt"), dest=Path("/b.txt"))], "overwrite": True}),
     ]
 
 

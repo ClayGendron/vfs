@@ -86,6 +86,8 @@ private *types and constants* stay next to what they support.
 
 ## Code comments
 
-- Keep comments concise (1–2 lines). State the what/why directly.
+- Inline comments and comment blocks are **2 lines maximum** — this includes
+  multi-line `#` blocks above a statement. State the what/why directly; if it
+  needs more room, it belongs in a docstring.
 - Do **not** reference story/spec numbers (e.g. "story 030 §5.2", "Phase 4")
   in code comments. Traceability lives in `context/stories/`, not inline.

@@ -118,7 +118,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from vfs.ops import MUTATING_OPS
-from vfs.paths import normalize_path
+from vfs.paths import Path, normalize_path
 from vfs.results2 import VFSErrorKind
 
 if TYPE_CHECKING:
@@ -130,6 +130,9 @@ if TYPE_CHECKING:
 
 Permission = Literal["read", "read_write"]
 """Filesystem-level permission value."""
+
+_ROOT = Path("/")
+"""The rebase identity — the default mount prefix when the terminal is the router itself."""
 
 
 def validate_permission(value: str) -> Permission:
@@ -248,17 +251,17 @@ def read_write(*, read: Iterable[str] = ()) -> PermissionMap:
 def check_writable(
     fs: VirtualFileSystem,
     op: str,
-    rel: str,
+    rel: Path,
     *,
-    mount_prefix: str = "",
+    mount_prefix: Path = _ROOT,
 ) -> Result | None:
     """Return a classified error result if *op* mutates a read-only path.
 
-    *rel* is the filesystem-relative path; *mount_prefix* is the
-    accumulated router-side mount prefix.  The error message reports
-    the reconstructed router-side path so the user sees the path they
-    typed, while rule resolution stays in filesystem-relative
-    coordinates.
+    *rel* is the gated, filesystem-relative path; *mount_prefix* is the
+    accumulated router-side mount prefix (``/`` when the terminal is the
+    router itself — the rebase identity).  The error message reports the
+    reconstructed router-side path so the user sees the path they typed,
+    while rule resolution stays in filesystem-relative coordinates.
 
     Returns ``None`` when the operation is allowed (either because it
     is not a mutation or because the resolved permission is
@@ -284,7 +287,7 @@ def check_writable(
             resolved = alternate
     if resolved.permission == "read_write":
         return None
-    full = _join(mount_prefix, rel)
+    full = rel.with_mount(mount_prefix)
     if resolved.rule_prefix is None:
         return fs._error(
             f"Cannot write to read-only path '{full}' (mount default)",
@@ -294,15 +297,6 @@ def check_writable(
         f"Cannot write to read-only path '{full}' (read-only by mount rule '{resolved.rule_prefix}')",
         kind=VFSErrorKind.read_only,
     )
-
-
-def _join(mount_prefix: str, rel: str) -> str:
-    """Reconstruct a router-side path from a mount prefix and a rel path."""
-    if not mount_prefix:
-        return rel
-    if rel == "/" or rel == "":
-        return mount_prefix or "/"
-    return f"{mount_prefix}{rel}"
 
 
 def _permission_candidates(rel: str) -> tuple[str, ...]:
