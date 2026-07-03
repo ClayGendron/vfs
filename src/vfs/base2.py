@@ -399,9 +399,8 @@ class VirtualFileSystem:
         for obs in observations:
             fs, _rel, prefix = self._resolve_terminal(obs.path)
             key = (id(fs), prefix)
-            if key not in groups:
-                groups[key] = (fs, [])
-            groups[key][1].append(obs.without_mount(prefix))
+            _fs, obs_list = groups.setdefault(key, (fs, []))
+            obs_list.append(obs.without_mount(prefix))
         return [(fs, pfx, obs_list) for ((_id, pfx), (fs, obs_list)) in groups.items()]
 
     # -------------------------------------------------------------------
@@ -638,9 +637,8 @@ class VirtualFileSystem:
                 return err
 
             key = id(src_fs)
-            if key not in groups:
-                groups[key] = (src_fs, src_prefix, [])
-            groups[key][2].append(ResolvedPair(src=src_rel, dest=dest_rel))
+            _fs, _pfx, pairs = groups.setdefault(key, (src_fs, src_prefix, []))
+            pairs.append(ResolvedPair(src=src_rel, dest=dest_rel))
 
         batch_kwarg = "moves" if op == "move" else "copies"
 
@@ -704,9 +702,8 @@ class VirtualFileSystem:
                 if cap_err is not None:
                     return cap_err
                 key = id(fs)
-                if key not in groups:
-                    groups[key] = (fs, prefix, [])
-                groups[key][2].append(rel)
+                _fs, _pfx, rels = groups.setdefault(key, (fs, prefix, []))
+                rels.append(rel)
 
             async def _run_scoped(
                 fs: VirtualFileSystem,
@@ -789,9 +786,8 @@ class VirtualFileSystem:
             if err is not None:
                 return err
             key = id(fs)
-            if key not in groups:
-                groups[key] = (fs, prefix, [])
-            groups[key][2].append(entry.without_mount(prefix))
+            _fs, _pfx, entry_group = groups.setdefault(key, (fs, prefix, []))
+            entry_group.append(entry.without_mount(prefix))
 
         async def _run_group(
             fs: VirtualFileSystem,
