@@ -1,0 +1,105 @@
+"""Drift tests pinning the op vocabulary to its consumers.
+
+The vocabulary in ``vfs.ops`` is the single source of truth for verb names
+and dispatch classes; these tests hold the router surface, the permission
+gate, and the projection table to it so the sets can never drift apart the
+way the three hand-copies once did.
+"""
+
+from __future__ import annotations
+
+import inspect
+
+from vfs import ops, permissions, projection
+from vfs.base2 import VirtualFileSystem
+from vfs.ops import ALL_OPS, EXEC_OPS, MUTATING_OPS, READ_OPS, TWO_PATH_OPS
+
+# Public router methods that manage the mount tree rather than route an op.
+# A new public coroutine on VirtualFileSystem must be a registered op or a
+# deliberate addition here.
+MANAGEMENT_METHODS = frozenset({"add_mount", "remove_mount", "close"})
+
+
+# ---------------------------------------------------------------------------
+# Set invariants
+# ---------------------------------------------------------------------------
+
+
+def test_all_ops_is_the_union_of_dispatch_classes() -> None:
+    assert ALL_OPS == MUTATING_OPS | READ_OPS | EXEC_OPS
+
+
+def test_dispatch_classes_are_pairwise_disjoint() -> None:
+    assert not MUTATING_OPS & READ_OPS
+    assert not MUTATING_OPS & EXEC_OPS
+    assert not READ_OPS & EXEC_OPS
+
+
+def test_two_path_ops_are_mutations() -> None:
+    assert TWO_PATH_OPS <= MUTATING_OPS
+
+
+def test_cli_and_rm_are_not_ops() -> None:
+    # cli is a meta-verb (parses into real ops); rm lost to delete.
+    for banned in ("cli", "rm"):
+        assert banned not in ALL_OPS
+        assert banned not in TWO_PATH_OPS
+
+
+def test_expected_vocabulary() -> None:
+    assert frozenset(
+        {
+            "read",
+            "write",
+            "edit",
+            "delete",
+            "stat",
+            "mkdir",
+            "mkedge",
+            "move",
+            "copy",
+            "ls",
+            "tree",
+            "glob",
+            "grep",
+            "glean",
+            "graph",
+            "run",
+        },
+    ) == ALL_OPS
+
+
+# ---------------------------------------------------------------------------
+# Consumers share the one vocabulary
+# ---------------------------------------------------------------------------
+
+
+def test_permission_gate_uses_the_shared_mutation_set() -> None:
+    assert permissions.MUTATING_OPS is ops.MUTATING_OPS
+
+
+def test_projection_derives_action_functions_from_the_shared_set() -> None:
+    assert projection.ACTION_FUNCTIONS is ops.MUTATING_OPS
+
+
+def test_glean_and_run_have_default_projections() -> None:
+    assert projection.default_projection("glean") == ("path", "score")
+    assert projection.default_projection("run") == ("path",)
+    assert "glean" in projection.KNOWN_FUNCTIONS
+    assert "run" in projection.KNOWN_FUNCTIONS
+
+
+# ---------------------------------------------------------------------------
+# Router surface ⊆ vocabulary
+# ---------------------------------------------------------------------------
+
+
+def test_router_public_verbs_are_registered_ops() -> None:
+    verbs = {
+        name
+        for name, _member in inspect.getmembers(VirtualFileSystem, inspect.iscoroutinefunction)
+        if not name.startswith("_")
+    }
+    assert {"read", "stat", "ls", "run"} <= verbs
+    unregistered = verbs - MANAGEMENT_METHODS - ALL_OPS
+    assert not unregistered, f"public router verbs missing from ALL_OPS: {sorted(unregistered)}"

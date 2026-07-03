@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from vfs.results2 import VFSErrorKind
 
 if TYPE_CHECKING:
-    from vfs.results import VFSResult
+    from vfs.results2 import VFSResult
 
 
 class VFSError(Exception):

@@ -19,6 +19,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from vfs.exceptions import exception_for_kind
+from vfs.ops import MUTATING_OPS
 from vfs.paths import METADATA_ROOT, Path, normalize_path, resolve_path
 from vfs.permissions import (
     Permission,
@@ -30,10 +31,7 @@ from vfs.results2 import ResultError, VFSErrorKind, VFSResult
 
 if TYPE_CHECKING:
     from vfs.models2 import Observation
-
-# Ops that author or rewrite entries; their paths get the namespace-write
-# authorization check at the gate. Read-family ops (read/stat/ls/grep) skip it.
-_MUTATION_OPS = frozenset({"write", "edit", "move", "copy", "mkedge", "rm", "delete"})
+    from vfs.ops import Op
 
 
 class VirtualFileSystem:
@@ -330,7 +328,7 @@ class VirtualFileSystem:
         """
         return None
 
-    def _capability_error(self, fs: VirtualFileSystem, op: str, path: Path | None) -> VFSResult | None:
+    def _capability_error(self, fs: VirtualFileSystem, op: Op, path: Path | None) -> VFSResult | None:
         """Return an ``unsupported`` result if *fs* does not answer *op*, else ``None``."""
         caps = fs.capabilities()
         if caps is not None and op not in caps:
@@ -339,7 +337,7 @@ class VirtualFileSystem:
 
     async def _call_local_impl(
         self,
-        op: str,
+        op: Op,
         *,
         user_id: str | None = None,
         **kwargs: object,
@@ -362,7 +360,7 @@ class VirtualFileSystem:
 
     async def _dispatch_grouped_observations(
         self,
-        op: str,
+        op: Op,
         observations: list[Observation],
         *,
         user_id: str | None = None,
@@ -375,7 +373,7 @@ class VirtualFileSystem:
         rebased and merged.
         """
         for obs in observations:
-            resolved = resolve_path(obs.path, mutation=op in _MUTATION_OPS)
+            resolved = resolve_path(obs.path, mutation=op in MUTATING_OPS)
             if resolved.path is None:
                 return self._error(resolved.error or f"Invalid path: {obs.path!r}", kind=VFSErrorKind.invalid)
 
@@ -410,7 +408,7 @@ class VirtualFileSystem:
 
     async def _route_single(
         self,
-        op: str,
+        op: Op,
         path: str | None,
         observations: list[Observation] | None,
         *,
@@ -431,7 +429,7 @@ class VirtualFileSystem:
             return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
 
         assert path is not None
-        resolved = resolve_path(path, mutation=op in _MUTATION_OPS)
+        resolved = resolve_path(path, mutation=op in MUTATING_OPS)
         if resolved.path is None:
             return self._error(resolved.error or f"Invalid path: {path!r}", kind=VFSErrorKind.invalid)
         path = resolved.path

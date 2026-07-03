@@ -116,30 +116,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
+from vfs.ops import MUTATING_OPS
 from vfs.paths import normalize_path
 from vfs.results2 import VFSErrorKind
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from vfs.base import VirtualFileSystem
-    from vfs.results import VFSResult
+    from vfs.base2 import VirtualFileSystem
+    from vfs.results2 import VFSResult
 
 
 Permission = Literal["read", "read_write"]
 """Filesystem-level permission value."""
-
-
-MUTATING_OPS: frozenset[str] = frozenset(
-    {"write", "edit", "delete", "mkdir", "mkedge", "move", "copy"},
-)
-"""Operation names that mutate the backing store.
-
-Used by :func:`check_writable` to decide whether a routed op needs a
-write-permission check.  Read-only operations (``read``, ``stat``, ``ls``,
-``tree``, ``glob``, ``grep``, ``search``, graph traversal, centrality)
-are intentionally excluded — they must keep working on read-only mounts.
-"""
 
 
 def validate_permission(value: str) -> Permission:

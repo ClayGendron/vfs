@@ -19,6 +19,7 @@ a newer server's result still renders on an older client.
 from __future__ import annotations
 
 from vfs.models2 import Observation
+from vfs.ops import MUTATING_OPS
 
 # ---------------------------------------------------------------------------
 # Field and function vocabularies
@@ -30,7 +31,7 @@ PROJECTION_SENTINELS: frozenset[str] = frozenset({"default", "all"})
 # Arrangement groups. The envelope's ``function`` key picks an arrangement;
 # multiple functions share one (e.g. all centrality methods).
 RANKED_SEARCH_FUNCTIONS: frozenset[str] = frozenset(
-    {"vector_search", "semantic_search", "lexical_search", "bm25"},
+    {"glean", "vector_search", "semantic_search", "lexical_search", "bm25"},
 )
 CENTRALITY_FUNCTIONS: frozenset[str] = frozenset(
     {
@@ -43,9 +44,9 @@ CENTRALITY_FUNCTIONS: frozenset[str] = frozenset(
         "hits",
     },
 )
-ACTION_FUNCTIONS: frozenset[str] = frozenset(
-    {"write", "delete", "edit", "move", "copy", "mkdir", "mkedge"},
-)
+# The mutation verbs — shared with the dispatch gate so the rendering and
+# permission vocabularies cannot drift apart.
+ACTION_FUNCTIONS: frozenset[str] = MUTATING_OPS
 TRAVERSAL_FUNCTIONS: frozenset[str] = frozenset(
     {"predecessors", "successors", "ancestors", "descendants", "neighborhood"}
     | {"meeting_subgraph", "min_meeting_subgraph"},
@@ -65,6 +66,7 @@ _DEFAULT_PROJECTION: dict[str, tuple[str, ...]] = {
     "tree": ("path",),
     "read": ("content",),
     "stat": ("path", "kind", "size_bytes", "updated_at"),
+    "run": ("path",),
     "hybrid": ("path",),
 }
 for _fn in RANKED_SEARCH_FUNCTIONS:
