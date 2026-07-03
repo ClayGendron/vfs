@@ -1,22 +1,8 @@
-import { useEffect, useState } from "react"
 import { useTheme } from "@/components/theme-provider"
 
 export function ThemeToggle() {
-  const { setTheme } = useTheme()
-  const [isDark, setIsDark] = useState(
-    () =>
-      typeof document !== "undefined" &&
-      document.documentElement.classList.contains("dark"),
-  )
-
-  useEffect(() => {
-    const root = document.documentElement
-    const sync = () => setIsDark(root.classList.contains("dark"))
-    sync()
-    const observer = new MutationObserver(sync)
-    observer.observe(root, { attributes: true, attributeFilter: ["class"] })
-    return () => observer.disconnect()
-  }, [])
+  const { resolvedTheme, setTheme } = useTheme()
+  const isDark = resolvedTheme === "dark"
 
   const toggle = () => setTheme(isDark ? "light" : "dark")
 
