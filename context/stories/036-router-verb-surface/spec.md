@@ -222,3 +222,73 @@ subgraph). Cross-server edges remain story 021.
     pass on all touched files (`ty` at parity or better — the two
     pre-existing diagnostics in base2/exceptions are not made worse).
 11. `permissions.py`'s docstring names the real base2 chokepoints.
+
+## Post-implementation hardening
+
+A five-agent adversarial audit of the landed router (authorization,
+routing, async/merge, vocabulary, input-fuzzing) confirmed the gate
+coverage and the rename, and surfaced five defects — all fixed in the
+same story with regression tests. Recorded here because each is a
+standing contract the `DatabaseFileSystem` port must not regress.
+
+1. **Gate ordering — capability check must precede dispatch
+   (`_dispatch_grouped_observations`).** The `check_writable` loop ran
+   before dispatch, but `_capability_error` sat *inside* the
+   `asyncio.gather`-fanned `_run_group`. An observation-batch mutation
+   (`delete`/`edit`) spanning a capable and a capability-limited terminal
+   dispatched to the capable one while reporting overall failure —
+   partial mutation, and inconsistent with every other chokepoint. Fix:
+   hoist the capability check into the same pre-dispatch loop
+   (capability then permission), so a batch touching any incapable or
+   read-only terminal is rejected whole with nothing dispatched.
+   **Contract:** every chokepoint resolves paths, checks capability, and
+   checks permission for *all* targets before dispatching *any*.
+
+2. **Error fan-in must not collapse distinct-mount failures
+   (`Result._combined_errors`).** The `|` fold dropped right-side errors
+   equal to a left-side error — correct for diamond chains
+   (`(a | b) & b`, the *same* object down both arms) but wrong on the
+   merge path, where two mounts failing identically (e.g. `unavailable`
+   with `path=None`) are two real failures. Fix: dedup by object
+   identity (`id()`), not equality — diamonds still collapse, distinct
+   mounts are both reported. **Contract:** a caller counting errors sees
+   one per downed terminal.
+
+3. **Cross-terminal atomicity stops at validation — say so.**
+   `asyncio.gather` does not cancel siblings when one dispatch *raises*,
+   so a `move`/`copy`/entry-batch spanning terminals can apply one side
+   and still surface the raise. The router cannot make this atomic; true
+   all-or-nothing across terminals is a backend/transaction concern.
+   Fix: the `_route_two_path` (and sibling) docstrings now state that
+   the all-or-nothing guarantee covers the *validation* phase only.
+   **Contract:** the backend story owns cross-terminal transactionality;
+   the router guarantees only that gates are all-or-nothing.
+
+4. **The router never raises on bad input — values in, `Result` out.**
+   Several public verbs leaked raw exceptions instead of an `invalid`
+   result: `_route_single`'s exactly-one-of-path/observations guard
+   (`raise ValueError` → reachable by `write()`/`delete()`/`graph(m)`
+   with no target); `TwoPathOperation(*item)` splatting malformed
+   `moves`/`copies` items (bad arity, a stray `str`) into `TypeError`;
+   and `.path` dereferences on non-`Entry`/`Observation` batch elements
+   and a non-`str` `mkedge` `edge_type` into `AttributeError`. Fix: the
+   guard returns `invalid`; `_coerce_two_path` validates each pair;
+   batch loops `isinstance`-check their elements; `mkedge` type-checks
+   `edge_type`. **Contract:** every public verb returns a `Result` for
+   any argument shape; only genuine programming misuse (never reachable
+   from typed calls) may raise.
+
+5. **Mutually-exclusive inputs are rejected, not silently preferred.**
+   `write(entries=, path=/content=)`, `edit(old/new=, edits=)`,
+   `move`/`copy(src/dest=, batch=)`, and fan-out
+   `glob`/`grep`/`glean(paths=, observations=)` previously let one input
+   silently win and dropped the other. Fix: supplying both forms returns
+   `invalid`. **Contract:** the router never silently discards caller
+   intent.
+
+Acceptance for the hardening: regression tests in `tests/test_base.py`
+cover each of 1–5 (capable-terminal-not-dispatched, two-equal-errors
+preserved while the diamond still dedups, malformed-pair/non-Entry/
+non-Observation/non-str-edge_type → `invalid`, and every
+both-inputs-given → `invalid`); `base2.py` and `results2.py` reach 100%
+line coverage; suite green with zero xfail/skip.

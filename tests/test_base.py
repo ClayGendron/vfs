@@ -24,7 +24,7 @@ from vfs.ops import MUTATING_OPS
 from vfs.paths import Path
 from vfs.permissions import read_write
 from vfs.replace import EditOperation
-from vfs.results2 import Result, VFSErrorKind
+from vfs.results2 import Result, ResultError, VFSErrorKind
 
 
 class SpyFS(VirtualFileSystem):
@@ -1180,10 +1180,11 @@ async def test_call_local_impl_reaches_the_op_impl_method() -> None:
 
 async def test_route_single_requires_exactly_one_input() -> None:
     fs = RecorderFS()
-    with pytest.raises(ValueError, match="Exactly one"):
-        await fs.read()
-    with pytest.raises(ValueError, match="Exactly one"):
-        await fs.read("/f.txt", observations=[Observation(path=Path("/f.txt"))])
+    neither = await fs.read()
+    both = await fs.read("/f.txt", observations=[Observation(path=Path("/f.txt"))])
+    assert neither.success is False and neither.errors[0].kind is VFSErrorKind.invalid
+    assert both.success is False and both.errors[0].kind is VFSErrorKind.invalid
+    assert fs.calls == []
 
 
 async def test_stat_and_ls_route_and_localize() -> None:
@@ -1326,3 +1327,94 @@ async def test_mkedge_capability_gate_blocks() -> None:
     result = await root.mkedge("/m/a.py", "/m/b.py", "imports")
     assert result.errors[0].kind is VFSErrorKind.unsupported
     assert child.calls == []
+
+
+# ----------------------------------------------------------------------
+# audit hardening — gate ordering, error fan-in, input validation
+# ----------------------------------------------------------------------
+
+
+async def test_observation_batch_mutation_gates_capability_before_dispatch() -> None:
+    # Finding 1: a delete batch spanning a capable and a capability-limited
+    # terminal must dispatch to NEITHER — the capability check runs before
+    # any group executes, like every other chokepoint.
+    root = VirtualFileSystem()
+    capable = RecorderFS()
+    limited = LimitedEchoFS(caps=frozenset({"read"}))
+    await root.add_mount(capable, "/cap")
+    await root.add_mount(limited, "/lim")
+    rows = [Observation(path=Path("/cap/a.txt")), Observation(path=Path("/lim/b.txt"))]
+    result = await root.delete(observations=rows)
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert capable.calls == []  # not dispatched despite being capable
+
+
+async def test_grouped_observations_reject_non_observation_element() -> None:
+    result = await RecorderFS().delete(observations=["notanobs"])  # ty: ignore[invalid-argument-type]
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_merge_preserves_distinct_but_equal_errors_from_different_mounts() -> None:
+    # Finding 2: two mounts failing identically are two real failures.
+    left = Result(function="grep", errors=[ResultError(kind=VFSErrorKind.unavailable, message="down")])
+    right = Result(function="grep", errors=[ResultError(kind=VFSErrorKind.unavailable, message="down")])
+    merged = left | right
+    assert len(merged.errors) == 2
+
+
+async def test_merge_still_dedups_the_same_error_object_in_a_diamond() -> None:
+    err = ResultError(kind=VFSErrorKind.unavailable, message="down")
+    a = Result(function="grep", observations=[Observation(path=Path("/a"))], errors=[err])
+    b = Result(function="grep", errors=[err])
+    diamond = (a | b) & b  # same err instance flows down both arms
+    assert len(diamond.errors) == 1
+
+
+@pytest.mark.parametrize("bad", [("/a",), ("/a", "/b", "/c"), ("/a", 123), "ab"])
+async def test_two_path_batch_rejects_malformed_pairs(bad: object) -> None:
+    result = await RecorderFS().move(moves=[bad])  # ty: ignore[invalid-argument-type]
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_write_entries_rejects_non_entry_element() -> None:
+    result = await RecorderFS().write(entries=["notanentry"])  # ty: ignore[invalid-argument-type]
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_mkedge_rejects_non_string_edge_type() -> None:
+    result = await RecorderFS().mkedge("/a.py", "/b.py", 123)  # ty: ignore[invalid-argument-type]
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_write_rejects_entries_and_path_together() -> None:
+    result = await RecorderFS().write(entries=[Entry(path=Path("/a.txt"))], path="/b.txt", content="x")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_edit_rejects_old_new_and_edits_together() -> None:
+    result = await RecorderFS().edit(path="/f.txt", old="a", new="b", edits=[EditOperation(old="c", new="d")])
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+@pytest.mark.parametrize("op", ["move", "copy"])
+async def test_two_path_rejects_pair_and_batch_together(op: str) -> None:
+    method = getattr(RecorderFS(), op)
+    result = await method(src="/a.txt", dest="/b.txt", **{"moves" if op == "move" else "copies": [("/c", "/d")]})
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+@pytest.mark.parametrize("op", ["glob", "grep", "glean"])
+async def test_fanout_rejects_paths_and_observations_together(op: str) -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(EchoFS(), "/m")
+    result = await _fan(root, op, paths=("/m/x",), observations=[Observation(path=Path("/m/y"))])
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid

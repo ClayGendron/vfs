@@ -239,12 +239,18 @@ class Result(BaseModel):
         return a.model_copy(update=updates) if updates else a
 
     def _combined_errors(self, other: Result) -> list[ResultError]:
-        """Concatenate errors, dropping right-side duplicates of left errors.
+        """Concatenate errors, dropping only the *same* error object twice.
 
-        Diamond-shaped chains (``(a | b) & b``) would otherwise repeat the
-        same error once per appearance.
+        Diamond-shaped chains (``(a | b) & b``) carry the identical
+        ``ResultError`` instance down both arms, so an identity check drops
+        that repeat. Equality would over-collapse: fan-out merges results
+        from distinct terminals, and two mounts failing identically (e.g.
+        ``unavailable`` with ``path=None``) produce equal-but-separate
+        errors that are two real failures — keep both so a caller counting
+        errors sees every downed mount.
         """
-        return self.errors + [e for e in other.errors if e not in self.errors]
+        seen = {id(e) for e in self.errors}
+        return self.errors + [e for e in other.errors if id(e) not in seen]
 
     def _merged_function(self, other: Result) -> str:
         """Shared function when both agree (or only one is set), else ``"hybrid"``."""

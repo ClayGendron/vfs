@@ -24,6 +24,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from vfs.exceptions import exception_for_kind
+from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS
 from vfs.paths import METADATA_ROOT, Path, edge_out_path, normalize_path, resolve_path
 from vfs.permissions import (
@@ -39,7 +40,6 @@ from vfs.results2 import Result, ResultError, VFSErrorKind
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from vfs.models2 import Entry, Observation
     from vfs.ops import Op
 
 # Grep option vocabularies — shared with the CLI grammar when it lands.
@@ -393,6 +393,11 @@ class VirtualFileSystem:
         rebased and merged.
         """
         for obs in observations:
+            if not isinstance(obs, Observation):
+                return self._error(
+                    f"observations must be Observation instances, got {type(obs).__name__}",
+                    kind=VFSErrorKind.invalid,
+                )
             resolved = resolve_path(obs.path, mutation=op in MUTATING_OPS)
             if resolved.path is None:
                 return self._error(resolved.error or f"Invalid path: {obs.path!r}", kind=VFSErrorKind.invalid)
@@ -401,7 +406,14 @@ class VirtualFileSystem:
         if not groups:
             return Result(function=op, observations=[])
 
+        # Every gate runs before any dispatch — capability then permission —
+        # so a batch spanning an incapable or read-only terminal is rejected
+        # whole, with nothing dispatched. Matches the other chokepoints; the
+        # capability check must not sit inside the fanned-out _run_group.
         for fs, prefix, group in groups:
+            cap_err = self._capability_error(fs, op, None)
+            if cap_err is not None:
+                return cap_err.with_mount(prefix)
             for obs in group:
                 err = check_writable(fs, op, obs.path, mount_prefix=prefix)
                 if err is not None:
@@ -412,9 +424,6 @@ class VirtualFileSystem:
             prefix: str,
             group: list[Observation],
         ) -> Result:
-            cap_err = self._capability_error(fs, op, None)
-            if cap_err is not None:
-                return cap_err.with_mount(prefix)
             if fs is self:
                 r = await self._call_local_impl(op, observations=group, user_id=user_id, **kwargs)
             else:
@@ -440,10 +449,16 @@ class VirtualFileSystem:
         With observations: group by filesystem, dispatch in parallel.
         With path: resolve one terminal and dispatch once — to ``self``
         through the local seam, or to a child mount through its public method.
+
+        Exactly one of *path* / *observations* is required; neither or both
+        is a caller error returned as ``invalid`` (the router never raises
+        on bad input — values in, ``Result`` out).
         """
         if (path is None) == (observations is None):
-            msg = "Exactly one of path or observations must be provided"
-            raise ValueError(msg)
+            return self._error(
+                "Exactly one of path or observations must be provided",
+                kind=VFSErrorKind.invalid,
+            )
 
         if observations is not None:
             return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
@@ -488,8 +503,14 @@ class VirtualFileSystem:
         spanning mounts is ``cross_mount``, never a partial execution.
         ``move`` mutates both endpoints, so both are write-gated; ``copy``
         only writes ``dest``, so its source needs no mutation resolution or
-        write permission.  All pairs are validated up front: a single bad
-        pair rejects the whole batch with nothing dispatched.
+        write permission.
+
+        All pairs are *validated* up front: a single bad pair rejects the
+        whole batch with nothing dispatched. Atomicity stops at validation —
+        once per-terminal dispatch begins, terminals run concurrently and a
+        runtime failure in one does not roll back another. True
+        cross-terminal atomicity is a backend/transaction concern, not the
+        router's (see also ``_route_fanout`` and ``_route_entry_batch``).
         """
         if not operations:
             return Result(function=op, observations=[])
@@ -566,7 +587,16 @@ class VirtualFileSystem:
         (mount-table order), silently skipping terminals whose
         ``capabilities()`` lack *op* — the no-probe rule's purpose: one
         incapable catalog must not fail a namespace-wide query.
+
+        *paths* and *observations* are mutually exclusive — supplying both
+        is a caller error returned as ``invalid`` rather than silently
+        preferring one.
         """
+        if paths and observations is not None:
+            return self._error(
+                f"{op} takes paths or observations, not both",
+                kind=VFSErrorKind.invalid,
+            )
         if observations is not None:
             return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
 
@@ -644,6 +674,11 @@ class VirtualFileSystem:
 
         groups: dict[int, tuple[VirtualFileSystem, str, list[Entry]]] = {}
         for entry in entries:
+            if not isinstance(entry, Entry):
+                return self._error(
+                    f"write entries must be Entry instances, got {type(entry).__name__}",
+                    kind=VFSErrorKind.invalid,
+                )
             resolved = resolve_path(entry.path, mutation=True)
             if resolved.path is None:
                 return self._error(resolved.error or f"Invalid path: {entry.path!r}", kind=VFSErrorKind.invalid)
@@ -897,9 +932,15 @@ class VirtualFileSystem:
         """Write one file (*path* + *content*) or a batch of *entries*.
 
         Batch entries route by their own paths — grouped per terminal,
-        rebased, and gated per entry before anything dispatches.
+        rebased, and gated per entry before anything dispatches. *entries*
+        and *path*/*content* are mutually exclusive.
         """
         if entries is not None:
+            if path is not None or content is not None:
+                return self._error(
+                    "write takes entries or path/content, not both",
+                    kind=VFSErrorKind.invalid,
+                )
             return await self._route_entry_batch(entries, overwrite=overwrite, user_id=user_id)
         return await self._route_single("write", path, None, content=content, overwrite=overwrite, user_id=user_id)
 
@@ -919,9 +960,16 @@ class VirtualFileSystem:
         *edits* is the native input: applied sequentially (each edit sees
         the content left by the previous one) and atomically (one failed
         match applies nothing) — guarantees the backend impl must honor.
-        The *old*/*new* pair is sugar wrapping a one-item list.
+        The *old*/*new* pair is sugar wrapping a one-item list; supplying
+        both forms is a caller error.
         """
-        if edits is None:
+        if edits is not None:
+            if old is not None or new is not None:
+                return self._error(
+                    "edit takes old/new or an edits list, not both",
+                    kind=VFSErrorKind.invalid,
+                )
+        else:
             if old is None or new is None:
                 return self._error(
                     "edit requires old and new strings, or an edits list",
@@ -966,6 +1014,11 @@ class VirtualFileSystem:
         writes the canonical ``edges/out`` projection; the inverse ``in``
         path is derived, never a write target.
         """
+        if not isinstance(edge_type, str):
+            return self._error(
+                f"edge_type must be a string, got {type(edge_type).__name__}",
+                kind=VFSErrorKind.invalid,
+            )
         src = resolve_path(source)
         if src.path is None:
             return self._error(src.error or f"Invalid path: {source!r}", kind=VFSErrorKind.invalid)
@@ -1009,6 +1062,23 @@ class VirtualFileSystem:
         )
         return result.with_mount(src_prefix)
 
+    @staticmethod
+    def _coerce_two_path(item: object) -> TwoPathOperation | None:
+        """Coerce a batch item to a ``TwoPathOperation``, or ``None`` if malformed.
+
+        Accepts a ``TwoPathOperation`` as-is or a 2-tuple/list of two strings.
+        Anything else — wrong arity, non-string members, a stray ``str`` that
+        a ``Sequence`` iteration would splatter into characters — is rejected
+        so the caller sees ``invalid`` instead of a raw ``TypeError``.
+        """
+        if isinstance(item, TwoPathOperation):
+            return item
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            src, dest = item
+            if isinstance(src, str) and isinstance(dest, str):
+                return TwoPathOperation(src=src, dest=dest)
+        return None
+
     async def move(
         self,
         src: str | None = None,
@@ -1018,12 +1088,7 @@ class VirtualFileSystem:
         overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        if moves is None:
-            if not src or not dest:
-                return self._error("move requires src and dest, or a moves list", kind=VFSErrorKind.invalid)
-            moves = [TwoPathOperation(src=src, dest=dest)]
-        operations = [p if isinstance(p, TwoPathOperation) else TwoPathOperation(*p) for p in moves]
-        return await self._route_two_path("move", operations, overwrite=overwrite, user_id=user_id)
+        return await self._route_pairs("move", src, dest, moves, overwrite=overwrite, user_id=user_id)
 
     async def copy(
         self,
@@ -1034,12 +1099,38 @@ class VirtualFileSystem:
         overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        if copies is None:
+        return await self._route_pairs("copy", src, dest, copies, overwrite=overwrite, user_id=user_id)
+
+    async def _route_pairs(
+        self,
+        op: Op,
+        src: str | None,
+        dest: str | None,
+        batch: Sequence[TwoPathOperation | tuple[str, str]] | None,
+        *,
+        overwrite: bool,
+        user_id: str | None,
+    ) -> Result:
+        """Shared move/copy front: normalize the src/dest-or-batch input, then route.
+
+        *src*/*dest* and *batch* are mutually exclusive; each batch item is
+        coerced through :meth:`_coerce_two_path`, so a malformed pair is an
+        ``invalid`` result rather than an uncaught ``TypeError``.
+        """
+        if batch is not None:
+            if src is not None or dest is not None:
+                return self._error(f"{op} takes src/dest or a batch list, not both", kind=VFSErrorKind.invalid)
+        else:
             if not src or not dest:
-                return self._error("copy requires src and dest, or a copies list", kind=VFSErrorKind.invalid)
-            copies = [TwoPathOperation(src=src, dest=dest)]
-        operations = [p if isinstance(p, TwoPathOperation) else TwoPathOperation(*p) for p in copies]
-        return await self._route_two_path("copy", operations, overwrite=overwrite, user_id=user_id)
+                return self._error(f"{op} requires src and dest, or a batch list", kind=VFSErrorKind.invalid)
+            batch = [TwoPathOperation(src=src, dest=dest)]
+        operations: list[TwoPathOperation] = []
+        for item in batch:
+            pair = self._coerce_two_path(item)
+            if pair is None:
+                return self._error(f"{op} pair must be (src, dest) of two strings: {item!r}", kind=VFSErrorKind.invalid)
+            operations.append(pair)
+        return await self._route_two_path(op, operations, overwrite=overwrite, user_id=user_id)
 
     # -------------------------------------------------------------------
     # public methods — execution
