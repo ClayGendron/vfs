@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 export function SpecHero({
   headline,
@@ -13,13 +13,22 @@ export function SpecHero({
   install?: { cmd: string }
 }) {
   const [copied, setCopied] = useState(false)
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clear any pending reset on unmount so setCopied never fires detached.
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current)
+    }
+  }, [])
 
   const copy = async () => {
     if (!install) return
     try {
       await navigator.clipboard.writeText(install.cmd)
       setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
+      if (resetTimer.current) clearTimeout(resetTimer.current)
+      resetTimer.current = setTimeout(() => setCopied(false), 1200)
     } catch {
       // clipboard denied
     }

@@ -14,6 +14,10 @@ const TTL_MS = 15 * 60 * 1000 // 15 min — friendly to GitHub's 60 req/hr anon 
 
 type Cached = { version: string; url: string; at: number }
 
+// Shared across all consumers so N hooks make at most one fetch per TTL window.
+let memory: Cached | null = null
+let inflight: Promise<Cached> | null = null
+
 function readCache(): Cached | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY)
@@ -34,48 +38,101 @@ function writeCache(v: Cached) {
   }
 }
 
+// Fresh value from memory first, then localStorage — never a stale entry.
+function getFresh(): Cached | null {
+  if (typeof window === "undefined") return null
+  if (memory && Date.now() - memory.at <= TTL_MS) return memory
+  const cached = readCache()
+  if (cached) memory = cached
+  return cached
+}
+
+function fetchRelease(): Promise<Cached> {
+  const fresh = getFresh()
+  if (fresh) return Promise.resolve(fresh)
+  if (inflight) return inflight
+  const { owner, name } = SITE.repo
+  inflight = fetch(
+    `https://api.github.com/repos/${owner}/${name}/releases/latest`,
+    { headers: { Accept: "application/vnd.github+json" } },
+  )
+    .then((r) => {
+      if (!r.ok) throw new Error(`GitHub API ${r.status}`)
+      return r.json() as Promise<{ tag_name: string; html_url: string }>
+    })
+    .then((data) => {
+      const value: Cached = {
+        version: data.tag_name,
+        url: data.html_url,
+        at: Date.now(),
+      }
+      memory = value
+      writeCache(value)
+      inflight = null
+      return value
+    })
+    .catch((e) => {
+      inflight = null
+      throw e
+    })
+  return inflight
+}
+
+function initialState(): ReleaseState {
+  const cached = getFresh()
+  if (cached) {
+    return {
+      version: cached.version,
+      url: cached.url,
+      loading: false,
+      fromCache: true,
+      error: null,
+    }
+  }
+  return {
+    version: SITE.versionFallback,
+    url: `${SITE.github}/releases/latest`,
+    loading: true,
+    fromCache: false,
+    error: null,
+  }
+}
+
 /**
- * Pulls the latest release tag from GitHub. Caches 15 min in localStorage.
+ * Pulls the latest release tag from GitHub. Caches 15 min in localStorage,
+ * de-duped module-wide so many consumers share one fetch per TTL window.
  * Falls back to SITE.versionFallback on error or before the first fetch lands.
  */
 export function useLatestRelease(): ReleaseState {
-  const cached = typeof window !== "undefined" ? readCache() : null
-  const [version, setVersion] = useState(cached?.version ?? SITE.versionFallback)
-  const [url, setUrl] = useState(
-    cached?.url ?? `${SITE.github}/releases/latest`,
-  )
-  const [loading, setLoading] = useState(!cached)
-  const [error, setError] = useState<Error | null>(null)
+  const [state, setState] = useState<ReleaseState>(initialState)
 
   useEffect(() => {
-    if (cached) {
-      setLoading(false)
-      return
-    }
-    const ctrl = new AbortController()
-    const { owner, name } = SITE.repo
-    fetch(`https://api.github.com/repos/${owner}/${name}/releases/latest`, {
-      headers: { Accept: "application/vnd.github+json" },
-      signal: ctrl.signal,
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error(`GitHub API ${r.status}`)
-        return r.json() as Promise<{ tag_name: string; html_url: string }>
-      })
-      .then((data) => {
-        setVersion(data.tag_name)
-        setUrl(data.html_url)
-        setLoading(false)
-        writeCache({ version: data.tag_name, url: data.html_url, at: Date.now() })
+    if (!state.loading) return
+    let mounted = true
+    fetchRelease()
+      .then((value) => {
+        if (!mounted) return
+        setState({
+          version: value.version,
+          url: value.url,
+          loading: false,
+          fromCache: false,
+          error: null,
+        })
       })
       .catch((e) => {
-        if (e.name === "AbortError") return
-        setError(e instanceof Error ? e : new Error(String(e)))
-        setLoading(false)
+        if (!mounted) return
+        setState((s) => ({
+          ...s,
+          loading: false,
+          error: e instanceof Error ? e : new Error(String(e)),
+        }))
       })
-    return () => ctrl.abort()
+    return () => {
+      mounted = false
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  return { version, url, loading, fromCache: !!cached, error }
+  return state
 }

@@ -13,7 +13,7 @@ const nav = [
 ]
 
 export function Topbar() {
-  const { version } = useLatestRelease()
+  const { version, url } = useLatestRelease()
 
   return (
     <header className="vfs-chrome">
@@ -48,7 +48,7 @@ export function Topbar() {
 
       <div className="vfs-spec-right">
         <a
-          href={RELEASES_URL}
+          href={url ?? RELEASES_URL}
           target="_blank"
           rel="noreferrer"
           className="vfs-spec-ver"
