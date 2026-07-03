@@ -29,7 +29,7 @@ import asyncio
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
-from vfs.exceptions import exception_for_kind
+from vfs.exceptions import NotFoundError, VFSError, exception_for_kind
 from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS
 from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
@@ -44,7 +44,7 @@ from vfs.replace import EditOperation
 from vfs.results2 import Result, ResultError, VFSErrorKind
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Coroutine, Sequence
 
     from vfs.ops import Op
 
@@ -169,7 +169,7 @@ class VirtualFileSystem:
             if existing_path.startswith(mount_path + "/"):
                 msg = f"Cannot mount at {mount_path}: it is owned by a deeper mount at {existing_path}"
                 raise ValueError(msg)
-        if self._storage and not await self._is_path_mountable(mount_path):
+        if not await self._is_path_mountable(mount_path):
             msg = f"Cannot mount at {mount_path}: storage contents conflict with that mount point"
             raise ValueError(msg)
 
@@ -331,15 +331,55 @@ class VirtualFileSystem:
     async def _is_path_mountable(self, path: Path) -> bool:
         """Return whether a mount may be attached at *path* inside this filesystem.
 
-        The pure router has no storage, so any path is mountable.  Storage
-        backends (``DatabaseFileSystem``) override this as a *policy*
-        predicate — not an exact-path check — and should reject when:
+        A mount point must not collide with stored contents: *path* itself
+        must not exist and every ancestor that exists must be a directory.
+        One batched ``stat`` over the lineage answers both — and rules out
+        shadowed descendants too, because storage keeps the namespace
+        *connected*: writes materialize every ancestor directory, so a
+        descendant cannot exist without *path* showing up here.  A sparse
+        backend that cannot honor that invariant must override this.
 
-        - any ancestor of *path* exists as a non-directory,
-        - *path* itself already exists, or
-        - any descendant already exists and would be shadowed by the mount.
+        Composed from the public verb via self-dispatch, so any storage
+        backend answers correctly without overriding; an override is a
+        one-query optimization, not an obligation.  Absence must surface as
+        ``not_found``; any other failure is conservatively unmountable.
         """
-        return True
+        if not self._storage:
+            return True
+
+        lineage = [Observation(path=path)]
+        node = path.parent_dir
+        while node != "/":
+            lineage.append(Observation(path=node))
+            node = node.parent_dir
+        found = await self._probe(self.stat(observations=lineage))
+        return found is not None and not any(o.path == path or o.kind != "directory" for o in found)
+
+    @staticmethod
+    async def _probe(call: Coroutine[Any, Any, Result]) -> list[Observation] | None:
+        """Await a read verb for the mountability check, mapping absence to ``[]``.
+
+        Returns the rows found; ``[]`` when everything was ``not_found`` (pure
+        absence — the mountable case); ``None`` on a *classified* read failure,
+        which the caller must treat as "cannot verify" and reject.  Handles the
+        two documented failure channels of a read verb — a failed ``Result`` and,
+        under ``raise_on_error=True``, the kind-mapped ``VFSError`` — identically.
+
+        A raw non-``VFSError`` from an impl is an impl bug, not a "cannot verify"
+        condition, so it propagates with its real traceback rather than being
+        masked as a mount conflict.
+        """
+        try:
+            result = await call
+        except NotFoundError:
+            return []
+        except VFSError:
+            return None
+        if result.success:
+            return list(result.observations)
+        if all(e.kind == VFSErrorKind.not_found for e in result.errors):
+            return list(result.observations)
+        return None
 
     # -------------------------------------------------------------------
     # observation grouping
@@ -774,7 +814,9 @@ class VirtualFileSystem:
         """Merge multiple results — any failure makes the whole a failure.
 
         ``|`` propagates ``success=False`` and concatenates ``errors`` while
-        preserving all successful observations.
+        preserving all successful observations.  Its path-union collapses
+        duplicate global paths (left wins); this is lossless here because
+        terminals have disjoint mount prefixes, so their rows never collide.
         """
         if not results:
             return Result(observations=[])

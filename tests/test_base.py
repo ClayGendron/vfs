@@ -21,7 +21,7 @@ from vfs.exceptions import (
 )
 from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS
-from vfs.paths import Path
+from vfs.paths import ObjectKind, Path
 from vfs.permissions import read_write
 from vfs.replace import EditOperation
 from vfs.results2 import Result, ResultError, VFSErrorKind
@@ -48,6 +48,28 @@ class MountPolicyFS(VirtualFileSystem):
 
     async def _is_path_mountable(self, path: Path) -> bool:
         return path not in self._blocked
+
+
+class DictStorageFS(VirtualFileSystem):
+    """Minimal storage terminal: a path -> kind dict behind stat/glob."""
+
+    def __init__(self, entries: dict[str, ObjectKind], **kwargs: Any) -> None:
+        super().__init__(storage=True, **kwargs)
+        self._entries = entries
+
+    async def _stat_impl(
+        self,
+        *,
+        path: str | None = None,
+        observations: list[Observation] | None = None,
+        **_: object,
+    ) -> Result:
+        wanted = [path] if path is not None else [o.path for o in observations or []]
+        rows = [Observation(path=Path(p), kind=self._entries[p]) for p in wanted if p in self._entries]
+        if path is not None and not rows:
+            return self._error(f"Not found: {path}", kind=VFSErrorKind.not_found, path=Path(path))
+        return Result(function="stat", observations=rows)
+
 
 
 # ----------------------------------------------------------------------
@@ -313,10 +335,67 @@ async def test_add_mount_mountable_check_runs_after_delegation() -> None:
 
 
 async def test_is_path_mountable_default_true() -> None:
-    # The pure router has no storage, so the base policy admits any path;
-    # add_mount only consults it when self._storage is set.
+    # The pure router has no storage, so the policy admits any path
+    # without probing.
     fs = VirtualFileSystem()
     assert await fs._is_path_mountable(Path("/anything/at/all")) is True
+
+
+async def test_mountable_rejects_occupied_point() -> None:
+    fs = DictStorageFS({"/data": "directory"})
+    with pytest.raises(ValueError, match="conflict"):
+        await fs.add_mount(VirtualFileSystem(), "/data")
+
+
+async def test_mountable_rejects_file_ancestor() -> None:
+    fs = DictStorageFS({"/a": "file"})
+    with pytest.raises(ValueError, match="conflict"):
+        await fs.add_mount(VirtualFileSystem(), "/a/b")
+
+
+async def test_mountable_rejects_shadowed_descendant() -> None:
+    # Connected namespace: a descendant implies its ancestors, so the shadow
+    # case surfaces as the mount point existing as a directory.
+    fs = DictStorageFS({"/data": "directory", "/data/kept.txt": "file"})
+    with pytest.raises(ValueError, match="conflict"):
+        await fs.add_mount(VirtualFileSystem(), "/data")
+
+
+async def test_mountable_allows_clean_sparse_point() -> None:
+    fs = DictStorageFS({"/a": "directory", "/other.txt": "file"})
+    await fs.add_mount(VirtualFileSystem(), "/a/b/c")
+    assert set(fs._mounts) == {"/a/b/c"}
+
+
+async def test_mountable_conservative_on_backend_error() -> None:
+    # "Cannot verify" rejects the mount, never permits it — as a failed
+    # result, and as the raised exception under raise_on_error.
+    class BrokenFS(VirtualFileSystem):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(storage=True, **kwargs)
+
+        async def _stat_impl(self, **_: object) -> Result:
+            return self._error("db down", kind=VFSErrorKind.unavailable)
+
+    with pytest.raises(ValueError, match="conflict"):
+        await BrokenFS().add_mount(VirtualFileSystem(), "/data")
+    with pytest.raises(ValueError, match="conflict"):
+        await BrokenFS(raise_on_error=True).add_mount(VirtualFileSystem(), "/data")
+
+
+async def test_mountable_treats_not_found_as_absence() -> None:
+    # A backend reporting lineage misses as not_found — failed result or
+    # raised NotFoundError — reads as pure absence: mountable.
+    class SparseFS(DictStorageFS):
+        async def _stat_impl(self, **_: object) -> Result:
+            return self._error("nothing here", kind=VFSErrorKind.not_found)
+
+    plain = SparseFS({})
+    await plain.add_mount(VirtualFileSystem(), "/data")
+    assert set(plain._mounts) == {"/data"}
+    raising = SparseFS({}, raise_on_error=True)
+    await raising.add_mount(VirtualFileSystem(), "/data")
+    assert set(raising._mounts) == {"/data"}
 
 
 async def test_add_mount_on_subnode_checks_whole_graph() -> None:
@@ -776,6 +855,10 @@ class EchoFS(RecorderFS):
     async def _call_local_impl(self, op, *, user_id=None, **kwargs) -> Result:  # type: ignore[override]
         self.calls.append((op, dict(kwargs)))
         return Result(function=op, observations=[Observation(path=Path(self._echo_path))])
+
+    async def _is_path_mountable(self, path: Path) -> bool:
+        # Echoed rows are not namespace truth — always accept mounts.
+        return True
 
 
 class LimitedEchoFS(EchoFS):
