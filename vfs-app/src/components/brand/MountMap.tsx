@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils"
+import { SITE } from "@/lib/site"
 
 /**
  * §4 lead visual — VFS as the protocol, not the database.
@@ -9,12 +10,7 @@ import { cn } from "@/lib/utils"
  * behind the wire.
  */
 
-const MOUNTS = [
-  { mount: "/enterprise", backend: "PostgresFileSystem", mode: "in-process" },
-  { mount: "/archive", backend: "MSSQLFileSystem", mode: "in-process" },
-  { mount: "/knowledge", backend: "DatabaseFileSystem · sqlite", mode: "in-process" },
-  { mount: "/agents", backend: "MCP server", mode: "mcp" },
-] as const
+const MOUNTS = SITE.mounts.filter((m) => m.mountpoint)
 
 export function MountMap() {
   return (
@@ -25,12 +21,12 @@ export function MountMap() {
         <div role="columnheader">mode</div>
       </div>
       {MOUNTS.map((m) => (
-        <div className="vfs-mounts-row" role="row" key={m.mount}>
+        <div className="vfs-mounts-row" role="row" key={m.mountpoint}>
           <div className="vfs-mounts-mount" role="cell">
             <span className="vfs-mounts-arrow" aria-hidden="true">
               →
             </span>
-            <span>{m.mount}</span>
+            <span>{m.mountpoint}</span>
           </div>
           <div className="vfs-mounts-backend" role="cell">
             {m.backend}

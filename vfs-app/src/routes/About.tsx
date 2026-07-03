@@ -1,11 +1,13 @@
 import { Section, Sample } from "@/components/brand"
+import { Seo } from "@/components/Seo"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { SITE } from "@/lib/site"
+import { routeMeta, SITE } from "@/lib/site"
 
 export function About() {
   return (
     <>
+      <Seo {...routeMeta.about} />
       {/* ─── Lede ─── */}
       <Section label="about / 01 · what vfs is" className="pt-24">
         <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-16 items-start">
@@ -192,7 +194,7 @@ ranked = g.pagerank(candidates=expanded)`}
         <p className="text-[15px] leading-relaxed text-[var(--muted)] max-w-prose mb-8">
           The core file system, CLI query engine, graph algorithms, and BM25 lexical
           search are implemented and proven, now being re-landed on a new MCP-native
-          core. <strong className="text-[var(--fg)] font-semibold">718 tests green on that core</strong>; SQLite, Postgres, and MSSQL tested against real databases.
+          core. <strong className="text-[var(--fg)] font-semibold">{SITE.tests} tests green on that core</strong>; SQLite, Postgres, and MSSQL tested against real databases.
         </p>
 
         <Separator className="bg-[var(--rule)] mb-8" />

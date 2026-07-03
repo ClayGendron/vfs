@@ -12,7 +12,8 @@ import {
   SpecHero,
   SpecStrip,
 } from "@/components/brand"
-import { SITE } from "@/lib/site"
+import { Seo } from "@/components/Seo"
+import { routeMeta, SITE } from "@/lib/site"
 
 export function Home() {
   const heroCode = (
@@ -38,8 +39,9 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
 
   return (
     <>
+      <Seo {...routeMeta.home} />
       <SpecHero
-        headline={"Agentic Search on\nany SQL Database"}
+        headline={SITE.headline}
         lede={SITE.description}
         code={heroCode}
         install={{ cmd: SITE.install.python }}
@@ -99,53 +101,17 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
             The core file system, CLI query engine, graph algorithms, and BM25
             lexical search are implemented and proven, now being re-landed on a
             new MCP-native core.{" "}
-            <strong style={{ color: "var(--fg)" }}>718 tests</strong> green on
-            that core; SQLite, Postgres, and MSSQL backends tested against real
+            <strong style={{ color: "var(--fg)" }}>{SITE.tests} tests</strong>{" "}
+            green on that core; SQLite, Postgres, and MSSQL backends tested against real
             databases. The API is still moving. Target stable:{" "}
             <strong style={{ color: "var(--fg)" }}>{SITE.milestone}</strong>.
           </p>
-          <div
-            style={{
-              display: "flex",
-              gap: 18,
-              marginTop: 18,
-              flexWrap: "wrap",
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
-            }}
-          >
-            <Link
-              to="/terminal"
-              style={{
-                color: "var(--accent)",
-                borderBottom: "1px solid var(--accent)",
-                paddingBottom: 2,
-              }}
-            >
+          <div className="vfs-linkline" style={{ marginTop: 18 }}>
+            <Link to="/terminal" className="accent">
               try the repl →
             </Link>
-            <Link
-              to="/about"
-              style={{
-                color: "var(--fg)",
-                borderBottom: "1px solid var(--rule)",
-                paddingBottom: 2,
-              }}
-            >
-              read the thesis →
-            </Link>
-            <a
-              href={SITE.github}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                color: "var(--fg)",
-                borderBottom: "1px solid var(--rule)",
-                paddingBottom: 2,
-              }}
-            >
+            <Link to="/about">read the thesis →</Link>
+            <a href={SITE.github} target="_blank" rel="noreferrer">
               source →
             </a>
           </div>

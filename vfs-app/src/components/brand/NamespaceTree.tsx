@@ -7,12 +7,9 @@
  * payoff — results compose with set algebra over one envelope.
  */
 
-const MOUNTS = [
-  { path: "enterprise/", mount: "postgres" },
-  { path: "archive/", mount: "mssql" },
-  { path: "knowledge/", mount: "sqlite" },
-  { path: "graph/", mount: "rustworkx" },
-] as const
+import { SITE } from "@/lib/site"
+
+const MOUNTS = SITE.mounts.filter((m) => m.treePath)
 
 export function NamespaceTree() {
   return (
@@ -29,12 +26,12 @@ export function NamespaceTree() {
         <span className="vfs-tree-mount">one root</span>
       </div>
       {MOUNTS.map((m, i) => (
-        <div className="vfs-tree-row" key={m.path}>
+        <div className="vfs-tree-row" key={m.treePath}>
           <span className="vfs-tree-branch" aria-hidden="true">
             {i === MOUNTS.length - 1 ? "└─" : "├─"}
           </span>
-          <span className="vfs-tree-path">{m.path}</span>
-          <span className="vfs-tree-mount">{m.mount}</span>
+          <span className="vfs-tree-path">{m.treePath}</span>
+          <span className="vfs-tree-mount">{m.store}</span>
         </div>
       ))}
       <div className="vfs-tree-foot">
