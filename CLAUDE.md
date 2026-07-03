@@ -35,6 +35,14 @@ those fundamentals are heading, not against keeping the whole tree green.
   branch as-is — including `main` — unless I explicitly ask for a new branch.
 - Commit or push only when I ask.
 
+## Project memory
+
+- **All project knowledge lives in this repo — never outside it.** Do not
+  write memory files to `~/.claude/projects/*/memory/` or any other
+  out-of-repo location; if any exist, delete them. Durable context belongs
+  in `context/` (stories, decisions, learnings) or this file, where it is
+  versioned and visible to everyone.
+
 ## Imports
 
 - **All imports go at the top of the file. No mid-file or function-local
