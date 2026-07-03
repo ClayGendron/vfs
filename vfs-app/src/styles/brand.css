@@ -1276,3 +1276,33 @@
   0%, 50%       { opacity: 1; }
   50.01%, 100%  { opacity: 0; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Link line · mono action links
+   Row of uppercase mono links with a bottom-rule affordance; the .accent
+   variant swaps the neutral rule for cobalt. Used on Home and error routes.
+   ════════════════════════════════════════════════════════════════════════ */
+.vfs-linkline {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.vfs-linkline a,
+.vfs-linkline button {
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 2px;
+  color: var(--fg);
+}
+.vfs-linkline button {
+  background: transparent;
+  cursor: pointer;
+}
+.vfs-linkline .accent {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}

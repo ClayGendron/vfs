@@ -7,6 +7,8 @@
  */
 
 import { Link, isRouteErrorResponse, useRouteError } from "react-router-dom"
+import { Seo } from "@/components/Seo"
+import { routeMeta } from "@/lib/site"
 
 function describe(error: unknown): { status: string; detail: string } {
   if (isRouteErrorResponse(error)) {
@@ -28,6 +30,7 @@ export function RouteError() {
 
   return (
     <main className="vfs-404">
+      <Seo {...routeMeta.error} />
       <div className="cap">error · something threw</div>
       <h1 className="title">/error</h1>
 
@@ -39,44 +42,15 @@ export function RouteError() {
         </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 18,
-          marginTop: 28,
-          flexWrap: "wrap",
-          fontFamily: "var(--font-mono)",
-          fontSize: 12,
-          letterSpacing: "0.18em",
-          textTransform: "uppercase",
-        }}
-      >
+      <div className="vfs-linkline" style={{ marginTop: 28 }}>
         <button
           type="button"
           onClick={() => window.location.reload()}
-          style={{
-            color: "var(--accent)",
-            borderBottom: "1px solid var(--accent)",
-            paddingBottom: 2,
-            background: "transparent",
-            border: 0,
-            borderBottomWidth: 1,
-            borderBottomStyle: "solid",
-            cursor: "pointer",
-          }}
+          className="accent"
         >
           reload →
         </button>
-        <Link
-          to="/"
-          style={{
-            color: "var(--fg)",
-            borderBottom: "1px solid var(--rule)",
-            paddingBottom: 2,
-          }}
-        >
-          cd home →
-        </Link>
+        <Link to="/">cd home →</Link>
       </div>
     </main>
   )
