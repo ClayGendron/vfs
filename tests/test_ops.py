@@ -89,17 +89,30 @@ def test_glean_and_run_have_default_projections() -> None:
     assert "run" in projection.KNOWN_FUNCTIONS
 
 
+def test_pruned_vocabularies_are_gone() -> None:
+    # Centrality left the product scope; per-method search names died with
+    # the glean redesign (fusion is opaque — no producing method to name).
+    assert not hasattr(projection, "CENTRALITY_FUNCTIONS")
+    assert not hasattr(projection, "RANKED_SEARCH_FUNCTIONS")
+    for stale in ("pagerank", "hits", "vector_search", "semantic_search", "lexical_search", "bm25"):
+        assert stale not in projection.KNOWN_FUNCTIONS
+
+
 # ---------------------------------------------------------------------------
 # Router surface ⊆ vocabulary
 # ---------------------------------------------------------------------------
 
 
-def test_router_public_verbs_are_registered_ops() -> None:
+def test_router_public_verbs_are_exactly_the_registered_ops() -> None:
+    """The full-equality drift test: the router surface *is* the vocabulary.
+
+    A new public coroutine on the router must be a registered op or a
+    deliberate addition to the management allowlist; a registered op with
+    no router method is an unbuilt verb.
+    """
     verbs = {
         name
         for name, _member in inspect.getmembers(VirtualFileSystem, inspect.iscoroutinefunction)
         if not name.startswith("_")
     }
-    assert {"read", "stat", "ls", "run"} <= verbs
-    unregistered = verbs - MANAGEMENT_METHODS - ALL_OPS
-    assert not unregistered, f"public router verbs missing from ALL_OPS: {sorted(unregistered)}"
+    assert verbs - MANAGEMENT_METHODS == ALL_OPS

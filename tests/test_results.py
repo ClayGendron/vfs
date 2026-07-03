@@ -1,4 +1,4 @@
-"""Tests for the VFSResult envelope: row access, algebra, rebasing, the wire."""
+"""Tests for the Result envelope: row access, algebra, rebasing, the wire."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from vfs.models2 import Match, Observation
-from vfs.results2 import ResultError, VFSErrorKind, VFSResult
+from vfs.results2 import Result, ResultError, VFSErrorKind
 
 
 def obs(path: str, **kwargs: object) -> Observation:
@@ -75,7 +75,7 @@ class TestResultError:
 
 class TestRowAccess:
     def test_empty_result(self) -> None:
-        result = VFSResult()
+        result = Result()
         assert not result
         assert len(result) == 0
         assert result.first() is None
@@ -83,7 +83,7 @@ class TestRowAccess:
         assert list(result) == []
 
     def test_sequence_protocol(self) -> None:
-        result = VFSResult(function="ls", observations=[obs("/a.md"), obs("/b.md")])
+        result = Result(function="ls", observations=[obs("/a.md"), obs("/b.md")])
         assert bool(result)
         assert len(result) == 2
         assert result[0].path == "/a.md"
@@ -94,18 +94,18 @@ class TestRowAccess:
         assert "/missing.md" not in result
 
     def test_first_and_one(self) -> None:
-        single = VFSResult(observations=[obs("/a.md", content="hello")])
+        single = Result(observations=[obs("/a.md", content="hello")])
         assert single.first() is single.observations[0]
         assert single.one().content == "hello"
 
     def test_one_raises_on_zero_and_many(self) -> None:
         with pytest.raises(ValueError, match="got 0"):
-            VFSResult(function="read").one()
+            Result(function="read").one()
         with pytest.raises(ValueError, match="got 2"):
-            VFSResult(observations=[obs("/a.md"), obs("/b.md")]).one()
+            Result(observations=[obs("/a.md"), obs("/b.md")]).one()
 
     def test_failed_result_is_falsy_even_with_rows(self) -> None:
-        result = VFSResult(
+        result = Result(
             observations=[obs("/a.md")],
             success=False,
             errors=[ResultError(kind=VFSErrorKind.unavailable, message="partial")],
@@ -121,54 +121,54 @@ class TestRowAccess:
 
 class TestSetAlgebra:
     def test_intersection_keeps_common_paths(self) -> None:
-        a = VFSResult(function="glob", observations=[obs("/a.md"), obs("/b.md")])
-        b = VFSResult(function="glob", observations=[obs("/b.md"), obs("/c.md")])
+        a = Result(function="glob", observations=[obs("/a.md"), obs("/b.md")])
+        b = Result(function="glob", observations=[obs("/b.md"), obs("/c.md")])
         assert (a & b).paths == ("/b.md",)
 
     def test_union_left_wins_and_fills_nulls(self) -> None:
-        a = VFSResult(function="vector_search", observations=[obs("/a.md", score=0.9)])
-        b = VFSResult(function="stat", observations=[obs("/a.md", score=0.1, size_bytes=42)])
+        a = Result(function="glean", observations=[obs("/a.md", score=0.9)])
+        b = Result(function="stat", observations=[obs("/a.md", score=0.1, size_bytes=42)])
         merged = (a | b).one()
         assert merged.score == 0.9  # left wins
         assert merged.size_bytes == 42  # right fills the null
 
     def test_cross_function_union_is_hybrid(self) -> None:
-        a = VFSResult(function="glob", observations=[obs("/a.md")])
-        b = VFSResult(function="grep", observations=[obs("/b.md")])
+        a = Result(function="glob", observations=[obs("/a.md")])
+        b = Result(function="grep", observations=[obs("/b.md")])
         assert (a | b).function == "hybrid"
         assert (a | a).function == "glob"
 
     def test_difference(self) -> None:
-        a = VFSResult(function="glob", observations=[obs("/a.md"), obs("/b.md")])
-        b = VFSResult(function="grep", observations=[obs("/b.md")])
+        a = Result(function="glob", observations=[obs("/a.md"), obs("/b.md")])
+        b = Result(function="grep", observations=[obs("/b.md")])
         diff = a - b
         assert diff.paths == ("/a.md",)
         assert diff.function == "glob"
 
     def test_errors_and_success_propagate(self) -> None:
         err = ResultError(kind=VFSErrorKind.timeout, message="slow mount")
-        a = VFSResult(observations=[obs("/a.md")])
-        b = VFSResult(success=False, errors=[err])
+        a = Result(observations=[obs("/a.md")])
+        b = Result(success=False, errors=[err])
         combined = a | b
         assert not combined.success
         assert combined.errors == [err]
 
     def test_union_with_empty_preserves_duplicate_paths(self) -> None:
-        dup = VFSResult(function="grep", observations=[obs("/a.md", score=0.9), obs("/a.md", score=0.1)])
-        empty = VFSResult(function="grep")
+        dup = Result(function="grep", observations=[obs("/a.md", score=0.9), obs("/a.md", score=0.1)])
+        empty = Result(function="grep")
         assert (dup | empty).observations == dup.observations
         assert (empty | dup).observations == dup.observations
 
     def test_diamond_chains_do_not_duplicate_errors(self) -> None:
         err = ResultError(kind=VFSErrorKind.unavailable, message="mount down")
-        a = VFSResult(observations=[obs("/a.md")])
-        b = VFSResult(success=False, errors=[err], observations=[obs("/a.md")])
+        a = Result(observations=[obs("/a.md")])
+        b = Result(success=False, errors=[err], observations=[obs("/a.md")])
         assert ((a | b) & b).errors == [err]
 
     def test_merge_does_not_alias_the_right_rows_matches_list(self) -> None:
         right_row = obs("/a.md", matches=[Match(start=1, end=2)])
-        left = VFSResult(observations=[obs("/a.md")])
-        right = VFSResult(observations=[right_row])
+        left = Result(observations=[obs("/a.md")])
+        right = Result(observations=[right_row])
         merged = (left | right).one()
         assert merged.matches == right_row.matches
         assert merged.matches is not right_row.matches
@@ -181,34 +181,34 @@ class TestSetAlgebra:
 
 class TestEnrichment:
     def test_sort_default_is_score_descending_none_last(self) -> None:
-        result = VFSResult(
+        result = Result(
             observations=[obs("/low.md", score=0.1), obs("/none.md"), obs("/high.md", score=0.9)],
         )
         assert result.sort().paths == ("/high.md", "/low.md", "/none.md")
 
     def test_top_sorts_then_slices(self) -> None:
-        result = VFSResult(
-            function="bm25",
+        result = Result(
+            function="glean",
             observations=[obs("/low.md", score=0.1), obs("/high.md", score=0.9)],
         )
         top = result.top(1)
         assert top.paths == ("/high.md",)
-        assert top.function == "bm25"
+        assert top.function == "glean"
 
     def test_top_rejects_non_positive_k(self) -> None:
         with pytest.raises(ValueError, match="k must be >= 1"):
-            VFSResult().top(0)
+            Result().top(0)
 
     def test_sort_honors_custom_key(self) -> None:
-        result = VFSResult(observations=[obs("/b.md"), obs("/a.md"), obs("/c.md")])
+        result = Result(observations=[obs("/b.md"), obs("/a.md"), obs("/c.md")])
         ordered = result.sort(key=lambda o: o.path, reverse=False)
         assert ordered.paths == ("/a.md", "/b.md", "/c.md")
 
     def test_sort_treats_nan_score_as_lowest(self) -> None:
         # NaN compares false against everything; an unguarded key corrupts the
         # sort and top() drops the real leaders. NaN must sink like None.
-        result = VFSResult(
-            function="bm25",
+        result = Result(
+            function="glean",
             observations=[
                 obs("/a.md", score=1.0),
                 obs("/nan.md", score=float("nan")),
@@ -220,7 +220,7 @@ class TestEnrichment:
         assert result.top(2).paths == ("/b.md", "/c.md")
 
     def test_filter_and_kinds(self) -> None:
-        result = VFSResult(
+        result = Result(
             observations=[obs("/a.md", kind="file"), obs("/docs", kind="directory")],
         )
         assert result.filter(lambda o: o.kind == "file").paths == ("/a.md",)
@@ -228,13 +228,13 @@ class TestEnrichment:
 
     def test_chains_preserve_envelope(self) -> None:
         err = ResultError(kind=VFSErrorKind.unavailable, message="one mount down")
-        result = VFSResult(
-            function="vector_search",
+        result = Result(
+            function="glean",
             observations=[obs("/a.md", score=0.5)],
             errors=[err],
         )
         chained = result.sort().filter(lambda o: True)
-        assert chained.function == "vector_search"
+        assert chained.function == "glean"
         assert chained.errors == [err]
 
 
@@ -245,7 +245,7 @@ class TestEnrichment:
 
 class TestMountRebasing:
     def test_with_mount_rebases_rows_and_error_paths(self) -> None:
-        result = VFSResult(
+        result = Result(
             function="ls",
             observations=[obs("/a.md"), obs("/")],
             errors=[ResultError(kind=VFSErrorKind.not_found, message="gone", path="/b.md")],
@@ -255,17 +255,17 @@ class TestMountRebasing:
         assert rebased.errors[0].path == "/data/b.md"
 
     def test_without_mount_inverts_with_mount(self) -> None:
-        result = VFSResult(function="ls", observations=[obs("/a.md")])
+        result = Result(function="ls", observations=[obs("/a.md")])
         assert result.with_mount("/data").without_mount("/data") == result
 
     def test_root_and_empty_mount_are_identity(self) -> None:
-        result = VFSResult(observations=[obs("/a.md")])
+        result = Result(observations=[obs("/a.md")])
         assert result.with_mount("/") is result
         assert result.with_mount("") is result
         assert result.without_mount("/") is result
 
     def test_rebase_is_pure(self) -> None:
-        result = VFSResult(observations=[obs("/a.md")])
+        result = Result(observations=[obs("/a.md")])
         result.with_mount("/data")
         assert result.paths == ("/a.md",)
 
@@ -275,8 +275,8 @@ class TestMountRebasing:
 # ---------------------------------------------------------------------------
 
 
-def rich_result() -> VFSResult:
-    return VFSResult(
+def rich_result() -> Result:
+    return Result(
         function="grep",
         observations=[
             obs(
@@ -297,11 +297,11 @@ def rich_result() -> VFSResult:
 class TestWireContract:
     def test_payload_round_trip_is_lossless(self) -> None:
         result = rich_result()
-        assert VFSResult.from_payload(result.to_payload()) == result
+        assert Result.from_payload(result.to_payload()) == result
 
     def test_payload_round_trip_without_exclude_none(self) -> None:
         result = rich_result()
-        assert VFSResult.from_payload(result.to_payload(exclude_none=False)) == result
+        assert Result.from_payload(result.to_payload(exclude_none=False)) == result
 
     def test_payload_is_json_safe(self) -> None:
         payload = rich_result().to_payload()
@@ -313,11 +313,11 @@ class TestWireContract:
     def test_payload_paths_revalidate_through_the_gate(self) -> None:
         payload = rich_result().to_payload()
         payload["observations"][0]["path"] = "/a/../b.md"
-        restored = VFSResult.from_payload(payload)
+        restored = Result.from_payload(payload)
         assert restored.observations[0].path == "/b.md"
 
     def test_exclude_none_drops_unpopulated_fields(self) -> None:
-        payload = VFSResult(observations=[obs("/a.md")]).to_payload()
+        payload = Result(observations=[obs("/a.md")]).to_payload()
         assert "score" not in payload["observations"][0]
 
     def test_to_json_matches_payload(self) -> None:
@@ -325,22 +325,22 @@ class TestWireContract:
         assert json.loads(result.to_json()) == result.to_payload()
 
     def test_non_finite_scores_are_json_safe_and_restore_as_none(self) -> None:
-        result = VFSResult(
-            function="bm25",
+        result = Result(
+            function="glean",
             observations=[obs("/a.md", score=float("nan")), obs("/b.md", score=float("inf"))],
         )
         payload = result.to_payload()
         json.dumps(payload, allow_nan=False)  # strict JSON must not raise
         assert json.loads(result.to_json()) == payload
-        restored = VFSResult.from_payload(payload)
+        restored = Result.from_payload(payload)
         assert restored.observations[0].score is None
         assert restored.observations[1].score is None
 
     def test_payload_survives_an_actual_json_wire(self) -> None:
         result = rich_result()
         wire = json.loads(json.dumps(result.to_payload(), allow_nan=False))
-        assert VFSResult.from_payload(wire) == result
+        assert Result.from_payload(wire) == result
 
     def test_str_delegates_to_render(self) -> None:
-        result = VFSResult(function="glob", observations=[obs("/b.md"), obs("/a.md")])
+        result = Result(function="glob", observations=[obs("/b.md"), obs("/a.md")])
         assert str(result) == "/a.md\n/b.md"

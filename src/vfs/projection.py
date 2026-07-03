@@ -29,21 +29,7 @@ OBSERVATION_FIELDS: frozenset[str] = frozenset(Observation.model_fields)
 PROJECTION_SENTINELS: frozenset[str] = frozenset({"default", "all"})
 
 # Arrangement groups. The envelope's ``function`` key picks an arrangement;
-# multiple functions share one (e.g. all centrality methods).
-RANKED_SEARCH_FUNCTIONS: frozenset[str] = frozenset(
-    {"glean", "vector_search", "semantic_search", "lexical_search", "bm25"},
-)
-CENTRALITY_FUNCTIONS: frozenset[str] = frozenset(
-    {
-        "pagerank",
-        "betweenness_centrality",
-        "closeness_centrality",
-        "degree_centrality",
-        "in_degree_centrality",
-        "out_degree_centrality",
-        "hits",
-    },
-)
+# multiple functions share one (e.g. all graph traversals).
 # The mutation verbs — shared with the dispatch gate so the rendering and
 # permission vocabularies cannot drift apart.
 ACTION_FUNCTIONS: frozenset[str] = MUTATING_OPS
@@ -62,6 +48,7 @@ FALLBACK_PROJECTION: tuple[str, ...] = ("path",)
 _DEFAULT_PROJECTION: dict[str, tuple[str, ...]] = {
     "grep": ("path", "matches"),
     "glob": ("path",),
+    "glean": ("path", "score"),
     "ls": ("path",),
     "tree": ("path",),
     "read": ("content",),
@@ -69,10 +56,6 @@ _DEFAULT_PROJECTION: dict[str, tuple[str, ...]] = {
     "run": ("path",),
     "hybrid": ("path",),
 }
-for _fn in RANKED_SEARCH_FUNCTIONS:
-    _DEFAULT_PROJECTION[_fn] = ("path", "score")
-for _fn in CENTRALITY_FUNCTIONS:
-    _DEFAULT_PROJECTION[_fn] = ("path", "score", "in_degree", "out_degree")
 for _fn in ACTION_FUNCTIONS:
     _DEFAULT_PROJECTION[_fn] = ("path",)
 for _fn in TRAVERSAL_FUNCTIONS:

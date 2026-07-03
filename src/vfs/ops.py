@@ -15,7 +15,7 @@ string into these ops and re-enters through their public methods, so every
 gate fires on the real verb. It is a front door, not an op.
 
 The ``graph`` op routes as one verb; its results report the specific
-method (``pagerank``, ``descendants``, ...) in ``VFSResult.function`` —
+method (``descendants``, ``ancestors``, ...) in ``Result.function`` —
 that rendering vocabulary lives in ``vfs.projection``, not here.
 """
 

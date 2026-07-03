@@ -61,7 +61,7 @@ Supporting decisions, settled here so later stories don't reopen them:
   a set (a `META_OPS` set would invite someone to iterate it into a gate).
 - **`graph` routes as one op** (`method=` selects the algorithm); results
   report the *specific* method name (`pagerank`, `descendants`, ...) in
-  `VFSResult.function`. That rendering vocabulary stays in `projection.py`;
+  `Result.function`. That rendering vocabulary stays in `projection.py`;
   `ops.py` is dispatch-only and must not grow a `GRAPH_METHODS` table.
 - **`glean` is the ranked-search verb** (the indexed counterpart of `grep`).
   The method-specific function names (`vector_search`, `bm25`, ...) remain
@@ -81,7 +81,7 @@ Supporting decisions, settled here so later stories don't reopen them:
   (`vfs.base`, `vfs.results`).
 - `projection.py` defines `ACTION_FUNCTIONS` as a third copy; it has no
   default projection for `glean` or `run`.
-- `exceptions.py`'s `TYPE_CHECKING` import of `VFSResult` points at the
+- `exceptions.py`'s `TYPE_CHECKING` import of `Result` points at the
   dead `vfs.results`.
 - No test pins any of these to each other.
 

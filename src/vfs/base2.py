@@ -10,28 +10,48 @@ longest-prefix mount matching, then dispatch across the mount boundary:
   ``_call_local_impl`` — the one seam down to an ``_*_impl`` method.
 - When the terminal is a child mount, the router calls the child's **public**
   method only — never the child's session, engine, or ``_*_impl``.  Values go
-  in, ``VFSResult`` comes out.
+  in, ``Result`` comes out.
+
+Five dispatch shapes cover the whole verb surface: single-path (most verbs),
+grouped observations (chained rows, and ``graph`` over row sets), two-path
+pairs (``move``/``copy``), the endpoint pair (``mkedge``), and fan-out
+(``glob``/``grep``/``glean`` with no scope reach every mount in parallel).
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from vfs.exceptions import exception_for_kind
 from vfs.ops import MUTATING_OPS
-from vfs.paths import METADATA_ROOT, Path, normalize_path, resolve_path
+from vfs.paths import METADATA_ROOT, Path, edge_out_path, normalize_path, resolve_path
 from vfs.permissions import (
     Permission,
     PermissionMap,
     check_writable,
     coerce_permissions,
 )
-from vfs.results2 import ResultError, VFSErrorKind, VFSResult
+from vfs.projection import TRAVERSAL_FUNCTIONS
+from vfs.replace import EditOperation
+from vfs.results2 import Result, ResultError, VFSErrorKind
 
 if TYPE_CHECKING:
-    from vfs.models2 import Observation
+    from collections.abc import Sequence
+
+    from vfs.models2 import Entry, Observation
     from vfs.ops import Op
+
+# Grep option vocabularies — shared with the CLI grammar when it lands.
+CaseMode = Literal["sensitive", "insensitive", "smart"]
+GrepOutputMode = Literal["lines", "files", "count"]
+
+
+class TwoPathOperation(NamedTuple):
+    """A source/destination pair for move or copy — a router-owned shape."""
+
+    src: str
+    dest: str
 
 
 class VirtualFileSystem:
@@ -328,7 +348,7 @@ class VirtualFileSystem:
         """
         return None
 
-    def _capability_error(self, fs: VirtualFileSystem, op: Op, path: Path | None) -> VFSResult | None:
+    def _capability_error(self, fs: VirtualFileSystem, op: Op, path: Path | None) -> Result | None:
         """Return an ``unsupported`` result if *fs* does not answer *op*, else ``None``."""
         caps = fs.capabilities()
         if caps is not None and op not in caps:
@@ -341,7 +361,7 @@ class VirtualFileSystem:
         *,
         user_id: str | None = None,
         **kwargs: object,
-    ) -> VFSResult:
+    ) -> Result:
         """The one seam from the router down to *self*'s own storage.
 
         This is the *only* place a filesystem reaches its own ``_*_impl``.
@@ -365,7 +385,7 @@ class VirtualFileSystem:
         *,
         user_id: str | None = None,
         **kwargs: object,
-    ) -> VFSResult:
+    ) -> Result:
         """Route pre-grouped observation operations to terminal filesystems.
 
         Each group runs against its terminal filesystem: ``self`` through the
@@ -379,7 +399,7 @@ class VirtualFileSystem:
 
         groups = self._group_observations_by_terminal(observations)
         if not groups:
-            return VFSResult(function=op, observations=[])
+            return Result(function=op, observations=[])
 
         for fs, prefix, group in groups:
             for obs in group:
@@ -391,7 +411,7 @@ class VirtualFileSystem:
             fs: VirtualFileSystem,
             prefix: str,
             group: list[Observation],
-        ) -> VFSResult:
+        ) -> Result:
             cap_err = self._capability_error(fs, op, None)
             if cap_err is not None:
                 return cap_err.with_mount(prefix)
@@ -414,7 +434,7 @@ class VirtualFileSystem:
         *,
         user_id: str | None = None,
         **kwargs: object,
-    ) -> VFSResult:
+    ) -> Result:
         """Route a single-path or observation-based operation.
 
         With observations: group by filesystem, dispatch in parallel.
@@ -454,15 +474,218 @@ class VirtualFileSystem:
 
         return result.with_mount(prefix)
 
+    async def _route_two_path(
+        self,
+        op: Op,
+        operations: list[TwoPathOperation],
+        *,
+        user_id: str | None = None,
+        **kwargs: object,
+    ) -> Result:
+        """Route src/dest pair mutations, gating every pair before any dispatch.
+
+        Both endpoints of a pair must resolve to the same terminal — a pair
+        spanning mounts is ``cross_mount``, never a partial execution.
+        ``move`` mutates both endpoints, so both are write-gated; ``copy``
+        only writes ``dest``, so its source needs no mutation resolution or
+        write permission.  All pairs are validated up front: a single bad
+        pair rejects the whole batch with nothing dispatched.
+        """
+        if not operations:
+            return Result(function=op, observations=[])
+
+        groups: dict[int, tuple[VirtualFileSystem, str, list[TwoPathOperation]]] = {}
+        for pair in operations:
+            src = resolve_path(pair.src, mutation=op == "move")
+            if src.path is None:
+                return self._error(src.error or f"Invalid path: {pair.src!r}", kind=VFSErrorKind.invalid)
+            dest = resolve_path(pair.dest, mutation=True)
+            if dest.path is None:
+                return self._error(dest.error or f"Invalid path: {pair.dest!r}", kind=VFSErrorKind.invalid)
+
+            src_fs, src_rel, src_prefix = self._resolve_terminal(src.path)
+            dest_fs, dest_rel, _ = self._resolve_terminal(dest.path)
+            if src_fs is not dest_fs:
+                return self._error(
+                    f"Cross-mount {op} is not supported: {src.path} and {dest.path} "
+                    "resolve to different filesystems",
+                    kind=VFSErrorKind.cross_mount,
+                )
+            if src_fs is self and not self._storage:
+                return self._error(f"No mount found for path: {src.path}", kind=VFSErrorKind.not_found)
+            cap_err = self._capability_error(src_fs, op, src.path)
+            if cap_err is not None:
+                return cap_err
+
+            if op == "move":
+                err = check_writable(src_fs, op, src_rel, mount_prefix=src_prefix)
+                if err is not None:
+                    return err
+            err = check_writable(dest_fs, op, dest_rel, mount_prefix=src_prefix)
+            if err is not None:
+                return err
+
+            key = id(src_fs)
+            if key not in groups:
+                groups[key] = (src_fs, src_prefix, [])
+            groups[key][2].append(TwoPathOperation(src=src_rel, dest=dest_rel))
+
+        batch_kwarg = "moves" if op == "move" else "copies"
+
+        async def _run_group(
+            fs: VirtualFileSystem,
+            prefix: str,
+            group: list[TwoPathOperation],
+        ) -> Result:
+            if fs is self:
+                r = await self._call_local_impl(op, operations=group, user_id=user_id, **kwargs)
+            else:
+                r = await getattr(fs, op)(**{batch_kwarg: group}, user_id=user_id, **kwargs)
+            return r.with_mount(prefix)
+
+        results = await asyncio.gather(
+            *(_run_group(fs, pfx, group) for fs, pfx, group in groups.values()),
+        )
+        return self._merge_results(list(results))
+
+    async def _route_fanout(
+        self,
+        op: Op,
+        *,
+        paths: tuple[str, ...] = (),
+        observations: list[Observation] | None = None,
+        user_id: str | None = None,
+        **kwargs: object,
+    ) -> Result:
+        """Route a namespace-wide query: everywhere, a scope subset, or rows.
+
+        With observations: reuse grouped dispatch.  With scope paths: group
+        the scopes by terminal and dispatch each group — a scoped terminal
+        that cannot answer errors ``unsupported``, like the single shape.
+        With neither: fan out to self-storage and every mount in parallel
+        (mount-table order), silently skipping terminals whose
+        ``capabilities()`` lack *op* — the no-probe rule's purpose: one
+        incapable catalog must not fail a namespace-wide query.
+        """
+        if observations is not None:
+            return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
+
+        if paths:
+            groups: dict[int, tuple[VirtualFileSystem, str, list[str]]] = {}
+            for raw in paths:
+                resolved = resolve_path(raw)
+                if resolved.path is None:
+                    return self._error(resolved.error or f"Invalid path: {raw!r}", kind=VFSErrorKind.invalid)
+                fs, rel, prefix = self._resolve_terminal(resolved.path)
+                if fs is self and not self._storage:
+                    return self._error(f"No mount found for path: {resolved.path}", kind=VFSErrorKind.not_found)
+                cap_err = self._capability_error(fs, op, resolved.path)
+                if cap_err is not None:
+                    return cap_err
+                key = id(fs)
+                if key not in groups:
+                    groups[key] = (fs, prefix, [])
+                groups[key][2].append(rel)
+
+            async def _run_scoped(
+                fs: VirtualFileSystem,
+                prefix: str,
+                rels: list[str],
+            ) -> Result:
+                if fs is self:
+                    r = await self._call_local_impl(op, paths=tuple(rels), user_id=user_id, **kwargs)
+                else:
+                    r = await getattr(fs, op)(paths=tuple(rels), user_id=user_id, **kwargs)
+                return r.with_mount(prefix)
+
+            results = await asyncio.gather(
+                *(_run_scoped(fs, pfx, rels) for fs, pfx, rels in groups.values()),
+            )
+            return self._merge_results(list(results))
+
+        targets: list[tuple[VirtualFileSystem, str]] = []
+        own_caps = self.capabilities()
+        if self._storage and (own_caps is None or op in own_caps):
+            targets.append((self, ""))
+        for mount_path, fs in self._mounts.items():
+            child_caps = fs.capabilities()
+            if child_caps is not None and op not in child_caps:
+                continue
+            targets.append((fs, mount_path))
+        if not targets:
+            return Result(function=op, observations=[])
+
+        async def _run_target(fs: VirtualFileSystem, prefix: str) -> Result:
+            if fs is self:
+                r = await self._call_local_impl(op, paths=(), user_id=user_id, **kwargs)
+            else:
+                r = await getattr(fs, op)(user_id=user_id, **kwargs)
+            return r.with_mount(prefix)
+
+        results = await asyncio.gather(*(_run_target(fs, pfx) for fs, pfx in targets))
+        return self._merge_results(list(results))
+
+    async def _route_entry_batch(
+        self,
+        entries: Sequence[Entry],
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
+    ) -> Result:
+        """Route a batch write, grouping entries by terminal via each entry's path.
+
+        The entry-path analogue of grouped-observation dispatch: every
+        entry's path is mutation-resolved and write-gated before anything
+        dispatches, then each terminal receives its entries rebased into
+        local coordinates via :meth:`Entry.without_mount`.
+        """
+        if not entries:
+            return Result(function="write", observations=[])
+
+        groups: dict[int, tuple[VirtualFileSystem, str, list[Entry]]] = {}
+        for entry in entries:
+            resolved = resolve_path(entry.path, mutation=True)
+            if resolved.path is None:
+                return self._error(resolved.error or f"Invalid path: {entry.path!r}", kind=VFSErrorKind.invalid)
+            fs, rel, prefix = self._resolve_terminal(resolved.path)
+            if fs is self and not self._storage:
+                return self._error(f"No mount found for path: {resolved.path}", kind=VFSErrorKind.not_found)
+            cap_err = self._capability_error(fs, "write", resolved.path)
+            if cap_err is not None:
+                return cap_err
+            err = check_writable(fs, "write", rel, mount_prefix=prefix)
+            if err is not None:
+                return err
+            key = id(fs)
+            if key not in groups:
+                groups[key] = (fs, prefix, [])
+            groups[key][2].append(entry.without_mount(prefix))
+
+        async def _run_group(
+            fs: VirtualFileSystem,
+            prefix: str,
+            group: list[Entry],
+        ) -> Result:
+            if fs is self:
+                r = await self._call_local_impl("write", entries=group, overwrite=overwrite, user_id=user_id)
+            else:
+                r = await fs.write(entries=group, overwrite=overwrite, user_id=user_id)
+            return r.with_mount(prefix)
+
+        results = await asyncio.gather(
+            *(_run_group(fs, pfx, group) for fs, pfx, group in groups.values()),
+        )
+        return self._merge_results(list(results))
+
     @staticmethod
-    def _merge_results(results: list[VFSResult]) -> VFSResult:
+    def _merge_results(results: list[Result]) -> Result:
         """Merge multiple results — any failure makes the whole a failure.
 
         ``|`` propagates ``success=False`` and concatenates ``errors`` while
         preserving all successful observations.
         """
         if not results:
-            return VFSResult(observations=[])
+            return Result(observations=[])
         merged = results[0]
         for r in results[1:]:
             merged = merged | r
@@ -479,22 +702,22 @@ class VirtualFileSystem:
         kind: VFSErrorKind,
         path: Path | None = None,
         data: dict[str, Any] | None = None,
-    ) -> VFSResult:
-        """Compose a failed ``VFSResult``, or raise if ``raise_on_error`` is set.
+    ) -> Result:
+        """Compose a failed ``Result``, or raise if ``raise_on_error`` is set.
 
         Pass the prose *message* and the structured *kind* (required), plus an
         optional *path* and machine-readable *data*; this wraps them in a
         :class:`ResultError` and either returns the failed result or raises the
         exception the kind maps to.  Callers that already hold a shaped
-        ``VFSResult`` should return it directly.
+        ``Result`` should return it directly.
         """
-        result = VFSResult(success=False, errors=[ResultError(kind=kind, message=message, path=path, data=data)])
+        result = Result(success=False, errors=[ResultError(kind=kind, message=message, path=path, data=data)])
         if not self._raise_on_error:
             return result
         raise exception_for_kind(kind)(message, result)
 
     # -------------------------------------------------------------------
-    # public methods
+    # public methods — reads
     # -------------------------------------------------------------------
 
     async def read(
@@ -504,7 +727,7 @@ class VirtualFileSystem:
         *,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
-    ) -> VFSResult:
+    ) -> Result:
         return await self._route_single("read", path, observations, columns=columns, user_id=user_id)
 
     async def stat(
@@ -514,7 +737,7 @@ class VirtualFileSystem:
         *,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
-    ) -> VFSResult:
+    ) -> Result:
         return await self._route_single("stat", path, observations, columns=columns, user_id=user_id)
 
     async def ls(
@@ -524,8 +747,303 @@ class VirtualFileSystem:
         *,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
-    ) -> VFSResult:
+    ) -> Result:
         return await self._route_single("ls", path, observations, columns=columns, user_id=user_id)
+
+    async def tree(
+        self,
+        path: str,
+        max_depth: int | None = None,
+        *,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        return await self._route_single("tree", path, None, max_depth=max_depth, columns=columns, user_id=user_id)
+
+    # -------------------------------------------------------------------
+    # public methods — search
+    # -------------------------------------------------------------------
+
+    async def glob(
+        self,
+        pattern: str,
+        *,
+        paths: tuple[str, ...] = (),
+        observations: list[Observation] | None = None,
+        ext: tuple[str, ...] = (),
+        max_count: int | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Match *pattern* against the namespace — unscoped calls reach every mount."""
+        return await self._route_fanout(
+            "glob",
+            paths=paths,
+            observations=observations,
+            pattern=pattern,
+            ext=ext,
+            max_count=max_count,
+            columns=columns,
+            user_id=user_id,
+        )
+
+    async def grep(
+        self,
+        pattern: str,
+        *,
+        paths: tuple[str, ...] = (),
+        observations: list[Observation] | None = None,
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
+        case_mode: CaseMode = "sensitive",
+        fixed_strings: bool = False,
+        word_regexp: bool = False,
+        invert_match: bool = False,
+        before_context: int = 0,
+        after_context: int = 0,
+        output_mode: GrepOutputMode = "lines",
+        max_count: int | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Search content for *pattern* — unscoped calls reach every mount."""
+        return await self._route_fanout(
+            "grep",
+            paths=paths,
+            observations=observations,
+            pattern=pattern,
+            ext=ext,
+            ext_not=ext_not,
+            globs=globs,
+            globs_not=globs_not,
+            case_mode=case_mode,
+            fixed_strings=fixed_strings,
+            word_regexp=word_regexp,
+            invert_match=invert_match,
+            before_context=before_context,
+            after_context=after_context,
+            output_mode=output_mode,
+            max_count=max_count,
+            columns=columns,
+            user_id=user_id,
+        )
+
+    async def glean(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        paths: tuple[str, ...] = (),
+        observations: list[Observation] | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Ranked search: text in, one fused ranked list out.
+
+        The caller never picks a retrieval strategy — backends index by
+        vector, lexical, and graph signals and fuse the rankings however
+        they see fit.  The router passes *query* and *limit* through
+        opaquely; results report ``function="glean"``.
+        """
+        return await self._route_fanout(
+            "glean",
+            paths=paths,
+            observations=observations,
+            query=query,
+            limit=limit,
+            columns=columns,
+            user_id=user_id,
+        )
+
+    async def graph(
+        self,
+        method: str,
+        path: str | None = None,
+        observations: list[Observation] | None = None,
+        *,
+        depth: int | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Run the graph traversal *method* — each terminal answers over its own subgraph.
+
+        A path routes to one terminal; observations group by terminal and
+        each mount runs the algorithm on its own graph, so a walk can never
+        follow an edge out of its mount.  *method* is validated against the
+        traversal vocabulary before any dispatch; results report the
+        specific method name in ``function``.
+        """
+        if method not in TRAVERSAL_FUNCTIONS:
+            return self._error(
+                f"Unknown graph method {method!r}; expected one of {sorted(TRAVERSAL_FUNCTIONS)}",
+                kind=VFSErrorKind.invalid,
+            )
+        return await self._route_single("graph", path, observations, method=method, depth=depth, user_id=user_id)
+
+    # -------------------------------------------------------------------
+    # public methods — mutations
+    # -------------------------------------------------------------------
+
+    async def write(
+        self,
+        entries: Sequence[Entry] | None = None,
+        *,
+        path: str | None = None,
+        content: str | None = None,
+        overwrite: bool = True,
+        user_id: str | None = None,
+    ) -> Result:
+        """Write one file (*path* + *content*) or a batch of *entries*.
+
+        Batch entries route by their own paths — grouped per terminal,
+        rebased, and gated per entry before anything dispatches.
+        """
+        if entries is not None:
+            return await self._route_entry_batch(entries, overwrite=overwrite, user_id=user_id)
+        return await self._route_single("write", path, None, content=content, overwrite=overwrite, user_id=user_id)
+
+    async def edit(
+        self,
+        path: str | None = None,
+        old: str | None = None,
+        new: str | None = None,
+        edits: list[EditOperation] | None = None,
+        observations: list[Observation] | None = None,
+        replace_all: bool = False,
+        *,
+        user_id: str | None = None,
+    ) -> Result:
+        """Apply find-and-replace edits — a multi-edit verb by contract.
+
+        *edits* is the native input: applied sequentially (each edit sees
+        the content left by the previous one) and atomically (one failed
+        match applies nothing) — guarantees the backend impl must honor.
+        The *old*/*new* pair is sugar wrapping a one-item list.
+        """
+        if edits is None:
+            if old is None or new is None:
+                return self._error(
+                    "edit requires old and new strings, or an edits list",
+                    kind=VFSErrorKind.invalid,
+                )
+            edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
+        return await self._route_single("edit", path, observations, edits=edits, user_id=user_id)
+
+    async def delete(
+        self,
+        path: str | None = None,
+        observations: list[Observation] | None = None,
+        *,
+        permanent: bool = False,
+        cascade: bool = True,
+        user_id: str | None = None,
+    ) -> Result:
+        return await self._route_single(
+            "delete",
+            path,
+            observations,
+            permanent=permanent,
+            cascade=cascade,
+            user_id=user_id,
+        )
+
+    async def mkdir(self, path: str, *, user_id: str | None = None) -> Result:
+        return await self._route_single("mkdir", path, None, user_id=user_id)
+
+    async def mkedge(
+        self,
+        source: str,
+        target: str,
+        edge_type: str,
+        *,
+        user_id: str | None = None,
+    ) -> Result:
+        """Create a typed edge from *source* to *target*.
+
+        Both endpoints must resolve to the same terminal (``cross_mount``
+        otherwise — cross-server edges are a later story).  The terminal
+        writes the canonical ``edges/out`` projection; the inverse ``in``
+        path is derived, never a write target.
+        """
+        src = resolve_path(source)
+        if src.path is None:
+            return self._error(src.error or f"Invalid path: {source!r}", kind=VFSErrorKind.invalid)
+        tgt = resolve_path(target)
+        if tgt.path is None:
+            return self._error(tgt.error or f"Invalid path: {target!r}", kind=VFSErrorKind.invalid)
+
+        src_fs, src_rel, src_prefix = self._resolve_terminal(src.path)
+        tgt_fs, tgt_rel, _ = self._resolve_terminal(tgt.path)
+        if src_fs is not tgt_fs:
+            return self._error(
+                f"Cross-mount edges are not supported: {src.path} and {tgt.path} "
+                "resolve to different filesystems",
+                kind=VFSErrorKind.cross_mount,
+            )
+        if src_fs is self and not self._storage:
+            return self._error(f"No mount found for path: {src.path}", kind=VFSErrorKind.not_found)
+        cap_err = self._capability_error(src_fs, "mkedge", src.path)
+        if cap_err is not None:
+            return cap_err
+
+        if src_fs is not self:
+            # The child re-derives the edge path and gates it against its own
+            # permission map — rules live in filesystem-relative coordinates.
+            result = await src_fs.mkedge(src_rel, tgt_rel, edge_type, user_id=user_id)
+            return result.with_mount(src_prefix)
+
+        try:
+            edge_path = edge_out_path(Path(src_rel), Path(tgt_rel), edge_type)
+        except ValueError as exc:
+            return self._error(str(exc), kind=VFSErrorKind.invalid)
+        err = check_writable(self, "mkedge", edge_path, mount_prefix=src_prefix)
+        if err is not None:
+            return err
+        result = await self._call_local_impl(
+            "mkedge",
+            source=src_rel,
+            target=tgt_rel,
+            edge_type=edge_type,
+            user_id=user_id,
+        )
+        return result.with_mount(src_prefix)
+
+    async def move(
+        self,
+        src: str | None = None,
+        dest: str | None = None,
+        moves: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
+    ) -> Result:
+        if moves is None:
+            if not src or not dest:
+                return self._error("move requires src and dest, or a moves list", kind=VFSErrorKind.invalid)
+            moves = [TwoPathOperation(src=src, dest=dest)]
+        operations = [p if isinstance(p, TwoPathOperation) else TwoPathOperation(*p) for p in moves]
+        return await self._route_two_path("move", operations, overwrite=overwrite, user_id=user_id)
+
+    async def copy(
+        self,
+        src: str | None = None,
+        dest: str | None = None,
+        copies: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
+    ) -> Result:
+        if copies is None:
+            if not src or not dest:
+                return self._error("copy requires src and dest, or a copies list", kind=VFSErrorKind.invalid)
+            copies = [TwoPathOperation(src=src, dest=dest)]
+        operations = [p if isinstance(p, TwoPathOperation) else TwoPathOperation(*p) for p in copies]
+        return await self._route_two_path("copy", operations, overwrite=overwrite, user_id=user_id)
+
+    # -------------------------------------------------------------------
+    # public methods — execution
+    # -------------------------------------------------------------------
 
     async def run(
         self,
@@ -533,7 +1051,7 @@ class VirtualFileSystem:
         *,
         arguments: dict[str, Any] | None = None,
         user_id: str | None = None,
-    ) -> VFSResult:
+    ) -> Result:
         """Execute the tool at *path* with *arguments* — the execution verb.
 
         ``read``/``stat``/``ls`` discover a tool's definition; ``run`` is the only

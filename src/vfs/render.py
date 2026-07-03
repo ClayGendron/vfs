@@ -1,4 +1,4 @@
-"""Text rendering for VFSResult — the human/agent-facing string surface.
+"""Text rendering for Result — the human/agent-facing string surface.
 
 One entry point, :func:`render_result`, dispatches on the result's
 ``function`` into a per-arrangement renderer: ripgrep-style lines for grep,
@@ -19,7 +19,7 @@ from vfs.projection import ACTION_FUNCTIONS, OBSERVATION_FIELDS, resolve_project
 
 if TYPE_CHECKING:
     from vfs.models2 import Observation
-    from vfs.results2 import ResultError, VFSResult
+    from vfs.results2 import Result, ResultError
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def render_result(result: VFSResult, *, projection: tuple[str, ...] | list[str] | None = None) -> str:
+def render_result(result: Result, *, projection: tuple[str, ...] | list[str] | None = None) -> str:
     """Render *result* to text. *projection* selects Observation columns to show.
 
     - ``None`` → function's default projection.
@@ -77,7 +77,7 @@ def _render_errors(errors: list[ResultError]) -> str:
 _PROJECTION_FREE_FUNCTIONS: frozenset[str] = frozenset({"tree"}) | ACTION_FUNCTIONS
 
 
-def _render_unpopulated_projection_note(result: VFSResult, projection: tuple[str, ...] | None) -> str:
+def _render_unpopulated_projection_note(result: Result, projection: tuple[str, ...] | None) -> str:
     """Return a note for explicitly projected fields that render nothing.
 
     Only fields the caller named outright are considered (``default`` / ``all``
@@ -124,7 +124,7 @@ def _field_unpopulated(function: str, field: str, observations: list[Observation
     return all(getattr(o, field) is None for o in observations)
 
 
-def _render_body(result: VFSResult, projection: tuple[str, ...]) -> str:
+def _render_body(result: Result, projection: tuple[str, ...]) -> str:
     """Dispatch to the function-specific arrangement helper.
 
     Unknown functions fall through to the path-list/table renderer — the
@@ -161,7 +161,7 @@ _RIGHT_ALIGN_FIELDS: frozenset[str] = frozenset(
 """Projection fields that render right-aligned in Markdown tables — numeric values."""
 
 
-def _render_path_list(result: VFSResult, projection: tuple[str, ...]) -> str:
+def _render_path_list(result: Result, projection: tuple[str, ...]) -> str:
     """One path per line for a path-only projection; a Markdown table otherwise.
 
     Markdown is the one textual format agents and chat UIs both parse
@@ -219,7 +219,7 @@ def _escape_table_cell(value: str) -> str:
     return value.replace("|", r"\|").replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
 
 
-def _render_block(result: VFSResult, projection: tuple[str, ...]) -> str:
+def _render_block(result: Result, projection: tuple[str, ...]) -> str:
     """First projection column is the block header; remaining columns are indented.
 
     A multi-line field value keeps its continuation lines indented under the
@@ -248,7 +248,7 @@ def _format_block_field(field: str, rendered: str) -> str:
     return "\n".join([head, *(f"    {line}" for line in rest)])
 
 
-def _render_read(result: VFSResult, projection: tuple[str, ...]) -> str:
+def _render_read(result: Result, projection: tuple[str, ...]) -> str:
     """Dump content verbatim. Multi-observation gets ``==> path <==`` headers."""
     if not result.observations:
         return ""
@@ -265,7 +265,7 @@ _GREP_LINE_LEVEL_FIELDS: frozenset[str] = frozenset({"path", "matches", "content
 """Fields that make sense on a per-source-line basis in grep output."""
 
 
-def _render_grep(result: VFSResult, projection: tuple[str, ...]) -> str:
+def _render_grep(result: Result, projection: tuple[str, ...]) -> str:
     """Ripgrep-style line output — or a Markdown table for row-level fields.
 
     When the projection contains only ``path`` / ``matches`` / ``content``
@@ -371,7 +371,7 @@ def _region_lines(
     return None
 
 
-def _render_tree(result: VFSResult) -> str:
+def _render_tree(result: Result) -> str:
     """ASCII tree of observation paths."""
     paths = sorted(o.path.strip("/").split("/") for o in result.observations if o.path != "/")
     tree: dict[str, dict] = {}
@@ -394,7 +394,7 @@ def _render_tree(result: VFSResult) -> str:
     return "\n".join(lines)
 
 
-def _render_action(result: VFSResult) -> str:
+def _render_action(result: Result) -> str:
     """Action one-liner — ``{Verb} {path}`` or ``{Verb} {N} paths``."""
     count = len(result.observations)
     verb = _verb_for(result.function)
@@ -413,7 +413,7 @@ _WRITE_SUMMARY_KINDS: tuple[str, ...] = ("file", "chunk", "edge")
 _FILE_STATUSES: tuple[str, ...] = ("created", "updated", "unchanged")
 
 
-def _render_write(result: VFSResult) -> str:
+def _render_write(result: Result) -> str:
     """Render a ``write`` result.
 
     Up to two blocks, errors first when present. Empty results render

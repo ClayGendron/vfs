@@ -2,7 +2,7 @@
 
 When ``VirtualFileSystem`` is constructed with ``raises=True``, the
 ``_error()`` method raises one of these exceptions instead of returning
-``VFSResult(success=False)``.  The original ``VFSResult`` is
+``Result(success=False)``.  The original ``Result`` is
 attached to the exception as ``.result`` so callers can inspect partial
 successes in batch operations.
 """
@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING
 from vfs.results2 import VFSErrorKind
 
 if TYPE_CHECKING:
-    from vfs.results2 import VFSResult
+    from vfs.results2 import Result
 
 
 class VFSError(Exception):
     """Base exception for all VFS errors."""
 
-    def __init__(self, message: str, result: VFSResult | None = None) -> None:
+    def __init__(self, message: str, result: Result | None = None) -> None:
         super().__init__(message)
         self.result = result
 
@@ -81,7 +81,7 @@ def exception_for_kind(kind: VFSErrorKind | str) -> type[VFSError]:
 def _classify_error(
     message: str,
     errors: list[str],
-    result: VFSResult,
+    result: Result,
 ) -> VFSError:
     """Map error messages to the appropriate exception type."""
     first = errors[0] if errors else message

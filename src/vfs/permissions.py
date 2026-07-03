@@ -2,11 +2,12 @@
 
 A VFS filesystem has a :class:`PermissionMap`: one default permission
 plus zero or more directory-prefix overrides.  Every mutating operation
-funnels through one of five chokepoints in :mod:`vfs.base`
-(``_route_single``, ``_route_write_batch``, ``_route_two_path``,
-``_dispatch_candidates``, ``mkedge``) and each chokepoint calls
-:func:`check_writable` on the resolved terminal filesystem with the
-filesystem-relative path before touching storage.
+funnels through one of the router chokepoints in :mod:`vfs.base2` —
+``_route_single`` / ``_dispatch_grouped_observations`` (single paths and
+observation batches), ``_route_two_path`` (move/copy pairs),
+``_route_entry_batch`` (batch writes), and ``mkedge`` — and each
+chokepoint calls :func:`check_writable` on the resolved terminal
+filesystem with the filesystem-relative path before touching storage.
 
 Resolution semantics
 --------------------
@@ -31,11 +32,11 @@ Sort order is established once at construction time, so resolution is
 a single linear pass.  This is the same algorithm that ``_match_mount``
 uses for routing — one mental model covers both.
 
-The rejection message starts with the literal substring ``"Cannot
-write"``, which the existing ``_classify_error`` mapping in
-:mod:`vfs.exceptions` already routes to
-:class:`~vfs.exceptions.WriteConflictError`.  No new exception class
-is required.
+The rejection is structured: the error carries ``kind=read_only``,
+which :func:`vfs.exceptions.exception_for_kind` maps to
+:class:`~vfs.exceptions.WriteConflictError` when the filesystem is
+configured with ``raise_on_error=True``.  No message inspection is
+involved.
 
 Helpers
 -------
@@ -124,7 +125,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from vfs.base2 import VirtualFileSystem
-    from vfs.results2 import VFSResult
+    from vfs.results2 import Result
 
 
 Permission = Literal["read", "read_write"]
@@ -250,7 +251,7 @@ def check_writable(
     rel: str,
     *,
     mount_prefix: str = "",
-) -> VFSResult | None:
+) -> Result | None:
     """Return a classified error result if *op* mutates a read-only path.
 
     *rel* is the filesystem-relative path; *mount_prefix* is the
@@ -261,7 +262,7 @@ def check_writable(
 
     Returns ``None`` when the operation is allowed (either because it
     is not a mutation or because the resolved permission is
-    ``"read_write"``).  Returns a failure :class:`VFSResult` — via
+    ``"read_write"``).  Returns a failure :class:`Result` — via
     ``fs._error(...)`` — when the operation would mutate a read-only
     path.
 

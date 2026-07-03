@@ -28,6 +28,19 @@ class ReplaceResult:
     method_used: str | None = None
 
 
+@dataclass(frozen=True)
+class EditOperation:
+    """A single find-and-replace edit.
+
+    Multiple ``EditOperation`` objects are applied sequentially — each sees
+    the content left by the previous one.
+    """
+
+    old: str
+    new: str
+    replace_all: bool = False
+
+
 Replacer = Callable[[str, str], Generator[Match]]
 
 

@@ -1,6 +1,6 @@
 """Composable result envelope for VFS — Observation rows in, text or payload out.
 
-Every VFS operation returns ``VFSResult``. Results carry ``observations`` —
+Every VFS operation returns ``Result``. Results carry ``observations`` —
 the frozen :class:`vfs.models2.Observation` rows uniform across grep, glob,
 search, graph queries, read/stat/ls, and writes — plus structured errors.
 Chaining (set algebra, ``.sort``, ``.top``, ``.filter``) operates in-memory,
@@ -127,11 +127,11 @@ class ResultError(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# VFSResult — unified envelope
+# Result — unified envelope
 # ---------------------------------------------------------------------------
 
 
-class VFSResult(BaseModel):
+class Result(BaseModel):
     """Unified result from every VFS operation.
 
     - **Envelope:** ``function`` identifies how the rows were produced;
@@ -238,7 +238,7 @@ class VFSResult(BaseModel):
                 updates[name] = list(value) if isinstance(value, list) else value
         return a.model_copy(update=updates) if updates else a
 
-    def _combined_errors(self, other: VFSResult) -> list[ResultError]:
+    def _combined_errors(self, other: Result) -> list[ResultError]:
         """Concatenate errors, dropping right-side duplicates of left errors.
 
         Diamond-shaped chains (``(a | b) & b``) would otherwise repeat the
@@ -246,37 +246,37 @@ class VFSResult(BaseModel):
         """
         return self.errors + [e for e in other.errors if e not in self.errors]
 
-    def _merged_function(self, other: VFSResult) -> str:
+    def _merged_function(self, other: Result) -> str:
         """Shared function when both agree (or only one is set), else ``"hybrid"``."""
         if not self.function or not other.function:
             return self.function or other.function
         return self.function if self.function == other.function else "hybrid"
 
-    def __and__(self, other: VFSResult) -> VFSResult:
+    def __and__(self, other: Result) -> Result:
         """Intersection — observations present on both sides, left wins on overlap."""
         right = other._as_dict()
         merged = [self._merge_observation(o, right[o.path]) for o in self.observations if o.path in right]
-        return VFSResult(
+        return Result(
             function=self._merged_function(other),
             observations=merged,
             success=self.success and other.success,
             errors=self._combined_errors(other),
         )
 
-    def __or__(self, other: VFSResult) -> VFSResult:
+    def __or__(self, other: Result) -> Result:
         """Union — all observations; left wins on overlap."""
         right = other._as_dict()
         left_paths = {o.path for o in self.observations}
         merged = [self._merge_observation(o, right[o.path]) if o.path in right else o for o in self.observations]
         merged += [o for o in other.observations if o.path not in left_paths]
-        return VFSResult(
+        return Result(
             function=self._merged_function(other),
             observations=merged,
             success=self.success and other.success,
             errors=self._combined_errors(other),
         )
 
-    def __sub__(self, other: VFSResult) -> VFSResult:
+    def __sub__(self, other: Result) -> Result:
         """Difference — observations in left whose path is not in right.
 
         Only the right side's *paths* are consumed; its errors and success
@@ -284,7 +284,7 @@ class VFSResult(BaseModel):
         """
         right_paths = set(other.paths)
         remaining = [o for o in self.observations if o.path not in right_paths]
-        return VFSResult(
+        return Result(
             function=self.function,
             observations=remaining,
             success=self.success,
@@ -295,9 +295,9 @@ class VFSResult(BaseModel):
     # Enrichment chains (local, no backend call)
     # -------------------------------------------------------------------
 
-    def _with_observations(self, observations: list[Observation]) -> VFSResult:
+    def _with_observations(self, observations: list[Observation]) -> Result:
         """Return a new result with the given *observations*, preserving envelope."""
-        return VFSResult(
+        return Result(
             function=self.function,
             observations=observations,
             success=self.success,
@@ -309,7 +309,7 @@ class VFSResult(BaseModel):
         *,
         key: Callable[[Observation], Any] | None = None,
         reverse: bool = True,
-    ) -> VFSResult:
+    ) -> Result:
         """Re-order observations. Default key is ``score`` (None/NaN treated as ``-inf``)."""
         if key is None:
 
@@ -321,7 +321,7 @@ class VFSResult(BaseModel):
 
         return self._with_observations(sorted(self.observations, key=key, reverse=reverse))
 
-    def top(self, k: int) -> VFSResult:
+    def top(self, k: int) -> Result:
         """Top *k* observations by score. *k* must be >= 1."""
         if k < 1:
             msg = f"k must be >= 1, got {k}"
@@ -329,11 +329,11 @@ class VFSResult(BaseModel):
         sorted_result = self.sort()
         return sorted_result._with_observations(sorted_result.observations[:k])
 
-    def filter(self, fn: Callable[[Observation], bool]) -> VFSResult:
+    def filter(self, fn: Callable[[Observation], bool]) -> Result:
         """Keep observations where *fn(observation)* is truthy."""
         return self._with_observations([o for o in self.observations if fn(o)])
 
-    def kinds(self, *kinds: str) -> VFSResult:
+    def kinds(self, *kinds: str) -> Result:
         """Filter observations by kind."""
         kind_set = set(kinds)
         return self.filter(lambda o: o.kind in kind_set)
@@ -342,7 +342,7 @@ class VFSResult(BaseModel):
     # Mount rebasing
     # -------------------------------------------------------------------
 
-    def with_mount(self, mount: str) -> VFSResult:
+    def with_mount(self, mount: str) -> Result:
         """New result with every row and error path re-rooted under *mount*.
 
         The router's outbound rebase. An empty or root *mount* is the
@@ -350,14 +350,14 @@ class VFSResult(BaseModel):
         """
         if not mount or mount == "/":
             return self
-        return VFSResult(
+        return Result(
             function=self.function,
             observations=[o.with_mount(mount) for o in self.observations],
             success=self.success,
             errors=[e.with_mount(mount) for e in self.errors],
         )
 
-    def without_mount(self, mount: str) -> VFSResult:
+    def without_mount(self, mount: str) -> Result:
         """New result with the *mount* prefix stripped from every row and error path.
 
         The inbound rebase; raising like :meth:`Path.without_mount` — a
@@ -365,7 +365,7 @@ class VFSResult(BaseModel):
         """
         if not mount or mount == "/":
             return self
-        return VFSResult(
+        return Result(
             function=self.function,
             observations=[o.without_mount(mount) for o in self.observations],
             success=self.success,
@@ -389,7 +389,7 @@ class VFSResult(BaseModel):
         return json.loads(self.model_dump_json(exclude_none=exclude_none))
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> VFSResult:
+    def from_payload(cls, payload: Mapping[str, Any]) -> Result:
         """Reconstruct a result from a wire payload — the inbound MCP half."""
         return cls.model_validate(payload)
 
