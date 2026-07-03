@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -44,6 +45,7 @@
     "shadcn": "^4.4.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.1",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.1.9"
   }
 }
