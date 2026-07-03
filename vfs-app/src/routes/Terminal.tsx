@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react"
 import type { FormEvent, KeyboardEvent, ReactNode } from "react"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Seo } from "@/components/Seo"
 import { lookup, listDir, normalize } from "@/lib/fakeFs"
-import { SITE } from "@/lib/site"
+import { routeMeta, SITE } from "@/lib/site"
 
-type LineKind = "out" | "err" | "prompt" | "banner" | "ok" | "dim"
+type LineKind = "out" | "err" | "prompt" | "banner" | "dim"
 
 type Line = { id: number; kind: LineKind; content: ReactNode }
 
@@ -19,13 +20,18 @@ const HELP = `commands
   cat <path>             print file content
   tree [path]            print subtree
   stat <path>            print entry metadata
-  clear                  clear the screen
-  help                   this message
+  whoami                 print current user
+  echo <text>            print text
+  clear                  clear the screen (alias: cls)
+  help                   this message (alias: ?)
 
 paths
   absolute (/workspace) or relative (./auth.py, ../spec)
   ~ aliases to /
-  up-arrow / down-arrow walks history`
+  up-arrow / down-arrow walks history
+  tab completes commands and paths`
+
+const COMMANDS = ["cat", "cd", "clear", "echo", "help", "ls", "pwd", "stat", "tree", "whoami"]
 
 function treeOf(path: string, depth = 0, prefix = ""): string[] {
   const node = lookup(path)
@@ -33,14 +39,15 @@ function treeOf(path: string, depth = 0, prefix = ""): string[] {
   if (node.kind === "file") return [path]
   const lines: string[] = depth === 0 ? [path] : []
   const names = Object.keys(node.children).sort((a, b) => {
-    const ad = node.children[a].kind === "dir" ? 0 : 1
-    const bd = node.children[b].kind === "dir" ? 0 : 1
+    const ad = node.children[a]?.kind === "dir" ? 0 : 1
+    const bd = node.children[b]?.kind === "dir" ? 0 : 1
     if (ad !== bd) return ad - bd
     return a.localeCompare(b)
   })
   names.forEach((name, i) => {
     const last = i === names.length - 1
     const child = node.children[name]
+    if (!child) return
     const head = prefix + (last ? "└── " : "├── ")
     const trail = prefix + (last ? "    " : "│   ")
     lines.push(head + name + (child.kind === "dir" ? "/" : ""))
@@ -104,7 +111,7 @@ export function Terminal() {
     switch (head) {
       case "help":
       case "?":
-        push("out", HELP)
+        push("dim", HELP)
         break
       case "clear":
       case "cls":
@@ -227,7 +234,30 @@ export function Terminal() {
         setInput("")
       } else {
         setHistIx(next)
-        setInput(history[next])
+        setInput(history[next] ?? "")
+      }
+    } else if (e.key === "Tab") {
+      e.preventDefault()
+      const parts = input.split(/\s+/)
+      if (parts.length <= 1) {
+        // first token: complete a command name
+        const matches = COMMANDS.filter((c) => c.startsWith(parts[0] ?? ""))
+        if (matches[0] && matches.length === 1) setInput(matches[0] + " ")
+        else if (matches.length > 1) push("out", matches.join("  "))
+      } else {
+        // later token: complete a path from the fake fs
+        const stub = parts[parts.length - 1] ?? ""
+        const slash = stub.lastIndexOf("/")
+        const dirPart = slash >= 0 ? stub.slice(0, slash + 1) : ""
+        const base = slash >= 0 ? stub.slice(slash + 1) : stub
+        const entries = listDir(resolve(dirPart || ".")) ?? []
+        const matches = entries.filter((e) => e.startsWith(base))
+        if (matches[0] && matches.length === 1) {
+          parts[parts.length - 1] = dirPart + matches[0]
+          setInput(parts.join(" "))
+        } else if (matches.length > 1) {
+          push("out", matches.join("  "))
+        }
       }
     } else if (e.key === "l" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
@@ -238,6 +268,7 @@ export function Terminal() {
 
   return (
     <section className="vfs-term">
+      <Seo {...routeMeta.terminal} />
       <header className="vfs-term-head">
         <h1 className="vfs-term-title">terminal</h1>
         <div className="vfs-term-sub">
@@ -249,6 +280,8 @@ export function Terminal() {
         </div>
       </header>
 
+      {/* click anywhere focuses the input; keyboard users tab straight to it, so no key handler needed */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
       <div
         className="vfs-term-shell"
         onClick={() => inputRef.current?.focus()}
@@ -267,7 +300,6 @@ export function Terminal() {
                 className={[
                   "vfs-term-line",
                   ln.kind === "err" && "vfs-term-err",
-                  ln.kind === "ok" && "vfs-term-ok",
                   ln.kind === "dim" && "vfs-term-dim",
                   ln.kind === "banner" && "vfs-term-dim",
                 ]
@@ -305,9 +337,10 @@ export function Terminal() {
   )
 }
 
-function PromptLine({ line }: { cwd: string; line: string }) {
+function PromptLine({ cwd, line }: { cwd: string; line: string }) {
   return (
     <>
+      <span className="vfs-term-path">{cwd}</span>
       <span className="vfs-term-prompt">$</span>
       <span>{line}</span>
     </>
