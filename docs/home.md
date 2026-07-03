@@ -1,8 +1,8 @@
-# VFS: The Context Engineering Platform for AI Agents
+# VFS: Agentic Search on any SQL Database
 
-VFS exists because it is our beleif that building effective AI agents, from the scale of small local development to the size of an enterprise, is first and foremost a **data engineering** problem. This conviction comes from our experience of noticing how AI agents complete tasks and learning how to engineer the context window to get the best outputs from those agents. The following beliefs, informed by that experience, drive the development of VFS.
+VFS is built on a conviction that creating effective AI agents, from the scale of small local development to the size of an enterprise, is first and foremost a **data engineering** problem. This conviction comes from observing how AI agents work on tasks, noticing the flaws in some components of their current harnesses and tooling, and applying the well established patterns of data science and engineering that . The beliefs below capture an opinionated framework of how LLMs and AI agents actually work, and how to build for them.
 
-## 1. LLMs Output Two Things, Human Consumable Content and Code
+## 1. Building AI Agents is a Data Engineering Problem
 
 
 
@@ -22,13 +22,15 @@ Two, the terminal is directly integrated with a computer's file system, and crit
 
 Now lets re-write the agent defintion to make it specific to a coding agent:
 
-> *"An AI coding agent is an LLM that operates in a loop by using a **terminal** to interact with a **file system**."*
+> *"An AI **coding** agent is an LLM that operates in a loop by using a **terminal** to interact with a **file system**."*
 
 This framing helps explain why coding agents generally perform better than other types of AI agents. Instead of having dozens, or hundreds, of tools, coding agents have a small set of tools with a text-based interface for composing commands. Instead of having a poorly defined environment to work in, coding agents have a well-defined and structured namespace where they can navigate, perform actions, and get feedback.
 
 This is why VFS adopts the file system as its core abstraction. File systems produce environments well-suited for LLMs to act as agents.
 
-## 3. Agentic Search has Four Verbs
+## 3. LLMs Output Two Things, Human Consumable Content and Code
+
+## 4. Agentic Search has Four Verbs
 
 Agentic search is autonomous knowledge retervial where an LLM is identfying the intent of a task, planning a multi-step retrieval strategy, executing searches, evaluating results, and then applying that knowledge to copmlete the task. Agentic search is seperate and different from RAG (retrival augmented generation) with RAG being a non-autonomous search where knowledge is injected into context without action by an LLM.
 
@@ -48,19 +50,6 @@ Three of these verbs are already familiar — `glob` and `grep` from any Unix te
 - `graph` searches on the dimension of **connection**. It traverses the edges between files and ranks files with centrality algorithms to present a topological view of how information flows within a knowledge base.
 
 Together, these four verbs cover every dimension along which a file carries information, and thus these verbs cover the needs of agentic search. Additionally, the outputs of one search method can be used as input to the next because everything is addressable by a file path. A file system with these four verbs allows agents to navigate and search an environment in an interative and preditable fashion. This meets the definition of agentic search, and thus provides us with a framework for how to engineer data for it.
-
-## 4. Web Agents Need a Workspace
-
-The majority of agents today are personal agents supporting individual requests, not enterprise agents that are always on and able to work unprompted in the background. These personal agents operate in two types of workspaces.
-
-1. **Computer Terminal:** Coding agents use the user's computer as the workspace. The agent can access and generally do anything the user can do and thus uses the user's computer to get work done.
-2. **Software Application:** Most other calls to an LLM or an agent operate within a software application. Users need to be logged into that software and the agent's capabilities are limited to that software.
-
-For both of these workspaces, the agent is not accessible unless a user is logged in to call it. Agents will not be able to fulfill the capabilities of an "employee" unless they have a dedicated space to work within an enterprise itself.
-
-
-
-
 
 ## 5. Knowledge and Capabilities are Distributed
 
