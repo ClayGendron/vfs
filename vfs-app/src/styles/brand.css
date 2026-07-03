@@ -201,37 +201,6 @@
   justify-content: center;
   border-bottom: 1px solid var(--rule);
 }
-.vfs-hero-mark {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 10px;
-  padding-bottom: 10px;
-  margin-bottom: 28px;
-  border-bottom: 1px solid var(--rule);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--quiet);
-}
-.vfs-hero-mark .sigil {
-  width: 9px; height: 9px;
-  background: var(--accent);
-  display: inline-block;
-}
-.vfs-hero-mark .word {
-  font-family: var(--font-brand);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  text-transform: lowercase;
-  color: var(--fg);
-}
-.vfs-hero-mark .ver {
-  font-size: 10px;
-  letter-spacing: 0.26em;
-}
 
 .vfs-hero-grid {
   display: grid;
@@ -266,51 +235,6 @@
   max-width: 100%;
   overflow: hidden;
 }
-
-/* ── headline emphasis treatments ─────────────────────────────── */
-.vfs-hl { position: relative; white-space: nowrap; }
-.vfs-hl .vfs-hl-text { position: relative; z-index: 1; }
-
-/* 01 · color — accent fill */
-.vfs-hl--color .vfs-hl-text { color: var(--accent); }
-
-/* 02 · italic — keep brand font, just italicize */
-.vfs-hl--italic .vfs-hl-text {
-  font-style: italic;
-  font-weight: 500;
-}
-
-/* 03 · underline — thick accent rule hugging the baseline */
-.vfs-hl--underline {
-  background-image: linear-gradient(var(--accent), var(--accent));
-  background-size: 100% 0.1em;
-  background-repeat: no-repeat;
-  background-position: 0 92%;
-}
-
-/* 04 · highlight — soft accent wash behind the word */
-.vfs-hl--highlight {
-  background: color-mix(in oklab, var(--accent) 22%, transparent);
-  padding: 0 0.15em;
-  margin: 0 -0.05em;
-  border-radius: 2px;
-}
-.vfs-hl--highlight .vfs-hl-text { color: var(--fg); }
-
-/* 05 · brackets — mono brackets flanking the word, accent-tinted */
-.vfs-hl--brackets .vfs-hl-text { color: var(--accent); }
-.vfs-hl--brackets::before,
-.vfs-hl--brackets::after {
-  font-family: var(--font-mono);
-  font-weight: 400;
-  color: var(--accent);
-  opacity: 0.7;
-  font-size: 0.78em;
-  vertical-align: 0.08em;
-  letter-spacing: 0;
-}
-.vfs-hl--brackets::before { content: "["; margin-right: 0.18em; }
-.vfs-hl--brackets::after  { content: "]"; margin-left: 0.18em; }
 
 .vfs-hero-lede {
   font-family: var(--font-display);
@@ -597,124 +521,6 @@
     border-bottom: 1px dashed var(--rule);
     background: color-mix(in oklab, var(--fg) 4%, transparent);
   }
-}
-
-/* ─────────── terminal tape (homepage preview) ─────────── */
-.vfs-tape {
-  background: var(--card-strong);
-  color: #d6d6d4;
-  border: 1px solid var(--rule);
-  border-radius: var(--r2);
-  overflow: hidden;
-}
-.vfs-tape-bar {
-  display: grid; grid-template-columns: 1fr auto;
-  padding: 12px 18px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: rgba(214,214,212,0.5);
-  background: color-mix(in oklab, var(--card-strong) 85%, var(--fg));
-}
-.vfs-tape-body {
-  padding: 22px 26px;
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.85;
-  margin: 0;
-}
-.vfs-tape-body .prompt,
-.vfs-tape-prompt { color: var(--accent); user-select: none; }
-.vfs-tape-cmd { color: #f1f1ee; }
-.vfs-tape-arg { color: rgba(214,214,212,0.7); }
-.vfs-tape-pipe { color: color-mix(in oklab, var(--accent) 70%, transparent); }
-.vfs-tape-line { white-space: pre; display: block; }
-.vfs-tape-rule {
-  height: 0; border-top: 1px dashed rgba(255,255,255,0.18);
-  margin: 14px 0;
-  display: block;
-}
-.vfs-tape-out-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 24px;
-  padding-left: 14px;
-  white-space: pre;
-}
-.vfs-tape-out-row:first-of-type {
-  margin-top: 8px;
-  padding-top: 10px;
-  border-top: 1px dashed rgba(255,255,255,0.18);
-}
-.vfs-tape-out-path { color: #f1f1ee; }
-.vfs-tape-out-score {
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-}
-.vfs-tape-cta {
-  display: flex; justify-content: flex-end;
-  padding: 10px 18px 14px;
-  border-top: 1px solid rgba(255,255,255,0.08);
-  background: color-mix(in oklab, var(--card-strong) 88%, var(--fg));
-}
-.vfs-tape-cta-link {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: rgba(214,214,212,0.7);
-  border: 1px solid rgba(255,255,255,0.18);
-  padding: 8px 14px;
-  border-radius: var(--r);
-  display: inline-flex; align-items: center; gap: 8px;
-  transition: color .18s, border-color .18s, background .18s;
-}
-.vfs-tape-cta-link:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 10%, transparent);
-}
-.vfs-tape-cta-arrow { display: inline-block; transition: transform .18s; }
-.vfs-tape-cta-link:hover .vfs-tape-cta-arrow { transform: translateX(3px); }
-
-/* ─────────── values / capability cards ─────────── */
-.vfs-values {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 16px;
-}
-.vfs-value {
-  background: var(--card);
-  border: 1px solid var(--rule);
-  padding: 28px 24px;
-  display: flex; flex-direction: column; gap: 12px;
-  transition: border-color .2s;
-}
-.vfs-value:hover {
-  border-color: color-mix(in oklab, var(--accent) 50%, var(--rule));
-}
-.vfs-value-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: var(--quiet);
-}
-.vfs-value-title {
-  font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin: 0;
-  color: var(--fg);
-}
-.vfs-value-body {
-  font-size: 14px; line-height: 1.6;
-  color: var(--muted);
-  margin: 0;
 }
 
 /* ─────────── filesystem footer ─────────── */
@@ -1029,12 +835,6 @@
 }
 .gr-node.is-lit,
 .gr-node.is-meeting { fill: var(--accent); }
-.vfs-verb-gloss {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--muted);
-  margin-top: auto;
-}
 .vfs-verbs-compose {
   border: 1px solid var(--rule);
   border-top: 0;
@@ -1097,22 +897,6 @@
   .vfs-verb { border-right: 0; }
   .vfs-verb:nth-last-child(-n+2) { border-bottom: 1px solid var(--rule); }
   .vfs-verb:last-child { border-bottom: 0; }
-}
-
-/* ── §3 · capability tape additions (doc + tool in one result) ── */
-.vfs-tape-kind {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(214,214,212,0.45);
-}
-.vfs-tape-run {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-  font-weight: 500;
 }
 
 /* ── §4 · mount map (fstab) ── */
