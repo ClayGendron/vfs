@@ -121,7 +121,8 @@ class VirtualFileSystem:
           mount already sits beneath *path* (the reverse order: ``/data/tmp``
           first, then ``/data``), when it duplicates an instance or would
           form a cycle, or — if *self* has storage — when stored contents
-          conflict with the mount point (see ``_is_path_mountable``).
+          conflict with the mount point or cannot be verified (see
+          ``_is_path_mountable``).
 
         A filesystem created with ``allow_child_mounts=False`` (e.g. a mount
         that proxies a remote/external namespace) rejects any mount whose
@@ -147,8 +148,7 @@ class VirtualFileSystem:
             raise ValueError(msg)
         if id(self._root()) in filesystem._reachable_ids():
             msg = (
-                f"Mounting at {mount_path} would create a cycle: "
-                "that filesystem already contains this namespace's root"
+                f"Mounting at {mount_path} would create a cycle: that filesystem already contains this namespace's root"
             )
             raise ValueError(msg)
 
@@ -166,8 +166,9 @@ class VirtualFileSystem:
             if existing_path.startswith(mount_path + "/"):
                 msg = f"Cannot mount at {mount_path}: it is owned by a deeper mount at {existing_path}"
                 raise ValueError(msg)
-        if not await self._is_path_mountable(mount_path):
-            msg = f"Cannot mount at {mount_path}: storage contents conflict with that mount point"
+        mountable, reason = await self._is_path_mountable(mount_path)
+        if not mountable:
+            msg = f"Cannot mount at {mount_path}: {reason}"
             raise ValueError(msg)
 
         filesystem._parent = self
@@ -318,8 +319,8 @@ class VirtualFileSystem:
             stack.extend(fs._mounts.values())
         return ids
 
-    async def _is_path_mountable(self, path: Path) -> bool:
-        """Return whether a mount may be attached at *path* inside this filesystem.
+    async def _is_path_mountable(self, path: Path) -> tuple[bool, str]:
+        """Return ``(ok, reason)`` for attaching a mount at *path* here.
 
         A mount point must not collide with stored contents: *path* itself
         must not exist and every ancestor that exists must be a directory.
@@ -332,36 +333,42 @@ class VirtualFileSystem:
         Composed from the public verb via self-dispatch, so any storage
         backend answers correctly without overriding; an override is a
         one-query optimization, not an obligation.  Absence must surface as
-        ``not_found``; any other failure is conservatively unmountable.
+        ``not_found``; any other failure is conservatively unmountable, with
+        *reason* saying the contents could not be verified — a downed
+        backend is not a contents conflict.
         """
         if not self._storage:
-            return True
+            return True, ""
 
         lineage = [Observation(path=path)]
         node = path.parent_dir
         while node != "/":
             lineage.append(Observation(path=node))
             node = node.parent_dir
-        found = await self._probe(self.stat(observations=lineage))
-        return found is not None and not any(o.path == path or o.kind != "directory" for o in found)
+        found, reason = await self._probe(self.stat(observations=lineage))
+        if found is None:
+            return False, reason
+        if any(o.path == path or o.kind != "directory" for o in found):
+            return False, "storage contents conflict with that mount point"
+        return True, ""
 
     @staticmethod
-    async def _probe(call: Coroutine[Any, Any, Result]) -> list[Observation] | None:
+    async def _probe(call: Coroutine[Any, Any, Result]) -> tuple[list[Observation] | None, str]:
         """Await a read verb for the mountability check, mapping absence to ``[]``.
 
-        Returns the rows found; ``[]`` when everything was ``not_found`` (pure
-        absence — the mountable case); ``None`` on a *classified* read failure,
-        which the caller must treat as "cannot verify" and reject.  ``Result``
-        is the only failure channel a verb has, so no exception handling is
-        needed: a raw exception from an impl is an impl bug and propagates
-        with its real traceback rather than being masked as a mount conflict.
+        Returns ``(rows, "")`` with the rows found — ``[]`` when everything
+        was ``not_found`` (pure absence, the mountable case) — or
+        ``(None, reason)`` on a *classified* read failure, which the caller
+        must treat as "cannot verify" and reject.  ``Result`` is the only
+        failure channel a verb has, so no exception handling is needed: a raw
+        exception from an impl is an impl bug and propagates with its real
+        traceback rather than being masked as a mount conflict.
         """
         result = await call
-        if result.success:
-            return list(result.observations)
-        if all(e.kind == VFSErrorKind.not_found for e in result.errors):
-            return list(result.observations)
-        return None
+        if result.success or all(e.kind == VFSErrorKind.not_found for e in result.errors):
+            return list(result.observations), ""
+        failure = next(e for e in result.errors if e.kind != VFSErrorKind.not_found)
+        return None, f"cannot verify storage contents there ({failure.kind}: {failure.message})"
 
     # -------------------------------------------------------------------
     # observation grouping
@@ -412,16 +419,50 @@ class VirtualFileSystem:
         """
         return None
 
-    def _capability_error(self, fs: VirtualFileSystem, op: Op, path: Path | None) -> Result | None:
-        """Return an ``unsupported`` result if *fs* does not answer *op*, else ``None``."""
+    def _gate_terminal(
+        self,
+        fs: VirtualFileSystem,
+        op: Op,
+        prefix: Path,
+        *,
+        report: Path,
+        write_rels: Sequence[Path] = (),
+    ) -> Result | None:
+        """Routability → capability → permission, in the pinned order.
+
+        Every dispatch chokepoint runs this gate on its resolved terminal
+        before touching it.  The order is a contract: an incapable terminal
+        reads as ``unsupported``, never as a policy denial, and an unroutable
+        path reads as ``not_found`` before anything else.
+
+        *report* is the terminal-relative path implicated in terminal-level
+        failures (routability, capability); it is reported router-side —
+        rebased under *prefix* — so the caller always sees the path they
+        typed.  *write_rels* are the terminal-relative paths the permission
+        gate checks (empty when the write target is derived later, as in
+        mkedge's pre-delegation gate).  Returns the first classified failure,
+        else ``None``.
+        """
+        reported = report.with_mount(prefix)
+        if fs is self and not self._storage:
+            return self._error(
+                f"No mount found for path: {reported}",
+                kind=VFSErrorKind.not_found,
+                function=op,
+                path=reported,
+            )
         caps = fs.capabilities()
         if caps is not None and op not in caps:
             return self._error(
                 f"Operation {op!r} is not supported here",
                 kind=VFSErrorKind.unsupported,
                 function=op,
-                path=path,
+                path=reported,
             )
+        for rel in write_rels:
+            err = check_writable(fs, op, rel, mount_prefix=prefix)
+            if err is not None:
+                return err
         return None
 
     async def _call_local_impl(
@@ -487,22 +528,12 @@ class VirtualFileSystem:
         if not groups:
             return Result(function=op, observations=[])
 
-        # All gates run before any dispatch (routability, capability, permission)
-        # so a batch touching a bad terminal is rejected whole, nothing dispatched.
+        # All gates run before any dispatch, so a batch touching a bad
+        # terminal is rejected whole, nothing dispatched.
         for fs, prefix, group in groups:
-            if fs is self and not self._storage:
-                return self._error(
-                    f"No mount found for path: {group[0].path}",
-                    kind=VFSErrorKind.not_found,
-                    function=op,
-                )
-            cap_err = self._capability_error(fs, op, None)
-            if cap_err is not None:
-                return cap_err.with_mount(prefix)
-            for obs in group:
-                err = check_writable(fs, op, obs.path, mount_prefix=prefix)
-                if err is not None:
-                    return err
+            err = self._gate_terminal(fs, op, prefix, report=group[0].path, write_rels=[o.path for o in group])
+            if err is not None:
+                return err
 
         async def _run_group(
             fs: VirtualFileSystem,
@@ -554,15 +585,7 @@ class VirtualFileSystem:
         path = resolved.path
 
         fs, rel, prefix = self._resolve_terminal(path)
-
-        if fs is self and not self._storage:
-            return self._error(f"No mount found for path: {path}", kind=VFSErrorKind.not_found, function=op)
-
-        cap_err = self._capability_error(fs, op, path)
-        if cap_err is not None:
-            return cap_err
-
-        err = check_writable(fs, op, rel, mount_prefix=prefix)
+        err = self._gate_terminal(fs, op, prefix, report=rel, write_rels=(rel,))
         if err is not None:
             return err
 
@@ -611,25 +634,18 @@ class VirtualFileSystem:
                 return self._error(dest.error or f"Invalid path: {pair.dest!r}", kind=VFSErrorKind.invalid, function=op)
 
             src_fs, src_rel, src_prefix = self._resolve_terminal(src.path)
-            dest_fs, dest_rel, _ = self._resolve_terminal(dest.path)
+            dest_fs, dest_rel, dest_prefix = self._resolve_terminal(dest.path)
             if src_fs is not dest_fs:
                 return self._error(
-                    f"Cross-mount {op} is not supported: {src.path} and {dest.path} "
-                    "resolve to different filesystems",
+                    f"Cross-mount {op} is not supported: {src.path} and {dest.path} resolve to different filesystems",
                     kind=VFSErrorKind.cross_mount,
                     function=op,
                 )
-            if src_fs is self and not self._storage:
-                return self._error(f"No mount found for path: {src.path}", kind=VFSErrorKind.not_found, function=op)
-            cap_err = self._capability_error(src_fs, op, src.path)
-            if cap_err is not None:
-                return cap_err
-
-            if op == "move":
-                err = check_writable(src_fs, op, src_rel, mount_prefix=src_prefix)
-                if err is not None:
-                    return err
-            err = check_writable(dest_fs, op, dest_rel, mount_prefix=src_prefix)
+            # Same terminal ⇒ same prefix, so one gate covers both endpoints;
+            # relaxing the cross-mount rule means gating each terminal itself.
+            assert src_prefix == dest_prefix
+            write_rels = (src_rel, dest_rel) if op == "move" else (dest_rel,)
+            err = self._gate_terminal(src_fs, op, src_prefix, report=src_rel, write_rels=write_rels)
             if err is not None:
                 return err
 
@@ -696,15 +712,9 @@ class VirtualFileSystem:
                         function=op,
                     )
                 fs, rel, prefix = self._resolve_terminal(resolved.path)
-                if fs is self and not self._storage:
-                    return self._error(
-                        f"No mount found for path: {resolved.path}",
-                        kind=VFSErrorKind.not_found,
-                        function=op,
-                    )
-                cap_err = self._capability_error(fs, op, resolved.path)
-                if cap_err is not None:
-                    return cap_err
+                err = self._gate_terminal(fs, op, prefix, report=rel, write_rels=(rel,))
+                if err is not None:
+                    return err
                 key = id(fs)
                 _fs, _pfx, rels = groups.setdefault(key, (fs, prefix, []))
                 rels.append(rel)
@@ -785,16 +795,7 @@ class VirtualFileSystem:
                     function="write",
                 )
             fs, rel, prefix = self._resolve_terminal(resolved.path)
-            if fs is self and not self._storage:
-                return self._error(
-                    f"No mount found for path: {resolved.path}",
-                    kind=VFSErrorKind.not_found,
-                    function="write",
-                )
-            cap_err = self._capability_error(fs, "write", resolved.path)
-            if cap_err is not None:
-                return cap_err
-            err = check_writable(fs, "write", rel, mount_prefix=prefix)
+            err = self._gate_terminal(fs, "write", prefix, report=rel, write_rels=(rel,))
             if err is not None:
                 return err
             key = id(fs)
@@ -1178,16 +1179,13 @@ class VirtualFileSystem:
         tgt_fs, tgt_rel, _ = self._resolve_terminal(tgt.path)
         if src_fs is not tgt_fs:
             return self._error(
-                f"Cross-mount edges are not supported: {src.path} and {tgt.path} "
-                "resolve to different filesystems",
+                f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different filesystems",
                 kind=VFSErrorKind.cross_mount,
                 function="mkedge",
             )
-        if src_fs is self and not self._storage:
-            return self._error(f"No mount found for path: {src.path}", kind=VFSErrorKind.not_found, function="mkedge")
-        cap_err = self._capability_error(src_fs, "mkedge", src.path)
-        if cap_err is not None:
-            return cap_err
+        err = self._gate_terminal(src_fs, "mkedge", src_prefix, report=src_rel)
+        if err is not None:
+            return err
 
         if src_fs is not self:
             # The child re-derives the edge path and gates it against its own

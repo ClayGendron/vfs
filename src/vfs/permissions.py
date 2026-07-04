@@ -2,12 +2,10 @@
 
 A VFS filesystem has a :class:`PermissionMap`: one default permission
 plus zero or more directory-prefix overrides.  Every mutating operation
-funnels through one of the router chokepoints in :mod:`vfs.base2` —
-``_route_single`` / ``_dispatch_grouped_observations`` (single paths and
-observation batches), ``_route_two_path`` (move/copy pairs),
-``_route_entry_batch`` (batch writes), and ``mkedge`` — and each
-chokepoint calls :func:`check_writable` on the resolved terminal
-filesystem with the filesystem-relative path before touching storage.
+funnels through a router dispatch chokepoint in :mod:`vfs.base2`, and
+every chokepoint runs the shared ``_gate_terminal`` gate — which calls
+:func:`check_writable` on the resolved terminal filesystem with the
+filesystem-relative path before touching storage.
 
 Resolution semantics
 --------------------
@@ -258,9 +256,10 @@ def check_writable(
 
     *rel* is the gated, filesystem-relative path; *mount_prefix* is the
     accumulated router-side mount prefix (``/`` when the terminal is the
-    router itself — the rebase identity).  The error message reports the
-    reconstructed router-side path so the user sees the path they typed,
-    while rule resolution stays in filesystem-relative coordinates.
+    router itself — the rebase identity).  The error reports the
+    reconstructed router-side path — in the message and as the structured
+    ``path`` — so the caller sees the path they typed, while rule
+    resolution stays in filesystem-relative coordinates.
 
     Returns ``None`` when the operation is allowed (either because it
     is not a mutation or because the resolved permission is
@@ -291,11 +290,13 @@ def check_writable(
             f"Cannot write to read-only path '{full}' (mount default)",
             kind=VFSErrorKind.read_only,
             function=op,
+            path=full,
         )
     return fs._error(
         f"Cannot write to read-only path '{full}' (read-only by mount rule '{resolved.rule_prefix}')",
         kind=VFSErrorKind.read_only,
         function=op,
+        path=full,
     )
 
 

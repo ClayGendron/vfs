@@ -48,8 +48,10 @@ class MountPolicyFS(VirtualFileSystem):
         super().__init__(storage=True)
         self._blocked = set(blocked)
 
-    async def _is_path_mountable(self, path: Path) -> bool:
-        return path not in self._blocked
+    async def _is_path_mountable(self, path: Path) -> tuple[bool, str]:
+        if path in self._blocked:
+            return False, "storage contents conflict with that mount point"
+        return True, ""
 
 
 class DictStorageFS(VirtualFileSystem):
@@ -337,7 +339,7 @@ async def test_is_path_mountable_default_true() -> None:
     # The pure router has no storage, so the policy admits any path
     # without probing.
     fs = VirtualFileSystem()
-    assert await fs._is_path_mountable(Path("/anything/at/all")) is True
+    assert await fs._is_path_mountable(Path("/anything/at/all")) == (True, "")
 
 
 async def test_mountable_rejects_occupied_point() -> None:
@@ -367,7 +369,8 @@ async def test_mountable_allows_clean_sparse_point() -> None:
 
 
 async def test_mountable_conservative_on_backend_error() -> None:
-    # "Cannot verify" rejects the mount, never permits it.
+    # "Cannot verify" rejects the mount, never permits it — and says so,
+    # rather than diagnosing a phantom contents conflict.
     class BrokenFS(VirtualFileSystem):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(storage=True, **kwargs)
@@ -375,8 +378,10 @@ async def test_mountable_conservative_on_backend_error() -> None:
         async def _stat_impl(self, **_: object) -> Result:
             return self._error("db down", kind=VFSErrorKind.unavailable)
 
-    with pytest.raises(ValueError, match="conflict"):
+    with pytest.raises(ValueError, match="cannot verify") as excinfo:
         await BrokenFS().add_mount(VirtualFileSystem(), "/data")
+    assert "conflict" not in str(excinfo.value)
+    assert "db down" in str(excinfo.value)
 
 
 async def test_mountable_treats_not_found_as_absence() -> None:
@@ -541,9 +546,9 @@ async def test_reachable_ids_dedups_shared_node() -> None:
     a = VirtualFileSystem()
     b = VirtualFileSystem()
     shared = VirtualFileSystem()
-    root._mounts = {"/a": a, "/b": b}
-    a._mounts = {"/s": shared}
-    b._mounts = {"/s": shared}
+    root._mounts = {Path("/a"): a, Path("/b"): b}
+    a._mounts = {Path("/s"): shared}
+    b._mounts = {Path("/s"): shared}
     assert root._reachable_ids() == {id(root), id(a), id(b), id(shared)}
 
 
@@ -728,7 +733,7 @@ def test_exception_for_kind_unmapped_and_unknown_fall_back_to_base() -> None:
 
 def test_error_returns_failed_result_by_default() -> None:
     fs = VirtualFileSystem()
-    r = fs._error("gone", kind=VFSErrorKind.not_found, path="/x")
+    r = fs._error("gone", kind=VFSErrorKind.not_found, path=Path("/x"))
     assert r.success is False
     assert r.errors[0].kind is VFSErrorKind.not_found
     assert r.errors[0].path == "/x"
@@ -799,11 +804,25 @@ class RunnerFS(VirtualFileSystem):
     def capabilities(self) -> frozenset[str] | None:
         return self._caps
 
-    async def read(self, path=None, observations=None, *, columns=None, user_id=None) -> Result:
+    async def read(
+        self,
+        path: str | None = None,
+        observations: list[Observation] | None = None,
+        *,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        assert path is not None  # the router always dispatches here with a path
         self.calls.append(("read", path, columns))
         return Result(function="read", observations=[Observation(path=Path(path), kind="tool")])
 
-    async def run(self, path=None, *, arguments=None, user_id=None) -> Result:
+    async def run(
+        self,
+        path: str,
+        *,
+        arguments: dict[str, Any] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
         self.calls.append(("run", path, arguments))
         return Result(function="run", observations=[Observation(path=Path(path), kind="tool")])
 
@@ -883,9 +902,9 @@ class EchoFS(RecorderFS):
         self.calls.append((op, dict(kwargs)))
         return Result(function=op, observations=[Observation(path=Path(self._echo_path))])
 
-    async def _is_path_mountable(self, path: Path) -> bool:
+    async def _is_path_mountable(self, path: Path) -> tuple[bool, str]:
         # Echoed rows are not namespace truth — always accept mounts.
-        return True
+        return True, ""
 
 
 class LimitedEchoFS(EchoFS):
@@ -1056,7 +1075,9 @@ async def test_move_gates_both_endpoints() -> None:
     src_frozen = await root.move(src="/m/frozen/a.txt", dest="/m/b.txt")
     dest_frozen = await root.move(src="/m/a.txt", dest="/m/frozen/b.txt")
     assert src_frozen.errors[0].kind is VFSErrorKind.read_only
+    assert src_frozen.errors[0].path == "/m/frozen/a.txt"
     assert dest_frozen.errors[0].kind is VFSErrorKind.read_only
+    assert dest_frozen.errors[0].path == "/m/frozen/b.txt"
     assert child.calls == []
 
 
@@ -1463,6 +1484,131 @@ async def test_mkedge_capability_gate_blocks() -> None:
     result = await root.mkedge("/m/a.py", "/m/b.py", "imports")
     assert result.errors[0].kind is VFSErrorKind.unsupported
     assert child.calls == []
+
+
+# ----------------------------------------------------------------------
+# one terminal gate — structured error paths and pinned order
+# ----------------------------------------------------------------------
+
+
+async def _gated_namespace() -> VirtualFileSystem:
+    """Router with a read-only mount and a capability-limited mount."""
+    root = VirtualFileSystem()
+    await root.add_mount(RecorderFS(permissions="read"), "/ro")
+    await root.add_mount(LimitedEchoFS(caps=frozenset({"read"})), "/dim")
+    return root
+
+
+GATE_FAILURES = [
+    (
+        "single/no-mount",
+        lambda r: r.write(path="/nowhere/x.txt", content="c"),
+        VFSErrorKind.not_found,
+        "/nowhere/x.txt",
+    ),
+    (
+        "grouped/no-mount",
+        lambda r: r.delete(observations=[Observation(path=Path("/nowhere/f.txt"))]),
+        VFSErrorKind.not_found,
+        "/nowhere/f.txt",
+    ),
+    (
+        "pair/no-mount",
+        lambda r: r.move(src="/nowhere/a.txt", dest="/nowhere/b.txt"),
+        VFSErrorKind.not_found,
+        "/nowhere/a.txt",
+    ),
+    (
+        "entries/no-mount",
+        lambda r: r.write(entries=[Entry(path=Path("/nowhere/f.txt"), content="c")]),
+        VFSErrorKind.not_found,
+        "/nowhere/f.txt",
+    ),
+    ("scoped/no-mount", lambda r: r.grep("x", paths=("/nowhere/sub",)), VFSErrorKind.not_found, "/nowhere/sub"),
+    (
+        "mkedge/no-mount",
+        lambda r: r.mkedge("/nowhere/a.py", "/nowhere/b.py", "imports"),
+        VFSErrorKind.not_found,
+        "/nowhere/a.py",
+    ),
+    ("single/read-only", lambda r: r.write(path="/ro/x.txt", content="c"), VFSErrorKind.read_only, "/ro/x.txt"),
+    (
+        "grouped/read-only",
+        lambda r: r.delete(observations=[Observation(path=Path("/ro/f.txt"))]),
+        VFSErrorKind.read_only,
+        "/ro/f.txt",
+    ),
+    ("pair-src/read-only", lambda r: r.move(src="/ro/a.txt", dest="/ro/b.txt"), VFSErrorKind.read_only, "/ro/a.txt"),
+    ("pair-dest/read-only", lambda r: r.copy(src="/ro/a.txt", dest="/ro/b.txt"), VFSErrorKind.read_only, "/ro/b.txt"),
+    (
+        "entries/read-only",
+        lambda r: r.write(entries=[Entry(path=Path("/ro/y.txt"), content="c")]),
+        VFSErrorKind.read_only,
+        "/ro/y.txt",
+    ),
+    ("single/incapable", lambda r: r.write(path="/dim/x.txt", content="c"), VFSErrorKind.unsupported, "/dim/x.txt"),
+    (
+        "grouped/incapable",
+        lambda r: r.stat(observations=[Observation(path=Path("/dim/f.txt"))]),
+        VFSErrorKind.unsupported,
+        "/dim/f.txt",
+    ),
+    ("pair/incapable", lambda r: r.move(src="/dim/a.txt", dest="/dim/b.txt"), VFSErrorKind.unsupported, "/dim/a.txt"),
+    (
+        "entries/incapable",
+        lambda r: r.write(entries=[Entry(path=Path("/dim/f.txt"), content="c")]),
+        VFSErrorKind.unsupported,
+        "/dim/f.txt",
+    ),
+    ("scoped/incapable", lambda r: r.grep("x", paths=("/dim/sub",)), VFSErrorKind.unsupported, "/dim/sub"),
+    (
+        "mkedge/incapable",
+        lambda r: r.mkedge("/dim/a.py", "/dim/b.py", "imports"),
+        VFSErrorKind.unsupported,
+        "/dim/a.py",
+    ),
+]
+
+
+@pytest.mark.parametrize(("call", "kind", "path"), [c[1:] for c in GATE_FAILURES], ids=[c[0] for c in GATE_FAILURES])
+async def test_gate_failures_carry_the_router_side_path(call: Any, kind: VFSErrorKind, path: str) -> None:
+    # Every chokepoint x every gate failure reachable there: the error's
+    # structured path is the path the caller addressed — never None.
+    root = await _gated_namespace()
+    result = await call(root)
+    assert result.success is False
+    assert result.errors[0].kind is kind
+    assert result.errors[0].path == path
+
+
+async def test_mkedge_permission_denial_reports_the_derived_edge_path() -> None:
+    # mkedge's write target is the derived canonical out-edge path — the one
+    # gate error implicating a path the caller never typed — and even that
+    # path is reported router-side, rebased under the mount prefix.
+    root = await _gated_namespace()
+    result = await root.mkedge("/ro/a.py", "/ro/b.py", "imports")
+    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert result.errors[0].path == "/ro/.vfs/a.py/__meta__/edges/out/imports/b.py"
+
+
+async def test_gate_order_capability_outranks_permission() -> None:
+    # A terminal that is simultaneously incapable and read-only fails
+    # unsupported: what the terminal cannot do outranks what policy denies.
+    root = VirtualFileSystem()
+    await root.add_mount(LimitedEchoFS(caps=frozenset({"read"}), permissions="read"), "/m")
+    result = await root.write(path="/m/f.txt", content="c")
+    assert result.errors[0].kind is VFSErrorKind.unsupported
+
+
+async def test_gate_order_routability_outranks_capability() -> None:
+    # A pure router with no mount at the path is not_found even when the op
+    # is also outside its own capability set.
+    class IncapableRouter(VirtualFileSystem):
+        def capabilities(self) -> frozenset[str] | None:
+            return frozenset()
+
+    result = await IncapableRouter().write(path="/nowhere/f.txt", content="c")
+    assert result.errors[0].kind is VFSErrorKind.not_found
 
 
 # ----------------------------------------------------------------------
