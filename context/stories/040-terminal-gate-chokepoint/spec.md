@@ -1,6 +1,6 @@
 # 040 — One Terminal Gate for Every Dispatch Chokepoint
 
-- **Status:** draft
+- **Status:** implemented (commit d8d2ab8, 2026-07-04)
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** refactor (router gate consolidation) + fix (structured error
