@@ -659,6 +659,212 @@ async def test_close_groups_multiple_failures() -> None:
 
 
 # ----------------------------------------------------------------------
+# concurrent mount mutation (the lock + the commit gate)
+# ----------------------------------------------------------------------
+
+
+class SuspendingStorageFS(VirtualFileSystem):
+    """Storage fs whose backend round-trip suspends, like a real DB stat.
+
+    Every probed path reports absent (``not_found``), so any mount path is
+    mountable — the point is the suspension, which is what opens the race
+    window the mount lock closes.  An optional *gate* holds the probe open
+    until the test releases it.
+    """
+
+    def __init__(self, *, gate: asyncio.Event | None = None, **kwargs: Any) -> None:
+        super().__init__(storage=True, **kwargs)
+        self._gate = gate
+
+    async def _call_local_impl(self, op: str, *, user_id: str | None = None, **kwargs: Any) -> Result:
+        if self._gate is not None:
+            await self._gate.wait()
+        else:
+            await asyncio.sleep(0)
+        errors = [
+            ResultError(kind=VFSErrorKind.not_found, message="not found", path=o.path)
+            for o in kwargs.get("observations", [])
+        ]
+        return Result(function=op, success=False, errors=errors)
+
+
+async def test_concurrent_add_same_path_one_winner_no_orphan() -> None:
+    root = SuspendingStorageFS()
+    c1 = SuspendingStorageFS(name="c1")
+    c2 = SuspendingStorageFS(name="c2")
+    results = await asyncio.gather(root.add_mount(c1, "/same"), root.add_mount(c2, "/same"), return_exceptions=True)
+    errors = [r for r in results if isinstance(r, Exception)]
+    assert len(errors) == 1
+    assert "Mount already exists" in str(errors[0])
+    winner = root._mounts[Path("/same")]
+    loser = c2 if winner is c1 else c1
+    assert winner._parent is root
+    assert loser._parent is None
+    await root.add_mount(loser, "/elsewhere")  # the loser is not orphaned
+    assert set(root._mounts) == {"/same", "/elsewhere"}
+
+
+async def test_concurrent_add_same_child_two_parents_stays_a_tree() -> None:
+    p1 = SuspendingStorageFS(name="p1")
+    p2 = SuspendingStorageFS(name="p2")
+    child = SuspendingStorageFS(name="child")
+    results = await asyncio.gather(p1.add_mount(child, "/c"), p2.add_mount(child, "/c"), return_exceptions=True)
+    errors = [r for r in results if isinstance(r, Exception)]
+    assert len(errors) == 1
+    assert "already mounted elsewhere" in str(errors[0])
+    holders = [fs for fs in (p1, p2) if "/c" in fs._mounts]
+    assert len(holders) == 1
+    assert child._parent is holders[0]
+
+
+async def test_concurrent_add_ancestor_and_descendant_never_flatten() -> None:
+    root = SuspendingStorageFS()
+    a = SuspendingStorageFS(name="a")
+    ab = SuspendingStorageFS(name="ab")
+    results = await asyncio.gather(root.add_mount(a, "/a"), root.add_mount(ab, "/a/b"), return_exceptions=True)
+    errors = [r for r in results if isinstance(r, Exception)]
+    assert not ("/a" in root._mounts and "/a/b" in root._mounts)
+    if errors:
+        # /a/b committed first, so /a hits the deeper-mount ownership check.
+        assert len(errors) == 1
+        assert "owned by a deeper mount" in str(errors[0])
+        assert set(root._mounts) == {"/a/b"}
+    else:
+        # /a committed first, so /a/b delegated into it — nested, not flat.
+        assert set(root._mounts) == {"/a"}
+        assert set(a._mounts) == {"/b"}
+
+
+async def test_concurrent_mutual_mounts_end_with_one_edge() -> None:
+    # The commit gate's cycle re-check: R under F racing F under R.
+    r = SuspendingStorageFS(name="r")
+    f = SuspendingStorageFS(name="f")
+    results = await asyncio.gather(r.add_mount(f, "/f"), f.add_mount(r, "/r"), return_exceptions=True)
+    errors = [x for x in results if isinstance(x, Exception)]
+    assert len(errors) == 1
+    assert "would create a cycle" in str(errors[0])
+    assert ("/f" in r._mounts) + ("/r" in f._mounts) == 1
+    assert r._root() is f._root()  # one tree; the parent chain terminates
+
+
+class SlowCloseFS(VirtualFileSystem):
+    """A mount whose close suspends, opening the close loop's race window."""
+
+    async def close(self) -> None:
+        # Enough yields for a racing add_mount to pass its probe and commit
+        # while the close loop is still suspended in here.
+        for _ in range(20):
+            await asyncio.sleep(0)
+        await super().close()
+
+
+@pytest.mark.parametrize("close_first", [True, False])
+async def test_close_racing_add_orphans_nothing(close_first: bool) -> None:
+    root = SuspendingStorageFS()
+    slow = SlowCloseFS()
+    await root.add_mount(slow, "/slow")
+    incoming = SuspendingStorageFS(name="incoming")
+    ops = [root.close(), root.add_mount(incoming, "/x")]
+    if not close_first:
+        ops.reverse()
+    results = await asyncio.gather(*ops, return_exceptions=True)
+    assert [r for r in results if isinstance(r, Exception)] == []
+    for fs in (slow, incoming):
+        assert (fs._parent is root) == (fs in root._mounts.values())
+
+
+class GatedCloseFS(SpyFS):
+    """A mount whose close parks on an event — a dispose the test can hold open."""
+
+    def __init__(self, gate: asyncio.Event, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._gate = gate
+
+    async def close(self) -> None:
+        await self._gate.wait()
+        await super().close()
+
+
+async def test_cancelled_close_leaves_no_half_detached_child() -> None:
+    # Cancellation mid-close splits the loop cleanly: closed children are
+    # fully detached, the rest fully attached — and a second close finishes.
+    gate = asyncio.Event()
+    root = VirtualFileSystem()
+    first, blocked, last = SpyFS(), GatedCloseFS(gate), SpyFS()
+    await root.add_mount(first, "/a")
+    await root.add_mount(blocked, "/b")
+    await root.add_mount(last, "/c")
+
+    task = asyncio.ensure_future(root.close())
+    while first.close_count == 0:
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not root._mount_lock.locked()
+    assert first._parent is None and Path("/a") not in root._mounts
+    assert blocked._parent is root and Path("/b") in root._mounts
+    assert last._parent is root and Path("/c") in root._mounts
+    assert root._sorted_mount_paths == sorted(root._mounts, reverse=True)
+
+    # The closed child is truly detached — no reverse orphan to double-mount.
+    other = VirtualFileSystem()
+    await other.add_mount(first, "/adopted")
+    assert first._parent is other
+
+    gate.set()
+    await root.close()
+    assert root._mounts == {}
+    assert blocked._parent is None and last._parent is None
+    assert blocked.close_count == 1 and last.close_count == 1
+
+
+async def test_readers_do_not_wait_on_the_mount_lock() -> None:
+    gate = asyncio.Event()
+    gate.set()
+    root = SuspendingStorageFS(gate=gate)
+    docs = DictStorageFS({"/file.txt": "file"})
+    await root.add_mount(docs, "/docs")
+
+    gate.clear()  # the next probe parks until the test releases it
+    pending = asyncio.ensure_future(root.add_mount(SuspendingStorageFS(), "/data"))
+    await asyncio.sleep(0)  # let the add reach its probe
+
+    result = await asyncio.wait_for(root.stat("/docs/file.txt"), timeout=1)
+    assert result.success
+    assert not pending.done()
+
+    gate.set()
+    await pending
+    assert set(root._mounts) == {"/docs", "/data"}
+
+
+async def test_concurrent_delegated_and_direct_adds_serialize() -> None:
+    # Exercises the parent-before-child lock order: no deadlock, one winner.
+    root = SuspendingStorageFS(name="root")
+    data = SuspendingStorageFS(name="data")
+    await root.add_mount(data, "/data")
+    d1 = SuspendingStorageFS(name="d1")
+    d2 = SuspendingStorageFS(name="d2")
+    results = await asyncio.wait_for(
+        asyncio.gather(
+            root.add_mount(d1, "/data/deep"),
+            data.add_mount(d2, "/deep"),
+            return_exceptions=True,
+        ),
+        timeout=5,
+    )
+    errors = [r for r in results if isinstance(r, Exception)]
+    assert len(errors) == 1
+    assert "Mount already exists" in str(errors[0])
+    winner = data._mounts[Path("/deep")]
+    loser = d2 if winner is d1 else d1
+    assert winner._parent is data
+    assert loser._parent is None
+
+
+# ----------------------------------------------------------------------
 # _match_mount / _resolve_terminal
 # ----------------------------------------------------------------------
 
@@ -2049,6 +2255,42 @@ async def test_tree_budgets_depth_across_the_spine() -> None:
     assert child.calls == [("tree", {"path": "/", "max_depth": None, "columns": None})]
 
 
+async def test_spine_tree_rejects_nonpositive_max_depth() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(EchoFS(), "/data/a")
+    result = await root.tree("/", max_depth=0)
+    assert result.success is False
+    assert result.errors[0].kind == VFSErrorKind.invalid
+    assert "max_depth must be >= 1" in result.errors[0].message
+
+
+async def test_spine_tree_scopes_to_the_named_region() -> None:
+    # A tree over one spine region ignores mounts outside it.
+    root = VirtualFileSystem()
+    a, b = RecorderFS(), RecorderFS()
+    await root.add_mount(a, "/a/x")
+    await root.add_mount(b, "/b/y")
+    result = await root.tree("/a")
+    assert result.success is True
+    assert result.paths == ("/a/x",)
+    assert b.calls == []
+
+
+async def test_spine_tree_skips_incapable_mount_silently() -> None:
+    # An incapable mount keeps its skeleton row but is never dispatched,
+    # matching the unscoped fan-out rule.
+    root = VirtualFileSystem()
+    a = EchoFS()
+    dim = LimitedEchoFS(caps=frozenset({"read"}))
+    await root.add_mount(a, "/data/a")
+    await root.add_mount(dim, "/data/b")
+    result = await root.tree("/")
+    assert result.success is True
+    assert result.errors == []
+    assert set(result.paths) == {"/data", "/data/a", "/data/b", "/data/a/hit.md"}
+    assert dim.calls == []
+
+
 async def test_scoped_fanout_expands_across_the_spine() -> None:
     # A storage-root scope reaches the mounts beneath it — narrowing a scope
     # no longer silently shrinks coverage.
@@ -2129,6 +2371,22 @@ async def test_absorb_does_not_promote_an_errorless_failure() -> None:
     result = await root.ls("/")
     assert result.success is False
     assert "/data" in result.paths  # synthesized rows still present
+
+
+async def test_absorb_promotes_pure_absence_to_success() -> None:
+    # Storage holding nothing at a spine path answers not_found; the mount
+    # table makes the directory real, so the composed ls succeeds anyway.
+    absent = Result(
+        function="ls",
+        success=False,
+        errors=[ResultError(kind=VFSErrorKind.not_found, message="nf", path=Path("/"))],
+    )
+    root = CannedFS({"ls": absent})
+    await root.add_mount(RecorderFS(), "/data/a")
+    result = await root.ls("/")
+    assert result.success is True
+    assert result.errors == []
+    assert result.paths == ("/data",)
 
 
 async def test_stat_chained_over_root_ls_round_trips() -> None:

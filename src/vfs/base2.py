@@ -99,6 +99,7 @@ class VirtualFileSystem:
         self._allow_child_mounts = allow_child_mounts
         self._permission_map: PermissionMap = coerce_permissions(permissions)
         self._parent: VirtualFileSystem | None = None
+        self._mount_lock = asyncio.Lock()
         self._mounts: dict[Path, VirtualFileSystem] = {}
         self._sorted_mount_paths: list[Path] = []
         self._class_name = self.__class__.__name__
@@ -144,45 +145,45 @@ class VirtualFileSystem:
             raise ValueError(msg)
         mount_path = self._normalize_mount_path(mount_name)
 
-        if not self._allow_child_mounts:
-            msg = f"{self._class_name} does not allow child mounts"
-            raise ValueError(msg)
-
-        # A filesystem lives in one place only: reject self-mounts, re-mounts, or cycles (checked at the true root).
-        if filesystem is self:
-            msg = "Cannot mount a filesystem into itself"
-            raise ValueError(msg)
-        if filesystem._parent is not None:
-            msg = f"Cannot mount at {mount_path}: that filesystem is already mounted elsewhere"
-            raise ValueError(msg)
-        if id(self._root()) in filesystem._reachable_ids():
-            msg = (
-                f"Mounting at {mount_path} would create a cycle: that filesystem already contains this namespace's root"
-            )
-            raise ValueError(msg)
-
-        matched = self._match_mount(mount_path)
-        if matched is not None:
-            mount_at, mount_fs = matched
-            if mount_at == mount_path:
-                msg = f"Mount already exists at: {mount_path}"
+        async with self._mount_lock:
+            if not self._allow_child_mounts:
+                msg = f"{self._class_name} does not allow child mounts"
                 raise ValueError(msg)
-            await mount_fs.add_mount(filesystem, mount_path.without_mount(mount_at))
-            return
 
-        # self owns mount_path
-        for existing_path in self._mounts:
-            if existing_path.startswith(mount_path + "/"):
-                msg = f"Cannot mount at {mount_path}: it is owned by a deeper mount at {existing_path}"
+            # A filesystem lives in one place only: reject self-mounts, re-mounts, or cycles (checked at the true root).
+            if filesystem is self:
+                msg = "Cannot mount a filesystem into itself"
                 raise ValueError(msg)
-        mountable, reason = await self._is_path_mountable(mount_path)
-        if not mountable:
-            msg = f"Cannot mount at {mount_path}: {reason}"
-            raise ValueError(msg)
+            if filesystem._parent is not None:
+                msg = f"Cannot mount at {mount_path}: that filesystem is already mounted elsewhere"
+                raise ValueError(msg)
+            if id(self._root()) in filesystem._reachable_ids():
+                msg = (
+                    f"Mounting at {mount_path} would create a cycle: "
+                    "that filesystem already contains this namespace's root"
+                )
+                raise ValueError(msg)
 
-        filesystem._parent = self
-        self._mounts[mount_path] = filesystem
-        self._rebuild_sorted_mounts()
+            matched = self._match_mount(mount_path)
+            if matched is not None:
+                mount_at, mount_fs = matched
+                if mount_at == mount_path:
+                    msg = f"Mount already exists at: {mount_path}"
+                    raise ValueError(msg)
+                await mount_fs.add_mount(filesystem, mount_path.without_mount(mount_at))
+                return
+
+            # self owns mount_path
+            for existing_path in self._mounts:
+                if existing_path.startswith(mount_path + "/"):
+                    msg = f"Cannot mount at {mount_path}: it is owned by a deeper mount at {existing_path}"
+                    raise ValueError(msg)
+            mountable, reason = await self._is_path_mountable(mount_path)
+            if not mountable:
+                msg = f"Cannot mount at {mount_path}: {reason}"
+                raise ValueError(msg)
+
+            self._commit_mount(filesystem, mount_path)
 
     async def remove_mount(self, path: str) -> None:
         """Unmount the filesystem at *path*, which may be nested.
@@ -195,42 +196,69 @@ class VirtualFileSystem:
         the caller retained.
         """
         mount_path = self._normalize_mount_path(path)
-        matched = self._match_mount(mount_path)
-        if matched is not None and matched[0] != mount_path:
-            mount_at, mount_fs = matched
-            await mount_fs.remove_mount(mount_path.without_mount(mount_at))
-            return
-        if mount_path not in self._mounts:
-            msg = f"No mount at: {mount_path!r}"
-            raise ValueError(msg)
-        detached = self._mounts.pop(mount_path)
-        detached._parent = None
-        self._rebuild_sorted_mounts()
+        async with self._mount_lock:
+            matched = self._match_mount(mount_path)
+            if matched is not None and matched[0] != mount_path:
+                mount_at, mount_fs = matched
+                await mount_fs.remove_mount(mount_path.without_mount(mount_at))
+                return
+            if mount_path not in self._mounts:
+                msg = f"No mount at: {mount_path!r}"
+                raise ValueError(msg)
+            detached = self._mounts.pop(mount_path)
+            detached._parent = None
+            self._rebuild_sorted_mounts()
 
     async def close(self) -> None:
-        """Close every mounted filesystem, then clear the mount table.
+        """Close every mounted filesystem, emptying the mount table as it goes.
 
         Closing is polymorphic: each mount closes itself (a
         ``DatabaseFileSystem`` disposes its own engine).  The router never
         touches a child's engine directly.
 
         Every mount is closed even if one fails; failures are collected and
-        re-raised after the table is cleared, so a single bad disposal can
+        re-raised once the table is empty, so a single bad disposal can
         neither strand a sibling's engine nor leave the table populated.
+        Each child is detached (popped, ``_parent`` reset) synchronously
+        after its close, so a cancellation mid-loop splits cleanly: closed
+        children are fully detached, the rest stay fully attached, and a
+        second ``close()`` finishes the job.  No half-detached state exists
+        for a later ``add_mount`` to corrupt.
         """
-        errors: list[Exception] = []
-        for fs in list(self._mounts.values()):
-            try:
-                await fs.close()
-            except Exception as exc:
-                errors.append(exc)
-            fs._parent = None
-        self._mounts.clear()
-        self._sorted_mount_paths.clear()
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise ExceptionGroup("errors while closing mounts", errors)
+        async with self._mount_lock:
+            errors: list[Exception] = []
+            for mount_path, fs in list(self._mounts.items()):
+                try:
+                    await fs.close()
+                except Exception as exc:
+                    errors.append(exc)
+                del self._mounts[mount_path]
+                fs._parent = None
+                self._rebuild_sorted_mounts()
+            if len(errors) == 1:
+                raise errors[0]
+            if errors:
+                raise ExceptionGroup("errors while closing mounts", errors)
+
+    def _commit_mount(self, filesystem: VirtualFileSystem, mount_path: Path) -> None:
+        """Re-prove the cross-instance facts, then commit — with no await between.
+
+        The mount lock stabilizes *this* table, but the incoming filesystem's
+        ``_parent`` and subtree live outside it and may have changed during the
+        mountability probe.  Re-checking them synchronously right before the
+        commit makes check-plus-commit atomic on a single event loop.
+        """
+        if filesystem._parent is not None:
+            msg = f"Cannot mount at {mount_path}: that filesystem is already mounted elsewhere"
+            raise ValueError(msg)
+        if id(self._root()) in filesystem._reachable_ids():
+            msg = (
+                f"Mounting at {mount_path} would create a cycle: that filesystem already contains this namespace's root"
+            )
+            raise ValueError(msg)
+        filesystem._parent = self
+        self._mounts[mount_path] = filesystem
+        self._rebuild_sorted_mounts()
 
     @staticmethod
     def _normalize_mount_path(path: str) -> Path:

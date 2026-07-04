@@ -166,6 +166,21 @@ is cleared. Whether mounting into a *closed* filesystem should itself
 be rejected is a lifecycle question this story leaves alone — the
 invariant defended here is only that no filesystem is ever orphaned.
 
+*(Amended 2026-07-04, post-landing pressure test: the loop originally
+reset each child's `_parent` as it went and cleared the table only at
+the end. `CancelledError` is a `BaseException`, so an ordinary
+`asyncio.wait_for(root.close(), ...)` timing out mid-loop escaped the
+per-child `except Exception` and left already-closed children reset
+but still in the table — a **reverse orphan** (`_parent is None`,
+table membership intact) that passes every `add_mount` guard and can
+then be mounted into a second tree, the exact double-parent this story
+exists to prevent. `close()` now detaches each child synchronously
+after its close (pop + `_parent` reset + rebuild), so a cancellation
+splits the loop cleanly into fully-detached and fully-attached
+children, and a second `close()` finishes the job. Pinned by
+`test_cancelled_close_leaves_no_half_detached_child`. Pre-existing
+exposure, not introduced by this story's lock.)*
+
 ### D4 — scope note: single event loop, by contract
 
 All guarantees are event-loop-local, matching the codebase's existing
