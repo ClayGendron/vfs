@@ -33,6 +33,9 @@ if TYPE_CHECKING:
 # /.agents, while its TOOL.md/SKILL.md manifest stays a plain indexable file.
 ObjectKind = Literal["file", "directory", "chunk", "version", "edge", "tool", "skill"]
 
+MAX_PATH_LENGTH = 1024  # hard namespace-wide invariant — see Path docstring
+MAX_SEGMENT_LENGTH = 255
+
 METADATA_ROOT = "/.vfs"
 META_SEGMENT = "__meta__"
 EDGE_DIRECTIONS = ("out", "in")
@@ -178,6 +181,23 @@ class Path(str):
     Derived strings (slicing, ``+``, ``.lstrip``) return plain ``str`` — the badge
     is intentionally not inherited. Re-mint via ``parent_dir`` / ``parent_file`` /
     ``joinpath`` / ``resolve_path`` when you need it back.
+
+    **Length is a hard invariant, not an ingress rule.** No ``Path`` ever
+    exceeds ``MAX_PATH_LENGTH`` (1024) — including the outputs of
+    ``with_mount`` / ``without_mount`` / ``joinpath``. This guarantees every
+    path a ``Result`` returns is valid input to the next request
+    (re-addressability). A rebase that would exceed the limit raises
+    ``ValueError`` at the ``Path`` layer; the router's rebase seam
+    (``Result.with_mount``) converts that per row into a classified
+    ``ResultError`` — an over-long global path can therefore never be
+    observed, raised, or stored anywhere in the system.
+
+    Consequence for deep mounts: a child-local path is only reachable through
+    a parent if ``len(mount_prefix) + len(local_path) <= 1024``. Content
+    written *through* the parent always satisfies this (the ingress gate
+    bounds the global path); content written directly to a child that is also
+    mounted deeper elsewhere may not — such rows surface as ``invalid``
+    errors on the parent's results rather than as rows.
     """
 
     __slots__ = ()
@@ -193,10 +213,13 @@ class Path(str):
     def _brand(cls, canonical: str) -> Path:
         """Stamp an already-canonical string as a ``Path`` without re-validating.
 
-        The single unchecked construction site. Only :func:`resolve_path` calls
-        it, on a string it has just normalized and validated — going through the
-        public ``Path(...)`` constructor here would recurse back into the gate.
-        Every other mint runs the full validation.
+        The single unchecked construction site, called only where canonicality
+        is proven: :func:`resolve_path` (on a string it has just normalized and
+        validated) and the rebase pair :meth:`with_mount` / :meth:`without_mount`
+        (canonical-absolute concat/strip of two branded paths, length checked
+        explicitly). Going through the public ``Path(...)`` constructor at those
+        sites would recurse back into the gate; every other mint runs the full
+        validation.
         """
         return str.__new__(cls, canonical)
 
@@ -286,12 +309,21 @@ class Path(str):
 
         The outbound half of routing; inverse of :meth:`without_mount`. *mount*
         is gated first, so ``/mnt/foo/`` and ``mnt/foo`` behave alike; a root
-        mount is the identity.
+        mount is the identity. Both sides are canonical and canonical-absolute
+        concatenation is canonical, so the result is branded directly — except
+        length, the one invariant concatenation can break, which is checked
+        explicitly. Raises ``ValueError`` on overflow; the router's rebase seam
+        converts that into a classified per-row error (see ``Result.with_mount``).
         """
         mount = Path(mount)
         if mount == "/":
             return self
-        return mount if self == "/" else mount.joinpath(self[1:])
+        if self == "/":
+            return mount
+        if len(mount) + len(self) > MAX_PATH_LENGTH:
+            msg = f"Rebased path too long (max {MAX_PATH_LENGTH}): mount {mount!r} + local path of {len(self)} chars"
+            raise ValueError(msg)
+        return Path._brand(mount + self)
 
     def without_mount(self, mount: str) -> Path:
         """Strip the leading *mount* prefix (global → local).
@@ -299,17 +331,19 @@ class Path(str):
         The inbound half of routing; inverse of :meth:`with_mount`. *mount* is
         gated first; the match is boundary-aware (``/mnt/foo`` is not within
         ``/mnt/foobar``); a root mount is the identity. Raises if this path is
-        not under *mount* — that is a routing bug, not a slice.
+        not under *mount* — that is a routing bug, not a slice. Stripping a
+        canonical prefix from a canonical path only shortens it, so the result
+        is branded directly — no length guard needed.
         """
         mount = Path(mount)
         if mount == "/":
             return self
         if self == mount:
-            return Path("/")
+            return Path._brand("/")
         if not self.startswith(mount + "/"):
             msg = f"Path {self!r} is not within mount {mount!r}"
             raise ValueError(msg)
-        return Path(self[len(mount) :])
+        return Path._brand(self[len(mount) :])
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -496,8 +530,8 @@ def validate_path(path: str) -> tuple[bool, str]:
     if reason is not None:
         return False, f"Path contains {reason}"
 
-    if len(path) > 1024:
-        return False, "Path too long (max 1024 characters)"
+    if len(path) > MAX_PATH_LENGTH:
+        return False, f"Path too long (max {MAX_PATH_LENGTH} characters)"
 
     if path == "/":
         return True, ""
@@ -506,8 +540,8 @@ def validate_path(path: str) -> tuple[bool, str]:
     if segments.count(META_SEGMENT) > 1:
         return False, f"Path contains nested '{META_SEGMENT}' segments"
     for segment in segments:
-        if len(segment) > 255:
-            return False, f"Path segment too long (max 255): '{segment[:40]}...'"
+        if len(segment) > MAX_SEGMENT_LENGTH:
+            return False, f"Path segment too long (max {MAX_SEGMENT_LENGTH}): '{segment[:40]}...'"
 
     if _under_meta_root(path):
         reason = _meta_grammar_reason(path)
@@ -544,13 +578,13 @@ def validate_relative_path(path: str) -> tuple[bool, str]:
     reason = _forbidden_char_reason(path)
     if reason is not None:
         return False, f"Path contains {reason}"
-    if len(path) > 1024:
-        return False, "Path too long (max 1024 characters)"
+    if len(path) > MAX_PATH_LENGTH:
+        return False, f"Path too long (max {MAX_PATH_LENGTH} characters)"
     for segment in path.split("/"):
         if segment == "..":
             return False, "Relative path must not contain '..' segments"
-        if len(segment) > 255:
-            return False, f"Path segment too long (max 255): '{segment[:40]}...'"
+        if len(segment) > MAX_SEGMENT_LENGTH:
+            return False, f"Path segment too long (max {MAX_SEGMENT_LENGTH}): '{segment[:40]}...'"
     return True, ""
 
 

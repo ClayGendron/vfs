@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from vfs.models2 import Observation
-from vfs.paths import Path  # noqa: TC001 — Pydantic needs this at runtime for field resolution
+from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.render import render_result
 
 if TYPE_CHECKING:
@@ -115,9 +115,18 @@ class ResultError(BaseModel):
             return value
 
     def with_mount(self, mount: str) -> ResultError:
-        """Frozen copy with ``path`` re-rooted under *mount* (outbound rebase)."""
+        """Frozen copy with ``path`` re-rooted under *mount* (outbound rebase).
+
+        A ``path`` whose rebased form would exceed ``MAX_PATH_LENGTH`` cannot
+        exist as a ``Path`` (hard invariant), so it rebases to ``path=None``
+        with the mount and local path preserved in ``data``.
+        """
         if self.path is None:
             return self
+        mount = Path(mount)
+        if mount != "/" and self.path != "/" and len(mount) + len(self.path) > MAX_PATH_LENGTH:
+            data = (self.data or {}) | {"mount": str(mount), "local_path": str(self.path)}
+            return self.model_copy(update={"path": None, "data": data})
         return self.model_copy(update={"path": self.path.with_mount(mount)})
 
     def without_mount(self, mount: str) -> ResultError:
@@ -355,15 +364,41 @@ class Result(BaseModel):
         """New result with every row and error path re-rooted under *mount*.
 
         The router's outbound rebase. An empty or root *mount* is the
-        identity. Pure — the original result is untouched.
+        identity. A row whose global path would exceed ``MAX_PATH_LENGTH``
+        cannot exist as a ``Path`` (hard invariant), so it is converted to an
+        ``invalid`` error carrying the local path and mount in ``data`` — the
+        result reports the row exists but is not addressable through this
+        mount, and ``success`` is ``False`` because the result is knowingly
+        incomplete. Pure — the original is untouched.
         """
-        if not mount or mount == "/":
+        if not mount:
             return self
+        mount = Path(mount)
+        if mount == "/":
+            return self
+        observations: list[Observation] = []
+        errors = [e.with_mount(mount) for e in self.errors]
+        overflowed = False
+        for o in self.observations:
+            if o.path != "/" and len(mount) + len(o.path) > MAX_PATH_LENGTH:
+                overflowed = True
+                errors.append(
+                    ResultError(
+                        kind=VFSErrorKind.invalid,
+                        message=(
+                            f"Path exceeds {MAX_PATH_LENGTH} chars when rebased under "
+                            f"'{mount}' and cannot be addressed through this mount"
+                        ),
+                        data={"mount": str(mount), "local_path": str(o.path)},
+                    )
+                )
+                continue
+            observations.append(o.with_mount(mount))
         return Result(
             function=self.function,
-            observations=[o.with_mount(mount) for o in self.observations],
-            success=self.success,
-            errors=[e.with_mount(mount) for e in self.errors],
+            observations=observations,
+            success=self.success and not overflowed,
+            errors=errors,
         )
 
     def without_mount(self, mount: str) -> Result:

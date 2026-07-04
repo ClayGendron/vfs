@@ -23,7 +23,7 @@ from vfs.exceptions import (
 )
 from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS
-from vfs.paths import ObjectKind, Path
+from vfs.paths import MAX_PATH_LENGTH, ObjectKind, Path
 from vfs.permissions import read_write
 from vfs.replace import EditOperation
 from vfs.results2 import Result, ResultError, VFSErrorKind
@@ -71,7 +71,6 @@ class DictStorageFS(VirtualFileSystem):
         if path is not None and not rows:
             return self._error(f"Not found: {path}", kind=VFSErrorKind.not_found, path=Path(path))
         return Result(function="stat", observations=rows)
-
 
 
 # ----------------------------------------------------------------------
@@ -1184,6 +1183,32 @@ async def test_fanout_with_no_capable_terminals_is_empty_success() -> None:
     assert result.success is True
     assert len(result) == 0
     assert result.function == "glean"
+
+
+class DeepRowFS(EchoFS):
+    """Echo mount whose impl answers a deep row plus an ordinary sibling."""
+
+    DEEP = "/" + "/".join(["a" * 250] * 4)  # 1004 chars — valid locally
+
+    async def _call_local_impl(self, op, *, user_id=None, **kwargs) -> Result:  # type: ignore[override]
+        rows = [Observation(path=Path(self.DEEP)), Observation(path=Path("/ok.py"))]
+        return Result(function=op, observations=rows)
+
+
+async def test_fanout_rebase_overflow_classifies_instead_of_raising() -> None:
+    # A child row valid in local coordinates but over 1024 once rebased is
+    # refused as an `invalid` error; the sibling row in the same result survives.
+    root = VirtualFileSystem()
+    mount = "/" + "m" * 30
+    await root.add_mount(DeepRowFS(), mount)
+    result = await root.glob("**/*")
+    assert result.success is False
+    assert result.paths == (f"{mount}/ok.py",)
+    [err] = result.errors
+    assert err.kind is VFSErrorKind.invalid
+    assert err.data == {"mount": mount, "local_path": DeepRowFS.DEEP}
+    # re-addressability: every surviving path is valid input to the next request
+    assert all(len(p) <= MAX_PATH_LENGTH and Path(p) is p for p in result.paths)
 
 
 async def test_grep_observations_use_grouped_dispatch() -> None:

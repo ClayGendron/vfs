@@ -6,12 +6,15 @@ so it collects and runs while the rest of the tree is mid-refactor.
 
 from __future__ import annotations
 
+import posixpath
 import time
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from vfs.paths import (
+    MAX_PATH_LENGTH,
+    MAX_SEGMENT_LENGTH,
     METADATA_ROOT,
     EdgeParts,
     Path,
@@ -641,6 +644,72 @@ class TestPathMount:
 
 
 # =========================================================================
+# Rebase length policy — 1024 is a hard, namespace-wide invariant
+# =========================================================================
+
+# A valid 1004-char local path: "/" + four 250-char segments joined by "/".
+DEEP_LOCAL = "/" + "/".join(["a" * 250] * 4)
+
+
+class TestRebaseLengthPolicy:
+    def test_named_limits(self):
+        assert MAX_PATH_LENGTH == 1024
+        assert MAX_SEGMENT_LENGTH == 255
+
+    def test_validators_name_the_limits(self):
+        ok, reason = validate_path("/" + "a" * MAX_PATH_LENGTH)
+        assert not ok and str(MAX_PATH_LENGTH) in reason
+        ok, reason = validate_path("/" + "a" * (MAX_SEGMENT_LENGTH + 1))
+        assert not ok and str(MAX_SEGMENT_LENGTH) in reason
+
+    def test_with_mount_at_exactly_the_limit_passes(self):
+        mount = "/" + "m" * 19  # 20 + 1004 == 1024
+        rebased = Path(DEEP_LOCAL).with_mount(mount)
+        assert len(rebased) == MAX_PATH_LENGTH
+        assert isinstance(rebased, Path)
+
+    def test_with_mount_one_past_the_limit_raises_naming_lengths(self):
+        mount = "/" + "m" * 20  # 21 + 1004 == 1025
+        with pytest.raises(ValueError, match="Rebased path too long") as exc:
+            Path(DEEP_LOCAL).with_mount(mount)
+        assert str(MAX_PATH_LENGTH) in str(exc.value)
+        assert str(len(DEEP_LOCAL)) in str(exc.value)
+
+    def test_without_mount_strips_a_max_length_path(self):
+        # Stripping only shortens, so the inbound half has no length guard.
+        mount = "/" + "m" * 19
+        global_path = Path(DEEP_LOCAL).with_mount(mount)
+        local = global_path.without_mount(mount)
+        assert local == DEEP_LOCAL
+        assert isinstance(local, Path)
+
+    # --- brand-equivalence: the fast path agrees with the full gate ---
+
+    @pytest.mark.parametrize(
+        "path",
+        ["/", "/bar.py", "/a/b/c", "/Makefile", "/.vfs/src/auth.py/__meta__/chunks/1/0_5"],
+    )
+    @pytest.mark.parametrize("mount", ["/", "/mnt", "/mnt/foo", "/deep/mount/point"])
+    def test_with_mount_matches_gate_construction(self, path, mount):
+        got = Path(path).with_mount(mount)
+        assert got == Path(posixpath.join(mount, path[1:]))
+        assert isinstance(got, Path)
+        # branded output passes the gate unchanged (re-addressable)
+        assert resolve_path(got).path is got
+
+    @pytest.mark.parametrize(
+        "path",
+        ["/", "/bar.py", "/a/b/c", "/Makefile", "/.vfs/src/auth.py/__meta__/chunks/1/0_5"],
+    )
+    @pytest.mark.parametrize("mount", ["/", "/mnt", "/mnt/foo", "/deep/mount/point"])
+    def test_rebase_inverse_law(self, path, mount):
+        p = Path(path)
+        assert p.with_mount(mount).without_mount(mount) == p
+        q = p.with_mount(mount)
+        assert q.without_mount(mount).with_mount(mount) == q
+
+
+# =========================================================================
 # parse_kind
 # =========================================================================
 
@@ -807,9 +876,7 @@ class TestNamespaceRoots:
         assert compute_parent_file(Path("/.vfs/src/auth.py/__meta__/versions/3")) == "/src/auth.py"
 
     def test_compute_parent_file_for_edge(self):
-        assert (
-            compute_parent_file(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")) == "/src/auth.py"
-        )
+        assert compute_parent_file(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")) == "/src/auth.py"
 
     def test_compute_parent_file_none_for_plain_file(self):
         assert compute_parent_file(Path("/src/auth.py")) is None

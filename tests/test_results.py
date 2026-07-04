@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from vfs.models2 import Match, Observation
+from vfs.paths import MAX_PATH_LENGTH
 from vfs.results2 import Result, ResultError, VFSErrorKind
 
 
@@ -270,6 +271,62 @@ class TestMountRebasing:
         result = Result(observations=[obs("/a.md")])
         result.with_mount("/data")
         assert result.paths == ("/a.md",)
+
+
+# ---------------------------------------------------------------------------
+# Rebase overflow classification — the router seam never raises
+# ---------------------------------------------------------------------------
+
+# A valid 1004-char local path; overflows once rebased under the 31-char mount.
+DEEP_LOCAL = "/" + "/".join(["a" * 250] * 4)
+LONG_MOUNT = "/" + "m" * 30
+
+
+class TestRebaseOverflow:
+    def test_overflow_row_becomes_invalid_error(self) -> None:
+        result = Result(function="glob", observations=[obs(DEEP_LOCAL), obs("/ok.py")])
+        rebased = result.with_mount(LONG_MOUNT)
+        assert rebased.success is False
+        assert rebased.paths == (f"{LONG_MOUNT}/ok.py",)  # sibling row survives
+        [err] = rebased.errors
+        assert err.kind is VFSErrorKind.invalid
+        assert err.path is None
+        assert str(MAX_PATH_LENGTH) in err.message
+        assert err.data == {"mount": LONG_MOUNT, "local_path": DEEP_LOCAL}
+
+    def test_row_at_exactly_the_limit_survives(self) -> None:
+        mount = "/" + "m" * 19  # 20 + 1004 == 1024
+        rebased = Result(observations=[obs(DEEP_LOCAL)]).with_mount(mount)
+        assert rebased.success is True
+        assert rebased.errors == []
+        assert len(rebased.paths[0]) == MAX_PATH_LENGTH
+
+    def test_overflow_rebase_is_pure(self) -> None:
+        result = Result(observations=[obs(DEEP_LOCAL)])
+        result.with_mount(LONG_MOUNT)
+        assert result.paths == (DEEP_LOCAL,)
+        assert result.success is True
+        assert result.errors == []
+
+    def test_error_path_overflow_drops_to_none_and_keeps_location_in_data(self) -> None:
+        err = ResultError(
+            kind=VFSErrorKind.not_found,
+            message="missing",
+            path=DEEP_LOCAL,
+            data={"attempt": 1},
+        )
+        rebased = err.with_mount(LONG_MOUNT)
+        assert rebased.path is None
+        assert rebased.kind is VFSErrorKind.not_found
+        assert rebased.message == "missing"
+        assert rebased.data == {"attempt": 1, "mount": LONG_MOUNT, "local_path": DEEP_LOCAL}
+
+    def test_error_path_at_exactly_the_limit_rebases(self) -> None:
+        mount = "/" + "m" * 19
+        err = ResultError(kind=VFSErrorKind.not_found, message="missing", path=DEEP_LOCAL)
+        rebased = err.with_mount(mount)
+        assert rebased.path is not None
+        assert len(rebased.path) == MAX_PATH_LENGTH
 
 
 # ---------------------------------------------------------------------------

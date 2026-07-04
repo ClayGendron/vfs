@@ -37,6 +37,7 @@ from sqlalchemy import (
     Table,
 )
 
+from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH
 from vfs.vector import NativeEmbeddingConfig, VectorType
 
 # Entry-table columns with no counterpart field on the domain model: the id
@@ -122,18 +123,18 @@ def build_vfs_tables(
         # relationship columns (id references arrive in a later phase).
         Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True),
         Column("external_id", String(1024)),
-        Column("path", String(1024), nullable=False, unique=True, index=True),
-        Column("name", String(255), nullable=False),
+        Column("path", String(MAX_PATH_LENGTH), nullable=False, unique=True, index=True),
+        Column("name", String(MAX_SEGMENT_LENGTH), nullable=False),
         Column("kind", String(32), nullable=False, index=True),
-        Column("parent_dir", String(1024), nullable=False, index=True),
-        Column("parent_file", String(1024), index=True),
+        Column("parent_dir", String(MAX_PATH_LENGTH), nullable=False, index=True),
+        Column("parent_file", String(MAX_PATH_LENGTH), index=True),
         # Content. Unbounded text columns take no length: VARCHAR on
         # SQLite/Postgres, VARCHAR(max) on MSSQL.
         Column("content", String()),
         Column("description", String()),
         Column("version_diff", String()),
         Column("content_hash", String(64)),
-        Column("mime_type", String(255)),
+        Column("mime_type", String(MAX_SEGMENT_LENGTH)),
         Column("ext", String(32), index=True),
         # Metrics.
         Column("lines", Integer, nullable=False, default=0),
@@ -150,16 +151,16 @@ def build_vfs_tables(
         Column("created_by", String(255)),
         # Edge-specific. ``source_path``/``target_path`` are repository-derived
         # like the parent columns above.
-        Column("source_path", String(1024), index=True),
-        Column("target_path", String(1024), index=True),
-        Column("edge_type", String(255)),
+        Column("source_path", String(MAX_PATH_LENGTH), index=True),
+        Column("target_path", String(MAX_PATH_LENGTH), index=True),
+        Column("edge_type", String(MAX_SEGMENT_LENGTH)),
         Column("edge_weight", Float),
         Column("edge_distance", Float),
         # Embedding.
         Column("embedding", embedding_type),
         # Ownership.
         Column("owner_id", String(255), index=True),
-        Column("original_path", String(1024)),
+        Column("original_path", String(MAX_PATH_LENGTH)),
         # Timestamps.
         Column("created_at", DateTime(timezone=True)),
         Column("updated_at", DateTime(timezone=True)),

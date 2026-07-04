@@ -1,6 +1,6 @@
 # 038 — Branded Rebase Under a Hard 1024 Path Ceiling
 
-- **Status:** draft
+- **Status:** implemented (2026-07-04, landing commit pending)
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** fix (no-raise contract violation) + perf (rebase hot path)
