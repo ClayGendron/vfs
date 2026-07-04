@@ -1,7 +1,12 @@
 """VirtualFileSystem — async router whose mount boundary is the public API.
 
 The base class owns mount routing and path rebasing.  The filesystem object
-itself owns ``/`` — mounting at ``"/"`` is illegal.
+itself owns ``/`` — mounting at ``"/"`` is illegal.  It also owns the
+**spine**: ``/`` plus every proper ancestor of a mount path.  Spine paths are
+real directories — ``ls``/``stat``/``tree`` answer on them locally from the
+mount table, a scoped fan-out landing on one expands across the mounts
+beneath it, and every other verb classifies them ``wrong_kind``, exactly as
+it would a stored directory.
 
 Public methods are routers.  They resolve the terminal filesystem via
 longest-prefix mount matching, then dispatch across the mount boundary:
@@ -27,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple
 
 from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS
@@ -50,6 +55,10 @@ if TYPE_CHECKING:
 # Grep option vocabularies — shared with the CLI grammar when it lands.
 CaseMode = Literal["sensitive", "insensitive", "smart"]
 GrepOutputMode = Literal["lines", "files", "count"]
+
+# The read verbs the router answers itself on spine paths; every other verb
+# classifies a spine path as a directory at the routability step.
+_SPINE_READ_OPS: Final[frozenset[Op]] = frozenset({"ls", "stat", "tree"})
 
 
 class TwoPathOperation(NamedTuple):
@@ -285,6 +294,31 @@ class VirtualFileSystem:
             rel = rel.without_mount(mount_path)
         return fs, rel, prefix
 
+    def _spine_children(self, rel: Path) -> dict[str, VirtualFileSystem | None]:
+        """Immediate child segments of *rel* implied by the mount table.
+
+        Maps segment → mounted filesystem when the child IS a mount point,
+        or → ``None`` when it is an intermediate spine directory (a mount
+        lies deeper).  Empty when *rel* is not on the spine.  Derived from
+        the mount table on every call — no new state to keep in sync.
+        """
+        base = "" if rel == "/" else str(rel)
+        children: dict[str, VirtualFileSystem | None] = {}
+        for mount_path, fs in self._mounts.items():
+            if not mount_path.startswith(base + "/"):
+                continue
+            segment, _, deeper = mount_path[len(base) + 1 :].partition("/")
+            children[segment] = None if deeper else fs
+        return children
+
+    def _is_spine_path(self, rel: Path) -> bool:
+        """Whether *rel* is on the spine: ``/`` or a proper mount ancestor.
+
+        Mount points themselves are not spine paths — they route into their
+        mount, whose own root answers (the recursion the tree stands on).
+        """
+        return rel == "/" or bool(self._spine_children(rel))
+
     def _root(self) -> VirtualFileSystem:
         """Walk parent links to the top of this mount tree.
 
@@ -393,6 +427,135 @@ class VirtualFileSystem:
         return [(fs, pfx, obs_list) for ((_id, pfx), (fs, obs_list)) in groups.items()]
 
     # -------------------------------------------------------------------
+    # spine answers — the directories the mount table implies
+    # -------------------------------------------------------------------
+
+    def _storage_answers(self, op: Op) -> bool:
+        """Whether self-storage joins a router-composed answer for *op*.
+
+        The unscoped-fan-out capability rule: storage participates silently
+        when capable, and its absence never fails the composed answer.
+        """
+        if not self._storage:
+            return False
+        caps = self.capabilities()
+        return caps is None or op in caps
+
+    @staticmethod
+    def _absorb_not_found(result: Result) -> Result:
+        """Strip a pure-absence failure — a spine directory exists regardless.
+
+        Storage holding nothing at a spine path answers ``not_found``, but
+        the mount table makes the directory real; only genuine failures
+        (anything beyond absence) propagate into the composed result.
+        """
+        # An errorless failure is malformed; pass it through rather than promote it.
+        if result.success or not result.errors or not all(e.kind == VFSErrorKind.not_found for e in result.errors):
+            return result
+        return Result(function=result.function, observations=list(result.observations))
+
+    def _spine_row(self, rel: Path) -> Observation:
+        """The synthesized directory row for a spine path.
+
+        The root row carries this node's own description, so a parent reading
+        a mount point composes to the child's constructor metadata — no
+        parent-side special case, and never a wire call.
+        """
+        description = self.description if rel == "/" else None
+        return Observation(path=rel, kind="directory", description=description)
+
+    async def _spine_read(self, op: Op, rel: Path, *, user_id: str | None = None, **kwargs: Any) -> Result:
+        """Answer ``ls``/``stat``/``tree`` for a spine path this router owns."""
+        if op == "ls":
+            return await self._spine_ls(rel, user_id=user_id, **kwargs)
+        if op == "tree":
+            return await self._spine_tree(rel, user_id=user_id, **kwargs)
+        return Result(function="stat", observations=[self._spine_row(rel)])
+
+    async def _spine_ls(
+        self,
+        rel: Path,
+        *,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """List a spine directory: storage rows plus rows synthesized from mounts.
+
+        A mount-point child carries the mount's description; an intermediate
+        child is a bare directory row.  Storage rows win on overlap, with
+        synthesized fields filling only what storage left null — collisions
+        are safe by construction (a mount point cannot exist in storage).
+        """
+        synthesized = [
+            Observation(path=rel / segment, kind="directory", description=fs.description if fs else None)
+            for segment, fs in self._spine_children(rel).items()
+        ]
+        synth = Result(function="ls", observations=synthesized)
+        if not self._storage_answers("ls"):
+            return synth
+        stored = await self._call_local_impl("ls", path=rel, columns=columns, user_id=user_id)
+        return self._absorb_not_found(stored) | synth
+
+    async def _spine_tree(
+        self,
+        rel: Path,
+        *,
+        max_depth: int | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Tree from a spine path: storage subtree, spine skeleton, mount descent.
+
+        Each mount at segment distance ``s`` below *rel* runs
+        ``tree("/", max_depth - s)`` — skipped when the remaining budget is
+        ``<= 0`` (its skeleton row stays), unlimited when *max_depth* is
+        ``None``.  Incapable mounts are skipped silently, as in an unscoped
+        fan-out: a tree over a region must not fail on one incapable catalog.
+        """
+        if max_depth is not None and max_depth < 1:
+            return self._error(f"max_depth must be >= 1, got {max_depth}", kind=VFSErrorKind.invalid, function="tree")
+
+        skeleton: dict[Path, Observation] = {}
+        descents: list[tuple[VirtualFileSystem, Path, int | None]] = []
+        for mount_path, fs in self._mounts.items():
+            if rel != "/" and not mount_path.startswith(rel + "/"):
+                continue
+            tail = mount_path if rel == "/" else mount_path[len(rel) :]
+            segments = tail.strip("/").split("/")
+            node = rel
+            for depth, segment in enumerate(segments, start=1):
+                if max_depth is not None and depth > max_depth:
+                    break
+                node = node / segment
+                description = fs.description if depth == len(segments) else None
+                skeleton.setdefault(node, Observation(path=node, kind="directory", description=description))
+            budget = None if max_depth is None else max_depth - len(segments)
+            if budget is not None and budget <= 0:
+                continue
+            caps = fs.capabilities()
+            if caps is not None and "tree" not in caps:
+                continue
+            descents.append((fs, mount_path, budget))
+
+        async def _descend(fs: VirtualFileSystem, prefix: Path, budget: int | None) -> Result:
+            r = await fs.tree("/", budget, columns=columns, user_id=user_id)
+            return r.with_mount(prefix)
+
+        results: list[Result] = []
+        if self._storage_answers("tree"):
+            stored = await self._call_local_impl(
+                "tree",
+                path=rel,
+                max_depth=max_depth,
+                columns=columns,
+                user_id=user_id,
+            )
+            results.append(self._absorb_not_found(stored))
+        results.append(Result(function="tree", observations=[skeleton[p] for p in sorted(skeleton)]))
+        results.extend(await self._gather_settled(_descend(fs, pfx, budget) for fs, pfx, budget in descents))
+        return self._merge_results(results)
+
+    # -------------------------------------------------------------------
     # dispatch across the mount boundary
     # -------------------------------------------------------------------
 
@@ -427,23 +590,40 @@ class VirtualFileSystem:
         *,
         report: Path,
         write_rels: Sequence[Path] = (),
+        spine_check: bool = True,
     ) -> Result | None:
         """Routability → capability → permission, in the pinned order.
 
         Every dispatch chokepoint runs this gate on its resolved terminal
         before touching it.  The order is a contract: an incapable terminal
         reads as ``unsupported``, never as a policy denial, and an unroutable
-        path reads as ``not_found`` before anything else.
+        path reads as ``not_found`` before anything else.  A spine path is
+        routable but is a directory, so at the routability step it classifies
+        ``wrong_kind`` — never ``not_found`` — for every verb except the
+        spine reads, which are answered upstream and never gate a spine path.
 
         *report* is the terminal-relative path implicated in terminal-level
         failures (routability, capability); it is reported router-side —
         rebased under *prefix* — so the caller always sees the path they
         typed.  *write_rels* are the terminal-relative paths the permission
         gate checks (empty when the write target is derived later, as in
-        mkedge's pre-delegation gate).  Returns the first classified failure,
-        else ``None``.
+        mkedge's pre-delegation gate).  *spine_check* is switched off by the
+        two chokepoints whose spine handling is deliberately elsewhere:
+        grouped observations (reads peel, mutations keep today's failures)
+        and mkedge (endpoints answer to the edge grammar).  Returns the
+        first classified failure, else ``None``.
         """
         reported = report.with_mount(prefix)
+        if fs is self and spine_check:
+            for rel in (report, *write_rels):
+                if self._is_spine_path(rel):
+                    spine_path = rel.with_mount(prefix)
+                    return self._error(
+                        f"Is a directory: {spine_path}",
+                        kind=VFSErrorKind.wrong_kind,
+                        function=op,
+                        path=spine_path,
+                    )
         if fs is self and not self._storage:
             return self._error(
                 f"No mount found for path: {reported}",
@@ -501,6 +681,11 @@ class VirtualFileSystem:
         Each group runs against its terminal filesystem: ``self`` through the
         local seam, a child mount through its public method.  Results are
         rebased and merged.
+
+        For the spine reads (``ls``/``stat``/``tree``), observations on this
+        router's own spine peel off into a synthesized local answer, so a
+        chained read over spine rows round-trips.  Everything else — other
+        reads, and every mutation — groups and dispatches unchanged.
         """
         rows = self._as_list(observations)
         if rows is None:
@@ -524,14 +709,32 @@ class VirtualFileSystem:
                     function=op,
                 )
 
-        groups = self._group_observations_by_terminal(rows)
-        if not groups:
+        spine_rels: dict[Path, None] = {}
+        routed = rows
+        if op in _SPINE_READ_OPS:
+            routed = []
+            for obs in rows:
+                fs, rel, _prefix = self._resolve_terminal(obs.path)
+                if fs is self and self._is_spine_path(rel):
+                    spine_rels.setdefault(rel)
+                else:
+                    routed.append(obs)
+
+        groups = self._group_observations_by_terminal(routed)
+        if not groups and not spine_rels:
             return Result(function=op, observations=[])
 
         # All gates run before any dispatch, so a batch touching a bad
         # terminal is rejected whole, nothing dispatched.
         for fs, prefix, group in groups:
-            err = self._gate_terminal(fs, op, prefix, report=group[0].path, write_rels=[o.path for o in group])
+            err = self._gate_terminal(
+                fs,
+                op,
+                prefix,
+                report=group[0].path,
+                write_rels=[o.path for o in group],
+                spine_check=False,
+            )
             if err is not None:
                 return err
 
@@ -546,7 +749,11 @@ class VirtualFileSystem:
                 r = await getattr(fs, op)(observations=group, user_id=user_id, **kwargs)
             return r.with_mount(prefix)
 
-        results = await self._gather_settled(_run_group(fs, pfx, group) for fs, pfx, group in groups)
+        coros: list[Coroutine[Any, Any, Result]] = [
+            self._spine_read(op, rel, user_id=user_id, **kwargs) for rel in spine_rels
+        ]
+        coros.extend(_run_group(fs, pfx, group) for fs, pfx, group in groups)
+        results = await self._gather_settled(coros)
         return self._merge_results(results)
 
     async def _route_single(
@@ -585,6 +792,10 @@ class VirtualFileSystem:
         path = resolved.path
 
         fs, rel, prefix = self._resolve_terminal(path)
+        # A spine path this router owns is answered from the mount table;
+        # routability is satisfied by the spine, not by storage.
+        if fs is self and op in _SPINE_READ_OPS and self._is_spine_path(rel):
+            return await self._spine_read(op, rel, user_id=user_id, **kwargs)
         err = self._gate_terminal(fs, op, prefix, report=rel, write_rels=(rel,))
         if err is not None:
             return err
@@ -688,6 +899,12 @@ class VirtualFileSystem:
         ``capabilities()`` lack *op* — the no-probe rule's purpose: one
         incapable catalog must not fail a namespace-wide query.
 
+        A scope on this router's own spine names a *region*, not a terminal:
+        it expands to self-storage scoped to it plus every mount strictly
+        beneath it dispatched unscoped, under the unscoped capability rule
+        (silent skip).  A scope that resolves inside a mount named the
+        terminal, and keeps the explicit ``unsupported``.
+
         *paths* and *observations* are mutually exclusive — supplying both
         is a caller error returned as ``invalid`` rather than silently
         preferring one.
@@ -703,6 +920,8 @@ class VirtualFileSystem:
 
         if paths:
             groups: dict[int, tuple[VirtualFileSystem, Path, list[Path]]] = {}
+            spine_rels: dict[Path, None] = {}
+            expanded: dict[int, tuple[VirtualFileSystem, Path]] = {}
             for raw in paths:
                 resolved = resolve_path(raw)
                 if resolved.path is None:
@@ -712,6 +931,16 @@ class VirtualFileSystem:
                         function=op,
                     )
                 fs, rel, prefix = self._resolve_terminal(resolved.path)
+                if fs is self and self._is_spine_path(rel):
+                    spine_rels.setdefault(rel)
+                    for mount_path, mount in self._mounts.items():
+                        if rel != "/" and not mount_path.startswith(rel + "/"):
+                            continue
+                        caps = mount.capabilities()
+                        if caps is not None and op not in caps:
+                            continue
+                        expanded.setdefault(id(mount), (mount, mount_path))
+                    continue
                 err = self._gate_terminal(fs, op, prefix, report=rel, write_rels=(rel,))
                 if err is not None:
                     return err
@@ -722,15 +951,27 @@ class VirtualFileSystem:
             async def _run_scoped(
                 fs: VirtualFileSystem,
                 prefix: Path,
-                rels: list[Path],
+                rels: tuple[Path, ...],
             ) -> Result:
                 if fs is self:
-                    r = await self._call_local_impl(op, paths=tuple(rels), user_id=user_id, **kwargs)
+                    r = await self._call_local_impl(op, paths=rels, user_id=user_id, **kwargs)
                 else:
-                    r = await getattr(fs, op)(paths=tuple(rels), user_id=user_id, **kwargs)
+                    r = await getattr(fs, op)(paths=rels, user_id=user_id, **kwargs)
                 return r.with_mount(prefix)
 
-            results = await self._gather_settled(_run_scoped(fs, pfx, rels) for fs, pfx, rels in groups.values())
+            # An expansion already covers its whole mount, so a narrower scope
+            # into the same mount is subsumed — one dispatch per terminal.
+            coros = [
+                _run_scoped(fs, pfx, tuple(rels)) for key, (fs, pfx, rels) in groups.items() if key not in expanded
+            ]
+            if spine_rels and self._storage_answers(op):
+                # A root scope covers all of storage, so it dispatches unscoped.
+                self_rels = () if "/" in spine_rels else tuple(spine_rels)
+                coros.append(_run_scoped(self, Path("/"), self_rels))
+            coros.extend(_run_scoped(mount, mount_path, ()) for mount, mount_path in expanded.values())
+            if not coros:
+                return Result(function=op, observations=[])
+            results = await self._gather_settled(coros)
             return self._merge_results(results)
 
         targets: list[tuple[VirtualFileSystem, Path]] = []
@@ -1183,7 +1424,9 @@ class VirtualFileSystem:
                 kind=VFSErrorKind.cross_mount,
                 function="mkedge",
             )
-        err = self._gate_terminal(src_fs, "mkedge", src_prefix, report=src_rel)
+        # Spine classification stays off: edge endpoints answer to the edge
+        # grammar (root/reserved endpoints reject as invalid, not wrong_kind).
+        err = self._gate_terminal(src_fs, "mkedge", src_prefix, report=src_rel, spine_check=False)
         if err is not None:
             return err
 
