@@ -7,8 +7,8 @@ The central pair:
   which nullable fields are relevant and how operations dispatch. A pure
   :class:`pydantic.BaseModel`, never bound to a database session: it carries
   fields, the construction-time validators, and pure-data methods (``chunk``,
-  ``plan_file_write``, ``set_version``, ``to_observation``, version
-  reconstruction).
+  ``with_content``, ``with_version``, ``create_version_row``,
+  ``to_observation``, version reconstruction).
 - :class:`Observation` — the frozen, possibly-partial row every operation
   returns about an entry: mirror fields held in type-lockstep with ``Entry``
   by a drift test, plus query-relative fields (``score``, ``matches``, ...).
@@ -35,10 +35,14 @@ from vfs.chunking import (
     split_notebook,
     split_with_line_ranges,
 )
-from vfs.paths import ObjectKind, Path, chunk_path, decompose_edge, version_path
+from vfs.paths import ObjectKind, Path, chunk_path, decompose_edge, is_meta_path, version_path
 from vfs.vector import Vector  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 from vfs.versioning import create_version as create_version_record
 from vfs.versioning import reconstruct_version
+
+# Kinds that never carry content — construction, normalization of absence,
+# and with_content all enforce the same set.
+_CONTENT_FREE_KINDS: Final[frozenset[str]] = frozenset({"directory", "tool", "skill"})
 
 # ---------------------------------------------------------------------------
 # The unified object model
@@ -192,22 +196,53 @@ class Entry(BaseModel):
         """Derive ``kind`` and ``name`` from the path when the caller omits them.
 
         Runs before field validation because ``kind`` is required — an absent
-        ``kind`` must be filled here or construction fails. Inject *only* these
-        identity projections, never a field whose caller-explicitness the write
-        path depends on — injected keys count as "set" (see the class docstring
-        for the full ``model_fields_set`` contract).
+        ``kind`` must be filled here or construction fails. This is also the
+        only place raw caller intent is readable, so it arbitrates explicitness:
+        explicit content is a statement of a content-bearing kind, so it
+        overrides a path inference that would land content-free — and an
+        *explicit* content-free kind alongside explicit content is a
+        contradiction that raises rather than destroying either statement.
+        Structurally content-free places refuse content outright instead of
+        being reclassified: the root path, the reserved ``/.vfs`` directory
+        skeleton, and ``/.agents`` tool/skill unit directories all raise.
+
+        Operates on a copy — the caller's mapping is never mutated. Inject
+        *only* the identity projections, never a field whose
+        caller-explicitness the write path depends on — injected keys count as
+        "set" (see the class docstring for the full ``model_fields_set``
+        contract).
         """
         if not isinstance(data, dict):
             return data
         raw = data.get("path")
         if not isinstance(raw, str):
             return data
+        data = dict(data)
         path = Path(raw)
         data["path"] = path
+        kind = data.get("kind")
+        content = data.get("content")
+        if content is not None and path == "/":
+            msg = "content conflicts with the root path: '/' carries no content"
+            raise ValueError(msg)
+        # isinstance gate: an unhashable kind must reach field validation as a
+        # literal_error, not explode this membership test with a TypeError.
+        if isinstance(kind, str) and kind in _CONTENT_FREE_KINDS and content is not None:
+            msg = f"content conflicts with kind={kind!r}: a {kind} carries no content (path={path!r})"
+            raise ValueError(msg)
         # Gate on ``is None``, not truthiness: an explicit "" is a caller value,
         # not an omission — it should reach field validation, not be derived over.
-        if data.get("kind") is None:
-            data["kind"] = path.kind
+        if kind is None:
+            inferred = path.kind
+            if content is not None and inferred in _CONTENT_FREE_KINDS:
+                # Structural classifications (/.vfs skeleton, /.agents units) are
+                # never the name lottery — content there is a caller error.
+                if is_meta_path(path) or inferred != "directory":
+                    msg = f"content conflicts with reserved path {path!r}: a {inferred} carries no content"
+                    raise ValueError(msg)
+                data["kind"] = "file"
+            else:
+                data["kind"] = inferred
         if data.get("name") is None:
             data["name"] = path.name
         return data
@@ -230,6 +265,10 @@ class Entry(BaseModel):
             msg = f"name must not be empty (path={self.path!r})"
             raise ValueError(msg)
 
+        if self.path == "/" and self.kind != "directory":
+            msg = f"the root path is always a directory (kind={self.kind!r})"
+            raise ValueError(msg)
+
         # ext: files only (declared kind authoritative); others stay None.
         if "ext" not in fields:
             self.ext = self.path.ext if self.kind == "file" else None
@@ -240,8 +279,9 @@ class Entry(BaseModel):
             if parts is not None:
                 self.edge_type = parts.edge_type
 
-        # Kind-specific content invariants.
-        if self.kind in {"directory", "tool", "skill"}:
+        # Kind-specific content invariants. The content-free null is pure
+        # normalization of absence — presence conflicts raise in _derive_identity.
+        if self.kind in _CONTENT_FREE_KINDS:
             self.content = None
         elif self.kind == "file" and self.content is None:
             self.content = ""
@@ -339,7 +379,7 @@ class Entry(BaseModel):
         ``version_number`` belongs to write planning. ``model_copy`` bypasses
         field validation, so the null-byte invariant is enforced here.
         """
-        if self.kind in {"directory", "tool", "skill"}:
+        if self.kind in _CONTENT_FREE_KINDS:
             msg = f"Cannot set content on a {self.kind}: {self.path}"
             raise ValueError(msg)
         if "\x00" in content:

@@ -57,10 +57,35 @@ never overrides an explicit statement.
 
 In `_derive_identity` (mode=before — the only place raw caller intent is
 readable, per the `model_fields_set` contract in the class docstring):
-when the caller supplies non-`None` `content` and no `kind`, derive
-`kind="file"`, not `parse_kind(path)`. The path heuristic keeps deciding
+when the caller supplies non-`None` `content` and no `kind`, and
+`parse_kind(path)` would land on a *content-free* kind (`directory`,
+`tool`, `skill`), derive `kind="file"` instead. Inference landing on a
+content-bearing kind (`chunk`, `version`, `edge` — structural
+classification, not the name lottery) is not a conflict and stands
+unchanged: nothing would be destroyed. The path heuristic keeps deciding
 for content-free constructions (`ls`-style synthesis, directory rows,
 hydration paths that always pass `kind` explicitly anyway).
+
+*(Scope settled 2026-07-04: the override is narrow — it fences only the
+content-destroying inferences, so chunk/version/edge-shaped paths with
+content keep their inferred kind exactly as today.)*
+
+*(Amendments settled 2026-07-04, out of adversarial review:)*
+
+- *Root carries no content, ever: any non-`None` content at `/` raises,
+  regardless of explicit kind, and a root entry must be a directory —
+  `Entry(path="/", kind="file")` raises even content-free.*
+- *Empty string is content: the gate is `is None`, not truthiness. A
+  directory's content-free state is `None`; `""` is a caller value that
+  forces `file` under D1 and conflicts under D2.*
+- *Reserved `/.vfs` directories refuse content: when inference lands
+  content-free on a meta path (the `__meta__` skeleton dirs), content
+  raises instead of reclassifying to `file` — structural classification
+  there is never the name lottery, so content is a caller error, not
+  evidence.*
+- *Tool and skill unit directories likewise refuse content: an inferred
+  `tool`/`skill` with content raises rather than reclassifying —
+  `/.agents` unit classification is structural too.*
 
 ### D2 — explicit content-free kind + explicit content raises
 

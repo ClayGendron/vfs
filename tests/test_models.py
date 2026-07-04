@@ -96,7 +96,7 @@ class TestConstructionValidation:
 
     def test_tool_and_skill_are_content_free_like_directories(self) -> None:
         for path in (tool_path("clone-repo"), skill_path("pdf-processing")):
-            entry = Entry(path=path, content="ignored")
+            entry = Entry(path=path)
             assert entry.kind in {"tool", "skill"}
             assert entry.content is None
             assert entry.parent_file is None
@@ -105,6 +105,109 @@ class TestConstructionValidation:
     def test_with_content_rejected_on_tool(self) -> None:
         with pytest.raises(ValueError, match="Cannot set content on a tool"):
             Entry(path=tool_path("clone-repo")).with_content("x")
+
+
+# ---------------------------------------------------------------------------
+# Authoring intent — explicit content is never silently dropped
+# ---------------------------------------------------------------------------
+
+
+class TestAuthoringIntent:
+    """Content is a statement of kind; the path heuristic only decides absence."""
+
+    def test_content_forces_file_over_extensionless_guess(self) -> None:
+        entry = Entry(path="/notes/journal", content="hello world")
+        assert entry.kind == "file"
+        assert entry.content == "hello world"
+        assert entry.size_bytes == len(b"hello world")
+        assert entry.lines == 1
+
+    def test_heuristic_still_owns_absence(self) -> None:
+        inferred_dir = Entry(path="/notes/journal")
+        assert inferred_dir.kind == "directory"
+        assert inferred_dir.content is None
+        assert Entry(path="/notes/todo").kind == "file"
+
+    def test_content_bearing_inference_stands(self) -> None:
+        chunk = Entry(path=chunk_path(Path("/a.md"), "1_10", 1), content="chunk text")
+        assert chunk.kind == "chunk"
+        assert chunk.content == "chunk text"
+        version = Entry(path=version_path(Path("/a.md"), 2), content="v2 text")
+        assert version.kind == "version"
+        assert version.content == "v2 text"
+
+    def test_explicit_directory_with_content_raises(self) -> None:
+        with pytest.raises(ValidationError, match="carries no content"):
+            Entry(path="/notes/journal", kind="directory", content="x")
+
+    def test_explicit_tool_with_content_raises(self) -> None:
+        with pytest.raises(ValidationError, match="carries no content"):
+            Entry(path=tool_path("clone-repo"), kind="tool", content="x")
+
+    def test_explicit_skill_with_content_raises(self) -> None:
+        with pytest.raises(ValidationError, match="carries no content"):
+            Entry(path=skill_path("pdf-processing"), kind="skill", content="x")
+
+    def test_empty_string_content_is_content(self) -> None:
+        entry = Entry(path="/notes/journal", content="")
+        assert entry.kind == "file"
+        assert entry.content == ""
+        with pytest.raises(ValidationError, match="carries no content"):
+            Entry(path="/notes/journal", kind="directory", content="")
+
+    def test_root_never_carries_content(self) -> None:
+        with pytest.raises(ValidationError, match="'/' carries no content"):
+            Entry(path="/", content="hello")
+        with pytest.raises(ValidationError, match="'/' carries no content"):
+            Entry(path="/", kind="file", content="hello")
+        with pytest.raises(ValidationError, match="'/' carries no content"):
+            Entry(path="/", content="")
+
+    def test_root_is_always_a_directory(self) -> None:
+        with pytest.raises(ValidationError, match="always a directory"):
+            Entry(path="/", kind="file")
+        root = Entry(path="/")
+        assert root.kind == "directory"
+        assert root.content is None
+
+    def test_reserved_meta_directory_refuses_content(self) -> None:
+        chunk_version_dir = chunk_path(Path("/a.md"), "1_10", 1).parent_dir
+        versions_dir = version_path(Path("/a.md"), 2).parent_dir
+        for path in (chunk_version_dir, versions_dir):
+            with pytest.raises(ValidationError, match="carries no content"):
+                Entry(path=path, content="x")
+
+    def test_tool_and_skill_unit_dirs_refuse_content(self) -> None:
+        for path in (tool_path("clone-repo"), skill_path("pdf-processing")):
+            with pytest.raises(ValidationError, match="carries no content"):
+                Entry(path=path, content="x")
+
+    def test_unhashable_kind_is_a_clean_validation_error(self) -> None:
+        for bad_kind in (["directory"], {"directory": 1}):
+            with pytest.raises(ValidationError, match="kind"):
+                Entry.model_validate({"path": "/x", "kind": bad_kind, "content": "x"})
+            with pytest.raises(ValidationError, match="kind"):
+                Entry.model_validate({"path": "/x", "kind": bad_kind})
+
+    def test_explicit_none_content_is_not_a_conflict(self) -> None:
+        entry = Entry(path="/notes/journal", kind="directory", content=None)
+        assert entry.kind == "directory"
+        assert entry.content is None
+
+    def test_explicit_kind_still_wins_over_the_path(self) -> None:
+        assert Entry(path="/a/b.md", kind="directory").kind == "directory"
+
+    def test_model_validate_leaves_caller_mapping_untouched(self) -> None:
+        data = {"path": "/a/b.md"}
+        Entry.model_validate(data)
+        assert data == {"path": "/a/b.md"}
+
+    def test_write_shape_round_trips_through_to_observation(self) -> None:
+        entry = Entry(path="/notes/journal", content="hello world")
+        observed = entry.to_observation(status="created")
+        assert observed.kind == "file"
+        assert observed.content == "hello world"
+        assert observed.status == "created"
 
 
 # ---------------------------------------------------------------------------
