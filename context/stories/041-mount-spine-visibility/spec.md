@@ -1,6 +1,6 @@
 # 041 — Mount-Spine Visibility: the Namespace Is Discoverable Top-Down
 
-- **Status:** draft
+- **Status:** implemented (commit 9a7e0bf, 2026-07-04)
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** feature (router namespace semantics) + fix (silent partial
