@@ -1,6 +1,6 @@
 # 035 — One Operation Vocabulary (`vfs/ops.py`)
 
-- **Status:** draft
+- **Status:** implemented (commit 02c2b01, 2026-07-03)
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** refactor (small; spec-only story)

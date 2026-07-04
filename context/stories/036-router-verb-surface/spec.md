@@ -1,6 +1,6 @@
 # 036 — Router Verb Surface (all sixteen ops on `VirtualFileSystem`)
 
-- **Status:** draft
+- **Status:** implemented (commit 185f73b, 2026-07-03)
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** feature (router layer only)

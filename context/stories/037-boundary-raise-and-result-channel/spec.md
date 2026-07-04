@@ -1,6 +1,6 @@
 # 037 — Boundary Raise and a Single Result Channel
 
-- **Status:** implemented (pending commit)
+- **Status:** implemented (commit 06cf551, 2026-07-03)
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** refactor (router failure semantics) + two contract fixes
