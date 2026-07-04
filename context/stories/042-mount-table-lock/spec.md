@@ -1,6 +1,6 @@
 # 042 — Serialize Mount-Table Mutation: a Lock Plus a Commit Gate
 
-- **Status:** draft
+- **Status:** implemented (commit 5f84052, 2026-07-04)
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** fix (TOCTOU races that corrupt the mount-tree invariants)
