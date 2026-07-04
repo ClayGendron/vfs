@@ -1,6 +1,6 @@
 # 043 — Entry Authoring Honors Caller Intent: Content Is Never Silently Dropped
 
-- **Status:** draft
+- **Status:** implemented (commit 41d93a1, 2026-07-04)
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** fix (silent data loss at the entry-creation chokepoint) +
