@@ -176,9 +176,18 @@ output feeds straight back in: `stat(observations=(await fs.ls("/")).observation
 must not die on the mount-ancestor rows it was just handed. In grouped
 dispatch for the read verbs (`ls`/`stat`/`tree`), observations whose path
 is on the spine peel off into a synthesized group answered locally;
-everything else groups and dispatches as today. Mutating verbs are
-unchanged — a spine path is not a mutation target, and their existing
-classified failures stand.
+everything else groups and dispatches as today. Mutating verbs classify
+`wrong_kind` like every other spine addressing — a spine path is not a
+mutation target through any input shape.
+
+*(Amended 2026-07-04, post-landing: originally "mutating verbs are
+unchanged", which kept their pre-041 classified failures. Pressure
+testing showed the gap that leaves on a **storage** root: `delete(
+observations=(Observation(path="/data"),))` dispatched to the impl and
+could delete a stored mount ancestor, while `delete(path="/data")`
+rejected `wrong_kind` — the D5 chaining idiom made the bypass one
+filter away. Grouped mutations now run the same D6 routability
+classification; grouped non-listing reads still dispatch as today.)*
 
 ### D6 — spine paths are directories, for every other verb
 

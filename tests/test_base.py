@@ -2176,6 +2176,35 @@ async def test_non_listing_verbs_classify_spine_paths_as_directories(target: str
     assert absent.errors[0].kind is VFSErrorKind.not_found  # the two kinds never blur
 
 
+async def test_grouped_mutations_reject_spine_targets_as_directories() -> None:
+    # A spine directory is not a mutation target through any input shape:
+    # the observation form classifies wrong_kind before touching storage.
+    root = RecorderFS()
+    child = RecorderFS()
+    await root.add_mount(child, "/data/a")
+    rows = [Observation(path=Path("/data"))]
+    attempts = [
+        await root.delete(observations=rows),
+        await root.edit(observations=rows, old="a", new="b"),
+        await root.delete(observations=[Observation(path=Path("/data")), Observation(path=Path("/f.txt"))]),
+    ]
+    for result in attempts:
+        assert result.success is False
+        assert result.errors[0].kind is VFSErrorKind.wrong_kind
+        assert result.errors[0].path == "/data"
+    assert all(op not in MUTATING_OPS for op, _ in root.calls)  # nothing dispatched
+    assert child.calls == []
+
+
+async def test_grouped_mutation_on_pure_router_spine_is_wrong_kind() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(RecorderFS(), "/data/a")
+    result = await root.delete(observations=[Observation(path=Path("/data"))])
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.wrong_kind
+    assert result.errors[0].path == "/data"
+
+
 async def test_mutations_reaching_routability_on_spine_classify_wrong_kind() -> None:
     root = VirtualFileSystem()
     await root.add_mount(RecorderFS(), "/data/a")

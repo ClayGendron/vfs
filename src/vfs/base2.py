@@ -609,9 +609,9 @@ class VirtualFileSystem:
         gate checks (empty when the write target is derived later, as in
         mkedge's pre-delegation gate).  *spine_check* is switched off by the
         two chokepoints whose spine handling is deliberately elsewhere:
-        grouped observations (reads peel, mutations keep today's failures)
-        and mkedge (endpoints answer to the edge grammar).  Returns the
-        first classified failure, else ``None``.
+        grouped reads (``ls``/``stat``/``tree`` peel upstream, the rest
+        dispatch as today) and mkedge (endpoints answer to the edge
+        grammar).  Returns the first classified failure, else ``None``.
         """
         reported = report.with_mount(prefix)
         if fs is self and spine_check:
@@ -684,8 +684,10 @@ class VirtualFileSystem:
 
         For the spine reads (``ls``/``stat``/``tree``), observations on this
         router's own spine peel off into a synthesized local answer, so a
-        chained read over spine rows round-trips.  Everything else — other
-        reads, and every mutation — groups and dispatches unchanged.
+        chained read over spine rows round-trips.  A mutation row on the
+        spine classifies ``wrong_kind`` at the gate — a spine directory is
+        never a mutation target through any input shape.  Other reads group
+        and dispatch unchanged.
         """
         rows = self._as_list(observations)
         if rows is None:
@@ -733,7 +735,7 @@ class VirtualFileSystem:
                 prefix,
                 report=group[0].path,
                 write_rels=[o.path for o in group],
-                spine_check=False,
+                spine_check=op in MUTATING_OPS,
             )
             if err is not None:
                 return err
