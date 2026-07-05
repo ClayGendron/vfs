@@ -1,6 +1,6 @@
 # 049 — The Composed Storage Seam: `StorageBackend` Protocol Under the Router
 
-- **Status:** implemented 2026-07-05 (landing commit pending)
+- **Status:** implemented 2026-07-05 — landing commit `218e88c`
 - **Date:** 2026-07-05
 - **Owner:** Clay Gendron
 - **Kind:** refactor (executes ADR 001 / story 046's decision)
