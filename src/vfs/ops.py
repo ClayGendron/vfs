@@ -64,3 +64,8 @@ EXEC_OPS: Final[frozenset[Op]] = frozenset({"run"})
 
 ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS
 """Every routed op. The drift test pins the router's public surface to this."""
+
+# Grep option vocabularies — shared by the router, the storage protocols,
+# and the CLI grammar when it lands.
+CaseMode = Literal["sensitive", "insensitive", "smart"]
+GrepOutputMode = Literal["lines", "files", "count"]

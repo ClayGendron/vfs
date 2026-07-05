@@ -11,11 +11,17 @@ it would a stored directory.
 Public methods are routers.  They resolve the terminal filesystem via
 longest-prefix mount matching, then dispatch across the mount boundary:
 
-- When the terminal is ``self``, the router drops to local storage through
-  ``_call_local_impl`` — the one seam down to an ``_*_impl`` method.
+- When the terminal is ``self``, the router drops to the storage object it
+  *holds* (``storage=`` at construction) through ``_call_local_impl`` — one
+  exhaustive funnel from the op to a typed :mod:`vfs.storage` method.
 - When the terminal is a child mount, the router calls the child's **public**
-  method only — never the child's session, engine, or ``_*_impl``.  Values go
-  in, ``Result`` comes out.
+  method only — never the child's session, engine, or storage object.
+  Values go in, ``Result`` comes out.
+
+A node is a router over things it holds: child mounts across edges, and
+optionally a storage backend underneath.  Storage is composed, never
+inherited — subclasses wire a backend (``super().__init__(storage=...)``),
+they do not implement ops on the node.
 
 Five dispatch shapes cover the whole verb surface: single-path (most verbs),
 grouped observations (chained rows, and ``graph`` over row sets), two-path
@@ -24,18 +30,18 @@ pairs (``move``/``copy``), the endpoint pair (``mkedge``), and fan-out
 
 Paths cross the public boundary as plain ``str``; the resolve gate mints
 :class:`~vfs.paths.Path` once, and everything below it — routing, gating,
-impl dispatch — carries the branded type.  Any path an ``_*_impl`` receives
-is already proven.
+storage dispatch — carries the branded type.  Any path a storage method
+receives is already proven.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, assert_never
 
 from vfs.models2 import Entry, Observation
-from vfs.ops import MUTATING_OPS
+from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode
 from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
 from vfs.permissions import (
     Permission,
@@ -46,15 +52,22 @@ from vfs.permissions import (
 from vfs.projection import TRAVERSAL_FUNCTIONS
 from vfs.replace import EditOperation
 from vfs.results2 import Result, ResultError, VFSErrorKind
+from vfs.storage import (
+    ResolvedPair,
+    StorageBackend,
+    SupportsClose,
+    SupportsGlean,
+    SupportsGraph,
+    SupportsMutation,
+    SupportsPatternSearch,
+    SupportsRun,
+    storage_ops,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Sequence
 
     from vfs.ops import Op
-
-# Grep option vocabularies — shared with the CLI grammar when it lands.
-CaseMode = Literal["sensitive", "insensitive", "smart"]
-GrepOutputMode = Literal["lines", "files", "count"]
 
 # The read verbs the router answers itself on spine paths; every other verb
 # classifies a spine path as a directory at the routability step.
@@ -68,17 +81,6 @@ class TwoPathOperation(NamedTuple):
     dest: str
 
 
-class ResolvedPair(NamedTuple):
-    """A gated, terminal-relative src/dest pair — what move/copy impls receive.
-
-    Distinct from :class:`TwoPathOperation` so the annotation says which side
-    of the resolve gate a pair is on: raw caller strings in, minted paths out.
-    """
-
-    src: Path
-    dest: Path
-
-
 class VirtualFileSystem:
     """Async router base class for all VFS filesystems."""
 
@@ -88,14 +90,20 @@ class VirtualFileSystem:
         name: str | None = None,
         title: str | None = None,
         description: str | None = None,
-        storage: bool = False,
+        storage: StorageBackend | None = None,
         allow_child_mounts: bool = True,
         permissions: Permission | PermissionMap = "read_write",
     ) -> None:
+        # Fail loud for untyped callers too: the read family is the minimum
+        # viable backend (the mountability probe needs stat).
+        if storage is not None and not isinstance(storage, StorageBackend):
+            msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
+            raise TypeError(msg)
         self.name = name
         self.title = title
         self.description = description
         self._storage = storage
+        self._storage_ops: frozenset[Op] = storage_ops(storage)
         self._allow_child_mounts = allow_child_mounts
         self._permission_map: PermissionMap = coerce_permissions(permissions)
         self._parent: VirtualFileSystem | None = None
@@ -210,11 +218,12 @@ class VirtualFileSystem:
             self._rebuild_sorted_mounts()
 
     async def close(self) -> None:
-        """Close every mounted filesystem, emptying the mount table as it goes.
+        """Close every mount, then dispose this node's own storage.
 
-        Closing is polymorphic: each mount closes itself (a
-        ``DatabaseFileSystem`` disposes its own engine).  The router never
-        touches a child's engine directly.
+        Closing is polymorphic: each mount closes itself, and a node closes
+        the backend it holds (when the backend exposes ``close``) exactly as
+        symmetrically — the router never touches a child's engine directly,
+        and a child never sees its parent's.
 
         Every mount is closed even if one fails; failures are collected and
         re-raised once the table is empty, so a single bad disposal can
@@ -222,8 +231,8 @@ class VirtualFileSystem:
         Each child is detached (popped, ``_parent`` reset) synchronously
         after its close, so a cancellation mid-loop splits cleanly: closed
         children are fully detached, the rest stay fully attached, and a
-        second ``close()`` finishes the job.  No half-detached state exists
-        for a later ``add_mount`` to corrupt.
+        second ``close()`` finishes the job — which re-disposes the backend;
+        tolerating repeated disposal is the backend's concern.
         """
         async with self._mount_lock:
             errors: list[Exception] = []
@@ -235,6 +244,11 @@ class VirtualFileSystem:
                 del self._mounts[mount_path]
                 fs._parent = None
                 self._rebuild_sorted_mounts()
+            if isinstance(self._storage, SupportsClose):
+                try:
+                    await self._storage.close()
+                except Exception as exc:
+                    errors.append(exc)
             if len(errors) == 1:
                 raise errors[0]
             if errors:
@@ -399,7 +413,7 @@ class VirtualFileSystem:
         *reason* saying the contents could not be verified — a downed
         backend is not a contents conflict.
         """
-        if not self._storage:
+        if self._storage is None:
             return True, ""
 
         lineage = [Observation(path=path)]
@@ -427,9 +441,13 @@ class VirtualFileSystem:
         traceback rather than being masked as a mount conflict.
         """
         result = await call
-        if result.success or all(e.kind == VFSErrorKind.not_found for e in result.errors):
+        # An errorless failure is malformed, not absence — mirror
+        # _absorb_not_found's guard and stay conservative.
+        if result.success or (result.errors and all(e.kind == VFSErrorKind.not_found for e in result.errors)):
             return list(result.observations), ""
-        failure = next(e for e in result.errors if e.kind != VFSErrorKind.not_found)
+        failure = next((e for e in result.errors if e.kind != VFSErrorKind.not_found), None)
+        if failure is None:
+            return None, "cannot verify storage contents there (malformed errorless failure)"
         return None, f"cannot verify storage contents there ({failure.kind}: {failure.message})"
 
     # -------------------------------------------------------------------
@@ -459,12 +477,14 @@ class VirtualFileSystem:
     # -------------------------------------------------------------------
 
     def _storage_answers(self, op: Op) -> bool:
-        """Whether self-storage joins a router-composed answer for *op*.
+        """Whether this node's own storage answers *op*.
 
-        The unscoped-fan-out capability rule: storage participates silently
-        when capable, and its absence never fails the composed answer.
+        Derived honesty first (the backend must satisfy the op's family),
+        then policy: an overridden ``capabilities()`` may advertise less
+        than the backend can do, never more.  The default subtree set is a
+        superset of the storage set, so it imposes nothing here.
         """
-        if not self._storage:
+        if op not in self._storage_ops:
             return False
         caps = self.capabilities()
         return caps is None or op in caps
@@ -601,14 +621,29 @@ class VirtualFileSystem:
         return list(items)
 
     def capabilities(self) -> frozenset[str] | None:
-        """Operations this filesystem answers as a terminal, or ``None`` for no limit.
+        """Operations this node's subtree answers, or ``None`` for no limit.
 
-        The router consults the terminal's set before dispatch and returns
-        ``unsupported`` without a wire call when an op is absent (the no-probe
-        rule). The base router imposes no limit; capability-limited leaves (an
-        MCP tool catalog) override with an explicit set.
+        A parent consults this set before dispatch and returns
+        ``unsupported`` without a wire call when an op is absent (the
+        no-probe rule) — so the set must cover everything reachable *through*
+        this node.  The default is derived, never declared: the spine reads
+        every node answers on ``/``, plus the op families this node's
+        storage object actually satisfies, plus the union of every mount's
+        set (a child answering ``None`` keeps "no limit" contagious).  It
+        cannot drift from reality because it is computed from reality.
+
+        Overriding stays legitimate for *policy* — advertising less than the
+        backend can do (an MCP tool catalog pinning ``ls``/``read``/``run``)
+        — and gates own-storage dispatch too, via ``_storage_answers``.
         """
-        return None
+        caps: set[str] = {"ls", "stat", "tree"}
+        caps |= self._storage_ops
+        for fs in self._mounts.values():
+            child = fs.capabilities()
+            if child is None:
+                return None
+            caps |= child
+        return frozenset(caps)
 
     def _gate_terminal(
         self,
@@ -652,15 +687,21 @@ class VirtualFileSystem:
                         function=op,
                         path=spine_path,
                     )
-        if fs is self and not self._storage:
+        if fs is self and self._storage is None:
             return self._error(
                 f"No mount found for path: {reported}",
                 kind=VFSErrorKind.not_found,
                 function=op,
                 path=reported,
             )
-        caps = fs.capabilities()
-        if caps is not None and op not in caps:
+        # Capability is asked of the thing that will answer: this node's own
+        # storage object when the terminal is self, the child's set otherwise.
+        if fs is self:
+            incapable = not self._storage_answers(op)
+        else:
+            caps = fs.capabilities()
+            incapable = caps is not None and op not in caps
+        if incapable:
             return self._error(
                 f"Operation {op!r} is not supported here",
                 kind=VFSErrorKind.unsupported,
@@ -678,23 +719,95 @@ class VirtualFileSystem:
         op: Op,
         *,
         user_id: str | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> Result:
-        """The one seam from the router down to *self*'s own storage.
+        """The one seam from the router down to the storage object it holds.
 
-        This is the *only* place a filesystem reaches its own ``_*_impl``.
-        It is valid for ``self`` alone — a child mount is always reached
-        through its public method, never through this helper.
+        This is the *only* place a filesystem reaches its own storage.  It
+        is valid for ``self`` alone — a child mount is always reached
+        through its public method, never through this funnel.
 
-        The pure router has no storage, so the base implementation errors.
-        Storage backends override it to open their own transaction and pass
-        the resulting handle (e.g. a SQL session) to ``_{op}_impl`` — the
-        session contract is a backend internal the router never sees.
+        The chokepoints upstream carry *op* as a variable, so this match is
+        where the op meets a typed method: sixteen boring arms ending in
+        ``assert_never``, so adding a verb to ``ops.py`` fails ``ty`` until
+        the funnel routes it, and every arm's target must exist on its
+        family protocol.  A family the backend does not satisfy classifies
+        ``unsupported`` — reachable only when a policy override advertises
+        more than the backend implements, and never a raw ``AttributeError``.
+
+        Transactions live behind these methods: a backend opens and commits
+        its own session inside each op — the router never sees one.
         """
-        if not self._storage:
+        storage = self._storage
+        if storage is None:
             return self._error(f"No storage backend for operation: {op}", kind=VFSErrorKind.unsupported, function=op)
-        impl = getattr(self, f"_{op}_impl")
-        return await impl(user_id=user_id, **kwargs)
+        match op:
+            case "read":
+                return await storage.read(user_id=user_id, **kwargs)
+            case "stat":
+                return await storage.stat(user_id=user_id, **kwargs)
+            case "ls":
+                return await storage.ls(user_id=user_id, **kwargs)
+            case "tree":
+                return await storage.tree(user_id=user_id, **kwargs)
+            case "glob":
+                if not isinstance(storage, SupportsPatternSearch):
+                    return self._backend_unsupported(op)
+                return await storage.glob(user_id=user_id, **kwargs)
+            case "grep":
+                if not isinstance(storage, SupportsPatternSearch):
+                    return self._backend_unsupported(op)
+                return await storage.grep(user_id=user_id, **kwargs)
+            case "glean":
+                if not isinstance(storage, SupportsGlean):
+                    return self._backend_unsupported(op)
+                return await storage.glean(user_id=user_id, **kwargs)
+            case "write":
+                if not isinstance(storage, SupportsMutation):
+                    return self._backend_unsupported(op)
+                return await storage.write(user_id=user_id, **kwargs)
+            case "edit":
+                if not isinstance(storage, SupportsMutation):
+                    return self._backend_unsupported(op)
+                return await storage.edit(user_id=user_id, **kwargs)
+            case "delete":
+                if not isinstance(storage, SupportsMutation):
+                    return self._backend_unsupported(op)
+                return await storage.delete(user_id=user_id, **kwargs)
+            case "mkdir":
+                if not isinstance(storage, SupportsMutation):
+                    return self._backend_unsupported(op)
+                return await storage.mkdir(user_id=user_id, **kwargs)
+            case "move":
+                if not isinstance(storage, SupportsMutation):
+                    return self._backend_unsupported(op)
+                return await storage.move(user_id=user_id, **kwargs)
+            case "copy":
+                if not isinstance(storage, SupportsMutation):
+                    return self._backend_unsupported(op)
+                return await storage.copy(user_id=user_id, **kwargs)
+            case "graph":
+                if not isinstance(storage, SupportsGraph):
+                    return self._backend_unsupported(op)
+                return await storage.graph(user_id=user_id, **kwargs)
+            case "mkedge":
+                if not isinstance(storage, SupportsMutation):
+                    return self._backend_unsupported(op)
+                return await storage.mkedge(user_id=user_id, **kwargs)
+            case "run":
+                if not isinstance(storage, SupportsRun):
+                    return self._backend_unsupported(op)
+                return await storage.run(user_id=user_id, **kwargs)
+            case _:
+                assert_never(op)
+
+    def _backend_unsupported(self, op: Op) -> Result:
+        """The funnel's narrowing miss: the backend lacks *op*'s family."""
+        return self._error(
+            f"Storage backend does not support operation: {op}",
+            kind=VFSErrorKind.unsupported,
+            function=op,
+        )
 
     async def _dispatch_grouped_observations(
         self,
@@ -1005,8 +1118,7 @@ class VirtualFileSystem:
             return self._merge_results(results)
 
         targets: list[tuple[VirtualFileSystem, Path]] = []
-        own_caps = self.capabilities()
-        if self._storage and (own_caps is None or op in own_caps):
+        if self._storage_answers(op):
             targets.append((self, Path("/")))
         for mount_path, fs in self._mounts.items():
             child_caps = fs.capabilities()

@@ -116,7 +116,8 @@ known-first-party = ["vfs"]
 
 [tool.ty.environment]
 python-version = "3.13"
-root = ["src", "."]
+# "tests" mirrors pytest's pythonpath so ty resolves base_doubles.
+root = ["src", "tests", "."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
