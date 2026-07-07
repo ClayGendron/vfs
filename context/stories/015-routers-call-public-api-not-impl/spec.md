@@ -1,6 +1,12 @@
 # 015 — Routers Call the Public API, Not the Impl
 
-- **Status:** draft
+- **Status:** superseded in shape by 056 (2026-07-07) — the intent
+  survives: the load-bearing rule (a value-only, MCP-serializable
+  boundary between composed namespaces) re-reads as "the router calls
+  only the storage protocol; the protocol *is* the wire shape."  The
+  concrete mechanism (routers calling mounted routers' public verbs)
+  is gone: 056 mounts storage, not routers, and composition crosses
+  the boundary through the adapter or the MCP dialect.
 - **Date:** 2026-05-02
 - **Owner:** Clay Gendron
 - **Kind:** architectural · namespace boundary

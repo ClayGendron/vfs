@@ -127,3 +127,10 @@ Settled details:
 Executes through the database backend port story (unnumbered at time
 of writing; the first story to land a constructor against ADR 001's
 protocol seam). Refines ADR 001's `SupportsClose`.
+
+**Consequence note (056, 2026-07-07):** with storage mounts, nothing
+exercises a backend at bind — `bind` probes the *owning* entry's
+storage for the site, never the incoming backend.  First touch,
+dialect decisions, and any session handshake happen at the first
+routed op, by design; `close()` disposes each distinct `owned` backend
+through `SupportsClose`, identity-deduped.

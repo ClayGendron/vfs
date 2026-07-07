@@ -1,6 +1,9 @@
 # 041 — Mount-Spine Visibility: the Namespace Is Discoverable Top-Down
 
-- **Status:** implemented (commit 9a7e0bf, 2026-07-04)
+- **Status:** implemented (commit 9a7e0bf, 2026-07-04); closed by 056
+  (2026-07-07) — the spine died in 055 and the surviving semantics
+  (region expansion, tree depth budgets, silent-skip) re-anchor on
+  056's one storage-mount table.
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** feature (router namespace semantics) + fix (silent partial

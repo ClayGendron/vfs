@@ -1,6 +1,9 @@
 # 048 — Re-entrant Mount Mutation Fails Loud, Not Silent
 
-- **Status:** draft
+- **Status:** closed by 056's lock restructuring (2026-07-07) — no
+  storage I/O is awaited under the mount lock anymore, so the
+  reentrancy window this story guards against no longer exists by
+  construction.
 - **Date:** 2026-07-04
 - **Owner:** Clay Gendron
 - **Kind:** fix (a silent hang becomes an immediate error) — small
