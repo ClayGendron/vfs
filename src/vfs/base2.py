@@ -809,6 +809,56 @@ class VirtualFileSystem:
             function=op,
         )
 
+    @staticmethod
+    async def _call_remote(fs: VirtualFileSystem, op: Op, **kwargs: Any) -> Result:
+        """The one seam from a router across a mount boundary — the remote
+        twin of :meth:`_call_local_impl`.
+
+        The chokepoints upstream carry *op* as a variable, so this match is
+        where it meets the child's typed public verb: a renamed or missing
+        method fails ``ty`` here, not at dispatch time, and ``assert_never``
+        keeps the funnel exhaustive against the ``ops.py`` vocabulary.
+        Dispatching through the public verb is the recursion the mount tree
+        stands on — the child re-resolves, re-gates, and rebases against its
+        own mount table.  The kwargs stay untyped by design: each chokepoint
+        owns its verb's argument shape, and this funnel only pins the verbs.
+        """
+        match op:
+            case "read":
+                return await fs.read(**kwargs)
+            case "stat":
+                return await fs.stat(**kwargs)
+            case "ls":
+                return await fs.ls(**kwargs)
+            case "tree":
+                return await fs.tree(**kwargs)
+            case "glob":
+                return await fs.glob(**kwargs)
+            case "grep":
+                return await fs.grep(**kwargs)
+            case "glean":
+                return await fs.glean(**kwargs)
+            case "write":
+                return await fs.write(**kwargs)
+            case "edit":
+                return await fs.edit(**kwargs)
+            case "delete":
+                return await fs.delete(**kwargs)
+            case "mkdir":
+                return await fs.mkdir(**kwargs)
+            case "move":
+                return await fs.move(**kwargs)
+            case "copy":
+                return await fs.copy(**kwargs)
+            case "graph":
+                return await fs.graph(**kwargs)
+            case "mkedge":
+                return await fs.mkedge(**kwargs)
+            case "run":
+                return await fs.run(**kwargs)
+            case _:
+                assert_never(op)
+
     async def _dispatch_grouped_observations(
         self,
         op: Op,
@@ -889,7 +939,7 @@ class VirtualFileSystem:
             if fs is self:
                 r = await self._call_local_impl(op, observations=group, user_id=user_id, **kwargs)
             else:
-                r = await getattr(fs, op)(observations=group, user_id=user_id, **kwargs)
+                r = await self._call_remote(fs, op, observations=group, user_id=user_id, **kwargs)
             return r.with_mount(prefix)
 
         coros: list[Coroutine[Any, Any, Result]] = [
@@ -946,7 +996,7 @@ class VirtualFileSystem:
         if fs is self:
             result = await self._call_local_impl(op, path=rel, user_id=user_id, **kwargs)
         else:
-            result = await getattr(fs, op)(path=rel, user_id=user_id, **kwargs)
+            result = await self._call_remote(fs, op, path=rel, user_id=user_id, **kwargs)
 
         return result.with_mount(prefix)
 
@@ -1017,7 +1067,7 @@ class VirtualFileSystem:
             if fs is self:
                 r = await self._call_local_impl(op, operations=group, user_id=user_id, **kwargs)
             else:
-                r = await getattr(fs, op)(**{batch_kwarg: group}, user_id=user_id, **kwargs)
+                r = await self._call_remote(fs, op, **{batch_kwarg: group}, user_id=user_id, **kwargs)
             return r.with_mount(prefix)
 
         results = await self._gather_settled(_run_group(fs, pfx, group) for fs, pfx, group in groups.values())
@@ -1099,7 +1149,7 @@ class VirtualFileSystem:
                 if fs is self:
                     r = await self._call_local_impl(op, paths=rels, user_id=user_id, **kwargs)
                 else:
-                    r = await getattr(fs, op)(paths=rels, user_id=user_id, **kwargs)
+                    r = await self._call_remote(fs, op, paths=rels, user_id=user_id, **kwargs)
                 return r.with_mount(prefix)
 
             # An expansion already covers its whole mount, so a narrower scope
@@ -1132,7 +1182,7 @@ class VirtualFileSystem:
             if fs is self:
                 r = await self._call_local_impl(op, paths=(), user_id=user_id, **kwargs)
             else:
-                r = await getattr(fs, op)(user_id=user_id, **kwargs)
+                r = await self._call_remote(fs, op, user_id=user_id, **kwargs)
             return r.with_mount(prefix)
 
         results = await self._gather_settled(_run_target(fs, pfx) for fs, pfx in targets)
