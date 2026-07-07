@@ -1,7 +1,12 @@
-"""VFS filesystem backends."""
+"""VFS storage backends.
 
-from vfs.backends.database import DatabaseFileSystem
-from vfs.backends.mssql import MSSQLFileSystem
-from vfs.backends.postgres import PostgresFileSystem
+Only the v2 in-memory reference backend is exported here.  The
+pre-refactor database backends (``database``, ``mssql``, ``postgres``)
+are mid-rebuild and import against retired names — reach them by direct
+module import once ported; eagerly importing them here would poison the
+whole package.
+"""
 
-__all__ = ["DatabaseFileSystem", "MSSQLFileSystem", "PostgresFileSystem"]
+from vfs.backends.memory import InMemoryStorage
+
+__all__ = ["InMemoryStorage"]
