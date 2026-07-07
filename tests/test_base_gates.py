@@ -1,5 +1,5 @@
-"""The terminal gate and error taxonomy: routability, capability (derived and
-overridden), permission, and kind-based exception dispatch."""
+"""The terminal gate and error taxonomy: capability (declared, not inferred),
+permission composition, pinned gate order, and kind-based exception dispatch."""
 
 from __future__ import annotations
 
@@ -8,12 +8,11 @@ from typing import Any
 import pytest
 
 from base_doubles import (
-    EchoFS,
-    LimitedEchoFS,
+    BindableStorage,
     ReadFamilyStorage,
     RecorderFS,
     RecorderStorage,
-    RunnerFS,
+    RunnerStorage,
     _mutate,
     _mutate_at_root,
 )
@@ -48,6 +47,13 @@ def test_exception_for_kind_unmapped_and_unknown_fall_back_to_base() -> None:
     assert exception_for_kind("vfs.quota_exceeded") is VFSError
 
 
+@pytest.mark.parametrize("kind", [VFSErrorKind.busy, VFSErrorKind.backend_unavailable, VFSErrorKind.budget_exhausted])
+def test_exception_for_kind_new_kinds_fall_back_to_base(kind: VFSErrorKind) -> None:
+    # The three kinds this story adds have no dedicated exception class yet —
+    # they still raise loud, just as the generic VFSError.
+    assert exception_for_kind(kind) is VFSError
+
+
 def test_error_returns_failed_result_by_default() -> None:
     fs = VirtualFileSystem()
     r = fs._error("gone", kind=VFSErrorKind.not_found, path=Path("/x"))
@@ -63,8 +69,8 @@ def test_error_attaches_structured_data() -> None:
 
 
 def test_error_never_raises_and_carries_function() -> None:
-    # The node layer has one failure channel: a returned Result. The op
-    # travels as function so a wire consumer can tell which verb failed.
+    # The router has one failure channel: a returned Result. The op travels
+    # as function so a wire consumer can tell which verb failed.
     fs = VirtualFileSystem()
     r = fs._error("gone", kind=VFSErrorKind.not_found, function="read")
     assert r.success is False
@@ -106,30 +112,66 @@ def test_raise_if_failed_handles_errorless_failure() -> None:
 
 
 # ----------------------------------------------------------------------
+# capabilities — declared per entry, never inferred
+# ----------------------------------------------------------------------
+
+
+async def test_default_capabilities_derive_from_the_backend() -> None:
+    # The default set is computed from what the backend implements — it
+    # cannot drift from reality.
+    read_only = VirtualFileSystem(storage=ReadFamilyStorage())
+    assert read_only.capabilities() == frozenset({"read", "stat", "ls", "tree"})
+    full = VirtualFileSystem(storage=RecorderStorage())
+    assert full.capabilities() == ALL_OPS
+
+
+async def test_capabilities_union_across_bindings() -> None:
+    # The router's capabilities() is the union of every entry's declared
+    # snapshot, self included.
+    root = VirtualFileSystem(storage=BindableStorage(caps=frozenset({"read", "stat", "ls", "tree"})))
+    assert root.capabilities() == frozenset({"read", "stat", "ls", "tree"})
+    await root.bind(BindableStorage(caps=frozenset({"glean"})), "/m")
+    assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "glean"})
+
+
+async def test_capability_snapshot_is_pinned_at_bind_not_live() -> None:
+    # Decision 2: the gate consults the bind-time snapshot. An in-process
+    # backend that later "declares" more never widens what the table sees.
+    backend = BindableStorage(caps=frozenset({"read"}))
+    root = VirtualFileSystem(storage=backend)
+    assert root.capabilities() == frozenset({"read"})
+    backend._caps = frozenset({"read", "write"})  # the live backend's own set changes
+    assert root.capabilities() == frozenset({"read"})  # the router's snapshot does not
+
+
+# ----------------------------------------------------------------------
 # capabilities gate + run verb
 # ----------------------------------------------------------------------
 
 
-async def test_run_on_pure_router_is_not_found() -> None:
+async def test_run_on_default_root_is_unsupported() -> None:
+    # The default backend (InMemoryStorage) never declares run — every path
+    # answers unsupported at the gate, not not_found: the root entry always
+    # resolves, it just cannot execute anything.
     root = VirtualFileSystem()
     r = await root.run("/nope/tool")
     assert r.success is False
-    assert r.errors[0].kind is VFSErrorKind.not_found
+    assert r.errors[0].kind is VFSErrorKind.unsupported
 
 
 async def test_run_routes_to_child_and_rebases() -> None:
     root = VirtualFileSystem()
-    catalog = RunnerFS()
+    catalog = RunnerStorage()
     await root.add_mount(catalog, "/nonvfs")
     r = await root.run("/nonvfs/clone-repo", arguments={"repo": "org/proj"})
-    assert catalog.calls == [("run", "/clone-repo", {"repo": "org/proj"})]
+    assert catalog.calls == [("run", {"path": "/clone-repo", "arguments": {"repo": "org/proj"}})]
     assert r.success is True
     assert r.paths == ("/nonvfs/clone-repo",)
 
 
 async def test_capabilities_gate_blocks_unsupported_op() -> None:
     root = VirtualFileSystem()
-    catalog = RunnerFS(caps=frozenset({"read"}))
+    catalog = RunnerStorage(caps=frozenset({"read"}))
     await root.add_mount(catalog, "/nonvfs")
     blocked = await root.run("/nonvfs/clone-repo")
     assert blocked.success is False
@@ -139,21 +181,12 @@ async def test_capabilities_gate_blocks_unsupported_op() -> None:
 
 async def test_capabilities_gate_allows_supported_op() -> None:
     root = VirtualFileSystem()
-    catalog = RunnerFS(caps=frozenset({"read"}))
+    catalog = RunnerStorage(caps=frozenset({"read"}))
     await root.add_mount(catalog, "/nonvfs")
     ok = await root.read("/nonvfs/clone-repo")
     assert ok.success is True
     assert ok.paths == ("/nonvfs/clone-repo",)
-    assert catalog.calls == [("read", "/clone-repo", None)]
-
-
-async def test_capabilities_none_imposes_no_gate() -> None:
-    # A plain child (capabilities() is None) answers run with no restriction.
-    root = VirtualFileSystem()
-    catalog = RunnerFS()
-    await root.add_mount(catalog, "/nonvfs")
-    r = await root.run("/nonvfs/x")
-    assert r.success is True
+    assert catalog.calls == [("read", {"path": "/clone-repo", "columns": None})]
 
 
 # ----------------------------------------------------------------------
@@ -164,8 +197,8 @@ async def test_capabilities_none_imposes_no_gate() -> None:
 @pytest.mark.parametrize("op", sorted(MUTATING_OPS))
 async def test_read_only_mount_rejects_every_mutation(op: str) -> None:
     root = VirtualFileSystem()
-    child = RecorderFS(permissions="read")
-    await root.add_mount(child, "/m")
+    child = RecorderStorage()
+    await root.add_mount(child, "/m", permissions="read")
     result = await _mutate(root, op, "/m")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.read_only
@@ -175,7 +208,7 @@ async def test_read_only_mount_rejects_every_mutation(op: str) -> None:
 @pytest.mark.parametrize("op", sorted(MUTATING_OPS))
 async def test_writable_mount_dispatches_every_mutation_once(op: str) -> None:
     root = VirtualFileSystem()
-    child = RecorderFS()
+    child = RecorderStorage()
     await root.add_mount(child, "/m")
     result = await _mutate(root, op, "/m")
     assert result.success is True
@@ -209,43 +242,12 @@ async def test_inverse_edge_projection_is_not_a_write_target() -> None:
 async def _gated_namespace() -> VirtualFileSystem:
     """Router with a read-only mount and a capability-limited mount."""
     root = VirtualFileSystem()
-    await root.add_mount(RecorderFS(permissions="read"), "/ro")
-    await root.add_mount(LimitedEchoFS(caps=frozenset({"read"})), "/dim")
+    await root.add_mount(RecorderStorage(), "/ro", permissions="read")
+    await root.add_mount(RecorderStorage(caps=frozenset({"read"})), "/dim")
     return root
 
 
 GATE_FAILURES = [
-    (
-        "single/no-mount",
-        lambda r: r.write(path="/nowhere/x.txt", content="c"),
-        VFSErrorKind.not_found,
-        "/nowhere/x.txt",
-    ),
-    (
-        "grouped/no-mount",
-        lambda r: r.delete(observations=[Observation(path=Path("/nowhere/f.txt"))]),
-        VFSErrorKind.not_found,
-        "/nowhere/f.txt",
-    ),
-    (
-        "pair/no-mount",
-        lambda r: r.move(src="/nowhere/a.txt", dest="/nowhere/b.txt"),
-        VFSErrorKind.not_found,
-        "/nowhere/a.txt",
-    ),
-    (
-        "entries/no-mount",
-        lambda r: r.write(entries=[Entry(path=Path("/nowhere/f.txt"), content="c")]),
-        VFSErrorKind.not_found,
-        "/nowhere/f.txt",
-    ),
-    ("scoped/no-mount", lambda r: r.grep("x", paths=("/nowhere/sub",)), VFSErrorKind.not_found, "/nowhere/sub"),
-    (
-        "mkedge/no-mount",
-        lambda r: r.mkedge("/nowhere/a.py", "/nowhere/b.py", "imports"),
-        VFSErrorKind.not_found,
-        "/nowhere/a.py",
-    ),
     ("single/read-only", lambda r: r.write(path="/ro/x.txt", content="c"), VFSErrorKind.read_only, "/ro/x.txt"),
     (
         "grouped/read-only",
@@ -310,61 +312,39 @@ async def test_gate_order_capability_outranks_permission() -> None:
     # A terminal that is simultaneously incapable and read-only fails
     # unsupported: what the terminal cannot do outranks what policy denies.
     root = VirtualFileSystem()
-    await root.add_mount(LimitedEchoFS(caps=frozenset({"read"}), permissions="read"), "/m")
+    child = RecorderStorage(caps=frozenset({"read"}))
+    await root.add_mount(child, "/m", permissions="read")
     result = await root.write(path="/m/f.txt", content="c")
     assert result.errors[0].kind is VFSErrorKind.unsupported
 
 
-async def test_gate_order_routability_outranks_capability() -> None:
-    # A pure router with no mount at the path is not_found even when the op
-    # is also outside its own capability set.
-    class IncapableRouter(VirtualFileSystem):
-        def capabilities(self) -> frozenset[str] | None:
-            return frozenset()
+async def test_gate_order_busy_outranks_capability_and_permission() -> None:
+    # The busy guard runs before the entry is even resolved for gating — a
+    # live bind site refuses busy no matter what the terminal would say.
+    root = VirtualFileSystem()
+    child = RecorderStorage(caps=frozenset({"read"}))
+    await root.add_mount(child, "/m", permissions="read")
+    result = await root.delete("/m")
+    assert result.errors[0].kind is VFSErrorKind.busy
 
-    result = await IncapableRouter().write(path="/nowhere/f.txt", content="c")
-    assert result.errors[0].kind is VFSErrorKind.not_found
+
+async def test_read_only_root_makes_writable_child_read_only_end_to_end() -> None:
+    # Decision 3's recorded behavior change: ancestor restriction composes —
+    # the most restrictive layer from / to the terminal wins. Add via bind()
+    # (the control-plane primitive), since add_mount's own mkdir would itself
+    # be gated read_only against a read-only root.
+    root = VirtualFileSystem(storage=BindableStorage(), permissions="read")
+    child = RecorderStorage()
+    await root.bind(child, "/scratch", permissions="read_write")
+    result = await root.write(path="/scratch/f.txt", content="c")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert child.calls == []
 
 
 # ----------------------------------------------------------------------
-# derived capabilities + own-backend disposal
+# partial backends
 # ----------------------------------------------------------------------
-
-
-async def test_default_capabilities_derive_from_the_backend() -> None:
-    # The default set is computed from what the backend implements — it
-    # cannot drift from reality.
-    read_only = VirtualFileSystem(storage=ReadFamilyStorage())
-    assert read_only.capabilities() == frozenset({"read", "stat", "ls", "tree"})
-    full = VirtualFileSystem(storage=RecorderStorage())
-    assert full.capabilities() == ALL_OPS
-
-
-async def test_pure_router_capabilities_are_spine_plus_subtree() -> None:
-    root = VirtualFileSystem()
-    assert root.capabilities() == frozenset({"ls", "stat", "tree"})  # every node answers "/"
-    await root.add_mount(LimitedEchoFS(caps=frozenset({"read"})), "/m")
-    assert root.capabilities() == frozenset({"ls", "stat", "tree", "read"})
-
-
-async def test_capabilities_none_child_keeps_no_limit_contagious() -> None:
-    # A child declaring "no limit" makes the subtree unbounded too.
-    root = VirtualFileSystem()
-    await root.add_mount(RunnerFS(), "/tools")
-    assert root.capabilities() is None
-
-
-async def test_derived_capabilities_route_through_nested_routers() -> None:
-    # Fan-out trusts subtree honesty: a pure router between root and a
-    # capable leaf must not hide the leaf.
-    root = VirtualFileSystem()
-    middle = VirtualFileSystem()
-    leaf = EchoFS()
-    await middle.add_mount(leaf, "/leaf")
-    await root.add_mount(middle, "/mid")
-    result = await root.glob("*.md")
-    assert result.success is True
-    assert result.paths == ("/mid/leaf/hit.md",)
 
 
 async def test_partial_backend_gates_unimplemented_family_as_unsupported() -> None:
