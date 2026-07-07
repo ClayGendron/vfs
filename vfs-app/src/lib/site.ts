@@ -1,5 +1,5 @@
 /** Shared so the number lives once — see `tests` and the `tests` metric. */
-const TESTS = 718
+const TESTS = 1094
 
 /**
  * One mount row, carrying the union of what both product visuals render:
@@ -19,7 +19,7 @@ export const SITE = {
   tagline: "Agentic Search on any SQL Database",
   headline: "Agentic Search on\nany SQL Database",
   description:
-    "Agentic search over any SQL database you already have — mount it as one namespace your LLM already knows how to drive, from the command line or inside your app.",
+    "Let agents work in an environment they already know, backed by the database you already have. VFS is a Unix-like virtual file system that makes it easy for developers to build enterprise-scale agentic applications.",
   domain: "vfs.dev",
   repo: { owner: "ClayGendron", name: "vfs" },
   github: "https://github.com/ClayGendron/vfs",
