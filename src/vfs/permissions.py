@@ -1,21 +1,22 @@
 """Permission enforcement for VFS filesystems.
 
-A VFS filesystem has a :class:`PermissionMap`: one default permission
-plus zero or more directory-prefix overrides.  Every mutating operation
-funnels through a router dispatch chokepoint in :mod:`vfs.base2`, and
-every chokepoint runs the shared ``_gate_terminal`` gate — which calls
-:func:`check_writable` on the resolved terminal filesystem with the
-filesystem-relative path before touching storage.
+A mount-table entry may carry a :class:`PermissionMap`: one default
+permission plus zero or more directory-prefix overrides.  Every mutating
+operation funnels through a router dispatch chokepoint in
+:mod:`vfs.base2`, whose gate calls :func:`check_writable_composed` with
+the maps of every entry on the path from ``/`` to the terminal — the
+most restrictive layer wins (a read-only root makes the whole tree
+read-only; restriction tightens, never loosens, like Linux's
+``MNT_READONLY || SB_RDONLY``).
 
 Resolution semantics
 --------------------
 
-Rules live in **filesystem-relative coordinates**: a rule on
-``/synthesis`` matches the path ``/synthesis`` inside the filesystem,
-regardless of which router-side path the filesystem happens to be
-mounted under.  This mirrors how ``_*_impl`` methods receive the
-rebased ``rel`` path, not the full virtual path, and it keeps the
-filesystem decoupled from its mount point.
+Rules live in **mount-relative coordinates**: a rule on ``/synthesis``
+matches the path ``/synthesis`` inside that mount, regardless of which
+router-side path the mount sits under.  Each layer therefore resolves
+against the path rebased into *its own* coordinates, and the rules stay
+decoupled from the mount point.
 
 To resolve a path:
 
@@ -116,13 +117,10 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from vfs.ops import MUTATING_OPS
 from vfs.paths import Path, normalize_path
-from vfs.results2 import VFSErrorKind
+from vfs.results2 import Result, ResultError, VFSErrorKind
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-    from vfs.base2 import VirtualFileSystem
-    from vfs.results2 import Result
 
 
 Permission = Literal["read", "read_write"]
@@ -245,8 +243,30 @@ def read_write(*, read: Iterable[str] = ()) -> PermissionMap:
     return PermissionMap(default="read_write", overrides=overrides)
 
 
+class PermissionLayer(NamedTuple):
+    """One gate layer: an entry's map, the path in that entry's coordinates, its prefix."""
+
+    permission_map: PermissionMap
+    rel: Path
+    mount_prefix: Path
+
+
+def check_writable_composed(layers: Iterable[PermissionLayer], op: str) -> Result | None:
+    """Gate *op* against every entry layer from ``/`` to the terminal.
+
+    The most restrictive layer wins: the first denial (walking outermost
+    to terminal) is returned, so the reported rule is the shallowest one
+    that forbids the write.  ``None`` when every layer allows.
+    """
+    for layer in layers:
+        denied = check_writable(layer.permission_map, op, layer.rel, mount_prefix=layer.mount_prefix)
+        if denied is not None:
+            return denied
+    return None
+
+
 def check_writable(
-    fs: VirtualFileSystem,
+    permission_map: PermissionMap,
     op: str,
     rel: Path,
     *,
@@ -254,18 +274,17 @@ def check_writable(
 ) -> Result | None:
     """Return a classified error result if *op* mutates a read-only path.
 
-    *rel* is the gated, filesystem-relative path; *mount_prefix* is the
-    accumulated router-side mount prefix (``/`` when the terminal is the
-    router itself — the rebase identity).  The error reports the
-    reconstructed router-side path — in the message and as the structured
-    ``path`` — so the caller sees the path they typed, while rule
-    resolution stays in filesystem-relative coordinates.
+    *rel* is the gated path in this map's mount-relative coordinates;
+    *mount_prefix* is the router-side prefix of the entry the map sits on
+    (``/`` for the root entry — the rebase identity).  The error reports
+    the reconstructed router-side path — in the message and as the
+    structured ``path`` — so the caller sees the path they typed, while
+    rule resolution stays in mount-relative coordinates.
 
     Returns ``None`` when the operation is allowed (either because it
     is not a mutation or because the resolved permission is
-    ``"read_write"``).  Returns a failure :class:`Result` — via
-    ``fs._error(...)`` — when the operation would mutate a read-only
-    path.
+    ``"read_write"``); a failure :class:`Result` when the operation
+    would mutate a read-only path.
 
     The error carries ``kind=read_only`` and reports *op* as the failed
     result's ``function``; :func:`~vfs.exceptions.exception_for_kind`
@@ -275,9 +294,9 @@ def check_writable(
     if op not in MUTATING_OPS:
         return None
     candidates = _permission_candidates(rel)
-    resolved = fs._permission_map._resolve(candidates[0])
+    resolved = permission_map._resolve(candidates[0])
     for candidate in candidates[1:]:
-        alternate = fs._permission_map._resolve(candidate)
+        alternate = permission_map._resolve(candidate)
         if alternate.rule_prefix is None:
             continue
         if resolved.rule_prefix is None or len(alternate.rule_prefix) > len(resolved.rule_prefix):
@@ -286,17 +305,19 @@ def check_writable(
         return None
     full = rel.with_mount(mount_prefix)
     if resolved.rule_prefix is None:
-        return fs._error(
-            f"Cannot write to read-only path '{full}' (mount default)",
-            kind=VFSErrorKind.read_only,
-            function=op,
-            path=full,
-        )
-    return fs._error(
-        f"Cannot write to read-only path '{full}' (read-only by mount rule '{resolved.rule_prefix}')",
-        kind=VFSErrorKind.read_only,
+        detail = "mount default"
+    else:
+        detail = f"read-only by mount rule '{resolved.rule_prefix}'"
+    return Result(
         function=op,
-        path=full,
+        success=False,
+        errors=[
+            ResultError(
+                kind=VFSErrorKind.read_only,
+                message=f"Cannot write to read-only path '{full}' ({detail})",
+                path=full,
+            )
+        ],
     )
 
 
