@@ -49,7 +49,7 @@
 16. [x] Retire `test_base_spine.py`; port survivors (055 task 10).
 17. [x] Story/ADR ripples: 015 superseded-in-shape; 041/048/050
     closed; 054 re-read; ADR 002 consequence note.
-18. [ ] End of session: `uv run pytest tests/`, `uv run ruff check`,
+18. [x] End of session: `uv run pytest tests/`, `uv run ruff check`,
     `uv run ty check` on touched files.
 
 ## Pass B — adapter

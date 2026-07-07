@@ -206,7 +206,7 @@ async def test_tree_missing_is_not_found() -> None:
 
 async def test_stat_row_shapes() -> None:
     storage = InMemoryStorage()
-    await storage.write(path=Path("/a.txt"), content="hello", description="a note")
+    await storage.write(entries=[Entry(path=Path("/a.txt"), content="hello", description="a note")])
     file_row = (await storage.stat(path=Path("/a.txt"))).observations[0]
     assert file_row.kind == "file"
     assert file_row.content is None  # stat never carries content

@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from dataclasses import dataclass, replace as clone_row
+from dataclasses import dataclass
+from dataclasses import replace as clone_row
 from typing import TYPE_CHECKING, Literal
 
 from vfs.models2 import Match, Observation
@@ -170,8 +171,7 @@ class InMemoryStorage:
         rows = [
             self._observe(p, self._rows[p])
             for p in sorted(self._rows)
-            if _depth_below(p, path) is not None
-            and (max_depth is None or _depth_below(p, path) <= max_depth)  # type: ignore[operator]
+            if (depth := _depth_below(p, path)) is not None and (max_depth is None or depth <= max_depth)
         ]
         return Result(function="tree", observations=rows)
 

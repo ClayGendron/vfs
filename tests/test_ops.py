@@ -17,7 +17,7 @@ from vfs.ops import ALL_OPS, EXEC_OPS, MUTATING_OPS, READ_OPS, TWO_PATH_OPS
 # Public router methods that manage the mount tree rather than route an op.
 # A new public coroutine on VirtualFileSystem must be a registered op or a
 # deliberate addition here.
-MANAGEMENT_METHODS = frozenset({"add_mount", "remove_mount", "close"})
+MANAGEMENT_METHODS = frozenset({"add_mount", "remove_mount", "bind", "unbind", "close"})
 
 
 # ---------------------------------------------------------------------------

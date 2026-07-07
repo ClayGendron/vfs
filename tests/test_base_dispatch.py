@@ -170,7 +170,7 @@ async def test_delete_bind_site_is_busy() -> None:
 async def test_delete_region_containing_bind_site_is_busy() -> None:
     root = VirtualFileSystem()
     a = RecorderStorage()
-    await root.add_mount(a, "/data/a")
+    await root.add_mount(a, "/data/a", parents=True)
     result = await root.delete("/data")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.busy
@@ -179,7 +179,7 @@ async def test_delete_region_containing_bind_site_is_busy() -> None:
 async def test_cascade_delete_refused_busy_when_region_holds_a_bind() -> None:
     root = VirtualFileSystem()
     a = RecorderStorage()
-    await root.add_mount(a, "/data/m")
+    await root.add_mount(a, "/data/m", parents=True)
     result = await root.delete("/data", cascade=True)
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.busy
@@ -220,7 +220,7 @@ async def test_move_source_bind_site_is_busy() -> None:
 async def test_move_region_containing_bind_site_is_busy() -> None:
     root = VirtualFileSystem()
     a = RecorderStorage()
-    await root.add_mount(a, "/data/a")
+    await root.add_mount(a, "/data/a", parents=True)
     result = await root.move(src="/data", dest="/moved")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.busy

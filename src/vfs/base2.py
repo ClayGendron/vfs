@@ -210,10 +210,13 @@ class VirtualFileSystem:
                 if existing.startswith(mount_path + "/"):
                     msg = f"Cannot bind at {mount_path}: a deeper mount already sits at {existing}"
                     raise ValueError(msg)
-                if existing != _ROOT and mount_path.startswith(existing + "/"):
-                    if self._bindings[existing].meta.no_overlay:
-                        msg = f"Cannot bind at {mount_path}: the mount at {existing} does not allow binds beneath it"
-                        raise ValueError(msg)
+                if (
+                    existing != _ROOT
+                    and mount_path.startswith(existing + "/")
+                    and self._bindings[existing].meta.no_overlay
+                ):
+                    msg = f"Cannot bind at {mount_path}: the mount at {existing} does not allow binds beneath it"
+                    raise ValueError(msg)
             if self._bindings[_ROOT].meta.no_overlay:
                 msg = f"{self._class_name} does not allow child mounts"
                 raise ValueError(msg)
@@ -361,7 +364,7 @@ class VirtualFileSystem:
         terminal = self._resolve_terminal(mount_path)
         stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel)
         if not stat.success or not stat.observations:
-            return f"no directory stored at the mount point (mkdir it, or use add_mount(..., parents=True)): {mount_path}"
+            return f"no directory stored at the mount point (mkdir it, or add_mount(..., parents=True)): {mount_path}"
         row = stat.observations[0]
         if row.kind != "directory":
             return f"the mount point is stored as {row.kind!r}, not a directory: {mount_path}"
@@ -645,12 +648,13 @@ class VirtualFileSystem:
                 case _:
                     assert_never(op)
         except TransportError as exc:
-            # Structured path stays unset: this result is still in entry
-            # coordinates and the rebase seam would double-prefix bind paths.
+            # Entry-root path in entry coordinates: the rebase seam turns it
+            # into the bind path (identity for the root entry).
             return self._error(
                 f"Backend for {binding.path} is unavailable: {exc}",
                 kind=VFSErrorKind.backend_unavailable,
                 function=op,
+                path=Path("/"),
             )
 
     def _backend_unsupported(self, op: Op) -> Result:
@@ -811,7 +815,7 @@ class VirtualFileSystem:
         observations: list[Observation] | None,
         *,
         user_id: str | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> Result:
         """Route a single-path or observation-based operation.
 
@@ -895,7 +899,9 @@ class VirtualFileSystem:
             results: list[Result] = [own]
             results.extend(
                 await self._gather_settled(
-                    self._dispatch_entry(binding, "tree", path=_ROOT, max_depth=budget, columns=columns, user_id=user_id)
+                    self._dispatch_entry(
+                        binding, "tree", path=_ROOT, max_depth=budget, columns=columns, user_id=user_id
+                    )
                     for binding, budget in descents
                 )
             )
@@ -957,9 +963,7 @@ class VirtualFileSystem:
                     kind=VFSErrorKind.cross_mount,
                     function=op,
                 )
-            write_rels = (
-                (src_terminal.rel, dest_terminal.rel) if op == "move" else (dest_terminal.rel,)
-            )
+            write_rels = (src_terminal.rel, dest_terminal.rel) if op == "move" else (dest_terminal.rel,)
             err = self._gate_entry(src_terminal.binding, op, report=src_terminal.rel, write_rels=write_rels)
             if err is not None:
                 return err
@@ -1058,8 +1062,7 @@ class VirtualFileSystem:
                 if key not in unscoped
             ]
             coros.extend(
-                self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs)
-                for binding in unscoped.values()
+                self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs) for binding in unscoped.values()
             )
             if not coros:
                 return Result(function=op, observations=[])

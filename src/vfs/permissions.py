@@ -304,10 +304,7 @@ def check_writable(
     if resolved.permission == "read_write":
         return None
     full = rel.with_mount(mount_prefix)
-    if resolved.rule_prefix is None:
-        detail = "mount default"
-    else:
-        detail = f"read-only by mount rule '{resolved.rule_prefix}'"
+    detail = "mount default" if resolved.rule_prefix is None else f"read-only by mount rule '{resolved.rule_prefix}'"
     return Result(
         function=op,
         success=False,
