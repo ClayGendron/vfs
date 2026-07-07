@@ -66,11 +66,14 @@ class VFSErrorKind(StrEnum):
     invalid = "vfs.invalid"  # EINVAL / ENAMETOOLONG
 
     # — concurrency / preconditions —
-    conflict = "vfs.conflict"  # ESTALE / EBUSY
+    conflict = "vfs.conflict"  # ESTALE
+    busy = "vfs.busy"  # EBUSY — a live bind site the data plane may not mutate
     cross_mount = "vfs.cross_mount"  # EXDEV
+    budget_exhausted = "vfs.budget_exhausted"  # ELOOP — hop/TTL budget spent; not retryable
 
     # — runtime liveness —
     unavailable = "vfs.unavailable"  # EIO / ECONNREFUSED / ENOSPC
+    backend_unavailable = "vfs.backend_unavailable"  # ENOTCONN / ESHUTDOWN — mount's transport is down
     timeout = "vfs.timeout"  # ETIMEDOUT
     cancelled = "vfs.cancelled"  # ECANCELED / EINTR
     internal = "vfs.internal"  # JSON-RPC INTERNAL_ERROR — the VFS itself broke

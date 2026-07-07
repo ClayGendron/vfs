@@ -5,10 +5,10 @@ router (``vfs.base2``), the permission gate (``vfs.permissions``), and the
 projection table (``vfs.projection``) all import from here; none defines
 its own copy. A verb's class decides how it is routed and gated:
 
-    MUTATING_OPS   → write-permission check + mutation path resolution
-    TWO_PATH_OPS   → source/target routing (may cross mounts → cross_mount)
-    READ_OPS       → routed, no write gate
-    EXEC_OPS       → routed, no write gate; executes rather than reads
+    MUTATING_OPS    → write-permission check + mutation path resolution
+    TWO_PATH_OPS    → source/target routing (may cross mounts → cross_mount)
+    READ_OPS        → routed, no write gate
+    EXEC_OPS        → routed, no write gate; executes rather than reads
 
 ``cli`` is deliberately absent: it is a meta-verb that parses a command
 string into these ops and re-enters through their public methods, so every
@@ -21,7 +21,7 @@ that rendering vocabulary lives in ``vfs.projection``, not here.
 
 from __future__ import annotations
 
-from typing import Final, Literal
+from typing import Final, Literal, NamedTuple
 
 # One name per verb, typed so an op string is checkable at the seams that
 # construct dispatch calls (the router's public methods pass literals).
@@ -53,6 +53,14 @@ MUTATING_OPS: Final[frozenset[Op]] = frozenset(
 
 TWO_PATH_OPS: Final[frozenset[Op]] = frozenset({"move", "copy"})
 """Mutations addressing a source and a target, routed as a pair."""
+
+
+class TwoPathOperation(NamedTuple):
+    """A source/destination pair for move or copy — the caller-facing input shape."""
+
+    src: str
+    dest: str
+
 
 READ_OPS: Final[frozenset[Op]] = frozenset(
     {"read", "stat", "ls", "tree", "glob", "grep", "glean", "graph"},

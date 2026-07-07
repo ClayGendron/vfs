@@ -1,14 +1,19 @@
 """Storage backend protocols — the composed seam beneath the router.
 
-A :class:`~vfs.base2.VirtualFileSystem` node *holds* its storage rather
-than *being* it: the constructor accepts a :class:`StorageBackend` object,
-and the router's one local-dispatch funnel calls these methods and nothing
-else.  Protocols are grouped by op family so a partial backend claims only
-what it genuinely supports — the router derives its default
-``capabilities()`` from which families the object satisfies, so the
-declared set cannot drift from reality.
+A :class:`~vfs.base2.VirtualFileSystem` mounts storage rather than other
+routers: every mount-table entry binds a :class:`StorageBackend` object,
+and the router's one dispatch funnel calls these methods and nothing else.
+Protocols are grouped by op family so a partial backend implements only
+what it genuinely supports, and every backend *declares* its op set
+through ``capabilities()`` — self-declaration, never structural sniffing,
+so an adapter or wire client answers with its real set rather than its
+method surface.
 
-    class MemoryStorage:            # read family = minimum viable backend
+    class MemoryStorage:            # the read family = the verb minimum
+        name = "memory"
+        description = "Ephemeral in-process rows"
+
+        def capabilities(self): return frozenset({"read", "stat", "ls", "tree"})
         async def read(self, *, path=None, observations=None, columns=None, user_id=None): ...
         async def stat(self, ...): ...
         async def ls(self, ...): ...
@@ -17,11 +22,15 @@ declared set cannot drift from reality.
     fs = VirtualFileSystem(storage=MemoryStorage())
 
 Every path a backend method receives is already gated and terminal-relative
-(the router resolves, gates, and rebases first); every method returns a
-``Result`` — the single classified failure channel.  A raw exception from a
-backend is a bug and propagates as one.  Transactions are backend-internal:
-a backend opens and commits its own session inside these methods, and the
-router never sees it.
+(the router resolves, gates, and rebases first); every path a backend
+*returns* is likewise terminal-relative and normalized — the funnel
+validates and rebases on the way out.  Every op method returns a ``Result``
+— the single classified failure channel.  A raw exception from an
+in-process backend is a bug and propagates as one; a *wire* backend
+raises :class:`TransportError` for a dead or unreachable peer, which the
+funnel normalizes to a ``backend_unavailable`` classification.
+Transactions are backend-internal: a backend opens and commits its own
+session inside these methods, and the router never sees it.
 """
 
 from __future__ import annotations
@@ -38,10 +47,20 @@ if TYPE_CHECKING:
     from vfs.results2 import Result
 
 
+class TransportError(Exception):
+    """A wire backend's peer is dead or unreachable — an operating condition.
+
+    Raised (or subclassed) only by backends whose storage lives across a
+    process or network boundary; the router's funnel normalizes it into a
+    ``backend_unavailable`` classification.  In-process backends never
+    raise it — for them a raw exception remains a bug and propagates.
+    """
+
+
 class ResolvedPair(NamedTuple):
     """A gated, terminal-relative src/dest pair — what move/copy receive.
 
-    Distinct from the router's caller-facing ``TwoPathOperation`` so the
+    Distinct from the caller-facing ``TwoPathOperation`` in ``vfs.ops`` so the
     annotation says which side of the resolve gate a pair is on: raw caller
     strings in, minted paths out.
     """
@@ -175,6 +194,7 @@ class SupportsMutation(Protocol):
         content: str | None = None,
         entries: list[Entry] | None = None,
         overwrite: bool = True,
+        parents: bool = False,
         user_id: str | None = None,
     ) -> Result: ...
 
@@ -197,7 +217,14 @@ class SupportsMutation(Protocol):
         user_id: str | None = None,
     ) -> Result: ...
 
-    async def mkdir(self, *, path: Path, user_id: str | None = None) -> Result: ...
+    async def mkdir(
+        self,
+        *,
+        path: Path,
+        parents: bool = False,
+        exist_ok: bool = False,
+        user_id: str | None = None,
+    ) -> Result: ...
 
     async def move(
         self,
@@ -255,27 +282,41 @@ class SupportsRun(Protocol):
 
 @runtime_checkable
 class StorageBackend(SupportsRead, Protocol):
-    """The constructor's accepted type: the read family is the minimum.
+    """What a mount-table entry binds: identity, declared capability, read verbs.
 
-    The mountability probe needs ``stat``, and a backend that cannot even
-    be read is not a storage backend.  Implement the further families the
-    backend genuinely supports; the router derives capability from them.
+    The read family is the *verb* minimum — a backend that cannot even be
+    read is not a storage backend — and three identity members are required
+    besides: ``name`` and ``description`` say what this backend is (mount
+    rows are decorated with the live ``description``), and
+    ``capabilities()`` declares the ops it honestly answers.  Declaration
+    beats inference: an adapter's method surface says nothing about what
+    its wrapped namespace supports, and a wire client's set is whatever
+    the far side advertises.  Site legality has no probe — ``mkdir`` and
+    the other mutation verbs check and act in one call.
     """
+
+    name: str
+    description: str
+
+    def capabilities(self) -> frozenset[Op]: ...
 
 
 @runtime_checkable
 class SupportsClose(Protocol):
-    """Optional disposal: a backend that owns an engine exposes ``close``.
+    """Optional disposal: a backend that owns an engine or session exposes ``close``.
 
-    The router's ``close()`` disposes its own backend through this after
-    closing its mounts; repeated disposal is the backend's concern.
+    The router's ``close()`` walks its table and disposes each bound
+    backend through this (identity-deduped, ``owned``-gated).  The
+    contract: ``close`` is idempotent — a second call is a no-op, not an
+    error — and dead-peer-tolerant — a wire backend whose peer is already
+    gone swallows the transport failure and completes its own teardown.
     """
 
     async def close(self) -> None: ...
 
 
 # ---------------------------------------------------------------------------
-# Capability derivation
+# Capability self-derivation
 # ---------------------------------------------------------------------------
 
 _FAMILY_OPS: Final[tuple[tuple[type, frozenset[Op]], ...]] = (
@@ -289,14 +330,16 @@ _FAMILY_OPS: Final[tuple[tuple[type, frozenset[Op]], ...]] = (
 
 
 def storage_ops(storage: object) -> frozenset[Op]:
-    """The ops *storage* honestly answers — derived from the families it satisfies.
+    """Derive an op set from the ``Supports*`` families *storage* satisfies.
 
-    Presence-based (``runtime_checkable`` checks members exist, not their
-    signatures).  ``ty`` checks signatures where a family is *expressed* in a
-    type: the read family at the constructor hand-off, further families where
-    a backend annotates them (a backend's own tests should).  A present but
-    mis-signed method is a backend bug and raises on the bug channel.
-    ``None`` or a non-backend derives the empty set.
+    A convenience for *implementing* ``capabilities()`` on an in-process
+    backend whose method surface is its truth — ``return storage_ops(self)``
+    stays in sync as families are added.  The router never calls this: the
+    gate consults only the declared ``capabilities()``.  Indirection must
+    not use it — an adapter or wire client defines every verb method
+    regardless of what its far side supports, so its surface lies; those
+    backends forward the wrapped router's set or derive from the peer's
+    advertised tools instead.
     """
     ops: set[Op] = set()
     for family, family_ops in _FAMILY_OPS:
