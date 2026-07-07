@@ -1,32 +1,29 @@
-"""VirtualFileSystem — async router whose mount boundary is the public API.
+"""VirtualFileSystem — async router over one mount table of storage backends.
 
-The base class owns mount routing and path rebasing.  The filesystem object
-itself owns ``/`` — mounting at ``"/"`` is illegal.  It also owns the
-**spine**: ``/`` plus every proper ancestor of a mount path.  Spine paths are
-real directories — ``ls``/``stat``/``tree`` answer on them locally from the
-mount table, a scoped fan-out landing on one expands across the mounts
-beneath it, and every other verb classifies them ``wrong_kind``, exactly as
-it would a stored directory.
+A mount binds a **storage instance**, never another router: the table maps
+``path -> Binding(path, storage, meta)``, the node's own backend is the
+identity entry at ``/``, and longest-prefix matching resolves every path to
+exactly one entry.  One ``VirtualFileSystem`` = one namespace = one policy
+layer — the Linux shape, where a mount entry binds a superblock and the VFS
+layer exists once.
 
-Public methods are routers.  They resolve the terminal filesystem via
-longest-prefix mount matching, then dispatch across the mount boundary:
+Namespace shape is *stored*, never synthesized: a mount-point directory is
+an ordinary stored row in whichever storage owns the parent path, while the
+binding lives only in this table.  ``bind`` is the primitive (onto an
+existing empty directory — the ``graft_tree`` rule); ``add_mount`` fuses a
+convenience mkdir-if-absent in front of it; ``remove_mount`` unbinds and
+strictly rmdirs.  Composition with other routers happens through storage
+too: an adapter presents a router as a ``StorageBackend`` (the exportfs
+move), and MCP clients are wire-speaking backends.
 
-- When the terminal is ``self``, the router drops to the storage object it
-  *holds* (``storage=`` at construction) through ``_call_local_impl`` — one
-  exhaustive funnel from the op to a typed :mod:`vfs.storage` method.
-- When the terminal is a child mount, the router calls the child's **public**
-  method only — never the child's session, engine, or storage object.
-  Values go in, ``Result`` comes out.
+The admin surface — ``bind``/``unbind``/``add_mount``/``remove_mount``/
+``close`` — is control-plane state on this router and is not part of the
+storage protocol: no dispatched verb can mutate a mount table.
 
-A node is a router over things it holds: child mounts across edges, and
-optionally a storage backend underneath.  Storage is composed, never
-inherited — subclasses wire a backend (``super().__init__(storage=...)``),
-they do not implement ops on the node.
-
-Five dispatch shapes cover the whole verb surface: single-path (most verbs),
-grouped observations (chained rows, and ``graph`` over row sets), two-path
-pairs (``move``/``copy``), the endpoint pair (``mkedge``), and fan-out
-(``glob``/``grep``/``glean`` with no scope reach every mount in parallel).
+Public methods are routers: resolve the entry, gate it (capability from the
+entry's declared snapshot, then permission maps composed from ``/`` down —
+most restrictive wins), dispatch through the one storage funnel, then
+rebase, shadow-filter, and decorate on the way out.
 
 Paths cross the public boundary as plain ``str``; the resolve gate mints
 :class:`~vfs.paths.Path` once, and everything below it — routing, gating,
@@ -38,15 +35,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, Final, NamedTuple, assert_never
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 
+from vfs.backends.memory import InMemoryStorage
 from vfs.models2 import Entry, Observation
-from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode
+from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
 from vfs.permissions import (
     Permission,
+    PermissionLayer,
     PermissionMap,
-    check_writable,
+    check_writable_composed,
     coerce_permissions,
 )
 from vfs.projection import TRAVERSAL_FUNCTIONS
@@ -61,7 +62,7 @@ from vfs.storage import (
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRun,
-    storage_ops,
+    TransportError,
 )
 
 if TYPE_CHECKING:
@@ -69,16 +70,52 @@ if TYPE_CHECKING:
 
     from vfs.ops import Op
 
-# The read verbs the router answers itself on spine paths; every other verb
-# classifies a spine path as a directory at the routability step.
-_SPINE_READ_OPS: Final[frozenset[Op]] = frozenset({"ls", "stat", "tree"})
+_ROOT = Path("/")
+
+# Router-traversal depth budget for the current request: decremented once
+# per router entered (adapters and wire hops re-enter), never per mount.
+_hop_budget: ContextVar[int | None] = ContextVar("vfs_hop_budget", default=None)
 
 
-class TwoPathOperation(NamedTuple):
-    """A source/destination pair for move or copy — the caller-facing input shape."""
+@dataclass(slots=True)
+class MountMeta:
+    """Per-entry policy and lifecycle facts — the ``mnt_flags`` of a binding.
 
-    src: str
-    dest: str
+    Policy lives on the entry, state lives on the storage: *permission_map*
+    holds mount-relative rules (``None`` — no local rules), *no_overlay*
+    refuses further binds beneath this entry, *owned* says ``close()``
+    disposes the storage, and *caps* is the capability snapshot taken from
+    ``storage.capabilities()`` at bind.
+    """
+
+    permission_map: PermissionMap | None = None
+    no_overlay: bool = False
+    owned: bool = True
+    caps: frozenset[str] = frozenset()
+
+
+class Binding(NamedTuple):
+    """One mount-table fact: *storage* bound at *path* under *meta* policy.
+
+    The identity binding — the node's own storage at ``/`` — is an ordinary
+    entry: every path resolves to exactly one binding, and the root entry
+    is simply the longest-prefix fallback.
+    """
+
+    path: Path
+    storage: StorageBackend
+    meta: MountMeta
+
+
+class ResolvedTerminal(NamedTuple):
+    """Where a routed path landed — a binding plus the residual path.
+
+    ``binding`` names the entry that owns the path; ``rel`` is the path in
+    that entry's own coordinates (``without_mount(binding.path)``).
+    """
+
+    binding: Binding
+    rel: Path
 
 
 class VirtualFileSystem:
@@ -91,188 +128,249 @@ class VirtualFileSystem:
         title: str | None = None,
         description: str | None = None,
         storage: StorageBackend | None = None,
-        allow_child_mounts: bool = True,
         permissions: Permission | PermissionMap = "read_write",
+        no_overlay: bool = False,
+        hop_budget: int = 16,
+        close_timeout: float = 10.0,
     ) -> None:
-        # Fail loud for untyped callers too: the read family is the minimum
-        # viable backend (the mountability probe needs stat).
-        if storage is not None and not isinstance(storage, StorageBackend):
+        if storage is None:
+            storage = InMemoryStorage()
+        if not isinstance(storage, StorageBackend):
             msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
             raise TypeError(msg)
         self.name = name
         self.title = title
         self.description = description
-        self._storage = storage
-        self._storage_ops: frozenset[Op] = storage_ops(storage)
-        self._allow_child_mounts = allow_child_mounts
-        self._permission_map: PermissionMap = coerce_permissions(permissions)
-        self._parent: VirtualFileSystem | None = None
+        self._hop_budget_default = hop_budget
+        self._close_timeout = close_timeout
         self._mount_lock = asyncio.Lock()
-        self._mounts: dict[Path, VirtualFileSystem] = {}
-        self._sorted_mount_paths: list[Path] = []
+        root_meta = MountMeta(
+            permission_map=coerce_permissions(permissions),
+            no_overlay=no_overlay,
+            owned=True,
+            caps=frozenset(storage.capabilities()),
+        )
+        self._bindings: dict[Path, Binding] = {_ROOT: Binding(path=_ROOT, storage=storage, meta=root_meta)}
+        self._sorted_mount_paths: list[Path] = [_ROOT]
         self._class_name = self.__class__.__name__
 
     # -------------------------------------------------------------------
-    # mounts and routing
+    # mount administration — bind/unbind primitives, add/remove sugar
     # -------------------------------------------------------------------
 
-    async def add_mount(self, filesystem: VirtualFileSystem, path: str | None = None) -> None:
-        """Mount a child *filesystem* at *path*, which may be nested.
+    async def bind(
+        self,
+        storage: StorageBackend,
+        path: str,
+        *,
+        permissions: Permission | PermissionMap | None = None,
+        no_overlay: bool = False,
+        owned: bool = True,
+    ) -> None:
+        """Bind *storage* at *path* — the mount primitive.
 
-        *path* is optional: when omitted, the filesystem's ``name`` is used as
-        the mount point, so a named filesystem can mount itself
-        (``root.add_mount(VirtualFileSystem(name="data"))`` lands at ``/data``).
-        An explicit *path* takes precedence; if neither *path* nor the
-        filesystem's name is available, the call raises.
+        The site must already exist as an **empty directory** in the storage
+        owning the parent path (the ``graft_tree`` rule: exists, is a
+        directory, has no children) — which is what makes rebinding after a
+        restart work on a persistent backend, and makes a crash-orphaned
+        mount-point directory a valid future site instead of poison.  The
+        binding itself is runtime-only table state; nothing about the bind
+        is stored.
 
-        *path* is interpreted relative to this filesystem: the namespace
-        root is the global origin, and calling on a sub-node treats *path*
-        as local to that node (so ``data.add_mount(fs, "/tmp")`` lands at the
-        data-local ``/tmp``).
+        Rejected when the path is already bound, sits beneath a
+        ``no_overlay`` entry, would sit above an existing deeper binding, or
+        when *storage* is already bound elsewhere in this table (aliasing —
+        one object, one path).  *permissions* installs mount-relative rules
+        on the entry; *owned* says ``close()`` disposes this storage.
 
-        Routing:
-
-        - If *path* falls under an existing mount, the request is delegated
-          to that mount — with ``/data`` mounted, ``add_mount(fs, "/data/tmp")``
-          becomes ``data_fs.add_mount(fs, "/tmp")``.  This recurses to any depth.
-        - Otherwise *self* owns the mount.  It is rejected when a deeper
-          mount already sits beneath *path* (the reverse order: ``/data/tmp``
-          first, then ``/data``), when it duplicates an instance or would
-          form a cycle, or — if *self* has storage — when stored contents
-          conflict with the mount point or cannot be verified (see
-          ``_is_path_mountable``).
-
-        A filesystem created with ``allow_child_mounts=False`` (e.g. a mount
-        that proxies a remote/external namespace) rejects any mount whose
-        owner it would be — including a delegated one — so a parent cannot
-        mutate the remote's local mount table without an explicit opt-in.
+        The site probe is storage I/O and runs outside the mount lock; the
+        table is re-checked and committed under it with no await between.
         """
-        mount_name = path or filesystem.name
-        if not mount_name:
-            msg = "add_mount needs a path or a named filesystem"
-            raise ValueError(msg)
-        mount_path = self._normalize_mount_path(mount_name)
+        if not isinstance(storage, StorageBackend):
+            msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
+            raise TypeError(msg)
+        mount_path = self._normalize_mount_path(path)
 
+        probed = await self._probe_bind_site(mount_path)
+        if probed is not None:
+            msg = f"Cannot bind at {mount_path}: {probed}"
+            raise ValueError(msg)
+
+        meta = MountMeta(
+            permission_map=None if permissions is None else coerce_permissions(permissions),
+            no_overlay=no_overlay,
+            owned=owned,
+            caps=frozenset(storage.capabilities()),
+        )
         async with self._mount_lock:
-            if not self._allow_child_mounts:
+            if mount_path in self._bindings:
+                msg = f"Mount already exists at: {mount_path}"
+                raise ValueError(msg)
+            for existing in self._sorted_mount_paths:
+                if existing.startswith(mount_path + "/"):
+                    msg = f"Cannot bind at {mount_path}: a deeper mount already sits at {existing}"
+                    raise ValueError(msg)
+                if existing != _ROOT and mount_path.startswith(existing + "/"):
+                    if self._bindings[existing].meta.no_overlay:
+                        msg = f"Cannot bind at {mount_path}: the mount at {existing} does not allow binds beneath it"
+                        raise ValueError(msg)
+            if self._bindings[_ROOT].meta.no_overlay:
                 msg = f"{self._class_name} does not allow child mounts"
                 raise ValueError(msg)
-
-            # A filesystem lives in one place only: reject self-mounts, re-mounts, or cycles (checked at the true root).
-            if filesystem is self:
-                msg = "Cannot mount a filesystem into itself"
+            if any(b.storage is storage for b in self._bindings.values()):
+                msg = f"Cannot bind at {mount_path}: that storage object is already bound in this table"
                 raise ValueError(msg)
-            if filesystem._parent is not None:
-                msg = f"Cannot mount at {mount_path}: that filesystem is already mounted elsewhere"
-                raise ValueError(msg)
-            if id(self._root()) in filesystem._reachable_ids():
-                msg = (
-                    f"Mounting at {mount_path} would create a cycle: "
-                    "that filesystem already contains this namespace's root"
-                )
-                raise ValueError(msg)
+            self._bindings[mount_path] = Binding(path=mount_path, storage=storage, meta=meta)
+            self._rebuild_sorted_mounts()
 
-            matched = self._match_mount(mount_path)
-            if matched is not None:
-                mount_at, mount_fs = matched
-                if mount_at == mount_path:
-                    msg = f"Mount already exists at: {mount_path}"
-                    raise ValueError(msg)
-                await mount_fs.add_mount(filesystem, mount_path.without_mount(mount_at))
-                return
+    async def unbind(self, path: str) -> Binding:
+        """Drop the binding at *path*, leaving its stored directory in place.
 
-            # self owns mount_path
-            for existing_path in self._mounts:
-                if existing_path.startswith(mount_path + "/"):
-                    msg = f"Cannot mount at {mount_path}: it is owned by a deeper mount at {existing_path}"
-                    raise ValueError(msg)
-            mountable, reason = await self._is_path_mountable(mount_path)
-            if not mountable:
-                msg = f"Cannot mount at {mount_path}: {reason}"
-                raise ValueError(msg)
-
-            self._commit_mount(filesystem, mount_path)
-
-    async def remove_mount(self, path: str) -> None:
-        """Unmount the filesystem at *path*, which may be nested.
-
-        *path* is interpreted relative to this filesystem, as in
-        ``add_mount``.  A nested path under an existing mount is delegated to
-        that mount.  Only the mount table is updated; lifecycle
-        (engine disposal) is the caller's concern — disposal happens in
-        ``close()`` or via an explicit ``await fs.close()`` on a reference
-        the caller retained.
+        The lazy-unmount half: pure table surgery under the lock, no storage
+        I/O, so it succeeds even against a dead or wedged backend.  Returns
+        the removed binding so the caller can dispose the storage it owns.
+        Rejected while deeper bindings still sit beneath *path* — unmount
+        depth-first, as ``umount`` does.
         """
         mount_path = self._normalize_mount_path(path)
         async with self._mount_lock:
-            matched = self._match_mount(mount_path)
-            if matched is not None and matched[0] != mount_path:
-                mount_at, mount_fs = matched
-                await mount_fs.remove_mount(mount_path.without_mount(mount_at))
-                return
-            if mount_path not in self._mounts:
+            binding = self._bindings.get(mount_path)
+            if binding is None:
                 msg = f"No mount at: {mount_path!r}"
                 raise ValueError(msg)
-            detached = self._mounts.pop(mount_path)
-            detached._parent = None
+            deeper = [p for p in self._sorted_mount_paths if p.startswith(mount_path + "/")]
+            if deeper:
+                msg = f"Cannot unmount {mount_path}: deeper mounts exist at {', '.join(map(str, deeper))}"
+                raise ValueError(msg)
+            del self._bindings[mount_path]
             self._rebuild_sorted_mounts()
+            return binding
+
+    async def add_mount(
+        self,
+        storage: StorageBackend,
+        path: str | None = None,
+        *,
+        parents: bool = False,
+        permissions: Permission | PermissionMap | None = None,
+        no_overlay: bool = False,
+        owned: bool = True,
+    ) -> None:
+        """Mount *storage* at *path* — mkdir-if-absent + bind, fused.
+
+        The udisks convenience over the :meth:`bind` primitive: the
+        mount-point directory is created when absent (an ordinary gated
+        mkdir against the owning entry — parents must exist unless
+        ``parents=True``), then the binding commits over it.  An existing
+        directory is fine when empty (the rebind-after-restart shape); an
+        occupied site or a file classifies through mkdir/bind and raises.
+        A failed bind leaves the directory behind — a plain empty directory
+        is a valid future mount site, not damage to roll back.
+
+        *path* is optional: when omitted, the storage's ``name`` names the
+        mount point (``add_mount(InMemoryStorage(name="data"))`` lands at
+        ``/data``).
+        """
+        mount_name = path or storage.name
+        if not mount_name:
+            msg = "add_mount needs a path or a named storage"
+            raise ValueError(msg)
+        mount_path = self._normalize_mount_path(mount_name)
+
+        made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True)
+        if not made.success:
+            detail = made.error_message or "storage refused the mount-point directory"
+            msg = f"Cannot mount at {mount_path}: {detail}"
+            raise ValueError(msg)
+        await self.bind(storage, str(mount_path), permissions=permissions, no_overlay=no_overlay, owned=owned)
+
+    async def remove_mount(self, path: str) -> None:
+        """Unmount *path* — unbind + strict rmdir, fused.
+
+        The binding is dropped first (table surgery under the lock), then
+        the mount-point directory is removed with a strict, non-recursive
+        delete against whichever storage owns the parent path.  Never a
+        cascade: on shared or persistent storage the directory may have
+        gained rows this router never saw, and unmount must not destroy
+        them.  A failed rmdir leaves the unbind standing and raises — the
+        namespace keeps a plain directory, loud and recoverable.
+
+        Storage lifecycle is untouched: unbinding never disposes an engine
+        or session.  Dispose through ``close()`` or by closing a retained
+        reference to the storage.
+        """
+        mount_path = self._normalize_mount_path(path)
+        await self.unbind(str(mount_path))
+        removed = await self.delete(path=str(mount_path), permanent=True, cascade=False)
+        if not removed.success:
+            detail = removed.error_message or "storage refused the delete"
+            msg = f"Unmounted {mount_path}, but removing its directory failed: {detail}"
+            raise ValueError(msg)
 
     async def close(self) -> None:
-        """Close every mount, then dispose this node's own storage.
+        """Release every resource this process holds for the namespace.
 
-        Closing is polymorphic: each mount closes itself, and a node closes
-        the backend it holds (when the backend exposes ``close``) exactly as
-        symmetrically — the router never touches a child's engine directly,
-        and a child never sees its parent's.
+        Snapshot-and-clear the table under the lock (synchronously — a
+        cancelled close never leaves a closed storage reachable), then
+        dispose outside it: each distinct ``owned`` storage that exposes
+        ``close`` is closed once (identity-deduped — the same object can
+        never be double-closed), concurrently, each under the per-backend
+        timeout.  Closing may end this client's own sessions — that is a
+        wire message — but never mutates a remote router's table.
 
-        Every mount is closed even if one fails; failures are collected and
-        re-raised once the table is empty, so a single bad disposal can
-        neither strand a sibling's engine nor leave the table populated.
-        Each child is detached (popped, ``_parent`` reset) synchronously
-        after its close, so a cancellation mid-loop splits cleanly: closed
-        children are fully detached, the rest stay fully attached, and a
-        second ``close()`` finishes the job — which re-disposes the backend;
-        tolerating repeated disposal is the backend's concern.
+        Failures are collected so one bad disposal cannot strand a
+        sibling's engine; ``SupportsClose`` is idempotent by contract, so a
+        second ``close()`` after cancellation just finishes the job.
         """
         async with self._mount_lock:
-            errors: list[Exception] = []
-            for mount_path, fs in list(self._mounts.items()):
-                try:
-                    await fs.close()
-                except Exception as exc:
-                    errors.append(exc)
-                del self._mounts[mount_path]
-                fs._parent = None
-                self._rebuild_sorted_mounts()
-            if isinstance(self._storage, SupportsClose):
-                try:
-                    await self._storage.close()
-                except Exception as exc:
-                    errors.append(exc)
-            if len(errors) == 1:
-                raise errors[0]
-            if errors:
-                raise ExceptionGroup("errors while closing mounts", errors)
+            bindings = list(self._bindings.values())
+            self._bindings = {}
+            self._sorted_mount_paths = []
 
-    def _commit_mount(self, filesystem: VirtualFileSystem, mount_path: Path) -> None:
-        """Re-prove the cross-instance facts, then commit — with no await between.
+        targets: dict[int, StorageBackend] = {}
+        for binding in bindings:
+            if binding.meta.owned and isinstance(binding.storage, SupportsClose):
+                targets.setdefault(id(binding.storage), binding.storage)
+        if not targets:
+            return
 
-        The mount lock stabilizes *this* table, but the incoming filesystem's
-        ``_parent`` and subtree live outside it and may have changed during the
-        mountability probe.  Re-checking them synchronously right before the
-        commit makes check-plus-commit atomic on a single event loop.
+        async def _close_one(storage: StorageBackend) -> None:
+            assert isinstance(storage, SupportsClose)
+            await asyncio.wait_for(storage.close(), timeout=self._close_timeout)
+
+        settled = await asyncio.gather(*(_close_one(s) for s in targets.values()), return_exceptions=True)
+        errors = [item for item in settled if isinstance(item, Exception)]
+        for item in settled:
+            if isinstance(item, BaseException) and not isinstance(item, Exception):
+                raise item
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("errors while closing storages", errors)
+
+    async def _probe_bind_site(self, mount_path: Path) -> str | None:
+        """Prove the bind site is an existing empty directory, else say why.
+
+        Storage I/O — runs outside the mount lock.  The owning entry is
+        whichever binding holds the parent region; on a shared backend the
+        answer can change before commit (unsynchronized shared admin), and
+        the resulting states are the ordinary classified ones.
         """
-        if filesystem._parent is not None:
-            msg = f"Cannot mount at {mount_path}: that filesystem is already mounted elsewhere"
-            raise ValueError(msg)
-        if id(self._root()) in filesystem._reachable_ids():
-            msg = (
-                f"Mounting at {mount_path} would create a cycle: that filesystem already contains this namespace's root"
-            )
-            raise ValueError(msg)
-        filesystem._parent = self
-        self._mounts[mount_path] = filesystem
-        self._rebuild_sorted_mounts()
+        if not self._bindings:
+            return "filesystem is closed"
+        terminal = self._resolve_terminal(mount_path)
+        stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel)
+        if not stat.success or not stat.observations:
+            return f"no directory stored at the mount point (mkdir it, or use add_mount(..., parents=True)): {mount_path}"
+        row = stat.observations[0]
+        if row.kind != "directory":
+            return f"the mount point is stored as {row.kind!r}, not a directory: {mount_path}"
+        listed = await self._call_storage(terminal.binding, "ls", path=terminal.rel)
+        if not listed.success:
+            return listed.error_message or f"could not list the mount point: {mount_path}"
+        if any(o.path != terminal.rel for o in listed.observations):
+            return f"the mount-point directory is not empty: {mount_path}"
+        return None
 
     @staticmethod
     def _normalize_mount_path(path: str) -> Path:
@@ -297,314 +395,320 @@ class VirtualFileSystem:
         return mount_path
 
     def _rebuild_sorted_mounts(self) -> None:
-        """Rebuild the pre-sorted mount path list, longest prefix first.
+        """Rebuild the pre-sorted binding path list, longest prefix first.
 
-        Reverse-lexicographic is enough: only mounts matching the same path
-        need relative order, and those are always prefix-chains, where the
-        proper prefix sorts strictly lower.
+        Reverse-lexicographic is enough: only paths matching the same
+        target need relative order, and those are always prefix-chains,
+        where the proper prefix sorts strictly lower — so ``/`` lands last,
+        the universal fallback.
         """
-        self._sorted_mount_paths = sorted(self._mounts.keys(), reverse=True)
+        self._sorted_mount_paths = sorted(self._bindings.keys(), reverse=True)
 
-    def _match_mount(self, path: Path) -> tuple[Path, VirtualFileSystem] | None:
-        """Longest-prefix mount match for *path*."""
+    # -------------------------------------------------------------------
+    # resolution — one table, longest prefix
+    # -------------------------------------------------------------------
+
+    def _match_mount(self, path: Path) -> Binding | None:
+        """Longest-prefix binding for *path* — ``None`` only when closed."""
         for mount_path in self._sorted_mount_paths:
-            if path == mount_path or path.startswith(mount_path + "/"):
-                return mount_path, self._mounts[mount_path]
+            if mount_path == _ROOT or path == mount_path or path.startswith(mount_path + "/"):
+                return self._bindings[mount_path]
         return None
 
-    def _resolve_terminal(self, path: Path) -> tuple[VirtualFileSystem, Path, Path]:
-        """Walk the mount chain to find the terminal filesystem.
+    def _resolve_terminal(self, path: Path) -> ResolvedTerminal:
+        """Resolve a gated :class:`Path` to its owning entry plus residual.
 
-        Takes a gated :class:`Path` — callers resolve first.  Returns
-        ``(terminal_fs, relative_path, prefix)`` where:
-        - *terminal_fs* is the filesystem that owns the path
-        - *relative_path* is the path within that filesystem
-        - *prefix* is the accumulated mount path for rebasing results;
-          ``/`` when *self* owns the path (the rebase identity)
+        A single longest-prefix match — nested mounts are ordinary deeper
+        rows in the same table, so there is nothing to recurse into.  The
+        root identity entry backstops every path; callers guard the
+        closed-table case before resolving.
         """
-        fs = self
-        prefix = Path("/")
-        rel = path
-        while True:
-            matched = fs._match_mount(rel)
-            if matched is None:
-                break
-            mount_path, mount_fs = matched
+        binding = self._match_mount(path)
+        assert binding is not None, "resolve on a closed filesystem"
+        return ResolvedTerminal(binding=binding, rel=path.without_mount(binding.path))
 
-            fs = mount_fs
-            prefix = mount_path.with_mount(prefix)
-            rel = rel.without_mount(mount_path)
-        return fs, rel, prefix
+    def _bindings_beneath(self, path: Path) -> list[Binding]:
+        """The bindings strictly beneath *path* (router coordinates).
 
-    def _spine_children(self, rel: Path) -> dict[str, VirtualFileSystem | None]:
-        """Immediate child segments of *rel* implied by the mount table.
-
-        Maps segment → mounted filesystem when the child IS a mount point,
-        or → ``None`` when it is an intermediate spine directory (a mount
-        lies deeper).  Empty when *rel* is not on the spine.  Derived from
-        the mount table on every call — no new state to keep in sync.
+        Routing state, not visibility: region expansion, tree descents, the
+        busy guard, and shadow filtering all read it.
         """
-        base = "" if rel == "/" else str(rel)
-        children: dict[str, VirtualFileSystem | None] = {}
-        for mount_path, fs in self._mounts.items():
-            if not mount_path.startswith(base + "/"):
-                continue
-            segment, _, deeper = mount_path[len(base) + 1 :].partition("/")
-            children[segment] = None if deeper else fs
-        return children
+        if path == "/":
+            return [b for p, b in self._bindings.items() if p != _ROOT]
+        return [b for p, b in self._bindings.items() if p.startswith(path + "/")]
 
-    def _is_spine_path(self, rel: Path) -> bool:
-        """Whether *rel* is on the spine: ``/`` or a proper mount ancestor.
-
-        Mount points themselves are not spine paths — they route into their
-        mount, whose own root answers (the recursion the tree stands on).
-        """
-        return rel == "/" or bool(self._spine_children(rel))
-
-    def _root(self) -> VirtualFileSystem:
-        """Walk parent links to the top of this mount tree.
-
-        Visited-guarded so a malformed parent chain cannot hang the walk,
-        matching ``_reachable_ids``; the single-parent invariant keeps the
-        chain acyclic in practice.
-        """
-        node = self
-        seen: set[int] = set()
-        while node._parent is not None and id(node) not in seen:
-            seen.add(id(node))
-            node = node._parent
-        return node
-
-    def _reachable_ids(self) -> set[int]:
-        """Return ``id()`` of this filesystem and every transitive mount.
-
-        Used to keep the mount graph a tree: a new mount's reachable set
-        must be disjoint from the destination tree's, which rejects cycles,
-        duplicate instances, and shared sub-mounts in one check — including
-        the case where the incoming filesystem already carries its own
-        mounts.  The walk is visited-guarded so it terminates even on a
-        malformed graph.
-        """
-        ids: set[int] = set()
-        stack: list[VirtualFileSystem] = [self]
-        while stack:
-            fs = stack.pop()
-            if id(fs) in ids:
-                continue
-            ids.add(id(fs))
-            stack.extend(fs._mounts.values())
-        return ids
-
-    async def _is_path_mountable(self, path: Path) -> tuple[bool, str]:
-        """Return ``(ok, reason)`` for attaching a mount at *path* here.
-
-        A mount point must not collide with stored contents: *path* itself
-        must not exist and every ancestor that exists must be a directory.
-        One batched ``stat`` over the lineage answers both — and rules out
-        shadowed descendants too, because storage keeps the namespace
-        *connected*: writes materialize every ancestor directory, so a
-        descendant cannot exist without *path* showing up here.  A sparse
-        backend that cannot honor that invariant must override this.
-
-        Composed from the public verb via self-dispatch, so any storage
-        backend answers correctly without overriding; an override is a
-        one-query optimization, not an obligation.  Absence must surface as
-        ``not_found``; any other failure is conservatively unmountable, with
-        *reason* saying the contents could not be verified — a downed
-        backend is not a contents conflict.
-        """
-        if self._storage is None:
-            return True, ""
-
-        lineage = [Observation(path=path)]
-        node = path.parent_dir
-        while node != "/":
-            lineage.append(Observation(path=node))
-            node = node.parent_dir
-        found, reason = await self._probe(self.stat(observations=lineage))
-        if found is None:
-            return False, reason
-        if any(o.path == path or o.kind != "directory" for o in found):
-            return False, "storage contents conflict with that mount point"
-        return True, ""
-
-    @staticmethod
-    async def _probe(call: Coroutine[Any, Any, Result]) -> tuple[list[Observation] | None, str]:
-        """Await a read verb for the mountability check, mapping absence to ``[]``.
-
-        Returns ``(rows, "")`` with the rows found — ``[]`` when everything
-        was ``not_found`` (pure absence, the mountable case) — or
-        ``(None, reason)`` on a *classified* read failure, which the caller
-        must treat as "cannot verify" and reject.  ``Result`` is the only
-        failure channel a verb has, so no exception handling is needed: a raw
-        exception from an impl is an impl bug and propagates with its real
-        traceback rather than being masked as a mount conflict.
-        """
-        result = await call
-        # An errorless failure is malformed, not absence — mirror
-        # _absorb_not_found's guard and stay conservative.
-        if result.success or (result.errors and all(e.kind == VFSErrorKind.not_found for e in result.errors)):
-            return list(result.observations), ""
-        failure = next((e for e in result.errors if e.kind != VFSErrorKind.not_found), None)
-        if failure is None:
-            return None, "cannot verify storage contents there (malformed errorless failure)"
-        return None, f"cannot verify storage contents there ({failure.kind}: {failure.message})"
+    def _closed_error(self, op: Op) -> Result:
+        """Classified answer for a dispatch attempted after ``close()``."""
+        return self._error(
+            "Filesystem is closed",
+            kind=VFSErrorKind.backend_unavailable,
+            function=op,
+        )
 
     # -------------------------------------------------------------------
-    # observation grouping
+    # gates — capability snapshot, then composed permissions
     # -------------------------------------------------------------------
 
-    def _group_observations_by_terminal(
-        self,
-        observations: list[Observation],
-    ) -> list[tuple[VirtualFileSystem, Path, list[Observation]]]:
-        """Group observations by terminal filesystem, rebasing paths.
+    def capabilities(self) -> frozenset[str]:
+        """Operations this namespace answers — the union of entry snapshots.
 
-        Returns ``[(filesystem, prefix, rebased_observations)]`` where each
-        observation's path is relative to its terminal filesystem (the mount
-        prefix stripped via :meth:`Observation.without_mount`).
+        Each entry's set was declared by its storage at bind
+        (``storage.capabilities()``), so the union is self-declaration all
+        the way down: an adapter forwards its wrapped router's set, a wire
+        backend advertises the far side's tools, and nothing is inferred
+        from method surfaces.
         """
-        groups: dict[tuple[int, Path], tuple[VirtualFileSystem, list[Observation]]] = {}
-        for obs in observations:
-            fs, _rel, prefix = self._resolve_terminal(obs.path)
-            key = (id(fs), prefix)
-            _fs, obs_list = groups.setdefault(key, (fs, []))
-            obs_list.append(obs.without_mount(prefix))
-        return [(fs, pfx, obs_list) for ((_id, pfx), (fs, obs_list)) in groups.items()]
+        caps: set[str] = set()
+        for binding in self._bindings.values():
+            caps |= binding.meta.caps
+        return frozenset(caps)
 
-    # -------------------------------------------------------------------
-    # spine answers — the directories the mount table implies
-    # -------------------------------------------------------------------
+    def _permission_layers(self, full: Path) -> list[PermissionLayer]:
+        """The permission maps governing *full*, outermost entry first.
 
-    def _storage_answers(self, op: Op) -> bool:
-        """Whether this node's own storage answers *op*.
-
-        Derived honesty first (the backend must satisfy the op's family),
-        then policy: an overridden ``capabilities()`` may advertise less
-        than the backend can do, never more.  The default subtree set is a
-        superset of the storage set, so it imposes nothing here.
+        Every entry whose path prefixes *full* contributes its map (when it
+        has one), with the path rebased into that entry's own coordinates —
+        restriction composes downward and can only tighten.
         """
-        if op not in self._storage_ops:
-            return False
-        caps = self.capabilities()
-        return caps is None or op in caps
-
-    @staticmethod
-    def _absorb_not_found(result: Result) -> Result:
-        """Strip a pure-absence failure — a spine directory exists regardless.
-
-        Storage holding nothing at a spine path answers ``not_found``, but
-        the mount table makes the directory real; only genuine failures
-        (anything beyond absence) propagate into the composed result.
-        """
-        # An errorless failure is malformed; pass it through rather than promote it.
-        if result.success or not result.errors or not all(e.kind == VFSErrorKind.not_found for e in result.errors):
-            return result
-        return Result(function=result.function, observations=list(result.observations))
-
-    def _spine_row(self, rel: Path) -> Observation:
-        """The synthesized directory row for a spine path.
-
-        The root row carries this node's own description, so a parent reading
-        a mount point composes to the child's constructor metadata — no
-        parent-side special case, and never a wire call.
-        """
-        description = self.description if rel == "/" else None
-        return Observation(path=rel, kind="directory", description=description)
-
-    async def _spine_read(self, op: Op, rel: Path, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        """Answer ``ls``/``stat``/``tree`` for a spine path this router owns."""
-        if op == "ls":
-            return await self._spine_ls(rel, user_id=user_id, **kwargs)
-        if op == "tree":
-            return await self._spine_tree(rel, user_id=user_id, **kwargs)
-        return Result(function="stat", observations=[self._spine_row(rel)])
-
-    async def _spine_ls(
-        self,
-        rel: Path,
-        *,
-        columns: frozenset[str] | None = None,
-        user_id: str | None = None,
-    ) -> Result:
-        """List a spine directory: storage rows plus rows synthesized from mounts.
-
-        A mount-point child carries the mount's description; an intermediate
-        child is a bare directory row.  Storage rows win on overlap, with
-        synthesized fields filling only what storage left null — collisions
-        are safe by construction (a mount point cannot exist in storage).
-        """
-        synthesized = [
-            Observation(path=rel / segment, kind="directory", description=fs.description if fs else None)
-            for segment, fs in self._spine_children(rel).items()
-        ]
-        synth = Result(function="ls", observations=synthesized)
-        if not self._storage_answers("ls"):
-            return synth
-        stored = await self._call_local_impl("ls", path=rel, columns=columns, user_id=user_id)
-        return self._absorb_not_found(stored) | synth
-
-    async def _spine_tree(
-        self,
-        rel: Path,
-        *,
-        max_depth: int | None = None,
-        columns: frozenset[str] | None = None,
-        user_id: str | None = None,
-    ) -> Result:
-        """Tree from a spine path: storage subtree, spine skeleton, mount descent.
-
-        Each mount at segment distance ``s`` below *rel* runs
-        ``tree("/", max_depth - s)`` — skipped when the remaining budget is
-        ``<= 0`` (its skeleton row stays), unlimited when *max_depth* is
-        ``None``.  Incapable mounts are skipped silently, as in an unscoped
-        fan-out: a tree over a region must not fail on one incapable catalog.
-        """
-        if max_depth is not None and max_depth < 1:
-            return self._error(f"max_depth must be >= 1, got {max_depth}", kind=VFSErrorKind.invalid, function="tree")
-
-        skeleton: dict[Path, Observation] = {}
-        descents: list[tuple[VirtualFileSystem, Path, int | None]] = []
-        for mount_path, fs in self._mounts.items():
-            if rel != "/" and not mount_path.startswith(rel + "/"):
+        layers: list[PermissionLayer] = []
+        for mount_path in reversed(self._sorted_mount_paths):
+            if mount_path != _ROOT and full != mount_path and not full.startswith(mount_path + "/"):
                 continue
-            tail = mount_path if rel == "/" else mount_path[len(rel) :]
-            segments = tail.strip("/").split("/")
-            node = rel
-            for depth, segment in enumerate(segments, start=1):
-                if max_depth is not None and depth > max_depth:
-                    break
-                node = node / segment
-                description = fs.description if depth == len(segments) else None
-                skeleton.setdefault(node, Observation(path=node, kind="directory", description=description))
-            budget = None if max_depth is None else max_depth - len(segments)
-            if budget is not None and budget <= 0:
+            permission_map = self._bindings[mount_path].meta.permission_map
+            if permission_map is None:
                 continue
-            caps = fs.capabilities()
-            if caps is not None and "tree" not in caps:
-                continue
-            descents.append((fs, mount_path, budget))
-
-        async def _descend(fs: VirtualFileSystem, prefix: Path, budget: int | None) -> Result:
-            r = await fs.tree("/", budget, columns=columns, user_id=user_id)
-            return r.with_mount(prefix)
-
-        results: list[Result] = []
-        if self._storage_answers("tree"):
-            stored = await self._call_local_impl(
-                "tree",
-                path=rel,
-                max_depth=max_depth,
-                columns=columns,
-                user_id=user_id,
+            layers.append(
+                PermissionLayer(
+                    permission_map=permission_map,
+                    rel=full.without_mount(mount_path),
+                    mount_prefix=mount_path,
+                )
             )
-            results.append(self._absorb_not_found(stored))
-        results.append(Result(function="tree", observations=[skeleton[p] for p in sorted(skeleton)]))
-        results.extend(await self._gather_settled(_descend(fs, pfx, budget) for fs, pfx, budget in descents))
-        return self._merge_results(results)
+        return layers
+
+    def _gate_entry(
+        self,
+        binding: Binding,
+        op: Op,
+        *,
+        report: Path,
+        write_rels: Sequence[Path] = (),
+    ) -> Result | None:
+        """Capability → permission, in the pinned order.
+
+        Every dispatch chokepoint runs this gate on its resolved entry
+        before touching it.  The order is a contract: an incapable entry
+        reads as ``unsupported``, never as a policy denial.  Existence and
+        kind are storage truth, classified by the backend at dispatch — the
+        gate holds only what the router itself knows.
+
+        *report* is the entry-relative path implicated in capability
+        failures, reported router-side so the caller sees the path they
+        typed.  *write_rels* are the entry-relative paths the permission
+        layers check (empty when the write target is derived later, as in
+        mkedge's pre-derivation gate).
+        """
+        reported = report.with_mount(binding.path)
+        if op not in binding.meta.caps:
+            return self._error(
+                f"Operation {op!r} is not supported here",
+                kind=VFSErrorKind.unsupported,
+                function=op,
+                path=reported,
+            )
+        for rel in write_rels:
+            full = rel.with_mount(binding.path)
+            err = check_writable_composed(self._permission_layers(full), op)
+            if err is not None:
+                return err
+        return None
+
+    def _busy_guard(self, op: Op, full: Path, *, subtree: bool) -> Result | None:
+        """Refuse a data-plane mutation that targets a live bind site.
+
+        The EBUSY rule: a bound path (or, with *subtree*, a region holding
+        bound paths) may not be deleted or moved out from under its binding
+        — a dangling binding whose stored site is gone would be worse than
+        the refusal.  Unmount first.
+        """
+        at_bind = full != _ROOT and full in self._bindings
+        beneath = self._bindings_beneath(full) if subtree else []
+        if not at_bind and not beneath:
+            return None
+        return self._error(
+            f"{full} is a mount point or contains one — unmount first",
+            kind=VFSErrorKind.busy,
+            function=op,
+            path=full,
+        )
 
     # -------------------------------------------------------------------
-    # dispatch across the mount boundary
+    # the funnel — one seam from op to storage, one seam back out
+    # -------------------------------------------------------------------
+
+    async def _dispatch_entry(self, binding: Binding, op: Op, *, user_id: str | None = None, **kwargs: Any) -> Result:
+        """Dispatch *op* to an entry and bring the result back to router coordinates.
+
+        The single outbound/inbound seam: call the entry's storage, rebase
+        under the entry path, drop rows shadowed by deeper bindings, then
+        decorate bind rows with their storage's live description.  Every
+        routed dispatch — single, grouped, paired, fan-out, tree — funnels
+        through here.
+        """
+        result = await self._call_storage(binding, op, user_id=user_id, **kwargs)
+        result = result.with_mount(binding.path)
+        result = self._shadow_filter(result, binding)
+        return self._decorate(result)
+
+    async def _call_storage(
+        self,
+        binding: Binding,
+        op: Op,
+        *,
+        user_id: str | None = None,
+        **kwargs: Any,
+    ) -> Result:
+        """The exhaustive op → typed-method match beneath the funnel.
+
+        The chokepoints upstream carry *op* as a variable, so this match is
+        where the op meets a typed method: sixteen boring arms ending in
+        ``assert_never``, so adding a verb to ``ops.py`` fails ``ty`` until
+        the funnel routes it.  A family the backend does not satisfy
+        classifies ``unsupported`` — reachable only when a declared
+        capability over-claims the implementation, never a raw
+        ``AttributeError``.  A :class:`TransportError` — a wire backend's
+        dead peer — normalizes to ``backend_unavailable``; any other raw
+        exception is a backend bug and propagates.
+
+        Transactions live behind these methods: a backend opens and commits
+        its own session inside each op — the router never sees one.
+        """
+        storage = binding.storage
+        try:
+            match op:
+                case "read":
+                    return await storage.read(user_id=user_id, **kwargs)
+                case "stat":
+                    return await storage.stat(user_id=user_id, **kwargs)
+                case "ls":
+                    return await storage.ls(user_id=user_id, **kwargs)
+                case "tree":
+                    return await storage.tree(user_id=user_id, **kwargs)
+                case "glob":
+                    if not isinstance(storage, SupportsPatternSearch):
+                        return self._backend_unsupported(op)
+                    return await storage.glob(user_id=user_id, **kwargs)
+                case "grep":
+                    if not isinstance(storage, SupportsPatternSearch):
+                        return self._backend_unsupported(op)
+                    return await storage.grep(user_id=user_id, **kwargs)
+                case "glean":
+                    if not isinstance(storage, SupportsGlean):
+                        return self._backend_unsupported(op)
+                    return await storage.glean(user_id=user_id, **kwargs)
+                case "write":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.write(user_id=user_id, **kwargs)
+                case "edit":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.edit(user_id=user_id, **kwargs)
+                case "delete":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.delete(user_id=user_id, **kwargs)
+                case "mkdir":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.mkdir(user_id=user_id, **kwargs)
+                case "move":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.move(user_id=user_id, **kwargs)
+                case "copy":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.copy(user_id=user_id, **kwargs)
+                case "graph":
+                    if not isinstance(storage, SupportsGraph):
+                        return self._backend_unsupported(op)
+                    return await storage.graph(user_id=user_id, **kwargs)
+                case "mkedge":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.mkedge(user_id=user_id, **kwargs)
+                case "run":
+                    if not isinstance(storage, SupportsRun):
+                        return self._backend_unsupported(op)
+                    return await storage.run(user_id=user_id, **kwargs)
+                case _:
+                    assert_never(op)
+        except TransportError as exc:
+            # Structured path stays unset: this result is still in entry
+            # coordinates and the rebase seam would double-prefix bind paths.
+            return self._error(
+                f"Backend for {binding.path} is unavailable: {exc}",
+                kind=VFSErrorKind.backend_unavailable,
+                function=op,
+            )
+
+    def _backend_unsupported(self, op: Op) -> Result:
+        """The funnel's narrowing miss: the backend lacks *op*'s family."""
+        return self._error(
+            f"Storage backend does not support operation: {op}",
+            kind=VFSErrorKind.unsupported,
+            function=op,
+        )
+
+    def _shadow_filter(self, result: Result, binding: Binding) -> Result:
+        """Drop rows a deeper binding shadows — the full-shadow mount rule.
+
+        A row strictly under a deeper bind path belongs to that binding's
+        storage, whatever the shallower storage happens to hold there
+        (crash orphans, rows written by another client of shared storage).
+        The row *at* the bind path survives: it is the stored mount-point
+        directory, and decoration gives it the bound storage's description.
+        """
+        deeper = [b.path for b in self._bindings_beneath(binding.path)]
+        if not deeper or not result.observations:
+            return result
+        kept = [o for o in result.observations if not any(o.path.startswith(p + "/") for p in deeper)]
+        if len(kept) == len(result.observations):
+            return result
+        return result.model_copy(update={"observations": kept})
+
+    def _decorate(self, result: Result) -> Result:
+        """Read-time decoration in router coordinates — the table speaks last.
+
+        A row at a bound path carries its storage's live description, and
+        the namespace root row carries this router's own — so reading a
+        mount point composes to the backend's current metadata without a
+        second call.  Kinds are untouched: a mount point is a directory,
+        stored and shown; mount-ness lives in the table alone.
+        """
+        if not result.observations:
+            return result
+        rows: list[Observation] = []
+        changed = False
+        for obs in result.observations:
+            description: str | None = None
+            if obs.path == "/":
+                description = self.description
+            else:
+                bound = self._bindings.get(obs.path)
+                if bound is not None:
+                    description = bound.storage.description
+            if description is not None and obs.description != description:
+                obs = obs.model_copy(update={"description": description})
+                changed = True
+            rows.append(obs)
+        if not changed:
+            return result
+        return result.model_copy(update={"observations": rows})
+
+    # -------------------------------------------------------------------
+    # dispatch shapes — single, grouped, paired, fan-out, tree
     # -------------------------------------------------------------------
 
     @staticmethod
@@ -620,244 +724,22 @@ class VirtualFileSystem:
             return None
         return list(items)
 
-    def capabilities(self) -> frozenset[str] | None:
-        """Operations this node's subtree answers, or ``None`` for no limit.
-
-        A parent consults this set before dispatch and returns
-        ``unsupported`` without a wire call when an op is absent (the
-        no-probe rule) — so the set must cover everything reachable *through*
-        this node.  The default is derived, never declared: the spine reads
-        every node answers on ``/``, plus the op families this node's
-        storage object actually satisfies, plus the union of every mount's
-        set (a child answering ``None`` keeps "no limit" contagious).  It
-        cannot drift from reality because it is computed from reality.
-
-        Overriding stays legitimate for *policy* — advertising less than the
-        backend can do (an MCP tool catalog pinning ``ls``/``read``/``run``)
-        — and gates own-storage dispatch too, via ``_storage_answers``.
-        """
-        caps: set[str] = {"ls", "stat", "tree"}
-        caps |= self._storage_ops
-        for fs in self._mounts.values():
-            child = fs.capabilities()
-            if child is None:
-                return None
-            caps |= child
-        return frozenset(caps)
-
-    def _gate_terminal(
+    def _group_observations_by_terminal(
         self,
-        fs: VirtualFileSystem,
-        op: Op,
-        prefix: Path,
-        *,
-        report: Path,
-        write_rels: Sequence[Path] = (),
-        spine_check: bool = True,
-    ) -> Result | None:
-        """Routability → capability → permission, in the pinned order.
+        observations: list[Observation],
+    ) -> list[tuple[Binding, list[Observation]]]:
+        """Group observations by owning entry, rebasing paths.
 
-        Every dispatch chokepoint runs this gate on its resolved terminal
-        before touching it.  The order is a contract: an incapable terminal
-        reads as ``unsupported``, never as a policy denial, and an unroutable
-        path reads as ``not_found`` before anything else.  A spine path is
-        routable but is a directory, so at the routability step it classifies
-        ``wrong_kind`` — never ``not_found`` — for every verb except the
-        spine reads, which are answered upstream and never gate a spine path.
-
-        *report* is the terminal-relative path implicated in terminal-level
-        failures (routability, capability); it is reported router-side —
-        rebased under *prefix* — so the caller always sees the path they
-        typed.  *write_rels* are the terminal-relative paths the permission
-        gate checks (empty when the write target is derived later, as in
-        mkedge's pre-delegation gate).  *spine_check* is switched off by the
-        two chokepoints whose spine handling is deliberately elsewhere:
-        grouped reads (``ls``/``stat``/``tree`` peel upstream, the rest
-        dispatch as today) and mkedge (endpoints answer to the edge
-        grammar).  Returns the first classified failure, else ``None``.
+        Returns ``[(binding, rebased_observations)]`` where each
+        observation's path is relative to its entry (the bind path stripped
+        via :meth:`Observation.without_mount`).
         """
-        reported = report.with_mount(prefix)
-        if fs is self and spine_check:
-            for rel in (report, *write_rels):
-                if self._is_spine_path(rel):
-                    spine_path = rel.with_mount(prefix)
-                    return self._error(
-                        f"Is a directory: {spine_path}",
-                        kind=VFSErrorKind.wrong_kind,
-                        function=op,
-                        path=spine_path,
-                    )
-        if fs is self and self._storage is None:
-            return self._error(
-                f"No mount found for path: {reported}",
-                kind=VFSErrorKind.not_found,
-                function=op,
-                path=reported,
-            )
-        # Capability is asked of the thing that will answer: this node's own
-        # storage object when the terminal is self, the child's set otherwise.
-        if fs is self:
-            incapable = not self._storage_answers(op)
-        else:
-            caps = fs.capabilities()
-            incapable = caps is not None and op not in caps
-        if incapable:
-            return self._error(
-                f"Operation {op!r} is not supported here",
-                kind=VFSErrorKind.unsupported,
-                function=op,
-                path=reported,
-            )
-        for rel in write_rels:
-            err = check_writable(fs, op, rel, mount_prefix=prefix)
-            if err is not None:
-                return err
-        return None
-
-    async def _call_local_impl(
-        self,
-        op: Op,
-        *,
-        user_id: str | None = None,
-        **kwargs: Any,
-    ) -> Result:
-        """The one seam from the router down to the storage object it holds.
-
-        This is the *only* place a filesystem reaches its own storage.  It
-        is valid for ``self`` alone — a child mount is always reached
-        through its public method, never through this funnel.
-
-        The chokepoints upstream carry *op* as a variable, so this match is
-        where the op meets a typed method: sixteen boring arms ending in
-        ``assert_never``, so adding a verb to ``ops.py`` fails ``ty`` until
-        the funnel routes it, and every arm's target must exist on its
-        family protocol.  A family the backend does not satisfy classifies
-        ``unsupported`` — reachable only when a policy override advertises
-        more than the backend implements, and never a raw ``AttributeError``.
-
-        Transactions live behind these methods: a backend opens and commits
-        its own session inside each op — the router never sees one.
-        """
-        storage = self._storage
-        if storage is None:
-            return self._error(f"No storage backend for operation: {op}", kind=VFSErrorKind.unsupported, function=op)
-        match op:
-            case "read":
-                return await storage.read(user_id=user_id, **kwargs)
-            case "stat":
-                return await storage.stat(user_id=user_id, **kwargs)
-            case "ls":
-                return await storage.ls(user_id=user_id, **kwargs)
-            case "tree":
-                return await storage.tree(user_id=user_id, **kwargs)
-            case "glob":
-                if not isinstance(storage, SupportsPatternSearch):
-                    return self._backend_unsupported(op)
-                return await storage.glob(user_id=user_id, **kwargs)
-            case "grep":
-                if not isinstance(storage, SupportsPatternSearch):
-                    return self._backend_unsupported(op)
-                return await storage.grep(user_id=user_id, **kwargs)
-            case "glean":
-                if not isinstance(storage, SupportsGlean):
-                    return self._backend_unsupported(op)
-                return await storage.glean(user_id=user_id, **kwargs)
-            case "write":
-                if not isinstance(storage, SupportsMutation):
-                    return self._backend_unsupported(op)
-                return await storage.write(user_id=user_id, **kwargs)
-            case "edit":
-                if not isinstance(storage, SupportsMutation):
-                    return self._backend_unsupported(op)
-                return await storage.edit(user_id=user_id, **kwargs)
-            case "delete":
-                if not isinstance(storage, SupportsMutation):
-                    return self._backend_unsupported(op)
-                return await storage.delete(user_id=user_id, **kwargs)
-            case "mkdir":
-                if not isinstance(storage, SupportsMutation):
-                    return self._backend_unsupported(op)
-                return await storage.mkdir(user_id=user_id, **kwargs)
-            case "move":
-                if not isinstance(storage, SupportsMutation):
-                    return self._backend_unsupported(op)
-                return await storage.move(user_id=user_id, **kwargs)
-            case "copy":
-                if not isinstance(storage, SupportsMutation):
-                    return self._backend_unsupported(op)
-                return await storage.copy(user_id=user_id, **kwargs)
-            case "graph":
-                if not isinstance(storage, SupportsGraph):
-                    return self._backend_unsupported(op)
-                return await storage.graph(user_id=user_id, **kwargs)
-            case "mkedge":
-                if not isinstance(storage, SupportsMutation):
-                    return self._backend_unsupported(op)
-                return await storage.mkedge(user_id=user_id, **kwargs)
-            case "run":
-                if not isinstance(storage, SupportsRun):
-                    return self._backend_unsupported(op)
-                return await storage.run(user_id=user_id, **kwargs)
-            case _:
-                assert_never(op)
-
-    def _backend_unsupported(self, op: Op) -> Result:
-        """The funnel's narrowing miss: the backend lacks *op*'s family."""
-        return self._error(
-            f"Storage backend does not support operation: {op}",
-            kind=VFSErrorKind.unsupported,
-            function=op,
-        )
-
-    @staticmethod
-    async def _call_remote(fs: VirtualFileSystem, op: Op, **kwargs: Any) -> Result:
-        """The one seam from a router across a mount boundary — the remote
-        twin of :meth:`_call_local_impl`.
-
-        The chokepoints upstream carry *op* as a variable, so this match is
-        where it meets the child's typed public verb: a renamed or missing
-        method fails ``ty`` here, not at dispatch time, and ``assert_never``
-        keeps the funnel exhaustive against the ``ops.py`` vocabulary.
-        Dispatching through the public verb is the recursion the mount tree
-        stands on — the child re-resolves, re-gates, and rebases against its
-        own mount table.  The kwargs stay untyped by design: each chokepoint
-        owns its verb's argument shape, and this funnel only pins the verbs.
-        """
-        match op:
-            case "read":
-                return await fs.read(**kwargs)
-            case "stat":
-                return await fs.stat(**kwargs)
-            case "ls":
-                return await fs.ls(**kwargs)
-            case "tree":
-                return await fs.tree(**kwargs)
-            case "glob":
-                return await fs.glob(**kwargs)
-            case "grep":
-                return await fs.grep(**kwargs)
-            case "glean":
-                return await fs.glean(**kwargs)
-            case "write":
-                return await fs.write(**kwargs)
-            case "edit":
-                return await fs.edit(**kwargs)
-            case "delete":
-                return await fs.delete(**kwargs)
-            case "mkdir":
-                return await fs.mkdir(**kwargs)
-            case "move":
-                return await fs.move(**kwargs)
-            case "copy":
-                return await fs.copy(**kwargs)
-            case "graph":
-                return await fs.graph(**kwargs)
-            case "mkedge":
-                return await fs.mkedge(**kwargs)
-            case "run":
-                return await fs.run(**kwargs)
-            case _:
-                assert_never(op)
+        groups: dict[Path, tuple[Binding, list[Observation]]] = {}
+        for obs in observations:
+            binding = self._resolve_terminal(obs.path).binding
+            _b, obs_list = groups.setdefault(binding.path, (binding, []))
+            obs_list.append(obs.without_mount(binding.path))
+        return list(groups.values())
 
     async def _dispatch_grouped_observations(
         self,
@@ -867,18 +749,12 @@ class VirtualFileSystem:
         user_id: str | None = None,
         **kwargs: object,
     ) -> Result:
-        """Route pre-grouped observation operations to terminal filesystems.
+        """Route pre-grouped observation operations to their entries.
 
-        Each group runs against its terminal filesystem: ``self`` through the
-        local seam, a child mount through its public method.  Results are
-        rebased and merged.
-
-        For the spine reads (``ls``/``stat``/``tree``), observations on this
-        router's own spine peel off into a synthesized local answer, so a
-        chained read over spine rows round-trips.  A mutation row on the
-        spine classifies ``wrong_kind`` at the gate — a spine directory is
-        never a mutation target through any input shape.  Other reads group
-        and dispatch unchanged.
+        Every input shape resolves against the same storage truth — a
+        directory row classifies for a mutation exactly as the equivalent
+        single-path call would.  Reads classify per row where the backend
+        supports it; mutations are rejected whole at the gate.
         """
         rows = self._as_list(observations)
         if rows is None:
@@ -901,52 +777,31 @@ class VirtualFileSystem:
                     kind=VFSErrorKind.invalid,
                     function=op,
                 )
+            if op == "delete":
+                busy = self._busy_guard(op, resolved.path, subtree=True)
+                if busy is not None:
+                    return busy
 
-        spine_rels: dict[Path, None] = {}
-        routed = rows
-        if op in _SPINE_READ_OPS:
-            routed = []
-            for obs in rows:
-                fs, rel, _prefix = self._resolve_terminal(obs.path)
-                if fs is self and self._is_spine_path(rel):
-                    spine_rels.setdefault(rel)
-                else:
-                    routed.append(obs)
-
-        groups = self._group_observations_by_terminal(routed)
-        if not groups and not spine_rels:
+        groups = self._group_observations_by_terminal(rows)
+        if not groups:
             return Result(function=op, observations=[])
 
         # All gates run before any dispatch, so a batch touching a bad
-        # terminal is rejected whole, nothing dispatched.
-        for fs, prefix, group in groups:
-            err = self._gate_terminal(
-                fs,
+        # entry is rejected whole per the facts visible in this table.
+        for binding, group in groups:
+            err = self._gate_entry(
+                binding,
                 op,
-                prefix,
                 report=group[0].path,
                 write_rels=[o.path for o in group],
-                spine_check=op in MUTATING_OPS,
             )
             if err is not None:
                 return err
 
-        async def _run_group(
-            fs: VirtualFileSystem,
-            prefix: Path,
-            group: list[Observation],
-        ) -> Result:
-            if fs is self:
-                r = await self._call_local_impl(op, observations=group, user_id=user_id, **kwargs)
-            else:
-                r = await self._call_remote(fs, op, observations=group, user_id=user_id, **kwargs)
-            return r.with_mount(prefix)
-
-        coros: list[Coroutine[Any, Any, Result]] = [
-            self._spine_read(op, rel, user_id=user_id, **kwargs) for rel in spine_rels
-        ]
-        coros.extend(_run_group(fs, pfx, group) for fs, pfx, group in groups)
-        results = await self._gather_settled(coros)
+        results = await self._gather_settled(
+            self._dispatch_entry(binding, op, observations=group, user_id=user_id, **kwargs)
+            for binding, group in groups
+        )
         return self._merge_results(results)
 
     async def _route_single(
@@ -960,14 +815,14 @@ class VirtualFileSystem:
     ) -> Result:
         """Route a single-path or observation-based operation.
 
-        With observations: group by filesystem, dispatch in parallel.
-        With path: resolve one terminal and dispatch once — to ``self``
-        through the local seam, or to a child mount through its public method.
-
-        Exactly one of *path* / *observations* is required; neither or both
-        is a caller error returned as ``invalid`` (the router never raises
-        on bad input — values in, ``Result`` out).
+        With observations: group by entry, dispatch in parallel.  With
+        path: resolve one entry and dispatch once.  Exactly one of *path* /
+        *observations* is required; neither or both is a caller error
+        returned as ``invalid`` (the router never raises on bad input —
+        values in, ``Result`` out).
         """
+        if not self._bindings:
+            return self._closed_error(op)
         if (path is None) == (observations is None):
             return self._error(
                 "Exactly one of path or observations must be provided",
@@ -982,23 +837,71 @@ class VirtualFileSystem:
         resolved = resolve_path(path, mutation=op in MUTATING_OPS)
         if resolved.path is None:
             return self._error(resolved.error or f"Invalid path: {path!r}", kind=VFSErrorKind.invalid, function=op)
-        path = resolved.path
+        full = resolved.path
 
-        fs, rel, prefix = self._resolve_terminal(path)
-        # A spine path this router owns is answered from the mount table;
-        # routability is satisfied by the spine, not by storage.
-        if fs is self and op in _SPINE_READ_OPS and self._is_spine_path(rel):
-            return await self._spine_read(op, rel, user_id=user_id, **kwargs)
-        err = self._gate_terminal(fs, op, prefix, report=rel, write_rels=(rel,))
+        if op == "delete":
+            busy = self._busy_guard(op, full, subtree=True)
+            if busy is not None:
+                return busy
+
+        terminal = self._resolve_terminal(full)
+        err = self._gate_entry(terminal.binding, op, report=terminal.rel, write_rels=(terminal.rel,))
         if err is not None:
             return err
 
-        if fs is self:
-            result = await self._call_local_impl(op, path=rel, user_id=user_id, **kwargs)
-        else:
-            result = await self._call_remote(fs, op, path=rel, user_id=user_id, **kwargs)
+        if op == "tree":
+            return await self._tree_entry(terminal, user_id=user_id, **kwargs)
+        return await self._dispatch_entry(terminal.binding, op, path=terminal.rel, user_id=user_id, **kwargs)
 
-        return result.with_mount(prefix)
+    async def _tree_entry(
+        self,
+        terminal: ResolvedTerminal,
+        *,
+        max_depth: int | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Tree over a region: the owning entry's subtree plus bound descents.
+
+        The owning storage answers its own shape (mount-point directories
+        are stored rows; rows under deeper binds are shadow-filtered).  Each
+        binding at segment distance ``s`` beneath the target then answers
+        ``tree("/", max_depth - s)`` — skipped when the remaining budget is
+        ``<= 0`` (its stored directory row stays) and skipped silently when
+        incapable, as in an unscoped fan-out.
+        """
+        budget_err = self._enter_hop(op="tree")
+        if isinstance(budget_err, Result):
+            return budget_err
+        try:
+            full = terminal.rel.with_mount(terminal.binding.path)
+            own = await self._dispatch_entry(
+                terminal.binding, "tree", path=terminal.rel, max_depth=max_depth, columns=columns, user_id=user_id
+            )
+            if not own.success:
+                return own
+
+            descents: list[tuple[Binding, int | None]] = []
+            for binding in self._bindings_beneath(full):
+                tail = binding.path if full == "/" else binding.path[len(full) :]
+                distance = len(tail.strip("/").split("/"))
+                budget = None if max_depth is None else max_depth - distance
+                if budget is not None and budget <= 0:
+                    continue
+                if "tree" not in binding.meta.caps:
+                    continue
+                descents.append((binding, budget))
+
+            results: list[Result] = [own]
+            results.extend(
+                await self._gather_settled(
+                    self._dispatch_entry(binding, "tree", path=_ROOT, max_depth=budget, columns=columns, user_id=user_id)
+                    for binding, budget in descents
+                )
+            )
+            return self._merge_results(results)
+        finally:
+            self._exit_hop(budget_err)
 
     async def _route_two_path(
         self,
@@ -1011,24 +914,24 @@ class VirtualFileSystem:
         """Route src/dest pair mutations, gating every pair before any dispatch.
 
         Pairs arrive as caller-facing :class:`TwoPathOperation` and dispatch
-        as gated, terminal-relative :class:`ResolvedPair` groups.  Both
-        endpoints of a pair must resolve to the same terminal — a pair
-        spanning mounts is ``cross_mount``, never a partial execution.
-        ``move`` mutates both endpoints, so both are write-gated; ``copy``
-        only writes ``dest``, so its source needs no mutation resolution or
-        write permission.
+        as gated, entry-relative :class:`ResolvedPair` groups.  Both
+        endpoints of a pair must resolve to the same **entry** — a pair
+        spanning entries is ``cross_mount`` (the EXDEV rule; no silent
+        copy-and-delete), and a pair that would move a bind site is
+        ``busy``.  ``move`` mutates both endpoints, so both are write-gated;
+        ``copy`` only writes ``dest``.
 
         All pairs are *validated* up front: a single bad pair rejects the
-        whole batch with nothing dispatched. Atomicity stops at validation —
-        once per-terminal dispatch begins, terminals run concurrently and a
-        runtime failure in one does not roll back another. True
-        cross-terminal atomicity is a backend/transaction concern, not the
-        router's (see also ``_route_fanout`` and ``_route_entry_batch``).
+        whole batch with nothing dispatched.  Atomicity stops at validation
+        — once per-entry dispatch begins, entries run concurrently and a
+        runtime failure in one does not roll back another.
         """
+        if not self._bindings:
+            return self._closed_error(op)
         if not operations:
             return Result(function=op, observations=[])
 
-        groups: dict[int, tuple[VirtualFileSystem, Path, list[ResolvedPair]]] = {}
+        groups: dict[Path, tuple[Binding, list[ResolvedPair]]] = {}
         for pair in operations:
             src = resolve_path(pair.src, mutation=op == "move")
             if src.path is None:
@@ -1036,41 +939,38 @@ class VirtualFileSystem:
             dest = resolve_path(pair.dest, mutation=True)
             if dest.path is None:
                 return self._error(dest.error or f"Invalid path: {pair.dest!r}", kind=VFSErrorKind.invalid, function=op)
+            src_full, dest_full = src.path, dest.path
 
-            src_fs, src_rel, src_prefix = self._resolve_terminal(src.path)
-            dest_fs, dest_rel, dest_prefix = self._resolve_terminal(dest.path)
-            if src_fs is not dest_fs:
+            if op == "move":
+                busy = self._busy_guard(op, src_full, subtree=True)
+                if busy is not None:
+                    return busy
+            busy = self._busy_guard(op, dest_full, subtree=True)
+            if busy is not None:
+                return busy
+
+            src_terminal = self._resolve_terminal(src_full)
+            dest_terminal = self._resolve_terminal(dest_full)
+            if src_terminal.binding.path != dest_terminal.binding.path:
                 return self._error(
-                    f"Cross-mount {op} is not supported: {src.path} and {dest.path} resolve to different filesystems",
+                    f"Cross-mount {op} is not supported: {src_full} and {dest_full} resolve to different mounts",
                     kind=VFSErrorKind.cross_mount,
                     function=op,
                 )
-            # Same terminal ⇒ same prefix, so one gate covers both endpoints;
-            # relaxing the cross-mount rule means gating each terminal itself.
-            assert src_prefix == dest_prefix
-            write_rels = (src_rel, dest_rel) if op == "move" else (dest_rel,)
-            err = self._gate_terminal(src_fs, op, src_prefix, report=src_rel, write_rels=write_rels)
+            write_rels = (
+                (src_terminal.rel, dest_terminal.rel) if op == "move" else (dest_terminal.rel,)
+            )
+            err = self._gate_entry(src_terminal.binding, op, report=src_terminal.rel, write_rels=write_rels)
             if err is not None:
                 return err
 
-            key = id(src_fs)
-            _fs, _pfx, pairs = groups.setdefault(key, (src_fs, src_prefix, []))
-            pairs.append(ResolvedPair(src=src_rel, dest=dest_rel))
+            _b, pairs = groups.setdefault(src_terminal.binding.path, (src_terminal.binding, []))
+            pairs.append(ResolvedPair(src=src_terminal.rel, dest=dest_terminal.rel))
 
-        batch_kwarg = "moves" if op == "move" else "copies"
-
-        async def _run_group(
-            fs: VirtualFileSystem,
-            prefix: Path,
-            group: list[ResolvedPair],
-        ) -> Result:
-            if fs is self:
-                r = await self._call_local_impl(op, operations=group, user_id=user_id, **kwargs)
-            else:
-                r = await self._call_remote(fs, op, **{batch_kwarg: group}, user_id=user_id, **kwargs)
-            return r.with_mount(prefix)
-
-        results = await self._gather_settled(_run_group(fs, pfx, group) for fs, pfx, group in groups.values())
+        results = await self._gather_settled(
+            self._dispatch_entry(binding, op, operations=group, user_id=user_id, **kwargs)
+            for binding, group in groups.values()
+        )
         return self._merge_results(results)
 
     async def _route_fanout(
@@ -1085,23 +985,20 @@ class VirtualFileSystem:
         """Route a namespace-wide query: everywhere, a scope subset, or rows.
 
         With observations: reuse grouped dispatch.  With scope paths: group
-        the scopes by terminal and dispatch each group — a scoped terminal
-        that cannot answer errors ``unsupported``, like the single shape.
-        With neither: fan out to self-storage and every mount in parallel
-        (mount-table order), silently skipping terminals whose
-        ``capabilities()`` lack *op* — the no-probe rule's purpose: one
-        incapable catalog must not fail a namespace-wide query.
-
-        A scope on this router's own spine names a *region*, not a terminal:
-        it expands to self-storage scoped to it plus every mount strictly
-        beneath it dispatched unscoped, under the unscoped capability rule
-        (silent skip).  A scope that resolves inside a mount named the
-        terminal, and keeps the explicit ``unsupported``.
+        the scopes by entry — a scoped entry that cannot answer errors
+        ``unsupported``, like the single shape.  A scope with bindings
+        beneath it names a *region*, not an entry: it expands to the owning
+        entry scoped to it plus every binding strictly beneath it dispatched
+        unscoped, under the unscoped capability rule (silent skip — one
+        incapable catalog must not fail a region query).  With neither:
+        every entry in table order, silently skipping the incapable.
 
         *paths* and *observations* are mutually exclusive — supplying both
         is a caller error returned as ``invalid`` rather than silently
         preferring one.
         """
+        if not self._bindings:
+            return self._closed_error(op)
         if paths and observations is not None:
             return self._error(
                 f"{op} takes paths or observations, not both",
@@ -1111,97 +1008,83 @@ class VirtualFileSystem:
         if observations is not None:
             return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
 
-        if paths:
-            groups: dict[int, tuple[VirtualFileSystem, Path, list[Path]]] = {}
-            spine_rels: dict[Path, None] = {}
-            expanded: dict[int, tuple[VirtualFileSystem, Path]] = {}
-            for raw in paths:
-                resolved = resolve_path(raw)
-                if resolved.path is None:
-                    return self._error(
-                        resolved.error or f"Invalid path: {raw!r}",
-                        kind=VFSErrorKind.invalid,
-                        function=op,
-                    )
-                fs, rel, prefix = self._resolve_terminal(resolved.path)
-                if fs is self and self._is_spine_path(rel):
-                    spine_rels.setdefault(rel)
-                    for mount_path, mount in self._mounts.items():
-                        if rel != "/" and not mount_path.startswith(rel + "/"):
-                            continue
-                        caps = mount.capabilities()
-                        if caps is not None and op not in caps:
-                            continue
-                        expanded.setdefault(id(mount), (mount, mount_path))
-                    continue
-                err = self._gate_terminal(fs, op, prefix, report=rel, write_rels=(rel,))
-                if err is not None:
-                    return err
-                key = id(fs)
-                _fs, _pfx, rels = groups.setdefault(key, (fs, prefix, []))
-                rels.append(rel)
+        budget_err = self._enter_hop(op=op)
+        if isinstance(budget_err, Result):
+            return budget_err
+        try:
+            scoped: dict[Path, tuple[Binding, list[Path]]] = {}
+            unscoped: dict[Path, Binding] = {}
 
-            async def _run_scoped(
-                fs: VirtualFileSystem,
-                prefix: Path,
-                rels: tuple[Path, ...],
-            ) -> Result:
-                if fs is self:
-                    r = await self._call_local_impl(op, paths=rels, user_id=user_id, **kwargs)
-                else:
-                    r = await self._call_remote(fs, op, paths=rels, user_id=user_id, **kwargs)
-                return r.with_mount(prefix)
+            if paths:
+                for raw in paths:
+                    resolved = resolve_path(raw)
+                    if resolved.path is None:
+                        return self._error(
+                            resolved.error or f"Invalid path: {raw!r}",
+                            kind=VFSErrorKind.invalid,
+                            function=op,
+                        )
+                    full = resolved.path
+                    terminal = self._resolve_terminal(full)
+                    beneath = self._bindings_beneath(full)
+                    if full == "/" or beneath:
+                        # A region: the owner answers its scope, deeper binds
+                        # answer whole — both under the silent-skip rule.
+                        if op in terminal.binding.meta.caps:
+                            if terminal.rel == "/":
+                                unscoped.setdefault(terminal.binding.path, terminal.binding)
+                            else:
+                                _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
+                                rels.append(terminal.rel)
+                        for binding in beneath:
+                            if op in binding.meta.caps:
+                                unscoped.setdefault(binding.path, binding)
+                        continue
+                    err = self._gate_entry(terminal.binding, op, report=terminal.rel, write_rels=(terminal.rel,))
+                    if err is not None:
+                        return err
+                    _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
+                    rels.append(terminal.rel)
+            else:
+                for binding in self._bindings.values():
+                    if op in binding.meta.caps:
+                        unscoped[binding.path] = binding
 
-            # An expansion already covers its whole mount, so a narrower scope
-            # into the same mount is subsumed — one dispatch per terminal.
+            # An unscoped dispatch already covers its whole entry, so a
+            # narrower scope into the same entry is subsumed.
             coros = [
-                _run_scoped(fs, pfx, tuple(rels)) for key, (fs, pfx, rels) in groups.items() if key not in expanded
+                self._dispatch_entry(binding, op, paths=tuple(rels), user_id=user_id, **kwargs)
+                for key, (binding, rels) in scoped.items()
+                if key not in unscoped
             ]
-            if spine_rels and self._storage_answers(op):
-                # A root scope covers all of storage, so it dispatches unscoped.
-                self_rels = () if "/" in spine_rels else tuple(spine_rels)
-                coros.append(_run_scoped(self, Path("/"), self_rels))
-            coros.extend(_run_scoped(mount, mount_path, ()) for mount, mount_path in expanded.values())
+            coros.extend(
+                self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs)
+                for binding in unscoped.values()
+            )
             if not coros:
                 return Result(function=op, observations=[])
             results = await self._gather_settled(coros)
             return self._merge_results(results)
-
-        targets: list[tuple[VirtualFileSystem, Path]] = []
-        if self._storage_answers(op):
-            targets.append((self, Path("/")))
-        for mount_path, fs in self._mounts.items():
-            child_caps = fs.capabilities()
-            if child_caps is not None and op not in child_caps:
-                continue
-            targets.append((fs, mount_path))
-        if not targets:
-            return Result(function=op, observations=[])
-
-        async def _run_target(fs: VirtualFileSystem, prefix: Path) -> Result:
-            if fs is self:
-                r = await self._call_local_impl(op, paths=(), user_id=user_id, **kwargs)
-            else:
-                r = await self._call_remote(fs, op, user_id=user_id, **kwargs)
-            return r.with_mount(prefix)
-
-        results = await self._gather_settled(_run_target(fs, pfx) for fs, pfx in targets)
-        return self._merge_results(results)
+        finally:
+            self._exit_hop(budget_err)
 
     async def _route_entry_batch(
         self,
         entries: Sequence[Entry],
         *,
         overwrite: bool = True,
+        parents: bool = False,
         user_id: str | None = None,
     ) -> Result:
-        """Route a batch write, grouping entries by terminal via each entry's path.
+        """Route a batch write, grouping entries by owning entry via each path.
 
         The entry-path analogue of grouped-observation dispatch: every
         entry's path is mutation-resolved and write-gated before anything
-        dispatches, then each terminal receives its entries rebased into
-        local coordinates via :meth:`Entry.without_mount`.
+        dispatches, then each entry group is rebased into local coordinates
+        via :meth:`Entry.without_mount`.
         """
+        if not self._bindings:
+            return self._closed_error("write")
         rows = self._as_list(entries)
         if rows is None:
             return self._error(
@@ -1212,7 +1095,7 @@ class VirtualFileSystem:
         if not rows:
             return Result(function="write", observations=[])
 
-        groups: dict[int, tuple[VirtualFileSystem, Path, list[Entry]]] = {}
+        groups: dict[Path, tuple[Binding, list[Entry]]] = {}
         for entry in rows:
             if not isinstance(entry, Entry):
                 return self._error(
@@ -1227,27 +1110,60 @@ class VirtualFileSystem:
                     kind=VFSErrorKind.invalid,
                     function="write",
                 )
-            fs, rel, prefix = self._resolve_terminal(resolved.path)
-            err = self._gate_terminal(fs, "write", prefix, report=rel, write_rels=(rel,))
+            terminal = self._resolve_terminal(resolved.path)
+            err = self._gate_entry(terminal.binding, "write", report=terminal.rel, write_rels=(terminal.rel,))
             if err is not None:
                 return err
-            key = id(fs)
-            _fs, _pfx, entry_group = groups.setdefault(key, (fs, prefix, []))
-            entry_group.append(entry.without_mount(prefix))
+            _b, entry_group = groups.setdefault(terminal.binding.path, (terminal.binding, []))
+            entry_group.append(entry.without_mount(terminal.binding.path))
 
-        async def _run_group(
-            fs: VirtualFileSystem,
-            prefix: Path,
-            group: list[Entry],
-        ) -> Result:
-            if fs is self:
-                r = await self._call_local_impl("write", entries=group, overwrite=overwrite, user_id=user_id)
-            else:
-                r = await fs.write(entries=group, overwrite=overwrite, user_id=user_id)
-            return r.with_mount(prefix)
-
-        results = await self._gather_settled(_run_group(fs, pfx, group) for fs, pfx, group in groups.values())
+        results = await self._gather_settled(
+            self._dispatch_entry(
+                binding,
+                "write",
+                entries=group,
+                overwrite=overwrite,
+                parents=parents,
+                user_id=user_id,
+            )
+            for binding, group in groups.values()
+        )
         return self._merge_results(results)
+
+    # -------------------------------------------------------------------
+    # hop budget — loops survived, not detected
+    # -------------------------------------------------------------------
+
+    def _enter_hop(self, *, op: Op) -> Result | Token[int | None]:
+        """Decrement the per-request router-traversal budget, or refuse.
+
+        The budget is a request-scoped context value shared across every
+        router the request passes through (adapters re-enter in the same
+        context; the wire dialect carries it across processes).  Opaque
+        storages make cycle *detection* impossible by design, so the
+        unbounded verbs are made finite instead — exhaustion classifies as
+        ``budget_exhausted`` rather than hanging.
+        """
+        budget = _hop_budget.get()
+        if budget is None:
+            budget = self._hop_budget_default
+        if budget <= 0:
+            return self._error(
+                f"Hop budget exhausted while routing {op!r} — a mount loop, or a composition deeper than the budget",
+                kind=VFSErrorKind.budget_exhausted,
+                function=op,
+            )
+        return _hop_budget.set(budget - 1)
+
+    @staticmethod
+    def _exit_hop(token: Result | Token[int | None]) -> None:
+        """Restore the caller's budget on the way out of a routed request."""
+        if isinstance(token, Token):
+            _hop_budget.reset(token)
+
+    # -------------------------------------------------------------------
+    # settlement and merging
+    # -------------------------------------------------------------------
 
     @staticmethod
     async def _gather_settled(coros: Iterable[Coroutine[Any, Any, Result]]) -> list[Result]:
@@ -1284,7 +1200,8 @@ class VirtualFileSystem:
         ``|`` propagates ``success=False`` and concatenates ``errors`` while
         preserving all successful observations.  Its path-union collapses
         duplicate global paths (left wins); this is lossless here because
-        terminals have disjoint mount prefixes, so their rows never collide.
+        shadow filtering already dropped every row a deeper binding owns, so
+        entries never answer for the same path.
         """
         if not results:
             return Result(observations=[])
@@ -1379,7 +1296,7 @@ class VirtualFileSystem:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        """Match *pattern* against the namespace — unscoped calls reach every mount."""
+        """Match *pattern* against the namespace — unscoped calls reach every entry."""
         return await self._route_fanout(
             "glob",
             paths=paths,
@@ -1412,7 +1329,7 @@ class VirtualFileSystem:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        """Search content for *pattern* — unscoped calls reach every mount."""
+        """Search content for *pattern* — unscoped calls reach every entry."""
         return await self._route_fanout(
             "grep",
             paths=paths,
@@ -1470,12 +1387,12 @@ class VirtualFileSystem:
         depth: int | None = None,
         user_id: str | None = None,
     ) -> Result:
-        """Run the graph traversal *method* — each terminal answers over its own subgraph.
+        """Run the graph traversal *method* — each entry answers over its own subgraph.
 
-        A path routes to one terminal; observations group by terminal and
-        each mount runs the algorithm on its own graph, so a walk can never
-        follow an edge out of its mount.  *method* is validated against the
-        traversal vocabulary before any dispatch; results report the
+        A path routes to one entry; observations group by entry and each
+        backend runs the algorithm on its own graph, so a walk can never
+        follow an edge out of its storage.  *method* is validated against
+        the traversal vocabulary before any dispatch; results report the
         specific method name in ``function``.
         """
         if method not in TRAVERSAL_FUNCTIONS:
@@ -1497,13 +1414,18 @@ class VirtualFileSystem:
         path: str | None = None,
         content: str | None = None,
         overwrite: bool = True,
+        parents: bool = False,
         user_id: str | None = None,
     ) -> Result:
         """Write one file (*path* + *content*) or a batch of *entries*.
 
-        Batch entries route by their own paths — grouped per terminal,
-        rebased, and gated per entry before anything dispatches. *entries*
+        Batch entries route by their own paths — grouped per entry,
+        rebased, and gated per row before anything dispatches. *entries*
         and *path*/*content* are mutually exclusive.
+
+        The parent chain must already exist as directories;
+        ``parents=True`` mints the missing ancestors, ``mkdir -p`` style,
+        and applies per call — every entry in a batch shares it.
         """
         if entries is not None:
             if path is not None or content is not None:
@@ -1512,8 +1434,16 @@ class VirtualFileSystem:
                     kind=VFSErrorKind.invalid,
                     function="write",
                 )
-            return await self._route_entry_batch(entries, overwrite=overwrite, user_id=user_id)
-        return await self._route_single("write", path, None, content=content, overwrite=overwrite, user_id=user_id)
+            return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, user_id=user_id)
+        return await self._route_single(
+            "write",
+            path,
+            None,
+            content=content,
+            overwrite=overwrite,
+            parents=parents,
+            user_id=user_id,
+        )
 
     async def edit(
         self,
@@ -1568,6 +1498,12 @@ class VirtualFileSystem:
         cascade: bool = True,
         user_id: str | None = None,
     ) -> Result:
+        """Delete *path* (or each observation row).
+
+        A live bind site is ``busy``: a bound path, or a region holding
+        bound paths, must be unmounted before it can be deleted — the
+        EBUSY rule.
+        """
         return await self._route_single(
             "delete",
             path,
@@ -1577,8 +1513,22 @@ class VirtualFileSystem:
             user_id=user_id,
         )
 
-    async def mkdir(self, path: str, *, user_id: str | None = None) -> Result:
-        return await self._route_single("mkdir", path, None, user_id=user_id)
+    async def mkdir(
+        self,
+        path: str,
+        *,
+        parents: bool = False,
+        exist_ok: bool = False,
+        user_id: str | None = None,
+    ) -> Result:
+        """Create a directory at *path* — pathlib-shaped flags, POSIX defaults.
+
+        Strict by default: every ancestor must already exist as a
+        directory, and an occupied site classifies ``exists``.
+        ``parents=True`` mints the missing chain; ``exist_ok=True`` forgives
+        an existing *directory* only — a file at the site stays ``exists``.
+        """
+        return await self._route_single("mkdir", path, None, parents=parents, exist_ok=exist_ok, user_id=user_id)
 
     async def mkedge(
         self,
@@ -1590,11 +1540,14 @@ class VirtualFileSystem:
     ) -> Result:
         """Create a typed edge from *source* to *target*.
 
-        Both endpoints must resolve to the same terminal (``cross_mount``
-        otherwise — cross-server edges are a later story).  The terminal
+        Both endpoints must resolve to the same entry (``cross_mount``
+        otherwise — cross-backend edges are a later story).  The entry
         writes the canonical ``edges/out`` projection; the inverse ``in``
-        path is derived, never a write target.
+        path is derived, never a write target, and is permission-gated in
+        the owning entry's coordinates like any other write.
         """
+        if not self._bindings:
+            return self._closed_error("mkedge")
         if not isinstance(edge_type, str):
             return self._error(
                 f"edge_type must be a string, got {type(edge_type).__name__}",
@@ -1608,41 +1561,35 @@ class VirtualFileSystem:
         if tgt.path is None:
             return self._error(tgt.error or f"Invalid path: {target!r}", kind=VFSErrorKind.invalid, function="mkedge")
 
-        src_fs, src_rel, src_prefix = self._resolve_terminal(src.path)
-        tgt_fs, tgt_rel, _ = self._resolve_terminal(tgt.path)
-        if src_fs is not tgt_fs:
+        src_terminal = self._resolve_terminal(src.path)
+        tgt_terminal = self._resolve_terminal(tgt.path)
+        if src_terminal.binding.path != tgt_terminal.binding.path:
             return self._error(
-                f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different filesystems",
+                f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different mounts",
                 kind=VFSErrorKind.cross_mount,
                 function="mkedge",
             )
-        # Spine classification stays off: edge endpoints answer to the edge
-        # grammar (root/reserved endpoints reject as invalid, not wrong_kind).
-        err = self._gate_terminal(src_fs, "mkedge", src_prefix, report=src_rel, spine_check=False)
+        binding = src_terminal.binding
+        err = self._gate_entry(binding, "mkedge", report=src_terminal.rel)
         if err is not None:
             return err
-
-        if src_fs is not self:
-            # The child re-derives the edge path and gates it against its own
-            # permission map — rules live in filesystem-relative coordinates.
-            result = await src_fs.mkedge(src_rel, tgt_rel, edge_type, user_id=user_id)
-            return result.with_mount(src_prefix)
 
         try:
-            edge_path = edge_out_path(src_rel, tgt_rel, edge_type)
+            edge_path = edge_out_path(src_terminal.rel, tgt_terminal.rel, edge_type)
         except ValueError as exc:
             return self._error(str(exc), kind=VFSErrorKind.invalid, function="mkedge")
-        err = check_writable(self, "mkedge", edge_path, mount_prefix=src_prefix)
-        if err is not None:
-            return err
-        result = await self._call_local_impl(
+        full_edge = edge_path.with_mount(binding.path)
+        denied = check_writable_composed(self._permission_layers(full_edge), "mkedge")
+        if denied is not None:
+            return denied
+        return await self._dispatch_entry(
+            binding,
             "mkedge",
-            source=src_rel,
-            target=tgt_rel,
+            source=src_terminal.rel,
+            target=tgt_terminal.rel,
             edge_type=edge_type,
             user_id=user_id,
         )
-        return result.with_mount(src_prefix)
 
     @staticmethod
     def _coerce_two_path(item: object) -> TwoPathOperation | None:
