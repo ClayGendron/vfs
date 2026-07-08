@@ -70,7 +70,7 @@ if TYPE_CHECKING:
 
     from vfs.ops import Op
 
-_ROOT = Path("/")
+ROOT = Path("/")
 
 # Router-traversal depth budget for the current request: decremented once
 # per router entered (adapters and wire hops re-enter), never per mount.
@@ -150,8 +150,8 @@ class VirtualFileSystem:
             owned=True,
             caps=frozenset(storage.capabilities()),
         )
-        self._bindings: dict[Path, Binding] = {_ROOT: Binding(path=_ROOT, storage=storage, meta=root_meta)}
-        self._sorted_mount_paths: list[Path] = [_ROOT]
+        self._bindings: dict[Path, Binding] = {ROOT: Binding(path=ROOT, storage=storage, meta=root_meta)}
+        self._sorted_mount_paths: list[Path] = [ROOT]
         self._class_name = self.__class__.__name__
 
     # -------------------------------------------------------------------
@@ -211,13 +211,13 @@ class VirtualFileSystem:
                     msg = f"Cannot bind at {mount_path}: a deeper mount already sits at {existing}"
                     raise ValueError(msg)
                 if (
-                    existing != _ROOT
+                    existing != ROOT
                     and mount_path.startswith(existing + "/")
                     and self._bindings[existing].meta.no_overlay
                 ):
                     msg = f"Cannot bind at {mount_path}: the mount at {existing} does not allow binds beneath it"
                     raise ValueError(msg)
-            if self._bindings[_ROOT].meta.no_overlay:
+            if self._bindings[ROOT].meta.no_overlay:
                 msg = f"{self._class_name} does not allow child mounts"
                 raise ValueError(msg)
             if any(b.storage is storage for b in self._bindings.values()):
@@ -363,9 +363,10 @@ class VirtualFileSystem:
             return "filesystem is closed"
         terminal = self._resolve_terminal(mount_path)
         stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel)
-        if not stat.success or not stat.observations:
+        # Keyed by path, not position — a backend's row order is not a contract.
+        row = next((o for o in stat.observations if o.path == terminal.rel), None) if stat.success else None
+        if row is None:
             return f"no directory stored at the mount point (mkdir it, or add_mount(..., parents=True)): {mount_path}"
-        row = stat.observations[0]
         if row.kind != "directory":
             return f"the mount point is stored as {row.kind!r}, not a directory: {mount_path}"
         listed = await self._call_storage(terminal.binding, "ls", path=terminal.rel)
@@ -388,9 +389,13 @@ class VirtualFileSystem:
         interior spaces (``"/My Documents"``) are preserved.
         """
         mount_path = Path(path)
-        if mount_path == "/":
+        # The root entry is constructor-owned: unbinding it would leave the
+        # table without its universal fallback.
+        if mount_path == ROOT:
             msg = "Mount path must not be empty or root"
             raise ValueError(msg)
+        # Segment-anywhere, not is_meta: aliasing is mount-relative, so a bind
+        # at /a/.vfs/m would land inside entry /a's metadata tree.
         meta_segment = METADATA_ROOT.strip("/")
         if meta_segment in mount_path.split("/")[1:]:
             msg = f"Mount path may not use the reserved metadata segment {meta_segment!r}: {path!r}"
@@ -414,7 +419,7 @@ class VirtualFileSystem:
     def _match_mount(self, path: Path) -> Binding | None:
         """Longest-prefix binding for *path* — ``None`` only when closed."""
         for mount_path in self._sorted_mount_paths:
-            if mount_path == _ROOT or path == mount_path or path.startswith(mount_path + "/"):
+            if mount_path == ROOT or path == mount_path or path.startswith(mount_path + "/"):
                 return self._bindings[mount_path]
         return None
 
@@ -436,8 +441,10 @@ class VirtualFileSystem:
         Routing state, not visibility: region expansion, tree descents, the
         busy guard, and shadow filtering all read it.
         """
-        if path == "/":
-            return [b for p, b in self._bindings.items() if p != _ROOT]
+        # Root's prefix-concatenation ("//") is non-canonical, so the general
+        # prefix test below cannot serve it.
+        if path == ROOT:
+            return [b for p, b in self._bindings.items() if p != ROOT]
         return [b for p, b in self._bindings.items() if p.startswith(path + "/")]
 
     def _closed_error(self, op: Op) -> Result:
@@ -475,7 +482,7 @@ class VirtualFileSystem:
         """
         layers: list[PermissionLayer] = []
         for mount_path in reversed(self._sorted_mount_paths):
-            if mount_path != _ROOT and full != mount_path and not full.startswith(mount_path + "/"):
+            if mount_path != ROOT and full != mount_path and not full.startswith(mount_path + "/"):
                 continue
             permission_map = self._bindings[mount_path].meta.permission_map
             if permission_map is None:
@@ -534,7 +541,7 @@ class VirtualFileSystem:
         — a dangling binding whose stored site is gone would be worse than
         the refusal.  Unmount first.
         """
-        at_bind = full != _ROOT and full in self._bindings
+        at_bind = full != ROOT and full in self._bindings
         beneath = self._bindings_beneath(full) if subtree else []
         if not at_bind and not beneath:
             return None
@@ -654,7 +661,7 @@ class VirtualFileSystem:
                 f"Backend for {binding.path} is unavailable: {exc}",
                 kind=VFSErrorKind.backend_unavailable,
                 function=op,
-                path=Path("/"),
+                path=ROOT,
             )
 
     def _backend_unsupported(self, op: Op) -> Result:
@@ -697,7 +704,7 @@ class VirtualFileSystem:
         changed = False
         for obs in result.observations:
             description: str | None = None
-            if obs.path == "/":
+            if obs.path == ROOT:
                 description = self.description
             else:
                 bound = self._bindings.get(obs.path)
@@ -887,7 +894,7 @@ class VirtualFileSystem:
 
             descents: list[tuple[Binding, int | None]] = []
             for binding in self._bindings_beneath(full):
-                tail = binding.path if full == "/" else binding.path[len(full) :]
+                tail = binding.path if full == ROOT else binding.path[len(full) :]
                 distance = len(tail.strip("/").split("/"))
                 budget = None if max_depth is None else max_depth - distance
                 if budget is not None and budget <= 0:
@@ -900,7 +907,7 @@ class VirtualFileSystem:
             results.extend(
                 await self._gather_settled(
                     self._dispatch_entry(
-                        binding, "tree", path=_ROOT, max_depth=budget, columns=columns, user_id=user_id
+                        binding, "tree", path=ROOT, max_depth=budget, columns=columns, user_id=user_id
                     )
                     for binding, budget in descents
                 )
@@ -1031,11 +1038,11 @@ class VirtualFileSystem:
                     full = resolved.path
                     terminal = self._resolve_terminal(full)
                     beneath = self._bindings_beneath(full)
-                    if full == "/" or beneath:
+                    if full == ROOT or beneath:
                         # A region: the owner answers its scope, deeper binds
                         # answer whole — both under the silent-skip rule.
                         if op in terminal.binding.meta.caps:
-                            if terminal.rel == "/":
+                            if terminal.rel == ROOT:
                                 unscoped.setdefault(terminal.binding.path, terminal.binding)
                             else:
                                 _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))

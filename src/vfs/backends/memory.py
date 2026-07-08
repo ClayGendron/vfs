@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 
 _Status = Literal["created", "updated", "unchanged"]
 
-
 ROOT = Path("/")
 
 # Stored kinds that carry editable text content; everything else is

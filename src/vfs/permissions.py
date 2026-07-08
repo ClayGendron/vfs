@@ -126,7 +126,7 @@ if TYPE_CHECKING:
 Permission = Literal["read", "read_write"]
 """Filesystem-level permission value."""
 
-_ROOT = Path("/")
+ROOT = Path("/")
 """The rebase identity — the default mount prefix when the terminal is the router itself."""
 
 
@@ -270,7 +270,7 @@ def check_writable(
     op: str,
     rel: Path,
     *,
-    mount_prefix: Path = _ROOT,
+    mount_prefix: Path = ROOT,
 ) -> Result | None:
     """Return a classified error result if *op* mutates a read-only path.
 
