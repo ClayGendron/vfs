@@ -90,4 +90,5 @@ private *types and constants* stay next to what they support.
   multi-line `#` blocks above a statement. State the what/why directly; if it
   needs more room, it belongs in a docstring.
 - Do **not** reference story/spec numbers (e.g. "story 030 §5.2", "Phase 4")
-  in code comments. Traceability lives in `context/stories/`, not inline.
+  in code comments **or docstrings**. Traceability lives in
+  `context/stories/`, not inline.

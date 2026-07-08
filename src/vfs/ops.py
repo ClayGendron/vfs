@@ -14,9 +14,10 @@ its own copy. A verb's class decides how it is routed and gated:
 string into these ops and re-enters through their public methods, so every
 gate fires on the real verb. It is a front door, not an op.
 
-The ``graph`` op routes as one verb; its results report the specific
-method (``descendants``, ``ancestors``, ...) in ``Result.function`` —
-that rendering vocabulary lives in ``vfs.projection``, not here.
+The ``graph`` op routes and reports as one verb: traversal only, with the
+standard result projection — centrality is an index-time background
+process, not a query-time verb. The envelope's ``Result.ops`` speaks this
+same vocabulary; per-method function names are retired.
 """
 
 from __future__ import annotations

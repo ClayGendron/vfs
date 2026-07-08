@@ -145,6 +145,20 @@ this.
    Router-side, `_error` requires the op — the router always knows it;
    `''` defaults disappear.
 
+   **Amended 2026-07-08 (owner decision, same day):** the field is
+   `ops: tuple[str, ...]` with an `.op` property, not `functions` /
+   `.function`. The graph verb narrowed to traversal-only (centrality
+   becomes an index-time background process — story 067 seed), which
+   collapsed the last divergence between the router's op vocabulary and
+   the envelope's rendering vocabulary; one vocabulary gets one name,
+   matching `vfs.ops`. Unchanged: the open `str` typing (peers may
+   report ops this client predates; `Op` stays a router-seam
+   construction check only) and the inbound `function="x"` shim. A
+   transitional `.function` alias keeps render/projection alive until
+   Pass B rewires them to `.op`. Supersedes `ops.py`'s "graph reports
+   the specific method in `Result.function`" note and retires the
+   graph-method entries in `projection.KNOWN_FUNCTIONS` (Pass B).
+
 9. **The envelope opens: `extra='allow'` + lenient per-item
    `from_payload`.** Unknown fields on `Result` and `ResultError`
    round-trip through mid-chain hops instead of being silently stripped
@@ -166,7 +180,7 @@ this.
     zero-progress rule; the algebra stays lawful.** `|` remains a pure
     fold — associative, idempotent, `Result()` identity, rebase
     distributes over merge — with a law-test suite pinning it.
-    `Result.merge_branches(results, function=op)` (the successor to
+    `Result.merge_branches(results, op=op)` (the successor to
     `_merge_results` at fan-out/tree sites) applies policy: **if any
     branch produced rows or succeeded, failed branches' errors demote to
     warnings — kind, source, retry class intact — and the envelope
@@ -181,6 +195,13 @@ this.
     named fails loudly. Capability skips in unscoped fan-out/tree stop
     being silent: each skipped entry contributes an info-severity
     `vfs.unsupported` entry (recorded coverage, not failure).
+    **Progress is envelope-level, not per-branch** (made explicit
+    2026-07-08 after pressure-testing): a branch that both produced
+    rows and failed counts as progress, and its own fatal entries —
+    including permanent kinds like `permission_denied` — demote with
+    the rest. This is the batch-progress reading (gemini/opencode: an
+    envelope that made progress never fails); the kind and retry class
+    stay intact for consumers that need the distinction.
 
 11. **Error accumulation is capped at the boundary, never in the
     algebra.** `to_payload(max_errors=…)` groups by `(kind, severity)`,
@@ -252,8 +273,8 @@ this.
   `with_mount` with source stamping and the append-once namespaced
   overflow record; derived `retry_class` and `is_fatal`; value identity.
 - `Result`: drop stored `success` (derived property, serialized
-  outbound, stripped inbound) and `function` (→ `functions` tuple +
-  `.function` property); `extra='allow'`; value-equality
+  outbound, stripped inbound) and `function` (→ `ops` tuple + `.op`
+  property — see decision 8 amendment); `extra='allow'`; value-equality
   `_combined_errors`; `merge_branches` with the zero-progress rule;
   `to_payload(max_errors=…)` rollup; lenient per-item `from_payload`
   (+ `strict=True`); `warnings`/`failures` accessors. Row algebra
@@ -270,7 +291,7 @@ this.
   drops `success=False` (derived).
 - `_backend_unsupported`: `path=ROOT` (entry anchoring via the funnel's
   rebase — one seam contract, stated once).
-- `_merge_results` → `Result.merge(results, function=op)` at
+- `_merge_results` → `Result.merge(results, op=op)` at
   scoped/grouped sites; `Result.merge_branches(...)` at `_route_fanout`
   and `_tree_entry` — the only two demotion sites. Docstring's false
   disjointness claim replaced by the stated bind-path decoration rule

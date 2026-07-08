@@ -6,8 +6,9 @@ self-contained in `results2.py` + its law suite; Pass B threads the new
 envelope through the router, backend, and renderer and fixes the
 envelope's own consumers. The field deletions are the migration's
 safety mechanism: removing stored `success` and the `function` str
-makes every stale construction site a hard `ty`/runtime error, so
-nothing migrates silently.
+makes every stale construction site a hard `ty` error, so nothing
+migrates silently (runtime stays open by design: `extra='allow'`
+swallows unknown kwargs, so the guard is static-only).
 
 Ordering constraint: this story lands **before 056 Pass C** — the
 payload shape freezes into the vfs MCP dialect there.
@@ -50,10 +51,11 @@ payload shape freezes into the vfs MCP dialect there.
 - Drop stored `success`; derived property (no fatal-severity errors),
   serialized outbound by `to_payload`, stripped inbound by a
   before-validator. `__bool__` unchanged in meaning.
-- Drop `function: str`; `functions: tuple[str, ...]` with ordered-union
-  merge and a `.function` property (sole verb or None). A
-  before-validator shims inbound/legacy `function="x"` to
-  `functions=("x",)` — keeps most construction sites source-compatible
+- Drop `function: str`; `ops: tuple[str, ...]` with ordered-union merge
+  and an `.op` property (sole op or None) — spec decision 8 amendment:
+  one vocabulary with `vfs.ops`, plus a transitional `.function` alias
+  until Pass B. A before-validator shims inbound/legacy `function="x"`
+  to `ops=("x",)` — keeps most construction sites source-compatible
   during Pass B.
 - `extra='allow'`; `_combined_errors` by value equality.
 - `Result.merge(results, *, function)` — the plain fold (successor to
@@ -101,9 +103,9 @@ be red mid-story per repo posture — Pass B restores it), ruff/ty on
 - `_backend_unsupported`: gains `path=ROOT` — anchored to the entry by
   the funnel's existing rebase; state the seam invariant once (the
   TransportError arm already relies on it) and delete the pun comment.
-- Replace `_merge_results` with `Result.merge(..., function=op)` at
+- Replace `_merge_results` with `Result.merge(..., op=op)` at
   grouped/two-path/entry-batch sites and
-  `Result.merge_branches(..., function=op)` at `_route_fanout` and
+  `Result.merge_branches(..., op=op)` at `_route_fanout` and
   `_tree_entry` — the only two demotion sites; scoped dispatch never
   demotes. Replace the docstring's false disjointness claim with the
   stated bind-path decoration rule.
