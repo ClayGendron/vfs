@@ -389,13 +389,9 @@ class VirtualFileSystem:
         interior spaces (``"/My Documents"``) are preserved.
         """
         mount_path = Path(path)
-        # The root entry is constructor-owned: unbinding it would leave the
-        # table without its universal fallback.
         if mount_path == ROOT:
             msg = "Mount path must not be empty or root"
             raise ValueError(msg)
-        # Segment-anywhere, not is_meta: aliasing is mount-relative, so a bind
-        # at /a/.vfs/m would land inside entry /a's metadata tree.
         meta_segment = METADATA_ROOT.strip("/")
         if meta_segment in mount_path.split("/")[1:]:
             msg = f"Mount path may not use the reserved metadata segment {meta_segment!r}: {path!r}"
@@ -441,8 +437,6 @@ class VirtualFileSystem:
         Routing state, not visibility: region expansion, tree descents, the
         busy guard, and shadow filtering all read it.
         """
-        # Root's prefix-concatenation ("//") is non-canonical, so the general
-        # prefix test below cannot serve it.
         if path == ROOT:
             return [b for p, b in self._bindings.items() if p != ROOT]
         return [b for p, b in self._bindings.items() if p.startswith(path + "/")]
@@ -501,7 +495,6 @@ class VirtualFileSystem:
         binding: Binding,
         op: Op,
         *,
-        report: Path,
         write_rels: Sequence[Path] = (),
     ) -> Result | None:
         """Capability → permission, in the pinned order.
@@ -512,19 +505,18 @@ class VirtualFileSystem:
         kind are storage truth, classified by the backend at dispatch — the
         gate holds only what the router itself knows.
 
-        *report* is the entry-relative path implicated in capability
-        failures, reported router-side so the caller sees the path they
-        typed.  *write_rels* are the entry-relative paths the permission
+        A capability failure is an entry-level fact and reports the entry's
+        bind path.  *write_rels* are the entry-relative paths the permission
         layers check (empty when the write target is derived later, as in
-        mkedge's pre-derivation gate).
+        mkedge's pre-derivation gate); each denial reports its own
+        router-side path.
         """
-        reported = report.with_mount(binding.path)
         if op not in binding.meta.caps:
             return self._error(
-                f"Operation {op!r} is not supported here",
+                f"Operation {op!r} is not supported for storage mounted at {binding.path}",
                 kind=VFSErrorKind.unsupported,
                 function=op,
-                path=reported,
+                path=binding.path,
             )
         for rel in write_rels:
             full = rel.with_mount(binding.path)
@@ -800,12 +792,7 @@ class VirtualFileSystem:
         # All gates run before any dispatch, so a batch touching a bad
         # entry is rejected whole per the facts visible in this table.
         for binding, group in groups:
-            err = self._gate_entry(
-                binding,
-                op,
-                report=group[0].path,
-                write_rels=[o.path for o in group],
-            )
+            err = self._gate_entry(binding, op, write_rels=[o.path for o in group])
             if err is not None:
                 return err
 
@@ -856,7 +843,7 @@ class VirtualFileSystem:
                 return busy
 
         terminal = self._resolve_terminal(full)
-        err = self._gate_entry(terminal.binding, op, report=terminal.rel, write_rels=(terminal.rel,))
+        err = self._gate_entry(terminal.binding, op, write_rels=(terminal.rel,))
         if err is not None:
             return err
 
@@ -971,7 +958,7 @@ class VirtualFileSystem:
                     function=op,
                 )
             write_rels = (src_terminal.rel, dest_terminal.rel) if op == "move" else (dest_terminal.rel,)
-            err = self._gate_entry(src_terminal.binding, op, report=src_terminal.rel, write_rels=write_rels)
+            err = self._gate_entry(src_terminal.binding, op, write_rels=write_rels)
             if err is not None:
                 return err
 
@@ -1051,7 +1038,7 @@ class VirtualFileSystem:
                             if op in binding.meta.caps:
                                 unscoped.setdefault(binding.path, binding)
                         continue
-                    err = self._gate_entry(terminal.binding, op, report=terminal.rel, write_rels=(terminal.rel,))
+                    err = self._gate_entry(terminal.binding, op, write_rels=(terminal.rel,))
                     if err is not None:
                         return err
                     _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
@@ -1121,7 +1108,7 @@ class VirtualFileSystem:
                     function="write",
                 )
             terminal = self._resolve_terminal(resolved.path)
-            err = self._gate_entry(terminal.binding, "write", report=terminal.rel, write_rels=(terminal.rel,))
+            err = self._gate_entry(terminal.binding, "write", write_rels=(terminal.rel,))
             if err is not None:
                 return err
             _b, entry_group = groups.setdefault(terminal.binding.path, (terminal.binding, []))
@@ -1580,7 +1567,7 @@ class VirtualFileSystem:
                 function="mkedge",
             )
         binding = src_terminal.binding
-        err = self._gate_entry(binding, "mkedge", report=src_terminal.rel)
+        err = self._gate_entry(binding, "mkedge")
         if err is not None:
             return err
 

@@ -4,9 +4,13 @@ VFS is built on a conviction that creating effective AI agents, from the scale o
 
 ## 1. Building AI Agents is a Data Engineering Problem
 
+It is important to ground any understanding of LLMs (and thus AI agents) with an awareness that these are predictive models that run in a loop. This means that AI agents are bound by the age old saying in data science and machine learning: garabe in, garabe out.
 
+Context engineering, a term that grown from prompt engineering, gained a lot of popularity because it re-framed the task of desining good agents from one that put an emphasis on the wording of the request to the agent (prompt engineering) to one that looked at how to fill up the context window of the LLM as a method to optimize the output. This is the m
 
-## 2. File Systems Create an Environment for AI Agents
+## 2. LLMs Output Two Things, Human Consumable Content and Code
+
+## 3. File Systems Create Environments for AI Agents
 
 Every blog or tutorial about AI agents will describe the simplest form of them as something like the following.
 
@@ -27,8 +31,6 @@ Now lets re-write the agent defintion to make it specific to a coding agent:
 This framing helps explain why coding agents generally perform better than other types of AI agents. Instead of having dozens, or hundreds, of tools, coding agents have a small set of tools with a text-based interface for composing commands. Instead of having a poorly defined environment to work in, coding agents have a well-defined and structured namespace where they can navigate, perform actions, and get feedback.
 
 This is why VFS adopts the file system as its core abstraction. File systems produce environments well-suited for LLMs to act as agents.
-
-## 3. LLMs Output Two Things, Human Consumable Content and Code
 
 ## 4. Agentic Search has Four Verbs
 

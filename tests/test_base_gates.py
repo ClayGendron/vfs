@@ -263,34 +263,34 @@ GATE_FAILURES = [
         VFSErrorKind.read_only,
         "/ro/y.txt",
     ),
-    ("single/incapable", lambda r: r.write(path="/dim/x.txt", content="c"), VFSErrorKind.unsupported, "/dim/x.txt"),
+    ("single/incapable", lambda r: r.write(path="/dim/x.txt", content="c"), VFSErrorKind.unsupported, "/dim"),
     (
         "grouped/incapable",
         lambda r: r.stat(observations=[Observation(path=Path("/dim/f.txt"))]),
         VFSErrorKind.unsupported,
-        "/dim/f.txt",
+        "/dim",
     ),
-    ("pair/incapable", lambda r: r.move(src="/dim/a.txt", dest="/dim/b.txt"), VFSErrorKind.unsupported, "/dim/a.txt"),
+    ("pair/incapable", lambda r: r.move(src="/dim/a.txt", dest="/dim/b.txt"), VFSErrorKind.unsupported, "/dim"),
     (
         "entries/incapable",
         lambda r: r.write(entries=[Entry(path=Path("/dim/f.txt"), content="c")]),
         VFSErrorKind.unsupported,
-        "/dim/f.txt",
+        "/dim",
     ),
-    ("scoped/incapable", lambda r: r.grep("x", paths=("/dim/sub",)), VFSErrorKind.unsupported, "/dim/sub"),
+    ("scoped/incapable", lambda r: r.grep("x", paths=("/dim/sub",)), VFSErrorKind.unsupported, "/dim"),
     (
         "mkedge/incapable",
         lambda r: r.mkedge("/dim/a.py", "/dim/b.py", "imports"),
         VFSErrorKind.unsupported,
-        "/dim/a.py",
+        "/dim",
     ),
 ]
 
 
 @pytest.mark.parametrize(("call", "kind", "path"), [c[1:] for c in GATE_FAILURES], ids=[c[0] for c in GATE_FAILURES])
 async def test_gate_failures_carry_the_router_side_path(call: Any, kind: VFSErrorKind, path: str) -> None:
-    # Every chokepoint x every gate failure reachable there: the error's
-    # structured path is the path the caller addressed — never None.
+    # Every chokepoint x every gate failure: a permission denial reports the
+    # addressed path; a capability miss reports the entry's bind path.
     root = await _gated_namespace()
     result = await call(root)
     assert result.success is False
