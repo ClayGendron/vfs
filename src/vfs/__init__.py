@@ -1,25 +1,25 @@
 __version__ = "0.0.22"
 
 from vfs import permissions
-from vfs.base import VirtualFileSystem
-from vfs.client import VFSClient, VFSClientAsync
+from vfs.base2 import VirtualFileSystem
 from vfs.exceptions import (
-    GraphError,
     MountError,
     NotFoundError,
     ValidationError,
     VFSError,
     WriteConflictError,
 )
+from vfs.paths import Path
 from vfs.permissions import PermissionMap
+from vfs.results2 import Result, ResultError
 
 __all__ = [
-    "GraphError",
     "MountError",
     "NotFoundError",
+    "Path",
     "PermissionMap",
-    "VFSClient",
-    "VFSClientAsync",
+    "Result",
+    "ResultError",
     "VFSError",
     "ValidationError",
     "VirtualFileSystem",

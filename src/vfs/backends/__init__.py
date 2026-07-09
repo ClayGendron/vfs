@@ -1,10 +1,8 @@
 """VFS storage backends.
 
-Only the v2 in-memory reference backend is exported here.  The
-pre-refactor database backends (``database``, ``mssql``, ``postgres``)
-are mid-rebuild and import against retired names — reach them by direct
-module import once ported; eagerly importing them here would poison the
-whole package.
+Only the in-memory reference backend lives here today.  The pre-refactor
+database backends (``database``, ``mssql``, ``postgres``) are parked in
+``src2/`` for reference and return here as they are ported.
 """
 
 from vfs.backends.memory import InMemoryStorage

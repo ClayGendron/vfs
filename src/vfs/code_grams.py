@@ -37,7 +37,6 @@ NFC and the user types NFD (or vice versa).
 from __future__ import annotations
 
 import unicodedata
-import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -48,8 +47,8 @@ if TYPE_CHECKING:
 # that re-export these modules and emit a DeprecationWarning on import. We bind
 # the real modules directly — no warning to suppress — and keep the historical
 # names locally so the AST-walking code below reads unchanged.
-from re import _constants as sre_constants  # noqa: PLC2701 — regex AST has no public access path
-from re import _parser as sre_parse  # noqa: PLC2701
+from re import _constants as sre_constants
+from re import _parser as sre_parse
 
 GRAM_SIZE: Final = 3
 
