@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from vfs.models import Match, Observation
+from vfs.paths import Path
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.results.render import _verb_for
 
 
-def obs(path: str, **kwargs: object) -> Observation:
-    return Observation(path=path, **kwargs)  # type: ignore[arg-type]
+def obs(path: str, **kwargs: Any) -> Observation:
+    return Observation(path=Path(path), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -33,8 +35,8 @@ class TestErrorRendering:
 
     def test_error_line_carries_the_locus(self) -> None:
         # The implicated path is the locus; without one, source stands in.
-        pathful = ResultError(kind=VFSErrorKind.not_found, message="gone", path="/a.md")
-        sourced = ResultError(kind="x.vendor.odd", message="odd", source="/m")
+        pathful = ResultError(kind=VFSErrorKind.not_found, message="gone", path=Path("/a.md"))
+        sourced = ResultError(kind="x.vendor.odd", message="odd", source=Path("/m"))
         rendered = Result(ops=("read",), errors=[pathful, sourced]).to_str()
         first, second = rendered.split("\n")
         assert first.startswith("ERROR /a.md: gone — ")

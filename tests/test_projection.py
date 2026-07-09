@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from vfs.models import Observation
+from vfs.paths import Path
 from vfs.results.projection import (
     FALLBACK_PROJECTION,
     KNOWN_FUNCTIONS,
@@ -16,8 +19,8 @@ from vfs.results.projection import (
 )
 
 
-def obs(path: str, **kwargs: object) -> Observation:
-    return Observation(path=path, **kwargs)  # type: ignore[arg-type]
+def obs(path: str, **kwargs: Any) -> Observation:
+    return Observation(path=Path(path), **kwargs)
 
 
 class TestVocabulary:
@@ -55,7 +58,7 @@ class TestValidateProjection:
 
     def test_bare_string_is_rejected(self) -> None:
         with pytest.raises(TypeError, match="bare string"):
-            validate_projection("path")  # type: ignore[arg-type]
+            validate_projection("path")  # ty: ignore[invalid-argument-type]
 
     def test_unknown_field_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="unknown field 'lines'"):
@@ -69,17 +72,17 @@ class TestValidateProjection:
 
     def test_non_sequence_inputs_are_rejected(self) -> None:
         with pytest.raises(TypeError, match="tuple or list"):
-            validate_projection(b"path")  # type: ignore[arg-type]
+            validate_projection(b"path")  # ty: ignore[invalid-argument-type]
         with pytest.raises(TypeError, match="tuple or list"):
-            validate_projection({"path": 1})  # type: ignore[arg-type]
+            validate_projection({"path": 1})  # ty: ignore[invalid-argument-type]
         with pytest.raises(TypeError, match="tuple or list"):
-            validate_projection(name for name in ("path",))  # type: ignore[arg-type]
+            validate_projection(name for name in ("path",))  # ty: ignore[invalid-argument-type]
 
     def test_non_string_items_are_rejected_cleanly(self) -> None:
         with pytest.raises(TypeError, match="field-name strings"):
-            validate_projection(("path", 5))  # type: ignore[arg-type]
+            validate_projection(("path", 5))  # ty: ignore[invalid-argument-type]
         with pytest.raises(TypeError, match="field-name strings"):
-            validate_projection((["path"],))  # type: ignore[arg-type]
+            validate_projection((["path"],))  # ty: ignore[invalid-argument-type]
 
 
 class TestResolveProjection:

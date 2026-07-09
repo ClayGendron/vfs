@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -10,9 +12,9 @@ from vfs.paths import RelativePath, skill_manifest_path, skill_path
 from vfs.skills import Skill, SkillResource
 
 
-def _frontmatter(manifest: str) -> dict:
+def _frontmatter(manifest: str | None) -> dict:
     """Parse the YAML frontmatter block out of a rendered SKILL.md."""
-    assert manifest.startswith("---\n")
+    assert manifest is not None and manifest.startswith("---\n")
     return yaml.safe_load(manifest.split("---\n")[1])
 
 
@@ -49,7 +51,7 @@ class TestSkillValidation:
 
     @pytest.mark.parametrize("field", ["description", "license", "compatibility"])
     def test_angle_brackets_rejected_in_frontmatter(self, field: str) -> None:
-        kwargs = {"name": "x", "description": "ok", field: "a <b> c"}
+        kwargs: dict[str, Any] = {"name": "x", "description": "ok", field: "a <b> c"}
         with pytest.raises(ValidationError, match="angle brackets"):
             Skill(**kwargs)
 
@@ -64,7 +66,7 @@ class TestSkillValidation:
 
     @pytest.mark.parametrize("field", ["license", "compatibility"])
     def test_blank_optional_strings_rejected(self, field: str) -> None:
-        kwargs = {"name": "x", "description": "ok", field: "  "}
+        kwargs: dict[str, Any] = {"name": "x", "description": "ok", field: "  "}
         with pytest.raises(ValidationError, match="must not be blank"):
             Skill(**kwargs)
 
@@ -136,8 +138,8 @@ class TestToEntries:
             name="pdf",
             description="do pdf",
             resources=(
-                SkillResource(path="scripts/extract.py", content="print(1)"),
-                SkillResource(path="references/REFERENCE.md", content="# ref"),
+                SkillResource(path=RelativePath("scripts/extract.py"), content="print(1)"),
+                SkillResource(path=RelativePath("references/REFERENCE.md"), content="# ref"),
             ),
         )
         entries = skill.to_entries()
@@ -151,7 +153,9 @@ class TestToEntries:
         assert all(e.kind == "file" for e in entries[2:])
 
     def test_resource_paths_are_canonicalized(self) -> None:
-        skill = Skill(name="pdf", description="d", resources=(SkillResource(path="scripts//a/./b.py", content="x"),))
+        # The raw, non-canonical str must reach the model boundary itself.
+        resource = SkillResource(path="scripts//a/./b.py", content="x")  # ty: ignore[invalid-argument-type]
+        skill = Skill(name="pdf", description="d", resources=(resource,))
         assert skill.to_entries()[-1].path == "/.agents/skills/pdf/scripts/a/b.py"
 
 
@@ -164,12 +168,13 @@ class TestResourceSafety:
     @pytest.mark.parametrize("bad", ["/abs/x.py", "../escape.py", "scripts/../../escape.py"])
     def test_unsafe_resource_paths_rejected_at_construction(self, bad: str) -> None:
         with pytest.raises(ValidationError):
-            SkillResource(path=bad, content="x")
+            SkillResource(path=bad, content="x")  # ty: ignore[invalid-argument-type]
 
     @pytest.mark.parametrize("variant", ["SKILL.md", "./SKILL.md", "SKILL.md/", " SKILL.md "])
     def test_manifest_shadowing_rejected_across_aliases(self, variant: str) -> None:
+        resource = SkillResource(path=variant, content="x")  # ty: ignore[invalid-argument-type]
         with pytest.raises(ValidationError, match="collides with the manifest"):
-            Skill(name="x", description="d", resources=(SkillResource(path=variant, content="x"),))
+            Skill(name="x", description="d", resources=(resource,))
 
     def test_duplicate_resource_paths_rejected(self) -> None:
         with pytest.raises(ValidationError, match="duplicate resource path"):
@@ -177,22 +182,23 @@ class TestResourceSafety:
                 name="x",
                 description="d",
                 resources=(
-                    SkillResource(path="scripts/a.py", content="A"),
-                    SkillResource(path="scripts//a.py", content="B"),
+                    SkillResource(path=RelativePath("scripts/a.py"), content="A"),
+                    # The dupe is only a dupe after canonicalization; keep it raw.
+                    SkillResource(path="scripts//a.py", content="B"),  # ty: ignore[invalid-argument-type]
                 ),
             )
 
     def test_sink_rejects_a_model_copy_bypassed_traversal(self) -> None:
         # model_copy skips validation, so a bad path can reach a SkillResource as
         # a plain str. to_entries must still refuse to mint an escaping entry.
-        good = SkillResource(path="scripts/x.py", content="x")
+        good = SkillResource(path=RelativePath("scripts/x.py"), content="x")
         evil = good.model_copy(update={"path": "../../etc/passwd"})
         skill = Skill(name="demo", description="d").model_copy(update={"resources": (evil,)})
         with pytest.raises(ValueError, match="escapes the skill directory"):
             skill.to_entries()
 
     def test_sink_rejects_a_model_copy_bypassed_absolute(self) -> None:
-        good = SkillResource(path="scripts/x.py", content="x")
+        good = SkillResource(path=RelativePath("scripts/x.py"), content="x")
         evil = good.model_copy(update={"path": "/etc/passwd"})
         skill = Skill(name="demo", description="d").model_copy(update={"resources": (evil,)})
         with pytest.raises(ValueError, match="escapes the skill directory"):
@@ -206,10 +212,10 @@ class TestResourceSafety:
 
 class TestSkillResource:
     def test_path_is_branded_relative(self) -> None:
-        resource = SkillResource(path="scripts/x.py", content="x")
+        resource = SkillResource(path=RelativePath("scripts/x.py"), content="x")
         assert isinstance(resource.path, RelativePath)
 
     def test_frozen(self) -> None:
-        resource = SkillResource(path="scripts/x.py", content="x")
+        resource = SkillResource(path=RelativePath("scripts/x.py"), content="x")
         with pytest.raises(ValidationError):
-            resource.path = "other"  # type: ignore[misc]
+            resource.path = "other"  # ty: ignore[invalid-assignment]

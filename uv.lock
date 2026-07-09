@@ -3240,6 +3240,7 @@ search = [
 [package.dev-dependencies]
 dev = [
     { name = "ipykernel" },
+    { name = "pgvector" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -3280,6 +3281,7 @@ provides-extras = ["search", "openai", "pinecone", "databricks", "postgres", "ms
 [package.metadata.requires-dev]
 dev = [
     { name = "ipykernel", specifier = ">=7.2.0" },
+    { name = "pgvector", specifier = ">=0.3" },
     { name = "pre-commit", specifier = ">=4.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23" },

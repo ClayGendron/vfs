@@ -17,6 +17,7 @@ from vfs.models.rows import (
     build_vfs_tables,
 )
 from vfs.models.vector import NativeEmbeddingConfig, VectorType
+from vfs.paths import Path
 
 
 @pytest.fixture
@@ -86,7 +87,7 @@ class TestBuildVFSTables:
         assert tables.entry.kwargs["sqlite_autoincrement"] is True
 
     def test_ext_kind_composite_index(self, tables: VFSTables) -> None:
-        by_name = {index.name: index for index in tables.entry.indexes}
+        by_name = {str(index.name): index for index in tables.entry.indexes}
         assert [c.name for c in by_name["ix_vfs_entries_ext_kind"].columns] == ["ext", "kind"]
 
     def test_default_embedding_is_portable(self, tables: VFSTables) -> None:
@@ -127,7 +128,7 @@ class TestDDL:
     def test_entry_dump_inserts_and_reads_back(self, tables: VFSTables) -> None:
         engine = create_engine("sqlite://")
         tables.metadata.create_all(engine)
-        entry = Entry(path="/docs/a.md", content="hello", description="greeting")
+        entry = Entry(path=Path("/docs/a.md"), content="hello", description="greeting")
         row = {
             **entry.model_dump(exclude=set(Entry.model_computed_fields)),
             # Repository-derived relationship columns (id refs in a later phase).

@@ -10,13 +10,16 @@ a storage, never a router.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vfs.base import VirtualFileSystem
 from vfs.models import Entry, Observation
 from vfs.paths import ObjectKind, Path
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage import TransportError, storage_ops
+
+if TYPE_CHECKING:
+    from vfs.ops import Op
 
 
 def _failed(op: str, kind: VFSErrorKind, message: str, path: Path | None = None) -> Result:
@@ -39,14 +42,14 @@ class RecorderStorage:
         *,
         name: str = "recorder",
         description: str = "Recorder storage double",
-        caps: frozenset[str] | None = None,
+        caps: frozenset[Op] | None = None,
     ) -> None:
         self.name = name
         self.description = description
         self._caps = caps
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def capabilities(self) -> frozenset[str]:
+    def capabilities(self) -> frozenset[Op]:
         return self._caps if self._caps is not None else storage_ops(self)
 
     def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
@@ -108,7 +111,7 @@ class ReadFamilyStorage:
     name = "read-family"
     description = "Read-family-only storage double"
 
-    def capabilities(self) -> frozenset[str]:
+    def capabilities(self) -> frozenset[Op]:
         return storage_ops(self)
 
     async def read(self, **kwargs: Any) -> Result:
@@ -155,7 +158,8 @@ class DictStorage(RecorderStorage):
         super().__init__(name="dict", description="Dict storage double")
         self._entries = entries
 
-    async def mkdir(self, *, path: Path, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def mkdir(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
+        assert path is not None
         self.calls.append(("mkdir", {"path": path, **kwargs}))
         if self._entries.get(str(path)) == "directory" and kwargs.get("exist_ok"):
             return Result(ops=("mkdir",), observations=[Observation(path=path, kind="directory")])
@@ -282,8 +286,8 @@ class RunnerStorage(RecorderStorage):
     (reads + run) unless *caps* narrows it further.
     """
 
-    def __init__(self, *, caps: frozenset[str] | None = None, **kwargs: Any) -> None:
-        wanted = caps if caps is not None else frozenset({"read", "stat", "ls", "tree", "run"})
+    def __init__(self, *, caps: frozenset[Op] | None = None, **kwargs: Any) -> None:
+        wanted: frozenset[Op] = caps if caps is not None else frozenset({"read", "stat", "ls", "tree", "run"})
         super().__init__(name=kwargs.pop("name", "runner"), caps=wanted, **kwargs)
 
     async def read(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
@@ -291,7 +295,15 @@ class RunnerStorage(RecorderStorage):
         target = path if path is not None else Path("/")
         return Result(ops=("read",), observations=[Observation(path=target, kind="tool")])
 
-    async def run(self, *, path: Path, arguments: dict[str, Any] | None = None, user_id: str | None = None) -> Result:
+    async def run(
+        self,
+        *,
+        path: Path | None = None,
+        arguments: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        **kwargs: Any,
+    ) -> Result:
+        assert path is not None
         self.calls.append(("run", {"path": path, "arguments": arguments}))
         return Result(ops=("run",), observations=[Observation(path=path, kind="tool")])
 

@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from vfs.models import Match, Observation
-from vfs.paths import MAX_PATH_LENGTH
+from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 
 
-def obs(path: str, **kwargs: object) -> Observation:
-    return Observation(path=path, **kwargs)  # type: ignore[arg-type]
+def obs(path: str, **kwargs: Any) -> Observation:
+    return Observation(path=Path(path), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +24,7 @@ def obs(path: str, **kwargs: object) -> Observation:
 
 class TestResultError:
     def test_kind_serializes_to_namespaced_value(self) -> None:
-        err = ResultError(kind=VFSErrorKind.not_found, message="no such path", path="/a/b.md")
+        err = ResultError(kind=VFSErrorKind.not_found, message="no such path", path=Path("/a/b.md"))
         assert err.model_dump(mode="json")["kind"] == "vfs.not_found"
 
     def test_kind_parses_from_wire_value(self) -> None:
@@ -50,7 +51,7 @@ class TestResultError:
         err = ResultError(
             kind=VFSErrorKind.conflict,
             message="stale revision",
-            path="/a.md",
+            path=Path("/a.md"),
             data={"expected": 3, "actual": 5},
         )
         restored = ResultError.model_validate(err.model_dump(mode="json"))
@@ -58,7 +59,7 @@ class TestResultError:
         assert restored == err
 
     def test_mount_rebase_round_trip(self) -> None:
-        err = ResultError(kind=VFSErrorKind.not_found, message="gone", path="/docs/a.md")
+        err = ResultError(kind=VFSErrorKind.not_found, message="gone", path=Path("/docs/a.md"))
         rebased = err.with_mount("/data")
         assert rebased.path == "/data/docs/a.md"
         assert rebased.without_mount("/data") == err
@@ -94,8 +95,12 @@ class TestRowAccess:
         result = Result(ops=("ls",), observations=[obs("/a.md"), obs("/b.md")])
         assert bool(result)
         assert len(result) == 2
-        assert result[0].path == "/a.md"
-        assert result[-1].path == "/b.md"
+        first, last = result[0], result[-1]
+        # An int index always yields a single row; narrow the getitem union.
+        assert isinstance(first, Observation)
+        assert isinstance(last, Observation)
+        assert first.path == "/a.md"
+        assert last.path == "/b.md"
         assert result[0:2] == result.observations
         assert [o.path for o in result] == ["/a.md", "/b.md"]
         assert "/a.md" in result
@@ -258,7 +263,7 @@ class TestMountRebasing:
         result = Result(
             ops=("ls",),
             observations=[obs("/a.md"), obs("/")],
-            errors=[ResultError(kind=VFSErrorKind.not_found, message="gone", path="/b.md")],
+            errors=[ResultError(kind=VFSErrorKind.not_found, message="gone", path=Path("/b.md"))],
         )
         rebased = result.with_mount("/data")
         assert rebased.paths == ("/data/a.md", "/data")
@@ -289,7 +294,7 @@ class TestMountRebasing:
 # ---------------------------------------------------------------------------
 
 # A valid 1004-char local path; overflows once rebased under the 31-char mount.
-DEEP_LOCAL = "/" + "/".join(["a" * 250] * 4)
+DEEP_LOCAL = Path("/" + "/".join(["a" * 250] * 4))
 LONG_MOUNT = "/" + "m" * 30
 
 
@@ -362,7 +367,7 @@ def rich_result() -> Result:
             ),
             obs("/src/db.py", status="updated"),
         ],
-        errors=[ResultError(kind=VFSErrorKind.permission_denied, message="read-only mount", path="/ro/x.md")],
+        errors=[ResultError(kind=VFSErrorKind.permission_denied, message="read-only mount", path=Path("/ro/x.md"))],
     )
 
 

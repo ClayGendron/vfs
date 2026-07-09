@@ -25,7 +25,7 @@ from base_doubles import (
 from vfs.base import VirtualFileSystem
 from vfs.exceptions import WriteConflictError, raise_if_failed
 from vfs.models import Entry, Observation
-from vfs.ops import ALL_OPS, TwoPathOperation
+from vfs.ops import ALL_OPS, Op, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.permissions import read_write
 from vfs.results import Result, ResultError, RetryClass, Severity, VFSErrorKind
@@ -783,7 +783,7 @@ async def test_funnel_backstop_answers_unsupported_when_capability_overclaims() 
     # policy bug); the funnel's own family check backstops it — unsupported,
     # never a raw AttributeError.
     class OverclaimingStorage(ReadFamilyStorage):
-        def capabilities(self) -> frozenset[str]:
+        def capabilities(self) -> frozenset[Op]:
             return ALL_OPS
 
     fs = VirtualFileSystem(storage=OverclaimingStorage())
@@ -799,7 +799,7 @@ async def test_every_guarded_funnel_arm_backstops_a_missing_family(op: str) -> N
     # only implements the read family — the backstop behind the gate,
     # exercised arm by arm by calling the funnel directly.
     class OverclaimingStorage(ReadFamilyStorage):
-        def capabilities(self) -> frozenset[str]:
+        def capabilities(self) -> frozenset[Op]:
             return ALL_OPS
 
     fs = VirtualFileSystem(storage=OverclaimingStorage())

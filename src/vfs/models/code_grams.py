@@ -43,12 +43,10 @@ from typing import TYPE_CHECKING, Final
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# The public ``sre_parse``/``sre_constants`` names are deprecated shims (3.11+)
-# that re-export these modules and emit a DeprecationWarning on import. We bind
-# the real modules directly — no warning to suppress — and keep the historical
-# names locally so the AST-walking code below reads unchanged.
-from re import _constants as sre_constants
-from re import _parser as sre_parse
+# The public sre_parse/sre_constants names are deprecated shims (3.11+); bind
+# the real modules directly (typeshed has no stubs for them, hence the ignores).
+from re import _constants as sre_constants  # ty: ignore[unresolved-import]
+from re import _parser as sre_parse  # ty: ignore[unresolved-import]
 
 GRAM_SIZE: Final = 3
 

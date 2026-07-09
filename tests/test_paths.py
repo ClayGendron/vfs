@@ -150,23 +150,23 @@ class TestNormalizePath:
 
 class TestSplitPath:
     def test_root(self):
-        assert split_path("/") == ("/", "")
+        assert split_path(Path("/")) == ("/", "")
 
     def test_single_segment(self):
-        assert split_path("/foo") == ("/", "foo")
+        assert split_path(Path("/foo")) == ("/", "foo")
 
     def test_nested(self):
-        assert split_path("/src/auth.py") == ("/src", "auth.py")
+        assert split_path(Path("/src/auth.py")) == ("/src", "auth.py")
 
     def test_metadata_path_is_literal_split(self):
         # split_path is a pure string operation, not metadata-aware
-        assert split_path("/.vfs/src/auth.py/__meta__/chunks/login") == (
+        assert split_path("/.vfs/src/auth.py/__meta__/chunks/login") == (  # ty: ignore[invalid-argument-type]
             "/.vfs/src/auth.py/__meta__/chunks",
             "login",
         )
 
     def test_edge_path_is_literal_split(self):
-        assert split_path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py") == (
+        assert split_path(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")) == (
             "/.vfs/src/auth.py/__meta__/edges/out/imports/src",
             "utils.py",
         )
@@ -286,7 +286,7 @@ class TestCheckMutablePath:
 class TestResolvePath:
     def test_valid_returns_canonical_vfspath(self):
         result = resolve_path("/src/auth.py")
-        assert result == ResolvedPath("/src/auth.py", None)
+        assert result == ResolvedPath(Path("/src/auth.py"), None)
         assert result.error is None
         assert isinstance(result.path, Path)
 
@@ -511,7 +511,7 @@ class TestPath:
             p: Path
 
         # A plain str is coerced through the gate (canonicalized) into a Path.
-        m = M(p="/a/../b")
+        m = M(p="/a/../b")  # ty: ignore[invalid-argument-type]
         assert isinstance(m.p, Path)
         assert m.p == "/b"
         # Serializes back to a plain str.
@@ -522,7 +522,7 @@ class TestPath:
             p: Path
 
         with pytest.raises(ValidationError):
-            M(p="/a\x00b")
+            M(p="/a\x00b")  # ty: ignore[invalid-argument-type]
 
 
 # =========================================================================
@@ -718,13 +718,13 @@ class TestParseKind:
     # --- Metadata markers ---
 
     def test_chunk(self):
-        assert parse_kind("/.vfs/src/auth.py/__meta__/chunks/1/login") == "chunk"
+        assert parse_kind(Path("/.vfs/src/auth.py/__meta__/chunks/1/login")) == "chunk"
 
     def test_version(self):
-        assert parse_kind("/.vfs/src/auth.py/__meta__/versions/3") == "version"
+        assert parse_kind(Path("/.vfs/src/auth.py/__meta__/versions/3")) == "version"
 
     def test_edge(self):
-        assert parse_kind("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py") == "edge"
+        assert parse_kind(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")) == "edge"
 
     # --- Files with extensions ---
 
@@ -733,42 +733,42 @@ class TestParseKind:
         assert parse_kind(path) == "file"
 
     def test_multiple_extensions(self):
-        assert parse_kind("/archive.tar.gz") == "file"
+        assert parse_kind(Path("/archive.tar.gz")) == "file"
 
     def test_trailing_dot(self):
         # file. has a dot at position > 0
-        assert parse_kind("/file.") == "file"
+        assert parse_kind(Path("/file.")) == "file"
 
     # --- Dotfiles ---
 
     @pytest.mark.parametrize("name", [".bashrc", ".gitconfig", ".hidden", ".vimrc"])
     def test_unlisted_dotfiles_are_files(self, name):
-        assert parse_kind(f"/home/{name}") == "file"
+        assert parse_kind(Path(f"/home/{name}")) == "file"
 
     def test_listed_dotfile(self):
-        assert parse_kind("/.gitignore") == "file"
+        assert parse_kind(Path("/.gitignore")) == "file"
 
     def test_dotfile_with_extension(self):
-        assert parse_kind("/.env.local") == "file"
+        assert parse_kind(Path("/.env.local")) == "file"
 
     # --- Dot-prefixed user paths remain ordinary files ---
 
     @pytest.mark.parametrize("name", [".chunks", ".versions", ".connections"])
     def test_dot_prefixed_metadata_like_names_are_files(self, name):
-        assert parse_kind(f"/foo/{name}") == "file"
+        assert parse_kind(Path(f"/foo/{name}")) == "file"
 
     # --- Extensionless files (case-insensitive) ---
 
     @pytest.mark.parametrize("name", ["Makefile", "makefile", "MAKEFILE"])
     def test_makefile_case_insensitive(self, name):
-        assert parse_kind(f"/{name}") == "file"
+        assert parse_kind(Path(f"/{name}")) == "file"
 
     @pytest.mark.parametrize("name", ["LICENSE", "license", "License"])
     def test_license_case_insensitive(self, name):
-        assert parse_kind(f"/{name}") == "file"
+        assert parse_kind(Path(f"/{name}")) == "file"
 
     def test_dockerfile(self):
-        assert parse_kind("/Dockerfile") == "file"
+        assert parse_kind(Path("/Dockerfile")) == "file"
 
     # --- Directories ---
 
@@ -777,27 +777,30 @@ class TestParseKind:
         assert parse_kind(path) == "directory"
 
     def test_nested_chunk_descendants_stay_classified_as_chunks(self):
-        assert parse_kind("/.vfs/src/auth.py/__meta__/chunks/login/body.txt") == "chunk"
+        # Grammar-invalid as a Path, so parse_kind sees the raw string.
+        kind = parse_kind("/.vfs/src/auth.py/__meta__/chunks/login/body.txt")  # ty: ignore[invalid-argument-type]
+        assert kind == "chunk"
 
     def test_nested_version_descendants_stay_classified_as_versions(self):
-        assert parse_kind("/.vfs/src/auth.py/__meta__/versions/3/body.txt") == "version"
+        kind = parse_kind("/.vfs/src/auth.py/__meta__/versions/3/body.txt")  # ty: ignore[invalid-argument-type]
+        assert kind == "version"
 
     def test_incomplete_edge_without_target_is_a_directory(self):
         # Edge type but no target is not a complete projected edge — it is the
         # type-scoped directory, mirroring the incomplete-chunk rule.
-        assert parse_kind("/.vfs/foo/__meta__/edges/out/imports") == "directory"
+        assert parse_kind(Path("/.vfs/foo/__meta__/edges/out/imports")) == "directory"
 
     # --- Marker boundary (no false positives) ---
 
     def test_similar_name_not_misclassified(self):
         # Similar user paths should not be mistaken for reserved metadata roots.
-        assert parse_kind("/my-connections/file.sql") == "file"
+        assert parse_kind(Path("/my-connections/file.sql")) == "file"
 
     def test_metadata_root_is_classified_as_directory(self):
-        assert parse_kind(METADATA_ROOT) == "directory"
+        assert parse_kind(Path(METADATA_ROOT)) == "directory"
 
     def test_metadata_tree_paths_are_classified_as_directories(self):
-        assert parse_kind("/.vfs/src/auth.py") == "directory"
+        assert parse_kind(Path("/.vfs/src/auth.py")) == "directory"
 
 
 # =========================================================================
@@ -809,14 +812,14 @@ class TestAgentNamespace:
     # --- parse_kind ---
 
     def test_tool_unit_directory(self):
-        assert parse_kind("/.agents/tools/clone-repo") == "tool"
+        assert parse_kind(Path("/.agents/tools/clone-repo")) == "tool"
 
     def test_skill_unit_directory(self):
-        assert parse_kind("/.agents/skills/pdf-processing") == "skill"
+        assert parse_kind(Path("/.agents/skills/pdf-processing")) == "skill"
 
     def test_agents_root_is_a_directory(self):
         # Its dotfile leaf would otherwise read as a file.
-        assert parse_kind("/.agents") == "directory"
+        assert parse_kind(Path("/.agents")) == "directory"
 
     @pytest.mark.parametrize("path", ["/.agents/tools", "/.agents/skills"])
     def test_family_roots_are_directories(self, path):
@@ -824,19 +827,19 @@ class TestAgentNamespace:
 
     def test_tool_manifest_is_a_plain_indexable_file(self):
         # The manifest is a file, not the unit — so it chunks/indexes like any file.
-        assert parse_kind("/.agents/tools/clone-repo/TOOL.md") == "file"
+        assert parse_kind(Path("/.agents/tools/clone-repo/TOOL.md")) == "file"
 
     def test_skill_manifest_is_a_plain_indexable_file(self):
-        assert parse_kind("/.agents/skills/pdf-processing/SKILL.md") == "file"
+        assert parse_kind(Path("/.agents/skills/pdf-processing/SKILL.md")) == "file"
 
     def test_bundled_resource_is_a_plain_file(self):
-        assert parse_kind("/.agents/tools/clone-repo/scripts/run.py") == "file"
+        assert parse_kind(Path("/.agents/tools/clone-repo/scripts/run.py")) == "file"
 
     def test_unknown_family_is_a_plain_directory(self):
-        assert parse_kind("/.agents/memories/notes") == "directory"
+        assert parse_kind(Path("/.agents/memories/notes")) == "directory"
 
     def test_agents_lookalike_user_path_not_misclassified(self):
-        assert parse_kind("/.agents-archive/tools/x") == "directory"
+        assert parse_kind(Path("/.agents-archive/tools/x")) == "directory"
 
     # --- builders ---
 
@@ -882,8 +885,8 @@ class TestNamespaceRoots:
         assert compute_parent_file(Path("/src/auth.py")) is None
 
     def test_is_meta_path_requires_exact_reserved_prefix(self):
-        assert is_meta_path("/.vfs/src/auth.py") is True
-        assert is_meta_path("/.vfssrc/auth.py") is False
+        assert is_meta_path(Path("/.vfs/src/auth.py")) is True
+        assert is_meta_path(Path("/.vfssrc/auth.py")) is False
 
 
 # =========================================================================
@@ -893,28 +896,32 @@ class TestNamespaceRoots:
 
 class TestParentDir:
     def test_file(self):
-        assert compute_parent_dir("/src/auth.py") == "/src"
+        assert compute_parent_dir(Path("/src/auth.py")) == "/src"
 
     def test_root_child(self):
-        assert compute_parent_dir("/src") == "/"
+        assert compute_parent_dir(Path("/src")) == "/"
 
     def test_root_is_own_parent(self):
-        assert compute_parent_dir("/") == "/"
+        assert compute_parent_dir(Path("/")) == "/"
 
     def test_chunk(self):
-        assert compute_parent_dir("/.vfs/src/auth.py/__meta__/chunks/login") == "/.vfs/src/auth.py/__meta__/chunks"
+        # Grammar-invalid as a Path, so the helper splits the raw string.
+        parent = compute_parent_dir("/.vfs/src/auth.py/__meta__/chunks/login")  # ty: ignore[invalid-argument-type]
+        assert parent == "/.vfs/src/auth.py/__meta__/chunks"
 
     def test_version(self):
-        assert compute_parent_dir("/.vfs/src/auth.py/__meta__/versions/3") == "/.vfs/src/auth.py/__meta__/versions"
+        assert (
+            compute_parent_dir(Path("/.vfs/src/auth.py/__meta__/versions/3")) == "/.vfs/src/auth.py/__meta__/versions"
+        )
 
     def test_edge(self):
         assert (
-            compute_parent_dir("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
+            compute_parent_dir(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py"))
             == "/.vfs/src/auth.py/__meta__/edges/out/imports/src"
         )
 
     def test_bare_metadata_dir(self):
-        assert compute_parent_dir("/.vfs/src/auth.py/__meta__/chunks") == "/.vfs/src/auth.py/__meta__"
+        assert compute_parent_dir(Path("/.vfs/src/auth.py/__meta__/chunks")) == "/.vfs/src/auth.py/__meta__"
 
 
 # =========================================================================
@@ -1000,7 +1007,7 @@ class TestEdgePath:
         for s, t, c in cases:
             path = edge_out_path(Path(s), Path(t), c)
             parts = decompose_edge(path)
-            assert parts == EdgeParts(source=s, target=t, edge_type=c, direction="out")
+            assert parts == EdgeParts(source=Path(s), target=Path(t), edge_type=c, direction="out")
 
     def test_normalizes_target(self):
         p = edge_out_path(Path("/a.py"), Path("src//utils.py"), "imports")
@@ -1034,22 +1041,22 @@ class TestEdgePath:
 
 class TestDecomposeEdge:
     def test_basic(self):
-        result = decompose_edge("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")
+        result = decompose_edge(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py"))
         assert result == EdgeParts(
-            source="/src/auth.py",
-            target="/src/utils.py",
+            source=Path("/src/auth.py"),
+            target=Path("/src/utils.py"),
             edge_type="imports",
             direction="out",
         )
 
     def test_not_a_connection(self):
-        assert decompose_edge("/src/auth.py") is None
+        assert decompose_edge(Path("/src/auth.py")) is None
 
     def test_type_only_no_target(self):
-        assert decompose_edge("/.vfs/foo/__meta__/edges/out/imports") is None
+        assert decompose_edge(Path("/.vfs/foo/__meta__/edges/out/imports")) is None
 
     def test_deep_target(self):
-        result = decompose_edge("/.vfs/a.py/__meta__/edges/out/calls/src/deep/nested/path.py")
+        result = decompose_edge(Path("/.vfs/a.py/__meta__/edges/out/calls/src/deep/nested/path.py"))
         assert result is not None
         assert result.source == "/a.py"
         assert result.target == "/src/deep/nested/path.py"
@@ -1057,7 +1064,7 @@ class TestDecomposeEdge:
         assert result.direction == "out"
 
     def test_named_access(self):
-        result = decompose_edge("/.vfs/a.py/__meta__/edges/out/imports/b.py")
+        result = decompose_edge(Path("/.vfs/a.py/__meta__/edges/out/imports/b.py"))
         assert result is not None
         assert result.source == "/a.py"
         assert result.target == "/b.py"
@@ -1076,49 +1083,49 @@ class TestDecomposeEdge:
 
 class TestExtractExtension:
     def test_simple_extension(self):
-        assert extract_extension("/src/auth.py") == "py"
+        assert extract_extension(Path("/src/auth.py")) == "py"
 
     def test_multi_dot_returns_last(self):
-        assert extract_extension("/src/foo.test.py") == "py"
+        assert extract_extension(Path("/src/foo.test.py")) == "py"
 
     def test_lowercased(self):
-        assert extract_extension("/src/Foo.PY") == "py"
+        assert extract_extension(Path("/src/Foo.PY")) == "py"
 
     def test_no_extension_returns_none(self):
-        assert extract_extension("/Makefile") is None
+        assert extract_extension(Path("/Makefile")) is None
 
     def test_dotfile_returns_none(self):
-        assert extract_extension("/.env") is None
+        assert extract_extension(Path("/.env")) is None
 
     def test_dotfile_with_extension(self):
-        assert extract_extension("/.eslintrc.json") == "json"
+        assert extract_extension(Path("/.eslintrc.json")) == "json"
 
     def test_empty_path(self):
-        assert extract_extension("") is None
+        assert extract_extension("") is None  # ty: ignore[invalid-argument-type]
 
     def test_root(self):
-        assert extract_extension("/") is None
+        assert extract_extension(Path("/")) is None
 
     def test_directory(self):
-        assert extract_extension("/src") is None
+        assert extract_extension(Path("/src")) is None
 
     def test_trailing_dot(self):
-        assert extract_extension("/src/foo.") is None
+        assert extract_extension(Path("/src/foo.")) is None
 
     def test_over_long_extension_rejected(self):
         # Extensions longer than 32 chars return None to keep the index clean.
         long_ext = "x" * 33
-        assert extract_extension(f"/src/foo.{long_ext}") is None
+        assert extract_extension(Path(f"/src/foo.{long_ext}")) is None
 
     def test_max_length_extension_accepted(self):
         ext = "x" * 32
-        assert extract_extension(f"/src/foo.{ext}") == ext
+        assert extract_extension(Path(f"/src/foo.{ext}")) == ext
 
     def test_numeric_extension(self):
-        assert extract_extension("/archive/old.123") == "123"
+        assert extract_extension(Path("/archive/old.123")) == "123"
 
     def test_path_normalized_first(self):
-        assert extract_extension("/src//auth.py") == "py"
+        assert extract_extension("/src//auth.py") == "py"  # ty: ignore[invalid-argument-type]
 
 
 # =========================================================================
@@ -1170,17 +1177,17 @@ class TestMetadataAnchoring:
     """A path NOT under /.vfs is never metadata, even if it embeds the markers."""
 
     def test_ordinary_edge_marker_path_is_not_an_edge(self):
-        assert parse_kind("/foo/__meta__/edges/out/imports/bar.py") == "file"
+        assert parse_kind(Path("/foo/__meta__/edges/out/imports/bar.py")) == "file"
 
     def test_ordinary_chunk_marker_path_is_not_a_chunk(self):
         # Leaf has no extension and is not an extensionless special -> directory.
-        assert parse_kind("/foo/__meta__/chunks/1/login") == "directory"
+        assert parse_kind(Path("/foo/__meta__/chunks/1/login")) == "directory"
 
     def test_ordinary_chunk_marker_path_with_extension_is_a_file(self):
-        assert parse_kind("/foo/__meta__/chunks/1/login.txt") == "file"
+        assert parse_kind(Path("/foo/__meta__/chunks/1/login.txt")) == "file"
 
     def test_decompose_edge_returns_none_for_non_meta_path(self):
-        assert decompose_edge("/foo/__meta__/edges/out/imports/bar") is None
+        assert decompose_edge(Path("/foo/__meta__/edges/out/imports/bar")) is None
 
     def test_compute_parent_file_none_for_non_meta_marker_path(self):
         assert compute_parent_file(Path("/foo/__meta__/chunks/1/login")) is None
@@ -1193,8 +1200,8 @@ class TestMetadataAnchoring:
 
     def test_metadata_under_vfs_still_classifies(self):
         # Sanity: real metadata still works after anchoring.
-        assert parse_kind("/.vfs/foo/__meta__/edges/out/imports/bar") == "edge"
-        assert parse_kind("/.vfs/foo/__meta__/chunks/1/login") == "chunk"
+        assert parse_kind(Path("/.vfs/foo/__meta__/edges/out/imports/bar")) == "edge"
+        assert parse_kind(Path("/.vfs/foo/__meta__/chunks/1/login")) == "chunk"
 
 
 # =========================================================================
@@ -1391,7 +1398,7 @@ class TestBuilderPath:
 
     def test_branded_output_round_trips(self):
         path = edge_out_path(Path("/src/a.py"), Path("/src/b.py"), "imports")
-        assert decompose_edge(path) == EdgeParts("/src/a.py", "/src/b.py", "imports", "out")
+        assert decompose_edge(path) == EdgeParts(Path("/src/a.py"), Path("/src/b.py"), "imports", "out")
 
     def test_branded_chunk_output_parses_back_to_chunk(self):
         assert parse_kind(chunk_path(Path("/a.py"), "login", 1)) == "chunk"
@@ -1433,6 +1440,7 @@ class TestCheckMutablePathContract:
         # /.vfs/foo/.. canonicalizes to /.vfs
         result = resolve_path("/.vfs/foo/..", mutation=True)
         assert result.path is None
+        assert result.error is not None
         assert "metadata root" in result.error
 
     def test_vfspath_cannot_hold_noncanonical_value(self):
@@ -1509,13 +1517,13 @@ class TestDangerousUnicode:
 
 class TestIncompleteEndpoints:
     def test_chunk_version_dir_without_name_is_a_directory(self):
-        assert parse_kind("/.vfs/f.py/__meta__/chunks/1") == "directory"
+        assert parse_kind(Path("/.vfs/f.py/__meta__/chunks/1")) == "directory"
 
     def test_complete_chunk_is_a_chunk(self):
-        assert parse_kind("/.vfs/f.py/__meta__/chunks/1/login") == "chunk"
+        assert parse_kind(Path("/.vfs/f.py/__meta__/chunks/1/login")) == "chunk"
 
     def test_complete_version_is_a_version(self):
-        assert parse_kind("/.vfs/f.py/__meta__/versions/3") == "version"
+        assert parse_kind(Path("/.vfs/f.py/__meta__/versions/3")) == "version"
 
     def test_incomplete_chunk_dir_is_not_a_mutable_chunk(self):
         ok, _ = check_mutable_path(Path("/.vfs/f.py/__meta__/chunks/1"))
@@ -1617,11 +1625,13 @@ class TestRelativePath:
         assert ok.error is None
         bad = resolve_relative_path("/abs")
         assert bad.path is None
+        assert bad.error is not None
         assert "absolute" in bad.error
 
     def test_resolve_rejects_non_string(self):
-        result = resolve_relative_path(123)  # type: ignore[arg-type]
+        result = resolve_relative_path(123)  # ty: ignore[invalid-argument-type]
         assert result.path is None
+        assert result.error is not None
         assert "must be a string" in result.error
 
     def test_primitives_match_the_gate(self):
@@ -1636,7 +1646,7 @@ class TestRelativePath:
         class M(BaseModel):
             path: RelativePath
 
-        assert M(path="scripts//x.py").path == "scripts/x.py"
-        assert isinstance(M(path="scripts/x.py").path, RelativePath)
+        assert M(path="scripts//x.py").path == "scripts/x.py"  # ty: ignore[invalid-argument-type]
+        assert isinstance(M(path="scripts/x.py").path, RelativePath)  # ty: ignore[invalid-argument-type]
         with pytest.raises(ValidationError):
-            M(path="/absolute")
+            M(path="/absolute")  # ty: ignore[invalid-argument-type]

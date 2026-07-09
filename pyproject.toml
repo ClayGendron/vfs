@@ -64,6 +64,8 @@ dev = [
     "pytest-cov>=5.0",
     "pre-commit>=4.0",
     "ipykernel>=7.2.0",
+    # typing-only: lets ty resolve the lazy pgvector import in models/vector.py
+    "pgvector>=0.3",
 ]
 docs = [
     "mkdocs-material>=9.0",
@@ -113,6 +115,9 @@ ignore = [
 known-first-party = ["vfs"]
 
 [tool.ty]
+
+[tool.ty.src]
+include = ["src", "tests"]
 
 [tool.ty.environment]
 python-version = "3.13"
