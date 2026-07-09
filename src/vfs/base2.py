@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 
 from vfs.backends.memory import InMemoryStorage
+from vfs.exceptions import MountError
+from vfs.kinds import Severity, kind_family
 from vfs.models2 import Entry, Observation
 from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
@@ -203,6 +205,11 @@ class VirtualFileSystem:
             caps=frozenset(storage.capabilities()),
         )
         async with self._mount_lock:
+            # Re-checked under the lock: close() may have emptied the table
+            # while the site probe's storage I/O was suspended.
+            if not self._bindings:
+                msg = f"Cannot bind at {mount_path}: filesystem is closed"
+                raise ValueError(msg)
             if mount_path in self._bindings:
                 msg = f"Mount already exists at: {mount_path}"
                 raise ValueError(msg)
@@ -284,7 +291,7 @@ class VirtualFileSystem:
         if not made.success:
             detail = made.error_message or "storage refused the mount-point directory"
             msg = f"Cannot mount at {mount_path}: {detail}"
-            raise ValueError(msg)
+            raise MountError(msg, result=made)
         await self.bind(storage, str(mount_path), permissions=permissions, no_overlay=no_overlay, owned=owned)
 
     async def remove_mount(self, path: str) -> None:
@@ -308,7 +315,7 @@ class VirtualFileSystem:
         if not removed.success:
             detail = removed.error_message or "storage refused the delete"
             msg = f"Unmounted {mount_path}, but removing its directory failed: {detail}"
-            raise ValueError(msg)
+            raise MountError(msg, result=removed)
 
     async def close(self) -> None:
         """Release every resource this process holds for the namespace.
@@ -357,16 +364,25 @@ class VirtualFileSystem:
         Storage I/O — runs outside the mount lock.  The owning entry is
         whichever binding holds the parent region; on a shared backend the
         answer can change before commit (unsynchronized shared admin), and
-        the resulting states are the ordinary classified ones.
+        the resulting states are the ordinary classified ones.  Failures
+        dispatch on the error kind, not the bit: only ``not_found`` earns
+        the mkdir advice — a dead backend surfaces its transport failure
+        instead of advising a mkdir that cannot help.
         """
         if not self._bindings:
             return "filesystem is closed"
         terminal = self._resolve_terminal(mount_path)
+        advice = f"no directory stored at the mount point (mkdir it, or add_mount(..., parents=True)): {mount_path}"
         stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel)
+        if not stat.success:
+            fatal = stat.failures[0]
+            if kind_family(fatal.kind) is VFSErrorKind.not_found:
+                return advice
+            return fatal.message or f"could not stat the mount point: {mount_path}"
         # Keyed by path, not position — a backend's row order is not a contract.
-        row = next((o for o in stat.observations if o.path == terminal.rel), None) if stat.success else None
+        row = next((o for o in stat.observations if o.path == terminal.rel), None)
         if row is None:
-            return f"no directory stored at the mount point (mkdir it, or add_mount(..., parents=True)): {mount_path}"
+            return advice
         if row.kind != "directory":
             return f"the mount point is stored as {row.kind!r}, not a directory: {mount_path}"
         listed = await self._call_storage(terminal.binding, "ls", path=terminal.rel)
@@ -446,7 +462,7 @@ class VirtualFileSystem:
         return self._error(
             "Filesystem is closed",
             kind=VFSErrorKind.backend_unavailable,
-            function=op,
+            op=op,
         )
 
     # -------------------------------------------------------------------
@@ -515,7 +531,7 @@ class VirtualFileSystem:
             return self._error(
                 f"Operation {op!r} is not supported for storage mounted at {binding.path}",
                 kind=VFSErrorKind.unsupported,
-                function=op,
+                op=op,
                 path=binding.path,
             )
         for rel in write_rels:
@@ -540,7 +556,7 @@ class VirtualFileSystem:
         return self._error(
             f"{full} is a mount point or contains one — unmount first",
             kind=VFSErrorKind.busy,
-            function=op,
+            op=op,
             path=full,
         )
 
@@ -581,6 +597,11 @@ class VirtualFileSystem:
         ``AttributeError``.  A :class:`TransportError` — a wire backend's
         dead peer — normalizes to ``backend_unavailable``; any other raw
         exception is a backend bug and propagates.
+
+        The seam invariant for every entry-level failure minted here: the
+        error is in entry coordinates, anchored at the entry root
+        (``path=ROOT``), and the funnel's rebase turns that anchor into
+        the bind path on the way out (identity for the root entry).
 
         Transactions live behind these methods: a backend opens and commits
         its own session inside each op — the router never sees one.
@@ -647,21 +668,24 @@ class VirtualFileSystem:
                 case _:
                     assert_never(op)
         except TransportError as exc:
-            # Entry-root path in entry coordinates: the rebase seam turns it
-            # into the bind path (identity for the root entry).
             return self._error(
                 f"Backend for {binding.path} is unavailable: {exc}",
                 kind=VFSErrorKind.backend_unavailable,
-                function=op,
+                op=op,
                 path=ROOT,
             )
 
     def _backend_unsupported(self, op: Op) -> Result:
-        """The funnel's narrowing miss: the backend lacks *op*'s family."""
+        """The funnel's narrowing miss: the backend lacks *op*'s family.
+
+        Entry-anchored under the funnel's seam invariant (see
+        :meth:`_call_storage`): ``path=ROOT`` rebases to the bind path.
+        """
         return self._error(
             f"Storage backend does not support operation: {op}",
             kind=VFSErrorKind.unsupported,
-            function=op,
+            op=op,
+            path=ROOT,
         )
 
     def _shadow_filter(self, result: Result, binding: Binding) -> Result:
@@ -764,21 +788,21 @@ class VirtualFileSystem:
             return self._error(
                 f"observations must be an iterable of Observation, got {type(observations).__name__}",
                 kind=VFSErrorKind.invalid,
-                function=op,
+                op=op,
             )
         for obs in rows:
             if not isinstance(obs, Observation):
                 return self._error(
                     f"observations must be Observation instances, got {type(obs).__name__}",
                     kind=VFSErrorKind.invalid,
-                    function=op,
+                    op=op,
                 )
             resolved = resolve_path(obs.path, mutation=op in MUTATING_OPS)
             if resolved.path is None:
                 return self._error(
                     resolved.error or f"Invalid path: {obs.path!r}",
                     kind=VFSErrorKind.invalid,
-                    function=op,
+                    op=op,
                 )
             if op == "delete":
                 busy = self._busy_guard(op, resolved.path, subtree=True)
@@ -787,7 +811,7 @@ class VirtualFileSystem:
 
         groups = self._group_observations_by_terminal(rows)
         if not groups:
-            return Result(function=op, observations=[])
+            return Result(ops=(op,))
 
         # All gates run before any dispatch, so a batch touching a bad
         # entry is rejected whole per the facts visible in this table.
@@ -800,7 +824,7 @@ class VirtualFileSystem:
             self._dispatch_entry(binding, op, observations=group, user_id=user_id, **kwargs)
             for binding, group in groups
         )
-        return self._merge_results(results)
+        return Result.merge(results, op=op)
 
     async def _route_single(
         self,
@@ -825,7 +849,7 @@ class VirtualFileSystem:
             return self._error(
                 "Exactly one of path or observations must be provided",
                 kind=VFSErrorKind.invalid,
-                function=op,
+                op=op,
             )
 
         if observations is not None:
@@ -834,7 +858,7 @@ class VirtualFileSystem:
         assert path is not None
         resolved = resolve_path(path, mutation=op in MUTATING_OPS)
         if resolved.path is None:
-            return self._error(resolved.error or f"Invalid path: {path!r}", kind=VFSErrorKind.invalid, function=op)
+            return self._error(resolved.error or f"Invalid path: {path!r}", kind=VFSErrorKind.invalid, op=op)
         full = resolved.path
 
         if op == "delete":
@@ -865,8 +889,11 @@ class VirtualFileSystem:
         are stored rows; rows under deeper binds are shadow-filtered).  Each
         binding at segment distance ``s`` beneath the target then answers
         ``tree("/", max_depth - s)`` — skipped when the remaining budget is
-        ``<= 0`` (its stored directory row stays) and skipped silently when
-        incapable, as in an unscoped fan-out.
+        ``<= 0`` (its stored directory row stays) and skipped with an
+        info-severity coverage record when incapable, as in an unscoped
+        fan-out.  Descents merge under the zero-progress rule: a dead
+        descent among live rows demotes to a warning; the named target
+        itself failing stays a loud failure.
         """
         budget_err = self._enter_hop(op="tree")
         if isinstance(budget_err, Result):
@@ -880,6 +907,7 @@ class VirtualFileSystem:
                 return own
 
             descents: list[tuple[Binding, int | None]] = []
+            skips: list[ResultError] = []
             for binding in self._bindings_beneath(full):
                 tail = binding.path if full == ROOT else binding.path[len(full) :]
                 distance = len(tail.strip("/").split("/"))
@@ -887,19 +915,18 @@ class VirtualFileSystem:
                 if budget is not None and budget <= 0:
                     continue
                 if "tree" not in binding.meta.caps:
+                    skips.append(self._skip_entry("tree", binding))
                     continue
                 descents.append((binding, budget))
 
             results: list[Result] = [own]
             results.extend(
                 await self._gather_settled(
-                    self._dispatch_entry(
-                        binding, "tree", path=ROOT, max_depth=budget, columns=columns, user_id=user_id
-                    )
+                    self._dispatch_entry(binding, "tree", path=ROOT, max_depth=budget, columns=columns, user_id=user_id)
                     for binding, budget in descents
                 )
             )
-            return self._merge_results(results)
+            return self._with_skips(Result.merge_branches(results, op="tree"), skips)
         finally:
             self._exit_hop(budget_err)
 
@@ -929,16 +956,16 @@ class VirtualFileSystem:
         if not self._bindings:
             return self._closed_error(op)
         if not operations:
-            return Result(function=op, observations=[])
+            return Result(ops=(op,))
 
         groups: dict[Path, tuple[Binding, list[ResolvedPair]]] = {}
         for pair in operations:
             src = resolve_path(pair.src, mutation=op == "move")
             if src.path is None:
-                return self._error(src.error or f"Invalid path: {pair.src!r}", kind=VFSErrorKind.invalid, function=op)
+                return self._error(src.error or f"Invalid path: {pair.src!r}", kind=VFSErrorKind.invalid, op=op)
             dest = resolve_path(pair.dest, mutation=True)
             if dest.path is None:
-                return self._error(dest.error or f"Invalid path: {pair.dest!r}", kind=VFSErrorKind.invalid, function=op)
+                return self._error(dest.error or f"Invalid path: {pair.dest!r}", kind=VFSErrorKind.invalid, op=op)
             src_full, dest_full = src.path, dest.path
 
             if op == "move":
@@ -955,7 +982,7 @@ class VirtualFileSystem:
                 return self._error(
                     f"Cross-mount {op} is not supported: {src_full} and {dest_full} resolve to different mounts",
                     kind=VFSErrorKind.cross_mount,
-                    function=op,
+                    op=op,
                 )
             write_rels = (src_terminal.rel, dest_terminal.rel) if op == "move" else (dest_terminal.rel,)
             err = self._gate_entry(src_terminal.binding, op, write_rels=write_rels)
@@ -969,7 +996,7 @@ class VirtualFileSystem:
             self._dispatch_entry(binding, op, operations=group, user_id=user_id, **kwargs)
             for binding, group in groups.values()
         )
-        return self._merge_results(results)
+        return Result.merge(results, op=op)
 
     async def _route_fanout(
         self,
@@ -977,6 +1004,7 @@ class VirtualFileSystem:
         *,
         paths: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
+        row_cap: int | None = None,
         user_id: str | None = None,
         **kwargs: object,
     ) -> Result:
@@ -987,9 +1015,22 @@ class VirtualFileSystem:
         ``unsupported``, like the single shape.  A scope with bindings
         beneath it names a *region*, not an entry: it expands to the owning
         entry scoped to it plus every binding strictly beneath it dispatched
-        unscoped, under the unscoped capability rule (silent skip — one
-        incapable catalog must not fail a region query).  With neither:
-        every entry in table order, silently skipping the incapable.
+        unscoped, under the unscoped capability rule.  With neither: every
+        entry in table order.  An unscoped entry that cannot answer is
+        skipped with an info-severity coverage record — one incapable
+        catalog must not fail a region query, but the gap goes on record.
+
+        Unscoped branches merge under the zero-progress rule
+        (``merge_branches``): a dead entry among answering ones demotes to
+        a warning; all dead stays a failure.  Entries the caller named
+        merge plain — scoped dispatch never demotes, so a named entry
+        fails loudly whatever its siblings produced.  That pin survives
+        subsumption: when a sibling region also covers a named entry, the
+        entry dispatches once (unscoped) but its result still merges
+        plain.  *row_cap* re-applies the caller's result bound after the
+        merge on every input shape — ``glean`` trims by score, everything
+        else keeps merge order — so it cannot multiply by entry count;
+        a non-positive bound is ``invalid``.
 
         *paths* and *observations* are mutually exclusive — supplying both
         is a caller error returned as ``invalid`` rather than silently
@@ -1001,10 +1042,17 @@ class VirtualFileSystem:
             return self._error(
                 f"{op} takes paths or observations, not both",
                 kind=VFSErrorKind.invalid,
-                function=op,
+                op=op,
+            )
+        if row_cap is not None and row_cap < 1:
+            return self._error(
+                f"{op} result bound must be >= 1, got {row_cap}",
+                kind=VFSErrorKind.invalid,
+                op=op,
             )
         if observations is not None:
-            return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
+            merged = await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
+            return self._cap_rows(merged, op, row_cap)
 
         budget_err = self._enter_hop(op=op)
         if isinstance(budget_err, Result):
@@ -1012,6 +1060,7 @@ class VirtualFileSystem:
         try:
             scoped: dict[Path, tuple[Binding, list[Path]]] = {}
             unscoped: dict[Path, Binding] = {}
+            skipped: dict[Path, ResultError] = {}
 
             if paths:
                 for raw in paths:
@@ -1020,23 +1069,26 @@ class VirtualFileSystem:
                         return self._error(
                             resolved.error or f"Invalid path: {raw!r}",
                             kind=VFSErrorKind.invalid,
-                            function=op,
+                            op=op,
                         )
                     full = resolved.path
                     terminal = self._resolve_terminal(full)
                     beneath = self._bindings_beneath(full)
                     if full == ROOT or beneath:
                         # A region: the owner answers its scope, deeper binds
-                        # answer whole — both under the silent-skip rule.
-                        if op in terminal.binding.meta.caps:
-                            if terminal.rel == ROOT:
-                                unscoped.setdefault(terminal.binding.path, terminal.binding)
-                            else:
-                                _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
-                                rels.append(terminal.rel)
+                        # answer whole — both under the recorded-skip rule.
+                        if op not in terminal.binding.meta.caps:
+                            skipped.setdefault(terminal.binding.path, self._skip_entry(op, terminal.binding))
+                        elif terminal.rel == ROOT:
+                            unscoped.setdefault(terminal.binding.path, terminal.binding)
+                        else:
+                            _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
+                            rels.append(terminal.rel)
                         for binding in beneath:
                             if op in binding.meta.caps:
                                 unscoped.setdefault(binding.path, binding)
+                            else:
+                                skipped.setdefault(binding.path, self._skip_entry(op, binding))
                         continue
                     err = self._gate_entry(terminal.binding, op, write_rels=(terminal.rel,))
                     if err is not None:
@@ -1047,23 +1099,50 @@ class VirtualFileSystem:
                 for binding in self._bindings.values():
                     if op in binding.meta.caps:
                         unscoped[binding.path] = binding
+                    else:
+                        skipped.setdefault(binding.path, self._skip_entry(op, binding))
 
             # An unscoped dispatch already covers its whole entry, so a
             # narrower scope into the same entry is subsumed.
-            coros = [
+            named_coros = [
                 self._dispatch_entry(binding, op, paths=tuple(rels), user_id=user_id, **kwargs)
                 for key, (binding, rels) in scoped.items()
                 if key not in unscoped
             ]
-            coros.extend(
-                self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs) for binding in unscoped.values()
-            )
-            if not coros:
-                return Result(function=op, observations=[])
-            results = await self._gather_settled(coros)
-            return self._merge_results(results)
+            branch_bindings = list(unscoped.values())
+            branch_coros = [
+                self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs) for binding in branch_bindings
+            ]
+            skips = list(skipped.values())
+            if not named_coros and not branch_coros:
+                return self._with_skips(Result(ops=(op,)), skips)
+            results = await self._gather_settled([*named_coros, *branch_coros])
+            named = results[: len(named_coros)]
+            # A subsumed named entry answered as a branch, but the caller
+            # named it — its result is pinned out of the demotion pool.
+            branch_results = list(zip(branch_bindings, results[len(named_coros) :], strict=True))
+            pinned = [r for b, r in branch_results if b.path in scoped]
+            demotable = [r for b, r in branch_results if b.path not in scoped]
+            branches = Result.merge_branches(demotable, op=op)
+            merged = Result.merge([*named, *pinned, branches], op=op)
+            return self._with_skips(self._cap_rows(merged, op, row_cap), skips)
         finally:
             self._exit_hop(budget_err)
+
+    @staticmethod
+    def _cap_rows(result: Result, op: Op, row_cap: int | None) -> Result:
+        """Re-apply the caller's result bound after a merge.
+
+        ``glean`` trims by score — the only ranked verb; cross-entry
+        scores are only loosely comparable.  Everything else keeps merge
+        order (named scopes first, then mount-table order), untouched by
+        stray scores.  Errors and warnings are never trimmed.
+        """
+        if row_cap is None or len(result.observations) <= row_cap:
+            return result
+        if op == "glean":
+            return result.top(row_cap)
+        return result.model_copy(update={"observations": list(result.observations[:row_cap])})
 
     async def _route_entry_batch(
         self,
@@ -1087,10 +1166,10 @@ class VirtualFileSystem:
             return self._error(
                 f"write entries must be an iterable of Entry, got {type(entries).__name__}",
                 kind=VFSErrorKind.invalid,
-                function="write",
+                op="write",
             )
         if not rows:
-            return Result(function="write", observations=[])
+            return Result(ops=("write",))
 
         groups: dict[Path, tuple[Binding, list[Entry]]] = {}
         for entry in rows:
@@ -1098,14 +1177,14 @@ class VirtualFileSystem:
                 return self._error(
                     f"write entries must be Entry instances, got {type(entry).__name__}",
                     kind=VFSErrorKind.invalid,
-                    function="write",
+                    op="write",
                 )
             resolved = resolve_path(entry.path, mutation=True)
             if resolved.path is None:
                 return self._error(
                     resolved.error or f"Invalid path: {entry.path!r}",
                     kind=VFSErrorKind.invalid,
-                    function="write",
+                    op="write",
                 )
             terminal = self._resolve_terminal(resolved.path)
             err = self._gate_entry(terminal.binding, "write", write_rels=(terminal.rel,))
@@ -1125,7 +1204,7 @@ class VirtualFileSystem:
             )
             for binding, group in groups.values()
         )
-        return self._merge_results(results)
+        return Result.merge(results, op="write")
 
     # -------------------------------------------------------------------
     # hop budget — loops survived, not detected
@@ -1148,7 +1227,7 @@ class VirtualFileSystem:
             return self._error(
                 f"Hop budget exhausted while routing {op!r} — a mount loop, or a composition deeper than the budget",
                 kind=VFSErrorKind.budget_exhausted,
-                function=op,
+                op=op,
             )
         return _hop_budget.set(budget - 1)
 
@@ -1190,22 +1269,29 @@ class VirtualFileSystem:
             raise ExceptionGroup("impl errors during dispatch", bugs)
         return [item for item in settled if isinstance(item, Result)]
 
-    @staticmethod
-    def _merge_results(results: list[Result]) -> Result:
-        """Merge multiple results — any failure makes the whole a failure.
+    def _skip_entry(self, op: Op, binding: Binding) -> ResultError:
+        """Info-severity coverage record for an entry an unscoped fan-out
+        or tree descent skipped as incapable — recorded, never a failure.
 
-        ``|`` propagates ``success=False`` and concatenates ``errors`` while
-        preserving all successful observations.  Its path-union collapses
-        duplicate global paths (left wins); this is lossless here because
-        shadow filtering already dropped every row a deeper binding owns, so
-        entries never answer for the same path.
+        Minted in router coordinates above the rebase seam, so the bind
+        path is stamped as both anchor (``path``) and provenance
+        (``source``) here.
         """
-        if not results:
-            return Result(observations=[])
-        merged = results[0]
-        for r in results[1:]:
-            merged = merged | r
-        return merged
+        return ResultError(
+            kind=VFSErrorKind.unsupported,
+            message=f"Skipped {binding.path}: operation {op!r} is not supported for its storage",
+            severity=Severity.info,
+            path=binding.path,
+            source=binding.path,
+        )
+
+    @staticmethod
+    def _with_skips(result: Result, skips: list[ResultError]) -> Result:
+        """Append capability-skip records after the merge — coverage facts
+        must never feed the zero-progress rule's branch arithmetic."""
+        if not skips:
+            return result
+        return result.model_copy(update={"errors": [*result.errors, *skips]})
 
     # -------------------------------------------------------------------
     # errors
@@ -1216,22 +1302,23 @@ class VirtualFileSystem:
         message: str,
         *,
         kind: VFSErrorKind,
-        function: str = "",
+        op: str,
+        severity: Severity = Severity.error,
         path: Path | None = None,
         data: dict[str, Any] | None = None,
     ) -> Result:
         """Compose a failed ``Result``.  The router never raises — values in,
         ``Result`` out; raising is the call boundary's job (``raise_if_failed``).
 
-        Pass the prose *message* and the structured *kind* (required), the op
-        as *function* so a failure reports which verb produced it, plus an
-        optional *path* and machine-readable *data*.  Callers that already
-        hold a shaped ``Result`` should return it directly.
+        Pass the prose *message*, the structured *kind*, and the producing
+        *op* — all required; the router always knows its verb and a failure
+        always reports it.  The verdict is derived from the entries, never
+        stored.  Callers that already hold a shaped ``Result`` should
+        return it directly.
         """
         return Result(
-            function=function,
-            success=False,
-            errors=[ResultError(kind=kind, message=message, path=path, data=data)],
+            ops=(op,),
+            errors=[ResultError(kind=kind, message=message, severity=severity, path=path, data=data)],
         )
 
     # -------------------------------------------------------------------
@@ -1293,11 +1380,18 @@ class VirtualFileSystem:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        """Match *pattern* against the namespace — unscoped calls reach every entry."""
+        """Match *pattern* against the namespace — unscoped calls reach every entry.
+
+        *max_count* (>= 1) bounds each entry's answer **and** the merged
+        result: a fan-out over N entries still returns at most
+        *max_count* rows, kept in merge order — entries named via *paths*
+        first, then mount-table order.
+        """
         return await self._route_fanout(
             "glob",
             paths=paths,
             observations=observations,
+            row_cap=max_count,
             pattern=pattern,
             ext=ext,
             max_count=max_count,
@@ -1326,7 +1420,11 @@ class VirtualFileSystem:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        """Search content for *pattern* — unscoped calls reach every entry."""
+        """Search content for *pattern* — unscoped calls reach every entry.
+
+        *max_count* caps matches **per file** (ripgrep's ``-m``), not the
+        row count — a fan-out returns one row per matching file regardless.
+        """
         return await self._route_fanout(
             "grep",
             paths=paths,
@@ -1363,12 +1461,16 @@ class VirtualFileSystem:
         The caller never picks a retrieval strategy — backends index by
         vector, lexical, and graph signals and fuse the rankings however
         they see fit.  The router passes *query* and *limit* through
-        opaquely; results report ``function="glean"``.
+        opaquely.  *limit* bounds each entry's answer **and** the merged
+        result, trimmed by score — with the caveat that cross-entry
+        scores are only loosely comparable (each entry ranks by its own
+        scorer).
         """
         return await self._route_fanout(
             "glean",
             paths=paths,
             observations=observations,
+            row_cap=limit,
             query=query,
             limit=limit,
             columns=columns,
@@ -1389,14 +1491,15 @@ class VirtualFileSystem:
         A path routes to one entry; observations group by entry and each
         backend runs the algorithm on its own graph, so a walk can never
         follow an edge out of its storage.  *method* is validated against
-        the traversal vocabulary before any dispatch; results report the
-        specific method name in ``function``.
+        the traversal vocabulary before any dispatch; the envelope reports
+        the one ``graph`` op — traversal is the whole verb, and analytics
+        are index-time data, not queries.
         """
         if method not in TRAVERSAL_FUNCTIONS:
             return self._error(
                 f"Unknown graph method {method!r}; expected one of {sorted(TRAVERSAL_FUNCTIONS)}",
                 kind=VFSErrorKind.invalid,
-                function="graph",
+                op="graph",
             )
         return await self._route_single("graph", path, observations, method=method, depth=depth, user_id=user_id)
 
@@ -1429,7 +1532,7 @@ class VirtualFileSystem:
                 return self._error(
                     "write takes entries or path/content, not both",
                     kind=VFSErrorKind.invalid,
-                    function="write",
+                    op="write",
                 )
             return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, user_id=user_id)
         return await self._route_single(
@@ -1466,14 +1569,14 @@ class VirtualFileSystem:
                 return self._error(
                     "edit takes old/new or an edits list, not both",
                     kind=VFSErrorKind.invalid,
-                    function="edit",
+                    op="edit",
                 )
             ops = self._as_list(edits)
             if ops is None or not all(isinstance(e, EditOperation) for e in ops):
                 return self._error(
                     "edit edits must be an iterable of EditOperation",
                     kind=VFSErrorKind.invalid,
-                    function="edit",
+                    op="edit",
                 )
             edits = ops
         else:
@@ -1481,7 +1584,7 @@ class VirtualFileSystem:
                 return self._error(
                     "edit requires old and new strings, or an edits list",
                     kind=VFSErrorKind.invalid,
-                    function="edit",
+                    op="edit",
                 )
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
         return await self._route_single("edit", path, observations, edits=edits, user_id=user_id)
@@ -1549,14 +1652,14 @@ class VirtualFileSystem:
             return self._error(
                 f"edge_type must be a string, got {type(edge_type).__name__}",
                 kind=VFSErrorKind.invalid,
-                function="mkedge",
+                op="mkedge",
             )
         src = resolve_path(source)
         if src.path is None:
-            return self._error(src.error or f"Invalid path: {source!r}", kind=VFSErrorKind.invalid, function="mkedge")
+            return self._error(src.error or f"Invalid path: {source!r}", kind=VFSErrorKind.invalid, op="mkedge")
         tgt = resolve_path(target)
         if tgt.path is None:
-            return self._error(tgt.error or f"Invalid path: {target!r}", kind=VFSErrorKind.invalid, function="mkedge")
+            return self._error(tgt.error or f"Invalid path: {target!r}", kind=VFSErrorKind.invalid, op="mkedge")
 
         src_terminal = self._resolve_terminal(src.path)
         tgt_terminal = self._resolve_terminal(tgt.path)
@@ -1564,7 +1667,7 @@ class VirtualFileSystem:
             return self._error(
                 f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different mounts",
                 kind=VFSErrorKind.cross_mount,
-                function="mkedge",
+                op="mkedge",
             )
         binding = src_terminal.binding
         err = self._gate_entry(binding, "mkedge")
@@ -1574,7 +1677,7 @@ class VirtualFileSystem:
         try:
             edge_path = edge_out_path(src_terminal.rel, tgt_terminal.rel, edge_type)
         except ValueError as exc:
-            return self._error(str(exc), kind=VFSErrorKind.invalid, function="mkedge")
+            return self._error(str(exc), kind=VFSErrorKind.invalid, op="mkedge")
         full_edge = edge_path.with_mount(binding.path)
         denied = check_writable_composed(self._permission_layers(full_edge), "mkedge")
         if denied is not None:
@@ -1648,21 +1751,21 @@ class VirtualFileSystem:
                 return self._error(
                     f"{op} takes src/dest or a batch list, not both",
                     kind=VFSErrorKind.invalid,
-                    function=op,
+                    op=op,
                 )
             pairs = self._as_list(batch)
             if pairs is None:
                 return self._error(
                     f"{op} batch must be an iterable of (src, dest) pairs, got {type(batch).__name__}",
                     kind=VFSErrorKind.invalid,
-                    function=op,
+                    op=op,
                 )
         else:
             if not src or not dest:
                 return self._error(
                     f"{op} requires src and dest, or a batch list",
                     kind=VFSErrorKind.invalid,
-                    function=op,
+                    op=op,
                 )
             pairs = [TwoPathOperation(src=src, dest=dest)]
         operations: list[TwoPathOperation] = []
@@ -1672,7 +1775,7 @@ class VirtualFileSystem:
                 return self._error(
                     f"{op} pair must be (src, dest) of two strings: {item!r}",
                     kind=VFSErrorKind.invalid,
-                    function=op,
+                    op=op,
                 )
             operations.append(pair)
         return await self._route_two_path(op, operations, overwrite=overwrite, user_id=user_id)

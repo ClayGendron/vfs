@@ -29,7 +29,7 @@ from vfs.ops import ALL_OPS, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.permissions import read_write
 from vfs.replace import EditOperation
-from vfs.results2 import Result, ResultError, VFSErrorKind
+from vfs.results2 import Result, ResultError, RetryClass, Severity, VFSErrorKind
 from vfs.storage import ResolvedPair
 
 # ----------------------------------------------------------------------
@@ -323,7 +323,9 @@ async def test_fanout_reaches_every_mount_in_table_order(op: str) -> None:
 
 
 @pytest.mark.parametrize("op", ["glob", "grep", "glean"])
-async def test_fanout_skips_incapable_terminal_silently(op: str) -> None:
+async def test_fanout_skips_incapable_terminal_with_info_record(op: str) -> None:
+    # The incapable entry is never dispatched, and the gap goes on record
+    # as an info-severity coverage entry — never a failure.
     root = VirtualFileSystem()
     a = EchoStorage()
     b = EchoStorage(caps=frozenset({"read"}))
@@ -331,9 +333,13 @@ async def test_fanout_skips_incapable_terminal_silently(op: str) -> None:
     await root.add_mount(b, "/b")
     result = await _fan(root, op)
     assert result.success is True
-    assert result.errors == []
     assert result.paths == ("/a/hit.md",)
     assert b.calls == []
+    # glean also skips the root entry (memory declares no glean) — every
+    # skip is an info-severity unsupported record anchored at its bind path.
+    assert all(e.kind is VFSErrorKind.unsupported and e.severity is Severity.info for e in result.errors)
+    skip = next(e for e in result.errors if e.path == "/b")
+    assert skip.source == "/b"
 
 
 @pytest.mark.parametrize("op", ["glob", "grep", "glean"])
@@ -370,27 +376,164 @@ async def test_fanout_includes_self_storage_before_mounts() -> None:
 
 
 async def test_fanout_with_no_capable_terminals_is_empty_success() -> None:
-    # The default backend never declares glean, and there are no mounts.
+    # The default backend never declares glean, and there are no mounts:
+    # empty success, with the skipped entry on record as info.
     result = await VirtualFileSystem().glean("anything")
     assert result.success is True
     assert len(result) == 0
-    assert result.function == "glean"
+    assert result.op == "glean"
+    [skip] = result.errors
+    assert skip.severity is Severity.info
+    assert skip.kind is VFSErrorKind.unsupported
 
 
 async def test_fanout_rebase_overflow_classifies_instead_of_raising() -> None:
     # A child row valid in local coordinates but over 1024 once rebased is
-    # refused as an `invalid` error; the sibling row in the same result survives.
+    # loss on record: an `unaddressable` warning with the entry-local path
+    # preserved; the sibling row survives and the envelope stays successful.
     root = VirtualFileSystem()
     mount = "/" + "m" * 30
     await root.add_mount(DeepRowStorage(), mount)
     result = await root.glob("**/*", paths=(mount,))
-    assert result.success is False
+    assert result.success is True
     assert result.paths == (f"{mount}/ok.py",)
     [err] = result.errors
-    assert err.kind is VFSErrorKind.invalid
-    assert err.data == {"mount": mount, "local_path": DeepRowStorage.DEEP}
+    assert err.kind is VFSErrorKind.unaddressable
+    assert err.severity is Severity.warning
+    assert err.source == mount
+    assert err.data == {"vfs.overflow": {"local_path": DeepRowStorage.DEEP}}
     # re-addressability: every surviving path is valid input to the next request
     assert all(len(p) <= MAX_PATH_LENGTH and Path(p) is p for p in result.paths)
+
+
+# ----------------------------------------------------------------------
+# fan-out demotion — the zero-progress rule at the merge seam
+# ----------------------------------------------------------------------
+
+
+async def test_fanout_one_dead_mount_demotes_to_warning() -> None:
+    # One dead mount among live ones is loss on record, not failure: live
+    # rows ship past the boundary bit, and the dead branch's error demotes
+    # to a warning with kind, source, and retry class intact.
+    root = VirtualFileSystem()
+    await root.add_mount(EchoStorage(), "/live")
+    await root.add_mount(TransportFailStorage(), "/dead")
+    result = await root.glob("*.md")
+    assert result.success is True
+    assert result.paths == ("/live/hit.md",)
+    [warning] = [e for e in result.errors if e.severity is Severity.warning]
+    assert warning.kind is VFSErrorKind.backend_unavailable
+    assert warning.source == "/dead"
+    assert warning.retry_class is RetryClass.transient
+
+
+async def test_fanout_all_dead_branches_stay_fatal() -> None:
+    # Zero progress across the region's branches: nothing demotes.
+    root = VirtualFileSystem()
+    await root.add_mount(TransportFailStorage(), "/r/d1", parents=True)
+    await root.add_mount(TransportFailStorage(), "/r/d2", parents=True)
+    result = await root.glob("*.md", paths=("/r",))
+    assert result.success is False
+    assert {e.source for e in result.failures} == {"/r/d1", "/r/d2"}
+
+
+async def test_scoped_dispatch_at_a_dead_mount_never_demotes() -> None:
+    # An entry the caller named fails loudly, whatever its siblings produce.
+    root = VirtualFileSystem()
+    await root.add_mount(EchoStorage(), "/live")
+    await root.add_mount(TransportFailStorage(), "/dead")
+    result = await root.grep("needle", paths=("/dead/src", "/live/src"))
+    assert result.success is False
+    [fatal] = result.failures
+    assert fatal.kind is VFSErrorKind.backend_unavailable
+    assert fatal.source == "/dead"
+
+
+async def test_named_scope_subsumed_by_a_region_still_fails_loudly() -> None:
+    # A sibling region covering a named entry subsumes its dispatch but
+    # must not launder its failure into the demotion pool: the caller
+    # named /dead/src, so the call fails whatever "/" produced.
+    root = VirtualFileSystem()
+    await root.add_mount(EchoStorage(), "/live")
+    await root.add_mount(TransportFailStorage(), "/dead")
+    result = await root.grep("needle", paths=("/", "/dead/src"))
+    assert result.success is False
+    [fatal] = result.failures
+    assert fatal.kind is VFSErrorKind.backend_unavailable
+    assert fatal.source == "/dead"
+
+
+# ----------------------------------------------------------------------
+# fan-out result bounds — the caller's cap survives the merge
+# ----------------------------------------------------------------------
+
+
+async def test_glob_max_count_bounds_the_merged_result() -> None:
+    # Two matching mounts, max_count=1: the bound holds after the merge
+    # instead of multiplying by mount count.
+    root = VirtualFileSystem()
+    await root.add_mount(EchoStorage(), "/a")
+    await root.add_mount(EchoStorage(), "/b")
+    result = await root.glob("*.md", max_count=1)
+    assert result.success is True
+    assert len(result) == 1
+
+
+async def test_observation_shaped_glob_obeys_max_count() -> None:
+    # The observations input shape is a fan-out too — the caller's bound
+    # holds after the grouped merge, not per entry.
+    root = VirtualFileSystem()
+    a, b = EchoStorage(), EchoStorage()
+    await root.add_mount(a, "/a")
+    await root.add_mount(b, "/b")
+    rows = [Observation(path=Path("/a/f.md")), Observation(path=Path("/b/g.md"))]
+    result = await root.glob("*.md", observations=rows, max_count=1)
+    assert result.success is True
+    assert len(result) == 1
+
+
+async def test_non_positive_result_bound_is_invalid() -> None:
+    root = VirtualFileSystem()
+    for result in (await root.glob("*.md", max_count=0), await root.glean("q", limit=-1)):
+        assert result.success is False
+        assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_glob_trim_keeps_merge_order_despite_scores() -> None:
+    # A stray score on a later mount's row must not jump it past earlier
+    # rows at the trim — glob's cap is order-preserving, never ranked.
+    root = VirtualFileSystem()
+    plain = CannedStorage({"glob": Result(ops=("glob",), observations=[Observation(path=Path("/f1"))])})
+    scored = CannedStorage({"glob": Result(ops=("glob",), observations=[Observation(path=Path("/s1"), score=9.9)])})
+    await root.add_mount(plain, "/a")
+    await root.add_mount(scored, "/b")
+    result = await root.glob("*", paths=("/a", "/b"), max_count=1)
+    assert result.paths == ("/a/f1",)
+
+
+async def test_glean_limit_trims_the_merge_by_score() -> None:
+    root = VirtualFileSystem()
+    low = CannedStorage(
+        {
+            "glean": Result(
+                ops=("glean",),
+                observations=[Observation(path=Path("/l1"), score=0.2), Observation(path=Path("/l2"), score=0.1)],
+            )
+        }
+    )
+    high = CannedStorage(
+        {
+            "glean": Result(
+                ops=("glean",),
+                observations=[Observation(path=Path("/h1"), score=0.9), Observation(path=Path("/h2"), score=0.8)],
+            )
+        }
+    )
+    await root.add_mount(low, "/low")
+    await root.add_mount(high, "/high")
+    result = await root.glean("query", limit=2)
+    assert result.success is True
+    assert result.paths == ("/high/h1", "/high/h2")
 
 
 async def test_grep_observations_use_grouped_dispatch() -> None:
@@ -414,8 +557,7 @@ async def test_grouped_read_partial_rows_and_error_both_surface() -> None:
     # Reads classify per-row: a backend may answer some observations AND an
     # error for the same call, and the router merges both through as-is.
     partial = Result(
-        function="stat",
-        success=False,
+        ops=("stat",),
         observations=[Observation(path=Path("/ok.txt"), kind="file")],
         errors=[ResultError(kind=VFSErrorKind.not_found, message="gone", path=Path("/missing.txt"))],
     )
@@ -592,7 +734,7 @@ async def test_transport_error_classifies_backend_unavailable() -> None:
     result = await root.read("/dead/f.txt")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.backend_unavailable
-    assert result.function == "read"
+    assert result.op == "read"
 
 
 async def test_transport_error_message_names_the_failure() -> None:
@@ -630,7 +772,7 @@ async def test_backend_unavailable_keeps_the_binding_bound() -> None:
 async def test_dispatch_reaches_the_backend_method() -> None:
     class PathEchoStorage(RecorderStorage):
         async def read(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
-            return Result(function="read", observations=[Observation(path=Path(str(path)))])
+            return Result(ops=("read",), observations=[Observation(path=Path(str(path)))])
 
     result = await VirtualFileSystem(storage=PathEchoStorage()).read("/f.txt")
     assert result.paths == ("/f.txt",)
@@ -648,7 +790,7 @@ async def test_funnel_backstop_answers_unsupported_when_capability_overclaims() 
     gated = await fs.write(path="/f.txt", content="x")  # passes the gate (caps lie)
     assert gated.success is False
     assert gated.errors[0].kind is VFSErrorKind.unsupported
-    assert gated.function == "write"
+    assert gated.op == "write"
 
 
 @pytest.mark.parametrize("op", sorted(ALL_OPS - {"read", "stat", "ls", "tree"}))
@@ -665,7 +807,7 @@ async def test_every_guarded_funnel_arm_backstops_a_missing_family(op: str) -> N
     result = await fs._call_storage(binding, op)  # ty: ignore[invalid-argument-type]
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.unsupported
-    assert result.function == op
+    assert result.op == op
 
 
 async def test_run_dispatches_through_the_funnel_to_the_backend() -> None:
@@ -738,10 +880,11 @@ async def test_grouped_observations_capability_error_is_rebased() -> None:
     assert child.calls == []
 
 
-async def test_merge_results_of_nothing_is_empty() -> None:
-    merged = VirtualFileSystem._merge_results([])
+async def test_merge_of_nothing_is_empty() -> None:
+    merged = Result.merge([], op="glob")
     assert merged.success is True
     assert len(merged) == 0
+    assert merged.op == "glob"
 
 
 async def test_two_path_empty_batch_is_empty_success() -> None:
@@ -786,7 +929,7 @@ async def test_gated_denial_is_a_result_until_the_boundary() -> None:
     denied = await root.write(path="/c/f.txt", content="x")
     assert denied.success is False
     assert denied.errors[0].kind is VFSErrorKind.read_only
-    assert denied.function == "write"
+    assert denied.op == "write"
     with pytest.raises(WriteConflictError):
         raise_if_failed(denied)
 
@@ -803,17 +946,18 @@ async def test_grouped_observations_reject_non_observation_element() -> None:
 
 
 async def test_merge_preserves_distinct_but_equal_errors_from_different_mounts() -> None:
-    # Two mounts failing identically are two real failures.
-    left = Result(function="grep", errors=[ResultError(kind=VFSErrorKind.unavailable, message="down")])
-    right = Result(function="grep", errors=[ResultError(kind=VFSErrorKind.unavailable, message="down")])
-    merged = left | right
+    # Two mounts failing identically are two real failures: the rebase seam
+    # stamps each with its own source, so value-equality dedup keeps both.
+    fail = Result(ops=("grep",), errors=[ResultError(kind=VFSErrorKind.unavailable, message="down")])
+    merged = fail.with_mount("/a") | fail.with_mount("/b")
     assert len(merged.errors) == 2
+    assert {e.source for e in merged.errors} == {"/a", "/b"}
 
 
 async def test_merge_still_dedups_the_same_error_object_in_a_diamond() -> None:
     err = ResultError(kind=VFSErrorKind.unavailable, message="down")
-    a = Result(function="grep", observations=[Observation(path=Path("/a"))], errors=[err])
-    b = Result(function="grep", errors=[err])
+    a = Result(ops=("grep",), observations=[Observation(path=Path("/a"))], errors=[err])
+    b = Result(ops=("grep",), errors=[err])
     diamond = (a | b) & b  # same err instance flows down both arms
     assert len(diamond.errors) == 1
 
@@ -1005,4 +1149,4 @@ async def test_closed_filesystem_fails_every_verb_as_backend_unavailable(verb: s
     result = await call(fs)
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.backend_unavailable
-    assert result.function == verb
+    assert result.op == verb

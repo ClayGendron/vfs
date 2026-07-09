@@ -17,10 +17,10 @@
 - **Ordering:** must land **before Pass C**. Every decision below is a
   wire-shape decision; after the first independent peer ships, the kind
   strings, field names, and fold rules are permanent.
-- **Evidence:** `repro.py` in this directory reproduces all ten defects
-  against the current envelope (run: `uv run python
-  context/stories/057-result-envelope/repro.py`). `research.md` holds the
-  distilled study corpus.
+- **Evidence:** `repro.py` reproduced all ten defects against the old
+  envelope; retired with Pass B (2026-07-08) — its cases live on in
+  `tests/test_result_laws.py` and the reworked suites. `research.md`
+  holds the distilled study corpus.
 
 ## Intent
 
@@ -153,11 +153,21 @@ this.
    the envelope's rendering vocabulary; one vocabulary gets one name,
    matching `vfs.ops`. Unchanged: the open `str` typing (peers may
    report ops this client predates; `Op` stays a router-seam
-   construction check only) and the inbound `function="x"` shim. A
-   transitional `.function` alias keeps render/projection alive until
-   Pass B rewires them to `.op`. Supersedes `ops.py`'s "graph reports
-   the specific method in `Result.function`" note and retires the
-   graph-method entries in `projection.KNOWN_FUNCTIONS` (Pass B).
+   construction check only). A transitional `.function` alias keeps
+   render/projection alive until Pass B rewires them to `.op`.
+   Supersedes `ops.py`'s "graph reports the specific method in
+   `Result.function`" note and retires the graph-method entries in
+   `projection.KNOWN_FUNCTIONS` (Pass B).
+
+   **Re-amended 2026-07-08 (owner decision, Pass B):** the inbound
+   `function="x"` shim is dropped, not kept — nothing is deployed, so
+   no producer of the legacy key exists and there is nothing to be
+   compatible with. Tombstone discipline (`_KIND_ALIASES`) starts at
+   the first shipped wire value, and `function` never ships. An
+   inbound `success` key is still stripped and re-derived — that is
+   decision 1's rule, not a compatibility shim (`to_payload` emits the
+   key for isError-checking clients, so the inbound seam must strip it
+   or it would ride as an extra field and poison value equality).
 
 9. **The envelope opens: `extra='allow'` + lenient per-item
    `from_payload`.** Unknown fields on `Result` and `ResultError`

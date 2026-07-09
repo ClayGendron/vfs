@@ -19,9 +19,9 @@ from vfs.results2 import Result, ResultError, VFSErrorKind
 from vfs.storage import TransportError, storage_ops
 
 
-def _failed(function: str, kind: VFSErrorKind, message: str, path: Path | None = None) -> Result:
+def _failed(op: str, kind: VFSErrorKind, message: str, path: Path | None = None) -> Result:
     """A backend-composed failure — doubles have no router ``_error`` helper."""
-    return Result(function=function, success=False, errors=[ResultError(kind=kind, message=message, path=path)])
+    return Result(ops=(op,), errors=[ResultError(kind=kind, message=message, path=path)])
 
 
 class RecorderStorage:
@@ -51,7 +51,7 @@ class RecorderStorage:
 
     def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
         self.calls.append((op, kwargs))
-        return Result(function=op, observations=[])
+        return Result(ops=(op,), observations=[])
 
     async def read(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
         return self._answer("read", kwargs)
@@ -112,16 +112,16 @@ class ReadFamilyStorage:
         return storage_ops(self)
 
     async def read(self, **kwargs: Any) -> Result:
-        return Result(function="read", observations=[])
+        return Result(ops=("read",), observations=[])
 
     async def stat(self, **kwargs: Any) -> Result:
-        return Result(function="stat", observations=[])
+        return Result(ops=("stat",), observations=[])
 
     async def ls(self, **kwargs: Any) -> Result:
-        return Result(function="ls", observations=[])
+        return Result(ops=("ls",), observations=[])
 
     async def tree(self, **kwargs: Any) -> Result:
-        return Result(function="tree", observations=[])
+        return Result(ops=("tree",), observations=[])
 
 
 class BindableStorage(RecorderStorage):
@@ -135,11 +135,11 @@ class BindableStorage(RecorderStorage):
     async def stat(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
         self.calls.append(("stat", {"path": path, **kwargs}))
         target = path if path is not None else Path("/")
-        return Result(function="stat", observations=[Observation(path=target, kind="directory")])
+        return Result(ops=("stat",), observations=[Observation(path=target, kind="directory")])
 
     async def ls(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
         self.calls.append(("ls", {"path": path, **kwargs}))
-        return Result(function="ls", observations=[])
+        return Result(ops=("ls",), observations=[])
 
 
 class DictStorage(RecorderStorage):
@@ -158,7 +158,7 @@ class DictStorage(RecorderStorage):
     async def mkdir(self, *, path: Path, user_id: str | None = None, **kwargs: Any) -> Result:
         self.calls.append(("mkdir", {"path": path, **kwargs}))
         if self._entries.get(str(path)) == "directory" and kwargs.get("exist_ok"):
-            return Result(function="mkdir", observations=[Observation(path=path, kind="directory")])
+            return Result(ops=("mkdir",), observations=[Observation(path=path, kind="directory")])
         occupied = path in self._entries
         node = path.parent_dir
         while not occupied and node != "/":
@@ -167,7 +167,7 @@ class DictStorage(RecorderStorage):
         if occupied:
             return _failed("mkdir", VFSErrorKind.exists, "storage contents conflict with that path", path=path)
         self._entries[str(path)] = "directory"
-        return Result(function="mkdir", observations=[Observation(path=path, kind="directory", status="created")])
+        return Result(ops=("mkdir",), observations=[Observation(path=path, kind="directory", status="created")])
 
     async def ls(
         self,
@@ -184,7 +184,7 @@ class DictStorage(RecorderStorage):
             for p, kind in self._entries.items()
             if p.startswith(prefix) and "/" not in p[len(prefix) :]
         ]
-        return Result(function="ls", observations=rows)
+        return Result(ops=("ls",), observations=rows)
 
     async def stat(
         self,
@@ -198,7 +198,7 @@ class DictStorage(RecorderStorage):
         rows = [Observation(path=Path(p), kind=self._entries[p]) for p in wanted if p in self._entries]
         if path is not None and not rows:
             return _failed("stat", VFSErrorKind.not_found, f"Not found: {path}", path=Path(path))
-        return Result(function="stat", observations=rows)
+        return Result(ops=("stat",), observations=rows)
 
 
 class DictStorageFS(VirtualFileSystem):
@@ -289,11 +289,11 @@ class RunnerStorage(RecorderStorage):
     async def read(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
         self.calls.append(("read", {"path": path, **kwargs}))
         target = path if path is not None else Path("/")
-        return Result(function="read", observations=[Observation(path=target, kind="tool")])
+        return Result(ops=("read",), observations=[Observation(path=target, kind="tool")])
 
     async def run(self, *, path: Path, arguments: dict[str, Any] | None = None, user_id: str | None = None) -> Result:
         self.calls.append(("run", {"path": path, "arguments": arguments}))
-        return Result(function="run", observations=[Observation(path=path, kind="tool")])
+        return Result(ops=("run",), observations=[Observation(path=path, kind="tool")])
 
 
 class EchoStorage(RecorderStorage):
@@ -305,7 +305,7 @@ class EchoStorage(RecorderStorage):
 
     def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
         self.calls.append((op, kwargs))
-        return Result(function=op, observations=[Observation(path=Path(self._echo_path))])
+        return Result(ops=(op,), observations=[Observation(path=Path(self._echo_path))])
 
 
 class ScopeSpyStorage(EchoStorage):
@@ -385,7 +385,7 @@ class DeepRowStorage(RecorderStorage):
     def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
         self.calls.append((op, kwargs))
         rows = [Observation(path=Path(self.DEEP)), Observation(path=Path("/ok.py"))]
-        return Result(function=op, observations=rows)
+        return Result(ops=(op,), observations=rows)
 
 
 class SlowWriteStorage(RecorderStorage):
@@ -401,7 +401,7 @@ class SlowWriteStorage(RecorderStorage):
         for entry in entries or []:
             self.write_log.append(entry.path)
             rows.append(Observation(path=entry.path, kind="file", status="created"))
-        return Result(function="write", observations=rows)
+        return Result(ops=("write",), observations=rows)
 
 
 class SlowWriteFS(VirtualFileSystem):
@@ -451,7 +451,7 @@ class CannedStorage(RecorderStorage):
 
     def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
         self.calls.append((op, kwargs))
-        return self.answers.get(op, Result(function=op, observations=[]))
+        return self.answers.get(op, Result(ops=(op,), observations=[]))
 
 
 class CannedFS(RecorderFS):

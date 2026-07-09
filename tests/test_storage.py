@@ -30,7 +30,7 @@ from vfs.storage import (
 
 
 def _ok(op: str) -> Result:
-    return Result(function=op, observations=[])
+    return Result(ops=(op,), observations=[])
 
 
 class ReadOnly:

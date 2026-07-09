@@ -1,10 +1,12 @@
 """Text rendering for Result — the human/agent-facing string surface.
 
-One entry point, :func:`render_result`, dispatches on the result's
-``function`` into a per-arrangement renderer: ripgrep-style lines for grep,
-an ASCII tree, verbatim content for read, Markdown tables for everything
-tabular, one-liners for actions, and a dedicated write formatter. Rendering
-is pure — it reads what is on the envelope and never performs I/O.
+One entry point, :func:`render_result`, dispatches on the result's ``op``
+into a per-arrangement renderer: ripgrep-style lines for grep, an ASCII
+tree, verbatim content for read, Markdown tables for everything tabular,
+one-liners for actions, and a dedicated write formatter. Errors render one
+agent-facing line each — severity, locus, cause, contract hint, retry
+directive — grouped errors, then warnings, then info. Rendering is pure —
+it reads what is on the envelope and never performs I/O.
 
 Text is rendered once, at the final human/agent boundary (CLI output or a
 top-level MCP tool). Inter-mount hops travel as structured payloads only.
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from vfs.kinds import KIND_CONTRACTS, Severity, kind_family
 from vfs.models2 import Match
 from vfs.projection import ACTION_FUNCTIONS, OBSERVATION_FIELDS, resolve_projection, validate_projection
 
@@ -30,14 +33,14 @@ if TYPE_CHECKING:
 def render_result(result: Result, *, projection: tuple[str, ...] | list[str] | None = None) -> str:
     """Render *result* to text. *projection* selects Observation columns to show.
 
-    - ``None`` → function's default projection.
+    - ``None`` → the op's default projection.
     - Tuple/list of field names, possibly with ``default`` / ``all`` sentinels.
     - ``write`` results use a dedicated ``write errors:`` / ``write success:``
       formatter regardless of projection.
-    - For other functions, ``success=False`` with no observations
-      short-circuits to ``"ERROR: ..."``.
-    - If the result has errors but ``success=True``, the error block is
-      appended after the body.
+    - For other ops, a failed result with no observations short-circuits
+      to the error block alone.
+    - Any remaining errors (warnings, info, partial failures) append as an
+      error block after the body.
 
     A bad projection raises on every path — including write and error
     results that ignore it for the body — so a typo fails the same way
@@ -45,13 +48,13 @@ def render_result(result: Result, *, projection: tuple[str, ...] | list[str] | N
     """
     proj = validate_projection(projection)
 
-    if result.function == "write":
+    if result.op == "write":
         return _render_write(result)
 
     if not result.success and not result.observations:
         return _render_errors(result.errors)
 
-    resolved = resolve_projection(proj, result.function, result.observations)
+    resolved = resolve_projection(proj, result.op, result.observations)
     body = _render_body(result, resolved)
     note = _render_unpopulated_projection_note(result, proj)
 
@@ -63,13 +66,45 @@ def render_result(result: Result, *, projection: tuple[str, ...] | list[str] | N
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+# Fatal first (unknown severity reads as error), then warnings, then info.
+_SEVERITY_ORDER: dict[str, int] = {Severity.warning: 1, Severity.info: 2}
+
 
 def _render_errors(errors: list[ResultError]) -> str:
-    """Prose error block — messages only; the kind stays structured-side."""
+    """One line per entry, grouped errors → warnings → info."""
     if not errors:
         return ""
-    prefix = "ERROR" if len(errors) == 1 else "ERRORS"
-    return f"{prefix}: " + "; ".join(e.message for e in errors)
+    ordered = sorted(errors, key=lambda e: _SEVERITY_ORDER.get(e.severity, 0))
+    return "\n".join(_error_line(e) for e in ordered)
+
+
+def _error_line(error: ResultError) -> str:
+    """``SEVERITY locus: message — hint (retry: class)`` on one line.
+
+    The locus is the implicated ``path``, else ``mount <source>``. Hint and
+    retry directive come from the contract table via ``kind_family``; an
+    unknown kind renders bare — no hint is better than a wrong one. A
+    rollup entry appends its count. One-line-ness is enforced, not
+    assumed: peer-controlled fields (message, unknown severities, rollup
+    junk) have their newlines collapsed so an entry can never forge a
+    sibling error line.
+    """
+    severity = str(error.severity).upper()
+    if error.path is not None:
+        locus = f" {error.path}"
+    elif error.source is not None:
+        locus = f" mount {error.source}"
+    else:
+        locus = ""
+    line = f"{severity}{locus}: {error.message}"
+    family = kind_family(error.kind)
+    if family is not None:
+        contract = KIND_CONTRACTS[family]
+        line += f" — {contract.hint} (retry: {contract.retry_class})"
+    rollup = (error.data or {}).get("vfs.rollup")
+    if isinstance(rollup, dict) and "count" in rollup:
+        line += f" [+{rollup['count']} more rolled up]"
+    return " ".join(line.splitlines())
 
 
 # Functions whose body ignores per-field projection columns — a
@@ -90,7 +125,7 @@ def _render_unpopulated_projection_note(result: Result, projection: tuple[str, .
     observations = result.observations
     if projection is None or not observations:
         return ""
-    if result.function in _PROJECTION_FREE_FUNCTIONS:
+    if result.op in _PROJECTION_FREE_FUNCTIONS:
         return ""
 
     missing: list[str] = []
@@ -99,7 +134,7 @@ def _render_unpopulated_projection_note(result: Result, projection: tuple[str, .
         if name not in OBSERVATION_FIELDS or name in seen:
             continue
         seen.add(name)
-        if _field_unpopulated(result.function, name, observations):
+        if _field_unpopulated(result.op, name, observations):
             missing.append(name)
     if not missing:
         return ""
@@ -108,7 +143,7 @@ def _render_unpopulated_projection_note(result: Result, projection: tuple[str, .
     return f"NOTE: {fields} not populated for any observations."
 
 
-def _field_unpopulated(function: str, field: str, observations: list[Observation]) -> bool:
+def _field_unpopulated(function: str | None, field: str, observations: list[Observation]) -> bool:
     """Whether *field* has no rendered data on any row, accounting for its source.
 
     ``grep`` renders ``path`` / ``matches`` / ``content`` from the per-line
@@ -125,12 +160,13 @@ def _field_unpopulated(function: str, field: str, observations: list[Observation
 
 
 def _render_body(result: Result, projection: tuple[str, ...]) -> str:
-    """Dispatch to the function-specific arrangement helper.
+    """Dispatch to the op-specific arrangement helper.
 
-    Unknown functions fall through to the path-list/table renderer — the
-    forward-compatible fallback for a function name this client predates.
+    Unknown ops — and ``None``, a cross-op merge — fall through to the
+    path-list/table renderer: the forward-compatible fallback for an op
+    name this client predates.
     """
-    fn = result.function
+    fn = result.op
     if fn == "grep":
         return _render_grep(result, projection)
     if fn == "tree":
@@ -397,7 +433,7 @@ def _render_tree(result: Result) -> str:
 def _render_action(result: Result) -> str:
     """Action one-liner — ``{Verb} {path}`` or ``{Verb} {N} paths``."""
     count = len(result.observations)
-    verb = _verb_for(result.function)
+    verb = _verb_for(result.op)
     if count == 0:
         return "No changes"
     if count == 1:
@@ -407,7 +443,7 @@ def _render_action(result: Result) -> str:
 
 # Kinds counted in the write-success summary. Versions are deliberately omitted
 # (they are bookkeeping rows the agent does not need to know about).
-_WRITE_SUMMARY_KINDS: tuple[str, ...] = ("file", "chunk", "edge")
+_WRITE_SUMMARY_KINDS: tuple[str, ...] = ("file", "directory", "chunk", "edge")
 
 # File write statuses, in breakdown order. A missing status reads as created.
 _FILE_STATUSES: tuple[str, ...] = ("created", "updated", "unchanged")
@@ -417,9 +453,10 @@ def _render_write(result: Result) -> str:
     """Render a ``write`` result.
 
     Up to two blocks, errors first when present. Empty results render
-    ``write: nothing to do``. The summary line counts files/chunks/edges
-    only; version rows are excluded. Single-file batches append a
-    ``  <status> <path>`` line below the summary.
+    ``write: nothing to do``. The summary line counts
+    files/directories/chunks/edges; version rows are excluded.
+    Single-file batches append a ``  <status> <path>`` line below the
+    summary.
     """
     error_block = _render_write_errors(result.errors)
     success_block = _render_write_success(result.observations)
@@ -434,17 +471,19 @@ def _render_write(result: Result) -> str:
 def _render_write_errors(errors: list[ResultError]) -> str:
     if not errors:
         return ""
-    lines = ["write errors:", *(f"  {err.message}" for err in errors)]
+    ordered = sorted(errors, key=lambda e: _SEVERITY_ORDER.get(e.severity, 0))
+    lines = ["write errors:", *(f"  {_error_line(err)}" for err in ordered)]
     return "\n".join(lines)
 
 
 def _render_write_success(observations: list[Observation]) -> str:
-    """Summarize a write: a reconciling file breakdown plus chunk/edge counts.
+    """Summarize a write: a reconciling file breakdown plus other-kind counts.
 
     File rows are reported by status — created / updated / unchanged — and the
     buckets always sum to the file count (a missing status reads as created).
-    Chunks and edges are bare counts; version rows are excluded. A single-file
-    write appends a ``  <status> <path>`` detail line.
+    Directories, chunks, and edges are bare counts — a directory-only batch
+    is a real write, never ``nothing to do``; version rows are excluded. A
+    single-file write appends a ``  <status> <path>`` detail line.
     """
     files = [o for o in observations if o.kind == "file"]
     other: dict[str, int] = {}
@@ -485,11 +524,13 @@ def _file_summary(files: list[Observation]) -> str:
 
 
 def _pluralize(kind: str, n: int) -> str:
-    word = kind if n == 1 else kind + "s"
+    if n == 1:
+        return f"1 {kind}"
+    word = "directories" if kind == "directory" else kind + "s"
     return f"{n} {word}"
 
 
-def _verb_for(operation: str) -> str:
+def _verb_for(operation: str | None) -> str:
     match operation:
         case "write":
             return "Wrote"

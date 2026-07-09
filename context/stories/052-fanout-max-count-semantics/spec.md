@@ -1,7 +1,19 @@
 # 052 — `max_count` and `limit` Are Per-Terminal, Not Global: Decide and Document
 
-- **Status:** draft — found in the base2 line-by-line review, 2026-07-07
-- **Date:** 2026-07-07
+- **Status:** decided and landed — 057 Pass B (2026-07-08) shipped the
+  "Both" option: `glob`'s `max_count` and `glean`'s `limit` dispatch per
+  terminal **and** re-apply at the merge on every input shape (paths,
+  regions, observations). `glob` truncates order-preserving in merge
+  order — named scopes first, then mount-table order — untouched by
+  stray scores; `glean` trims by score, with the cross-terminal
+  comparability caveat documented. `grep`'s `max_count` is per-file
+  (ripgrep `-m`) and needs no merge trim. A non-positive bound is
+  `invalid`, never a silent no-cap. Recorded in the verb docstrings
+  (`vfs/base2.py`); the trim drops silently — a `data` note can come
+  later if agents prove to need it. (Shape hardened by the 2026-07-08
+  pressure-test run: observation-shaped bypass, score-jump ordering,
+  and the `max_count<=0` no-cap hole all found and closed.)
+- **Date:** 2026-07-07 (decided 2026-07-08)
 - **Owner:** Clay Gendron
 - **Kind:** design decision + doc/contract fix (possibly small code)
 - **Depends on:** 036 (router verb surface), 045 (verb wire contract —

@@ -9,7 +9,7 @@ import pytest
 
 from vfs.models2 import Match, Observation
 from vfs.paths import MAX_PATH_LENGTH
-from vfs.results2 import Result, ResultError, VFSErrorKind
+from vfs.results2 import Result, ResultError, Severity, VFSErrorKind
 
 
 def obs(path: str, **kwargs: object) -> Observation:
@@ -63,10 +63,15 @@ class TestResultError:
         assert rebased.path == "/data/docs/a.md"
         assert rebased.without_mount("/data") == err
 
-    def test_mount_rebase_without_path_is_identity(self) -> None:
+    def test_mount_rebase_always_stamps_provenance(self) -> None:
+        # with_mount is never the identity: the first hop stamps source and
+        # every later hop re-roots it; without_mount inverts the round-trip.
         err = ResultError(kind=VFSErrorKind.unavailable, message="backend down")
-        assert err.with_mount("/data") is err
-        assert err.without_mount("/data") is err
+        hop = err.with_mount("/data")
+        assert hop is not err
+        assert hop.source == "/data"
+        assert hop.with_mount("/outer").source == "/outer/data"
+        assert hop.without_mount("/data") == err
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +91,7 @@ class TestRowAccess:
         assert list(result) == []
 
     def test_sequence_protocol(self) -> None:
-        result = Result(function="ls", observations=[obs("/a.md"), obs("/b.md")])
+        result = Result(ops=("ls",), observations=[obs("/a.md"), obs("/b.md")])
         assert bool(result)
         assert len(result) == 2
         assert result[0].path == "/a.md"
@@ -103,14 +108,13 @@ class TestRowAccess:
 
     def test_one_raises_on_zero_and_many(self) -> None:
         with pytest.raises(ValueError, match="got 0"):
-            Result(function="read").one()
+            Result(ops=("read",)).one()
         with pytest.raises(ValueError, match="got 2"):
             Result(observations=[obs("/a.md"), obs("/b.md")]).one()
 
     def test_failed_result_is_falsy_even_with_rows(self) -> None:
         result = Result(
             observations=[obs("/a.md")],
-            success=False,
             errors=[ResultError(kind=VFSErrorKind.unavailable, message="partial")],
         )
         assert not result
@@ -124,48 +128,51 @@ class TestRowAccess:
 
 class TestSetAlgebra:
     def test_intersection_keeps_common_paths(self) -> None:
-        a = Result(function="glob", observations=[obs("/a.md"), obs("/b.md")])
-        b = Result(function="glob", observations=[obs("/b.md"), obs("/c.md")])
+        a = Result(ops=("glob",), observations=[obs("/a.md"), obs("/b.md")])
+        b = Result(ops=("glob",), observations=[obs("/b.md"), obs("/c.md")])
         assert (a & b).paths == ("/b.md",)
 
     def test_union_left_wins_and_fills_nulls(self) -> None:
-        a = Result(function="glean", observations=[obs("/a.md", score=0.9)])
-        b = Result(function="stat", observations=[obs("/a.md", score=0.1, size_bytes=42)])
+        a = Result(ops=("glean",), observations=[obs("/a.md", score=0.9)])
+        b = Result(ops=("stat",), observations=[obs("/a.md", score=0.1, size_bytes=42)])
         merged = (a | b).one()
         assert merged.score == 0.9  # left wins
         assert merged.size_bytes == 42  # right fills the null
 
-    def test_cross_function_union_is_hybrid(self) -> None:
-        a = Result(function="glob", observations=[obs("/a.md")])
-        b = Result(function="grep", observations=[obs("/b.md")])
-        assert (a | b).function == "hybrid"
-        assert (a | a).function == "glob"
+    def test_cross_op_union_keeps_both_ops(self) -> None:
+        # Ordered union, no in-band sentinel: both producing ops survive,
+        # and .op reads None so renderers fall back to the generic shape.
+        a = Result(ops=("glob",), observations=[obs("/a.md")])
+        b = Result(ops=("grep",), observations=[obs("/b.md")])
+        assert (a | b).ops == ("glob", "grep")
+        assert (a | b).op is None
+        assert (a | a).op == "glob"
 
     def test_difference(self) -> None:
-        a = Result(function="glob", observations=[obs("/a.md"), obs("/b.md")])
-        b = Result(function="grep", observations=[obs("/b.md")])
+        a = Result(ops=("glob",), observations=[obs("/a.md"), obs("/b.md")])
+        b = Result(ops=("grep",), observations=[obs("/b.md")])
         diff = a - b
         assert diff.paths == ("/a.md",)
-        assert diff.function == "glob"
+        assert diff.op == "glob"
 
     def test_errors_and_success_propagate(self) -> None:
         err = ResultError(kind=VFSErrorKind.timeout, message="slow mount")
         a = Result(observations=[obs("/a.md")])
-        b = Result(success=False, errors=[err])
+        b = Result(errors=[err])
         combined = a | b
         assert not combined.success
         assert combined.errors == [err]
 
     def test_union_with_empty_preserves_duplicate_paths(self) -> None:
-        dup = Result(function="grep", observations=[obs("/a.md", score=0.9), obs("/a.md", score=0.1)])
-        empty = Result(function="grep")
+        dup = Result(ops=("grep",), observations=[obs("/a.md", score=0.9), obs("/a.md", score=0.1)])
+        empty = Result(ops=("grep",))
         assert (dup | empty).observations == dup.observations
         assert (empty | dup).observations == dup.observations
 
     def test_diamond_chains_do_not_duplicate_errors(self) -> None:
         err = ResultError(kind=VFSErrorKind.unavailable, message="mount down")
         a = Result(observations=[obs("/a.md")])
-        b = Result(success=False, errors=[err], observations=[obs("/a.md")])
+        b = Result(errors=[err], observations=[obs("/a.md")])
         assert ((a | b) & b).errors == [err]
 
     def test_merge_does_not_alias_the_right_rows_matches_list(self) -> None:
@@ -191,12 +198,12 @@ class TestEnrichment:
 
     def test_top_sorts_then_slices(self) -> None:
         result = Result(
-            function="glean",
+            ops=("glean",),
             observations=[obs("/low.md", score=0.1), obs("/high.md", score=0.9)],
         )
         top = result.top(1)
         assert top.paths == ("/high.md",)
-        assert top.function == "glean"
+        assert top.op == "glean"
 
     def test_top_rejects_non_positive_k(self) -> None:
         with pytest.raises(ValueError, match="k must be >= 1"):
@@ -211,7 +218,7 @@ class TestEnrichment:
         # NaN compares false against everything; an unguarded key corrupts the
         # sort and top() drops the real leaders. NaN must sink like None.
         result = Result(
-            function="glean",
+            ops=("glean",),
             observations=[
                 obs("/a.md", score=1.0),
                 obs("/nan.md", score=float("nan")),
@@ -232,12 +239,12 @@ class TestEnrichment:
     def test_chains_preserve_envelope(self) -> None:
         err = ResultError(kind=VFSErrorKind.unavailable, message="one mount down")
         result = Result(
-            function="glean",
+            ops=("glean",),
             observations=[obs("/a.md", score=0.5)],
             errors=[err],
         )
         chained = result.sort().filter(lambda o: True)
-        assert chained.function == "glean"
+        assert chained.op == "glean"
         assert chained.errors == [err]
 
 
@@ -249,7 +256,7 @@ class TestEnrichment:
 class TestMountRebasing:
     def test_with_mount_rebases_rows_and_error_paths(self) -> None:
         result = Result(
-            function="ls",
+            ops=("ls",),
             observations=[obs("/a.md"), obs("/")],
             errors=[ResultError(kind=VFSErrorKind.not_found, message="gone", path="/b.md")],
         )
@@ -258,14 +265,18 @@ class TestMountRebasing:
         assert rebased.errors[0].path == "/data/b.md"
 
     def test_without_mount_inverts_with_mount(self) -> None:
-        result = Result(function="ls", observations=[obs("/a.md")])
+        result = Result(ops=("ls",), observations=[obs("/a.md")])
         assert result.with_mount("/data").without_mount("/data") == result
 
-    def test_root_and_empty_mount_are_identity(self) -> None:
+    def test_empty_mount_is_identity_and_root_is_a_real_hop(self) -> None:
+        # "" is the identity; "/" is a real hop for provenance even though
+        # row paths are unchanged — an errorless result stays equal.
         result = Result(observations=[obs("/a.md")])
-        assert result.with_mount("/") is result
         assert result.with_mount("") is result
         assert result.without_mount("/") is result
+        rooted = result.with_mount("/")
+        assert rooted.paths == ("/a.md",)
+        assert rooted == result
 
     def test_rebase_is_pure(self) -> None:
         result = Result(observations=[obs("/a.md")])
@@ -283,16 +294,18 @@ LONG_MOUNT = "/" + "m" * 30
 
 
 class TestRebaseOverflow:
-    def test_overflow_row_becomes_invalid_error(self) -> None:
-        result = Result(function="glob", observations=[obs(DEEP_LOCAL), obs("/ok.py")])
+    def test_overflow_row_becomes_unaddressable_warning(self) -> None:
+        result = Result(ops=("glob",), observations=[obs(DEEP_LOCAL), obs("/ok.py")])
         rebased = result.with_mount(LONG_MOUNT)
-        assert rebased.success is False
+        assert rebased.success is True  # loss on record, not failure
         assert rebased.paths == (f"{LONG_MOUNT}/ok.py",)  # sibling row survives
         [err] = rebased.errors
-        assert err.kind is VFSErrorKind.invalid
+        assert err.kind is VFSErrorKind.unaddressable
+        assert err.severity is Severity.warning
         assert err.path is None
+        assert err.source == LONG_MOUNT
         assert str(MAX_PATH_LENGTH) in err.message
-        assert err.data == {"mount": LONG_MOUNT, "local_path": DEEP_LOCAL}
+        assert err.data == {"vfs.overflow": {"local_path": DEEP_LOCAL}}
 
     def test_row_at_exactly_the_limit_survives(self) -> None:
         mount = "/" + "m" * 19  # 20 + 1004 == 1024
@@ -319,7 +332,8 @@ class TestRebaseOverflow:
         assert rebased.path is None
         assert rebased.kind is VFSErrorKind.not_found
         assert rebased.message == "missing"
-        assert rebased.data == {"attempt": 1, "mount": LONG_MOUNT, "local_path": DEEP_LOCAL}
+        assert rebased.source == LONG_MOUNT
+        assert rebased.data == {"attempt": 1, "vfs.overflow": {"local_path": DEEP_LOCAL}}
 
     def test_error_path_at_exactly_the_limit_rebases(self) -> None:
         mount = "/" + "m" * 19
@@ -336,7 +350,7 @@ class TestRebaseOverflow:
 
 def rich_result() -> Result:
     return Result(
-        function="grep",
+        ops=("grep",),
         observations=[
             obs(
                 "/src/auth.py",
@@ -348,7 +362,6 @@ def rich_result() -> Result:
             ),
             obs("/src/db.py", status="updated"),
         ],
-        success=False,
         errors=[ResultError(kind=VFSErrorKind.permission_denied, message="read-only mount", path="/ro/x.md")],
     )
 
@@ -385,7 +398,7 @@ class TestWireContract:
 
     def test_non_finite_scores_are_json_safe_and_restore_as_none(self) -> None:
         result = Result(
-            function="glean",
+            ops=("glean",),
             observations=[obs("/a.md", score=float("nan")), obs("/b.md", score=float("inf"))],
         )
         payload = result.to_payload()
@@ -401,5 +414,5 @@ class TestWireContract:
         assert Result.from_payload(wire) == result
 
     def test_str_delegates_to_render(self) -> None:
-        result = Result(function="glob", observations=[obs("/b.md"), obs("/a.md")])
+        result = Result(ops=("glob",), observations=[obs("/b.md"), obs("/a.md")])
         assert str(result) == "/a.md\n/b.md"

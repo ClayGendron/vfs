@@ -17,12 +17,14 @@ from base_doubles import (
     RecorderStorage,
     ScopeSpyStorage,
     SpyCloseStorage,
+    TransportFailStorage,
 )
 from vfs.backends.memory import InMemoryStorage
 from vfs.base2 import Binding, MountMeta, VirtualFileSystem
+from vfs.exceptions import MountError
 from vfs.models2 import Observation
 from vfs.paths import Path
-from vfs.results2 import Result, VFSErrorKind
+from vfs.results2 import Result, Severity, VFSErrorKind
 
 # ----------------------------------------------------------------------
 # file-local doubles
@@ -42,14 +44,14 @@ class GhostStorage(BindableStorage):
     async def ls(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
         self.calls.append(("ls", {"path": path, **kwargs}))
         if path == self._mount:
-            return Result(function="ls", observations=[])
+            return Result(ops=("ls",), observations=[])
         rows = [Observation(path=self._mount, kind="directory"), self._ghost]
-        return Result(function="ls", observations=rows)
+        return Result(ops=("ls",), observations=rows)
 
     async def tree(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
         self.calls.append(("tree", kwargs))
         rows = [Observation(path=self._mount, kind="directory"), self._ghost]
-        return Result(function="tree", observations=rows)
+        return Result(ops=("tree",), observations=rows)
 
 
 # ----------------------------------------------------------------------
@@ -76,7 +78,7 @@ def test_init_holds_the_given_backend() -> None:
 def test_init_rejects_backend_missing_the_read_family() -> None:
     class StatOnly:
         async def stat(self, **kwargs: Any) -> Result:
-            return Result(function="stat", observations=[])
+            return Result(ops=("stat",), observations=[])
 
     with pytest.raises(TypeError, match="read family"):
         VirtualFileSystem(storage=StatOnly())  # ty: ignore[invalid-argument-type]
@@ -137,6 +139,62 @@ async def test_bind_succeeds_onto_an_existing_empty_directory() -> None:
     child = RecorderStorage()
     await root.bind(child, "/data")
     assert root._bindings[Path("/data")].storage is child
+
+
+async def test_add_mount_mkdir_failure_raises_mount_error_with_evidence() -> None:
+    # The prose stays a ValueError match for string-matching callers; the
+    # structured ResultError list rides on the typed exception.
+    root = VirtualFileSystem(storage=InMemoryStorage())
+    await root.write(path="/site", content="x")
+    with pytest.raises(MountError, match="Cannot mount at /site") as exc:
+        await root.add_mount(InMemoryStorage(), "/site")
+    assert isinstance(exc.value, ValueError)
+    assert exc.value.errors[0].kind is VFSErrorKind.exists
+
+
+async def test_remove_mount_rmdir_failure_raises_mount_error_with_evidence() -> None:
+    backend = InMemoryStorage()
+    root = VirtualFileSystem(storage=backend)
+    await root.add_mount(InMemoryStorage(name="child"), "/m")
+    await backend.write(path=Path("/m/foreign.txt"), content="secret")  # bypasses the router
+    with pytest.raises(MountError, match="removing its directory failed") as exc:
+        await root.remove_mount("/m")
+    assert exc.value.errors[0].kind is VFSErrorKind.not_empty
+
+
+async def test_bind_beneath_a_dead_backend_reports_the_transport_failure() -> None:
+    # The probe dispatches on the error kind: a dead backend surfaces its
+    # transport failure — never the mkdir advice, which cannot help.
+    root = VirtualFileSystem()
+    await root.add_mount(TransportFailStorage(), "/dead")
+    with pytest.raises(ValueError, match="unavailable") as exc:
+        await root.bind(InMemoryStorage(), "/dead/sub")
+    assert "mkdir" not in str(exc.value)
+
+
+async def test_bind_racing_close_refuses_cleanly() -> None:
+    # close() may empty the table while the site probe's storage I/O is
+    # suspended; bind must refuse as "closed", never escape a KeyError.
+    class GateStatStorage(InMemoryStorage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def stat(self, **kwargs: Any) -> Result:
+            self.entered.set()
+            await self.release.wait()
+            return await super().stat(**kwargs)
+
+    backend = GateStatStorage()
+    root = VirtualFileSystem(storage=backend)
+    await backend.mkdir(path=Path("/site"))
+    bind_task = asyncio.create_task(root.bind(InMemoryStorage(), "/site"))
+    await backend.entered.wait()
+    await root.close()
+    backend.release.set()
+    with pytest.raises(ValueError, match="closed"):
+        await bind_task
 
 
 async def test_bind_rejects_non_storage_backend() -> None:
@@ -652,7 +710,7 @@ async def test_tree_budgets_depth_across_bound_regions() -> None:
     assert child.calls == [("tree", {"path": "/", "max_depth": None, "columns": None})]
 
 
-async def test_tree_skips_incapable_binding_silently() -> None:
+async def test_tree_skips_incapable_binding_with_info_record() -> None:
     root = VirtualFileSystem()
     capable = RecorderStorage()
     dim = RecorderStorage(caps=frozenset({"read", "stat", "ls"}))  # no "tree"
@@ -660,9 +718,12 @@ async def test_tree_skips_incapable_binding_silently() -> None:
     await root.add_mount(dim, "/data/b", parents=True)
     result = await root.tree("/")
     assert result.success is True
-    assert result.errors == []
     assert {"/data", "/data/a", "/data/b"} <= set(result.paths)
     assert dim.calls == []
+    [skip] = result.errors
+    assert skip.kind is VFSErrorKind.unsupported
+    assert skip.severity is Severity.info
+    assert skip.path == "/data/b"
 
 
 # ----------------------------------------------------------------------

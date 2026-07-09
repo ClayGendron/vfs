@@ -17,7 +17,8 @@ file store.
 Batch ops (entry writes, move/copy pairs, multi-target edits and
 deletes) stage against a copy and commit only on full success — the
 in-memory analogue of the transaction a database backend opens inside
-each op.
+each op.  Failures enumerate per entry: a failed batch reports every
+failing target, not just the first, and commits nothing.
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ if TYPE_CHECKING:
     from vfs.replace import EditOperation
     from vfs.storage import ResolvedPair
 
-_Status = Literal["created", "updated", "unchanged"]
+_Status = Literal["created", "updated", "unchanged", "deleted"]
 
 ROOT = Path("/")
 
@@ -110,7 +111,7 @@ class InMemoryStorage:
                 errors.append(_classified(VFSErrorKind.wrong_kind, f"Is a directory: {target}", target))
                 continue
             rows.append(self._observe(target, row, content=True))
-        return Result(function="read", observations=rows, success=not errors, errors=errors)
+        return Result(ops=("read",), observations=rows, errors=errors)
 
     async def stat(
         self,
@@ -128,7 +129,7 @@ class InMemoryStorage:
                 errors.append(_classified(VFSErrorKind.not_found, f"Not found: {target}", target))
                 continue
             rows.append(self._observe(target, row))
-        return Result(function="stat", observations=rows, success=not errors, errors=errors)
+        return Result(ops=("stat",), observations=rows, errors=errors)
 
     async def ls(
         self,
@@ -150,7 +151,7 @@ class InMemoryStorage:
                 continue
             children = [p for p in self._rows if p != ROOT and p.parent_dir == target]
             rows.extend(self._observe(p, self._rows[p]) for p in sorted(children))
-        return Result(function="ls", observations=rows, success=not errors, errors=errors)
+        return Result(ops=("ls",), observations=rows, errors=errors)
 
     async def tree(
         self,
@@ -166,13 +167,13 @@ class InMemoryStorage:
         if row is None:
             return _fail("tree", VFSErrorKind.not_found, f"Not found: {path}", path)
         if row.kind != "directory":
-            return Result(function="tree", observations=[self._observe(path, row)])
+            return Result(ops=("tree",), observations=[self._observe(path, row)])
         rows = [
             self._observe(p, self._rows[p])
             for p in sorted(self._rows)
             if (depth := _depth_below(p, path)) is not None and (max_depth is None or depth <= max_depth)
         ]
-        return Result(function="tree", observations=rows)
+        return Result(ops=("tree",), observations=rows)
 
     # -------------------------------------------------------------------
     # Pattern search
@@ -193,6 +194,8 @@ class InMemoryStorage:
         wanted_ext = frozenset(e.lstrip(".").lower() for e in ext)
         rows: list[Observation] = []
         for p in sorted(self._rows):
+            if max_count is not None and len(rows) >= max_count:
+                break
             if p == ROOT or not _in_scope(p, scope):
                 continue
             subject = str(p) if "/" in pattern else p.name
@@ -201,9 +204,7 @@ class InMemoryStorage:
             if wanted_ext and (extract_extension(p) or "") not in wanted_ext:
                 continue
             rows.append(self._observe(p, self._rows[p]))
-            if max_count is not None and len(rows) >= max_count:
-                break
-        return Result(function="glob", observations=rows)
+        return Result(ops=("glob",), observations=rows)
 
     async def grep(
         self,
@@ -256,7 +257,7 @@ class InMemoryStorage:
             )
             if hit is not None:
                 rows.append(hit)
-        return Result(function="grep", observations=rows)
+        return Result(ops=("grep",), observations=rows)
 
     # -------------------------------------------------------------------
     # Mutation family
@@ -281,7 +282,7 @@ class InMemoryStorage:
         if isinstance(result, Result):
             return result
         self._rows = staged
-        return Result(function="write", observations=[result])
+        return Result(ops=("write",), observations=[result])
 
     async def edit(
         self,
@@ -295,22 +296,32 @@ class InMemoryStorage:
             return self._directories_only("edit")
         staged = dict(self._rows)
         rows: list[Observation] = []
+        errors: list[ResultError] = []
         for target in self._targets(path, observations):
             row = staged.get(target)
             if row is None:
-                return _fail("edit", VFSErrorKind.not_found, f"Not found: {target}", target)
+                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {target}", target))
+                continue
             if row.kind not in _CONTENT_KINDS or row.content is None:
-                return _fail("edit", VFSErrorKind.wrong_kind, f"No editable content: {target}", target)
+                errors.append(_classified(VFSErrorKind.wrong_kind, f"No editable content: {target}", target))
+                continue
             content = row.content
+            failed: ResultError | None = None
             for op in edits:
                 outcome = replace(content, op.old, op.new, replace_all=op.replace_all)
                 if not outcome.success or outcome.content is None:
-                    return _fail("edit", VFSErrorKind.invalid, outcome.error or "edit failed", target)
+                    failed = _classified(VFSErrorKind.invalid, outcome.error or "edit failed", target)
+                    break
                 content = outcome.content
+            if failed is not None:
+                errors.append(failed)
+                continue
             staged[target] = clone_row(row, content=content)
             rows.append(self._observe(target, staged[target], status="updated"))
+        if errors:
+            return Result(ops=("edit",), errors=errors)
         self._rows = staged
-        return Result(function="edit", observations=rows)
+        return Result(ops=("edit",), observations=rows)
 
     async def delete(
         self,
@@ -323,20 +334,26 @@ class InMemoryStorage:
     ) -> Result:
         staged = dict(self._rows)
         rows: list[Observation] = []
+        errors: list[ResultError] = []
         for target in self._targets(path, observations):
             if target == ROOT:
-                return _fail("delete", VFSErrorKind.invalid, "Cannot delete the root directory", target)
+                errors.append(_classified(VFSErrorKind.invalid, "Cannot delete the root directory", target))
+                continue
             row = staged.get(target)
             if row is None:
-                return _fail("delete", VFSErrorKind.not_found, f"Not found: {target}", target)
+                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {target}", target))
+                continue
             descendants = [p for p in staged if p.startswith(target + "/")]
             if descendants and not cascade:
-                return _fail("delete", VFSErrorKind.not_empty, f"Directory not empty: {target}", target)
+                errors.append(_classified(VFSErrorKind.not_empty, f"Directory not empty: {target}", target))
+                continue
             for p in (*descendants, target):
                 staged.pop(p, None)
-            rows.append(self._observe(target, row))
+            rows.append(self._observe(target, row, status="deleted"))
+        if errors:
+            return Result(ops=("delete",), errors=errors)
         self._rows = staged
-        return Result(function="delete", observations=rows)
+        return Result(ops=("delete",), observations=rows)
 
     async def mkdir(
         self,
@@ -350,7 +367,7 @@ class InMemoryStorage:
         occupant = staged.get(path)
         if occupant is not None:
             if exist_ok and occupant.kind == "directory":
-                return Result(function="mkdir", observations=[self._observe(path, occupant, status="unchanged")])
+                return Result(ops=("mkdir",), observations=[self._observe(path, occupant, status="unchanged")])
             return _fail("mkdir", VFSErrorKind.exists, f"Already exists: {path}", path)
         gate = self._parent_gate(staged, "mkdir", path, parents=parents)
         if gate is not None:
@@ -359,7 +376,7 @@ class InMemoryStorage:
         staged[path] = _Row(kind="directory")
         rows.append(self._observe(path, staged[path], status="created"))
         self._rows = staged
-        return Result(function="mkdir", observations=rows)
+        return Result(ops=("mkdir",), observations=rows)
 
     async def move(
         self,
@@ -403,7 +420,7 @@ class InMemoryStorage:
         status = "updated" if edge_path in staged else "created"
         staged[edge_path] = _Row(kind="edge", edge_type=edge_type)
         self._rows = staged
-        return Result(function="mkedge", observations=[self._observe(edge_path, staged[edge_path], status=status)])
+        return Result(ops=("mkedge",), observations=[self._observe(edge_path, staged[edge_path], status=status)])
 
     # -------------------------------------------------------------------
     # Internal helpers
@@ -491,17 +508,22 @@ class InMemoryStorage:
     def _write_entries(self, entries: list[Entry], *, overwrite: bool, parents: bool) -> Result:
         staged = dict(self._rows)
         rows: list[Observation] = []
+        errors: list[ResultError] = []
         for entry in entries:
             if entry.kind == "directory":
                 occupant = staged.get(entry.path)
                 if occupant is not None:
                     if occupant.kind != "directory":
-                        return _fail("write", VFSErrorKind.wrong_kind, f"Not a directory: {entry.path}", entry.path)
+                        errors.append(
+                            _classified(VFSErrorKind.wrong_kind, f"Not a directory: {entry.path}", entry.path)
+                        )
+                        continue
                     rows.append(self._observe(entry.path, occupant, status="unchanged"))
                     continue
                 gate = self._parent_gate(staged, "write", entry.path, parents=parents)
                 if gate is not None:
-                    return gate
+                    errors.extend(gate.errors)
+                    continue
                 self._mint_chain(staged, entry.path)
                 staged[entry.path] = _Row(kind="directory", description=entry.description)
                 rows.append(self._observe(entry.path, staged[entry.path], status="created"))
@@ -517,32 +539,44 @@ class InMemoryStorage:
                 description=entry.description,
             )
             if isinstance(result, Result):
-                return result
+                errors.extend(result.errors)
+                continue
             rows.append(result)
+        if errors:
+            return Result(ops=("write",), errors=errors)
         self._rows = staged
-        return Result(function="write", observations=rows)
+        return Result(ops=("write",), observations=rows)
 
     def _transfer(self, op: str, operations: list[ResolvedPair], *, overwrite: bool) -> Result:
         staged = dict(self._rows)
         rows: list[Observation] = []
+        errors: list[ResultError] = []
+        # Enumeration is best-effort past a failed pair: later pairs judge
+        # against the staged state that excludes the failed pair's effect.
         for pair in operations:
             src, dest = pair.src, pair.dest
             src_row = staged.get(src)
             if src_row is None:
-                return _fail(op, VFSErrorKind.not_found, f"Not found: {src}", src)
+                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {src}", src))
+                continue
             if src == ROOT or dest == ROOT:
-                return _fail(op, VFSErrorKind.invalid, f"Cannot {op} the root directory")
+                errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} the root directory"))
+                continue
             if dest == src or dest.startswith(src + "/"):
-                return _fail(op, VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}")
+                errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))
+                continue
             gate = self._parent_gate(staged, op, dest, parents=False)
             if gate is not None:
-                return gate
+                errors.extend(gate.errors)
+                continue
             occupant = staged.get(dest)
             if occupant is not None:
                 if occupant.kind == "directory" or src_row.kind == "directory":
-                    return _fail(op, VFSErrorKind.wrong_kind, f"Cannot {op} onto: {dest}", dest)
+                    errors.append(_classified(VFSErrorKind.wrong_kind, f"Cannot {op} onto: {dest}", dest))
+                    continue
                 if not overwrite:
-                    return _fail(op, VFSErrorKind.exists, f"Already exists: {dest}", dest)
+                    errors.append(_classified(VFSErrorKind.exists, f"Already exists: {dest}", dest))
+                    continue
             moved = [(p, staged[p]) for p in list(staged) if p == src or p.startswith(src + "/")]
             for p, row in moved:
                 new_path = Path(dest + p[len(src) :]) if p != src else dest
@@ -550,8 +584,10 @@ class InMemoryStorage:
                 if op == "move":
                     del staged[p]
             rows.append(self._observe(dest, staged[dest], status="updated" if occupant is not None else "created"))
+        if errors:
+            return Result(ops=(op,), errors=errors)
         self._rows = staged
-        return Result(function=op, observations=rows)
+        return Result(ops=(op,), observations=rows)
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +600,7 @@ def _classified(kind: VFSErrorKind, message: str, path: Path | None = None) -> R
 
 
 def _fail(op: str, kind: VFSErrorKind, message: str, path: Path | None = None) -> Result:
-    return Result(function=op, success=False, errors=[_classified(kind, message, path)])
+    return Result(ops=(op,), errors=[_classified(kind, message, path)])
 
 
 def _ancestor_chain(path: Path) -> list[Path]:

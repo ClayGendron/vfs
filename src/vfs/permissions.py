@@ -286,8 +286,8 @@ def check_writable(
     ``"read_write"``); a failure :class:`Result` when the operation
     would mutate a read-only path.
 
-    The error carries ``kind=read_only`` and reports *op* as the failed
-    result's ``function``; :func:`~vfs.exceptions.exception_for_kind`
+    The error carries ``kind=read_only`` and reports *op* on the failed
+    result's ``ops``; :func:`~vfs.exceptions.exception_for_kind`
     maps the kind to :class:`~vfs.exceptions.WriteConflictError` when a
     boundary caller applies ``raise_if_failed``.
     """
@@ -306,8 +306,7 @@ def check_writable(
     full = rel.with_mount(mount_prefix)
     detail = "mount default" if resolved.rule_prefix is None else f"read-only by mount rule '{resolved.rule_prefix}'"
     return Result(
-        function=op,
-        success=False,
+        ops=(op,),
         errors=[
             ResultError(
                 kind=VFSErrorKind.read_only,

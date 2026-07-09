@@ -110,6 +110,10 @@ primitive everything pays for.
    prefixes" docstring is corrected — shadow-filtering is what
    restores disjointness.  (This closes the MountFS #486 shape, the
    one part of the design with no working library precedent.)
+   *Superseded in part by 057:* full disjointness is false at bind
+   paths (both sides of a seam answer for the bind path itself);
+   `_merge_results` is replaced by `Result.merge`/`merge_branches`,
+   whose docstring states the bind-path decoration rule honestly.
 8. **Cross-mount move/copy is a typed `cross_mount` refusal (EXDEV).**
    No silent copy+delete fallback (the fsspec/PyFilesystem degrade is
    non-atomic and opaque — wrong for an agent-facing tool); same-entry
@@ -147,7 +151,9 @@ primitive everything pays for.
     `TransportError` family into it, keeping "raw exception = backend
     bug" true for in-process backends (FUSE settles presentation
     router-side the same way: severed connections become ENOTCONN
-    uniformly).  The binding stays bound and errors distinctly — never
+    uniformly).  *Amended by 057 decision 5:* the kind's wire value is
+    re-parented to `vfs.unavailable.backend`; the shipped string
+    `vfs.backend_unavailable` remains a permanent inbound alias.  The binding stays bound and errors distinctly — never
     silent auto-unbind; `remove_mount` is the operator action and
     always succeeds locally.  `VFSStorage` auto-reconnects an expired
     HTTP session — one re-initialize attempt per op, the client

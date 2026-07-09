@@ -313,7 +313,7 @@ class Entry(BaseModel):
         self,
         *,
         score: float | None = None,
-        status: Literal["created", "updated", "unchanged"] | None = None,
+        status: Literal["created", "updated", "unchanged", "deleted"] | None = None,
         matches: list[Match] | None = None,
     ) -> Observation:
         """Project this entry to a frozen :class:`Observation`.
@@ -658,7 +658,7 @@ class Observation(BaseModel):
     matches: list[Match] | None = None
     in_degree: int | None = None
     out_degree: int | None = None
-    status: Literal["created", "updated", "unchanged"] | None = None
+    status: Literal["created", "updated", "unchanged", "deleted"] | None = None
 
     # -----------------------------------------------------------------------
     # Mount rebasing

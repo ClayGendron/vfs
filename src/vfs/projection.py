@@ -28,20 +28,22 @@ from vfs.ops import MUTATING_OPS
 OBSERVATION_FIELDS: frozenset[str] = frozenset(Observation.model_fields)
 PROJECTION_SENTINELS: frozenset[str] = frozenset({"default", "all"})
 
-# Arrangement groups. The envelope's ``function`` key picks an arrangement;
-# multiple functions share one (e.g. all graph traversals).
-# The mutation verbs — shared with the dispatch gate so the rendering and
-# permission vocabularies cannot drift apart.
+# Arrangement groups. The envelope's ``op`` picks an arrangement; the
+# mutation verbs share one — drawn from the dispatch gate so the rendering
+# and permission vocabularies cannot drift apart.
 ACTION_FUNCTIONS: frozenset[str] = MUTATING_OPS
+
+# The graph *method* vocabulary — router-side input validation only. A
+# method name never reaches an envelope: results report the one `graph` op.
 TRAVERSAL_FUNCTIONS: frozenset[str] = frozenset(
     {"predecessors", "successors", "ancestors", "descendants", "neighborhood"}
     | {"meeting_subgraph", "min_meeting_subgraph"},
 )
 
 FALLBACK_PROJECTION: tuple[str, ...] = ("path",)
-"""Default projection for a function this client does not recognize."""
+"""Default projection for an op this client does not recognize."""
 
-# Per-function default projection. Users override with ``--output`` on the
+# Per-op default projection. Users override with ``--output`` on the
 # CLI or the ``projection=`` kwarg on ``to_str``. Grep's default is
 # ``matches`` rather than ``content``: each Match carries its own region
 # text, so the full file content never needs to be fetched for the render.
@@ -54,12 +56,10 @@ _DEFAULT_PROJECTION: dict[str, tuple[str, ...]] = {
     "read": ("content",),
     "stat": ("path", "kind", "size_bytes", "updated_at"),
     "run": ("path",),
-    "hybrid": ("path",),
+    "graph": ("path", "kind"),
 }
 for _fn in ACTION_FUNCTIONS:
     _DEFAULT_PROJECTION[_fn] = ("path",)
-for _fn in TRAVERSAL_FUNCTIONS:
-    _DEFAULT_PROJECTION[_fn] = ("path", "kind")
 
 KNOWN_FUNCTIONS: frozenset[str] = frozenset(_DEFAULT_PROJECTION)
 """Every function name with a registered default projection."""
@@ -75,13 +75,15 @@ def is_known_function(function: str) -> bool:
     return function in KNOWN_FUNCTIONS
 
 
-def default_projection(function: str) -> tuple[str, ...]:
+def default_projection(function: str | None) -> tuple[str, ...]:
     """Return the default projection for *function*.
 
-    Unknown functions fall back to :data:`FALLBACK_PROJECTION` — the wire is
-    forward-compatible, so a function name this client does not know renders
-    as a path list rather than failing.
+    Unknown op names — and ``None``, a cross-op merge — fall back to
+    :data:`FALLBACK_PROJECTION`: the wire is forward-compatible, so an op
+    this client does not know renders as a path list rather than failing.
     """
+    if function is None:
+        return FALLBACK_PROJECTION
     return _DEFAULT_PROJECTION.get(function, FALLBACK_PROJECTION)
 
 
@@ -124,7 +126,7 @@ def validate_projection(projection: tuple[str, ...] | list[str] | None) -> tuple
 
 def resolve_projection(
     projection: tuple[str, ...] | None,
-    function: str,
+    function: str | None,
     observations: list[Observation],
 ) -> tuple[str, ...]:
     """Expand ``default`` / ``all`` sentinels into concrete Observation field names.

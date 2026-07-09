@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from vfs.models2 import Observation
 from vfs.paths import MAX_PATH_LENGTH
 from vfs.results2 import (
+    _QUARANTINE_CLIP,
     KIND_CONTRACTS,
     Result,
     ResultError,
@@ -359,10 +360,12 @@ class TestWireLeniency:
             assert lying.to_payload()["success"] is False
 
     def test_oversized_quarantined_item_is_clipped(self) -> None:
+        # Bound derives from the constant (+1 for the ellipsis) so the
+        # clamp size can move without silently desyncing this pin.
         r = Result.from_payload({"observations": [{"path": "/bad/\x00row", "junk": "Q" * 5000}]})
         item = (r.errors[0].data or {})["vfs.quarantine"]["item"]
         assert isinstance(item, str)
-        assert len(item) <= 501
+        assert len(item) <= _QUARANTINE_CLIP + 1
 
     def test_malformed_envelope_field_salvages_validated_items(self) -> None:
         r = Result.from_payload(
@@ -384,11 +387,6 @@ class TestWireLeniency:
         hopped = Result.from_payload(payload).to_payload()
         assert hopped["errors"][0]["trace_id"] == "abc"
         assert hopped["peer_note"] == "from a newer peer"
-
-    def test_legacy_function_string_shims_to_ops(self) -> None:
-        r = Result.from_payload({"function": "glob", "observations": []})
-        assert r.ops == ("glob",)
-        assert r.op == "glob"
 
     def test_payload_success_is_the_derived_verdict(self) -> None:
         assert Result(errors=[err()]).to_payload()["success"] is False

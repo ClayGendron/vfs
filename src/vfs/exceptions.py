@@ -13,10 +13,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from vfs.results2 import VFSErrorKind
+from vfs.kinds import VFSErrorKind, kind_family
 
 if TYPE_CHECKING:
-    from vfs.results2 import Result
+    from vfs.results2 import Result, ResultError
 
 
 class VFSError(Exception):
@@ -31,8 +31,17 @@ class NotFoundError(VFSError):
     """A path does not exist or is not the expected kind."""
 
 
-class MountError(VFSError):
-    """No mount found for the given path."""
+class MountError(VFSError, ValueError):
+    """Mount administration failed — ``add_mount``/``remove_mount``.
+
+    ``str()`` stays the prose (and ``ValueError`` keeps string-matching
+    callers working); the structured evidence rides on ``errors`` — the
+    ``ResultError`` list from the attached mkdir/rmdir result.
+    """
+
+    @property
+    def errors(self) -> list[ResultError]:
+        return list(self.result.errors) if self.result is not None else []
 
 
 class WriteConflictError(VFSError):
@@ -51,12 +60,10 @@ class SchemaMismatchError(VFSError):
     """The live database schema does not match the in-memory table definitions."""
 
 
-# Kind → exception class. The structured ``VFSErrorKind`` is the dispatch key
-# (replacing message-substring matching); an unmapped kind
-# (``unavailable``/``timeout``/``cancelled``/``internal``) or an unknown
-# peer-supplied string falls back to the base ``VFSError``.
-# Keyed by kind-or-raw-string: an unknown peer-supplied kind is a legal miss.
-_KIND_TO_EXC: dict[VFSErrorKind | str, type[VFSError]] = {
+# Kind → exception class, keyed by the kind's resolved family. An unmapped
+# family (``unavailable``/``timeout``/``cancelled``/``internal``) or a kind
+# with no known prefix falls back to the base ``VFSError``.
+_KIND_TO_EXC: dict[VFSErrorKind, type[VFSError]] = {
     VFSErrorKind.not_found: NotFoundError,
     VFSErrorKind.wrong_kind: NotFoundError,
     VFSErrorKind.exists: WriteConflictError,
@@ -74,11 +81,16 @@ _KIND_TO_EXC: dict[VFSErrorKind | str, type[VFSError]] = {
 def exception_for_kind(kind: VFSErrorKind | str) -> type[VFSError]:
     """Return the exception class for a structured error *kind*.
 
-    Dispatches on the ``VFSErrorKind`` directly — no message inspection. An
-    unmapped kind or an unknown peer-supplied string falls back to the base
-    ``VFSError``.
+    Dispatches through :func:`kind_family` — no message inspection — so an
+    unknown child kind from a newer peer degrades to its known parent's
+    class before falling back to base ``VFSError``.  A kind with no known
+    prefix raises as base ``VFSError``, never a narrower class that would
+    misstate an unknown failure.
     """
-    return _KIND_TO_EXC.get(kind, VFSError)
+    family = kind_family(kind)
+    if family is None:
+        return VFSError
+    return _KIND_TO_EXC.get(family, VFSError)
 
 
 def raise_if_failed(result: Result) -> Result:
@@ -90,16 +102,16 @@ def raise_if_failed(result: Result) -> Result:
 
         entry = raise_if_failed(await fs.read("/a.txt")).one()
 
-    Each error raises as its kind's exception with the full result attached;
-    multiple errors raise an ``ExceptionGroup`` so a fan-out failure reports
-    every downed terminal, not just the first.
+    Only **fatal** entries raise — success is derived, so a failed result
+    always carries at least one, and warnings/info (loss on record,
+    coverage notes) never become exceptions.  Each fatal entry raises as
+    its kind's exception with the full result attached; multiple raise as
+    an ``ExceptionGroup`` so a fan-out failure reports every downed
+    terminal, not just the first.
     """
     if result.success:
         return result
-    excs = [exception_for_kind(e.kind)(e.message, result) for e in result.errors]
+    excs = [exception_for_kind(e.kind)(e.message, result) for e in result.failures]
     if len(excs) == 1:
         raise excs[0]
-    if not excs:
-        msg = "VFS operation failed without a structured error"
-        raise VFSError(msg, result)
     raise ExceptionGroup("multiple VFS errors", excs)

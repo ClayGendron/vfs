@@ -28,7 +28,7 @@ from vfs.exceptions import (
 from vfs.models2 import Entry, Observation
 from vfs.ops import ALL_OPS, MUTATING_OPS
 from vfs.paths import Path
-from vfs.results2 import Result, ResultError, VFSErrorKind
+from vfs.results2 import Result, ResultError, Severity, VFSErrorKind
 
 # ----------------------------------------------------------------------
 # _error and kind-based exception dispatch
@@ -56,7 +56,7 @@ def test_exception_for_kind_new_kinds_fall_back_to_base(kind: VFSErrorKind) -> N
 
 def test_error_returns_failed_result_by_default() -> None:
     fs = VirtualFileSystem()
-    r = fs._error("gone", kind=VFSErrorKind.not_found, path=Path("/x"))
+    r = fs._error("gone", kind=VFSErrorKind.not_found, op="read", path=Path("/x"))
     assert r.success is False
     assert r.errors[0].kind is VFSErrorKind.not_found
     assert r.errors[0].path == "/x"
@@ -64,26 +64,35 @@ def test_error_returns_failed_result_by_default() -> None:
 
 def test_error_attaches_structured_data() -> None:
     fs = VirtualFileSystem()
-    r = fs._error("stale", kind=VFSErrorKind.conflict, data={"expected": 1})
+    r = fs._error("stale", kind=VFSErrorKind.conflict, op="edit", data={"expected": 1})
     assert r.errors[0].data == {"expected": 1}
 
 
-def test_error_never_raises_and_carries_function() -> None:
-    # The router has one failure channel: a returned Result. The op travels
-    # as function so a wire consumer can tell which verb failed.
+def test_error_never_raises_and_carries_the_op() -> None:
+    # The router has one failure channel: a returned Result. The op rides
+    # the envelope so a wire consumer can tell which verb failed.
     fs = VirtualFileSystem()
-    r = fs._error("gone", kind=VFSErrorKind.not_found, function="read")
+    r = fs._error("gone", kind=VFSErrorKind.not_found, op="read")
     assert r.success is False
-    assert r.function == "read"
+    assert r.op == "read"
+
+
+def test_error_severity_defaults_to_error_and_accepts_tiers() -> None:
+    fs = VirtualFileSystem()
+    fatal = fs._error("gone", kind=VFSErrorKind.not_found, op="read")
+    advisory = fs._error("skip", kind=VFSErrorKind.unsupported, op="grep", severity=Severity.info)
+    assert fatal.errors[0].severity is Severity.error
+    assert advisory.success is True
+    assert advisory.errors[0].severity is Severity.info
 
 
 def test_raise_if_failed_passes_success_through() -> None:
-    ok = Result(function="read", observations=[])
+    ok = Result(ops=("read",), observations=[])
     assert raise_if_failed(ok) is ok
 
 
 def test_raise_if_failed_maps_single_error_to_kind_exception() -> None:
-    failed = VirtualFileSystem()._error("gone", kind=VFSErrorKind.not_found, function="read")
+    failed = VirtualFileSystem()._error("gone", kind=VFSErrorKind.not_found, op="read")
     with pytest.raises(NotFoundError) as exc:
         raise_if_failed(failed)
     # the raised exception still carries the full failed result
@@ -94,7 +103,6 @@ def test_raise_if_failed_maps_single_error_to_kind_exception() -> None:
 def test_raise_if_failed_groups_multiple_errors() -> None:
     # A fan-out failure reports every downed terminal, not just the first.
     failed = Result(
-        success=False,
         errors=[
             ResultError(kind=VFSErrorKind.not_found, message="gone"),
             ResultError(kind=VFSErrorKind.read_only, message="frozen"),
@@ -106,9 +114,17 @@ def test_raise_if_failed_groups_multiple_errors() -> None:
     assert matched == {NotFoundError, WriteConflictError}
 
 
-def test_raise_if_failed_handles_errorless_failure() -> None:
-    with pytest.raises(VFSError):
-        raise_if_failed(Result(success=False))
+def test_raise_if_failed_passes_warnings_and_info_through() -> None:
+    # Warnings and info are loss on record, not failure — the boundary
+    # adapter never turns them into exceptions.
+    result = Result(
+        ops=("glob",),
+        errors=[
+            ResultError(kind=VFSErrorKind.unaddressable, message="deep row", severity=Severity.warning),
+            ResultError(kind=VFSErrorKind.unsupported, message="skipped", severity=Severity.info),
+        ],
+    )
+    assert raise_if_failed(result) is result
 
 
 # ----------------------------------------------------------------------
