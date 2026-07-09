@@ -22,14 +22,14 @@ from base_doubles import (
     TransportFailStorage,
     _fan,
 )
-from vfs.base2 import VirtualFileSystem
+from vfs.base import VirtualFileSystem
 from vfs.exceptions import WriteConflictError, raise_if_failed
-from vfs.models2 import Entry, Observation
+from vfs.models import Entry, Observation
 from vfs.ops import ALL_OPS, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.permissions import read_write
 from vfs.replace import EditOperation
-from vfs.results2 import Result, ResultError, RetryClass, Severity, VFSErrorKind
+from vfs.results import Result, ResultError, RetryClass, Severity, VFSErrorKind
 from vfs.storage import ResolvedPair
 
 # ----------------------------------------------------------------------

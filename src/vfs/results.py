@@ -1,7 +1,7 @@
 """Composable result envelope for VFS — evidence in, verdict derived.
 
 Every VFS operation returns ``Result``. Results carry ``observations`` —
-the frozen :class:`vfs.models2.Observation` rows uniform across grep, glob,
+the frozen :class:`vfs.models.Observation` rows uniform across grep, glob,
 search, graph queries, read/stat/ls, and writes — plus structured errors.
 Chaining (set algebra, ``.sort``, ``.top``, ``.filter``) operates in-memory,
 and a result's observations are the standard input when operations chain:
@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from vfs.kinds import _KIND_ALIASES, KIND_CONTRACTS, KindContract, RetryClass, Severity, VFSErrorKind, kind_family
-from vfs.models2 import Observation
+from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.render import render_result
 

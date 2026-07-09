@@ -1,7 +1,7 @@
 """The operation vocabulary — every verb a filesystem can answer.
 
 The single source of truth for op names and their dispatch classes. The
-router (``vfs.base2``), the permission gate (``vfs.permissions``), and the
+router (``vfs.base``), the permission gate (``vfs.permissions``), and the
 projection table (``vfs.projection``) all import from here; none defines
 its own copy. A verb's class decides how it is routed and gated:
 

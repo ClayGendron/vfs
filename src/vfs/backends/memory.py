@@ -29,14 +29,14 @@ from dataclasses import dataclass
 from dataclasses import replace as clone_row
 from typing import TYPE_CHECKING, Literal
 
-from vfs.models2 import Match, Observation
+from vfs.models import Match, Observation
 from vfs.paths import Path, edge_out_path, extract_extension
 from vfs.replace import replace
-from vfs.results2 import Result, ResultError, VFSErrorKind
+from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage import storage_ops
 
 if TYPE_CHECKING:
-    from vfs.models2 import Entry
+    from vfs.models import Entry
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind
     from vfs.replace import EditOperation

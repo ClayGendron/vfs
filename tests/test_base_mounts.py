@@ -20,11 +20,11 @@ from base_doubles import (
     TransportFailStorage,
 )
 from vfs.backends.memory import InMemoryStorage
-from vfs.base2 import Binding, MountMeta, VirtualFileSystem
+from vfs.base import Binding, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
-from vfs.models2 import Observation
+from vfs.models import Observation
 from vfs.paths import Path
-from vfs.results2 import Result, Severity, VFSErrorKind
+from vfs.results import Result, Severity, VFSErrorKind
 
 # ----------------------------------------------------------------------
 # file-local doubles

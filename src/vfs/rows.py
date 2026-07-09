@@ -2,7 +2,7 @@
 
 This module is the persistence half of the domain/persistence split: the
 columns, lengths, indexes, and id backbone of what a mount actually stores.
-The tables are written by hand and never derived from :class:`vfs.models2.Entry`
+The tables are written by hand and never derived from :class:`vfs.models.Entry`
 — this module does not import it. The two artifacts are held in lockstep by a
 drift test instead, so a schema change is always a deliberate edit here, never
 a side effect of touching the domain model.

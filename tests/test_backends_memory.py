@@ -10,11 +10,11 @@ classification of batched reads.
 from __future__ import annotations
 
 from vfs.backends.memory import InMemoryStorage
-from vfs.models2 import Entry, Observation
+from vfs.models import Entry, Observation
 from vfs.ops import MUTATING_OPS
 from vfs.paths import Path, edge_out_path
 from vfs.replace import EditOperation
-from vfs.results2 import VFSErrorKind
+from vfs.results import VFSErrorKind
 from vfs.storage import ResolvedPair
 
 # ----------------------------------------------------------------------

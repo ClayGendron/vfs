@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vfs.models2 import Observation
+from vfs.models import Observation
 from vfs.projection import (
     FALLBACK_PROJECTION,
     KNOWN_FUNCTIONS,

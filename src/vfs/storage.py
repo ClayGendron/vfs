@@ -1,6 +1,6 @@
 """Storage backend protocols — the composed seam beneath the router.
 
-A :class:`~vfs.base2.VirtualFileSystem` mounts storage rather than other
+A :class:`~vfs.base.VirtualFileSystem` mounts storage rather than other
 routers: every mount-table entry binds a :class:`StorageBackend` object,
 and the router's one dispatch funnel calls these methods and nothing else.
 Protocols are grouped by op family so a partial backend implements only
@@ -40,11 +40,11 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, runtime_chec
 from vfs.ops import MUTATING_OPS
 
 if TYPE_CHECKING:
-    from vfs.models2 import Entry, Observation
+    from vfs.models import Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import Path
     from vfs.replace import EditOperation
-    from vfs.results2 import Result
+    from vfs.results import Result
 
 
 class TransportError(Exception):

@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from vfs.models2 import Match, Observation
+from vfs.models import Match, Observation
 from vfs.paths import MAX_PATH_LENGTH
-from vfs.results2 import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind
 
 
 def obs(path: str, **kwargs: object) -> Observation:

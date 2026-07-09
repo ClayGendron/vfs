@@ -9,7 +9,7 @@ from typing import Union, get_args, get_origin
 import pytest
 from pydantic import ValidationError
 
-from vfs.models2 import (
+from vfs.models import (
     OBSERVATION_MIRROR_FIELDS,
     OBSERVATION_QUERY_FIELDS,
     Entry,

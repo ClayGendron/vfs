@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from vfs.kinds import VFSErrorKind, kind_family
 
 if TYPE_CHECKING:
-    from vfs.results2 import Result, ResultError
+    from vfs.results import Result, ResultError
 
 
 class VFSError(Exception):

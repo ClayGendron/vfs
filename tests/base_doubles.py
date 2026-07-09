@@ -2,7 +2,7 @@
 
 Backend fakes satisfy the family protocols from ``vfs.storage`` (plus the
 required identity members); the few FS doubles subclass
-``vfs.base2.VirtualFileSystem`` only to pre-wire a backend.  Mount-table
+``vfs.base.VirtualFileSystem`` only to pre-wire a backend.  Mount-table
 behavior is steered entirely through storage doubles — a mounted thing is
 a storage, never a router.
 """
@@ -12,10 +12,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from vfs.base2 import VirtualFileSystem
-from vfs.models2 import Entry, Observation
+from vfs.base import VirtualFileSystem
+from vfs.models import Entry, Observation
 from vfs.paths import ObjectKind, Path
-from vfs.results2 import Result, ResultError, VFSErrorKind
+from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage import TransportError, storage_ops
 
 

@@ -16,7 +16,7 @@ from base_doubles import (
     _mutate,
     _mutate_at_root,
 )
-from vfs.base2 import VirtualFileSystem
+from vfs.base import VirtualFileSystem
 from vfs.exceptions import (
     NotFoundError,
     ValidationError,
@@ -25,10 +25,10 @@ from vfs.exceptions import (
     exception_for_kind,
     raise_if_failed,
 )
-from vfs.models2 import Entry, Observation
+from vfs.models import Entry, Observation
 from vfs.ops import ALL_OPS, MUTATING_OPS
 from vfs.paths import Path
-from vfs.results2 import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind
 
 # ----------------------------------------------------------------------
 # _error and kind-based exception dispatch

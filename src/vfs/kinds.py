@@ -3,7 +3,7 @@
 The kind vocabulary (:class:`VFSErrorKind`), the severity trust tiers
 (:class:`Severity`), and the normative per-kind contract table
 (:data:`KIND_CONTRACTS` — retry class, agent hint, ``path`` referent)
-live here so both the envelope (``vfs.results2``) and the renderer
+live here so both the envelope (``vfs.results``) and the renderer
 (``vfs.render``) can consume them without a cycle: hints and retry
 directives are contract, not wire data, and the renderer is where they
 become text. :func:`kind_family` is the normative dispatch rule for the
@@ -29,7 +29,7 @@ class VFSErrorKind(StrEnum):
     so an unknown child kind from a newer peer (``vfs.unavailable.dns``)
     degrades to its known parent (``vfs.unavailable``) before falling to
     base handling. A kind with no known prefix is preserved as its raw
-    string by ``ResultError`` (see ``vfs.results2``) and handled at the
+    string by ``ResultError`` (see ``vfs.results``) and handled at the
     broadest tier — the boundary adapter raises it as base ``VFSError``,
     never a narrower class that would misstate an unknown failure.
 

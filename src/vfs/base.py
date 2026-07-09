@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 from vfs.backends.memory import InMemoryStorage
 from vfs.exceptions import MountError
 from vfs.kinds import Severity, kind_family
-from vfs.models2 import Entry, Observation
+from vfs.models import Entry, Observation
 from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
 from vfs.permissions import (
@@ -54,7 +54,7 @@ from vfs.permissions import (
 )
 from vfs.projection import TRAVERSAL_FUNCTIONS
 from vfs.replace import EditOperation
-from vfs.results2 import Result, ResultError, VFSErrorKind
+from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,

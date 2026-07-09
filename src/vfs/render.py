@@ -17,12 +17,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from vfs.kinds import KIND_CONTRACTS, Severity, kind_family
-from vfs.models2 import Match
+from vfs.models import Match
 from vfs.projection import ACTION_FUNCTIONS, OBSERVATION_FIELDS, resolve_projection, validate_projection
 
 if TYPE_CHECKING:
-    from vfs.models2 import Observation
-    from vfs.results2 import Result, ResultError
+    from vfs.models import Observation
+    from vfs.results import Result, ResultError
 
 
 # ---------------------------------------------------------------------------

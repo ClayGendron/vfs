@@ -11,7 +11,7 @@ from __future__ import annotations
 import inspect
 
 from vfs import ops, permissions, projection
-from vfs.base2 import VirtualFileSystem
+from vfs.base import VirtualFileSystem
 from vfs.ops import ALL_OPS, EXEC_OPS, MUTATING_OPS, READ_OPS, TWO_PATH_OPS
 
 # Public router methods that manage the mount tree rather than route an op.

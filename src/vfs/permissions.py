@@ -3,7 +3,7 @@
 A mount-table entry may carry a :class:`PermissionMap`: one default
 permission plus zero or more directory-prefix overrides.  Every mutating
 operation funnels through a router dispatch chokepoint in
-:mod:`vfs.base2`, whose gate calls :func:`check_writable_composed` with
+:mod:`vfs.base`, whose gate calls :func:`check_writable_composed` with
 the maps of every entry on the path from ``/`` to the terminal — the
 most restrictive layer wins (a read-only root makes the whole tree
 read-only; restriction tightens, never loosens, like Linux's
@@ -117,7 +117,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from vfs.ops import MUTATING_OPS
 from vfs.paths import Path, normalize_path
-from vfs.results2 import Result, ResultError, VFSErrorKind
+from vfs.results import Result, ResultError, VFSErrorKind
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

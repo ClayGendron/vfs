@@ -1,6 +1,6 @@
 """Projection — which Observation fields an operation fetches and renders.
 
-A projection is an ordered tuple of :class:`vfs.models2.Observation` field
+A projection is an ordered tuple of :class:`vfs.models.Observation` field
 names. It does double duty: the renderer uses it to pick the columns shown in
 text output, and the backends use it to narrow the SQL SELECT to just the
 columns the caller will see. Two sentinels expand at resolve time —
@@ -18,7 +18,7 @@ a newer server's result still renders on an older client.
 
 from __future__ import annotations
 
-from vfs.models2 import Observation
+from vfs.models import Observation
 from vfs.ops import MUTATING_OPS
 
 # ---------------------------------------------------------------------------

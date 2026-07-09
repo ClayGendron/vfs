@@ -25,7 +25,7 @@ import re
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from vfs.models2 import Entry
+from vfs.models import Entry
 from vfs.paths import SKILL_MANIFEST, RelativePath, skill_manifest_path, skill_path
 
 # Constraints from the Agent Skills spec. The name must also match its parent

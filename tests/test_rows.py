@@ -8,7 +8,7 @@ from typing import Union, get_args, get_origin
 import pytest
 from sqlalchemy import create_engine, insert, inspect, select
 
-from vfs.models2 import Entry
+from vfs.models import Entry
 from vfs.rows import (
     ENTRY_ROW_ONLY_COLUMNS,
     GRAM_ACTION_ADD,

@@ -15,7 +15,7 @@ import pytest
 
 from vfs.ops import ALL_OPS, MUTATING_OPS
 from vfs.paths import Path
-from vfs.results2 import Result
+from vfs.results import Result
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,

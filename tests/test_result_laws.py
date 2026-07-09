@@ -16,9 +16,9 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from vfs.models2 import Observation
+from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH
-from vfs.results2 import (
+from vfs.results import (
     _QUARANTINE_CLIP,
     KIND_CONTRACTS,
     Result,
