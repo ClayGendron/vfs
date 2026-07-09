@@ -28,17 +28,17 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationInfo, computed_field, field_validator, model_validator
 
-from vfs.chunking import (
+from vfs.models.chunking import (
     NOTEBOOK_EXTENSION,
     grammar_for_extension,
     split_code,
     split_notebook,
     split_with_line_ranges,
 )
+from vfs.models.vector import Vector  # noqa: TC001 — Pydantic needs this at runtime for field resolution
+from vfs.models.versioning import create_version as create_version_record
+from vfs.models.versioning import reconstruct_version
 from vfs.paths import ObjectKind, Path, chunk_path, decompose_edge, is_meta_path, version_path
-from vfs.vector import Vector  # noqa: TC001 — Pydantic needs this at runtime for field resolution
-from vfs.versioning import create_version as create_version_record
-from vfs.versioning import reconstruct_version
 
 # Kinds that never carry content — construction, normalization of absence,
 # and with_content all enforce the same set.
@@ -442,7 +442,7 @@ class Entry(BaseModel):
     ) -> Entry:
         """Construct a ``kind="version"`` row for *version_content*.
 
-        Snapshot-vs-diff is decided by :func:`vfs.versioning.create_version`;
+        Snapshot-vs-diff is decided by :func:`vfs.models.versioning.create_version`;
         the metrics of the *full* version content are passed explicitly — a
         diff row stores the diff, so the validator must not re-measure its
         stored payload (the explicit-metrics carve-out).

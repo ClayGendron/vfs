@@ -4,7 +4,7 @@ The kind vocabulary (:class:`VFSErrorKind`), the severity trust tiers
 (:class:`Severity`), and the normative per-kind contract table
 (:data:`KIND_CONTRACTS` — retry class, agent hint, ``path`` referent)
 live here so both the envelope (``vfs.results``) and the renderer
-(``vfs.render``) can consume them without a cycle: hints and retry
+(``vfs.results.render``) can consume them without a cycle: hints and retry
 directives are contract, not wire data, and the renderer is where they
 become text. :func:`kind_family` is the normative dispatch rule for the
 hierarchical vocabulary.

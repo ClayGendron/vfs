@@ -28,9 +28,9 @@ from vfs.models import Entry, Observation
 from vfs.ops import ALL_OPS, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.permissions import read_write
-from vfs.replace import EditOperation
 from vfs.results import Result, ResultError, RetryClass, Severity, VFSErrorKind
 from vfs.storage import ResolvedPair
+from vfs.storage.replace import EditOperation
 
 # ----------------------------------------------------------------------
 # single-shape verbs localize their dispatch

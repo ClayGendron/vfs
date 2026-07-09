@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import inspect
 
-from vfs import ops, permissions, projection
+from vfs import ops, permissions
 from vfs.base import VirtualFileSystem
 from vfs.ops import ALL_OPS, EXEC_OPS, MUTATING_OPS, READ_OPS, TWO_PATH_OPS
+from vfs.results import projection
 
 # Public router methods that manage the mount tree rather than route an op.
 # A new public coroutine on VirtualFileSystem must be a registered op or a
@@ -47,26 +48,29 @@ def test_cli_and_rm_are_not_ops() -> None:
 
 
 def test_expected_vocabulary() -> None:
-    assert frozenset(
-        {
-            "read",
-            "write",
-            "edit",
-            "delete",
-            "stat",
-            "mkdir",
-            "mkedge",
-            "move",
-            "copy",
-            "ls",
-            "tree",
-            "glob",
-            "grep",
-            "glean",
-            "graph",
-            "run",
-        },
-    ) == ALL_OPS
+    assert (
+        frozenset(
+            {
+                "read",
+                "write",
+                "edit",
+                "delete",
+                "stat",
+                "mkdir",
+                "mkedge",
+                "move",
+                "copy",
+                "ls",
+                "tree",
+                "glob",
+                "grep",
+                "glean",
+                "graph",
+                "run",
+            },
+        )
+        == ALL_OPS
+    )
 
 
 # ---------------------------------------------------------------------------

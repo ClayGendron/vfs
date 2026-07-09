@@ -7,7 +7,7 @@ from itertools import pairwise
 
 import pytest
 
-from vfs.chunking import (
+from vfs.models.chunking import (
     DEFAULT_SEPARATORS,
     EXTENSION_TO_GRAMMAR,
     _call,

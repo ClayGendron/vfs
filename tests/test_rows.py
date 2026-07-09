@@ -9,14 +9,14 @@ import pytest
 from sqlalchemy import create_engine, insert, inspect, select
 
 from vfs.models import Entry
-from vfs.rows import (
+from vfs.models.rows import (
     ENTRY_ROW_ONLY_COLUMNS,
     GRAM_ACTION_ADD,
     GramStagingRow,
     VFSTables,
     build_vfs_tables,
 )
-from vfs.vector import NativeEmbeddingConfig, VectorType
+from vfs.models.vector import NativeEmbeddingConfig, VectorType
 
 
 @pytest.fixture
@@ -48,8 +48,7 @@ class TestEntryRowDrift:
         for name, field in Entry.model_fields.items():
             column = tables.entry.c[name]
             assert column.nullable == _allows_none(field.annotation), (
-                f"nullability drift on {name!r}: column nullable={column.nullable}, "
-                f"Entry annotation {field.annotation}"
+                f"nullability drift on {name!r}: column nullable={column.nullable}, Entry annotation {field.annotation}"
             )
 
     def test_gram_staging_row_matches_staging_columns(self, tables: VFSTables) -> None:

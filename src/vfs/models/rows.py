@@ -37,8 +37,8 @@ from sqlalchemy import (
     Table,
 )
 
+from vfs.models.vector import NativeEmbeddingConfig, VectorType
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH
-from vfs.vector import NativeEmbeddingConfig, VectorType
 
 # Entry-table columns with no counterpart field on the domain model: the id
 # backbone plus the relationship columns the repository derives from ``path``.

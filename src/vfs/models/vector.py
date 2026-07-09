@@ -7,7 +7,7 @@ PostgreSQL ``vector(<N>)`` column when ``postgres_native=True``.
 
 Usage::
 
-    from vfs.vector import Vector, VectorType
+    from vfs.models.vector import Vector, VectorType
 
     # As a model field (any dimension):
     vector: Vector | None = Field(default=None, sa_type=VectorType())
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 class NativeEmbeddingConfig:
     """Postgres-native pgvector column configuration for a filesystem mount.
 
-    Passed to :class:`vfs.backends.postgres.PostgresFileSystem` at
+    Passed to :class:`vfs.storage.backends.postgres.PostgresFileSystem` at
     construction. The filesystem uses it to shape the ``embedding`` column
     of its minted entry-table class so that the column is a true
     ``vector(<N>)`` with the configured pgvector index.

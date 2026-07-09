@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 import pytest
 
 from vfs.models import Match, Observation
-from vfs.render import _verb_for
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results.render import _verb_for
 
 
 def obs(path: str, **kwargs: object) -> Observation:

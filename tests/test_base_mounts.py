@@ -19,12 +19,12 @@ from base_doubles import (
     SpyCloseStorage,
     TransportFailStorage,
 )
-from vfs.backends.memory import InMemoryStorage
 from vfs.base import Binding, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.models import Observation
 from vfs.paths import Path
 from vfs.results import Result, Severity, VFSErrorKind
+from vfs.storage.backends.memory import InMemoryStorage
 
 # ----------------------------------------------------------------------
 # file-local doubles

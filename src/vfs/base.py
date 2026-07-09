@@ -39,9 +39,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 
-from vfs.backends.memory import InMemoryStorage
 from vfs.exceptions import MountError
-from vfs.kinds import Severity, kind_family
 from vfs.models import Entry, Observation
 from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
@@ -52,9 +50,9 @@ from vfs.permissions import (
     check_writable_composed,
     coerce_permissions,
 )
-from vfs.projection import TRAVERSAL_FUNCTIONS
-from vfs.replace import EditOperation
 from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results.kinds import Severity, kind_family
+from vfs.results.projection import TRAVERSAL_FUNCTIONS
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,
@@ -66,6 +64,8 @@ from vfs.storage import (
     SupportsRun,
     TransportError,
 )
+from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Sequence

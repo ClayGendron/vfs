@@ -19,7 +19,6 @@ from pydantic import ValidationError
 from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH
 from vfs.results import (
-    _QUARANTINE_CLIP,
     KIND_CONTRACTS,
     Result,
     ResultError,
@@ -28,6 +27,7 @@ from vfs.results import (
     VFSErrorKind,
     kind_family,
 )
+from vfs.results.envelope import _QUARANTINE_CLIP
 
 
 def obs(path: str, **kwargs: object) -> Observation:

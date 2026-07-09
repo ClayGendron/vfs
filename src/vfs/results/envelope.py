@@ -39,15 +39,23 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from vfs.kinds import _KIND_ALIASES, KIND_CONTRACTS, KindContract, RetryClass, Severity, VFSErrorKind, kind_family
 from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH, Path
-from vfs.render import render_result
+from vfs.results.kinds import (
+    _KIND_ALIASES,
+    KIND_CONTRACTS,
+    KindContract,
+    RetryClass,
+    Severity,
+    VFSErrorKind,
+    kind_family,
+)
+from vfs.results.render import render_result
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
-# The vocabulary and contract tables live in vfs.kinds (shared with the
+# The vocabulary and contract tables live in vfs.results.kinds (shared with the
 # renderer); re-exported here as the envelope's one import surface.
 __all__ = [
     "KIND_CONTRACTS",
@@ -646,7 +654,7 @@ class Result(BaseModel):
         return json.dumps(self.to_payload(exclude_none=exclude_none))
 
     def to_str(self, *, projection: tuple[str, ...] | list[str] | None = None) -> str:
-        """Render to text via :func:`vfs.render.render_result`.
+        """Render to text via :func:`vfs.results.render.render_result`.
 
         *projection* selects Observation columns; ``None`` uses the
         function's default. Arrangement is function-specific.

@@ -31,16 +31,16 @@ from typing import TYPE_CHECKING, Literal
 
 from vfs.models import Match, Observation
 from vfs.paths import Path, edge_out_path, extract_extension
-from vfs.replace import replace
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage import storage_ops
+from vfs.storage.replace import replace
 
 if TYPE_CHECKING:
     from vfs.models import Entry
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind
-    from vfs.replace import EditOperation
     from vfs.storage import ResolvedPair
+    from vfs.storage.replace import EditOperation
 
 _Status = Literal["created", "updated", "unchanged", "deleted"]
 

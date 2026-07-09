@@ -42,7 +42,7 @@ from bisect import bisect_left
 
 from tree_sitter_language_pack import SupportedLanguage, get_parser
 
-from vfs.code_grams import GRAM_SIZE, normalize_content
+from vfs.models.code_grams import GRAM_SIZE, normalize_content
 
 # Separator priority for the recursive character splitter.
 DEFAULT_SEPARATORS: tuple[str, ...] = ("\n\n", "\n", " ", "")

@@ -43,8 +43,8 @@ if TYPE_CHECKING:
     from vfs.models import Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import Path
-    from vfs.replace import EditOperation
     from vfs.results import Result
+    from vfs.storage.replace import EditOperation
 
 
 class TransportError(Exception):
