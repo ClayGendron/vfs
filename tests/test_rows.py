@@ -128,7 +128,7 @@ class TestDDL:
     def test_entry_dump_inserts_and_reads_back(self, tables: VFSTables) -> None:
         engine = create_engine("sqlite://")
         tables.metadata.create_all(engine)
-        entry = Entry(path=Path("/docs/a.md"), content="hello", description="greeting")
+        entry = Entry(path=Path("/docs/a.md"), content="hello")
         row = {
             **entry.model_dump(exclude=set(Entry.model_computed_fields)),
             # Repository-derived relationship columns (id refs in a later phase).

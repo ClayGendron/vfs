@@ -127,11 +127,11 @@ class TestToEntries:
         unit, manifest = entries
         assert unit.path == skill_path("pdf")
         assert unit.kind == "skill"
-        assert unit.description == "do pdf"
         assert unit.content is None
         assert manifest.path == skill_manifest_path("pdf")
         assert manifest.kind == "file"
         assert _frontmatter(manifest.content)["name"] == "pdf"
+        assert _frontmatter(manifest.content)["description"] == "do pdf"
 
     def test_resources_emitted_under_the_skill_root(self) -> None:
         skill = Skill(

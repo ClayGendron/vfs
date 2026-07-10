@@ -190,13 +190,13 @@ class Skill(BaseModel):
     def to_entries(self) -> list[Entry]:
         """Project to the entries that create this skill, unit directory first.
 
-        The unit directory is ``kind="skill"`` and carries the skill's
-        ``description``; the ``SKILL.md`` manifest and every bundled resource are
-        ordinary indexable files under it.
+        The unit directory is ``kind="skill"``; the ``SKILL.md`` manifest —
+        which carries the name and ``description`` in its frontmatter — and
+        every bundled resource are ordinary indexable files under it.
         """
         root = skill_path(self.name)
         entries = [
-            Entry(path=root, kind="skill", description=self.description),
+            Entry(path=root, kind="skill"),
             Entry(path=skill_manifest_path(self.name), kind="file", content=self.render_manifest()),
         ]
         for resource in self.resources:

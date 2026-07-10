@@ -57,7 +57,6 @@ class _Row:
 
     kind: ObjectKind
     content: str | None = None
-    description: str | None = None
     edge_type: str | None = None
 
 
@@ -446,7 +445,6 @@ class InMemoryStorage:
             path=path,
             kind=row.kind,
             content=row.content if content else None,
-            description=row.description,
             edge_type=row.edge_type,
             size_bytes=size,
             status=status,
@@ -487,7 +485,6 @@ class InMemoryStorage:
         kind: ObjectKind,
         overwrite: bool,
         parents: bool,
-        description: str | None = None,
     ) -> Result | Observation:
         """Gate and stage one content-bearing row; a ``Result`` is the failure."""
         if not self._allow_files and kind != "directory":
@@ -502,7 +499,7 @@ class InMemoryStorage:
             if not overwrite:
                 return _fail(op, VFSErrorKind.exists, f"Already exists: {path}", path)
         self._mint_chain(staged, path)
-        staged[path] = _Row(kind=kind, content=content, description=description)
+        staged[path] = _Row(kind=kind, content=content)
         return self._observe(path, staged[path], status="updated" if occupant is not None else "created")
 
     def _write_entries(self, entries: list[Entry], *, overwrite: bool, parents: bool) -> Result:
@@ -525,7 +522,7 @@ class InMemoryStorage:
                     errors.extend(gate.errors)
                     continue
                 self._mint_chain(staged, entry.path)
-                staged[entry.path] = _Row(kind="directory", description=entry.description)
+                staged[entry.path] = _Row(kind="directory")
                 rows.append(self._observe(entry.path, staged[entry.path], status="created"))
                 continue
             result = self._put_file(
@@ -536,7 +533,6 @@ class InMemoryStorage:
                 kind=entry.kind,
                 overwrite=overwrite,
                 parents=parents,
-                description=entry.description,
             )
             if isinstance(result, Result):
                 errors.extend(result.errors)

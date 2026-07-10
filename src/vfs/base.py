@@ -157,7 +157,7 @@ class VirtualFileSystem:
         self._class_name = self.__class__.__name__
 
     # -------------------------------------------------------------------
-    # mount administration — bind/unbind primitives, add/remove sugar
+    # mount administration
     # -------------------------------------------------------------------
 
     async def bind(
@@ -375,11 +375,10 @@ class VirtualFileSystem:
         advice = f"no directory stored at the mount point (mkdir it, or add_mount(..., parents=True)): {mount_path}"
         stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel)
         if not stat.success:
-            fatal = stat.failures[0]
-            if kind_family(fatal.kind) is VFSErrorKind.not_found:
+            blocker = next((f for f in stat.failures if kind_family(f.kind) is not VFSErrorKind.not_found), None)
+            if blocker is None:
                 return advice
-            return fatal.message or f"could not stat the mount point: {mount_path}"
-        # Keyed by path, not position — a backend's row order is not a contract.
+            return blocker.message or f"could not stat the mount point: {mount_path}"
         row = next((o for o in stat.observations if o.path == terminal.rel), None)
         if row is None:
             return advice
@@ -568,15 +567,13 @@ class VirtualFileSystem:
         """Dispatch *op* to an entry and bring the result back to router coordinates.
 
         The single outbound/inbound seam: call the entry's storage, rebase
-        under the entry path, drop rows shadowed by deeper bindings, then
-        decorate bind rows with their storage's live description.  Every
-        routed dispatch — single, grouped, paired, fan-out, tree — funnels
-        through here.
+        under the entry path, then drop rows shadowed by deeper bindings.
+        Every routed dispatch — single, grouped, paired, fan-out, tree —
+        funnels through here.
         """
         result = await self._call_storage(binding, op, user_id=user_id, **kwargs)
         result = result.with_mount(binding.path)
-        result = self._shadow_filter(result, binding)
-        return self._decorate(result)
+        return self._shadow_filter(result, binding)
 
     async def _call_storage(
         self,
@@ -695,7 +692,7 @@ class VirtualFileSystem:
         storage, whatever the shallower storage happens to hold there
         (crash orphans, rows written by another client of shared storage).
         The row *at* the bind path survives: it is the stored mount-point
-        directory, and decoration gives it the bound storage's description.
+        directory, visible in listings like any other.
         """
         deeper = [b.path for b in self._bindings_beneath(binding.path)]
         if not deeper or not result.observations:
@@ -704,35 +701,6 @@ class VirtualFileSystem:
         if len(kept) == len(result.observations):
             return result
         return result.model_copy(update={"observations": kept})
-
-    def _decorate(self, result: Result) -> Result:
-        """Read-time decoration in router coordinates — the table speaks last.
-
-        A row at a bound path carries its storage's live description, and
-        the namespace root row carries this router's own — so reading a
-        mount point composes to the backend's current metadata without a
-        second call.  Kinds are untouched: a mount point is a directory,
-        stored and shown; mount-ness lives in the table alone.
-        """
-        if not result.observations:
-            return result
-        rows: list[Observation] = []
-        changed = False
-        for obs in result.observations:
-            description: str | None = None
-            if obs.path == ROOT:
-                description = self.description
-            else:
-                bound = self._bindings.get(obs.path)
-                if bound is not None:
-                    description = bound.storage.description
-            if description is not None and obs.description != description:
-                obs = obs.model_copy(update={"description": description})
-                changed = True
-            rows.append(obs)
-        if not changed:
-            return result
-        return result.model_copy(update={"observations": rows})
 
     # -------------------------------------------------------------------
     # dispatch shapes — single, grouped, paired, fan-out, tree

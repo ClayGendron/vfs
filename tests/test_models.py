@@ -46,9 +46,9 @@ class TestModelFieldsSet:
 
     def test_untouched_fields_distinguish_explicit_none_from_unset(self) -> None:
         unset = Entry(path=Path("/docs/a.md"))
-        explicit = Entry(path=Path("/docs/a.md"), description=None)
-        assert "description" not in unset.model_fields_set
-        assert "description" in explicit.model_fields_set
+        explicit = Entry(path=Path("/docs/a.md"), mime_type=None)
+        assert "mime_type" not in unset.model_fields_set
+        assert "mime_type" in explicit.model_fields_set
 
     def test_validator_assignment_of_none_counts_as_set(self) -> None:
         directory = Entry(path=Path("/docs"))
@@ -69,10 +69,6 @@ class TestConstructionValidation:
     def test_null_bytes_in_version_diff_rejected(self) -> None:
         with pytest.raises(ValidationError, match="null bytes"):
             Entry(path=version_path(Path("/a.md"), 2), version_diff="a\x00b")
-
-    def test_null_bytes_in_description_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="null bytes"):
-            Entry(path=Path("/a.md"), description="a\x00b")
 
     def test_empty_name_rejected_for_non_root(self) -> None:
         with pytest.raises(ValidationError, match="name must not be empty"):
@@ -282,7 +278,6 @@ class TestEntryToObservation:
         file = Entry(
             path=Path("/docs/a.md"),
             content="hello",
-            description="greeting",
             mime_type="text/markdown",
             version_number=3,
         )

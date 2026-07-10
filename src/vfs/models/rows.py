@@ -131,7 +131,6 @@ def build_vfs_tables(
         # Content. Unbounded text columns take no length: VARCHAR on
         # SQLite/Postgres, VARCHAR(max) on MSSQL.
         Column("content", String()),
-        Column("description", String()),
         Column("version_diff", String()),
         Column("content_hash", String(64)),
         Column("mime_type", String(MAX_SEGMENT_LENGTH)),

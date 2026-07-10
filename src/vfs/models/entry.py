@@ -70,7 +70,7 @@ class Entry(BaseModel):
     construction it holds the caller's keys plus everything the validators
     derived (``kind``, ``name``, ``ext``, the content metrics, the timestamps).
     It is a pure record of caller intent only for fields no validator assigns
-    (``description``, ``mime_type``, ...) — there it still distinguishes an
+    (``mime_type``, ``external_id``, ...) — there it still distinguishes an
     explicit ``None`` from an unset default. Logic that needs caller intent for
     a validator-assigned field must read the set *inside* validation, before
     the assignment lands (as the version-metrics carve-out in
@@ -87,7 +87,6 @@ class Entry(BaseModel):
     # --- Content ------------------------------------------------------------
 
     content: str | None = None
-    description: str | None = None
     version_diff: str | None = None
     content_hash: str | None = None
     mime_type: str | None = None
@@ -181,7 +180,7 @@ class Entry(BaseModel):
     # Construction and validation
     # -----------------------------------------------------------------------
 
-    @field_validator("content", "description", "version_diff")
+    @field_validator("content", "version_diff")
     @classmethod
     def _reject_null_bytes(cls, value: str | None, info: ValidationInfo) -> str | None:
         """Reject null bytes in stored text — they are invalid in SQL text columns."""
@@ -328,7 +327,6 @@ class Entry(BaseModel):
             path=self.path,
             kind=self.kind,
             content=self.content,
-            description=self.description,
             content_hash=self.content_hash,
             mime_type=self.mime_type,
             size_bytes=self.size_bytes,
@@ -641,7 +639,6 @@ class Observation(BaseModel):
     path: Path
     kind: ObjectKind | None = None
     content: str | None = None
-    description: str | None = None
     content_hash: str | None = None
     mime_type: str | None = None
     size_bytes: int | None = None

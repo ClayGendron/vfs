@@ -149,17 +149,17 @@ class TestPathListAndTable:
     def test_table_cells_escape_pipes_and_newlines(self) -> None:
         result = Result(
             ops=("ls",),
-            observations=[obs("/a.md", kind="file", description="x|y\nz")],
+            observations=[obs("/a.md", kind="file", mime_type="x|y\nz")],
         )
-        out = result.to_str(projection=("path", "description"))
+        out = result.to_str(projection=("path", "mime_type"))
         assert r"x\|y z" in out
 
     def test_table_cells_strip_carriage_returns(self) -> None:
         result = Result(
             ops=("ls",),
-            observations=[obs("/a.md", kind="file", description="one\r\ntwo\rthree")],
+            observations=[obs("/a.md", kind="file", mime_type="one\r\ntwo\rthree")],
         )
-        out = result.to_str(projection=("path", "description"))
+        out = result.to_str(projection=("path", "mime_type"))
         assert "one two three" in out
         assert "\r" not in out
 

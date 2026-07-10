@@ -589,29 +589,6 @@ async def test_shadow_filter_drops_tree_rows_beneath_a_deeper_bind() -> None:
 
 
 # ----------------------------------------------------------------------
-# decoration — a bind row carries its storage's live description
-# ----------------------------------------------------------------------
-
-
-async def test_decorate_bind_row_carries_live_storage_description() -> None:
-    root = VirtualFileSystem()
-    child = RecorderStorage(description="child docs")
-    await root.add_mount(child, "/data")
-    row = next(o for o in (await root.ls("/")).observations if o.path == "/data")
-    assert row.kind == "directory"
-    assert row.description == "child docs"
-    child.description = "updated live"
-    row2 = next(o for o in (await root.ls("/")).observations if o.path == "/data")
-    assert row2.description == "updated live"  # live, not snapshotted
-
-
-async def test_decorate_root_row_carries_router_description() -> None:
-    root = VirtualFileSystem(description="the top")
-    row = (await root.stat("/")).one()
-    assert row.description == "the top"
-
-
-# ----------------------------------------------------------------------
 # capabilities — union of entry snapshots, taken at bind
 # ----------------------------------------------------------------------
 

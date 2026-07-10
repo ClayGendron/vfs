@@ -287,7 +287,7 @@ class StorageBackend(SupportsRead, Protocol):
     The read family is the *verb* minimum — a backend that cannot even be
     read is not a storage backend — and three identity members are required
     besides: ``name`` and ``description`` say what this backend is (mount
-    rows are decorated with the live ``description``), and
+    administration reads the live ``description``), and
     ``capabilities()`` declares the ops it honestly answers.  Declaration
     beats inference: an adapter's method surface says nothing about what
     its wrapped namespace supports, and a wire client's set is whatever
