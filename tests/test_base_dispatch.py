@@ -1150,3 +1150,180 @@ async def test_closed_filesystem_fails_every_verb_as_backend_unavailable(verb: s
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.backend_unavailable
     assert result.op == verb
+
+
+# ----------------------------------------------------------------------
+# decomposed routing helpers — direct unit tests
+# ----------------------------------------------------------------------
+
+
+def _live(op: str, path: str) -> Result:
+    return Result(ops=(op,), observations=[Observation(path=Path(path), kind="file")])
+
+
+def _dead(op: str) -> Result:
+    return Result(ops=(op,), errors=[ResultError(kind=VFSErrorKind.backend_unavailable, message="dead peer")])
+
+
+def test_merge_fanout_pinned_failure_stays_fatal() -> None:
+    # A branch the caller also named merges plain — no demotion pool.
+    merged = VirtualFileSystem._merge_fanout(
+        [],
+        [(Path("/dead"), _dead("grep")), (Path("/live"), _live("grep", "/live/a.txt"))],
+        frozenset({Path("/dead")}),
+        "grep",
+    )
+    assert merged.success is False
+    [fatal] = merged.failures
+    assert fatal.kind is VFSErrorKind.backend_unavailable
+
+
+def test_merge_fanout_unpinned_failure_demotes_beside_live_branches() -> None:
+    merged = VirtualFileSystem._merge_fanout(
+        [],
+        [(Path("/dead"), _dead("grep")), (Path("/live"), _live("grep", "/live/a.txt"))],
+        frozenset(),
+        "grep",
+    )
+    assert merged.success is True
+    [warning] = [e for e in merged.errors if e.severity is Severity.warning]
+    assert warning.kind is VFSErrorKind.backend_unavailable
+
+
+def test_merge_fanout_all_dead_unpinned_stays_loud() -> None:
+    merged = VirtualFileSystem._merge_fanout(
+        [],
+        [(Path("/d1"), _dead("grep")), (Path("/d2"), _dead("grep"))],
+        frozenset(),
+        "grep",
+    )
+    assert merged.success is False
+
+
+def test_merge_fanout_named_results_merge_plain() -> None:
+    merged = VirtualFileSystem._merge_fanout([_dead("grep")], [], frozenset(), "grep")
+    assert merged.success is False
+
+
+async def test_classify_no_paths_sweeps_table_and_skips_incapable() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(RecorderStorage(), "/full")
+    await root.add_mount(ReadFamilyStorage(), "/thin")
+    plan = root._classify_fanout_scopes("glob", ())
+    assert plan.refusal is None
+    assert set(plan.unscoped) == {Path("/"), Path("/full")}
+    assert plan.scoped == {}
+    [skip] = plan.skips
+    assert skip.path == "/thin"
+    assert skip.severity is Severity.info
+
+
+async def test_classify_region_scopes_owner_and_unscopes_deeper_binds() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(RecorderStorage(), "/a/b", parents=True)
+    plan = root._classify_fanout_scopes("glob", ("/a",))
+    assert plan.refusal is None
+    binding, rels = plan.scoped[Path("/")]
+    assert binding.path == "/" and rels == [Path("/a")]
+    assert set(plan.unscoped) == {Path("/a/b")}
+
+
+async def test_classify_plain_path_is_scoped_to_its_terminal() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(RecorderStorage(), "/m")
+    plan = root._classify_fanout_scopes("glob", ("/m/sub",))
+    assert plan.refusal is None
+    binding, rels = plan.scoped[Path("/m")]
+    assert binding.path == "/m" and rels == [Path("/sub")]
+    assert plan.unscoped == {}
+
+
+async def test_classify_invalid_path_refuses_with_empty_plan() -> None:
+    root = VirtualFileSystem()
+    plan = root._classify_fanout_scopes("glob", ("/" + "x" * (MAX_PATH_LENGTH + 1),))
+    assert plan.refusal is not None
+    assert plan.refusal.errors[0].kind is VFSErrorKind.invalid
+    assert plan.scoped == {} and plan.unscoped == {} and plan.skips == []
+
+
+async def test_classify_scoped_incapable_refuses_with_empty_plan() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(ReadFamilyStorage(), "/thin")
+    plan = root._classify_fanout_scopes("glob", ("/thin/sub",))
+    assert plan.refusal is not None
+    assert plan.refusal.errors[0].kind is VFSErrorKind.unsupported
+    assert plan.scoped == {} and plan.unscoped == {} and plan.skips == []
+
+
+async def test_classify_dedups_skips_across_region_paths() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(ReadFamilyStorage(), "/a/thin", parents=True)
+    plan = root._classify_fanout_scopes("glob", ("/", "/a"))
+    assert plan.refusal is None
+    assert len(plan.skips) == 1
+
+
+async def test_hop_grant_exhaustion_refuses_without_token() -> None:
+    fs = VirtualFileSystem(hop_budget=0)
+    grant = fs._enter_hop(op="glob")
+    assert grant.token is None
+    assert grant.refusal is not None
+    assert grant.refusal.errors[0].kind is VFSErrorKind.budget_exhausted
+
+
+async def test_hop_grant_exit_restores_the_callers_budget() -> None:
+    fs = VirtualFileSystem(hop_budget=1)
+    first = fs._enter_hop(op="glob")
+    assert first.refusal is None and first.token is not None
+    nested = fs._enter_hop(op="glob")
+    assert nested.refusal is not None
+    fs._exit_hop(first.token)
+    again = fs._enter_hop(op="glob")
+    assert again.refusal is None
+    fs._exit_hop(again.token)
+
+
+def test_exit_hop_accepts_none() -> None:
+    VirtualFileSystem._exit_hop(None)
+
+
+async def test_two_path_invalid_dest_beats_busy_src() -> None:
+    # Per-pair precedence is a contract: resolve both endpoints, then
+    # busy-guard — a bind-site src with an invalid dest reports invalid.
+    root = VirtualFileSystem()
+    await root.add_mount(RecorderStorage(), "/m")
+    result = await root.move(src="/m", dest="/" + "x" * (MAX_PATH_LENGTH + 1))
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+# ----------------------------------------------------------------------
+# coverage edges — tree own-failure, closed entry batch, native edits
+# ----------------------------------------------------------------------
+
+
+async def test_tree_named_target_failure_returns_loud() -> None:
+    # The named target itself failing is never demoted — no descents run.
+    root = VirtualFileSystem()
+    await root.add_mount(TransportFailStorage(), "/dead")
+    result = await root.tree("/dead")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.backend_unavailable
+
+
+async def test_closed_filesystem_rejects_an_entry_batch_write() -> None:
+    fs = VirtualFileSystem()
+    await fs.close()
+    result = await fs.write(entries=[Entry(path=Path("/f.txt"), content="x")])
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.backend_unavailable
+
+
+async def test_edit_passes_a_native_edits_list_through() -> None:
+    root = VirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    edits = [EditOperation(old="a", new="b"), EditOperation(old="c", new="d", replace_all=True)]
+    result = await root.edit(path="/m/f.txt", edits=edits)
+    assert result.success is True
+    assert child.calls == [("edit", {"path": "/f.txt", "edits": edits})]

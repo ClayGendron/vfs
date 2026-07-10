@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine, Sequence
 
     from vfs.ops import Op
+    from vfs.paths import ResolvedPath
 
 ROOT = Path("/")
 
@@ -118,6 +119,39 @@ class ResolvedTerminal(NamedTuple):
 
     binding: Binding
     rel: Path
+
+    @property
+    def full(self) -> Path:
+        """The router-coordinate path this terminal resolved from."""
+        return self.rel.with_mount(self.binding.path)
+
+
+class _HopGrant(NamedTuple):
+    """One hop-budget admission: exactly one of *token* / *refusal* is set.
+
+    ``token`` restores the caller's budget on exit (``_exit_hop``);
+    ``refusal`` is the classified ``budget_exhausted`` result.
+    """
+
+    token: Token[int | None] | None
+    refusal: Result | None
+
+
+class _FanoutPlan(NamedTuple):
+    """One fan-out's classified inputs — an output-only plan.
+
+    ``scoped`` maps bind path to the entry and its caller-named rels;
+    ``unscoped`` holds the entries dispatched whole; ``skips`` are the
+    incapable-entry coverage records, appended only after the merge so
+    they never feed branch demotion.  ``refusal`` is the sole failure
+    carrier: when set, the collections are empty and the caller returns
+    it.  The plan never grows input fields — inputs stay arguments.
+    """
+
+    scoped: dict[Path, tuple[Binding, list[Path]]]
+    unscoped: dict[Path, Binding]
+    skips: list[ResultError]
+    refusal: Result | None = None
 
 
 class VirtualFileSystem:
@@ -719,23 +753,6 @@ class VirtualFileSystem:
             return None
         return list(items)
 
-    def _group_observations_by_terminal(
-        self,
-        observations: list[Observation],
-    ) -> list[tuple[Binding, list[Observation]]]:
-        """Group observations by owning entry, rebasing paths.
-
-        Returns ``[(binding, rebased_observations)]`` where each
-        observation's path is relative to its entry (the bind path stripped
-        via :meth:`Observation.without_mount`).
-        """
-        groups: dict[Path, tuple[Binding, list[Observation]]] = {}
-        for obs in observations:
-            binding = self._resolve_terminal(obs.path).binding
-            _b, obs_list = groups.setdefault(binding.path, (binding, []))
-            obs_list.append(obs.without_mount(binding.path))
-        return list(groups.values())
-
     async def _dispatch_grouped_observations(
         self,
         op: Op,
@@ -749,7 +766,9 @@ class VirtualFileSystem:
         Every input shape resolves against the same storage truth — a
         directory row classifies for a mutation exactly as the equivalent
         single-path call would.  Reads classify per row where the backend
-        supports it; mutations are rejected whole at the gate.
+        supports it; mutations are rejected whole at the gate.  Each row
+        resolves once: the validated path both routes to its entry and
+        rebases the row into entry coordinates.
         """
         rows = self._as_list(observations)
         if rows is None:
@@ -758,6 +777,7 @@ class VirtualFileSystem:
                 kind=VFSErrorKind.invalid,
                 op=op,
             )
+        groups: dict[Path, tuple[Binding, list[Observation]]] = {}
         for obs in rows:
             if not isinstance(obs, Observation):
                 return self._error(
@@ -767,30 +787,27 @@ class VirtualFileSystem:
                 )
             resolved = resolve_path(obs.path, mutation=op in MUTATING_OPS)
             if resolved.path is None:
-                return self._error(
-                    resolved.error or f"Invalid path: {obs.path!r}",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
+                return self._invalid_path(resolved, obs.path, op)
             if op == "delete":
                 busy = self._busy_guard(op, resolved.path, subtree=True)
                 if busy is not None:
                     return busy
-
-        groups = self._group_observations_by_terminal(rows)
+            binding = self._resolve_terminal(resolved.path).binding
+            _b, obs_list = groups.setdefault(binding.path, (binding, []))
+            obs_list.append(obs.without_mount(binding.path))
         if not groups:
             return Result(ops=(op,))
 
         # All gates run before any dispatch, so a batch touching a bad
         # entry is rejected whole per the facts visible in this table.
-        for binding, group in groups:
+        for binding, group in groups.values():
             err = self._gate_entry(binding, op, write_rels=[o.path for o in group])
             if err is not None:
                 return err
 
         results = await self._gather_settled(
             self._dispatch_entry(binding, op, observations=group, user_id=user_id, **kwargs)
-            for binding, group in groups
+            for binding, group in groups.values()
         )
         return Result.merge(results, op=op)
 
@@ -826,7 +843,7 @@ class VirtualFileSystem:
         assert path is not None
         resolved = resolve_path(path, mutation=op in MUTATING_OPS)
         if resolved.path is None:
-            return self._error(resolved.error or f"Invalid path: {path!r}", kind=VFSErrorKind.invalid, op=op)
+            return self._invalid_path(resolved, path, op)
         full = resolved.path
 
         if op == "delete":
@@ -863,11 +880,11 @@ class VirtualFileSystem:
         descent among live rows demotes to a warning; the named target
         itself failing stays a loud failure.
         """
-        budget_err = self._enter_hop(op="tree")
-        if isinstance(budget_err, Result):
-            return budget_err
+        grant = self._enter_hop(op="tree")
+        if grant.refusal is not None:
+            return grant.refusal
         try:
-            full = terminal.rel.with_mount(terminal.binding.path)
+            full = terminal.full
             own = await self._dispatch_entry(
                 terminal.binding, "tree", path=terminal.rel, max_depth=max_depth, columns=columns, user_id=user_id
             )
@@ -896,7 +913,7 @@ class VirtualFileSystem:
             )
             return self._with_skips(Result.merge_branches(results, op="tree"), skips)
         finally:
-            self._exit_hop(budget_err)
+            self._exit_hop(grant.token)
 
     async def _route_two_path(
         self,
@@ -930,10 +947,10 @@ class VirtualFileSystem:
         for pair in operations:
             src = resolve_path(pair.src, mutation=op == "move")
             if src.path is None:
-                return self._error(src.error or f"Invalid path: {pair.src!r}", kind=VFSErrorKind.invalid, op=op)
+                return self._invalid_path(src, pair.src, op)
             dest = resolve_path(pair.dest, mutation=True)
             if dest.path is None:
-                return self._error(dest.error or f"Invalid path: {pair.dest!r}", kind=VFSErrorKind.invalid, op=op)
+                return self._invalid_path(dest, pair.dest, op)
             src_full, dest_full = src.path, dest.path
 
             if op == "move":
@@ -965,6 +982,73 @@ class VirtualFileSystem:
             for binding, group in groups.values()
         )
         return Result.merge(results, op=op)
+
+    @staticmethod
+    def _coerce_two_path(item: object) -> TwoPathOperation | None:
+        """Coerce a batch item to a ``TwoPathOperation``, or ``None`` if malformed.
+
+        Accepts a ``TwoPathOperation`` as-is or a 2-tuple/list of two strings.
+        Anything else — wrong arity, non-string members, a stray ``str`` that
+        a ``Sequence`` iteration would splatter into characters — is rejected
+        so the caller sees ``invalid`` instead of a raw ``TypeError``.
+        """
+        if isinstance(item, TwoPathOperation):
+            return item
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            src, dest = item
+            if isinstance(src, str) and isinstance(dest, str):
+                return TwoPathOperation(src=src, dest=dest)
+        return None
+
+    async def _route_pairs(
+        self,
+        op: Op,
+        src: str | None,
+        dest: str | None,
+        batch: Sequence[TwoPathOperation | tuple[str, str]] | None,
+        *,
+        overwrite: bool,
+        user_id: str | None,
+    ) -> Result:
+        """Shared move/copy front: normalize the src/dest-or-batch input, then route.
+
+        *src*/*dest* and *batch* are mutually exclusive; each batch item is
+        coerced through :meth:`_coerce_two_path`, so a malformed pair is an
+        ``invalid`` result rather than an uncaught ``TypeError``.
+        """
+        if batch is not None:
+            if src is not None or dest is not None:
+                return self._error(
+                    f"{op} takes src/dest or a batch list, not both",
+                    kind=VFSErrorKind.invalid,
+                    op=op,
+                )
+            pairs = self._as_list(batch)
+            if pairs is None:
+                return self._error(
+                    f"{op} batch must be an iterable of (src, dest) pairs, got {type(batch).__name__}",
+                    kind=VFSErrorKind.invalid,
+                    op=op,
+                )
+        else:
+            if not src or not dest:
+                return self._error(
+                    f"{op} requires src and dest, or a batch list",
+                    kind=VFSErrorKind.invalid,
+                    op=op,
+                )
+            pairs = [TwoPathOperation(src=src, dest=dest)]
+        operations: list[TwoPathOperation] = []
+        for item in pairs:
+            pair = self._coerce_two_path(item)
+            if pair is None:
+                return self._error(
+                    f"{op} pair must be (src, dest) of two strings: {item!r}",
+                    kind=VFSErrorKind.invalid,
+                    op=op,
+                )
+            operations.append(pair)
+        return await self._route_two_path(op, operations, overwrite=overwrite, user_id=user_id)
 
     async def _route_fanout(
         self,
@@ -1022,80 +1106,105 @@ class VirtualFileSystem:
             merged = await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
             return self._cap_rows(merged, op, row_cap)
 
-        budget_err = self._enter_hop(op=op)
-        if isinstance(budget_err, Result):
-            return budget_err
+        grant = self._enter_hop(op=op)
+        if grant.refusal is not None:
+            return grant.refusal
         try:
-            scoped: dict[Path, tuple[Binding, list[Path]]] = {}
-            unscoped: dict[Path, Binding] = {}
-            skipped: dict[Path, ResultError] = {}
-
-            if paths:
-                for raw in paths:
-                    resolved = resolve_path(raw)
-                    if resolved.path is None:
-                        return self._error(
-                            resolved.error or f"Invalid path: {raw!r}",
-                            kind=VFSErrorKind.invalid,
-                            op=op,
-                        )
-                    full = resolved.path
-                    terminal = self._resolve_terminal(full)
-                    beneath = self._bindings_beneath(full)
-                    if full == ROOT or beneath:
-                        # A region: the owner answers its scope, deeper binds
-                        # answer whole — both under the recorded-skip rule.
-                        if op not in terminal.binding.meta.caps:
-                            skipped.setdefault(terminal.binding.path, self._skip_entry(op, terminal.binding))
-                        elif terminal.rel == ROOT:
-                            unscoped.setdefault(terminal.binding.path, terminal.binding)
-                        else:
-                            _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
-                            rels.append(terminal.rel)
-                        for binding in beneath:
-                            if op in binding.meta.caps:
-                                unscoped.setdefault(binding.path, binding)
-                            else:
-                                skipped.setdefault(binding.path, self._skip_entry(op, binding))
-                        continue
-                    err = self._gate_entry(terminal.binding, op, write_rels=(terminal.rel,))
-                    if err is not None:
-                        return err
-                    _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
-                    rels.append(terminal.rel)
-            else:
-                for binding in self._bindings.values():
-                    if op in binding.meta.caps:
-                        unscoped[binding.path] = binding
-                    else:
-                        skipped.setdefault(binding.path, self._skip_entry(op, binding))
+            plan = self._classify_fanout_scopes(op, paths)
+            if plan.refusal is not None:
+                return plan.refusal
 
             # An unscoped dispatch already covers its whole entry, so a
             # narrower scope into the same entry is subsumed.
             named_coros = [
                 self._dispatch_entry(binding, op, paths=tuple(rels), user_id=user_id, **kwargs)
-                for key, (binding, rels) in scoped.items()
-                if key not in unscoped
+                for key, (binding, rels) in plan.scoped.items()
+                if key not in plan.unscoped
             ]
-            branch_bindings = list(unscoped.values())
+            branch_bindings = list(plan.unscoped.values())
             branch_coros = [
                 self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs) for binding in branch_bindings
             ]
-            skips = list(skipped.values())
             if not named_coros and not branch_coros:
-                return self._with_skips(Result(ops=(op,)), skips)
+                return self._with_skips(Result(ops=(op,)), plan.skips)
             results = await self._gather_settled([*named_coros, *branch_coros])
             named = results[: len(named_coros)]
-            # A subsumed named entry answered as a branch, but the caller
-            # named it — its result is pinned out of the demotion pool.
-            branch_results = list(zip(branch_bindings, results[len(named_coros) :], strict=True))
-            pinned = [r for b, r in branch_results if b.path in scoped]
-            demotable = [r for b, r in branch_results if b.path not in scoped]
-            branches = Result.merge_branches(demotable, op=op)
-            merged = Result.merge([*named, *pinned, branches], op=op)
-            return self._with_skips(self._cap_rows(merged, op, row_cap), skips)
+            branch_results = list(zip((b.path for b in branch_bindings), results[len(named_coros) :], strict=True))
+            merged = self._merge_fanout(named, branch_results, frozenset(plan.scoped), op)
+            return self._with_skips(self._cap_rows(merged, op, row_cap), plan.skips)
         finally:
-            self._exit_hop(budget_err)
+            self._exit_hop(grant.token)
+
+    def _classify_fanout_scopes(self, op: Op, paths: tuple[str, ...]) -> _FanoutPlan:
+        """Classify a fan-out's targets into the entries that will answer.
+
+        No paths: every entry in table order — capable entries dispatch
+        whole, incapable ones become skip records.  A path with bindings
+        beneath it (or the root) names a *region*: the owning entry
+        answers its scope, deeper bindings answer whole, both under the
+        recorded-skip rule.  A plain path names one entry, which is
+        gated — a scoped entry that cannot answer refuses loudly, like
+        the single shape.  Refusals (invalid path, gate denial) come
+        back on the plan; the collections are then empty.
+        """
+        scoped: dict[Path, tuple[Binding, list[Path]]] = {}
+        unscoped: dict[Path, Binding] = {}
+        skipped: dict[Path, ResultError] = {}
+
+        if paths:
+            for raw in paths:
+                resolved = resolve_path(raw)
+                if resolved.path is None:
+                    return _FanoutPlan({}, {}, [], refusal=self._invalid_path(resolved, raw, op))
+                full = resolved.path
+                terminal = self._resolve_terminal(full)
+                beneath = self._bindings_beneath(full)
+                if full == ROOT or beneath:
+                    if op not in terminal.binding.meta.caps:
+                        skipped.setdefault(terminal.binding.path, self._skip_entry(op, terminal.binding))
+                    elif terminal.rel == ROOT:
+                        unscoped.setdefault(terminal.binding.path, terminal.binding)
+                    else:
+                        _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
+                        rels.append(terminal.rel)
+                    for binding in beneath:
+                        if op in binding.meta.caps:
+                            unscoped.setdefault(binding.path, binding)
+                        else:
+                            skipped.setdefault(binding.path, self._skip_entry(op, binding))
+                    continue
+                err = self._gate_entry(terminal.binding, op, write_rels=(terminal.rel,))
+                if err is not None:
+                    return _FanoutPlan({}, {}, [], refusal=err)
+                _b, rels = scoped.setdefault(terminal.binding.path, (terminal.binding, []))
+                rels.append(terminal.rel)
+        else:
+            for binding in self._bindings.values():
+                if op in binding.meta.caps:
+                    unscoped[binding.path] = binding
+                else:
+                    skipped.setdefault(binding.path, self._skip_entry(op, binding))
+
+        return _FanoutPlan(scoped=scoped, unscoped=unscoped, skips=list(skipped.values()))
+
+    @staticmethod
+    def _merge_fanout(
+        named: list[Result],
+        branch_results: list[tuple[Path, Result]],
+        scoped_keys: frozenset[Path],
+        op: Op,
+    ) -> Result:
+        """Merge fan-out answers under the pinning rule — a pure function.
+
+        Branches whose bind path the caller also *named* (subsumed
+        scopes) merge plain: the caller asked after that entry, so its
+        failure stays loud whatever its siblings produced.  Only the
+        unpinned branches enter the zero-progress demotion pool.
+        """
+        pinned = [r for p, r in branch_results if p in scoped_keys]
+        demotable = [r for p, r in branch_results if p not in scoped_keys]
+        branches = Result.merge_branches(demotable, op=op)
+        return Result.merge([*named, *pinned, branches], op=op)
 
     @staticmethod
     def _cap_rows(result: Result, op: Op, row_cap: int | None) -> Result:
@@ -1149,11 +1258,7 @@ class VirtualFileSystem:
                 )
             resolved = resolve_path(entry.path, mutation=True)
             if resolved.path is None:
-                return self._error(
-                    resolved.error or f"Invalid path: {entry.path!r}",
-                    kind=VFSErrorKind.invalid,
-                    op="write",
-                )
+                return self._invalid_path(resolved, entry.path, "write")
             terminal = self._resolve_terminal(resolved.path)
             err = self._gate_entry(terminal.binding, "write", write_rels=(terminal.rel,))
             if err is not None:
@@ -1178,7 +1283,7 @@ class VirtualFileSystem:
     # hop budget — loops survived, not detected
     # -------------------------------------------------------------------
 
-    def _enter_hop(self, *, op: Op) -> Result | Token[int | None]:
+    def _enter_hop(self, *, op: Op) -> _HopGrant:
         """Decrement the per-request router-traversal budget, or refuse.
 
         The budget is a request-scoped context value shared across every
@@ -1192,17 +1297,18 @@ class VirtualFileSystem:
         if budget is None:
             budget = self._hop_budget_default
         if budget <= 0:
-            return self._error(
+            refusal = self._error(
                 f"Hop budget exhausted while routing {op!r} — a mount loop, or a composition deeper than the budget",
                 kind=VFSErrorKind.budget_exhausted,
                 op=op,
             )
-        return _hop_budget.set(budget - 1)
+            return _HopGrant(token=None, refusal=refusal)
+        return _HopGrant(token=_hop_budget.set(budget - 1), refusal=None)
 
     @staticmethod
-    def _exit_hop(token: Result | Token[int | None]) -> None:
+    def _exit_hop(token: Token[int | None] | None) -> None:
         """Restore the caller's budget on the way out of a routed request."""
-        if isinstance(token, Token):
+        if token is not None:
             _hop_budget.reset(token)
 
     # -------------------------------------------------------------------
@@ -1288,6 +1394,14 @@ class VirtualFileSystem:
             ops=(op,),
             errors=[ResultError(kind=kind, message=message, severity=severity, path=path, data=data)],
         )
+
+    def _invalid_path(self, resolved: ResolvedPath, raw: str, op: Op) -> Result:
+        """Classify a failed path resolution — the one invalid-path mint.
+
+        Total: called only in the ``resolved.path is None`` branch, so the
+        resolve idiom keeps its narrowing; prefers the gate's own prose.
+        """
+        return self._error(resolved.error or f"Invalid path: {raw!r}", kind=VFSErrorKind.invalid, op=op)
 
     # -------------------------------------------------------------------
     # public methods — reads
@@ -1624,10 +1738,10 @@ class VirtualFileSystem:
             )
         src = resolve_path(source)
         if src.path is None:
-            return self._error(src.error or f"Invalid path: {source!r}", kind=VFSErrorKind.invalid, op="mkedge")
+            return self._invalid_path(src, source, "mkedge")
         tgt = resolve_path(target)
         if tgt.path is None:
-            return self._error(tgt.error or f"Invalid path: {target!r}", kind=VFSErrorKind.invalid, op="mkedge")
+            return self._invalid_path(tgt, target, "mkedge")
 
         src_terminal = self._resolve_terminal(src.path)
         tgt_terminal = self._resolve_terminal(tgt.path)
@@ -1659,23 +1773,6 @@ class VirtualFileSystem:
             user_id=user_id,
         )
 
-    @staticmethod
-    def _coerce_two_path(item: object) -> TwoPathOperation | None:
-        """Coerce a batch item to a ``TwoPathOperation``, or ``None`` if malformed.
-
-        Accepts a ``TwoPathOperation`` as-is or a 2-tuple/list of two strings.
-        Anything else — wrong arity, non-string members, a stray ``str`` that
-        a ``Sequence`` iteration would splatter into characters — is rejected
-        so the caller sees ``invalid`` instead of a raw ``TypeError``.
-        """
-        if isinstance(item, TwoPathOperation):
-            return item
-        if isinstance(item, (tuple, list)) and len(item) == 2:
-            src, dest = item
-            if isinstance(src, str) and isinstance(dest, str):
-                return TwoPathOperation(src=src, dest=dest)
-        return None
-
     async def move(
         self,
         src: str | None = None,
@@ -1697,56 +1794,6 @@ class VirtualFileSystem:
         user_id: str | None = None,
     ) -> Result:
         return await self._route_pairs("copy", src, dest, copies, overwrite=overwrite, user_id=user_id)
-
-    async def _route_pairs(
-        self,
-        op: Op,
-        src: str | None,
-        dest: str | None,
-        batch: Sequence[TwoPathOperation | tuple[str, str]] | None,
-        *,
-        overwrite: bool,
-        user_id: str | None,
-    ) -> Result:
-        """Shared move/copy front: normalize the src/dest-or-batch input, then route.
-
-        *src*/*dest* and *batch* are mutually exclusive; each batch item is
-        coerced through :meth:`_coerce_two_path`, so a malformed pair is an
-        ``invalid`` result rather than an uncaught ``TypeError``.
-        """
-        if batch is not None:
-            if src is not None or dest is not None:
-                return self._error(
-                    f"{op} takes src/dest or a batch list, not both",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
-            pairs = self._as_list(batch)
-            if pairs is None:
-                return self._error(
-                    f"{op} batch must be an iterable of (src, dest) pairs, got {type(batch).__name__}",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
-        else:
-            if not src or not dest:
-                return self._error(
-                    f"{op} requires src and dest, or a batch list",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
-            pairs = [TwoPathOperation(src=src, dest=dest)]
-        operations: list[TwoPathOperation] = []
-        for item in pairs:
-            pair = self._coerce_two_path(item)
-            if pair is None:
-                return self._error(
-                    f"{op} pair must be (src, dest) of two strings: {item!r}",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
-            operations.append(pair)
-        return await self._route_two_path(op, operations, overwrite=overwrite, user_id=user_id)
 
     # -------------------------------------------------------------------
     # public methods — execution

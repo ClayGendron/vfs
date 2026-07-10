@@ -11,6 +11,7 @@ import pytest
 from base_doubles import (
     BadCloseStorage,
     BindableStorage,
+    CannedStorage,
     DictStorage,
     GatedCloseStorage,
     ReadFamilyStorage,
@@ -23,7 +24,7 @@ from vfs.base import Binding, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.models import Observation
 from vfs.paths import Path
-from vfs.results import Result, Severity, VFSErrorKind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
 
 # ----------------------------------------------------------------------
@@ -743,3 +744,53 @@ async def test_grouped_and_single_delete_agree_on_a_stored_directory() -> None:
     assert single.success is False
     assert grouped.success is False
     assert single.errors[0].kind is grouped.errors[0].kind is VFSErrorKind.not_empty
+
+
+# ----------------------------------------------------------------------
+# probe and lifecycle edges — closed tables, odd stat answers, dead ls
+# ----------------------------------------------------------------------
+
+
+class _CancelledCloseStorage(RecorderStorage):
+    """Owned storage whose disposal is cancelled mid-flight."""
+
+    async def close(self) -> None:
+        raise asyncio.CancelledError
+
+
+async def test_bind_on_a_closed_filesystem_is_refused() -> None:
+    fs = VirtualFileSystem()
+    await fs.close()
+    with pytest.raises(ValueError, match="filesystem is closed"):
+        await fs.bind(RecorderStorage(), "/m")
+
+
+async def test_match_mount_is_none_only_when_closed() -> None:
+    fs = VirtualFileSystem()
+    await fs.close()
+    assert fs._match_mount(Path("/anything")) is None
+
+
+async def test_bind_advises_mkdir_when_stat_answers_without_the_row() -> None:
+    # A stat that succeeds but omits the site row reads as "nothing stored".
+    root = VirtualFileSystem(storage=CannedStorage({"stat": Result(ops=("stat",), observations=[])}))
+    with pytest.raises(ValueError, match="no directory stored"):
+        await root.bind(RecorderStorage(), "/m")
+
+
+async def test_bind_surfaces_a_failed_mount_point_listing() -> None:
+    answers = {
+        "stat": Result(ops=("stat",), observations=[Observation(path=Path("/m"), kind="directory")]),
+        "ls": Result(ops=("ls",), errors=[ResultError(kind=VFSErrorKind.internal, message="listing broke")]),
+    }
+    root = VirtualFileSystem(storage=CannedStorage(answers))
+    with pytest.raises(ValueError, match="listing broke"):
+        await root.bind(RecorderStorage(), "/m")
+
+
+async def test_close_reraises_cancellation_from_a_storage_close() -> None:
+    fs = VirtualFileSystem()
+    await fs.add_mount(_CancelledCloseStorage(), "/m")
+    with pytest.raises(asyncio.CancelledError):
+        await fs.close()
+    assert fs._match_mount(Path("/m")) is None
