@@ -317,6 +317,29 @@ async def test_mkedge_rejects_non_string_edge_type() -> None:
     assert result.errors[0].kind is VFSErrorKind.invalid
 
 
+async def test_mkedge_invalid_endpoint_beats_cross_mount() -> None:
+    # Endpoint eligibility is a path fact — the same bad endpoint must
+    # classify invalid on any topology, never cross_mount.
+    root = VirtualFileSystem()
+    await root.add_mount(RecorderStorage(), "/m")
+    for source in ("/", "/.vfs/ghost.py"):
+        result = await root.mkedge(source, "/m/b.py", "imports")
+        assert result.success is False
+        assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_mkedge_gates_the_derived_inverse_path() -> None:
+    # The in projection is never a write target, but it is still gated:
+    # a region-denied inverse refuses before any dispatch.
+    root = VirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m", permissions=read_write(read=["/.vfs/b.py"]))
+    result = await root.mkedge("/m/a.py", "/m/b.py", "imports")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert child.calls == []
+
+
 # ----------------------------------------------------------------------
 # fan-out shape: glob / grep / glean
 # ----------------------------------------------------------------------
@@ -510,6 +533,19 @@ async def test_non_positive_result_bound_is_invalid() -> None:
     for result in (await root.glob("*.md", max_count=0), await root.glean("q", limit=-1)):
         assert result.success is False
         assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_non_integer_result_bound_is_invalid() -> None:
+    # The bound rule is the router's: type garbage classifies before any
+    # dispatch instead of raising at the check or the post-merge trim.
+    root = VirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    for bad in ("5", 2.5):
+        result = await root.glob("*", max_count=bad)  # ty: ignore[invalid-argument-type]
+        assert result.success is False
+        assert result.errors[0].kind is VFSErrorKind.invalid
+    assert child.calls == []
 
 
 async def test_glob_trim_keeps_merge_order_despite_scores() -> None:

@@ -482,10 +482,11 @@ async def test_close_disposes_concurrently_not_sequentially() -> None:
     assert loop.time() - start < 0.15
 
 
-async def test_close_cancellation_mid_dispose_leaves_table_already_empty() -> None:
+async def test_close_cancellation_parks_disposal_for_a_retry() -> None:
     gate = asyncio.Event()
+    storage = GatedCloseStorage(gate)
     root = VirtualFileSystem()
-    await root.add_mount(GatedCloseStorage(gate), "/a")
+    await root.add_mount(storage, "/a")
     task = asyncio.ensure_future(root.close())
     await asyncio.sleep(0)  # let close() snapshot-clear and reach the gate
     assert root._bindings == {}
@@ -493,7 +494,10 @@ async def test_close_cancellation_mid_dispose_leaves_table_already_empty() -> No
     with pytest.raises(asyncio.CancelledError):
         await task
     assert root._bindings == {}
-    await root.close()  # a second close is a no-op — nothing left to dispose
+    assert storage.close_count == 0  # disposal parked, not lost
+    gate.set()
+    await root.close()  # the retry drains the parked snapshot
+    assert storage.close_count == 1
 
 
 @pytest.mark.parametrize(

@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
 from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode, TwoPathOperation
-from vfs.paths import METADATA_ROOT, Path, edge_out_path, resolve_path
+from vfs.paths import METADATA_ROOT, Path, edge_in_path, edge_out_path, resolve_path, validate_edge_endpoint
 from vfs.permissions import (
     Permission,
     PermissionLayer,
@@ -180,6 +180,7 @@ class VirtualFileSystem:
         self._hop_budget_default = hop_budget
         self._close_timeout = close_timeout
         self._mount_lock = asyncio.Lock()
+        self._stranded_disposals: dict[int, StorageBackend] = {}
         root_meta = MountMeta(
             permission_map=coerce_permissions(permissions),
             no_overlay=no_overlay,
@@ -363,18 +364,22 @@ class VirtualFileSystem:
         wire message — but never mutates a remote router's table.
 
         Failures are collected so one bad disposal cannot strand a
-        sibling's engine; ``SupportsClose`` is idempotent by contract, so a
-        second ``close()`` after cancellation just finishes the job.
+        sibling's engine; undisposed storages are parked on the router and
+        ``SupportsClose`` is idempotent by contract, so a second ``close()``
+        after cancellation finishes the job.
         """
         async with self._mount_lock:
             bindings = list(self._bindings.values())
             self._bindings = {}
             self._sorted_mount_paths = []
 
-        targets: dict[int, StorageBackend] = {}
+        targets = dict(self._stranded_disposals)
         for binding in bindings:
             if binding.meta.owned and isinstance(binding.storage, SupportsClose):
                 targets.setdefault(id(binding.storage), binding.storage)
+        # Parked before disposal so a cancelled gather leaves the snapshot
+        # reachable — the retry drains it instead of leaking the engines.
+        self._stranded_disposals = targets
         if not targets:
             return
 
@@ -383,6 +388,7 @@ class VirtualFileSystem:
             await asyncio.wait_for(storage.close(), timeout=self._close_timeout)
 
         settled = await asyncio.gather(*(_close_one(s) for s in targets.values()), return_exceptions=True)
+        self._stranded_disposals = {}
         errors = [item for item in settled if isinstance(item, Exception)]
         for item in settled:
             if isinstance(item, BaseException) and not isinstance(item, Exception):
@@ -514,144 +520,6 @@ class VirtualFileSystem:
         user_id: str | None = None,
     ) -> Result:
         return await self._route_single("tree", path, None, max_depth=max_depth, columns=columns, user_id=user_id)
-
-    # -------------------------------------------------------------------
-    # public methods — search
-    # -------------------------------------------------------------------
-
-    async def glob(
-        self,
-        pattern: str,
-        *,
-        paths: tuple[str, ...] = (),
-        observations: list[Observation] | None = None,
-        ext: tuple[str, ...] = (),
-        max_count: int | None = None,
-        columns: frozenset[str] | None = None,
-        user_id: str | None = None,
-    ) -> Result:
-        """Match *pattern* against the namespace — unscoped calls reach every entry.
-
-        *max_count* (>= 1) bounds each entry's answer **and** the merged
-        result: a fan-out over N entries still returns at most
-        *max_count* rows, kept in merge order — entries named via *paths*
-        first, then mount-table order.
-        """
-        return await self._route_fanout(
-            "glob",
-            paths=paths,
-            observations=observations,
-            row_cap=max_count,
-            pattern=pattern,
-            ext=ext,
-            max_count=max_count,
-            columns=columns,
-            user_id=user_id,
-        )
-
-    async def grep(
-        self,
-        pattern: str,
-        *,
-        paths: tuple[str, ...] = (),
-        observations: list[Observation] | None = None,
-        ext: tuple[str, ...] = (),
-        ext_not: tuple[str, ...] = (),
-        globs: tuple[str, ...] = (),
-        globs_not: tuple[str, ...] = (),
-        case_mode: CaseMode = "sensitive",
-        fixed_strings: bool = False,
-        word_regexp: bool = False,
-        invert_match: bool = False,
-        before_context: int = 0,
-        after_context: int = 0,
-        output_mode: GrepOutputMode = "lines",
-        max_count: int | None = None,
-        columns: frozenset[str] | None = None,
-        user_id: str | None = None,
-    ) -> Result:
-        """Search content for *pattern* — unscoped calls reach every entry.
-
-        *max_count* caps matches **per file** (ripgrep's ``-m``), not the
-        row count — a fan-out returns one row per matching file regardless.
-        """
-        return await self._route_fanout(
-            "grep",
-            paths=paths,
-            observations=observations,
-            pattern=pattern,
-            ext=ext,
-            ext_not=ext_not,
-            globs=globs,
-            globs_not=globs_not,
-            case_mode=case_mode,
-            fixed_strings=fixed_strings,
-            word_regexp=word_regexp,
-            invert_match=invert_match,
-            before_context=before_context,
-            after_context=after_context,
-            output_mode=output_mode,
-            max_count=max_count,
-            columns=columns,
-            user_id=user_id,
-        )
-
-    async def glean(
-        self,
-        query: str,
-        *,
-        limit: int = 10,
-        paths: tuple[str, ...] = (),
-        observations: list[Observation] | None = None,
-        columns: frozenset[str] | None = None,
-        user_id: str | None = None,
-    ) -> Result:
-        """Ranked search: text in, one fused ranked list out.
-
-        The caller never picks a retrieval strategy — backends index by
-        vector, lexical, and graph signals and fuse the rankings however
-        they see fit.  The router passes *query* and *limit* through
-        opaquely.  *limit* bounds each entry's answer **and** the merged
-        result, trimmed by score — with the caveat that cross-entry
-        scores are only loosely comparable (each entry ranks by its own
-        scorer).
-        """
-        return await self._route_fanout(
-            "glean",
-            paths=paths,
-            observations=observations,
-            row_cap=limit,
-            query=query,
-            limit=limit,
-            columns=columns,
-            user_id=user_id,
-        )
-
-    async def graph(
-        self,
-        method: str,
-        path: str | None = None,
-        observations: list[Observation] | None = None,
-        *,
-        depth: int | None = None,
-        user_id: str | None = None,
-    ) -> Result:
-        """Run the graph traversal *method* — each entry answers over its own subgraph.
-
-        A path routes to one entry; observations group by entry and each
-        backend runs the algorithm on its own graph, so a walk can never
-        follow an edge out of its storage.  *method* is validated against
-        the traversal vocabulary before any dispatch; the envelope reports
-        the one ``graph`` op — traversal is the whole verb, and analytics
-        are index-time data, not queries.
-        """
-        if method not in TRAVERSAL_FUNCTIONS:
-            return self._error(
-                f"Unknown graph method {method!r}; expected one of {sorted(TRAVERSAL_FUNCTIONS)}",
-                kind=VFSErrorKind.invalid,
-                op="graph",
-            )
-        return await self._route_single("graph", path, observations, method=method, depth=depth, user_id=user_id)
 
     # -------------------------------------------------------------------
     # public methods — mutations
@@ -813,6 +681,13 @@ class VirtualFileSystem:
 
         src_terminal = self._resolve_terminal(src.path)
         tgt_terminal = self._resolve_terminal(tgt.path)
+        # Endpoint eligibility is a path fact and outranks the table fact
+        # below — the same bad endpoint classifies alike on any topology.
+        try:
+            validate_edge_endpoint(src_terminal.rel, "source")
+            validate_edge_endpoint(tgt_terminal.rel, "target")
+        except ValueError as exc:
+            return self._error(str(exc), kind=VFSErrorKind.invalid, op="mkedge")
         if src_terminal.binding.path != tgt_terminal.binding.path:
             return self._error(
                 f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different mounts",
@@ -825,13 +700,14 @@ class VirtualFileSystem:
             return err
 
         try:
-            edge_path = edge_out_path(src_terminal.rel, tgt_terminal.rel, edge_type)
+            full_edge = edge_out_path(src_terminal.rel, tgt_terminal.rel, edge_type).with_mount(binding.path)
+            full_inverse = edge_in_path(src_terminal.rel, tgt_terminal.rel, edge_type).with_mount(binding.path)
         except ValueError as exc:
             return self._error(str(exc), kind=VFSErrorKind.invalid, op="mkedge")
-        full_edge = edge_path.with_mount(binding.path)
-        denied = check_writable_composed(self._permission_layers(full_edge), "mkedge")
-        if denied is not None:
-            return denied
+        for full in (full_edge, full_inverse):
+            denied = check_writable_composed(self._permission_layers(full), "mkedge")
+            if denied is not None:
+                return denied
         return await self._dispatch_entry(
             binding,
             "mkedge",
@@ -862,6 +738,144 @@ class VirtualFileSystem:
         user_id: str | None = None,
     ) -> Result:
         return await self._route_pairs("copy", src, dest, copies, overwrite=overwrite, user_id=user_id)
+
+    # -------------------------------------------------------------------
+    # public methods — search
+    # -------------------------------------------------------------------
+
+    async def glob(
+        self,
+        pattern: str,
+        *,
+        paths: tuple[str, ...] = (),
+        observations: list[Observation] | None = None,
+        ext: tuple[str, ...] = (),
+        max_count: int | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Match *pattern* against the namespace — unscoped calls reach every entry.
+
+        *max_count* (>= 1) bounds each entry's answer **and** the merged
+        result: a fan-out over N entries still returns at most
+        *max_count* rows, kept in merge order — entries named via *paths*
+        first, then mount-table order.
+        """
+        return await self._route_fanout(
+            "glob",
+            paths=paths,
+            observations=observations,
+            row_cap=max_count,
+            pattern=pattern,
+            ext=ext,
+            max_count=max_count,
+            columns=columns,
+            user_id=user_id,
+        )
+
+    async def grep(
+        self,
+        pattern: str,
+        *,
+        paths: tuple[str, ...] = (),
+        observations: list[Observation] | None = None,
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
+        case_mode: CaseMode = "sensitive",
+        fixed_strings: bool = False,
+        word_regexp: bool = False,
+        invert_match: bool = False,
+        before_context: int = 0,
+        after_context: int = 0,
+        output_mode: GrepOutputMode = "lines",
+        max_count: int | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Search content for *pattern* — unscoped calls reach every entry.
+
+        *max_count* caps matches **per file** (ripgrep's ``-m``), not the
+        row count — a fan-out returns one row per matching file regardless.
+        """
+        return await self._route_fanout(
+            "grep",
+            paths=paths,
+            observations=observations,
+            pattern=pattern,
+            ext=ext,
+            ext_not=ext_not,
+            globs=globs,
+            globs_not=globs_not,
+            case_mode=case_mode,
+            fixed_strings=fixed_strings,
+            word_regexp=word_regexp,
+            invert_match=invert_match,
+            before_context=before_context,
+            after_context=after_context,
+            output_mode=output_mode,
+            max_count=max_count,
+            columns=columns,
+            user_id=user_id,
+        )
+
+    async def glean(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        paths: tuple[str, ...] = (),
+        observations: list[Observation] | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Ranked search: text in, one fused ranked list out.
+
+        The caller never picks a retrieval strategy — backends index by
+        vector, lexical, and graph signals and fuse the rankings however
+        they see fit.  The router passes *query* and *limit* through
+        opaquely.  *limit* bounds each entry's answer **and** the merged
+        result, trimmed by score — with the caveat that cross-entry
+        scores are only loosely comparable (each entry ranks by its own
+        scorer).
+        """
+        return await self._route_fanout(
+            "glean",
+            paths=paths,
+            observations=observations,
+            row_cap=limit,
+            query=query,
+            limit=limit,
+            columns=columns,
+            user_id=user_id,
+        )
+
+    async def graph(
+        self,
+        method: str,
+        path: str | None = None,
+        observations: list[Observation] | None = None,
+        *,
+        depth: int | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Run the graph traversal *method* — each entry answers over its own subgraph.
+
+        A path routes to one entry; observations group by entry and each
+        backend runs the algorithm on its own graph, so a walk can never
+        follow an edge out of its storage.  *method* is validated against
+        the traversal vocabulary before any dispatch; the envelope reports
+        the one ``graph`` op — traversal is the whole verb, and analytics
+        are index-time data, not queries.
+        """
+        if method not in TRAVERSAL_FUNCTIONS:
+            return self._error(
+                f"Unknown graph method {method!r}; expected one of {sorted(TRAVERSAL_FUNCTIONS)}",
+                kind=VFSErrorKind.invalid,
+                op="graph",
+            )
+        return await self._route_single("graph", path, observations, method=method, depth=depth, user_id=user_id)
 
     # -------------------------------------------------------------------
     # public methods — execution
@@ -1104,7 +1118,7 @@ class VirtualFileSystem:
         plain.  *row_cap* re-applies the caller's result bound after the
         merge on every input shape — ``glean`` trims by score, everything
         else keeps merge order — so it cannot multiply by entry count;
-        a non-positive bound is ``invalid``.
+        a non-integer or non-positive bound is ``invalid``.
 
         *paths* and *observations* are mutually exclusive — supplying both
         is a caller error returned as ``invalid`` rather than silently
@@ -1118,9 +1132,9 @@ class VirtualFileSystem:
                 kind=VFSErrorKind.invalid,
                 op=op,
             )
-        if row_cap is not None and row_cap < 1:
+        if row_cap is not None and not (isinstance(row_cap, int) and row_cap >= 1):
             return self._error(
-                f"{op} result bound must be >= 1, got {row_cap}",
+                f"{op} result bound must be an integer >= 1, got {row_cap!r}",
                 kind=VFSErrorKind.invalid,
                 op=op,
             )

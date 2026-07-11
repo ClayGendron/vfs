@@ -574,8 +574,14 @@ class InMemoryStorage:
                     errors.append(_classified(VFSErrorKind.exists, f"Already exists: {dest}", dest))
                     continue
             moved = [(p, staged[p]) for p in list(staged) if p == src or p.startswith(src + "/")]
-            for p, row in moved:
-                new_path = Path(dest + p[len(src) :]) if p != src else dest
+            # Mint every destination before mutating: one unaddressable row
+            # refuses the pair whole rather than raising or tearing the tree.
+            try:
+                dests = [Path(dest + p[len(src) :]) if p != src else dest for p, _ in moved]
+            except ValueError as exc:
+                errors.append(_classified(VFSErrorKind.unaddressable, f"Cannot {op} {src}: {exc}", dest))
+                continue
+            for (p, row), new_path in zip(moved, dests, strict=True):
                 staged[new_path] = clone_row(row)
                 if op == "move":
                     del staged[p]

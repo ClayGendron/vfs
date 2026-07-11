@@ -270,6 +270,23 @@ async def test_move_a_file_onto_a_directory_is_wrong_kind() -> None:
     assert result.errors[0].kind == VFSErrorKind.wrong_kind
 
 
+async def test_transfer_classifies_a_row_that_overflows_at_the_destination() -> None:
+    # Both pair paths are individually valid; only a deep row's minted
+    # destination exceeds the limit — refuse the pair, never raise.
+    storage = InMemoryStorage()
+    tail = "x" * 200 + ".txt"
+    await storage.mkdir(path=Path("/d"))
+    await storage.write(path=Path("/d/" + tail), content="deep")
+    parent = "/" + "/".join(["p" * 200 for _ in range(4)])
+    await storage.mkdir(path=Path(parent), parents=True)
+    dest = Path(parent + "/" + "q" * 100)
+    for op in (storage.move, storage.copy):
+        result = await op(operations=[ResolvedPair(src=Path("/d"), dest=dest)])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unaddressable
+    assert (await storage.read(path=Path("/d/" + tail))).success is True
+
+
 async def test_move_batch_is_staged_atomic() -> None:
     storage = InMemoryStorage()
     await storage.write(path=Path("/a.txt"), content="x")

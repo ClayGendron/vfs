@@ -613,18 +613,34 @@ def version_path(file_path: Path, version_number: int) -> Path:
     return Path(f"{METADATA_ROOT}{base}/{META_SEGMENT}/versions/{version_number}")
 
 
+def validate_edge_endpoint(path: Path, label: str) -> Path:
+    """Validate *path* as a canonical, non-metadata edge endpoint.
+
+    Edge endpoints are user-space entities, never reserved ``/.vfs`` paths — so
+    any metadata path is rejected outright (mirrors :func:`_validate_file_base`).
+    """
+    if path in {"/", METADATA_ROOT}:
+        msg = f"{label} must not be root or reserved metadata root"
+        raise ValueError(msg)
+    if path.is_meta:
+        msg = f"{label} must not be a metadata path: {path}"
+        raise ValueError(msg)
+    _reject_embedded_meta_segment(path, label)
+    return path
+
+
 def edge_out_path(source: Path, target: Path, edge_type: str) -> Path:
     """Build the canonical writable edge projection path."""
-    src = _validate_edge_endpoint(source, "source")
-    tgt = _validate_edge_endpoint(target, "target")
+    src = validate_edge_endpoint(source, "source")
+    tgt = validate_edge_endpoint(target, "target")
     _validate_name(edge_type, "edge_type")
     return Path(f"{METADATA_ROOT}{src}/{META_SEGMENT}/edges/out/{edge_type}/{tgt.lstrip('/')}")
 
 
 def edge_in_path(source: Path, target: Path, edge_type: str) -> Path:
     """Build the inverse readable edge projection path."""
-    src = _validate_edge_endpoint(source, "source")
-    tgt = _validate_edge_endpoint(target, "target")
+    src = validate_edge_endpoint(source, "source")
+    tgt = validate_edge_endpoint(target, "target")
     _validate_name(edge_type, "edge_type")
     return Path(f"{METADATA_ROOT}{tgt}/{META_SEGMENT}/edges/in/{edge_type}/{src.lstrip('/')}")
 
@@ -983,22 +999,6 @@ def _validate_file_base(path: Path) -> Path:
         msg = f"Base path must not be a metadata path: {path}"
         raise ValueError(msg)
     _reject_embedded_meta_segment(path, "Base path")
-    return path
-
-
-def _validate_edge_endpoint(path: Path, label: str) -> Path:
-    """Validate *path* as a canonical, non-metadata edge endpoint.
-
-    Edge endpoints are user-space entities, never reserved ``/.vfs`` paths — so
-    any metadata path is rejected outright (mirrors :func:`_validate_file_base`).
-    """
-    if path in {"/", METADATA_ROOT}:
-        msg = f"{label} must not be root or reserved metadata root"
-        raise ValueError(msg)
-    if path.is_meta:
-        msg = f"{label} must not be a metadata path: {path}"
-        raise ValueError(msg)
-    _reject_embedded_meta_segment(path, label)
     return path
 
 
