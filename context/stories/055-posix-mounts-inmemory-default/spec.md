@@ -1,6 +1,12 @@
 # 055 — POSIX Mounts Over a Storage-Backed Namespace: `InMemoryStorage` as the Default
 
-- **Status:** in progress — markers resolved 2026-07-07; see plan.md
+- **Status:** closed 2026-07-10 — core landed via 056 Pass A
+  (`d02b3ad`): `InMemoryStorage` with `allow_files`, spine removed,
+  `add_mount`/`remove_mount` with `parents` threading all verified in
+  code. Caveat: the fused mkdir→bind `add_mount` shape in "Decisions
+  settled" 1–2 was **superseded, not landed** — 056 decisions 4/5
+  replaced it with bind-onto-existing-empty-directory and strict
+  non-recursive rmdir. tasks.md items 1–7 folded into 056 Pass A.
 - **Date:** 2026-07-07
 - **Owner:** Clay Gendron
 - **Kind:** feature (new backend) + refactor (mount semantics, spine removal)

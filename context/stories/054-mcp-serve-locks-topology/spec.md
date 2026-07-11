@@ -6,6 +6,10 @@
   (bind/unbind/add_mount/remove_mount/close), which 056 keeps off the
   wire structurally — the server wrapper exposes no admin tools, so
   this story's default is enforced by construction.
+  Re-read 2026-07-10: the "Why" section's `allow_child_mounts` claim is
+  stale — that flag no longer exists anywhere in `src/vfs` (it was
+  deleted with 056's mount-table rework), so the client-half symmetry
+  argument needs restating when `serve()` is specced.
 - **Date:** 2026-07-07
 - **Owner:** Clay Gendron
 - **Kind:** policy decision (security default for the future MCP server)

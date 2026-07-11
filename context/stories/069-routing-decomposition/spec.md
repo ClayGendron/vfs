@@ -1,6 +1,6 @@
 # 069 — Routing decomposition: total steps, refusal checks, one plan per fan-out
 
-- **Status:** implemented 2026-07-10, pending commit — research
+- **Status:** implemented 2026-07-10 (landing commit `22a3f33`) — research
   review 2026-07-10 (3 primary-source lenses: Linux v6.12
   `namei.c`/`pnode.c`, Plan 9 4th-edition `chan.c`/`devmnt.c`,
   V7→4.4BSD `namei`; **no fatal objections**; four amendments

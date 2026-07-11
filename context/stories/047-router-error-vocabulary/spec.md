@@ -1,6 +1,12 @@
 # 047 — Router Input Errors Speak the Caller's Vocabulary
 
-- **Status:** draft
+- **Status:** closed 2026-07-10 — both findings landed as side effects
+  of later refactors, verified against `base.py`: item 1 by 071's param
+  gates (`params.py` gives `write` its own `msg_missing`/`msg_both`
+  vocabulary; `_route_single`'s neither-nor branch is gone), item 2 by
+  069 (`_merge_results` no longer exists; `_merge_fanout` and
+  `Result.merge`/`merge_branches` take `op` as a required argument, so
+  an empty merge cannot lose the op). No work remains.
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** fix (two small caller-facing correctness nits) — a

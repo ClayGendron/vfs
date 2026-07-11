@@ -1,7 +1,14 @@
 # 053 — Router Review Cleanups: Small Findings from the base2 Line-by-Line
 
 - **Status:** draft — collects the minor findings from the 2026-07-07
-  base2 review; each item is independently landable
+  base2 review; each item is independently landable.
+  Re-triaged 2026-07-10 against post-069/071 `base.py`: items 3 and 4
+  are **obsolete** (the spine and `SPINE_READ_OPS` were deleted by
+  056/069); item 2 is **stale** (`_merge_results` is gone — re-derive
+  against `_merge_fanout` before acting); item 1 **survives** (bare
+  asserts remain in `_route_single`/`_route_two_path`, though the
+  named `src_prefix == dest_prefix` assert no longer exists); item 5
+  survives as a note, but its call sites are renamed/gone.
 - **Date:** 2026-07-07
 - **Owner:** Clay Gendron
 - **Kind:** chore (correctness hygiene; no behavior change intended
