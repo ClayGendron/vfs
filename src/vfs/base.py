@@ -36,12 +36,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
-from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode, TwoPathOperation
+from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
 from vfs.paths import METADATA_ROOT, Path, edge_in_path, edge_out_path, resolve_path, validate_edge_endpoint
 from vfs.permissions import (
@@ -72,6 +72,7 @@ if TYPE_CHECKING:
 
     from vfs.ops import Op
     from vfs.paths import ResolvedPath
+    from vfs.permissions import PermissionsPayload
 
 ROOT = Path("/")
 
@@ -86,15 +87,25 @@ class MountMeta:
 
     Policy lives on the entry, state lives on the storage: *permission_map*
     holds mount-relative rules (``None`` — no local rules), *no_overlay*
-    refuses further binds beneath this entry, *owned* says ``close()``
-    disposes the storage, and *caps* is the capability snapshot taken from
-    ``storage.capabilities()`` at bind.
+    refuses **new** binds beneath this entry (existing children are
+    grandfathered and keep dispatching; since ``unbind`` never consults the
+    flag, a sealed subtree can shrink but never grow), *owned* says
+    ``close()`` disposes the storage, *declared_caps* is the unmasked
+    capability snapshot taken from ``storage.capabilities()``, and
+    *deny_ops* is the mounter's op mask.  *caps* — what every gate reads —
+    is derived at construction as ``declared_caps - deny_ops``; a meta is
+    always replaced whole, never field-mutated, so the three can't drift.
     """
 
     permission_map: PermissionMap | None = None
     no_overlay: bool = False
     owned: bool = True
-    caps: frozenset[str] = frozenset()
+    declared_caps: frozenset[str] = frozenset()
+    deny_ops: frozenset[str] = frozenset()
+    caps: frozenset[str] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.caps = self.declared_caps - self.deny_ops
 
 
 class Binding(NamedTuple):
@@ -108,6 +119,33 @@ class Binding(NamedTuple):
     path: Path
     storage: StorageBackend
     meta: MountMeta
+
+
+class MountInfo(NamedTuple):
+    """One ``mounts()`` row — table facts and bind-time snapshots, JSON-native.
+
+    Every field is a JSON fixed point (str, bool, None, or containers of
+    these), so ``json.dumps(row._asdict())`` always succeeds.  Mounter-
+    imposed policy is echoed verbatim — *permissions* (the serialized local
+    map; ``None`` when a child bind stored none), *deny_ops* (the stored
+    mask, sorted; ``()`` when unmasked), *no_overlay*, *owned* — which is
+    what makes the rows replayable: they rebuild the namespace given the
+    storages (see :meth:`VirtualFileSystem.mounts` for the seal-last
+    recipe).  *caps* is the **effective** post-mask set, sorted;
+    *description* is a live attribute read, everything else is table fact
+    or bind-time snapshot.  ``no_overlay=True`` means "no *new* binds
+    beneath" — a sealed entry may still show child rows.
+    """
+
+    path: str
+    storage_name: str
+    storage_type: str
+    description: str
+    caps: tuple[str, ...]
+    deny_ops: tuple[str, ...]
+    permissions: PermissionsPayload | None
+    no_overlay: bool
+    owned: bool
 
 
 class ResolvedTerminal(NamedTuple):
@@ -165,6 +203,7 @@ class VirtualFileSystem:
         description: str | None = None,
         storage: StorageBackend | None = None,
         permissions: Permission | PermissionMap = "read_write",
+        deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         hop_budget: int = 16,
         close_timeout: float = 10.0,
@@ -185,7 +224,8 @@ class VirtualFileSystem:
             permission_map=coerce_permissions(permissions),
             no_overlay=no_overlay,
             owned=True,
-            caps=frozenset(storage.capabilities()),
+            declared_caps=frozenset(storage.capabilities()),
+            deny_ops=self._validate_deny_ops(deny_ops),
         )
         self._bindings: dict[Path, Binding] = {ROOT: Binding(path=ROOT, storage=storage, meta=root_meta)}
         self._sorted_mount_paths: list[Path] = [ROOT]
@@ -201,6 +241,7 @@ class VirtualFileSystem:
         path: str,
         *,
         permissions: Permission | PermissionMap | None = None,
+        deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         owned: bool = True,
     ) -> None:
@@ -218,7 +259,9 @@ class VirtualFileSystem:
         ``no_overlay`` entry, would sit above an existing deeper binding, or
         when *storage* is already bound elsewhere in this table (aliasing —
         one object, one path).  *permissions* installs mount-relative rules
-        on the entry; *owned* says ``close()`` disposes this storage.
+        on the entry; *deny_ops* masks mutating/exec ops out of the entry's
+        effective capabilities (read-family ops cannot be masked); *owned*
+        says ``close()`` disposes this storage.
 
         The site probe is storage I/O and runs outside the mount lock; the
         table is re-checked and committed under it with no await between.
@@ -227,6 +270,7 @@ class VirtualFileSystem:
             msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
             raise TypeError(msg)
         mount_path = self._normalize_mount_path(path)
+        mask = self._validate_deny_ops(deny_ops)
 
         probed = await self._probe_bind_site(mount_path)
         if probed is not None:
@@ -237,7 +281,8 @@ class VirtualFileSystem:
             permission_map=None if permissions is None else coerce_permissions(permissions),
             no_overlay=no_overlay,
             owned=owned,
-            caps=frozenset(storage.capabilities()),
+            declared_caps=frozenset(storage.capabilities()),
+            deny_ops=mask,
         )
         async with self._mount_lock:
             # Re-checked under the lock: close() may have emptied the table
@@ -298,6 +343,7 @@ class VirtualFileSystem:
         *,
         parents: bool = False,
         permissions: Permission | PermissionMap | None = None,
+        deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         owned: bool = True,
     ) -> None:
@@ -321,13 +367,17 @@ class VirtualFileSystem:
             msg = "add_mount needs a path or a named storage"
             raise ValueError(msg)
         mount_path = self._normalize_mount_path(mount_name)
+        # Validated before the mkdir — a rejected mask must not mint the site.
+        mask = self._validate_deny_ops(deny_ops)
 
         made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True)
         if not made.success:
             detail = made.error_message or "storage refused the mount-point directory"
             msg = f"Cannot mount at {mount_path}: {detail}"
             raise MountError(msg, result=made)
-        await self.bind(storage, str(mount_path), permissions=permissions, no_overlay=no_overlay, owned=owned)
+        await self.bind(
+            storage, str(mount_path), permissions=permissions, deny_ops=mask, no_overlay=no_overlay, owned=owned
+        )
 
     async def remove_mount(self, path: str) -> None:
         """Unmount *path* — unbind + strict rmdir, fused.
@@ -351,6 +401,75 @@ class VirtualFileSystem:
             detail = removed.error_message or "storage refused the delete"
             msg = f"Unmounted {mount_path}, but removing its directory failed: {detail}"
             raise MountError(msg, result=removed)
+
+    async def remount(
+        self,
+        path: str,
+        *,
+        permissions: Permission | PermissionMap | None = None,
+        deny_ops: Iterable[Op] | None = None,
+        no_overlay: bool | None = None,
+        refresh_caps: bool = False,
+    ) -> None:
+        """Change the entry's policy at *path* in place — atomic, no I/O.
+
+        ``None`` means "leave unchanged" everywhere — so ``deny_ops=()``
+        (clear the mask) is distinct from ``deny_ops=None`` (keep it), and
+        passing no changes at all is a no-op, not an error.  The binding is
+        replaced under the mount lock with a new meta; no moment exists
+        where the path is unbound, and no storage I/O runs — the one
+        storage call is ``refresh_caps=True`` re-snapshotting
+        ``storage.capabilities()`` (taken before the lock, committed under
+        it): the remedy for a reconnected wire backend whose tool set
+        changed.  A replaced or cleared mask recomputes effective caps from
+        the stored unmasked snapshot, so previously masked ops come back
+        without asking the storage.
+
+        Root is an ordinary entry: ``remount("/")`` is how you tighten the
+        whole namespace.  Loosening is permitted, as on Linux — a parent
+        layer's map still gates every path beneath (most restrictive wins),
+        so ``remount`` can never grant more than the chain above allows.
+
+        ``no_overlay=True`` seals with **future-only** effect: existing
+        deeper bindings stay bound and dispatching; only *new* binds
+        beneath the entry are refused.  Because ``unbind`` never consults
+        the flag, the sealed subtree is a one-way ratchet — it can shrink
+        but never grow.  Unknown path raises :class:`ValueError`, as
+        ``unbind`` does.
+        """
+        mount_path = self._normalize_mount_path(path, allow_root=True)
+        mask = None if deny_ops is None else self._validate_deny_ops(deny_ops)
+        new_map = None if permissions is None else coerce_permissions(permissions)
+
+        # The one storage call, taken outside the lock (capabilities() is
+        # synchronous per protocol — "outside" means before acquiring).
+        fresh_caps: frozenset[str] | None = None
+        probed_storage: StorageBackend | None = None
+        if refresh_caps:
+            probing = self._bindings.get(mount_path)
+            if probing is None:
+                msg = f"No mount at: {mount_path!r}"
+                raise ValueError(msg)
+            probed_storage = probing.storage
+            fresh_caps = frozenset(probed_storage.capabilities())
+
+        async with self._mount_lock:
+            binding = self._bindings.get(mount_path)
+            if binding is None:
+                msg = f"No mount at: {mount_path!r}"
+                raise ValueError(msg)
+            if probed_storage is not None and binding.storage is not probed_storage:
+                msg = f"Mount at {mount_path} changed while remounting — retry"
+                raise ValueError(msg)
+            meta = binding.meta
+            new_meta = MountMeta(
+                permission_map=meta.permission_map if new_map is None else new_map,
+                no_overlay=meta.no_overlay if no_overlay is None else no_overlay,
+                owned=meta.owned,
+                declared_caps=meta.declared_caps if fresh_caps is None else fresh_caps,
+                deny_ops=meta.deny_ops if mask is None else mask,
+            )
+            self._bindings[mount_path] = binding._replace(meta=new_meta)
 
     async def close(self) -> None:
         """Release every resource this process holds for the namespace.
@@ -397,6 +516,47 @@ class VirtualFileSystem:
             raise errors[0]
         if errors:
             raise ExceptionGroup("errors while closing storages", errors)
+
+    def mounts(self) -> tuple[MountInfo, ...]:
+        """The mount table, one JSON-native row per binding — replayable.
+
+        Rows are ordered by bind path, root identity entry first (it is an
+        ordinary entry); a closed filesystem returns ``()``.  Values are
+        table facts and bind-time snapshots — no storage I/O, and no lock:
+        this reads one dict snapshot synchronously, and the table can
+        change the instant a lock would drop anyway.  The single live read
+        is ``description`` (attribute access, not a call).
+
+        Mounter-imposed policy is echoed verbatim on each row —
+        ``permissions``, ``deny_ops``, ``no_overlay``, ``owned`` — never
+        left to be derived, so the rows carry enough to rebuild the
+        namespace given the storages: replay the root row through the
+        constructor and every other row through :meth:`bind`, applying
+        ``no_overlay=True`` rows **seal-last** via :meth:`remount` — a
+        sealed entry refuses the child binds beneath it, so a subtree
+        grandfathered by ``remount(no_overlay=True)`` cannot replay with
+        the flag passed at bind time.  Replay keyed by ``storage_name``
+        assumes the mounter keeps names unique; the table itself never
+        requires that.
+        """
+        rows = []
+        for mount_path in sorted(self._bindings):
+            binding = self._bindings[mount_path]
+            meta = binding.meta
+            rows.append(
+                MountInfo(
+                    path=str(mount_path),
+                    storage_name=binding.storage.name,
+                    storage_type=type(binding.storage).__name__,
+                    description=binding.storage.description,
+                    caps=tuple(sorted(meta.caps)),
+                    deny_ops=tuple(sorted(meta.deny_ops)),
+                    permissions=None if meta.permission_map is None else meta.permission_map.to_payload(),
+                    no_overlay=meta.no_overlay,
+                    owned=meta.owned,
+                )
+            )
+        return tuple(rows)
 
     def capabilities(self) -> frozenset[str]:
         """Operations this namespace answers — the union of entry snapshots.
@@ -446,19 +606,21 @@ class VirtualFileSystem:
         return None
 
     @staticmethod
-    def _normalize_mount_path(path: str) -> Path:
+    def _normalize_mount_path(path: str, *, allow_root: bool = False) -> Path:
         """Canonicalize and validate a mount path through the :class:`Path` gate.
 
         The gate does the normalization and structural validation (make
         absolute, drop ``.``/``..``, strip per-segment whitespace, reject
         control characters and over-long segments).  A mount path adds only
-        two policy rules the generic gate cannot know: it is never the root,
-        and it never uses the reserved metadata segment (``".vfs"``).  Stray
-        whitespace is canonicalized like any other path, not rejected;
-        interior spaces (``"/My Documents"``) are preserved.
+        two policy rules the generic gate cannot know: it is never the root
+        (except for ``remount``, which targets existing entries and admits
+        ``/`` via *allow_root* — root is an ordinary entry), and it never
+        uses the reserved metadata segment (``".vfs"``).  Stray whitespace
+        is canonicalized like any other path, not rejected; interior spaces
+        (``"/My Documents"``) are preserved.
         """
         mount_path = Path(path)
-        if mount_path == ROOT:
+        if mount_path == ROOT and not allow_root:
             msg = "Mount path must not be empty or root"
             raise ValueError(msg)
         meta_segment = METADATA_ROOT.strip("/")
@@ -466,6 +628,26 @@ class VirtualFileSystem:
             msg = f"Mount path may not use the reserved metadata segment {meta_segment!r}: {path!r}"
             raise ValueError(msg)
         return mount_path
+
+    @staticmethod
+    def _validate_deny_ops(deny_ops: Iterable[Op]) -> frozenset[Op]:
+        """Validate a mount-policy op mask — mutating/exec ops only.
+
+        Read-family ops cannot be masked: mount policy is principal-blind,
+        and read denial lives in the permission plane, where a principal is
+        in scope.  The check is closed over the known read-family names, so
+        unknown op names stay maskable if the vocabulary ever widens.
+        Raises :class:`ValueError` naming the offending ops.
+        """
+        if isinstance(deny_ops, (str, bytes)):
+            msg = f"deny_ops must be an iterable of op names, not a bare string: {deny_ops!r}"
+            raise TypeError(msg)
+        mask = frozenset(deny_ops)
+        blocked = mask & READ_OPS
+        if blocked:
+            msg = f"deny_ops may not mask read-family ops: {', '.join(sorted(blocked))}"
+            raise ValueError(msg)
+        return mask
 
     def _rebuild_sorted_mounts(self) -> None:
         """Rebuild the pre-sorted binding path list, longest prefix first.

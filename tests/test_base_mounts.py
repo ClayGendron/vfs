@@ -442,7 +442,9 @@ async def test_close_dedupes_the_same_storage_bound_twice_via_direct_table_edit(
     # close()'s identity-dedup holds even then.
     shared = SpyCloseStorage()
     root = VirtualFileSystem(storage=shared)
-    root._bindings[Path("/x")] = Binding(path=Path("/x"), storage=shared, meta=MountMeta(caps=shared.capabilities()))
+    root._bindings[Path("/x")] = Binding(
+        path=Path("/x"), storage=shared, meta=MountMeta(declared_caps=shared.capabilities())
+    )
     root._sorted_mount_paths = sorted(root._bindings, reverse=True)
     await root.close()
     assert shared.close_count == 1

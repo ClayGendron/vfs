@@ -1,7 +1,11 @@
 # 044 — Mount-Time Rights Mask: Effective Rights Are an Intersection Along the Chain
 
-- **Status:** draft — design decisions signed off 2026-07-03 (ownership
-  rule, read-required masks, mask visibility); ready for plan.md
+- **Status:** superseded by 068 feature 3 (landed 2026-07-11), which
+  re-anchored this story on `MountMeta.caps` and `_gate_entry`. The
+  signed-off decisions (mounter imposes policy, masks visible,
+  intersection along the chain, no dark mounts) all carried over; the
+  mechanism here (a `Rights` mask in the terminal gate, dependent on
+  039) did not.
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** feature (permission model) + fix (a gate that is fictional for

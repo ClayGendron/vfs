@@ -1,7 +1,12 @@
 # 039 — Execute Permission Tier for the `run` Verb
 
-- **Status:** draft — default-grant decision signed off 2026-07-03
-  (execute defaults to granted); ready for plan.md
+- **Status:** draft, superseded in practice by 068 (landed 2026-07-11):
+  `deny_ops` is the execution lever — `run` stays outside the
+  permission-map vocabulary. Two deliberate supersessions recorded
+  there: denied execution classifies `unsupported` (040's capability
+  slot), not this spec's `permission_denied`; and per-path execute
+  carve-outs stay unexpressed (`deny_ops` is per-entry). Reopen only if
+  per-path or per-principal execute policy becomes real.
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** feature (permission model) + policy decision

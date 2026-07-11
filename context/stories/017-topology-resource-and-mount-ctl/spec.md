@@ -1,6 +1,9 @@
 # 017 — Topology Resource (`/.mounts/`) and Mount Ctl
 
-- **Status:** draft
+- **Status:** draft — the programmatic `list_mounts()` half is
+  superseded by 068's `mounts()`/`MountInfo` (landed 2026-07-11); the
+  synthetic `/.mounts/` file tree and ctl-file write surface stay
+  parked (the admin surface is deliberately not part of the namespace).
 - **Date:** 2026-05-02
 - **Owner:** Clay Gendron
 - **Kind:** feature · introspection · FSP surface

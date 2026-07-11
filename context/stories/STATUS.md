@@ -6,28 +6,29 @@ lines first; regenerate this file when the picture shifts (review the
 open/seed/draft specs against `src/vfs/` and update both).
 
 - **Last reviewed:** 2026-07-10, against `main` at `fee073d`
-  (story 071 landed).
+  (story 071 landed); 068/039/044/017 entries trued up 2026-07-11
+  when 068 landed.
 - **Method:** every spec's status line collected, then the
   draft/seed/in-progress stories verified against the actual code
   (`base.py`, `permissions.py`, `ops.py`, `params.py`, `results/`).
 
 ## Outstanding work that touches `base.py`
 
-Ordered by a suggested sequence (068 → 039 → 051, with 070 first or
-last depending on whether the `Principal` rename should ripple through
-068's new surface or land on top of it).
+Ordered by a suggested sequence (051 next, with 070 whenever — 068
+landed before it, so the `Principal` rename now ripples through
+`add_mount`/`remove_mount`'s internal calls only).
 
-- **068 — mount admin completeness** (seed, but well-decided; closest
-  to implementable). New router surface: `mounts()` reading the
-  `_bindings` snapshot, async `remount()` doing atomic `Binding`
-  replacement under the mount lock, `deny_ops` mask on
-  `bind`/`add_mount`/`remount`. Three localized clarification forks
-  remain.
-- **039 — execute permission tier** (draft; premise fully intact).
-  Not started: `permissions.py` still has the two-value `Permission`,
-  no `Rights` type, and `run` on a read-only mount still executes
-  ungated (`ops.py` `EXEC_OPS` — "routed, no write gate"). Unblocks
-  the 044 re-triage.
+- **068 — mount admin completeness**: **landed 2026-07-11** (features
+  1–3: `mounts()`/`MountInfo`, atomic `remount`, `deny_ops` mask on
+  constructor/`bind`/`add_mount`/`remount`; `MountMeta` now stores
+  `declared_caps` + `deny_ops` with derived post-mask `caps`).
+  Features 4 (`move_mount`) and 5 (`LazyStorage`) stay demand-gated —
+  split into new stories if picked up.
+- **039 — execute permission tier** (draft; superseded in practice by
+  068's `deny_ops` — see its status line). `run` stays outside the
+  permission-map vocabulary; denied execution classifies
+  `unsupported`. Reopen only for per-path/per-principal execute
+  policy.
 - **051 — fanout deadline** (draft; premise intact). No time budget
   anywhere in fan-out — `_gather_settled` gathers with no deadline;
   the `timeout` error kind exists in `results/kinds.py` but is unused.
@@ -50,11 +51,10 @@ last depending on whether the `Principal` rename should ripple through
   work; Pass A already carried every `base.py` change. Also carries
   057 decision 13's inbound half (`VFSStorage` treating a parseable
   vfs payload as authoritative), which waits on Pass C.
-- **044 — mount rights mask** (draft). Chain-intersection semantics
-  already partially exist via `_permission_layers` /
-  `check_writable_composed`; the per-edge `rights=` mask depends on
-  039, and the spec's "router reaches into the child's private map"
-  premise looks obsolete post-056. Re-triage before implementing.
+- **044 — mount rights mask**: **superseded by 068 feature 3**
+  (landed 2026-07-11). Its signed-off decisions carried over onto
+  `MountMeta.caps`/`_gate_entry`; its `Rights`-in-terminal-gate
+  mechanism is retired with it.
 - **045 — verb wire contract** (draft; doc/contract artifact). No
   schema artifact exists yet; post-071 `params.py` `ParamSpec` tables
   are a better drift-test substrate than the raw signatures the spec

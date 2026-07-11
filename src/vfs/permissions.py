@@ -113,7 +113,7 @@ engines (or separate tables within one engine) — not two
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict
 
 from vfs.ops import MUTATING_OPS
 from vfs.paths import Path, normalize_path
@@ -128,6 +128,21 @@ Permission = Literal["read", "read_write"]
 
 ROOT = Path("/")
 """The rebase identity — the default mount prefix when the terminal is the router itself."""
+
+
+class PermissionsPayload(TypedDict):
+    """JSON-native form of a :class:`PermissionMap` — what ``to_payload`` emits.
+
+    ``overrides`` pairs are ``[prefix, permission]`` lists in the map's
+    normalized order, so the payload is deterministic and feeds the
+    constructor back verbatim at runtime.  Typed replay code converts the
+    pairs explicitly — ``list[list[str]]`` is not statically assignable to
+    the declared overrides tuple type; only ``__post_init__``'s runtime
+    normalization accepts the payload as-is.
+    """
+
+    default: Permission
+    overrides: list[list[str]]
 
 
 def validate_permission(value: str) -> Permission:
@@ -188,6 +203,17 @@ class PermissionMap:
     def resolve(self, path: str) -> Permission:
         """Resolve *path* to a :data:`Permission` via longest-prefix match."""
         return self._resolve(path).permission
+
+    def to_payload(self) -> PermissionsPayload:
+        """Serialize to a :class:`PermissionsPayload` in normalized order.
+
+        The emitted dict survives ``json.dumps``/``loads`` unchanged and
+        reconstructs this exact map when fed back to the constructor.
+        """
+        return PermissionsPayload(
+            default=self.default,
+            overrides=[[path, perm] for path, perm in self.overrides],
+        )
 
     def _resolve(self, path: str) -> _Resolution:
         normalized = normalize_path(path)

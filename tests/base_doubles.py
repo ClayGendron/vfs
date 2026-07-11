@@ -145,6 +145,40 @@ class BindableStorage(RecorderStorage):
         return Result(ops=("ls",), observations=[])
 
 
+class CapCountingStorage(BindableStorage):
+    """Bindable recorder counting ``capabilities()`` calls.
+
+    ``.calls`` records op dispatches only, so the no-storage-I/O criteria
+    need this separate spy to prove the snapshot is never re-taken.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.capabilities_calls = 0
+
+    def capabilities(self) -> frozenset[Op]:
+        self.capabilities_calls += 1
+        return super().capabilities()
+
+
+class SuspendingProbeStorage(BindableStorage):
+    """Bindable parent whose probe reads suspend once per call.
+
+    The suspension is what opens the race window: ``bind``'s site probe
+    yields to the loop mid-sequence, so a gathered read can land in the
+    gap an unbind+bind pair leaves open — the contrast that proves
+    ``remount`` has no such gap.
+    """
+
+    async def stat(self, **kwargs: Any) -> Result:
+        await asyncio.sleep(0)
+        return await super().stat(**kwargs)
+
+    async def ls(self, **kwargs: Any) -> Result:
+        await asyncio.sleep(0)
+        return await super().ls(**kwargs)
+
+
 class DictStorage(RecorderStorage):
     """Minimal storage backend: a path -> kind dict behind stat, ls, and mkdir.
 
