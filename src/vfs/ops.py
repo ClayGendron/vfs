@@ -78,3 +78,9 @@ ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS
 # and the CLI grammar when it lands.
 CaseMode = Literal["sensitive", "insensitive", "smart"]
 GrepOutputMode = Literal["lines", "files", "count"]
+
+GRAPH_METHODS: Final[frozenset[str]] = frozenset(
+    {"predecessors", "successors", "ancestors", "descendants", "neighborhood"}
+    | {"meeting_subgraph", "min_meeting_subgraph"},
+)
+"""Graph traversal vocabulary — the only methods the ``graph`` verb accepts."""

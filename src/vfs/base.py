@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
 from vfs.ops import MUTATING_OPS, CaseMode, GrepOutputMode, TwoPathOperation
+from vfs.params import param_violation
 from vfs.paths import METADATA_ROOT, Path, edge_in_path, edge_out_path, resolve_path, validate_edge_endpoint
 from vfs.permissions import (
     Permission,
@@ -52,7 +53,6 @@ from vfs.permissions import (
 )
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.results.kinds import Severity, kind_family
-from vfs.results.projection import TRAVERSAL_FUNCTIONS
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,
@@ -489,6 +489,9 @@ class VirtualFileSystem:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
+        refusal = self._gate_params("read", path=path, observations=observations, columns=columns, user_id=user_id)
+        if refusal is not None:
+            return refusal
         return await self._route_single("read", path, observations, columns=columns, user_id=user_id)
 
     async def stat(
@@ -499,6 +502,9 @@ class VirtualFileSystem:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
+        refusal = self._gate_params("stat", path=path, observations=observations, columns=columns, user_id=user_id)
+        if refusal is not None:
+            return refusal
         return await self._route_single("stat", path, observations, columns=columns, user_id=user_id)
 
     async def ls(
@@ -509,6 +515,9 @@ class VirtualFileSystem:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
+        refusal = self._gate_params("ls", path=path, observations=observations, columns=columns, user_id=user_id)
+        if refusal is not None:
+            return refusal
         return await self._route_single("ls", path, observations, columns=columns, user_id=user_id)
 
     async def tree(
@@ -519,6 +528,9 @@ class VirtualFileSystem:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
+        refusal = self._gate_params("tree", path=path, max_depth=max_depth, columns=columns, user_id=user_id)
+        if refusal is not None:
+            return refusal
         return await self._route_single("tree", path, None, max_depth=max_depth, columns=columns, user_id=user_id)
 
     # -------------------------------------------------------------------
@@ -545,13 +557,12 @@ class VirtualFileSystem:
         ``parents=True`` mints the missing ancestors, ``mkdir -p`` style,
         and applies per call — every entry in a batch shares it.
         """
+        refusal = self._gate_params(
+            "write", entries=entries, path=path, content=content, overwrite=overwrite, parents=parents, user_id=user_id
+        )
+        if refusal is not None:
+            return refusal
         if entries is not None:
-            if path is not None or content is not None:
-                return self._error(
-                    "write takes entries or path/content, not both",
-                    kind=VFSErrorKind.invalid,
-                    op="write",
-                )
             return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, user_id=user_id)
         return await self._route_single(
             "write",
@@ -582,13 +593,19 @@ class VirtualFileSystem:
         The *old*/*new* pair is sugar wrapping a one-item list; supplying
         both forms is a caller error.
         """
+        refusal = self._gate_params(
+            "edit",
+            path=path,
+            old=old,
+            new=new,
+            edits=edits,
+            observations=observations,
+            replace_all=replace_all,
+            user_id=user_id,
+        )
+        if refusal is not None:
+            return refusal
         if edits is not None:
-            if old is not None or new is not None:
-                return self._error(
-                    "edit takes old/new or an edits list, not both",
-                    kind=VFSErrorKind.invalid,
-                    op="edit",
-                )
             ops = self._as_list(edits)
             if ops is None or not all(isinstance(e, EditOperation) for e in ops):
                 return self._error(
@@ -598,12 +615,7 @@ class VirtualFileSystem:
                 )
             edits = ops
         else:
-            if old is None or new is None:
-                return self._error(
-                    "edit requires old and new strings, or an edits list",
-                    kind=VFSErrorKind.invalid,
-                    op="edit",
-                )
+            assert old is not None and new is not None
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
         return await self._route_single("edit", path, observations, edits=edits, user_id=user_id)
 
@@ -622,6 +634,11 @@ class VirtualFileSystem:
         bound paths, must be unmounted before it can be deleted — the
         EBUSY rule.
         """
+        refusal = self._gate_params(
+            "delete", path=path, observations=observations, permanent=permanent, cascade=cascade, user_id=user_id
+        )
+        if refusal is not None:
+            return refusal
         return await self._route_single(
             "delete",
             path,
@@ -646,6 +663,9 @@ class VirtualFileSystem:
         ``parents=True`` mints the missing chain; ``exist_ok=True`` forgives
         an existing *directory* only — a file at the site stays ``exists``.
         """
+        refusal = self._gate_params("mkdir", path=path, parents=parents, exist_ok=exist_ok, user_id=user_id)
+        if refusal is not None:
+            return refusal
         return await self._route_single("mkdir", path, None, parents=parents, exist_ok=exist_ok, user_id=user_id)
 
     async def mkedge(
@@ -664,14 +684,11 @@ class VirtualFileSystem:
         path is derived, never a write target, and is permission-gated in
         the owning entry's coordinates like any other write.
         """
+        refusal = self._gate_params("mkedge", source=source, target=target, edge_type=edge_type, user_id=user_id)
+        if refusal is not None:
+            return refusal
         if not self._bindings:
             return self._closed_error("mkedge")
-        if not isinstance(edge_type, str):
-            return self._error(
-                f"edge_type must be a string, got {type(edge_type).__name__}",
-                kind=VFSErrorKind.invalid,
-                op="mkedge",
-            )
         src = resolve_path(source)
         if src.path is None:
             return self._invalid_path(src, source, "mkedge")
@@ -726,6 +743,9 @@ class VirtualFileSystem:
         overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
+        refusal = self._gate_params("move", src=src, dest=dest, moves=moves, overwrite=overwrite, user_id=user_id)
+        if refusal is not None:
+            return refusal
         return await self._route_pairs("move", src, dest, moves, overwrite=overwrite, user_id=user_id)
 
     async def copy(
@@ -737,6 +757,9 @@ class VirtualFileSystem:
         overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
+        refusal = self._gate_params("copy", src=src, dest=dest, copies=copies, overwrite=overwrite, user_id=user_id)
+        if refusal is not None:
+            return refusal
         return await self._route_pairs("copy", src, dest, copies, overwrite=overwrite, user_id=user_id)
 
     # -------------------------------------------------------------------
@@ -761,6 +784,18 @@ class VirtualFileSystem:
         *max_count* rows, kept in merge order — entries named via *paths*
         first, then mount-table order.
         """
+        refusal = self._gate_params(
+            "glob",
+            pattern=pattern,
+            paths=paths,
+            observations=observations,
+            ext=ext,
+            max_count=max_count,
+            columns=columns,
+            user_id=user_id,
+        )
+        if refusal is not None:
+            return refusal
         return await self._route_fanout(
             "glob",
             paths=paths,
@@ -799,6 +834,28 @@ class VirtualFileSystem:
         *max_count* caps matches **per file** (ripgrep's ``-m``), not the
         row count — a fan-out returns one row per matching file regardless.
         """
+        refusal = self._gate_params(
+            "grep",
+            pattern=pattern,
+            paths=paths,
+            observations=observations,
+            ext=ext,
+            ext_not=ext_not,
+            globs=globs,
+            globs_not=globs_not,
+            case_mode=case_mode,
+            fixed_strings=fixed_strings,
+            word_regexp=word_regexp,
+            invert_match=invert_match,
+            before_context=before_context,
+            after_context=after_context,
+            output_mode=output_mode,
+            max_count=max_count,
+            columns=columns,
+            user_id=user_id,
+        )
+        if refusal is not None:
+            return refusal
         return await self._route_fanout(
             "grep",
             paths=paths,
@@ -840,6 +897,11 @@ class VirtualFileSystem:
         scores are only loosely comparable (each entry ranks by its own
         scorer).
         """
+        refusal = self._gate_params(
+            "glean", query=query, limit=limit, paths=paths, observations=observations, columns=columns, user_id=user_id
+        )
+        if refusal is not None:
+            return refusal
         return await self._route_fanout(
             "glean",
             paths=paths,
@@ -869,12 +931,11 @@ class VirtualFileSystem:
         the one ``graph`` op — traversal is the whole verb, and analytics
         are index-time data, not queries.
         """
-        if method not in TRAVERSAL_FUNCTIONS:
-            return self._error(
-                f"Unknown graph method {method!r}; expected one of {sorted(TRAVERSAL_FUNCTIONS)}",
-                kind=VFSErrorKind.invalid,
-                op="graph",
-            )
+        refusal = self._gate_params(
+            "graph", method=method, path=path, observations=observations, depth=depth, user_id=user_id
+        )
+        if refusal is not None:
+            return refusal
         return await self._route_single("graph", path, observations, method=method, depth=depth, user_id=user_id)
 
     # -------------------------------------------------------------------
@@ -894,6 +955,9 @@ class VirtualFileSystem:
         verb that executes it. Not a namespace mutation, so it takes no
         write-authorization gate.
         """
+        refusal = self._gate_params("run", path=path, arguments=arguments, user_id=user_id)
+        if refusal is not None:
+            return refusal
         return await self._route_single("run", path, None, arguments=arguments, user_id=user_id)
 
     # -------------------------------------------------------------------
@@ -926,19 +990,11 @@ class VirtualFileSystem:
 
         With observations: group by entry, dispatch in parallel.  With
         path: resolve one entry and dispatch once.  Exactly one of *path* /
-        *observations* is required; neither or both is a caller error
-        returned as ``invalid`` (the router never raises on bad input —
-        values in, ``Result`` out).
+        *observations* arrives — the verb's params gate enforced the shape
+        before delegating here.
         """
         if not self._bindings:
             return self._closed_error(op)
-        if (path is None) == (observations is None):
-            return self._error(
-                "Exactly one of path or observations must be provided",
-                kind=VFSErrorKind.invalid,
-                op=op,
-            )
-
         if observations is not None:
             return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
 
@@ -1038,19 +1094,10 @@ class VirtualFileSystem:
         info-severity coverage record when incapable, as in an unscoped
         fan-out.  Descents merge under the zero-progress rule: a dead
         descent among live rows demotes to a warning; the named target
-        itself failing stays a loud failure.
-
-        *max_depth* must be an integer ``>= 1`` or ``None`` (unbounded).
-        Anything else — including a wire adapter forwarding unvalidated
-        input — classifies ``invalid`` here, before any dispatch, so the
-        depth rule is the router's, not each backend's.
+        itself failing stays a loud failure.  *max_depth* arrives gated
+        (integer ``>= 1`` or ``None``) — the depth rule is the router's,
+        declared in the params table.
         """
-        if max_depth is not None and not (isinstance(max_depth, int) and max_depth >= 1):
-            return self._error(
-                f"tree max_depth must be an integer >= 1, got {max_depth!r}",
-                kind=VFSErrorKind.invalid,
-                op="tree",
-            )
         grant = self._enter_hop(op="tree")
         if grant.refusal is not None:
             return grant.refusal
@@ -1118,26 +1165,13 @@ class VirtualFileSystem:
         plain.  *row_cap* re-applies the caller's result bound after the
         merge on every input shape — ``glean`` trims by score, everything
         else keeps merge order — so it cannot multiply by entry count;
-        a non-integer or non-positive bound is ``invalid``.
+        the bound arrives gated (integer ``>= 1`` or ``None``).
 
-        *paths* and *observations* are mutually exclusive — supplying both
-        is a caller error returned as ``invalid`` rather than silently
-        preferring one.
+        *paths* / *observations* exclusivity and the *row_cap* bound are
+        enforced by the verbs' params gate before delegation.
         """
         if not self._bindings:
             return self._closed_error(op)
-        if paths and observations is not None:
-            return self._error(
-                f"{op} takes paths or observations, not both",
-                kind=VFSErrorKind.invalid,
-                op=op,
-            )
-        if row_cap is not None and not (isinstance(row_cap, int) and row_cap >= 1):
-            return self._error(
-                f"{op} result bound must be an integer >= 1, got {row_cap!r}",
-                kind=VFSErrorKind.invalid,
-                op=op,
-            )
         if observations is not None:
             merged = await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
             return self._cap_rows(merged, op, row_cap)
@@ -1339,17 +1373,12 @@ class VirtualFileSystem:
     ) -> Result:
         """Shared move/copy front: normalize the src/dest-or-batch input, then route.
 
-        *src*/*dest* and *batch* are mutually exclusive; each batch item is
-        coerced through :meth:`_coerce_two_path`, so a malformed pair is an
-        ``invalid`` result rather than an uncaught ``TypeError``.
+        The verb's params gate enforced src/dest-xor-batch before delegating;
+        each batch item is coerced through :meth:`_coerce_two_path`, so a
+        malformed pair is an ``invalid`` result rather than an uncaught
+        ``TypeError``.
         """
         if batch is not None:
-            if src is not None or dest is not None:
-                return self._error(
-                    f"{op} takes src/dest or a batch list, not both",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
             pairs = self._as_list(batch)
             if pairs is None:
                 return self._error(
@@ -1358,12 +1387,7 @@ class VirtualFileSystem:
                     op=op,
                 )
         else:
-            if not src or not dest:
-                return self._error(
-                    f"{op} requires src and dest, or a batch list",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
+            assert src is not None and dest is not None
             pairs = [TwoPathOperation(src=src, dest=dest)]
         operations: list[TwoPathOperation] = []
         for item in pairs:
@@ -1503,6 +1527,20 @@ class VirtualFileSystem:
     # -------------------------------------------------------------------
     # gates — capability snapshot, then composed permissions
     # -------------------------------------------------------------------
+
+    def _gate_params(self, op: Op, /, **params: object) -> Result | None:
+        """Refuse type, domain, and input-shape garbage before anything else.
+
+        The rules live in the per-op table (``vfs.params``); a violation
+        classifies ``invalid`` naming the parameter.  Caller-input facts
+        outrank every router-state fact, so this gate runs first at every
+        public verb — a bad parameter reports ``invalid`` even on a closed
+        table or a busy path.
+        """
+        problem = param_violation(op, params)
+        if problem is None:
+            return None
+        return self._error(problem, kind=VFSErrorKind.invalid, op=op)
 
     def _gate_entry(
         self,

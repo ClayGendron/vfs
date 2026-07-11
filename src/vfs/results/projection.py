@@ -33,13 +33,6 @@ PROJECTION_SENTINELS: frozenset[str] = frozenset({"default", "all"})
 # and permission vocabularies cannot drift apart.
 ACTION_FUNCTIONS: frozenset[str] = MUTATING_OPS
 
-# The graph *method* vocabulary — router-side input validation only. A
-# method name never reaches an envelope: results report the one `graph` op.
-TRAVERSAL_FUNCTIONS: frozenset[str] = frozenset(
-    {"predecessors", "successors", "ancestors", "descendants", "neighborhood"}
-    | {"meeting_subgraph", "min_meeting_subgraph"},
-)
-
 FALLBACK_PROJECTION: tuple[str, ...] = ("path",)
 """Default projection for an op this client does not recognize."""
 
