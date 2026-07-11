@@ -857,10 +857,10 @@ class VirtualFileSystem:
             return err
 
         if op == "tree":
-            return await self._tree_entry(terminal, user_id=user_id, **kwargs)
+            return await self._tree_region(terminal, user_id=user_id, **kwargs)
         return await self._dispatch_entry(terminal.binding, op, path=terminal.rel, user_id=user_id, **kwargs)
 
-    async def _tree_entry(
+    async def _tree_region(
         self,
         terminal: ResolvedTerminal,
         *,
@@ -879,7 +879,18 @@ class VirtualFileSystem:
         fan-out.  Descents merge under the zero-progress rule: a dead
         descent among live rows demotes to a warning; the named target
         itself failing stays a loud failure.
+
+        *max_depth* must be an integer ``>= 1`` or ``None`` (unbounded).
+        Anything else — including a wire adapter forwarding unvalidated
+        input — classifies ``invalid`` here, before any dispatch, so the
+        depth rule is the router's, not each backend's.
         """
+        if max_depth is not None and not (isinstance(max_depth, int) and max_depth >= 1):
+            return self._error(
+                f"tree max_depth must be an integer >= 1, got {max_depth!r}",
+                kind=VFSErrorKind.invalid,
+                op="tree",
+            )
         grant = self._enter_hop(op="tree")
         if grant.refusal is not None:
             return grant.refusal
@@ -894,7 +905,7 @@ class VirtualFileSystem:
             descents: list[tuple[Binding, int | None]] = []
             skips: list[ResultError] = []
             for binding in self._bindings_beneath(full):
-                tail = binding.path if full == ROOT else binding.path[len(full) :]
+                tail = binding.path.without_mount(full)
                 distance = len(tail.strip("/").split("/"))
                 budget = None if max_depth is None else max_depth - distance
                 if budget is not None and budget <= 0:

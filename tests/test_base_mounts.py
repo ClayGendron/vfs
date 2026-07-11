@@ -704,6 +704,32 @@ async def test_tree_skips_incapable_binding_with_info_record() -> None:
     assert skip.path == "/data/b"
 
 
+async def test_tree_budgets_depth_from_a_non_root_target() -> None:
+    root = VirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/data/a/b", parents=True)
+
+    # The bind sits two segments beneath the target: depth 2 exhausts the
+    # budget at the mount point, whose stored directory row still shows.
+    depth2 = await root.tree("/data", max_depth=2)
+    assert set(depth2.paths) == {"/data/a", "/data/a/b"}
+    assert child.calls == []
+
+    await root.tree("/data", max_depth=3)
+    assert child.calls == [("tree", {"path": "/", "max_depth": 1, "columns": None})]
+
+
+async def test_tree_dead_descent_demotes_beside_live_rows() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(TransportFailStorage(), "/data/dead", parents=True)
+    result = await root.tree("/")
+    assert result.success is True
+    assert {"/data", "/data/dead"} <= set(result.paths)
+    [warning] = result.errors
+    assert warning.severity is Severity.warning
+    assert warning.kind is VFSErrorKind.backend_unavailable
+
+
 # ----------------------------------------------------------------------
 # fan-out — a scope with binds beneath it expands into a region
 # ----------------------------------------------------------------------

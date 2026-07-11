@@ -69,6 +69,19 @@ async def test_tree_routes_with_depth_passthrough() -> None:
     assert child.calls == [("tree", {"path": "/src", "max_depth": 2, "columns": None})]
 
 
+async def test_tree_rejects_a_bad_max_depth_before_dispatch() -> None:
+    # The depth rule is the router's: sub-one or non-int classifies
+    # invalid before any backend sees the call.
+    root = VirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    for bad in (0, -1, "2", 1.5):
+        result = await root.tree("/m", max_depth=bad)  # ty: ignore[invalid-argument-type]
+        assert result.success is False
+        assert result.errors[0].kind is VFSErrorKind.invalid
+    assert child.calls == []
+
+
 # ----------------------------------------------------------------------
 # two-path shape: move / copy
 # ----------------------------------------------------------------------
