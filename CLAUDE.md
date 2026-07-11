@@ -1,33 +1,41 @@
 # Project guidance for Claude Code
 
-## Current state: major refactor in progress
+## Current state: greenfield rebuild, green tree
 
-The repo is being rebuilt bit by bit. **Things being broken — failed imports,
-unresolved references, tests not collecting — is expected.** Do not treat a
-broken import or a non-running suite as a blocker or a regression to fix unless
-I ask. Flag it if relevant, then keep moving.
+The repo is being rebuilt around solid fundamentals — **paths, models, base,
+results, and storage** — built around an MCP design. The live tree is fully
+green: the `tests/` suite passes, and `ruff` and `ty` are at zero across
+`src/` and `tests/`. **Keep it that way** — a broken import, a failing test,
+or a new lint/type error in the live tree is a regression to fix, not
+expected refactor noise.
 
-The goal of the refactor is to land solid fundamentals — **paths, models,
-base, and database** — built around an MCP design. Evaluate work against where
-those fundamentals are heading, not against keeping the whole tree green.
+A green tree is an invariant, not a constraint on ambition. **This is still
+greenfield work: do not discount ideas because they would require a big
+refactor, churn a lot of files, or take significant resources.** There is no
+legacy to protect and no users to migrate — evaluate ideas on where the
+fundamentals should end up, propose the right design, and treat the cost of
+getting there as a planning detail, not a reason to shrink the idea. Green
+means each landing leaves the tree working; it does not mean changes must be
+small.
 
-### Tests: `tests/` vs `tests2/`
+### Live code vs archived reference: `src/`+`tests/` vs `src2/`+`tests2/`
 
-- **`tests/` is the live suite** being rebuilt for the new design — this is
-  where new and updated tests go, and the only suite worth running.
-- **`tests2/` is stale reference only.** It holds the pre-refactor tests, kept
-  around as a quarry to mine when building out `tests/`. Do **not** run it, fix
-  it, or treat its failures/imports as meaningful — it imports names that no
-  longer exist by design. When a `tests2/` file has been ported, it can go.
+- **`src/` and `tests/` are live.** New and updated code and tests go here;
+  `tests/` is the only suite worth running.
+- **`src2/` and `tests2/` are archived pre-refactor code, kept as a quarry**
+  to mine while building out the live tree. Do **not** run, lint, fix, or
+  port-fix them — they reference names that no longer exist by design, and
+  tooling config already excludes them. When a file has been fully ported or
+  superseded, it can go.
 
 ## Tooling
 
 - This is a **uv** project. Run Python and tooling through `uv` — e.g.
   `uv run python ...`, `uv run pytest ...`. Do not invoke the interpreter or
   `pip` directly, and do not manually `source .venv`.
-- **`ruff` and `ty` only need to pass for files that have test coverage** in
-  the live `tests/` suite. Lint and type errors in un-covered, pre-refactor
-  files are expected mid-refactor and are not blockers — don't chase them.
+- **`ruff` and `ty` must stay at zero across `src/` and `tests/`.** They
+  currently pass clean; leave them that way after every change. `src2/` and
+  `tests2/` are excluded in `pyproject.toml` — never chase errors there.
 
 ## Git workflow
 
