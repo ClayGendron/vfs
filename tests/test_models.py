@@ -626,7 +626,7 @@ class TestObservation:
 
     def test_path_is_branded_and_canonical(self) -> None:
         # deliberately unwrapped: canonicalization must happen in model validation
-        obs = Observation(path="docs/../a.md")  # ty: ignore[invalid-argument-type]
+        obs = Observation(path="docs/../a.md")
         assert isinstance(obs.path, Path)
         assert obs.path == "/a.md"
         assert obs.path.name == "a.md"

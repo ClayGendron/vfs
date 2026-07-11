@@ -154,7 +154,7 @@ class TestToEntries:
 
     def test_resource_paths_are_canonicalized(self) -> None:
         # The raw, non-canonical str must reach the model boundary itself.
-        resource = SkillResource(path="scripts//a/./b.py", content="x")  # ty: ignore[invalid-argument-type]
+        resource = SkillResource(path="scripts//a/./b.py", content="x")
         skill = Skill(name="pdf", description="d", resources=(resource,))
         assert skill.to_entries()[-1].path == "/.agents/skills/pdf/scripts/a/b.py"
 
@@ -168,11 +168,11 @@ class TestResourceSafety:
     @pytest.mark.parametrize("bad", ["/abs/x.py", "../escape.py", "scripts/../../escape.py"])
     def test_unsafe_resource_paths_rejected_at_construction(self, bad: str) -> None:
         with pytest.raises(ValidationError):
-            SkillResource(path=bad, content="x")  # ty: ignore[invalid-argument-type]
+            SkillResource(path=bad, content="x")
 
     @pytest.mark.parametrize("variant", ["SKILL.md", "./SKILL.md", "SKILL.md/", " SKILL.md "])
     def test_manifest_shadowing_rejected_across_aliases(self, variant: str) -> None:
-        resource = SkillResource(path=variant, content="x")  # ty: ignore[invalid-argument-type]
+        resource = SkillResource(path=variant, content="x")
         with pytest.raises(ValidationError, match="collides with the manifest"):
             Skill(name="x", description="d", resources=(resource,))
 
@@ -184,7 +184,7 @@ class TestResourceSafety:
                 resources=(
                     SkillResource(path=RelativePath("scripts/a.py"), content="A"),
                     # The dupe is only a dupe after canonicalization; keep it raw.
-                    SkillResource(path="scripts//a.py", content="B"),  # ty: ignore[invalid-argument-type]
+                    SkillResource(path="scripts//a.py", content="B"),
                 ),
             )
 

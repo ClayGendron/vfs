@@ -511,7 +511,7 @@ class TestPath:
             p: Path
 
         # A plain str is coerced through the gate (canonicalized) into a Path.
-        m = M(p="/a/../b")  # ty: ignore[invalid-argument-type]
+        m = M(p="/a/../b")
         assert isinstance(m.p, Path)
         assert m.p == "/b"
         # Serializes back to a plain str.
@@ -522,7 +522,7 @@ class TestPath:
             p: Path
 
         with pytest.raises(ValidationError):
-            M(p="/a\x00b")  # ty: ignore[invalid-argument-type]
+            M(p="/a\x00b")
 
 
 # =========================================================================
@@ -1646,7 +1646,7 @@ class TestRelativePath:
         class M(BaseModel):
             path: RelativePath
 
-        assert M(path="scripts//x.py").path == "scripts/x.py"  # ty: ignore[invalid-argument-type]
-        assert isinstance(M(path="scripts/x.py").path, RelativePath)  # ty: ignore[invalid-argument-type]
+        assert M(path="scripts//x.py").path == "scripts/x.py"
+        assert isinstance(M(path="scripts/x.py").path, RelativePath)
         with pytest.raises(ValidationError):
-            M(path="/absolute")  # ty: ignore[invalid-argument-type]
+            M(path="/absolute")
