@@ -51,6 +51,24 @@ small.
   in `context/` (stories, decisions, learnings) or this file, where it is
   versioned and visible to everyone.
 
+## Reference repos for research
+
+Sibling checkouts under `~/Git/Repos/` are available **read-only** for
+research — study prior art there freely (read, grep, cite), but never modify
+them or copy code in wholesale. Run `ls ~/Git/Repos` for the full list; the
+most relevant to this project:
+
+- **Filesystem heritage & semantics**: `plan9`, `plan9port`,
+  `unix-history-repo`, `freebsd-src`, `linux`, `libfuse`, `pjdfstest`
+  (POSIX fs test suite)
+- **VFS / storage layers**: `filesystem_spec` (fsspec), `pyfilesystem2`,
+  `opendal`, `juicefs`, `seaweedfs`, `minio`, `libsqlfs`, `agentfs`,
+  `jackrabbit-oak`
+- **Databases**: `sqlite`, `postgres`, `turso`, `sqlalchemy`
+- **Code search & indexing** (trigram-index stories): `zoekt`, `codesearch`,
+  `scip`
+- **MCP**: `modelcontextprotocol`, `python-sdk`, `fastmcp`
+
 ## Imports
 
 - **All imports go at the top of the file. No mid-file or function-local
