@@ -18,7 +18,12 @@ Batch ops (entry writes, move/copy pairs, multi-target edits and
 deletes) stage against a copy and commit only on full success — the
 in-memory analogue of the transaction a database backend opens inside
 each op.  Failures enumerate per entry: a failed batch reports every
-failing target, not just the first, and commits nothing.
+failing target, not just the first, stamps the requested target into
+``error.data`` so value-identical failures stay distinct, and commits
+nothing.  Overlapping targets are order-independent: a cascade delete
+subsumes requested descendants and repeats (judged against committed
+state), while a move refuses duplicate sources and sources inside
+another moved source as a batch-shape conflict.
 """
 
 from __future__ import annotations
@@ -36,6 +41,8 @@ from vfs.storage import storage_ops
 from vfs.storage.replace import replace
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from vfs.models import Entry
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind
@@ -58,6 +65,7 @@ class _Row:
     kind: ObjectKind
     content: str | None = None
     edge_type: str | None = None
+    revision: int = 0
 
 
 class InMemoryStorage:
@@ -81,9 +89,14 @@ class InMemoryStorage:
         self.description = description
         self._allow_files = allow_files
         self._rows: dict[Path, _Row] = {ROOT: _Row(kind="directory")}
+        self._revision = 0
 
     def capabilities(self) -> frozenset[Op]:
         return storage_ops(self)
+
+    def traits(self) -> Mapping[str, str]:
+        # Live-state scan: no index tier, so results are never stale.
+        return {"grep_tier": "scan", "grep_staleness": "none", "revision_encoding": "counter64"}
 
     # -------------------------------------------------------------------
     # Read family
@@ -104,10 +117,13 @@ class InMemoryStorage:
         for target in self._targets(path, observations):
             row = self._rows.get(target)
             if row is None:
-                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {target}", target))
+                errors.append(self._classify_miss(self._rows, target))
                 continue
             if row.kind not in _CONTENT_KINDS:
-                errors.append(_classified(VFSErrorKind.wrong_kind, f"Is a directory: {target}", target))
+                # The prose names the row's actual kind — a directly
+                # addressed edge row is not a directory.
+                article = "an" if row.kind[0] in "aeiou" else "a"
+                errors.append(_classified(VFSErrorKind.wrong_kind, f"Is {article} {row.kind}: {target}", target))
                 continue
             rows.append(self._observe(target, row, content=True))
         return Result(ops=("read",), observations=rows, errors=errors)
@@ -125,7 +141,7 @@ class InMemoryStorage:
         for target in self._targets(path, observations):
             row = self._rows.get(target)
             if row is None:
-                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {target}", target))
+                errors.append(self._classify_miss(self._rows, target))
                 continue
             rows.append(self._observe(target, row))
         return Result(ops=("stat",), observations=rows, errors=errors)
@@ -143,7 +159,7 @@ class InMemoryStorage:
         for target in self._targets(path, observations, default=ROOT):
             row = self._rows.get(target)
             if row is None:
-                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {target}", target))
+                errors.append(self._classify_miss(self._rows, target))
                 continue
             if row.kind != "directory":
                 rows.append(self._observe(target, row))
@@ -164,7 +180,7 @@ class InMemoryStorage:
             return _fail("tree", VFSErrorKind.invalid, f"max_depth must be >= 1, got {max_depth}")
         row = self._rows.get(path)
         if row is None:
-            return _fail("tree", VFSErrorKind.not_found, f"Not found: {path}", path)
+            return Result(ops=("tree",), errors=[self._classify_miss(self._rows, path)])
         if row.kind != "directory":
             return Result(ops=("tree",), observations=[self._observe(path, row)])
         rows = [
@@ -223,9 +239,11 @@ class InMemoryStorage:
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
+        allow_scan: bool = False,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
+        # allow_scan is a no-op: this backend is already the scan tier.
         regex = _compile_grep(pattern, case_mode=case_mode, fixed_strings=fixed_strings, word_regexp=word_regexp)
         if regex is None:
             return _fail("grep", VFSErrorKind.invalid, f"Invalid pattern: {pattern!r}")
@@ -248,6 +266,7 @@ class InMemoryStorage:
                 p,
                 row.content,
                 regex,
+                revision=row.revision,
                 invert_match=invert_match,
                 before_context=before_context,
                 after_context=after_context,
@@ -277,11 +296,11 @@ class InMemoryStorage:
         if path is None or content is None:
             return _fail("write", VFSErrorKind.invalid, "write requires path and content, or entries")
         staged = dict(self._rows)
-        result = self._put_file(staged, "write", path, content, kind="file", overwrite=overwrite, parents=parents)
-        if isinstance(result, Result):
-            return result
+        outcome = self._put_file(staged, "write", path, content, kind="file", overwrite=overwrite, parents=parents)
+        if isinstance(outcome, Result):
+            return outcome
         self._rows = staged
-        return Result(ops=("write",), observations=[result])
+        return Result(ops=("write",), observations=[self._observe(path, staged[path], status=outcome)])
 
     async def edit(
         self,
@@ -294,12 +313,12 @@ class InMemoryStorage:
         if not self._allow_files:
             return self._directories_only("edit")
         staged = dict(self._rows)
-        rows: list[Observation] = []
+        edited: list[Path] = []
         errors: list[ResultError] = []
         for target in self._targets(path, observations):
             row = staged.get(target)
             if row is None:
-                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {target}", target))
+                errors.append(self._classify_miss(staged, target))
                 continue
             if row.kind not in _CONTENT_KINDS or row.content is None:
                 errors.append(_classified(VFSErrorKind.wrong_kind, f"No editable content: {target}", target))
@@ -315,10 +334,13 @@ class InMemoryStorage:
             if failed is not None:
                 errors.append(failed)
                 continue
-            staged[target] = clone_row(row, content=content)
-            rows.append(self._observe(target, staged[target], status="updated"))
+            staged[target] = clone_row(row, content=content, revision=self._next_revision())
+            edited.append(target)
         if errors:
             return Result(ops=("edit",), errors=errors)
+        # Observe only after the whole batch is staged: a repeated target
+        # re-stamps the row an earlier iteration would have observed.
+        rows = [self._observe(target, staged[target], status="updated") for target in edited]
         self._rows = staged
         return Result(ops=("edit",), observations=rows)
 
@@ -334,13 +356,27 @@ class InMemoryStorage:
         staged = dict(self._rows)
         rows: list[Observation] = []
         errors: list[ResultError] = []
-        for target in self._targets(path, observations):
+        requested = self._targets(path, observations)
+        unique = set(requested)
+        seen: set[Path] = set()
+        for target in requested:
             if target == ROOT:
                 errors.append(_classified(VFSErrorKind.invalid, "Cannot delete the root directory", target))
                 continue
+            # A target inside another target's cascade — or a repeat — is
+            # subsumed: judged against committed state, order-independent.
+            covered = cascade and any(o != target and target.startswith(o + "/") for o in unique)
+            if covered or target in seen:
+                row = self._rows.get(target)
+                if row is None:
+                    errors.append(self._classify_miss(self._rows, target))
+                else:
+                    rows.append(self._observe(target, row, status="deleted"))
+                continue
+            seen.add(target)
             row = staged.get(target)
             if row is None:
-                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {target}", target))
+                errors.append(self._classify_miss(staged, target))
                 continue
             descendants = [p for p in staged if p.startswith(target + "/")]
             if descendants and not cascade:
@@ -348,6 +384,7 @@ class InMemoryStorage:
                 continue
             for p in (*descendants, target):
                 staged.pop(p, None)
+            self._bump_parent(staged, target)
             rows.append(self._observe(target, row, status="deleted"))
         if errors:
             return Result(ops=("delete",), errors=errors)
@@ -371,9 +408,12 @@ class InMemoryStorage:
         gate = self._parent_gate(staged, "mkdir", path, parents=parents)
         if gate is not None:
             return gate
-        rows = [self._observe(p, staged[p], status="created") for p in self._mint_chain(staged, path)]
-        staged[path] = _Row(kind="directory")
-        rows.append(self._observe(path, staged[path], status="created"))
+        minted = self._mint_chain(staged, path)
+        staged[path] = _Row(kind="directory", revision=self._next_revision())
+        self._bump_parent(staged, path)
+        # Observe after every stamp and bump so each row reports its
+        # committed revision, not a mid-batch one.
+        rows = [self._observe(p, staged[p], status="created") for p in (*minted, path)]
         self._rows = staged
         return Result(ops=("mkdir",), observations=rows)
 
@@ -417,7 +457,9 @@ class InMemoryStorage:
         # minted implicitly, exempt from the strict parent rule.
         self._mint_chain(staged, edge_path)
         status = "updated" if edge_path in staged else "created"
-        staged[edge_path] = _Row(kind="edge", edge_type=edge_type)
+        staged[edge_path] = _Row(kind="edge", edge_type=edge_type, revision=self._next_revision())
+        if status == "created":
+            self._bump_parent(staged, edge_path)
         self._rows = staged
         return Result(ops=("mkedge",), observations=[self._observe(edge_path, staged[edge_path], status=status)])
 
@@ -440,6 +482,8 @@ class InMemoryStorage:
         return [default] if default is not None else []
 
     def _observe(self, path: Path, row: _Row, *, content: bool = False, status: _Status | None = None) -> Observation:
+        # The populated mask derives from the non-None fields here — this
+        # backend fetches whole rows, so value-presence and fetched coincide.
         size = len(row.content.encode()) if row.content is not None else None
         return Observation(
             path=path,
@@ -447,11 +491,49 @@ class InMemoryStorage:
             content=row.content if content else None,
             edge_type=row.edge_type,
             size_bytes=size,
+            revision=row.revision,
             status=status,
         )
 
+    def _next_revision(self) -> int:
+        """Next value of the per-instance monotone sequence (gaps are fine)."""
+        self._revision += 1
+        return self._revision
+
+    def _bump_parent(self, rows: dict[Path, _Row], path: Path) -> None:
+        """Unconditional parent-revision bump for a namespace mutation at *path*.
+
+        Clones the parent row — *rows* may be a staged copy sharing row
+        objects with the committed dict, and a failed batch must not leave
+        a bump behind.
+        """
+        parent = rows.get(path.parent_dir)
+        if parent is not None:
+            rows[path.parent_dir] = clone_row(parent, revision=self._next_revision())
+
     def _directories_only(self, op: str) -> Result:
         return _fail(op, VFSErrorKind.unsupported, "This storage holds directories only; file content is not supported")
+
+    def _classify_miss(self, rows: dict[Path, _Row], target: Path) -> ResultError:
+        """Descent classification for a missed *target* — first failing boundary wins.
+
+        The shared error-ordering ladder: a missing ancestor classifies
+        ``not_found`` at that component; an ancestor stored as a
+        non-directory classifies ``wrong_kind`` there — before any fact
+        about the leaf. Only when the whole parent chain is sound is the
+        miss the leaf's own ``not_found``. Every error stamps the requested
+        *target* into ``data`` so sibling misses under one dead ancestor
+        stay distinct through merge dedup.
+        """
+        for ancestor in _ancestor_chain(target):
+            row = rows.get(ancestor)
+            if row is None:
+                return _classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
+            if row.kind != "directory":
+                return _classified(
+                    VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target
+                )
+        return _classified(VFSErrorKind.not_found, f"Not found: {target}", target, target=target)
 
     def _parent_gate(self, rows: dict[Path, _Row], op: str, path: Path, *, parents: bool) -> Result | None:
         """The POSIX parent rule: wrong_kind is unconditional; absence needs the flag."""
@@ -460,18 +542,22 @@ class InMemoryStorage:
             if row is None:
                 if parents:
                     return None
-                return _fail(op, VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor)
+                return _fail(op, VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=path)
             if row.kind != "directory":
-                return _fail(op, VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor)
+                return _fail(op, VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=path)
         return None
 
-    @staticmethod
-    def _mint_chain(rows: dict[Path, _Row], path: Path) -> list[Path]:
-        """Create the missing ancestor directories of *path*; return them in order."""
+    def _mint_chain(self, rows: dict[Path, _Row], path: Path) -> list[Path]:
+        """Create the missing ancestor directories of *path*; return them in order.
+
+        Each mint is a namespace mutation of its own parent: the minted row
+        is stamped and the parent bumped, shallowest first.
+        """
         minted: list[Path] = []
         for ancestor in _ancestor_chain(path):
             if ancestor not in rows:
-                rows[ancestor] = _Row(kind="directory")
+                rows[ancestor] = _Row(kind="directory", revision=self._next_revision())
+                self._bump_parent(rows, ancestor)
                 minted.append(ancestor)
         return minted
 
@@ -485,8 +571,12 @@ class InMemoryStorage:
         kind: ObjectKind,
         overwrite: bool,
         parents: bool,
-    ) -> Result | Observation:
-        """Gate and stage one content-bearing row; a ``Result`` is the failure."""
+    ) -> Result | _Status:
+        """Gate and stage one content-bearing row; a ``Result`` is the failure.
+
+        Returns the staged row's status — callers observe after the whole
+        batch is staged, so no observation carries a mid-batch revision.
+        """
         if not self._allow_files and kind != "directory":
             return self._directories_only(op)
         gate = self._parent_gate(staged, op, path, parents=parents)
@@ -499,12 +589,14 @@ class InMemoryStorage:
             if not overwrite:
                 return _fail(op, VFSErrorKind.exists, f"Already exists: {path}", path)
         self._mint_chain(staged, path)
-        staged[path] = _Row(kind=kind, content=content)
-        return self._observe(path, staged[path], status="updated" if occupant is not None else "created")
+        staged[path] = _Row(kind=kind, content=content, revision=self._next_revision())
+        if occupant is None:
+            self._bump_parent(staged, path)
+        return "updated" if occupant is not None else "created"
 
     def _write_entries(self, entries: list[Entry], *, overwrite: bool, parents: bool) -> Result:
         staged = dict(self._rows)
-        rows: list[Observation] = []
+        pending: list[tuple[Path, _Status]] = []
         errors: list[ResultError] = []
         for entry in entries:
             if entry.kind == "directory":
@@ -515,17 +607,18 @@ class InMemoryStorage:
                             _classified(VFSErrorKind.wrong_kind, f"Not a directory: {entry.path}", entry.path)
                         )
                         continue
-                    rows.append(self._observe(entry.path, occupant, status="unchanged"))
+                    pending.append((entry.path, "unchanged"))
                     continue
                 gate = self._parent_gate(staged, "write", entry.path, parents=parents)
                 if gate is not None:
                     errors.extend(gate.errors)
                     continue
                 self._mint_chain(staged, entry.path)
-                staged[entry.path] = _Row(kind="directory")
-                rows.append(self._observe(entry.path, staged[entry.path], status="created"))
+                staged[entry.path] = _Row(kind="directory", revision=self._next_revision())
+                self._bump_parent(staged, entry.path)
+                pending.append((entry.path, "created"))
                 continue
-            result = self._put_file(
+            outcome = self._put_file(
                 staged,
                 "write",
                 entry.path,
@@ -534,44 +627,82 @@ class InMemoryStorage:
                 overwrite=overwrite,
                 parents=parents,
             )
-            if isinstance(result, Result):
-                errors.extend(result.errors)
+            if isinstance(outcome, Result):
+                errors.extend(outcome.errors)
                 continue
-            rows.append(result)
+            pending.append((entry.path, outcome))
         if errors:
             return Result(ops=("write",), errors=errors)
+        # Observe only after the whole batch is staged: a later entry may
+        # bump a row observed earlier (sibling parent bumps, repeat paths).
+        rows = [self._observe(p, staged[p], status=status) for p, status in pending]
         self._rows = staged
         return Result(ops=("write",), observations=rows)
 
     def _transfer(self, op: str, operations: list[ResolvedPair], *, overwrite: bool) -> Result:
         staged = dict(self._rows)
-        rows: list[Observation] = []
+        pending: list[tuple[Path, _Status, _Row]] = []
         errors: list[ResultError] = []
+        move_srcs = [pair.src for pair in operations] if op == "move" else []
         # Enumeration is best-effort past a failed pair: later pairs judge
         # against the staged state that excludes the failed pair's effect.
         for pair in operations:
             src, dest = pair.src, pair.dest
+            if src != ROOT and (move_srcs.count(src) > 1 or _covering_src(src, move_srcs) is not None):
+                # Overlapping move sources are a batch-shape conflict judged
+                # against committed state, so the outcome is order-independent.
+                if self._rows.get(src) is None:
+                    errors.append(self._classify_miss(self._rows, src))
+                elif move_srcs.count(src) > 1:
+                    errors.append(
+                        _classified(
+                            VFSErrorKind.invalid, f"Duplicate move source in batch: {src}", src, target=src
+                        )
+                    )
+                else:
+                    ancestor = _covering_src(src, move_srcs)
+                    errors.append(
+                        _classified(
+                            VFSErrorKind.invalid,
+                            f"Cannot move {src}: inside {ancestor}, which this batch also moves",
+                            src,
+                            target=src,
+                        )
+                    )
+                continue
             src_row = staged.get(src)
             if src_row is None:
-                errors.append(_classified(VFSErrorKind.not_found, f"Not found: {src}", src))
+                errors.append(self._classify_miss(staged, src))
                 continue
             if src == ROOT or dest == ROOT:
                 errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} the root directory"))
                 continue
-            if dest == src or dest.startswith(src + "/"):
-                errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))
+            if dest == src:
+                # POSIX rename-to-self: a successful no-op, never a refusal.
+                pending.append((dest, "unchanged", src_row))
                 continue
             gate = self._parent_gate(staged, op, dest, parents=False)
             if gate is not None:
                 errors.extend(gate.errors)
                 continue
+            # The rename ladder: no-replace exists first, cycle next (one
+            # kind, both directions), then kind, then emptiness — last.
             occupant = staged.get(dest)
+            if occupant is not None and not overwrite:
+                errors.append(_classified(VFSErrorKind.exists, f"Already exists: {dest}", dest))
+                continue
+            if dest.startswith(src + "/"):
+                errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))
+                continue
+            if src.startswith(dest + "/"):
+                errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} {src} onto its own ancestor: {dest}"))
+                continue
             if occupant is not None:
-                if occupant.kind == "directory" or src_row.kind == "directory":
+                if (src_row.kind == "directory") != (occupant.kind == "directory"):
                     errors.append(_classified(VFSErrorKind.wrong_kind, f"Cannot {op} onto: {dest}", dest))
                     continue
-                if not overwrite:
-                    errors.append(_classified(VFSErrorKind.exists, f"Already exists: {dest}", dest))
+                if occupant.kind == "directory" and any(p.startswith(dest + "/") for p in staged):
+                    errors.append(_classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest))
                     continue
             moved = [(p, staged[p]) for p in list(staged) if p == src or p.startswith(src + "/")]
             # Mint every destination before mutating: one unaddressable row
@@ -581,13 +712,26 @@ class InMemoryStorage:
             except ValueError as exc:
                 errors.append(_classified(VFSErrorKind.unaddressable, f"Cannot {op} {src}: {exc}", dest))
                 continue
+            # Copy mints new nodes, so every copied row gets a fresh revision;
+            # move keeps descendants' revisions (a reparent is a material
+            # write of the moved node plus both parent bumps, nothing more).
             for (p, row), new_path in zip(moved, dests, strict=True):
-                staged[new_path] = clone_row(row)
+                staged[new_path] = clone_row(row, revision=self._next_revision() if op == "copy" else row.revision)
                 if op == "move":
                     del staged[p]
-            rows.append(self._observe(dest, staged[dest], status="updated" if occupant is not None else "created"))
+            if op == "move":
+                staged[dest] = clone_row(staged[dest], revision=self._next_revision())
+                self._bump_parent(staged, src)
+                self._bump_parent(staged, dest)
+            elif occupant is None:
+                self._bump_parent(staged, dest)
+            pending.append((dest, "updated" if occupant is not None else "created", staged[dest]))
         if errors:
             return Result(ops=(op,), errors=errors)
+        # Observe only after the whole batch is staged: a later pair may
+        # bump a row staged earlier. The pair's own staged row is the
+        # fallback for a dest a later pair in the batch moved away.
+        rows = [self._observe(p, staged.get(p, snapshot), status=status) for p, status, snapshot in pending]
         self._rows = staged
         return Result(ops=(op,), observations=rows)
 
@@ -597,12 +741,33 @@ class InMemoryStorage:
 # ---------------------------------------------------------------------------
 
 
-def _classified(kind: VFSErrorKind, message: str, path: Path | None = None) -> ResultError:
-    return ResultError(kind=kind, message=message, path=path)
+def _covering_src(src: Path, srcs: list[Path]) -> Path | None:
+    """The batch source whose subtree contains *src*, if any."""
+    return next((other for other in srcs if other != src and src.startswith(other + "/")), None)
 
 
-def _fail(op: str, kind: VFSErrorKind, message: str, path: Path | None = None) -> Result:
-    return Result(ops=(op,), errors=[_classified(kind, message, path)])
+def _classified(
+    kind: VFSErrorKind,
+    message: str,
+    path: Path | None = None,
+    *,
+    target: Path | None = None,
+) -> ResultError:
+    # ``target`` names the requested row so value-identical errors from
+    # distinct batch targets survive merge dedup (envelope's discriminator).
+    data = {"target": str(target)} if target is not None else None
+    return ResultError(kind=kind, message=message, path=path, data=data)
+
+
+def _fail(
+    op: str,
+    kind: VFSErrorKind,
+    message: str,
+    path: Path | None = None,
+    *,
+    target: Path | None = None,
+) -> Result:
+    return Result(ops=(op,), errors=[_classified(kind, message, path, target=target)])
 
 
 def _ancestor_chain(path: Path) -> list[Path]:
@@ -649,6 +814,7 @@ def _grep_file(
     content: str,
     regex: re.Pattern[str],
     *,
+    revision: int,
     invert_match: bool,
     before_context: int,
     after_context: int,
@@ -669,10 +835,10 @@ def _grep_file(
     if not regions:
         return None
     if output_mode == "files":
-        return Observation(path=path, kind="file")
+        return Observation(path=path, kind="file", revision=revision)
     if output_mode == "count":
-        return Observation(path=path, kind="file", score=float(len(regions)))
-    return Observation(path=path, kind="file", content=content, matches=regions)
+        return Observation(path=path, kind="file", revision=revision, score=float(len(regions)))
+    return Observation(path=path, kind="file", revision=revision, content=content, matches=regions)
 
 
 __all__ = ["InMemoryStorage"]
