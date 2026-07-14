@@ -51,13 +51,21 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
 
 ## Pass A — files and directories
 
-- [ ] 9. Slice 6 — `backends/database/` skeleton: `dialects.py`
-      (budgets, classifier, settings, isolation, collation),
+- [x] 9. Slice 6 — `backends/database/` skeleton: `dialects.py`
+      (policy only — retryable classifier, settings, isolation, key
+      byte budgets; facts SQLAlchemy models are read off the dialect:
+      `insertmanyvalues_max_parameters`, `is_disconnect`; unknown
+      dialects serve on a generic floor, never refused),
       `engine.py` (construction XOR, first-touch with schema-version
       row under the serialization point, per-session settings, retry
       + backoff, `close()`), `backend.py` stub. Tests: restart
       rebind, cross-loop first touch, version-mismatch refusal,
-      concurrent first touch, borrowed-pool close.
+      concurrent first touch, borrowed-pool close. New kind
+      `vfs.unavailable.schema` for the mismatch refusal. Slice-6
+      pressure test: 2 confirmed findings remediated — half-provisioned
+      database (rows but no meta) now a classified refusal, not a raw
+      `NoResultFound`; SQLite session settings stamp every pool checkout
+      so pre-borrow pooled connections are covered.
 - [ ] 10. Slice 7 — `descent.py` (ladder chokepoint + two-scope
       liveness prefix filter) + `reads.py` (read family, `parent_id`
       ls, prefix-LIKE tree, binary-collated order) + glob (escaped
