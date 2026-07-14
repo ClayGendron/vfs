@@ -8,7 +8,14 @@
   red-team scrutiny gate applied 2026-07-13 (22 confirmed findings
   folded — counter scope, move-verb isolation carve-out, topology
   serialization scope, verb surfaces, trash semantics, copy). No open
-  markers — ready for plan.md once ADR 059 lands
+  markers. **in progress** — plan.md + tasks.md drafted 2026-07-13;
+  ADR 059 landed 2026-07-14 as
+  `context/decisions/004-stable-node-identity.md`; Stage 1 (seam
+  ripples, tasks 2–8) complete 2026-07-14; adversarial pressure test
+  same day — 11 confirmed + 3 contested findings written up in
+  `pressure-findings-stage1.md` (four ready-to-implement, six
+  decision-gated) — resolve before Pass A slice 6
+  (`backends/database/` skeleton, tasks.md task 9)
 - **Date:** 2026-07-12
 - **Owner:** Clay Gendron
 - **Kind:** feature (the database backend port that ADR 001 and ADR 002
@@ -136,6 +143,18 @@ read-pipeline R2):
   budget**, and every entry gets a classified per-entry outcome, never
   a silent skip (the JuiceFS `doBatchUnlink` anti-pattern). The budget
   is a declared per-dialect datum on the base class.
+- **Overlapping batch targets are order-independent** (resolved
+  2026-07-14, pressure finding 2.6.1): a cascade delete subsumes
+  requested descendants and repeats — judged against committed state,
+  the S3-DeleteObjects/fsspec norm; no surveyed batch API validates
+  against accumulating staged state — while move refuses duplicate
+  sources and a source inside another moved source as a batch-shape
+  conflict (`invalid`, named for the requested target; copy fan-out
+  from one source stays legal, since copy never consumes its source).
+  Per-target errors stamp the requested target into ``error.data`` so
+  value-identical failures from distinct targets survive merge dedup
+  (2.6.2 — per-requested-key attribution is the wild norm; nothing
+  attributes a failure to a cascade root).
 - The one-commit guarantee holds only while content lives in the
   transactional store — moving content out is a design fork that
   re-acquires the metadata/data ordering problem, not an optimization.
@@ -147,6 +166,15 @@ read-pipeline R2):
   gain `revision` and the mask, `results/projection.py` becomes
   mask-driven, and `InMemoryStorage` stamps revision so the shared
   harness holds for both backends.
+- **Result merge under the mask** (resolved 2026-07-14, pressure
+  finding 2.1): overlap fill in the result algebra is mask-driven —
+  the right row fills only fields absent from the left mask, masks
+  union, fetched-and-null is never overwritten — and revision merges
+  agree-or-null: when both sides carry differing revisions the merged
+  row's revision stamps null (still masked), so a composite of two
+  snapshots never claims a single one (the NFS same-change_attr
+  discipline, adapted so bind-path decoration keeps working across
+  mounts' unrelated counters).
 
 This retires the `src2` typing pain at the root: no minted ORM classes, no
 `_unchecked_select`, target of **zero** `ty: ignore` in the new module.
@@ -266,11 +294,34 @@ behavior.
     weak-selectivity refusal tier — selectivity is a runtime budget
     (candidate/posting-byte/wall-time caps, truncation-flagged
     results), not a plan-time prediction.
+  - **The gram stream is raw folded codepoints — no Unicode
+    normalization** (resolved 2026-07-14, pressure finding 2.4). The
+    authoritative matcher is Python `re` over raw content, which is
+    codepoint-exact and never unifies canonical-equivalent forms,
+    while NFC is not substring-stable — so NFC in the pipeline created
+    real false negatives to defend matches the verifier cannot make
+    (zoekt, codesearch, and pg_trgm all index un-normalized streams).
+    The one shared fold is newline-normalize + Turkic-i pre-fold
+    (U+0131 and U+0130 → `i`; sre's simple-case orbit unifies them
+    with `i` where `casefold` does not — U+0130 was a second breaker
+    the original finding missed) + `casefold`, satisfying the
+    invariant *candidate fold ⊇ verifier case orbit* (pinned by an
+    exhaustive orbit-scan test). Normalization-insensitive grep
+    (matching U+00E9 in either composed form) is explicitly out of
+    contract — the raw-content verifier never provided it; offering it
+    would be a product decision requiring normalized-verify semantics.
+    The three-part epoch fingerprint's index format version (below)
+    covers the fold definition: any future fold change forces reindex.
   - **Execution:** rarest-first intersection ordered by
     `posting_list.doc_count` — default **k=4** grams with early exit
     (spike-validated: k=2, zoekt's positional-only number, is up to 5×
     worse on doc-level postings; k=all wastes decode on rare
-    patterns), empty-posting short-circuit, metadata/soft-delete join
+    patterns), empty-posting short-circuit, **the posting-byte budget
+    enforced before fetch via `posting_list.byte_size`** — a blob the
+    budget won't cover is never pulled; Postgres detoast of a
+    compressed blob is all-or-nothing, so an accidental hot-gram fetch
+    is expensive and unmitigable after the fact (resolved 2026-07-14,
+    research-posting-storage.md) — metadata/soft-delete join
     before any content fetch, unconditional authoritative Python `re`
     verification of every candidate. The scan/verify machinery is
     permanent keepable code — it is the verification layer, the
@@ -280,11 +331,29 @@ behavior.
     k-rarest policy actually fetches — spike §2). Delta+gamma is
     dropped; `ENCODING_ROARING` stays reserved for a density-tier
     upgrade if ever needed.
+  - **Storage granularity (resolved 2026-07-14,
+    research-posting-storage.md): one row per `(epoch, gram_key)`
+    holds the gram's full doclist blob.** FTS5 and GIN split posting
+    lists only to serve intra-list seek and in-place update — both
+    absent here (whole-blob fetch of k-rarest grams; epoch-immutable
+    rows), and the shipped tier has no blob-capacity cliff. Doc-id-range
+    chunking stays reserved, never built speculatively: posting tables
+    are regenerable caches, so a future chunked format is a
+    format-version bump and drop-and-rebuild, not a migration.
   - **Index lifecycle: batch only.** No per-write index maintenance —
     the staging/fold/compact pipeline is dropped and `gram_staging`
     leaves the schema. An explicit reindex verb builds posting rows
     under a new epoch and flips the current-epoch pointer in one
-    transaction; old-epoch reclamation is a separate slower step. The
+    transaction — **the flip is a compare-and-set on the expected old
+    epoch, rows-affected checked, so concurrent reindexers cannot
+    publish over each other** (Oak's checkpoint CAS; resolved
+    2026-07-14, research-posting-storage.md); old-epoch reclamation is
+    a separate slower step. Posting rows bulk-insert **sorted by
+    `(epoch, gram_key)` in size-partitioned batches** — SQLAlchemy's
+    insert paging is parameter-count-only with no byte limiter (and
+    MSSQL's 2,100-param cap yields 349 rows/statement at six columns),
+    so the verb caps batch bytes itself: large pages for the tiny-blob
+    majority, small pages for heavy grams. The
     epoch stamp is a three-part fingerprint (index format version,
     index-options hash, max-revision watermark); any format/options
     mismatch → drop-and-rebuild, never migrate. The verb is
@@ -355,7 +424,20 @@ SeaweedFS's v2 store moved *to* app-owned DDL). Index-tier tables are
 versioned regenerable caches — format-version stamped,
 drop-and-rebuild on mismatch, never migrated. **Binary collation is
 pinned in DDL on path/name columns** — a pagination-correctness and
-LIKE-sargability prerequisite, not an ordering nicety. A migration
+LIKE-sargability prerequisite, not an ordering nicety. On MSSQL that
+collation is `Latin1_General_100_BIN2_UTF8` (resolved 2026-07-14,
+pressure finding 2.5): a Unicode-safe VARCHAR whose byte order equals
+UTF-8/code-point order on every engine, with a **SQL Server 2019+
+floor**. Plain `_BIN2` VARCHAR was a code-page column silently
+corrupting non-Latin paths; NVARCHAR+`_BIN2` is rejected twice over —
+UTF-16 code-unit order diverges from the other engines on
+supplementary-plane characters, and 2 bytes/char busts the 1,700-byte
+index-key cap even for ASCII paths at the full 1024-char budget,
+where UTF-8 VARCHAR keeps every all-ASCII path indexable (non-ASCII
+paths past 1,700 UTF-8 bytes classify at the byte budget below). The
+MSSQL provider story must validate the ODBC UTF-8 parameter path
+end-to-end before claiming the capability; Oak's
+varbinary-of-UTF-8-bytes key is the documented fallback. A migration
 tool remains a future option for the durable entry/edge/version
 tables only, if deployment policy demands it; that changes how DDL
 runs, not who defines it.
@@ -367,7 +449,20 @@ unique keys cap near 1,700 bytes, Postgres btree near 2,704;
 bytes). A path lawful at ingress but over the engine's key budget
 classifies at the backend — never an unclassified driver error — with
 at/over-limit harness rows per mutating verb (research.md gap #1,
-closed).
+closed). `table_name` carries the same discipline (resolved
+2026-07-14, pressure finding 2.6.3): `build_vfs_tables` refuses a
+prefix over `MAX_TABLE_NAME_LENGTH = 41` — derived constraint names
+must fit Postgres's 63-char identifier cap on every engine (SQLite
+would accept them; SQLAlchemy's compile-time `IdentifierError` fires
+only on the first engine that enforces the cap) — with a tightness
+test pinning the 63 − 22 arithmetic to the longest derived suffix.
+
+Blob columns are correct as generic `LargeBinary` on the shipped tier
+(SQLite `BLOB`, Postgres `bytea`, MSSQL `VARBINARY(max)` on 2012+ via
+`deprecate_large_types`). A future MySQL tier must pin `LONGBLOB` via
+`with_variant` — bare `LargeBinary` renders MySQL's plain `BLOB`, a
+64 KB silent-truncation cap (resolved 2026-07-14,
+research-posting-storage.md).
 
 ### 9. Meta namespace, versions, content layout, and delete — resolved
 
@@ -561,7 +656,14 @@ closed).
   trashed or swept ancestor), not just acyclicity; it walks to the
   root, never fixed-depth; both cycle directions collapse to one
   classified refusal kind (Linux's EINVAL/ENOTEMPTY split recorded as
-  deliberately not copied).
+  deliberately not copied). **Cycle classification runs before
+  occupied-target classification** (resolved 2026-07-14, pressure
+  finding 2.3 — the Linux ladder: the rename trap checks fire in the
+  lookup phase, before vfs_rename's kind checks ever run), which is
+  what makes the one-kind pin reachable in the target-ancestor
+  direction: an ancestor destination is by construction an occupied
+  non-empty directory, so any occupied-first order would misclassify
+  that direction as wrong_kind/not_empty.
 - **Durability — "committed" defined per engine (W8):** committed =
   atomic (recovery truncates at the last valid commit frame),
   immediately visible, durable per the declared tier.
@@ -620,9 +722,13 @@ router seam; **zero per-engine conditional assertions**.
 Harness rows added by the pipelines research: a trashed path
 classifies `not_found` through every read verb; an op under a deleted
 ancestor classifies `not_found`; a crash-simulated (rolled-back)
-delete leaves all row families consistent; move refusal order
-(source-missing > target-exists > cycle > permission) with both cycle
-directions one kind; the concurrent two-move cycle test on two
+delete leaves all row families consistent; move/copy refusal order
+(source-missing > exists-under-no-replace > cycle > wrong_kind >
+not_empty > permission; resolved 2026-07-14, pressure findings
+2.2/2.3) with both cycle directions one kind, dir-over-empty-dir a
+successful POSIX replace, and dir-over-non-empty-dir `not_empty`
+(POSIX latitude allows EEXIST or ENOTEMPTY; FreeBSD/JuiceFS/SeaweedFS
+all emit ENOTEMPTY); the concurrent two-move cycle test on two
 instances of one database; the corrupted-diff-row probe — post-pack
 only, Pass C, since the write path is diff-free (corruption kind
 asserted and post-snapshot versions still reconstruct);
