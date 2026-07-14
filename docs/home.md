@@ -6,13 +6,19 @@ VFS is built on a conviction that creating effective AI agents, from the scale o
 
 LLMs will continue to gain intelligence
 
-It is important to ground any understanding of LLMs (and thus AI agents) with an awareness that these are predictive models, and this means LLMs are bound by the age old computing principle of garabe in, garabe out.
+Intelligence cannot replace knowledge. An LLM is trained as a predictive model, and like any predictive model, it predicts on its inputs — what a classical model does with features, an LLM does with context. Everything left out of the context window, the model must reconstruct from what it internalized during training: knowledge frozen at a cutoff, impossible to verify at inference time, and blind to your systems. Modern models reconstruct impressively well, but the context window is the only input you control.
 
-In all of our first interactions with LLMs in 2022 and 2023, the capability and value that those models showed to us was that there was a lot of information and language comprehnsion that could encoded into an artifical deep nueral network. Prompt engineering came to be a concept that emphasized that our job was to write our instructions in a very specific way as to get the LLM to render its encoded knowledge and understanding into a response the was useful to us.
+The weights are like a memory: something real is encoded there, but recalling is not reading. A memory cannot be swapped out, curated, or checked against its source; a page open on the desk can be all three.
 
-The shift from using the term prompt engineering to context engineering was a big step for the industry in establishing an awareness of the important of filling up an LLM's context window will all the information it needed (and ideally with little that it didn't) to properly complete a task; but I also drew attention to a more fundamental question about what LLM's are doing when we send them prompts. 
+This is why so many failures blamed on a model's intelligence are really failures of supply. Ask about your codebase, your customers, or a decision made yesterday — facts no training run ever saw — and the model has nothing to consult. It can only produce its best statistical estimate, and we call the wrong ones hallucinations. Context is not sufficient (models can misread what they are given), but it is necessary. The model was starved, not stupid.
 
-Context engineering, a term that grown from prompt engineering, gained a lot of popularity because it re-framed the task of desining good agents from one that put an emphasis on the wording of the request to the agent (prompt engineering) to one that looked at how to fill up the context window of the LLM as a method to optimize the output. This is the m
+When most of the world met LLMs through the first chat products in late 2022, those products exposed no tools — no search, no files. The value on display was the weights themselves, a lossy compression of much of the public web, and prompt engineering matured into the craft of steering what the model rendered from them.
+
+But a model treated this way — as an oracle to be prompted — has two hard limits. Its default answer is the consensus answer, because training makes the generic response the path of least resistance. And the knowledge that makes work valuable — private, recent, fast-changing — is exactly what weights hold worst: it can be fine-tuned in, but slowly, expensively, and stale on arrival.
+
+Context engineering is deciding what information the model reasons over. Prompt engineering is directing how the model uses it. Both are essential to the modern stack, and only one of them is a data problem.
+
+It is a data problem with a familiar shape. Organizations have spent two decades building engineering, governance, and operational discipline around data for human consumers — analysts, dashboards, applications. Agents consume data differently: they search it, iteratively and mid-task, pulling what they need into context themselves. Products bolt retrieval onto agents today, but no standard layer of the data ecosystem is engineered for an agent's read loop the way the warehouse was engineered for an analyst's query. VFS is built to be that layer.
 
 ## 2. LLMs Output Two Things, Human Consumable Content and Code
 
