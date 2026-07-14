@@ -12,7 +12,7 @@ in Python afterward by the caller.
 Layers:
 
 1. ``iter_code_grams`` / ``unique_code_grams``
-   Raw byte trigram extraction from NFC-normalized UTF-8 content.
+   Raw byte trigram extraction from newline-normalized UTF-8 content.
 
 2. ``grams_for_fixed_string``
    Required byte trigrams for a fixed-string grep pattern.
@@ -21,22 +21,35 @@ Layers:
    A small boolean algebra over required gram sets, derived from a traversal
    of Python's ``sre_parse`` regex AST.
 
-The stored index is a **single lowercase stream**: index maintenance always
-extracts with ``folded=True`` (``content.casefold()`` after newline + NFC
-normalization), and case sensitivity is enforced by the final regex verify,
-never by the index. The tokenizer API stays dual-mode via the ``folded``
-parameter only so the query planner can fold a search *pattern* the same way;
-there is no second raw-case stream and no ``gram_kind``.
+The stored index is a **single folded stream**: index maintenance always
+extracts with ``folded=True``, and case sensitivity is enforced by the final
+regex verify, never by the index. **The query planner always plans folded** —
+there is no raw query path, because raw-pattern grams do not exist in a
+folded stream (a silent false negative); the tokenizer's ``folded`` parameter
+exists for the content-indexing side.
 
-Unicode normalization: both indexer and query planner apply NFC normalization
-before encoding, so canonically-equivalent code points produce the same byte
-stream. This avoids silent index/query divergence when a file is stored as
-NFC and the user types NFD (or vice versa).
+The stream is **raw codepoints, folded** — newline-normalized,
+Turkic-i-folded (U+0131 dotless i and U+0130 dotted I map to ASCII ``i``),
+casefolded, UTF-8 encoded. There is deliberately **no Unicode
+normalization** (NFC/NFD): the authoritative
+matcher is Python ``re`` over raw content, which is codepoint-exact and
+never unifies canonically-equivalent forms — while NFC is not
+substring-stable, so a normalized index stream can lack the grams of a span
+``re`` matches in raw content (a false negative). zoekt, codesearch, and
+pg_trgm all index un-normalized streams for the same reason.
+
+The fold exists to satisfy one invariant: **every codepoint pair that
+``re.IGNORECASE`` treats as equal folds to identical text** — the candidate
+fold is a superset of the verifier's case orbit, so case-insensitive matches
+are never pruned before the verify. ``str.casefold`` covers every such pair
+except the Turkic-i family: sre's simple-case orbit (plus its
+``_EXTRA_CASES`` table) unifies U+0131 (dotless i) and U+0130 (dotted I)
+with ASCII ``i``, and ``casefold`` does neither — hence the pre-fold. The
+invariant is pinned by an exhaustive orbit-scan test.
 """
 
 from __future__ import annotations
 
-import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -50,30 +63,29 @@ from re import _parser as sre_parse  # ty: ignore[unresolved-import]
 
 GRAM_SIZE: Final = 3
 
-_IGNORECASE: Final = sre_constants.SRE_FLAG_IGNORECASE
-
 
 def normalize_content(content: str) -> bytes:
-    """Return UTF-8 bytes after newline normalization and NFC normalization.
+    """Return UTF-8 bytes after newline normalization — nothing else.
 
-    Applied identically by indexers and query planners so canonically
-    equivalent inputs produce the same byte stream.
+    Deliberately no Unicode normalization: the index stream must contain
+    the same codepoints the raw-content regex verify sees (module docstring).
     """
     if "\r" in content:
         content = content.replace("\r\n", "\n").replace("\r", "\n")
-    if not content.isascii():
-        content = unicodedata.normalize("NFC", content)
     return content.encode("utf-8")
 
 
 def fold_content(content: str) -> str:
-    """Return the case-folded form of *content* used for the folded gram stream.
+    """Return the folded form of *content* used for the folded gram stream.
 
-    NFC normalization is applied first so casefold sees a stable form across
-    NFC/NFD inputs.
+    The one shared fold for indexer and planner: Turkic-i pre-fold, then
+    ``casefold``. The pre-fold covers sre's simple-case orbit, which unifies
+    U+0131 (dotless i) and U+0130 (dotted I) with ASCII ``i`` where
+    ``casefold`` does not (U+0130 must map before casefold explodes it to
+    ``i`` + U+0307).
     """
     if not content.isascii():
-        content = unicodedata.normalize("NFC", content)
+        content = content.replace("\u0131", "i").replace("\u0130", "i")
     return content.casefold()
 
 
@@ -114,14 +126,15 @@ def unique_code_grams(content: str, *, folded: bool = False) -> set[int]:
     return set(iter_code_grams(content, folded=folded))
 
 
-def grams_for_fixed_string(pattern: str, *, folded: bool = False) -> set[int]:
-    """Return required byte trigrams for a fixed-string grep pattern.
+def grams_for_fixed_string(pattern: str) -> set[int]:
+    """Return required byte trigrams for a fixed-string grep pattern, folded.
 
-    Strings shorter than 3 bytes (after normalization and optional folding)
-    have no required grams; the candidate query must fall back to ``ANY`` for
-    those.
+    Pattern-side extraction is always folded — the stored index is a single
+    folded stream, and case sensitivity belongs to the final verify. Strings
+    shorter than 3 bytes after normalization and folding have no required
+    grams; the candidate query must fall back to ``ANY`` for those.
     """
-    return unique_code_grams(pattern, folded=folded)
+    return unique_code_grams(pattern, folded=True)
 
 
 # ---------------------------------------------------------------------------
@@ -182,59 +195,77 @@ GramQuery = GramAny | GramAnd | GramOr
 # ---------------------------------------------------------------------------
 
 
-def _emit_literal(codepoint: int, *, folded: bool, flags: int) -> bytes | None:
-    """Return UTF-8 bytes for a literal codepoint, or ``None`` if unsafe.
+def _emit_literal(codepoint: int) -> str | None:
+    """Return the literal codepoint as run text, or ``None`` if unsafe.
 
-    In folded mode every literal is casefolded before encoding — the index
-    and the query planner agree on the lowercase byte stream regardless of
-    surrounding flag toggles.
-
-    In raw mode, a literal under an effective IGNORECASE flag could match
-    either case in content, so we cannot assert any required byte. We return
-    ``None`` and let the caller flush the run.
+    Case sensitivity never blocks a literal: planning is always folded, so
+    the folded run covers every case the pattern could match. Folding
+    happens at flush time over the whole run, through the same pipeline the
+    indexer applies to content.
     """
     char = chr(codepoint)
     try:
-        if folded:
-            # NFC keeps casefold output stable for combining-mark-bearing inputs.
-            return unicodedata.normalize("NFC", char.casefold()).encode("utf-8")
-        if flags & _IGNORECASE:
-            return None
-        return unicodedata.normalize("NFC", char).encode("utf-8")
+        char.encode("utf-8")
     except UnicodeEncodeError:
         # Lone surrogates and other non-encodable code points cannot be
         # required as bytes in the index. Treat as opaque and flush the run.
         return None
+    return char
 
 
-def _collect_runs(ast: list, *, folded: bool, flags: int) -> tuple[list[bytes], bool]:
-    """Walk a flat AST sequence and return ``(runs, terminated)``.
+def _encode_run(run: str) -> bytes:
+    """Encode one literal run exactly as the folded index stream is encoded."""
+    return normalize_content(fold_content(run))
 
-    ``runs`` is the list of guaranteed-literal byte runs found in order. Each
-    run is a maximal contiguous sequence of bytes every match must contain.
 
-    ``terminated`` is ``True`` if every node in *ast* contributed soundly to
-    the run stream (no opaque assertions encountered). The caller uses this
-    to decide whether a *whole subtree* is a candidate for required-gram
-    extraction — a non-top-level BRANCH whose every branch returns
-    ``terminated=True`` AND yields at least one common gram could in principle
-    be tightened, but our v1 keeps that conservative.
+def _pure_literal_text(ast: list) -> str | None:
+    """Literal text of *ast* when every node is a guaranteed literal.
+
+    Descends through nested groups whose bodies are themselves pure
+    literal. Returns ``None`` as soon as any node could match bytes other
+    than one fixed sequence — including a lone-surrogate literal that
+    cannot be required as index bytes.
     """
-    runs: list[bytes] = []
-    buf: list[bytes] = []
+    parts: list[str] = []
+    for op, arg in ast:
+        if op is sre_constants.LITERAL:
+            char = _emit_literal(arg)
+            if char is None:
+                return None
+            parts.append(char)
+            continue
+        if op is sre_constants.SUBPATTERN:
+            inner = _pure_literal_text(list(arg[3]))
+            if inner is None:
+                return None
+            parts.append(inner)
+            continue
+        return None
+    return "".join(parts)
+
+
+def _collect_runs(ast: list) -> list[str]:
+    """Walk a flat AST sequence and return its guaranteed-literal text runs.
+
+    Runs are kept as text so the shared fold applies to each whole run at
+    gram extraction. Each run is a maximal contiguous sequence every match
+    must contain.
+    """
+    runs: list[str] = []
+    buf: list[str] = []
 
     def flush() -> None:
         if buf:
-            runs.append(b"".join(buf))
+            runs.append("".join(buf))
             buf.clear()
 
     for op, arg in ast:
         if op is sre_constants.LITERAL:
-            byte = _emit_literal(arg, folded=folded, flags=flags)
-            if byte is None:
+            char = _emit_literal(arg)
+            if char is None:
                 flush()
             else:
-                buf.append(byte)
+                buf.append(char)
             continue
 
         if op is sre_constants.NOT_LITERAL:
@@ -268,27 +299,23 @@ def _collect_runs(ast: list, *, folded: bool, flags: int) -> tuple[list[bytes], 
                 # side so we don't claim adjacency that the repetition would
                 # break.
                 flush()
-                inner_runs, _ = _collect_runs(list(body), folded=folded, flags=flags)
-                runs.extend(inner_runs)
+                runs.extend(_collect_runs(list(body)))
             continue
 
         if op is sre_constants.SUBPATTERN:
             # SUBPATTERN payload: (group_id, add_flags, del_flags, body).
-            # Inline scoped flags like (?i:...) toggle our effective flags
-            # for the body only.
-            _group_id, add_flags, del_flags, body = arg
-            new_flags = (flags | add_flags) & ~del_flags
-            inner_runs, _ = _collect_runs(list(body), folded=folded, flags=new_flags)
-            # Group boundaries don't break adjacency. Splice the inner runs
-            # into our run stream, preserving any open buffer.
-            for idx, inner in enumerate(inner_runs):
-                if idx == 0 and buf:
-                    buf.append(inner)
-                else:
-                    flush()
-                    runs.append(inner)
-            # If the inner produced no runs, our buf still continues; we
-            # treat the empty group as transparent.
+            # Scoped case flags are irrelevant to a folded-only planner.
+            _group_id, _add_flags, _del_flags, body = arg
+            literal = _pure_literal_text(list(body))
+            if literal is not None:
+                # Only a pure-literal (or empty) body is adjacency-
+                # transparent: the group matches exactly these bytes.
+                buf.append(literal)
+                continue
+            # Any other body may match bytes its inner runs don't cover, so
+            # adjacency breaks on both sides; the runs stand alone.
+            flush()
+            runs.extend(_collect_runs(list(body)))
             continue
 
         if op is sre_constants.BRANCH:
@@ -317,22 +344,17 @@ def _collect_runs(ast: list, *, folded: bool, flags: int) -> tuple[list[bytes], 
         flush()
 
     flush()
-    return runs, True
+    return runs
 
 
-def _grams_from_runs(runs: list[bytes]) -> set[int]:
+def _grams_from_runs(runs: list[str]) -> set[int]:
     out: set[int] = set()
     for run in runs:
-        out |= _grams_from_run(run)
+        out |= _grams_from_run(_encode_run(run))
     return out
 
 
-def _query_from_ast(
-    ast: list,
-    *,
-    folded: bool,
-    flags: int,
-) -> GramQuery:
+def _query_from_ast(ast: list) -> GramQuery:
     """Compile a flat AST sequence into a :class:`GramQuery`.
 
     Top-level alternation is split here. Otherwise, required grams are
@@ -341,22 +363,18 @@ def _query_from_ast(
     # Detect top-level alternation: the AST is exactly ``[(BRANCH, (None, [
     # branch1, branch2, ... ]))]``.
     if len(ast) == 1 and ast[0][0] is sre_constants.BRANCH:
+        # A parsed BRANCH always holds two or more alternatives.
         _none, branches = ast[0][1]
         compiled: list[GramQuery] = []
         for branch in branches:
-            sub = _query_from_ast(list(branch), folded=folded, flags=flags)
+            sub = _query_from_ast(list(branch))
             if isinstance(sub, GramAny):
                 # An OR with an unconstrained branch is unconstrained.
                 return GramAny()
             compiled.append(sub)
-        if not compiled:
-            return GramAny()
-        if len(compiled) == 1:
-            return compiled[0]
         return GramOr(tuple(compiled))
 
-    runs, _ = _collect_runs(ast, folded=folded, flags=flags)
-    grams = _grams_from_runs(runs)
+    grams = _grams_from_runs(_collect_runs(ast))
     if not grams:
         return GramAny()
     return GramAnd(frozenset(grams))
@@ -366,9 +384,12 @@ def build_code_gram_query(
     pattern: str,
     *,
     fixed_strings: bool = False,
-    folded: bool = False,
 ) -> GramQuery:
-    """Compile *pattern* into a conservative :class:`GramQuery`.
+    """Compile *pattern* into a conservative :class:`GramQuery`, always folded.
+
+    There is no raw planning mode: the stored index is a single folded
+    stream, so raw-pattern grams would silently miss (a false negative);
+    case sensitivity is enforced by the caller's final regex verify.
 
     Strategy:
 
@@ -378,14 +399,19 @@ def build_code_gram_query(
 
       * Top-level alternation becomes an OR of per-branch queries; if any
         branch is unconstrained the whole OR collapses to ANY.
+      * A group splices into the surrounding literal run only when its
+        body is pure literal (nested literal groups included); any other
+        body breaks adjacency on both sides and contributes its inner
+        runs standalone.
       * Quantified bodies whose minimum repetition is zero are dropped.
-      * Inline scoped flags (``(?i:...)``, ``(?-i:...)``) are tracked through
-        ``SUBPATTERN`` arguments so case-insensitive subtrees do not leak
-        case-sensitive grams.
+      * Case flags (``(?i)``, ``(?i:...)``) need no tracking — folding
+        already covers every case a literal could match.
       * Lookarounds, anchors, character classes, backrefs, and unknown
         constructs flush the current literal run.
-      * Unicode literals are NFC-normalized (and casefolded in folded mode)
-        before encoding so the planner and indexer agree on the byte stream.
+      * Each guaranteed-literal run is folded as a whole before encoding —
+        newline-normalized, Turkic-i-folded, casefolded; the same pipeline
+        the indexer applies to content, and deliberately no NFC (module
+        docstring) — so planner and indexer agree on the byte stream.
 
     No false negatives. Weaker predicates are always acceptable; unsoundness
     is not.
@@ -394,25 +420,20 @@ def build_code_gram_query(
         return GramAny()
 
     if fixed_strings:
-        grams = grams_for_fixed_string(pattern, folded=folded)
+        grams = grams_for_fixed_string(pattern)
         if not grams:
             return GramAny()
         return GramAnd(frozenset(grams))
 
     try:
         parsed = sre_parse.parse(pattern)
-    except sre_constants.error:
-        # Pattern doesn't compile — degrade to ANY rather than raise. The
-        # authoritative Python regex compile will report the error to the
-        # caller.
-        return GramAny()
-    except UnicodeEncodeError:
-        # Lone surrogates or other non-encodable code points inside the
-        # pattern. Degrade to ANY rather than raise.
+    except (sre_constants.error, UnicodeEncodeError):
+        # A pattern that doesn't parse degrades to ANY rather than raising —
+        # the authoritative Python regex compile reports the error to the
+        # caller (compile-first discipline).
         return GramAny()
 
-    initial_flags = parsed.state.flags
-    return _query_from_ast(list(parsed.data), folded=folded, flags=initial_flags)
+    return _query_from_ast(list(parsed.data))
 
 
 __all__ = [
