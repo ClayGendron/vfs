@@ -80,6 +80,7 @@ class VFSErrorKind(StrEnum):
     # — runtime liveness —
     unavailable = "vfs.unavailable"  # EIO / ECONNREFUSED / ENOSPC
     backend_unavailable = "vfs.unavailable.backend"  # ENOTCONN / ESHUTDOWN — mount's transport is down
+    schema_mismatch = "vfs.unavailable.schema"  # database provisioned by an incompatible schema version
     timeout = "vfs.timeout"  # ETIMEDOUT
     cancelled = "vfs.cancelled"  # ECANCELED / EINTR
     internal = "vfs.internal"  # JSON-RPC INTERNAL_ERROR — the VFS itself broke
@@ -215,6 +216,11 @@ KIND_CONTRACTS: dict[VFSErrorKind, KindContract] = {
         RetryClass.transient,
         "Check the mount's backend connection, then retry.",
         "the entry's bind path — the mount whose transport is down",
+    ),
+    VFSErrorKind.schema_mismatch: KindContract(
+        RetryClass.never,
+        "This mount's database was provisioned by an incompatible schema version; upgrade or re-provision it.",
+        "None — source carries the mount",
     ),
     VFSErrorKind.timeout: KindContract(
         RetryClass.transient,
