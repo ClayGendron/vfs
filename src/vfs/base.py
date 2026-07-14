@@ -1008,6 +1008,7 @@ class VirtualFileSystem:
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
+        allow_scan: bool = False,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
@@ -1015,6 +1016,8 @@ class VirtualFileSystem:
 
         *max_count* caps matches **per file** (ripgrep's ``-m``), not the
         row count — a fan-out returns one row per matching file regardless.
+        *allow_scan* opts into an index-refusing backend's scan tier;
+        scan-tier backends accept it as a no-op.
         """
         refusal = self._gate_params(
             "grep",
@@ -1033,6 +1036,7 @@ class VirtualFileSystem:
             after_context=after_context,
             output_mode=output_mode,
             max_count=max_count,
+            allow_scan=allow_scan,
             columns=columns,
             user_id=user_id,
         )
@@ -1055,6 +1059,7 @@ class VirtualFileSystem:
             after_context=after_context,
             output_mode=output_mode,
             max_count=max_count,
+            allow_scan=allow_scan,
             columns=columns,
             user_id=user_id,
         )

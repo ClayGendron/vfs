@@ -17,6 +17,8 @@ from vfs.ops import ALL_OPS, MUTATING_OPS
 from vfs.paths import Path
 from vfs.results import Result
 from vfs.storage import (
+    TRAIT_KEYS,
+    TRAIT_VALUES,
     ResolvedPair,
     StorageBackend,
     SupportsClose,
@@ -24,6 +26,7 @@ from vfs.storage import (
     SupportsGraph,
     SupportsMutation,
     SupportsPatternSearch,
+    SupportsTraits,
     TransportError,
     storage_ops,
 )
@@ -263,3 +266,31 @@ def test_resolved_pair_shape_is_a_src_dest_namedtuple() -> None:
     assert pair.dest == "/b"
     assert pair == (Path("/a"), Path("/b"))
     assert ResolvedPair._fields == ("src", "dest")
+
+
+# ----------------------------------------------------------------------
+# SupportsTraits — the declared operating-quality vocabulary
+# ----------------------------------------------------------------------
+
+
+def test_trait_vocabulary_is_total_and_keyed() -> None:
+    assert frozenset(TRAIT_VALUES) == TRAIT_KEYS
+    for key, values in TRAIT_VALUES.items():
+        assert values, f"trait {key!r} declares no legal values"
+
+
+def test_traits_is_an_optional_protocol() -> None:
+    class Declaring:
+        def traits(self) -> dict[str, str]:
+            return {"grep_tier": "scan"}
+
+    assert isinstance(Declaring(), SupportsTraits)
+    assert not isinstance(ReadOnly(), SupportsTraits)
+
+
+def test_traits_does_not_affect_capability_derivation() -> None:
+    class DeclaringReader(ReadOnly):
+        def traits(self) -> dict[str, str]:
+            return {"grep_tier": "scan"}
+
+    assert storage_ops(DeclaringReader()) == storage_ops(ReadOnly())

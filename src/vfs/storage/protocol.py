@@ -35,11 +35,13 @@ session inside these methods, and the router never sees it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, Protocol, get_args, runtime_checkable
 
 from vfs.ops import MUTATING_OPS
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from vfs.models import Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import Path
@@ -67,6 +69,22 @@ class ResolvedPair(NamedTuple):
 
     src: Path
     dest: Path
+
+
+# Declared operating-quality traits — how a backend serves its verbs, not
+# which verbs it serves (that is ``capabilities()``). An absent key means
+# the trait is not declared, never a default.
+TraitKey = Literal["grep_tier", "grep_staleness", "revision_encoding", "durability", "arbitration"]
+TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
+
+TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
+    "grep_tier": frozenset({"indexed", "scan"}),
+    "grep_staleness": frozenset({"none", "watermark"}),
+    "revision_encoding": frozenset({"counter64"}),
+    "durability": frozenset({"full", "relaxed"}),
+    "arbitration": frozenset({"upsert", "catch_retry"}),
+}
+"""Per-key value vocabulary; the traits drift test pins declarations to it."""
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +172,7 @@ class SupportsPatternSearch(Protocol):
         after_context: int = 0,
         output_mode: GrepOutputMode = "lines",
         max_count: int | None = None,
+        allow_scan: bool = False,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result: ...
@@ -299,6 +318,22 @@ class StorageBackend(SupportsRead, Protocol):
     description: str
 
     def capabilities(self) -> frozenset[Op]: ...
+
+
+@runtime_checkable
+class SupportsTraits(Protocol):
+    """Optional declared operating qualities — how the verbs are served.
+
+    ``capabilities()`` says which ops a backend answers; ``traits()`` says
+    with what qualities — grep's tier and staleness window, the revision
+    encoding, the durability tier, the create-arbitration mode. Keys come
+    from :data:`TRAIT_KEYS`, values from :data:`TRAIT_VALUES`; an absent
+    key is "not declared," never an implied default. Declaration beats
+    discovery: staleness and durability are contracts a caller must be
+    able to read, not surprises to probe for.
+    """
+
+    def traits(self) -> Mapping[str, str]: ...
 
 
 @runtime_checkable

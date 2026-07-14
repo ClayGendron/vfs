@@ -6,6 +6,8 @@ implementations live under ``backends``.
 """
 
 from vfs.storage.protocol import (
+    TRAIT_KEYS,
+    TRAIT_VALUES,
     ResolvedPair,
     StorageBackend,
     SupportsClose,
@@ -15,11 +17,15 @@ from vfs.storage.protocol import (
     SupportsPatternSearch,
     SupportsRead,
     SupportsRun,
+    SupportsTraits,
+    TraitKey,
     TransportError,
     storage_ops,
 )
 
 __all__ = [
+    "TRAIT_KEYS",
+    "TRAIT_VALUES",
     "ResolvedPair",
     "StorageBackend",
     "SupportsClose",
@@ -29,6 +35,8 @@ __all__ = [
     "SupportsPatternSearch",
     "SupportsRead",
     "SupportsRun",
+    "SupportsTraits",
+    "TraitKey",
     "TransportError",
     "storage_ops",
 ]

@@ -184,6 +184,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("after_context", "int", nullable=False, minimum=0, default=0, doc="context lines after a match"),
         ParamSpec("output_mode", "str", nullable=False, choices=OUTPUT_MODES, default="lines", doc="row shape"),
         ParamSpec("max_count", "int", minimum=1, doc="matches per file, ripgrep's -m"),
+        ParamSpec("allow_scan", "bool", nullable=False, default=False, doc="opt into an unindexed scan tier"),
         _COLUMNS,
         _USER,
     ),
