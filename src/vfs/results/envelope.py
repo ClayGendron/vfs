@@ -112,6 +112,9 @@ class ResultError(BaseModel):
     path: Path | None = None
     source: Path | None = None
     data: dict[str, Any] | None = None
+    # Orthogonal to the kind-derived retry_class: the producing backend's
+    # classifier saw a transient condition — same op, unchanged, may succeed.
+    retryable: bool = False
 
     @field_validator("kind", mode="before")
     @classmethod
@@ -236,9 +239,12 @@ class Result(BaseModel):
     - Set algebra: ``&`` (intersection), ``|`` (union), ``-`` (difference).
       ``|`` is a pure fold — associative, idempotent over path-distinct
       rows, with ``Result()`` as identity — and rebase distributes over
-      it. Overlapping paths merge **left wins**, filling fields the left
-      row left null. Policy lives outside the algebra: ``merge`` is the
-      plain fold, ``merge_branches`` adds fan-out demotion.
+      it. Overlapping paths merge **left wins by mask**: the right fills
+      only fields the left never fetched, masks union, and a revision
+      disagreement stamps the merged revision null (see
+      :meth:`_merge_observation`). Policy lives outside the algebra:
+      ``merge`` is the plain fold, ``merge_branches`` adds fan-out
+      demotion.
     - Enrichment: ``.sort()``, ``.top()``, ``.filter()``, ``.kinds()``.
     - Routing: ``.with_mount()`` / ``.without_mount()`` rebase every row
       and error across a mount boundary and stamp error provenance.
@@ -340,10 +346,10 @@ class Result(BaseModel):
         return path in self.paths
 
     # -------------------------------------------------------------------
-    # Set algebra — left-wins merge on overlap
+    # Set algebra — left-wins-by-mask merge on overlap
     # -------------------------------------------------------------------
     # Algebra keys rows by path: left rows survive in order; right rows
-    # merge first-wins where paths overlap and append verbatim otherwise.
+    # merge first-wins-by-mask where paths overlap, append otherwise.
 
     def _as_dict(self) -> dict[str, Observation]:
         """Path → first observation with that path."""
@@ -354,18 +360,33 @@ class Result(BaseModel):
 
     @staticmethod
     def _merge_observation(a: Observation, b: Observation) -> Observation:
-        """Left observation wins; fill from right only where left is None.
+        """Mask-driven fill: left wins every field it fetched; the right
+        fills only fields absent from the left's mask; masks union.
 
-        Filled list fields are copied so frozen rows never share a mutable
-        list across results.
+        Presence is the ``populated`` mask, never value-nullness — a left
+        field fetched-and-null is a fact and is never overwritten (the
+        statx/NFS discipline; a null check would be the 9P wstat sentinel
+        conflation the mask exists to kill). Filled list fields are copied
+        so frozen rows never share a mutable list across results.
+
+        ``revision`` is the row's snapshot coordinate, not fillable state:
+        when both sides carry differing revisions the merged row stamps
+        ``revision=None`` (still masked) — a composite of two snapshots
+        claims no single one, and a revision-guarded consumer must re-stat.
+        Same-revision and one-sided merges keep the value, so the rule is
+        agree-or-null: associative, commutative, idempotent.
         """
         updates: dict[str, Any] = {}
         for name in Observation.model_fields:
-            if getattr(a, name) is not None:
+            if name == "populated" or name in a.populated or name not in b.populated:
                 continue
             value = getattr(b, name)
-            if value is not None:
-                updates[name] = list(value) if isinstance(value, list) else value
+            updates[name] = list(value) if isinstance(value, list) else value
+        if "revision" in a.populated and "revision" in b.populated and a.revision != b.revision:
+            updates["revision"] = None
+        mask = a.populated | b.populated
+        if mask != a.populated:
+            updates["populated"] = mask
         return a.model_copy(update=updates) if updates else a
 
     def _combined_errors(self, other: Result) -> list[ResultError]:
@@ -389,7 +410,7 @@ class Result(BaseModel):
         return self.ops + tuple(o for o in other.ops if o not in self.ops)
 
     def __and__(self, other: Result) -> Result:
-        """Intersection — observations present on both sides, left wins on overlap."""
+        """Intersection — observations present on both sides, left wins by mask."""
         right = other._as_dict()
         merged = [self._merge_observation(o, right[o.path]) for o in self.observations if o.path in right]
         return Result(
@@ -399,7 +420,7 @@ class Result(BaseModel):
         )
 
     def __or__(self, other: Result) -> Result:
-        """Union — all observations; left wins on overlap."""
+        """Union — all observations; left wins by mask on overlap."""
         right = other._as_dict()
         left_paths = {o.path for o in self.observations}
         merged = [self._merge_observation(o, right[o.path]) if o.path in right else o for o in self.observations]
@@ -435,10 +456,12 @@ class Result(BaseModel):
         For scoped and grouped dispatch, where every branch answers for an
         entry the caller named: any fatal entry fails the merged envelope.
         *op* seeds the envelope's verb for an empty merge. Rows for the
-        same global path fuse left-wins; at bind paths this decorates the
-        owner's row with the mounted root's fields (the two rows are the
-        same entry seen from both sides of the seam) — bind paths are the
-        one place branch row-sets are *not* disjoint.
+        same global path fuse left-wins by mask; at bind paths this
+        decorates the owner's row with the mounted root's fields (the two
+        rows are the same entry seen from both sides of the seam — their
+        counters are unrelated, so the decorated row's revision reads
+        null) — bind paths are the one place branch row-sets are *not*
+        disjoint.
         """
         merged = cls(ops=(op,) if op else ())
         for r in results:
@@ -670,10 +693,14 @@ class Result(BaseModel):
     # -------------------------------------------------------------------
 
     def _rolled_errors(self) -> list[ResultError]:
-        """Group errors by (kind, severity); keep each head, roll each tail."""
-        groups: dict[tuple[str, str], list[ResultError]] = {}
+        """Group errors by (kind, severity, retryable); keep each head, roll each tail.
+
+        ``retryable`` is part of the key and stamped on the rollup entry —
+        the transient signal survives the boundary for every grouped error.
+        """
+        groups: dict[tuple[str, str, bool], list[ResultError]] = {}
         for e in self.errors:
-            groups.setdefault((str(e.kind), str(e.severity)), []).append(e)
+            groups.setdefault((str(e.kind), str(e.severity), e.retryable), []).append(e)
         rolled: list[ResultError] = []
         for members in groups.values():
             head, tail = members[0], members[1:]
@@ -685,6 +712,7 @@ class Result(BaseModel):
                         kind=head.kind,
                         message=f"{len(tail)} more {head.kind} error(s) rolled up at the wire boundary",
                         severity=head.severity,
+                        retryable=head.retryable,
                         data={"vfs.rollup": {"count": len(tail), "sources": sources}},
                     )
                 )

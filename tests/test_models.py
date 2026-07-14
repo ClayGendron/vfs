@@ -280,6 +280,7 @@ class TestEntryToObservation:
             content="hello",
             mime_type="text/markdown",
             version_number=3,
+            revision=7,
         )
         edge = Entry(
             path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"),
@@ -311,6 +312,36 @@ class TestEntryToObservation:
         assert obs.score is None
         assert obs.status is None
         assert obs.matches is None
+
+
+# ---------------------------------------------------------------------------
+# Observation populated-field mask
+# ---------------------------------------------------------------------------
+
+
+class TestObservationPopulatedMask:
+    def test_defaults_to_non_none_supplied_fields(self) -> None:
+        obs = Observation(path=Path("/a.md"), kind="file", content=None)
+        assert obs.populated == frozenset({"path", "kind"})
+
+    def test_explicit_mask_wins_over_derivation(self) -> None:
+        # A fetched-but-null column stays in the mask: the mask records what
+        # the call fetched, not which values happen to be non-null.
+        obs = Observation(path=Path("/a.md"), populated=frozenset({"path", "content"}))
+        assert obs.content is None
+        assert obs.populated == frozenset({"path", "content"})
+
+    def test_to_observation_populates_every_mirror(self) -> None:
+        obs = Entry(path=Path("/a.md"), content="x").to_observation()
+        assert obs.populated == OBSERVATION_MIRROR_FIELDS
+
+    def test_to_observation_adds_supplied_query_fields(self) -> None:
+        obs = Entry(path=Path("/a.md"), content="x").to_observation(score=0.5, status="created")
+        assert obs.populated == OBSERVATION_MIRROR_FIELDS | {"score", "status"}
+
+    def test_rebasing_preserves_the_mask(self) -> None:
+        obs = Observation(path=Path("/docs/a.md"), populated=frozenset({"path", "content"}))
+        assert obs.with_mount("/data").populated == frozenset({"path", "content"})
 
 
 # ---------------------------------------------------------------------------

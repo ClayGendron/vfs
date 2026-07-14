@@ -107,6 +107,10 @@ class Entry(BaseModel):
     chunked: bool = False
     encoded: bool = False
 
+    # --- Revision -------------------------------------------------------------
+
+    revision: int | None = None
+
     # --- Version-specific ---------------------------------------------------
 
     version_number: int | None = None
@@ -126,7 +130,6 @@ class Entry(BaseModel):
     # --- Ownership ----------------------------------------------------------
 
     owner_id: str | None = None
-    original_path: str | None = None
 
     # --- Timestamps ---------------------------------------------------------
 
@@ -318,11 +321,15 @@ class Entry(BaseModel):
         """Project this entry to a frozen :class:`Observation`.
 
         Every mirror is projected, ``content`` included — an Entry is the
-        whole truth, so its projection is a complete observation. Rows that
-        should not carry content (listings, search hits) are built from
-        column-projected reads, not from entries. Query fields are supplied
-        by the producing operation.
+        whole truth, so its projection is a complete observation, and the
+        mask says so: every mirror is populated (a null mirror is a true
+        absence on the entry), plus whichever query fields the producing
+        operation supplied. Rows that should not carry content (listings,
+        search hits) are built from column-projected reads, not from entries.
         """
+        supplied = {
+            name for name, value in (("score", score), ("status", status), ("matches", matches)) if value is not None
+        }
         return Observation(
             path=self.path,
             kind=self.kind,
@@ -330,6 +337,7 @@ class Entry(BaseModel):
             content_hash=self.content_hash,
             mime_type=self.mime_type,
             size_bytes=self.size_bytes,
+            revision=self.revision,
             version_number=self.version_number,
             edge_type=self.edge_type,
             edge_weight=self.edge_weight,
@@ -339,6 +347,7 @@ class Entry(BaseModel):
             score=score,
             status=status,
             matches=matches,
+            populated=OBSERVATION_MIRROR_FIELDS | supplied,
         )
 
     # -----------------------------------------------------------------------
@@ -630,6 +639,14 @@ class Observation(BaseModel):
     regions, a write status — and are never persisted. ``name`` / ``ext`` /
     ``parent_dir`` need no mirrors: ``path`` is a :class:`Path`, so they
     come free (``obs.path.name``).
+
+    ``populated`` is the explicit field mask: the names this call actually
+    fetched or supplied. It is what distinguishes "fetched, and null" from
+    "not fetched" — consumers assert and narrow by the mask, never by
+    null-checking values. Backends stamp it from the requested columns;
+    when a constructor omits it, it defaults to the non-None supplied
+    fields. The mask itself is not a column: it never renders and cannot
+    be projected.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -642,6 +659,7 @@ class Observation(BaseModel):
     content_hash: str | None = None
     mime_type: str | None = None
     size_bytes: int | None = None
+    revision: int | None = None
     version_number: int | None = None
     edge_type: str | None = None
     edge_weight: float | None = None
@@ -656,6 +674,20 @@ class Observation(BaseModel):
     in_degree: int | None = None
     out_degree: int | None = None
     status: Literal["created", "updated", "unchanged", "deleted"] | None = None
+
+    # --- Populated-field mask ------------------------------------------------
+
+    populated: frozenset[str] = frozenset()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_populated(cls, data: Any) -> Any:
+        """Default the mask to the non-None supplied fields when not stamped."""
+        if not isinstance(data, dict) or "populated" in data:
+            return data
+        data = dict(data)
+        data["populated"] = frozenset(k for k, v in data.items() if v is not None and k in cls.model_fields)
+        return data
 
     # -----------------------------------------------------------------------
     # Mount rebasing
@@ -673,6 +705,6 @@ class Observation(BaseModel):
 # Mirror/query partition of Observation's fields. The drift test pins every
 # mirror to its Entry field's type; query fields must never exist on Entry.
 OBSERVATION_QUERY_FIELDS: Final[frozenset[str]] = frozenset(
-    {"score", "matches", "in_degree", "out_degree", "status"},
+    {"score", "matches", "in_degree", "out_degree", "status", "populated"},
 )
 OBSERVATION_MIRROR_FIELDS: Final[frozenset[str]] = frozenset(Observation.model_fields) - OBSERVATION_QUERY_FIELDS

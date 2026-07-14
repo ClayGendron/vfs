@@ -25,7 +25,9 @@ from vfs.ops import MUTATING_OPS
 # Field and function vocabularies
 # ---------------------------------------------------------------------------
 
-OBSERVATION_FIELDS: frozenset[str] = frozenset(Observation.model_fields)
+# The populated-field mask is metadata about the row, not a column: it is
+# never projectable and never renders.
+OBSERVATION_FIELDS: frozenset[str] = frozenset(Observation.model_fields) - {"populated"}
 PROJECTION_SENTINELS: frozenset[str] = frozenset({"default", "all"})
 
 # Arrangement groups. The envelope's ``op`` picks an arrangement; the
@@ -125,7 +127,9 @@ def resolve_projection(
     """Expand ``default`` / ``all`` sentinels into concrete Observation field names.
 
     - ``default`` → ``default_projection(function)``
-    - ``all`` → every field that is non-null on at least one observation
+    - ``all`` → every field populated on at least one observation, read
+      from the ``populated`` masks — a fetched-but-null column counts,
+      a never-fetched one does not.
     Order is preserved; duplicates are dropped (first-win).
     """
     if projection is None:
@@ -143,9 +147,9 @@ def resolve_projection(
             for field in default_projection(function):
                 _add(field)
         elif name == "all":
-            populated = {f for o in observations for f in OBSERVATION_FIELDS if getattr(o, f) is not None}
+            populated = frozenset().union(*(o.populated for o in observations)) if observations else frozenset()
             for field in Observation.model_fields:
-                if field in populated:
+                if field in populated and field in OBSERVATION_FIELDS:
                     _add(field)
         else:
             _add(name)

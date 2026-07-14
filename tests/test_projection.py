@@ -25,7 +25,12 @@ def obs(path: str, **kwargs: Any) -> Observation:
 
 class TestVocabulary:
     def test_observation_fields_track_the_model(self) -> None:
-        assert frozenset(Observation.model_fields) == OBSERVATION_FIELDS
+        assert frozenset(Observation.model_fields) - {"populated"} == OBSERVATION_FIELDS
+
+    def test_the_mask_is_not_projectable(self) -> None:
+        assert "populated" not in OBSERVATION_FIELDS
+        with pytest.raises(ValueError, match="unknown field 'populated'"):
+            validate_projection(("path", "populated"))
 
     def test_every_default_projection_uses_real_fields(self) -> None:
         for function in KNOWN_FUNCTIONS:
@@ -96,6 +101,16 @@ class TestResolveProjection:
         rows = [obs("/a.md", kind="file"), obs("/b.md", score=0.5)]
         resolved = resolve_projection(("all",), "glob", rows)
         assert set(resolved) == {"path", "kind", "score"}
+
+    def test_all_sentinel_reads_the_mask_not_values(self) -> None:
+        # content was fetched but came back null — the mask says so, and
+        # `all` trusts the mask over the value.
+        rows = [obs("/a.md", kind="file", populated=frozenset({"path", "kind", "content"}))]
+        assert set(resolve_projection(("all",), "glob", rows)) == {"path", "kind", "content"}
+
+    def test_all_sentinel_never_emits_the_mask_itself(self) -> None:
+        rows = [obs("/a.md", populated=frozenset({"path", "populated"}))]
+        assert resolve_projection(("all",), "glob", rows) == ("path",)
 
     def test_duplicates_drop_first_win(self) -> None:
         assert resolve_projection(("score", "default"), "glean", []) == ("score", "path")

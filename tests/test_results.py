@@ -421,3 +421,29 @@ class TestWireContract:
     def test_str_delegates_to_render(self) -> None:
         result = Result(ops=("glob",), observations=[obs("/b.md"), obs("/a.md")])
         assert str(result) == "/a.md\n/b.md"
+
+
+class TestRetryableFlag:
+    def test_defaults_false_and_is_orthogonal_to_retry_class(self) -> None:
+        entry = ResultError(kind=VFSErrorKind.internal, message="boom")
+        assert entry.retryable is False
+        # The flag comes from the producing backend's classifier, never
+        # from the kind's contract-table retry class.
+        flagged = ResultError(kind=VFSErrorKind.internal, message="boom", retryable=True)
+        assert flagged.retryable is True
+        assert flagged.retry_class == entry.retry_class
+
+    def test_round_trips_the_wire(self) -> None:
+        result = Result(
+            ops=("write",),
+            errors=[ResultError(kind=VFSErrorKind.conflict, message="rival writer", retryable=True)],
+        )
+        restored = Result.from_payload(json.loads(result.to_json()))
+        assert restored.errors[0].retryable is True
+
+    def test_never_renders(self) -> None:
+        result = Result(
+            ops=("read",),
+            errors=[ResultError(kind=VFSErrorKind.conflict, message="rival writer", retryable=True)],
+        )
+        assert "retryable" not in str(result).lower()

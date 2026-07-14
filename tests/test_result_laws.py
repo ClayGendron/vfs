@@ -394,6 +394,85 @@ class TestWireLeniency:
 
 
 # ---------------------------------------------------------------------------
+# Merge under the populated mask — fill by mask, revision agree-or-null
+# ---------------------------------------------------------------------------
+
+
+def masked(path: str, populated: set[str], **kwargs: object) -> Observation:
+    """A row with an explicit mask — fetched-and-null is representable."""
+    return Observation.model_validate({"path": path, "populated": frozenset(populated) | {"path"}, **kwargs})
+
+
+class TestMaskedMerge:
+    def test_fill_is_mask_driven_never_null_driven(self) -> None:
+        # Left fetched content and observed null — that is a fact, and the
+        # right's value must not overwrite it.
+        left = Result(observations=[masked("/a.md", {"content", "revision"}, revision=5)])
+        right = Result(observations=[masked("/a.md", {"content", "revision"}, content="ghost", revision=5)])
+        merged = (left | right).one()
+        assert merged.content is None
+        assert "content" in merged.populated
+
+    def test_fill_adds_only_never_fetched_fields_and_unions_the_mask(self) -> None:
+        left = Result(observations=[masked("/a.md", {"kind", "revision"}, kind="file", revision=5)])
+        right = Result(
+            observations=[masked("/a.md", {"content", "size_bytes", "revision"}, content="x", size_bytes=1, revision=5)]
+        )
+        merged = (left | right).one()
+        assert merged.content == "x"
+        assert merged.size_bytes == 1
+        assert {"kind", "content", "size_bytes", "revision"} <= merged.populated
+
+    def test_merged_values_never_exceed_the_mask(self) -> None:
+        # The conformance invariant, held by algebra-produced rows too.
+        left = Result(observations=[masked("/a.md", {"kind"}, kind="file")])
+        right = Result(observations=[masked("/a.md", {"content"}, content="x")])
+        merged = (left | right).one()
+        valued = {f for f in Observation.model_fields if f != "populated" and getattr(merged, f) is not None}
+        assert valued <= merged.populated
+
+    def test_same_revision_merge_keeps_the_revision(self) -> None:
+        left = Result(observations=[masked("/a.md", {"kind", "revision"}, kind="file", revision=7)])
+        right = Result(observations=[masked("/a.md", {"content", "revision"}, content="x", revision=7)])
+        assert (left | right).one().revision == 7
+
+    def test_cross_revision_merge_nulls_the_revision_but_keeps_it_masked(self) -> None:
+        # stat@5 | read@3 must not claim rev-3 content as the rev-5 state:
+        # a composite of two snapshots carries no single coordinate.
+        left = Result(observations=[masked("/a.md", {"kind", "revision"}, kind="file", revision=5)])
+        right = Result(observations=[masked("/a.md", {"content", "revision"}, content="x", revision=3)])
+        merged = (left | right).one()
+        assert merged.content == "x"
+        assert merged.revision is None
+        assert "revision" in merged.populated
+
+    def test_one_sided_revision_fills_normally(self) -> None:
+        left = Result(observations=[masked("/a.md", {"kind"}, kind="file")])
+        right = Result(observations=[masked("/a.md", {"revision"}, revision=3)])
+        assert (left | right).one().revision == 3
+
+    def test_masked_merge_is_associative_across_revision_disagreement(self) -> None:
+        a = Result(observations=[masked("/a.md", {"kind", "revision"}, kind="file", revision=1)])
+        b = Result(observations=[masked("/a.md", {"content", "revision"}, content="x", revision=2)])
+        c = Result(observations=[masked("/a.md", {"size_bytes", "revision"}, size_bytes=9, revision=1)])
+        assert ((a | b) | c).one() == (a | (b | c)).one()
+
+    def test_bind_path_decoration_still_fills_across_unrelated_counters(self) -> None:
+        # The router's seam: the owner's directory row and the mounted
+        # root's row are the same entry from both sides — their counters
+        # are unrelated, so the decorated row honestly claims no revision.
+        owner = Result(observations=[masked("/data", {"kind", "revision"}, kind="directory", revision=41)])
+        child_fields = {"kind", "size_bytes", "revision"}
+        child_root = Result(
+            observations=[masked("/data", child_fields, kind="directory", size_bytes=0, revision=3)]
+        )
+        decorated = Result.merge([owner, child_root], op="ls").one()
+        assert decorated.size_bytes == 0
+        assert decorated.revision is None
+        assert {"kind", "size_bytes", "revision"} <= decorated.populated
+
+
+# ---------------------------------------------------------------------------
 # Boundary rollup — capped at the wire, never in the algebra
 # ---------------------------------------------------------------------------
 
@@ -424,6 +503,24 @@ class TestRollup:
     def test_under_the_cap_nothing_rolls(self) -> None:
         r = outage(3)
         assert len(r.to_payload(max_errors=3)["errors"]) == 3
+
+    def test_rollup_carries_the_retryable_flag(self) -> None:
+        # Same kind and severity, split by the transient signal: two
+        # groups, and every rolled entry keeps its group's retryable.
+        merged = Result()
+        for i in range(3):
+            transient = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down", retryable=True)])
+            merged = merged | transient.with_mount(f"/t{i}")
+        for i in range(3):
+            settled = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down")])
+            merged = merged | settled.with_mount(f"/s{i}")
+        payload = merged.to_payload(max_errors=2)
+        restored = Result.from_payload(payload)
+        retryable = [e for e in restored.errors if e.retryable]
+        settled_back = [e for e in restored.errors if not e.retryable]
+        assert len(retryable) == 2 and len(settled_back) == 2  # head + rollup per group
+        assert sum(e.data["vfs.rollup"]["count"] for e in retryable if e.data and "vfs.rollup" in e.data) == 2
+        assert sum(e.data["vfs.rollup"]["count"] for e in settled_back if e.data and "vfs.rollup" in e.data) == 2
 
     def test_in_process_nothing_is_ever_dropped(self) -> None:
         assert len(outage(5).errors) == 5
