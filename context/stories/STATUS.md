@@ -7,7 +7,7 @@ open/seed/draft specs against `src/vfs/` and update both).
 
 - **Last reviewed:** 2026-07-10, against `main` at `fee073d`
   (story 071 landed); 068/039/044/017 entries trued up 2026-07-11
-  when 068 landed.
+  when 068 landed; 072 entry added 2026-07-12 (research + spike day).
 - **Method:** every spec's status line collected, then the
   draft/seed/in-progress stories verified against the actual code
   (`base.py`, `permissions.py`, `ops.py`, `params.py`, `results/`).
@@ -67,6 +67,18 @@ landed before it, so the `Principal` rename now ripples through
   construction, not the router.
 - **067 — graph traversal-only** (seed). Work is in the future graph
   subsystem and `results/` rendering; `base.py` dispatch unaffected.
+- **072 — database storage backend** (seed, added 2026-07-12). The
+  `DatabaseStorage` port. Same-day: nine-repo reference review
+  (`research.md`), grep-index deep-dive (`research-grep-index.md`),
+  and a measured SQLite+Postgres spike at ~1M docs
+  (`spike-results.md`). Spec §6 (search ladder) is **resolved**:
+  grep ships with the byte-trigram index write+read together,
+  index-required by default (classified refusal + `allow_scan`
+  opt-out), batch-only reindex (staging/fold dropped — supersedes
+  014's auto-index-on-write and 030's incremental premise as
+  direction; both remain quarry), posting encoding delta+varint
+  (delta+gamma dropped). Remaining §4/§5/§8/§9/§12 clarification
+  markers still open; identity option (c) awaits 059.
 
 ## Closed or trued-up in this review (2026-07-10)
 

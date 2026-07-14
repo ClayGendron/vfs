@@ -1,6 +1,10 @@
 # 013 — Database-Agnostic Code Trigram Index
 
-- **Status:** draft
+- **Status:** draft — direction superseded 2026-07-12 by 072 §6: the
+  index ships with grep in `DatabaseStorage`, batch-only epoch rebuild
+  (staging/fold dropped), posting encoding delta+varint (not
+  delta+gamma). Remains the quarry for the gram planner and posting
+  model; see 072 `research-grep-index.md` and `spike-results.md`.
 - **Date:** 2026-04-24 (restructured 2026-05-25; posting-list model simplified
   2026-05-27; triage pass 2026-05-27; index-pipeline reframe 2026-05-28)
 - **Owner:** Clay Gendron

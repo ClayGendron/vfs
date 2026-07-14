@@ -111,6 +111,7 @@ ignore = [
 "tests/**/*.py" = ["ANN", "S101", "TC001"]
 "src2/**/*.py" = ["ALL"]  # archived — skip linting
 "tests2/**/*.py" = ["ALL"]  # archived — skip linting
+"context/**/*.py" = ["ALL"]  # story spikes — throwaway benchmark code
 
 [tool.ruff.lint.isort]
 known-first-party = ["vfs"]

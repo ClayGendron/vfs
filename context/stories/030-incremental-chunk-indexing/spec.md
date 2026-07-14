@@ -1,6 +1,10 @@
 # 030 — Incremental Chunk Indexing & Deferred `index()`
 
-- **Status:** draft
+- **Status:** draft — incremental-maintenance premise superseded
+  2026-07-12 by 072 §6 (batch-only epoch rebuild; zoekt treats
+  incremental index maintenance as the hazardous half — see 072
+  `research-grep-index.md` §3). The deferred/explicit `index()` verb
+  idea survives as 072's reindex verb.
 - **Date:** 2026-05-25
 - **Owner:** Clay Gendron
 - **Kind:** feature + backend

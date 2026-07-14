@@ -1,6 +1,10 @@
 # 014 — Auto-Chunk and Auto-Index on Write
 
-- **Status:** draft
+- **Status:** draft — the auto-index-on-write half is superseded
+  2026-07-12 by 072 §6 (no per-write index maintenance; batch-only
+  reindex behind an epoch watermark). The auto-chunk half is
+  unaffected and feeds the future chunk/encode/glean story
+  (072 Pass B/C successor).
 - **Date:** 2026-05-01
 - **Owner:** Clay Gendron
 - **Kind:** feature + backend
