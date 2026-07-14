@@ -1,10 +1,16 @@
 # VFS: Agentic Search on any SQL Database
 
-VFS is built on a conviction that creating effective AI agents, from the scale of small local development to the size of an enterprise, is first and foremost a **data engineering** problem. This conviction comes from observing how AI agents work on tasks, noticing the flaws in some components of their current harnesses and tooling, and applying the well established patterns of data science and engineering that . The beliefs below capture an opinionated framework of how LLMs and AI agents actually work, and how to build for them.
+VFS is built on a conviction that creating effective AI agents, from the scale of small local development to the size of an enterprise, is first and foremost a **data engineering** problem. This conviction comes from observing how AI agents work on tasks, noticing the flaws in some components of their current harnesses and tooling, and identifying what well established patterns of computer science can we applied towards making great AI agents. The beliefs below capture an opinionated understanding of what LLMs and AI agents are and how they work and create a high level framework of how to build with them.
 
 ## 1. Building AI Agents is a Data Engineering Problem
 
-It is important to ground any understanding of LLMs (and thus AI agents) with an awareness that these are predictive models that run in a loop. This means that AI agents are bound by the age old saying in data science and machine learning: garabe in, garabe out.
+LLMs will continue to gain intelligence
+
+It is important to ground any understanding of LLMs (and thus AI agents) with an awareness that these are predictive models, and this means LLMs are bound by the age old computing principle of garabe in, garabe out.
+
+In all of our first interactions with LLMs in 2022 and 2023, the capability and value that those models showed to us was that there was a lot of information and language comprehnsion that could encoded into an artifical deep nueral network. Prompt engineering came to be a concept that emphasized that our job was to write our instructions in a very specific way as to get the LLM to render its encoded knowledge and understanding into a response the was useful to us.
+
+The shift from using the term prompt engineering to context engineering was a big step for the industry in establishing an awareness of the important of filling up an LLM's context window will all the information it needed (and ideally with little that it didn't) to properly complete a task; but I also drew attention to a more fundamental question about what LLM's are doing when we send them prompts. 
 
 Context engineering, a term that grown from prompt engineering, gained a lot of popularity because it re-framed the task of desining good agents from one that put an emphasis on the wording of the request to the agent (prompt engineering) to one that looked at how to fill up the context window of the LLM as a method to optimize the output. This is the m
 
@@ -32,7 +38,9 @@ This framing helps explain why coding agents generally perform better than other
 
 This is why VFS adopts the file system as its core abstraction. File systems produce environments well-suited for LLMs to act as agents.
 
-## 4. Agentic Search has Four Verbs
+## 4. Knowledge and Capabilities are Distributed
+
+## 5. Agentic Search has Four Verbs
 
 Agentic search is autonomous knowledge retervial where an LLM is identfying the intent of a task, planning a multi-step retrieval strategy, executing searches, evaluating results, and then applying that knowledge to copmlete the task. Agentic search is seperate and different from RAG (retrival augmented generation) with RAG being a non-autonomous search where knowledge is injected into context without action by an LLM.
 
@@ -52,8 +60,6 @@ Three of these verbs are already familiar — `glob` and `grep` from any Unix te
 - `graph` searches on the dimension of **connection**. It traverses the edges between files and ranks files with centrality algorithms to present a topological view of how information flows within a knowledge base.
 
 Together, these four verbs cover every dimension along which a file carries information, and thus these verbs cover the needs of agentic search. Additionally, the outputs of one search method can be used as input to the next because everything is addressable by a file path. A file system with these four verbs allows agents to navigate and search an environment in an interative and preditable fashion. This meets the definition of agentic search, and thus provides us with a framework for how to engineer data for it.
-
-## 5. Knowledge and Capabilities are Distributed
 
 
 
