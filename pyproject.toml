@@ -36,6 +36,7 @@ dependencies = [
     "tree-sitter>=0.22",
     "tree-sitter-language-pack>=1.8",
     "pyyaml>=6.0.3",
+    "python-ulid>=3.1.0",
 ]
 
 [project.urls]
@@ -134,6 +135,7 @@ norecursedirs = ["tests/fixtures/repos", "tests2", "src2"]
 markers = [
     "slow: marks tests as slow",
     "integration: marks integration tests",
+    "needs(*ops): ops a storage-conformance test requires the backend to declare",
 ]
 
 [tool.coverage.run]
