@@ -7,12 +7,14 @@ is stubbed to a classified refusal and ``capabilities()`` is
 hand-declared empty until the read slice lands — capabilities stay
 honest per pass, and the router never routes to an undeclared family.
 
-    storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")   # built
-    storage = DatabaseStorage(engine=shared_engine)                    # borrowed
+    storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")     # built
+    storage = DatabaseStorage(session_factory=app_sessionmaker)         # borrowed
 
-First touch happens at the first routed op (or the ``first_touch``
-admin verb) on the caller's loop; ``close()`` disposes the engine iff
-built and never touches a borrowed pool.
+Built or borrowed, never a bare engine: a backend builds its engine or
+borrows sessions — it never holds an engine it didn't make. First touch
+happens at the first routed op (or the ``first_touch`` admin verb) on
+the caller's loop; ``close()`` disposes the engine iff built and never
+touches a borrowed pool.
 """
 
 from __future__ import annotations
@@ -23,9 +25,9 @@ from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.engine import EngineHost
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
-    from sqlalchemy.ext.asyncio import AsyncEngine
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models import Observation
     from vfs.ops import Op
@@ -39,15 +41,17 @@ class DatabaseStorage:
         self,
         *,
         url: str | None = None,
-        engine: AsyncEngine | None = None,
+        session_factory: Callable[[], AsyncSession] | None = None,
         table_name: str = "vfs",
         schema: str | None = None,
         name: str = "database",
         description: str | None = None,
     ) -> None:
-        self._host = EngineHost(url=url, engine=engine, table_name=table_name, schema=schema)
+        self._host = EngineHost(url=url, session_factory=session_factory, table_name=table_name, schema=schema)
         self.name = name
-        self.description = description or f"Database storage ({self._host.profile.name}: {table_name})"
+        # Construction stays dialect-free: a borrowed host knows its
+        # dialect only at first use, so the default names the tables.
+        self.description = description or f"Database storage ({table_name})"
 
     @property
     def mount_identity(self) -> str | None:

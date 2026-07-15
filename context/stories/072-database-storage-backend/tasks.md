@@ -65,7 +65,12 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       pressure test: 2 confirmed findings remediated — half-provisioned
       database (rows but no meta) now a classified refusal, not a raw
       `NoResultFound`; SQLite session settings stamp every pool checkout
-      so pre-borrow pooled connections are covered.
+      so pre-borrow pooled connections are covered. ADR-002 conformance
+      restored post-landing: the borrowed handle is an injected session
+      factory (the bare `engine=` kwarg the ADR removed had crept back);
+      dialect policy resolves from the session bind at first use, all IO
+      flows through sessions, and a borrowed host never holds an engine
+      (pinned by tests).
 - [ ] 10. Slice 7 — `descent.py` (ladder chokepoint + two-scope
       liveness prefix filter) + `reads.py` (read family, `parent_id`
       ls, prefix-LIKE tree, binary-collated order) + glob (escaped

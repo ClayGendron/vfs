@@ -1,10 +1,12 @@
 """DatabaseStorage lifecycle tests — construction, first touch, retry, close.
 
 The conformance suite covers verb behavior once families land; this file
-holds the DB-specific contract: the construction XOR, idempotent
-provisioning under the serialization point, schema-version verification,
-restart rebind, cross-loop first touch, borrowed-pool close, and the
-dialect policy layer (generic floor, retryable classification).
+holds the DB-specific contract: the construction XOR (built url vs
+borrowed session factory — never a bare engine), idempotent provisioning
+under the serialization point, schema-version verification, restart
+rebind, cross-loop first touch, borrowed-sessions close, and the dialect
+policy layer (generic floor, deferred resolution, retryable
+classification).
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import insert, select, text, update
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from ulid import ULID
 
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
@@ -41,12 +43,12 @@ def _url(tmp_path) -> str:
 
 
 class TestConstruction:
-    def test_url_and_engine_together_are_refused(self, tmp_path) -> None:
-        engine = create_async_engine(_url(tmp_path))
+    def test_url_and_session_factory_together_are_refused(self, tmp_path) -> None:
+        factory = async_sessionmaker(create_async_engine(_url(tmp_path)), expire_on_commit=False)
         with pytest.raises(ValueError, match="exactly one"):
-            DatabaseStorage(url=_url(tmp_path), engine=engine)
+            DatabaseStorage(url=_url(tmp_path), session_factory=factory)
 
-    def test_neither_url_nor_engine_is_refused(self) -> None:
+    def test_neither_url_nor_session_factory_is_refused(self) -> None:
         with pytest.raises(ValueError, match="exactly one"):
             DatabaseStorage()
 
@@ -270,9 +272,9 @@ class TestLifecycle:
         # Pool a connection BEFORE the borrow; checkout must still stamp it.
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-        storage = DatabaseStorage(engine=engine)
+        storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
         assert (await storage.first_touch()).success is True
-        async with storage._host._writer_engine.begin() as conn:
+        async with engine.connect() as conn:  # the app's own pool is stamped too
             like = (await conn.exec_driver_sql("SELECT 'A' LIKE 'a'")).scalar_one()
             timeout = (await conn.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
         assert like == 0  # case_sensitive_like = ON
@@ -280,13 +282,38 @@ class TestLifecycle:
         await storage.close()
         await engine.dispose()
 
-    async def test_borrowed_engine_close_never_disposes(self, tmp_path) -> None:
+    async def test_borrowed_close_never_disposes(self, tmp_path) -> None:
         engine = create_async_engine(_url(tmp_path))
-        storage = DatabaseStorage(engine=engine)
+        storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
         assert (await storage.first_touch()).success is True
         await storage.close()
         async with engine.connect() as conn:  # the pool must still serve
             assert (await conn.execute(text("SELECT 1"))).scalar_one() == 1
+        await engine.dispose()
+
+    async def test_a_borrowed_host_never_holds_an_engine(self, tmp_path) -> None:
+        engine = create_async_engine(_url(tmp_path))
+        storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
+        with pytest.raises(RuntimeError, match="borrowed host"):
+            _ = storage._host.engine
+        await engine.dispose()
+
+    async def test_borrowed_dialect_policy_defers_to_first_use(self, tmp_path) -> None:
+        engine = create_async_engine(_url(tmp_path))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        calls = 0
+
+        def factory() -> AsyncSession:
+            nonlocal calls
+            calls += 1
+            return maker()
+
+        storage = DatabaseStorage(session_factory=factory)
+        assert calls == 0  # construction makes no dialect decision
+        assert storage._host.profile.name == "sqlite"
+        assert calls == 1  # resolved from the first session's bind
+        assert (await storage.first_touch()).success is True
+        await storage.close()
         await engine.dispose()
 
     async def test_built_close_is_idempotent(self, tmp_path) -> None:
