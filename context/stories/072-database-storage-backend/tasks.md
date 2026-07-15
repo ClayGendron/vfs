@@ -71,12 +71,24 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       dialect policy resolves from the session bind at first use, all IO
       flows through sessions, and a borrowed host never holds an engine
       (pinned by tests).
-- [ ] 10. Slice 7 — `descent.py` (ladder chokepoint + two-scope
+- [x] 10. Slice 7 — `descent.py` (ladder chokepoint + two-scope
       liveness prefix filter) + `reads.py` (read family, `parent_id`
       ls, prefix-LIKE tree, binary-collated order) + glob (escaped
       sargable LIKE); mask stamping; hand-declared capabilities;
-      conformance suite gains the sqlite parametrization —
-      read/glob families green.
+      conformance suite gains the sqlite parametrization. Note: the
+      read-family conformance rows stay capability-skipped until
+      slice 8 supplies write/mkdir fixtures — slice 7's verification
+      is the seeded-Core read tests in `test_backends_database.py`.
+      Pressure-tested (12 dimensions, adversarially verified): two
+      confirmed findings fixed and pinned — descent through a trashed
+      row leaked its kind (`classify_misses` now carries the trash
+      scope; trash misses classify uniformly), and pool exhaustion
+      leaked a raw `sqlalchemy.exc.TimeoutError` (catch widened to
+      `SQLAlchemyError`). Precedent review (four-agent reference
+      sweep) confirmed the ladder, listing shapes, mask contract, and
+      prefilter/verify structure against Linux/FreeBSD/JuiceFS/
+      statx/zoekt; the one contract-level deviation found (fnmatch
+      glob semantics) is story 073's charter, decided 2026-07-14.
 - [ ] 11. Slice 8 — `writes.py`: write/edit/mkdir; dict-accumulate →
       bulk Core statements in pinned order; one transaction per
       batch, budget chunking, per-entry outcomes; revision stamp +
