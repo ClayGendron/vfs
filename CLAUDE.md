@@ -118,3 +118,15 @@ private *types and constants* stay next to what they support.
 - Do **not** reference story/spec numbers (e.g. "story 030 §5.2", "Phase 4")
   in code comments **or docstrings**. Traceability lives in
   `context/stories/`, not inline.
+
+## Code smells
+
+- **After writing or changing code, reflect on whether it contains any "code
+  smell"** — the classic hints that something may be off: duplicated code,
+  long methods, long parameter lists, magic numbers, primitive obsession
+  (bare strings/ints/lists where a small type belongs), positional indexing
+  into sequences (`parts[2]`), deep nesting, feature envy, god classes,
+  shotgun surgery, dead code, or speculative generality.
+- **A smell is a hint to look closer, not a rule to obey blindly.** When you
+  spot one, dig in: understand *why* the code took that shape, and decide
+  whether it is justified here.
