@@ -40,10 +40,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, TypeVar
 
 from sqlalchemy import Engine, event, func, insert, select
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from ulid import ULID
 
@@ -58,6 +58,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
     from vfs.models.rows import VFSTables
+
+T = TypeVar("T")
 
 
 class _ResolvedPolicy(NamedTuple):
@@ -137,10 +139,12 @@ class EngineHost:
                 return None
             try:
                 return await self.with_retry(self._first_touch)
-            except (DBAPIError, OSError) as exc:
-                return self._unavailable(exc)
+            except (SQLAlchemyError, OSError) as exc:
+                # SQLAlchemyError, not just DBAPIError: pool exhaustion
+                # (TimeoutError) is an operating condition, never a raise.
+                return self.classify_failure(exc, context="First touch")
 
-    async def with_retry(self, fn: Callable[[], Awaitable[ResultError | None]]) -> ResultError | None:
+    async def with_retry(self, fn: Callable[[], Awaitable[T]]) -> T:
         """Run *fn*, restarting whole on a retryable outcome, with backoff."""
         delay = self._retry_base_delay
         for attempt in range(1, self._retry_attempts + 1):
@@ -152,6 +156,22 @@ class EngineHost:
                 await asyncio.sleep(delay)
                 delay *= 2
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def classify_failure(self, exc: BaseException, *, context: str) -> ResultError:
+        """Classify a driver failure that escaped retry — always a Result, never a raise."""
+        origin = getattr(exc, "orig", None) or exc
+        try:
+            # The runtime contract takes any driver exception; the stub's
+            # `Error` type is the DBAPI module protocol, not a real class.
+            disconnected = isinstance(origin, Exception) and self._policy().dialect.is_disconnect(
+                origin,  # ty: ignore[invalid-argument-type]
+                None,
+                None,
+            )
+        except Exception:
+            disconnected = False
+        kind = VFSErrorKind.backend_unavailable if disconnected else VFSErrorKind.unavailable
+        return ResultError(kind=kind, message=f"{context} failed: {origin}", retryable=True)
 
     async def close(self) -> None:
         """Dispose iff built; idempotent; borrowed connectivity is never touched."""
@@ -278,22 +298,6 @@ class EngineHost:
             )
         self.mount_identity = identity
         return None
-
-    def _unavailable(self, exc: BaseException) -> ResultError:
-        origin = getattr(exc, "orig", None) or exc
-        try:
-            # The runtime contract takes any driver exception; the stub's
-            # `Error` type is the DBAPI module protocol, not a real class.
-            disconnected = isinstance(origin, Exception) and self._policy().dialect.is_disconnect(
-                origin,  # ty: ignore[invalid-argument-type]
-                None,
-                None,
-            )
-        except Exception:
-            disconnected = False
-        kind = VFSErrorKind.backend_unavailable if disconnected else VFSErrorKind.unavailable
-        return ResultError(kind=kind, message=f"First touch failed: {origin}", retryable=True)
-
 
 # ---------------------------------------------------------------------------
 # Module helpers

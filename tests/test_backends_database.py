@@ -107,6 +107,9 @@ class TestDialectPolicy:
         exc = Exception("40001", "deadlock victim")
         assert is_retryable(GENERIC, exc) is True
 
+    def test_an_exception_with_no_sqlstate_is_not_retryable(self) -> None:
+        assert is_retryable(GENERIC, Exception()) is False
+
     def test_parameter_budget_is_read_from_sqlalchemy(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         host = storage._host
@@ -183,9 +186,9 @@ class TestFirstTouch:
     async def test_the_first_routed_op_triggers_first_touch(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         result = await storage.stat(path=Path("/"))
-        assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unsupported
-        assert storage.mount_identity is not None  # provisioning happened anyway
+        assert result.success is True
+        assert result.observations[0].kind == "directory"
+        assert storage.mount_identity is not None
         await storage.close()
 
     async def test_ops_surface_the_mismatch_refusal(self, tmp_path) -> None:
@@ -321,3 +324,462 @@ class TestLifecycle:
         await storage.first_touch()
         await storage.close()
         await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Read family + glob — seeded directly through Core (writes land later)
+# ---------------------------------------------------------------------------
+
+
+async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]]) -> None:
+    """Plant rows the way the write slices later will: entries + content.
+
+    Reads land before mutations, so tests seed through Core directly —
+    ancestors are minted as directories, files get a content row, and
+    every row gets a distinct revision.
+    """
+    assert (await storage.first_touch()).success is True
+    tables = storage._host.tables
+    now = datetime.now(UTC)
+    async with storage._host.session_factory() as session:
+        conn = await session.connection(execution_options={"vfs_writer": True})
+        root_id = (await conn.execute(select(tables.entry.c.id).where(tables.entry.c.path == "/"))).scalar_one()
+        ids: dict[str, int] = {"/": root_id}
+        revision = 0
+
+        async def ensure(path: str, kind: str, content: str | None) -> None:
+            nonlocal revision
+            if path in ids:
+                return
+            parent = path.rsplit("/", 1)[0] or "/"
+            if parent not in ids:
+                await ensure(parent, "directory", None)
+            revision += 1
+            result = await conn.execute(
+                insert(tables.entry)
+                .values(
+                    node_id=str(ULID()),
+                    parent_id=ids[parent],
+                    path=path,
+                    name=path.rsplit("/", 1)[1],
+                    kind=kind,
+                    revision=revision,
+                    size_bytes=len(content.encode()) if content is not None else 0,
+                    lines=content.count("\n") + 1 if content else 0,
+                    created_at=now,
+                    updated_at=now,
+                )
+                .returning(tables.entry.c.id)
+            )
+            entry_id = result.scalar_one()
+            ids[path] = entry_id
+            if content is not None:
+                await conn.execute(insert(tables.content).values(entry_id=entry_id, content=content))
+
+        for path, kind, content in rows:
+            await ensure(path, kind, content)
+        await session.commit()
+
+
+class TestReadFamily:
+    """Verb behavior over seeded rows — the slice's own verification.
+
+    The conformance suite exercises these paths in full once the write
+    slice lands (its fixtures are built through the mutation verbs);
+    until then these tests are what proves the read family.
+    """
+
+    @pytest.fixture
+    async def storage(self, tmp_path):
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(
+            storage,
+            [
+                ("/top.txt", "file", "hello world"),
+                ("/docs/Zed.txt", "file", "zulu"),
+                ("/docs/a.txt", "file", "alpha"),
+                ("/docs/b.md", "file", "bravo"),
+                ("/docs/sub/c.txt", "file", "charlie"),
+            ],
+        )
+        yield storage
+        await storage.close()
+
+    async def test_read_returns_content(self, storage: DatabaseStorage) -> None:
+        result = await storage.read(path=Path("/docs/a.txt"))
+        assert result.success is True
+        row = result.observations[0]
+        assert row.content == "alpha"
+        assert row.kind == "file"
+        assert row.revision is not None
+        assert "content" in row.populated
+
+    async def test_read_on_a_directory_is_wrong_kind(self, storage: DatabaseStorage) -> None:
+        result = await storage.read(path=Path("/docs"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert "Is a directory" in result.errors[0].message
+
+    async def test_read_batch_keeps_good_rows_and_classifies_misses(self, storage: DatabaseStorage) -> None:
+        from vfs.models import Observation
+
+        targets = [Observation(path=Path("/docs/a.txt")), Observation(path=Path("/missing.txt"))]
+        result = await storage.read(observations=targets)
+        assert result.success is False
+        assert [o.path for o in result.observations] == ["/docs/a.txt"]
+        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert (result.errors[0].data or {})["target"] == "/missing.txt"
+
+    async def test_stat_shapes_and_mask(self, storage: DatabaseStorage) -> None:
+        file_row = (await storage.stat(path=Path("/docs/a.txt"))).observations[0]
+        assert file_row.kind == "file"
+        assert file_row.size_bytes == len(b"alpha")
+        assert file_row.content is None
+        assert {"path", "kind", "revision"} <= file_row.populated
+
+        dir_row = (await storage.stat(path=Path("/docs"))).observations[0]
+        assert dir_row.kind == "directory"
+        assert dir_row.size_bytes is None  # the NOT NULL 0 never reads as a size
+        assert "size_bytes" in dir_row.populated  # fetched-and-null stays masked
+
+    async def test_missing_ancestor_classifies_not_found_at_that_component(
+        self, storage: DatabaseStorage
+    ) -> None:
+        for verb in (storage.read, storage.stat, storage.ls, storage.tree):
+            result = await verb(path=Path("/ghost/deep/x.txt"))
+            assert result.success is False
+            assert result.errors[0].kind == VFSErrorKind.not_found
+            assert result.errors[0].path == "/ghost"
+
+    async def test_file_ancestor_classifies_wrong_kind_at_that_component(
+        self, storage: DatabaseStorage
+    ) -> None:
+        for verb in (storage.read, storage.stat, storage.ls, storage.tree):
+            result = await verb(path=Path("/top.txt/deep/x.txt"))
+            assert result.success is False
+            assert result.errors[0].kind == VFSErrorKind.wrong_kind
+            assert result.errors[0].path == "/top.txt"
+
+    async def test_sibling_misses_under_one_dead_ancestor_stay_distinct(self, storage: DatabaseStorage) -> None:
+        from vfs.models import Observation
+
+        targets = [Observation(path=Path("/dead/x")), Observation(path=Path("/dead/y"))]
+        result = await storage.stat(observations=targets)
+        assert len(result.errors) == 2
+        assert {(e.data or {}).get("target") for e in result.errors} == {"/dead/x", "/dead/y"}
+
+    async def test_ls_orders_children_by_byte_value(self, storage: DatabaseStorage) -> None:
+        result = await storage.ls(path=Path("/docs"))
+        assert [o.path for o in result.observations] == [
+            "/docs/Zed.txt",  # Z (0x5A) sorts before a (0x61) under binary collation
+            "/docs/a.txt",
+            "/docs/b.md",
+            "/docs/sub",
+        ]
+
+    async def test_ls_defaults_to_the_root(self, storage: DatabaseStorage) -> None:
+        result = await storage.ls()
+        assert [o.path for o in result.observations] == ["/docs", "/top.txt"]
+
+    async def test_ls_file_target_lists_itself(self, storage: DatabaseStorage) -> None:
+        result = await storage.ls(path=Path("/top.txt"))
+        assert [o.path for o in result.observations] == ["/top.txt"]
+
+    async def test_tree_orders_by_path_and_budgets_depth(self, storage: DatabaseStorage) -> None:
+        full = await storage.tree(path=Path("/docs"))
+        assert [o.path for o in full.observations] == [
+            "/docs/Zed.txt",
+            "/docs/a.txt",
+            "/docs/b.md",
+            "/docs/sub",
+            "/docs/sub/c.txt",
+        ]
+        shallow = await storage.tree(path=Path("/docs"), max_depth=1)
+        assert [o.path for o in shallow.observations] == [
+            "/docs/Zed.txt",
+            "/docs/a.txt",
+            "/docs/b.md",
+            "/docs/sub",
+        ]
+
+    async def test_tree_from_the_root_excludes_the_root_row(self, storage: DatabaseStorage) -> None:
+        result = await storage.tree(path=Path("/"), max_depth=1)
+        assert [o.path for o in result.observations] == ["/docs", "/top.txt"]
+
+    async def test_tree_on_a_file_returns_just_that_row(self, storage: DatabaseStorage) -> None:
+        result = await storage.tree(path=Path("/top.txt"))
+        assert [o.path for o in result.observations] == ["/top.txt"]
+
+    async def test_tree_rejects_a_sub_one_max_depth_without_touching_the_database(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        result = await storage.tree(path=Path("/"), max_depth=0)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert storage.mount_identity is None  # refused before first touch
+        await storage.close()
+
+    async def test_projection_narrows_the_select_and_stamps_the_mask(self, storage: DatabaseStorage) -> None:
+        result = await storage.stat(path=Path("/docs/a.txt"), columns=frozenset({"size_bytes", "mime_type"}))
+        row = result.observations[0]
+        assert row.populated == {"path", "kind", "revision", "size_bytes", "mime_type"}
+        assert row.mime_type is None  # fetched, and null
+        assert row.content_hash is None
+        assert "content_hash" not in row.populated  # not fetched
+
+    async def test_read_projection_controls_the_content_fetch(self, storage: DatabaseStorage) -> None:
+        without = (await storage.read(path=Path("/docs/a.txt"), columns=frozenset({"path"}))).observations[0]
+        assert without.content is None
+        assert "content" not in without.populated
+        with_content = (
+            await storage.read(path=Path("/docs/a.txt"), columns=frozenset({"content"}))
+        ).observations[0]
+        assert with_content.content == "alpha"
+        assert "content" in with_content.populated
+
+    async def test_glob_matches_names_and_full_paths(self, storage: DatabaseStorage) -> None:
+        by_name = await storage.glob(pattern="*.txt")
+        assert [o.path for o in by_name.observations] == [
+            "/docs/Zed.txt",
+            "/docs/a.txt",
+            "/docs/sub/c.txt",
+            "/top.txt",
+        ]
+        by_path = await storage.glob(pattern="/docs/*.txt")
+        assert [o.path for o in by_path.observations] == ["/docs/Zed.txt", "/docs/a.txt", "/docs/sub/c.txt"]
+
+    async def test_glob_scope_ext_and_max_count(self, storage: DatabaseStorage) -> None:
+        scoped = await storage.glob(pattern="*", paths=(Path("/docs"),))
+        assert all(str(o.path).startswith("/docs") for o in scoped.observations)
+        by_ext = await storage.glob(pattern="*", ext=("md",))
+        assert [o.path for o in by_ext.observations] == ["/docs/b.md"]
+        capped = await storage.glob(pattern="*.txt", max_count=2)
+        assert len(capped.observations) == 2
+
+    async def test_glob_character_class_falls_back_to_fnmatch(self, storage: DatabaseStorage) -> None:
+        result = await storage.glob(pattern="[ab]*.txt")
+        assert [o.path for o in result.observations] == ["/docs/a.txt"]
+
+    async def test_glob_escapes_like_metacharacters(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/da_a.txt", "file", "x"), ("/daxa.txt", "file", "x")])
+        result = await storage.glob(pattern="da_a.txt")
+        assert [o.path for o in result.observations] == ["/da_a.txt"]
+        await storage.close()
+
+
+class TestNamespaceScopes:
+    """The two-scope liveness filter: meta hidden by default, trash always."""
+
+    @pytest.fixture
+    async def storage(self, tmp_path):
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(
+            storage,
+            [
+                ("/real.txt", "file", "needle in the open"),
+                ("/.vfs/docs/a.txt/__meta__/versions/1", "version", "v1 text"),
+                ("/.vfs/trash/bucket/01ARZ", "file", "needle in the trash"),
+            ],
+        )
+        yield storage
+        await storage.close()
+
+    async def test_enumeration_hides_the_meta_subtree(self, storage: DatabaseStorage) -> None:
+        assert [o.path for o in (await storage.ls(path=Path("/"))).observations] == ["/real.txt"]
+        assert [o.path for o in (await storage.tree(path=Path("/"))).observations] == ["/real.txt"]
+        assert [o.path for o in (await storage.glob(pattern="*")).observations] == ["/real.txt"]
+
+    async def test_direct_meta_address_bypasses_the_meta_exclusion(self, storage: DatabaseStorage) -> None:
+        version = Path("/.vfs/docs/a.txt/__meta__/versions/1")
+        stat = await storage.stat(path=version)
+        assert stat.success is True
+        assert stat.observations[0].kind == "version"
+        read = await storage.read(path=version)
+        assert read.observations[0].content == "v1 text"
+        listing = await storage.ls(path=version.parent_dir)
+        assert [o.path for o in listing.observations] == [str(version)]
+
+    async def test_trash_is_invisible_even_from_a_meta_anchor(self, storage: DatabaseStorage) -> None:
+        # ls of /.vfs is a direct meta address: docs serves, trash never.
+        listing = await storage.ls(path=Path("/.vfs"))
+        assert [o.path for o in listing.observations] == ["/.vfs/docs"]
+        subtree = await storage.tree(path=Path("/.vfs"))
+        assert all("/trash" not in str(o.path) for o in subtree.observations)
+
+    async def test_a_trashed_path_classifies_not_found_through_every_read_verb(
+        self, storage: DatabaseStorage
+    ) -> None:
+        trashed = Path("/.vfs/trash/bucket/01ARZ")
+        for verb in (storage.read, storage.stat, storage.ls, storage.tree):
+            result = await verb(path=trashed)
+            assert result.success is False
+            assert result.errors[0].kind == VFSErrorKind.not_found
+
+    async def test_descent_through_a_trashed_row_never_surfaces_it(self, storage: DatabaseStorage) -> None:
+        # A child under a trashed FILE must not classify wrong_kind naming
+        # the trashed row — the walk would leak what point reads hide.
+        result = await storage.read(path=Path("/.vfs/trash/bucket/01ARZ/child"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.not_found
+
+    async def test_trash_misses_classify_uniformly_regardless_of_bucket_existence(
+        self, storage: DatabaseStorage
+    ) -> None:
+        # Identical classification whether or not internal trash rows exist
+        # on the probed path — error shape must not reveal trash structure.
+        under_real_bucket = await storage.stat(path=Path("/.vfs/trash/bucket/GHOST/x"))
+        under_no_bucket = await storage.stat(path=Path("/.vfs/trash/NOBUCKET/x"))
+        for result in (under_real_bucket, under_no_bucket):
+            assert result.errors[0].kind == VFSErrorKind.not_found
+            assert result.errors[0].path == "/.vfs/trash"
+
+
+class TestReadFailureHandling:
+    """Driver failures classify; retryable outcomes restart the method."""
+
+    async def test_read_failure_classifies_unavailable(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        async with storage._host.engine.begin() as conn:
+            await conn.exec_driver_sql("DROP TABLE vfs")
+        result = await storage.stat(path=Path("/"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert result.errors[0].retryable is True
+        await storage.close()
+
+    async def test_with_retry_restarts_on_a_retryable_error(self, tmp_path) -> None:
+        from sqlalchemy.exc import DBAPIError
+
+        from vfs.storage.backends.database.engine import EngineHost
+
+        host = EngineHost(url=_url(tmp_path), retry_base_delay=0.001)
+        calls = 0
+
+        async def flaky() -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise DBAPIError("SELECT 1", None, _SqliteError(5))
+            return "served"
+
+        assert await host.with_retry(flaky) == "served"
+        assert calls == 2
+        await host.close()
+
+    async def test_with_retry_gives_up_after_the_attempt_budget(self, tmp_path) -> None:
+        from sqlalchemy.exc import DBAPIError
+
+        from vfs.storage.backends.database.engine import EngineHost
+
+        host = EngineHost(url=_url(tmp_path), retry_attempts=2, retry_base_delay=0.001)
+
+        async def always_busy() -> None:
+            raise DBAPIError("SELECT 1", None, _SqliteError(5))
+
+        with pytest.raises(DBAPIError):
+            await host.with_retry(always_busy)
+        await host.close()
+
+
+class TestUnlandedVerbStubs:
+    """Every undeclared verb refuses classified; capabilities stay honest."""
+
+    async def test_unlanded_verbs_refuse_as_unsupported(self, tmp_path) -> None:
+        from vfs.storage import ResolvedPair
+        from vfs.storage.replace import EditOperation
+
+        storage = DatabaseStorage(url=_url(tmp_path))
+        pair = [ResolvedPair(src=Path("/a"), dest=Path("/b"))]
+        calls = [
+            storage.grep(pattern="x"),
+            storage.write(path=Path("/a"), content="x"),
+            storage.edit(edits=[EditOperation(old="a", new="b")], path=Path("/a")),
+            storage.delete(path=Path("/a")),
+            storage.mkdir(path=Path("/a")),
+            storage.move(operations=pair),
+            storage.copy(operations=pair),
+            storage.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports"),
+        ]
+        for call in calls:
+            result = await call
+            assert result.success is False
+            assert result.errors[0].kind == VFSErrorKind.unsupported
+        stubbed = {"grep", "write", "edit", "delete", "mkdir", "move", "copy", "mkedge"}
+        assert storage.capabilities() == {"read", "stat", "ls", "tree", "glob"}
+        assert storage.capabilities().isdisjoint(stubbed)
+        await storage.close()
+
+    async def test_stub_verbs_surface_the_first_touch_refusal(self, tmp_path) -> None:
+        seeded = DatabaseStorage(url=_url(tmp_path))
+        await seeded.first_touch()
+        meta = seeded._host.tables.meta
+        async with seeded._host.engine.begin() as conn:
+            await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
+        await seeded.close()
+        stale = DatabaseStorage(url=_url(tmp_path))
+        result = await stale.write(path=Path("/a"), content="x")
+        assert result.errors[0].kind == VFSErrorKind.schema_mismatch
+        await stale.close()
+
+    async def test_reads_with_no_targets_return_an_empty_success(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        result = await storage.read()
+        assert result.success is True
+        assert result.observations == []
+        await storage.close()
+
+
+class TestUnicodeAndCollation:
+    """Binary collation over non-ASCII names — ordering and case sensitivity."""
+
+    @pytest.fixture
+    async def storage(self, tmp_path):
+        storage = DatabaseStorage(url=_url(tmp_path))
+        # Case pair as siblings plus ASCII/Greek/CJK/emoji names — distinct
+        # rows must coexist and order by UTF-8 byte value.
+        self.names = ["A.txt", "a.txt", "Z.txt", "é.txt", "Ω.txt", "中.txt", "😀.txt"]
+        await _seed(storage, [(f"/dir/{name}", "file", "x") for name in self.names])
+        yield storage
+        await storage.close()
+
+    async def test_ls_orders_unicode_names_like_python_codepoint_sort(self, storage: DatabaseStorage) -> None:
+        # UTF-8 byte order equals codepoint order, so the binary-collated
+        # column must reproduce Python's str sort exactly.
+        result = await storage.ls(path=Path("/dir"))
+        assert [o.path.name for o in result.observations] == sorted(self.names)
+
+    async def test_case_pair_siblings_are_distinct_rows(self, storage: DatabaseStorage) -> None:
+        upper = await storage.stat(path=Path("/dir/A.txt"))
+        lower = await storage.stat(path=Path("/dir/a.txt"))
+        assert upper.success is True and lower.success is True
+        assert upper.observations[0].revision != lower.observations[0].revision
+
+    async def test_glob_stays_case_sensitive_through_the_pool(self, storage: DatabaseStorage) -> None:
+        # The LIKE prefilter must not case-fold: case_sensitive_like=ON is
+        # stamped per checkout, and fnmatchcase is the authority.
+        result = await storage.glob(pattern="A*")
+        assert [o.path.name for o in result.observations] == ["A.txt"]
+
+    async def test_point_read_misses_on_case_difference(self, storage: DatabaseStorage) -> None:
+        result = await storage.stat(path=Path("/dir/a.TXT"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.not_found
+
+
+class TestPoolExhaustion:
+    async def test_pool_exhaustion_classifies_instead_of_raising(self, tmp_path) -> None:
+        # sqlalchemy.exc.TimeoutError is not a DBAPIError: the verb must
+        # still classify it, never leak it raw (the no-raw-raise criterion).
+        engine = create_async_engine(_url(tmp_path), pool_size=1, max_overflow=0, pool_timeout=0.2)
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        storage = DatabaseStorage(session_factory=maker)
+        assert (await storage.first_touch()).success is True
+        async with maker() as hog:
+            await hog.connection()  # hold the only pooled connection
+            result = await storage.stat(path=Path("/"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert result.errors[0].retryable is True
+        await storage.close()
+        await engine.dispose()
