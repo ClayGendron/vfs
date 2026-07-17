@@ -653,7 +653,7 @@ class TestObservation:
     def test_frozen(self) -> None:
         obs = Observation(path=Path("/a.md"))
         with pytest.raises(ValidationError):
-            obs.score = 1.0  # type: ignore[misc]
+            obs.score = 1.0  # ty: ignore[invalid-assignment]
 
     def test_path_is_branded_and_canonical(self) -> None:
         # deliberately unwrapped: canonicalization must happen in model validation

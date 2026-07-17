@@ -463,9 +463,7 @@ class TestMaskedMerge:
         # are unrelated, so the decorated row honestly claims no revision.
         owner = Result(observations=[masked("/data", {"kind", "revision"}, kind="directory", revision=41)])
         child_fields = {"kind", "size_bytes", "revision"}
-        child_root = Result(
-            observations=[masked("/data", child_fields, kind="directory", size_bytes=0, revision=3)]
-        )
+        child_root = Result(observations=[masked("/data", child_fields, kind="directory", size_bytes=0, revision=3)])
         decorated = Result.merge([owner, child_root], op="ls").one()
         assert decorated.size_bytes == 0
         assert decorated.revision is None

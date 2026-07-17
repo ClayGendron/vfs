@@ -527,9 +527,7 @@ class InMemoryStorage:
             if row is None:
                 return _classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
             if row.kind != "directory":
-                return _classified(
-                    VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target
-                )
+                return _classified(VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target)
         return _classified(VFSErrorKind.not_found, f"Not found: {target}", target, target=target)
 
     def _parent_gate(self, rows: dict[Path, _Row], op: str, path: Path, *, parents: bool) -> Result | None:
@@ -652,9 +650,7 @@ class InMemoryStorage:
                     errors.append(self._classify_miss(self._rows, src))
                 elif move_srcs.count(src) > 1:
                     errors.append(
-                        _classified(
-                            VFSErrorKind.invalid, f"Duplicate move source in batch: {src}", src, target=src
-                        )
+                        _classified(VFSErrorKind.invalid, f"Duplicate move source in batch: {src}", src, target=src)
                     )
                 else:
                     ancestor = _covering_src(src, move_srcs)

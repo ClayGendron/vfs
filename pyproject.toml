@@ -67,7 +67,8 @@ dev = [
     "ipykernel>=7.2.0",
     # typing-only: lets ty resolve the lazy pgvector import in models/vector.py
     "pgvector>=0.3",
-    "ty>=0.0.57",
+    "ty>=0.0.60",
+    "ruff>=0.15.22",
 ]
 docs = [
     "mkdocs-material>=9.0",

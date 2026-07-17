@@ -57,9 +57,7 @@ async def classify_misses(session: AsyncSession, entry: Table, targets: Sequence
     ancestors = {ancestor for target in targets for ancestor in ancestor_chain(target)}
     kinds: dict[str, str] = {}
     if ancestors:
-        stmt = select(entry.c.path, entry.c.kind).where(
-            entry.c.path.in_(sorted(ancestors)), *trash_filters(entry)
-        )
+        stmt = select(entry.c.path, entry.c.kind).where(entry.c.path.in_(sorted(ancestors)), *trash_filters(entry))
         kinds = {row.path: row.kind for row in await session.execute(stmt)}
     return [_classify_miss(target, kinds) for target in targets]
 

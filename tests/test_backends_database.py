@@ -443,18 +443,14 @@ class TestReadFamily:
         assert dir_row.size_bytes is None  # the NOT NULL 0 never reads as a size
         assert "size_bytes" in dir_row.populated  # fetched-and-null stays masked
 
-    async def test_missing_ancestor_classifies_not_found_at_that_component(
-        self, storage: DatabaseStorage
-    ) -> None:
+    async def test_missing_ancestor_classifies_not_found_at_that_component(self, storage: DatabaseStorage) -> None:
         for verb in (storage.read, storage.stat, storage.ls, storage.tree):
             result = await verb(path=Path("/ghost/deep/x.txt"))
             assert result.success is False
             assert result.errors[0].kind == VFSErrorKind.not_found
             assert result.errors[0].path == "/ghost"
 
-    async def test_file_ancestor_classifies_wrong_kind_at_that_component(
-        self, storage: DatabaseStorage
-    ) -> None:
+    async def test_file_ancestor_classifies_wrong_kind_at_that_component(self, storage: DatabaseStorage) -> None:
         for verb in (storage.read, storage.stat, storage.ls, storage.tree):
             result = await verb(path=Path("/top.txt/deep/x.txt"))
             assert result.success is False
@@ -531,9 +527,7 @@ class TestReadFamily:
         without = (await storage.read(path=Path("/docs/a.txt"), columns=frozenset({"path"}))).observations[0]
         assert without.content is None
         assert "content" not in without.populated
-        with_content = (
-            await storage.read(path=Path("/docs/a.txt"), columns=frozenset({"content"}))
-        ).observations[0]
+        with_content = (await storage.read(path=Path("/docs/a.txt"), columns=frozenset({"content"}))).observations[0]
         assert with_content.content == "alpha"
         assert "content" in with_content.populated
 
@@ -607,9 +601,7 @@ class TestNamespaceScopes:
         subtree = await storage.tree(path=Path("/.vfs"))
         assert all("/trash" not in str(o.path) for o in subtree.observations)
 
-    async def test_a_trashed_path_classifies_not_found_through_every_read_verb(
-        self, storage: DatabaseStorage
-    ) -> None:
+    async def test_a_trashed_path_classifies_not_found_through_every_read_verb(self, storage: DatabaseStorage) -> None:
         trashed = Path("/.vfs/trash/bucket/01ARZ")
         for verb in (storage.read, storage.stat, storage.ls, storage.tree):
             result = await verb(path=trashed)
@@ -884,9 +876,7 @@ class TestTrashWriteRefusal:
         )
         assert written.success is False
         assert written.errors[0].kind == VFSErrorKind.invalid
-        as_dir = await storage.write(
-            entries=[Entry(path=Path("/.vfs/trash/bucket"), kind="directory")], parents=True
-        )
+        as_dir = await storage.write(entries=[Entry(path=Path("/.vfs/trash/bucket"), kind="directory")], parents=True)
         assert as_dir.success is False
         assert as_dir.errors[0].kind == VFSErrorKind.invalid
         made = await storage.mkdir(path=Path("/.vfs/trash/bucket"), parents=True)
@@ -901,9 +891,7 @@ class TestTrashWriteRefusal:
     async def test_meta_paths_outside_trash_still_write(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         version = Path("/.vfs/docs/a.txt/__meta__/versions/1")
-        result = await storage.write(
-            entries=[Entry(path=version, kind="version", content="v1")], parents=True
-        )
+        result = await storage.write(entries=[Entry(path=version, kind="version", content="v1")], parents=True)
         assert result.success is True
         assert (await storage.read(path=version)).observations[0].content == "v1"
         await storage.close()

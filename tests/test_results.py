@@ -42,7 +42,7 @@ class TestResultError:
     def test_frozen(self) -> None:
         err = ResultError(kind=VFSErrorKind.invalid, message="bad")
         with pytest.raises(Exception, match="frozen"):
-            err.message = "other"  # type: ignore[misc]
+            err.message = "other"  # ty: ignore[invalid-assignment]
 
     def test_data_defaults_none(self) -> None:
         assert ResultError(kind=VFSErrorKind.invalid, message="x").data is None

@@ -110,9 +110,7 @@ class StorageContract:
         assert result.errors[0].path == "/a"
 
     @needs("write")
-    async def test_ancestor_stored_as_a_file_is_wrong_kind_without_parents(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_ancestor_stored_as_a_file_is_wrong_kind_without_parents(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/f"), content="x")])
         result = await storage.write(entries=[Entry(path=Path("/f/sub.txt"), content="x")])
         assert result.success is False
@@ -120,9 +118,7 @@ class StorageContract:
         assert result.errors[0].path == "/f"
 
     @needs("write", "mkdir")
-    async def test_ancestor_stored_as_a_file_is_wrong_kind_even_with_parents(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_ancestor_stored_as_a_file_is_wrong_kind_even_with_parents(self, storage: ConformanceBackend) -> None:
         # Unconditional: parents=True mints missing ancestors, it never coerces one.
         await storage.write(entries=[Entry(path=Path("/f"), content="x")])
         result = await storage.mkdir(path=Path("/f/sub"), parents=True)
@@ -138,9 +134,7 @@ class StorageContract:
         assert result.errors[0].kind == VFSErrorKind.wrong_kind
 
     @needs("write")
-    async def test_write_onto_an_existing_file_without_overwrite_is_exists(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_write_onto_an_existing_file_without_overwrite_is_exists(self, storage: ConformanceBackend) -> None:
         # The create leaf table: existence outranks everything else at the leaf.
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="first")])
         result = await storage.write(entries=[Entry(path=Path("/a.txt"), content="second")], overwrite=False)
@@ -157,9 +151,7 @@ class StorageContract:
         assert {o.path: o.status for o in result.observations} == {"/existing": "unchanged", "/new": "created"}
 
     @needs("write")
-    async def test_write_entries_classifies_directory_failures_per_entry(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_write_entries_classifies_directory_failures_per_entry(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/f"), content="x")])
         result = await storage.write(
             entries=[
@@ -282,9 +274,7 @@ class StorageContract:
     # ------------------------------------------------------------------
 
     @needs("write", "read", "stat", "ls", "tree")
-    async def test_missing_ancestor_classifies_not_found_at_that_component(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_missing_ancestor_classifies_not_found_at_that_component(self, storage: ConformanceBackend) -> None:
         # Positional precedence: the walk stops at the leftmost failing
         # boundary; deeper conditions (the missing leaf) never surface.
         await storage.write(entries=[Entry(path=Path("/top.txt"), content="x")])
@@ -295,9 +285,7 @@ class StorageContract:
             assert result.errors[0].path == "/ghost"
 
     @needs("write", "read", "stat", "ls", "tree")
-    async def test_file_ancestor_classifies_wrong_kind_at_that_component(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_file_ancestor_classifies_wrong_kind_at_that_component(self, storage: ConformanceBackend) -> None:
         # Wrong-kind on a node beats everything deeper — the V7
         # access-clobbers-ENOTDIR bug is the counterexample on record.
         await storage.write(entries=[Entry(path=Path("/f"), content="x")])
@@ -332,9 +320,7 @@ class StorageContract:
         assert (await storage.stat(path=Path("/b/x.txt"))).success is True
 
     @needs("write", "mkdir", "copy", "stat")
-    async def test_copy_rewrites_the_subtree_prefix_and_keeps_the_source(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_copy_rewrites_the_subtree_prefix_and_keeps_the_source(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a"))
         await storage.write(entries=[Entry(path=Path("/a/x.txt"), content="x")])
         result = await storage.copy(operations=[ResolvedPair(src=Path("/a"), dest=Path("/b"))])
@@ -343,9 +329,7 @@ class StorageContract:
         assert (await storage.stat(path=Path("/b/x.txt"))).success is True
 
     @needs("mkdir", "move")
-    async def test_move_into_own_descendant_is_one_cycle_kind_at_any_depth(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_move_into_own_descendant_is_one_cycle_kind_at_any_depth(self, storage: ConformanceBackend) -> None:
         # Both a depth-1 and a depth-2 destination refuse with the same
         # kind — cycle refusal is one classification, not two.
         await storage.mkdir(path=Path("/a/b"), parents=True)
@@ -371,9 +355,7 @@ class StorageContract:
         assert result.errors[0].kind == VFSErrorKind.not_found
 
     @needs("write", "mkdir", "move")
-    async def test_move_cycle_classifies_before_the_occupied_destination(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_move_cycle_classifies_before_the_occupied_destination(self, storage: ConformanceBackend) -> None:
         # Destination is both occupied AND inside the source: the cycle
         # refusal wins over occupied-target kind translation (the Linux
         # rename ladder — trap checks precede vfs_rename's kind checks).
@@ -401,12 +383,8 @@ class StorageContract:
         # RENAME_NOREPLACE EEXIST fires before any type check.
         await storage.mkdir(path=Path("/d"))
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
-        onto_dir = await storage.move(
-            operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/d"))], overwrite=False
-        )
-        onto_file = await storage.move(
-            operations=[ResolvedPair(src=Path("/d"), dest=Path("/f.txt"))], overwrite=False
-        )
+        onto_dir = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/d"))], overwrite=False)
+        onto_file = await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/f.txt"))], overwrite=False)
         assert onto_dir.errors[0].kind == VFSErrorKind.exists
         assert onto_file.errors[0].kind == VFSErrorKind.exists
 
@@ -445,16 +423,12 @@ class StorageContract:
     async def test_move_file_over_file_without_overwrite_is_exists(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="b")])
-        result = await storage.move(
-            operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], overwrite=False
-        )
+        result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], overwrite=False)
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.exists
 
     @needs("write", "mkdir", "move")
-    async def test_move_a_directory_onto_an_occupied_site_is_wrong_kind(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_move_a_directory_onto_an_occupied_site_is_wrong_kind(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a"))
         await storage.write(entries=[Entry(path=Path("/c.txt"), content="x")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/c.txt"))])
@@ -496,9 +470,7 @@ class StorageContract:
         assert as_target.errors[0].kind == VFSErrorKind.invalid
 
     @needs("write", "move")
-    async def test_move_destination_under_a_missing_parent_is_not_found(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_move_destination_under_a_missing_parent_is_not_found(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/ghost/a.txt"))])
         assert result.success is False
@@ -573,9 +545,7 @@ class StorageContract:
         assert result.errors[0].kind == VFSErrorKind.not_found
 
     @needs("write", "mkdir", "delete", "stat")
-    async def test_delete_non_empty_directory_without_cascade_is_not_empty(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_delete_non_empty_directory_without_cascade_is_not_empty(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a"))
         await storage.write(entries=[Entry(path=Path("/a/f.txt"), content="x")])
         result = await storage.delete(path=Path("/a"), cascade=False)
@@ -604,9 +574,7 @@ class StorageContract:
     # ------------------------------------------------------------------
 
     @needs("write", "mkdir", "glob")
-    async def test_glob_matches_by_name_without_a_slash_in_the_pattern(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_glob_matches_by_name_without_a_slash_in_the_pattern(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a/b"), parents=True)
         await storage.write(entries=[Entry(path=Path("/a/b/x.py"), content="x")])
         result = await storage.glob(pattern="x.py")
@@ -760,9 +728,7 @@ class StorageContract:
     # ------------------------------------------------------------------
 
     @needs("write", "read")
-    async def test_read_batch_classifies_each_row_and_keeps_the_good_ones(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_read_batch_classifies_each_row_and_keeps_the_good_ones(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="b")])
         observations = [
@@ -834,9 +800,7 @@ class StorageContract:
     # ------------------------------------------------------------------
 
     @needs("write", "mkdir", "stat", "read", "ls", "tree", "glob", "grep")
-    async def test_every_observation_carries_revision_and_the_identity_mask(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_every_observation_carries_revision_and_the_identity_mask(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a"))
         await storage.write(entries=[Entry(path=Path("/a/f.txt"), content="x")])
         for result in (
@@ -867,9 +831,7 @@ class StorageContract:
                 assert valued <= o.populated, f"mask omits populated fields: {valued - o.populated}"
 
     @needs("write", "stat")
-    async def test_material_writes_stamp_strictly_increasing_revisions(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_material_writes_stamp_strictly_increasing_revisions(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="1")])
         first = await _revision_of(storage, "/a.txt")
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="2")])
@@ -877,9 +839,7 @@ class StorageContract:
         assert second > first
 
     @needs("write", "mkdir", "stat")
-    async def test_namespace_create_bumps_the_parent_but_overwrite_does_not(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_namespace_create_bumps_the_parent_but_overwrite_does_not(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/docs"))
         before = await _revision_of(storage, "/docs")
         await storage.write(entries=[Entry(path=Path("/docs/a.md"), content="1")])
@@ -1028,9 +988,7 @@ class StorageContract:
         assert unchanged.revision == committed.revision
 
     @needs("write", "edit", "stat")
-    async def test_batch_edit_repeated_target_reports_the_committed_revision(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_batch_edit_repeated_target_reports_the_committed_revision(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="aa")])
         targets = [Observation(path=Path("/f.txt")), Observation(path=Path("/f.txt"))]
         result = await storage.edit(edits=[EditOperation(old="a", new="aa", replace_all=True)], observations=targets)
@@ -1061,15 +1019,11 @@ class StorageContract:
             assert (await storage.stat(path=Path("/a"))).success is False
 
     @needs("mkdir", "delete", "stat")
-    async def test_delete_covered_miss_classifies_the_requested_target(
-        self, storage: ConformanceBackend
-    ) -> None:
+    async def test_delete_covered_miss_classifies_the_requested_target(self, storage: ConformanceBackend) -> None:
         # /a/ghost sits inside /a's cascade but never existed: the error
         # names the requested target, never the cascade root.
         await storage.mkdir(path=Path("/a"))
-        result = await storage.delete(
-            observations=[Observation(path=Path("/a")), Observation(path=Path("/a/ghost"))]
-        )
+        result = await storage.delete(observations=[Observation(path=Path("/a")), Observation(path=Path("/a/ghost"))])
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.not_found
         assert result.errors[0].path == "/a/ghost"

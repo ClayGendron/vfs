@@ -583,8 +583,7 @@ async def _apply(
     if plan.bump_revisions:
         entry = tables.entry
         rows = [
-            {"b_id": plan.committed[path]["id"], "b_rev": revision}
-            for path, revision in plan.bump_revisions.items()
+            {"b_id": plan.committed[path]["id"], "b_rev": revision} for path, revision in plan.bump_revisions.items()
         ]
         await session.execute(
             update(entry).where(entry.c.id == bindparam("b_id")).values(revision=bindparam("b_rev")), rows

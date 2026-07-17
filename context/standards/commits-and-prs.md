@@ -46,13 +46,17 @@ Don't reference issue numbers in the subject unless the issue is the entire cont
 
 In order:
 
-1. `uvx ruff format src/ tests/`
-2. `uvx ruff check src/ tests/`
-3. `uvx --refresh ty check src/`
+1. `uv run ruff format src/ tests/`
+2. `uv run ruff check src/ tests/`
+3. `uv run ty check src/ tests/`
 4. `uv run pytest`
 5. `git push`
 
 CI runs `ruff format --check`. Skipping step 1 has cost real CI time and forced fixup commits — don't.
+
+Always `uv run`, never `uvx`. `ruff` and `ty` are pinned in the lock file
+so local and CI agree; `uvx` ignores the pin and fetches the newest
+release, which drifts the moment either tool ships a formatting change.
 
 ## Pull requests
 

@@ -229,7 +229,9 @@ class TestDDL:
         entry = Entry(path=Path("/docs/a.md"), content="hello", revision=1)
         ulid = "0" * ULID_LENGTH
         with engine.begin() as conn:
-            entry_id = conn.execute(insert(tables.entry), [_entries_row(entry, node_id=ulid, parent_id=None)]).inserted_primary_key  # noqa: E501
+            entry_id = conn.execute(
+                insert(tables.entry), [_entries_row(entry, node_id=ulid, parent_id=None)]
+            ).inserted_primary_key
             stored_id = conn.execute(select(tables.entry.c.id)).scalar_one()
             conn.execute(insert(tables.content), [{"entry_id": stored_id, "content": entry.content}])
             row = conn.execute(select(tables.entry)).mappings().one()
