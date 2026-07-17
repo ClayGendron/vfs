@@ -48,8 +48,9 @@ small.
 - **All project knowledge lives in this repo — never outside it.** Do not
   write memory files to `~/.claude/projects/*/memory/` or any other
   out-of-repo location; if any exist, delete them. Durable context belongs
-  in `context/` (stories, decisions, learnings) or this file, where it is
-  versioned and visible to everyone.
+  in `context/` (research, decisions, specs, standards) or this file, where
+  it is versioned and visible to everyone. The pipeline is research →
+  decide → specify → code, all under standards — see `context/README.md`.
 
 ## Reference repos for research
 
@@ -115,9 +116,9 @@ private *types and constants* stay next to what they support.
 - Inline comments and comment blocks are **2 lines maximum** — this includes
   multi-line `#` blocks above a statement. State the what/why directly; if it
   needs more room, it belongs in a docstring.
-- Do **not** reference story/spec numbers (e.g. "story 030 §5.2", "Phase 4")
+- Do **not** reference story/spec numbers (e.g. "spec 030 §5.2", "Phase 4")
   in code comments **or docstrings**. Traceability lives in
-  `context/stories/`, not inline.
+  `context/specs/`, not inline.
 
 ## Code smells
 

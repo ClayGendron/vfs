@@ -33,7 +33,7 @@ In practice, that usually means reading:
 
 - the relevant backend or module in `src/vfs/`
 - the mirrored test file in `tests/`
-- the story in `context/stories/`
+- the spec in `context/specs/`
 - any standards doc that constrains the work
 
 If code, tests, and story disagree, do not guess. Resolve the active contract first.
@@ -135,7 +135,7 @@ That keeps integration tests consistent and makes failures easier to localize.
 If the shipped behavior changes in a way contributors or users need to know, update the nearest durable doc in the same change:
 
 - README for user-facing capability claims
-- `context/stories/...` for implementation prototypes or story notes
+- `context/specs/...` for implementation prototypes or spec notes
 - standards docs for reusable team practice
 
 ## Typical workflow for a strong contribution

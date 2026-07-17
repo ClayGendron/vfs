@@ -75,7 +75,7 @@ per op family. The settled details, argued in full in story 046:
   (`DatabaseStorage → PostgresStorage → MSSQLStorage`); user-facing
   classes like `PostgresFileSystem` remain as thin constructor wiring.
 
-Spike evidence (both files in `context/stories/046-storage-composition-decision/`,
+Spike evidence (both files in `context/specs/archive/046-storage-composition-decision/`,
 executed 2026-07-04): `spike_inherited.py` — a `storage=True` subclass
 defining no impls passes `ty` clean and crashes only at dispatch;
 `spike_composed.py` — the same omission against the protocol fails `ty`
@@ -97,4 +97,4 @@ type-checks unchanged.
   and MCP mounts (034) are reached through public methods and never see
   this decision.
 
-Executed by story 049 (`context/stories/049-storage-backend-protocol/`).
+Executed by story 049 (`context/specs/archive/049-storage-backend-protocol/`).

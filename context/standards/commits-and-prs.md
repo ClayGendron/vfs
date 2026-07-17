@@ -58,7 +58,7 @@ CI runs `ruff format --check`. Skipping step 1 has cost real CI time and forced 
 
 - Title: imperative, under 70 chars, mirrors the leading commit subject.
 - Description: a `## Summary` (1–3 bullets) and a `## Test plan` (what was checked).
-- Link to the relevant story (`context/stories/NNN-slug/`) or decision (`context/decisions/NNN-slug.md`) if one exists.
+- Link to the relevant spec (`context/specs/NNN-slug/`) or decision (`context/decisions/NNN-slug.md`) if one exists.
 - Don't open PRs you wouldn't review yourself. Read the diff before assigning a reviewer.
 
 ## Review

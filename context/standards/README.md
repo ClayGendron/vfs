@@ -12,7 +12,7 @@ How-we-build. Conventions, patterns, and procedural skills that shape code witho
 ## What does not belong here
 
 - Immutable rules (→ `constitution.md`)
-- Story-specific design (→ `stories/`)
+- Spec-specific design (→ `../specs/`)
 - Historical decisions (→ `decisions/`)
 
 ## Organizing

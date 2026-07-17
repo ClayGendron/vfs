@@ -1,37 +1,50 @@
 # /context
 
-The durable memory of this project. Everything an AI agent or a new human contributor needs to understand **what** we're building, **why**, and **how we build it** — separated from the code itself.
+The durable memory of this project. Everything an AI agent or a new human
+contributor needs to understand **what** we're building, **why**, and **how
+we build it** — separated from the code itself.
 
-Code is a build artifact of this context. When code and context disagree, fix the code (unless the context is demonstrably wrong, in which case fix the context first).
+Code is a build artifact of this context. When code and context disagree,
+fix the code (unless the context is demonstrably wrong, in which case fix
+the context first).
 
-## Structure
+## The pipeline
+
+We work **research → decide → specify → code**, all while following
+standards. Each directory is one stage:
 
 ```
 context/
-  constitution.md       # immutable principles — read before every task
-  open-questions.md     # unknowns, undecided, parked items
-  product/
-    mission.md          # what we're building and for whom
-    roadmap.md          # ordered direction, not a commitment
-  standards/            # how-we-build: conventions, patterns, skills
-  stories/              # per-story packages (001-foo, 002-bar) — features,
-                        #   analyses, experiments, migrations
-    NNN-slug/
-      spec.md           # WHAT & WHY — intent, scope, acceptance criteria
-      plan.md           # HOW — approach, trade-offs
-      tasks.md          # DO — ordered executable task list
-      research.md       # optional — captured exploration
-  decisions/            # ADRs: point-in-time choices with rationale
-  learnings/            # research, post-mortems, shared insights
+  README.md             # this map
+  open-questions.md     # intake: unknowns, undecided calls, parked ideas
+  research/             # RESEARCH — dated memos: raw study of precedent
+  decisions/            # DECIDE — ADRs: point-in-time choices, append-only
+  specs/                # SPECIFY — open work packages, single-dev scope
+  standards/            # FOLLOW — rarely-changing governing docs + grades/
 ```
 
-## The three-file rule for stories
+## Lifecycle rules
 
-Every story is a folder with at least `spec.md` (WHAT), `plan.md` (HOW), `tasks.md` (DO). A story can be a feature, an analysis, an experiment, a migration — any discrete unit of intentional work. This separation is load-bearing:
+The directory names matter less than the flow contract between them:
 
-- **spec.md** stays stable as tech choices change
-- **plan.md** can be regenerated when the spec is solid
-- **tasks.md** is ephemeral — shipped stories can archive or delete it
+- **`research/`** — append-mostly, date-prefixed (`YYYY-MM-DD-slug.md`),
+  never edited after the fact (supersede with a newer memo). Raw study of
+  precedent, benchmarks, landscape. A research memo commits us to nothing.
+- **`decisions/`** — append-only ADRs. Each cites the research it stands on
+  and names what it supersedes. Where "we studied X" becomes "we will do Y."
+- **`specs/`** — **ephemeral by design.** Born from decisions, small enough
+  for one developer, self-contained enough to leave the repo. When a spec
+  lands, its durable residue flows *backward* — decisions made during
+  implementation → `decisions/`, research done along the way → `research/`
+  — and then the spec is deleted. Git history is the archive.
+  (`specs/archive/` holds pre-reorg landed stories pending that mining.)
+- **`standards/`** — versioned, rarely changed, and the only directory the
+  other three must obey. Holds the constitution, mission, roadmap, the
+  how-we-build standards, the quality rubric, and the `grades/` time series.
+
+The backward-flow rule is the key design point: it is what makes specs
+safely deletable and keeps `decisions/` and `research/` as the permanent
+memory.
 
 ## Clarification over guessing
 
@@ -41,7 +54,8 @@ When authoring any document here, mark uncertainty explicitly:
 [NEEDS CLARIFICATION: which auth method — OAuth, SSO, email/password?]
 ```
 
-Never silently guess. The marker is a first-class citizen and should be surfaced in reviews.
+Never silently guess. The marker is a first-class citizen, should be
+surfaced in reviews, and gets a pointer in `open-questions.md`.
 
 ## Conventions
 
@@ -49,4 +63,5 @@ Never silently guess. The marker is a first-class citizen and should be surfaced
 - Each document has a frontmatter-free header: title, status, date, owner
 - Cross-reference liberally with relative links
 - Prefer small, focused documents over monoliths
-- `learnings/` is append-mostly; `decisions/` is append-only (supersede, don't rewrite)
+- `research/` is append-mostly; `decisions/` is append-only (supersede,
+  don't rewrite)

@@ -17,13 +17,13 @@ stands today — is the **path**. Edges encode their endpoints as
 `source_path`/`target_path` strings, so a rename must rewrite every
 edge row under the moved subtree or lineage silently severs. The
 2026-07-08 stable-ID evaluation
-(`context/learnings/2026-07-08-stable-id-namespace-proposal.md`)
+(`context/research/2026-07-08-stable-id-namespace-proposal.md`)
 judged this a live defect and sketched a remediation series (stories
 059–066); story 072 then had to choose whether to port the database
 backend onto the defective schema, sequence the series first, or land
 directly on the target schema.
 
-The nine-repo reference review (story 072 `research.md` §1) settled
+The nine-repo reference review (story 072's research memo, now `context/research/2026-07-13-database-storage-backend.md`, §1) settled
 the substance unanimously — six repos speak to the fork and all land
 on stable identity with a parent pointer:
 
@@ -133,6 +133,6 @@ Amendments absorbed from the reference review while confirming (c):
   keys dependent rows on path — or exposes the integer surrogate as a
   public name — is out of spec.
 
-Executes through story 072 (`context/stories/072-database-storage-backend/`).
-Evidence: story 072 `research.md` §1;
-`context/learnings/2026-07-08-stable-id-namespace-proposal.md` §§2–3.
+Executes through story 072 (`context/specs/072-database-storage-backend/`).
+Evidence: `context/research/2026-07-13-database-storage-backend.md` §1;
+`context/research/2026-07-08-stable-id-namespace-proposal.md` §§2–3.
