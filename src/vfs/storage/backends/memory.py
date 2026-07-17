@@ -34,7 +34,9 @@ from dataclasses import dataclass
 from dataclasses import replace as clone_row
 from typing import TYPE_CHECKING, Literal
 
-from vfs.models import Match, Observation
+from pydantic import ValidationError
+
+from vfs.models import Entry, Match, Observation
 from vfs.paths import Path, edge_out_path, extract_extension
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage import storage_ops
@@ -43,7 +45,6 @@ from vfs.storage.replace import replace
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from vfs.models import Entry
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind
     from vfs.storage import ResolvedPair
@@ -284,23 +285,12 @@ class InMemoryStorage:
     async def write(
         self,
         *,
-        path: Path | None = None,
-        content: str | None = None,
-        entries: list[Entry] | None = None,
+        entries: list[Entry],
         overwrite: bool = True,
         parents: bool = False,
         user_id: str | None = None,
     ) -> Result:
-        if entries is not None:
-            return self._write_entries(entries, overwrite=overwrite, parents=parents)
-        if path is None or content is None:
-            return _fail("write", VFSErrorKind.invalid, "write requires path and content, or entries")
-        staged = dict(self._rows)
-        outcome = self._put_file(staged, "write", path, content, kind="file", overwrite=overwrite, parents=parents)
-        if isinstance(outcome, Result):
-            return outcome
-        self._rows = staged
-        return Result(ops=("write",), observations=[self._observe(path, staged[path], status=outcome)])
+        return self._write_entries(entries, overwrite=overwrite, parents=parents)
 
     async def edit(
         self,
@@ -333,6 +323,13 @@ class InMemoryStorage:
                 content = outcome.content
             if failed is not None:
                 errors.append(failed)
+                continue
+            try:
+                # Edits synthesize content, so the result re-enters the same
+                # gate writes pass: Entry owns every content invariant.
+                Entry(path=target, kind=row.kind, content=content)
+            except ValidationError as exc:
+                errors.append(_classified(VFSErrorKind.invalid, exc.errors()[0]["msg"], target))
                 continue
             staged[target] = clone_row(row, content=content, revision=self._next_revision())
             edited.append(target)

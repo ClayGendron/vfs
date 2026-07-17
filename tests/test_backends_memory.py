@@ -60,19 +60,10 @@ def test_traits_declares_the_scan_tier_within_the_vocabulary() -> None:
         assert value in TRAIT_VALUES[key]
 
 
-async def test_write_with_neither_shape_is_invalid() -> None:
-    # The router's ingress gate normally refuses this; the backend still
-    # defends when called directly.
-    storage = InMemoryStorage()
-    result = await storage.write()
-    assert result.success is False
-    assert result.errors[0].kind == VFSErrorKind.invalid
-
-
 async def test_grep_allow_scan_is_a_strict_no_op() -> None:
     # This backend is already the scan tier: the opt-out changes nothing.
     storage = InMemoryStorage()
-    await storage.write(path=Path("/a.txt"), content="needle here")
+    await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle here")])
     default = await storage.grep(pattern="needle")
     opted = await storage.grep(pattern="needle", allow_scan=True)
     assert default.observations == opted.observations
@@ -86,7 +77,7 @@ async def test_grep_allow_scan_is_a_strict_no_op() -> None:
 
 async def test_write_content_is_unsupported_without_allow_files() -> None:
     storage = InMemoryStorage(allow_files=False)
-    result = await storage.write(path=Path("/a.txt"), content="x")
+    result = await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
     assert result.success is False
     assert result.errors[0].kind == VFSErrorKind.unsupported
     assert "directories only" in result.errors[0].message
@@ -154,8 +145,8 @@ async def test_read_of_an_edge_row_names_the_actual_kind() -> None:
     # The refusal kind is wrong_kind either way; the prose an agent reads
     # must not call a directly-addressed edge projection a directory.
     storage = InMemoryStorage()
-    await storage.write(path=Path("/src.py"), content="x")
-    await storage.write(path=Path("/dst.py"), content="x")
+    await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
+    await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
     edge = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
     result = await storage.read(path=edge.observations[0].path)
     assert result.success is False
@@ -167,8 +158,8 @@ async def test_read_of_an_edge_row_names_the_actual_kind() -> None:
 async def test_mkedge_mints_meta_ancestors_exempt_from_the_strict_parent_rule() -> None:
     # No prior mkdir under /.vfs was ever done — mkedge mints its own frame.
     storage = InMemoryStorage()
-    await storage.write(path=Path("/src.py"), content="x")
-    await storage.write(path=Path("/dst.py"), content="x")
+    await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
+    await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
     result = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
     assert result.success is True
     edge_path = result.observations[0].path

@@ -38,11 +38,20 @@ from vfs.storage.replace import EditOperation
 
 
 async def test_write_localizes_path_and_passes_kwargs() -> None:
+    # The single form is router sugar: storage receives a localized,
+    # validated Entry — raw path/content never cross the storage seam.
     root = VirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     await root.write(path="/m/f.txt", content="x", overwrite=False)
-    assert child.calls == [("write", {"path": "/f.txt", "content": "x", "overwrite": False, "parents": False})]
+    op, kwargs = child.calls[0]
+    assert op == "write"
+    [entry] = kwargs["entries"]
+    assert entry.path == "/f.txt"
+    assert entry.content == "x"
+    assert entry.kind == "file"
+    assert kwargs["overwrite"] is False
+    assert kwargs["parents"] is False
 
 
 async def test_edit_wraps_old_new_into_edits_list() -> None:

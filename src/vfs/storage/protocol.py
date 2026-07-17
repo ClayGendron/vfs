@@ -209,9 +209,7 @@ class SupportsMutation(Protocol):
     async def write(
         self,
         *,
-        path: Path | None = None,
-        content: str | None = None,
-        entries: list[Entry] | None = None,
+        entries: list[Entry],
         overwrite: bool = True,
         parents: bool = False,
         user_id: str | None = None,

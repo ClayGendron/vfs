@@ -244,7 +244,12 @@ class TestDDL:
     def test_meta_table_enforces_the_single_row(self, tables: VFSTables) -> None:
         engine = create_engine("sqlite://")
         tables.metadata.create_all(engine)
-        row = {"id": 1, "schema_format_version": SCHEMA_FORMAT_VERSION, "mount_identity": "0" * ULID_LENGTH}
+        row = {
+            "id": 1,
+            "schema_format_version": SCHEMA_FORMAT_VERSION,
+            "mount_identity": "0" * ULID_LENGTH,
+            "revision_counter": 0,
+        }
         with engine.begin() as conn:
             conn.execute(insert(tables.meta), [row])
         with pytest.raises(IntegrityError), engine.begin() as conn:

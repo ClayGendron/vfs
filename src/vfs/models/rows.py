@@ -273,14 +273,19 @@ def build_vfs_tables(
 
     # Single-row mount metadata: the schema-format version first touch
     # verifies, the durable mount identity that keys the per-mount advisory
-    # lock, and the current-epoch pointer whose one-row flip publishes a
-    # rebuilt gram index atomically.
+    # lock, the revision high-water mark, and the current-epoch pointer whose
+    # one-row flip publishes a rebuilt gram index atomically.
+    # ``revision_counter`` is the per-mount monotone sequence — a durable
+    # high-water mark, never MAX(revision): permanent deletes shrink the max,
+    # and a regressed counter re-stamps values at or below a published index
+    # watermark (the silent-false-negative class the dirty overlay forbids).
     meta = Table(
         f"{table_name}_meta",
         metadata,
         Column("id", Integer, primary_key=True, autoincrement=False),
         Column("schema_format_version", Integer, nullable=False),
         Column("mount_identity", String(ULID_LENGTH), nullable=False),
+        Column("revision_counter", BigInteger, nullable=False),
         Column("current_gram_epoch", Integer),
         Column("created_at", DateTime(timezone=True)),
         CheckConstraint("id = 1", name=f"ck_{table_name}_meta_single_row"),

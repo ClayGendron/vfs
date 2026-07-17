@@ -264,6 +264,7 @@ class EngineHost:
                 id=1,
                 schema_format_version=SCHEMA_FORMAT_VERSION,
                 mount_identity=str(ULID()),
+                revision_counter=0,
                 created_at=now,
             )
         )

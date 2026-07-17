@@ -19,8 +19,9 @@ from sqlalchemy import insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from ulid import ULID
 
+from vfs.models import Entry
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
-from vfs.paths import Path
+from vfs.paths import ObjectKind, Path
 from vfs.results import VFSErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
@@ -687,16 +688,12 @@ class TestUnlandedVerbStubs:
 
     async def test_unlanded_verbs_refuse_as_unsupported(self, tmp_path) -> None:
         from vfs.storage import ResolvedPair
-        from vfs.storage.replace import EditOperation
 
         storage = DatabaseStorage(url=_url(tmp_path))
         pair = [ResolvedPair(src=Path("/a"), dest=Path("/b"))]
         calls = [
             storage.grep(pattern="x"),
-            storage.write(path=Path("/a"), content="x"),
-            storage.edit(edits=[EditOperation(old="a", new="b")], path=Path("/a")),
             storage.delete(path=Path("/a")),
-            storage.mkdir(path=Path("/a")),
             storage.move(operations=pair),
             storage.copy(operations=pair),
             storage.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports"),
@@ -705,12 +702,12 @@ class TestUnlandedVerbStubs:
             result = await call
             assert result.success is False
             assert result.errors[0].kind == VFSErrorKind.unsupported
-        stubbed = {"grep", "write", "edit", "delete", "mkdir", "move", "copy", "mkedge"}
-        assert storage.capabilities() == {"read", "stat", "ls", "tree", "glob"}
+        stubbed = {"grep", "delete", "move", "copy", "mkedge"}
+        assert storage.capabilities() == {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir"}
         assert storage.capabilities().isdisjoint(stubbed)
         await storage.close()
 
-    async def test_stub_verbs_surface_the_first_touch_refusal(self, tmp_path) -> None:
+    async def test_mutation_verbs_surface_the_first_touch_refusal(self, tmp_path) -> None:
         seeded = DatabaseStorage(url=_url(tmp_path))
         await seeded.first_touch()
         meta = seeded._host.tables.meta
@@ -718,7 +715,7 @@ class TestUnlandedVerbStubs:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
         stale = DatabaseStorage(url=_url(tmp_path))
-        result = await stale.write(path=Path("/a"), content="x")
+        result = await stale.write(entries=[Entry(path=Path("/a"), content="x")])
         assert result.errors[0].kind == VFSErrorKind.schema_mismatch
         await stale.close()
 
@@ -783,3 +780,228 @@ class TestPoolExhaustion:
         assert result.errors[0].retryable is True
         await storage.close()
         await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Mutation core — DB-specific contract beyond the conformance suite
+# ---------------------------------------------------------------------------
+
+
+class TestWriteMechanics:
+    """One transaction per batch, bounded statements, durable revision counter."""
+
+    async def test_failed_batch_commits_nothing_including_the_counter(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        good = await storage.write(entries=[Entry(path=Path("/keep.txt"), content="x")])
+        assert good.success is True
+        tables = storage._host.tables
+        async with storage._host.engine.connect() as conn:
+            counter_before = (await conn.execute(select(tables.meta.c.revision_counter))).scalar_one()
+            rows_before = len((await conn.execute(select(tables.entry.c.id))).all())
+        bad = await storage.write(
+            entries=[Entry(path=Path("/new.txt"), content="y"), Entry(path=Path("/ghost/deep.txt"), content="z")]
+        )
+        assert bad.success is False
+        async with storage._host.engine.connect() as conn:
+            counter_after = (await conn.execute(select(tables.meta.c.revision_counter))).scalar_one()
+            rows_after = len((await conn.execute(select(tables.entry.c.id))).all())
+            orphans = (await conn.execute(select(tables.content.c.entry_id))).all()
+        assert counter_after == counter_before  # the allocation rolled back too
+        assert rows_after == rows_before
+        assert len(orphans) == 1  # /keep.txt only
+        await storage.close()
+
+    async def test_batch_statement_count_is_bounded_by_tables_not_entries(self, tmp_path) -> None:
+        from sqlalchemy import event
+
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        entries = [Entry(path=Path(f"/f{i:03}.txt"), content=f"body {i}") for i in range(100)]
+        result = await storage.write(entries=entries)
+        assert result.success is True
+        assert len(result.observations) == 100
+        # BEGIN + plan select + counter update/select + one insert chunk +
+        # content delete/insert + parent bump — O(tables), never O(entries).
+        assert len(statements) <= 12, statements
+        await storage.close()
+
+    async def test_revision_counter_survives_restart(self, tmp_path) -> None:
+        first = DatabaseStorage(url=_url(tmp_path))
+        await first.write(entries=[Entry(path=Path("/a.txt"), content="1")])
+        before = (await first.stat(path=Path("/a.txt"))).observations[0].revision
+        assert before is not None
+        await first.close()
+        second = DatabaseStorage(url=_url(tmp_path))
+        await second.write(entries=[Entry(path=Path("/a.txt"), content="2")])
+        after = (await second.stat(path=Path("/a.txt"))).observations[0].revision
+        assert after is not None
+        assert after > before
+        await second.close()
+
+    async def test_overwrite_restamps_the_owner(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")], user_id="alice")
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="b")], user_id="bob")
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            owner = (await conn.execute(select(entry.c.owner_id).where(entry.c.path == "/f.txt"))).scalar_one()
+        assert owner == "bob"
+        await storage.close()
+
+    async def test_over_key_byte_budget_classifies_unaddressable(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        storage._host._profile = replace(storage._host.profile, key_byte_budget=32)
+        long_path = Path("/" + "x" * 60 + ".txt")
+        written = await storage.write(entries=[Entry(path=long_path, content="x")])
+        assert written.success is False
+        assert written.errors[0].kind == VFSErrorKind.unaddressable
+        made = await storage.mkdir(path=Path("/" + "d" * 60))
+        assert made.success is False
+        assert made.errors[0].kind == VFSErrorKind.unaddressable
+        await storage.close()
+
+
+class TestTrashWriteRefusal:
+    """The reserved trash namespace is never a write target."""
+
+    async def test_writes_into_trash_classify_invalid_and_mint_nothing(self, tmp_path) -> None:
+        # Entry validation already refuses inferred content under the
+        # reserved skeleton; the backend guard covers what still constructs.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        written = await storage.write(
+            entries=[Entry(path=Path("/.vfs/trash/bucket/x.txt"), kind="file", content="x")], parents=True
+        )
+        assert written.success is False
+        assert written.errors[0].kind == VFSErrorKind.invalid
+        as_dir = await storage.write(
+            entries=[Entry(path=Path("/.vfs/trash/bucket"), kind="directory")], parents=True
+        )
+        assert as_dir.success is False
+        assert as_dir.errors[0].kind == VFSErrorKind.invalid
+        made = await storage.mkdir(path=Path("/.vfs/trash/bucket"), parents=True)
+        assert made.success is False
+        assert made.errors[0].kind == VFSErrorKind.invalid
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            minted = (await conn.execute(select(entry.c.path).where(entry.c.path.like("/.vfs%")))).all()
+        assert minted == []  # nothing minted, not even ancestors
+        await storage.close()
+
+    async def test_meta_paths_outside_trash_still_write(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        version = Path("/.vfs/docs/a.txt/__meta__/versions/1")
+        result = await storage.write(
+            entries=[Entry(path=version, kind="version", content="v1")], parents=True
+        )
+        assert result.success is True
+        assert (await storage.read(path=version)).observations[0].content == "v1"
+        await storage.close()
+
+
+class TestArbitration:
+    """Both arbitration arms resolve conflicts the plan could not see."""
+
+    async def test_catch_retry_arm_serves_the_write_family(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        storage._host._profile = replace(storage._host.profile, arbitration="catch_retry")
+        result = await storage.write(
+            entries=[Entry(path=Path("/d"), kind="directory"), Entry(path=Path("/d/f.txt"), content="x")]
+        )
+        assert result.success is True
+        assert (await storage.read(path=Path("/d/f.txt"))).observations[0].content == "x"
+        again = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="y")])
+        assert again.observations[0].status == "updated"
+        await storage.close()
+
+    async def test_resolve_rows_converts_or_classifies_per_occupant(self, tmp_path) -> None:
+        from vfs.storage.backends.database.writes import _entry_values, _resolve_rows, _Staged
+
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="rival")])
+        await storage.mkdir(path=Path("/dir"))
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            root_id = (await conn.execute(select(entry.c.id).where(entry.c.path == "/"))).scalar_one()
+            now = datetime.now(UTC)
+
+            def staged_for(path: str, kind: ObjectKind) -> _Staged:
+                return _Staged(path=Path(path), parent=Path("/"), kind=kind, created=True, content="mine")
+
+            # overwrite=True over a rival file: converted to a clobbering update.
+            clobber = staged_for("/f.txt", "file")
+            errors = await _resolve_rows(
+                session, entry, [clobber], [_entry_values(clobber, root_id, None, now)], overwrite=True
+            )
+            assert errors == []
+            assert clobber.created is False and clobber.entry_id is not None and clobber.base_revision is None
+
+            # overwrite=False over a rival file: a definite exists outcome.
+            refused = staged_for("/f.txt", "file")
+            errors = await _resolve_rows(
+                session, entry, [refused], [_entry_values(refused, root_id, None, now)], overwrite=False
+            )
+            assert [e.kind for e in errors] == [VFSErrorKind.exists]
+
+            # overwrite=True where the rival is a directory: wrong_kind.
+            blocked = staged_for("/dir", "file")
+            errors = await _resolve_rows(
+                session, entry, [blocked], [_entry_values(blocked, root_id, None, now)], overwrite=True
+            )
+            assert [e.kind for e in errors] == [VFSErrorKind.wrong_kind]
+
+            # a directory create losing to any occupant: exists.
+            dir_loss = staged_for("/dir", "directory")
+            errors = await _resolve_rows(
+                session, entry, [dir_loss], [_entry_values(dir_loss, root_id, None, now)], overwrite=True
+            )
+            assert [e.kind for e in errors] == [VFSErrorKind.exists]
+        await storage.close()
+
+    async def test_stale_guard_classifies_conflict(self, tmp_path) -> None:
+        from vfs.storage.backends.database.writes import _Staged, _update_materials
+
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")])
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            row = (await conn.execute(select(entry.c.id).where(entry.c.path == "/f.txt"))).one()
+            stale = _Staged(
+                path=Path("/f.txt"),
+                parent=Path("/"),
+                kind="file",
+                created=False,
+                content="b",
+                entry_id=row.id,
+                base_revision=999_999,  # a rival moved the row past our snapshot
+                revision=1_000_000,
+            )
+            errors = await _update_materials(session, entry, [stale], user_id=None, now=datetime.now(UTC))
+        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert "Concurrent modification" in errors[0].message
+        await storage.close()
+
+    def test_upsert_constructor_is_dialect_bound(self) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        from vfs.storage.backends.database.dialects import POSTGRESQL, SQLITE
+        from vfs.storage.backends.database.writes import _upsert_constructor
+
+        assert _upsert_constructor(SQLITE) is sqlite_insert
+        assert _upsert_constructor(POSTGRESQL) is pg_insert

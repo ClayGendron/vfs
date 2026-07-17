@@ -1,14 +1,16 @@
-"""``DatabaseStorage`` — the portable SQL backend (read family + glob).
+"""``DatabaseStorage`` — the portable SQL backend (reads, glob, mutation core).
 
 Runs on any SQLAlchemy-compatible database: known dialects carry tuned
 policy, everything else serves on the generic floor (``dialects.py``).
 The read family and glob are live — point reads with projection
 push-down, ``parent_id`` listings, sargable prefix-LIKE subtrees, and
 the descent-ladder classification chokepoint (``descent.py`` /
-``reads.py``). The mutation family and grep are stubbed to a classified
-refusal and ``capabilities()`` is hand-declared per pass — capabilities
-stay honest mid-story, and the router never routes to an undeclared
-family.
+``reads.py``) — as is the mutation core: write/edit/mkdir batches
+planned and executed as one transaction each (``writes.py``). The
+topology verbs (delete/move/copy), ``mkedge``, and grep are stubbed to
+a classified refusal and ``capabilities()`` is hand-declared per pass —
+capabilities stay honest mid-story, and the router never routes to an
+undeclared family.
 
     storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")     # built
     storage = DatabaseStorage(session_factory=app_sessionmaker)         # borrowed
@@ -33,6 +35,7 @@ from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, targets_of, tree_rows
+from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -46,8 +49,8 @@ if TYPE_CHECKING:
     from vfs.storage.replace import EditOperation
 
 # Hand-declared per pass: family derivation would over-declare while
-# grep and the mutation verbs are still classified stubs.
-_LANDED_OPS: Final[frozenset[Op]] = frozenset({"read", "stat", "ls", "tree", "glob"})
+# grep and the topology verbs are still classified stubs.
+_LANDED_OPS: Final[frozenset[Op]] = frozenset({"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir"})
 
 
 class DatabaseStorage:
@@ -194,20 +197,30 @@ class DatabaseStorage:
         return await self._stub("grep")
 
     # -------------------------------------------------------------------
-    # Mutation family — stubbed until its slices land
+    # Mutation core — write / edit / mkdir; topology verbs still stubbed
     # -------------------------------------------------------------------
 
     async def write(
         self,
         *,
-        path: Path | None = None,
-        content: str | None = None,
-        entries: list[Entry] | None = None,
+        entries: list[Entry],
         overwrite: bool = True,
         parents: bool = False,
         user_id: str | None = None,
     ) -> Result:
-        return await self._stub("write")
+        return await self._execute_write(
+            "write",
+            lambda session: write_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.parameter_budget,
+                entries=entries,
+                overwrite=overwrite,
+                parents=parents,
+                user_id=user_id,
+            ),
+        )
 
     async def edit(
         self,
@@ -217,7 +230,19 @@ class DatabaseStorage:
         observations: list[Observation] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        return await self._stub("edit")
+        targets = targets_of(path, observations)
+        return await self._execute_write(
+            "edit",
+            lambda session: edit_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.parameter_budget,
+                edits=edits,
+                targets=targets,
+                user_id=user_id,
+            ),
+        )
 
     async def delete(
         self,
@@ -238,7 +263,19 @@ class DatabaseStorage:
         exist_ok: bool = False,
         user_id: str | None = None,
     ) -> Result:
-        return await self._stub("mkdir")
+        return await self._execute_write(
+            "mkdir",
+            lambda session: mkdir_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.parameter_budget,
+                path=path,
+                parents=parents,
+                exist_ok=exist_ok,
+                user_id=user_id,
+            ),
+        )
 
     async def move(
         self,
@@ -301,6 +338,32 @@ class DatabaseStorage:
         except (SQLAlchemyError, OSError) as exc:
             # SQLAlchemyError, not just DBAPIError: pool exhaustion
             # (TimeoutError) is an operating condition, never a raise.
+            return Result(ops=(op,), errors=[self._host.classify_failure(exc, context=op)])
+
+    async def _execute_write(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
+        """One batch = one writer transaction, committed iff the plan succeeded.
+
+        The connection carries ``vfs_writer`` so SQLite opens the
+        transaction ``BEGIN IMMEDIATE`` — the write lock is held from the
+        plan's first read. A retryable outcome discards the session and
+        restarts the whole method from that first read; a failed plan
+        returns classified errors and the session rolls back on exit.
+        """
+        refusal = await self._host.ensure_ready()
+        if refusal is not None:
+            return Result(ops=(op,), errors=[refusal])
+
+        async def attempt() -> Result:
+            async with self._host.session_factory() as session:
+                await session.connection(execution_options={"vfs_writer": True})
+                result = await fn(session)
+                if result.success:
+                    await session.commit()
+                return result
+
+        try:
+            return await self._host.with_retry(attempt)
+        except (SQLAlchemyError, OSError) as exc:
             return Result(ops=(op,), errors=[self._host.classify_failure(exc, context=op)])
 
     async def _stub(self, op: str) -> Result:

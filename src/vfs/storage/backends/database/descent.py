@@ -118,6 +118,15 @@ def in_meta(path: Path) -> bool:
     return path == METADATA_ROOT or path.startswith(METADATA_ROOT + "/")
 
 
+def in_trash(path: Path) -> bool:
+    """Whether *path* addresses into the reserved internal trash subtree.
+
+    Ingress never admits these paths, but backends take bare ``Path``
+    objects — a write allowed here would mint rows no read verb can see.
+    """
+    return path == TRASH_ROOT or path.startswith(TRASH_ROOT + "/")
+
+
 def escape_like(text: str) -> str:
     """Escape LIKE metacharacters so *text* matches only itself as a prefix."""
     return (

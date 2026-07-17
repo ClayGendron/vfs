@@ -39,6 +39,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 
+from pydantic import ValidationError
+
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
@@ -733,7 +735,10 @@ class VirtualFileSystem:
 
         Batch entries route by their own paths — grouped per entry,
         rebased, and gated per row before anything dispatches. *entries*
-        and *path*/*content* are mutually exclusive.
+        and *path*/*content* are mutually exclusive. The single form is
+        sugar: this gate constructs the validated :class:`Entry`, and
+        storage only ever receives entries — raw content never crosses
+        the storage seam.
 
         The parent chain must already exist as directories;
         ``parents=True`` mints the missing ancestors, ``mkdir -p`` style,
@@ -746,15 +751,20 @@ class VirtualFileSystem:
             return refusal
         if entries is not None:
             return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, user_id=user_id)
-        return await self._route_single(
-            "write",
-            path,
-            None,
-            content=content,
-            overwrite=overwrite,
-            parents=parents,
-            user_id=user_id,
-        )
+        if path is None or content is None:
+            return self._error(
+                "write requires path and content, or entries",
+                kind=VFSErrorKind.invalid,
+                op="write",
+            )
+        resolved = resolve_path(path, mutation=True)
+        if resolved.path is None:
+            return self._invalid_path(resolved, path, "write")
+        try:
+            entry = Entry(path=str(resolved.path), content=content)
+        except ValidationError as exc:
+            return self._error(exc.errors()[0]["msg"], kind=VFSErrorKind.invalid, op="write")
+        return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, user_id=user_id)
 
     async def edit(
         self,

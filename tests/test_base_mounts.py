@@ -22,7 +22,7 @@ from base_doubles import (
 )
 from vfs.base import Binding, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
-from vfs.models import Observation
+from vfs.models import Entry, Observation
 from vfs.paths import Path
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
@@ -146,7 +146,7 @@ async def test_add_mount_mkdir_failure_raises_mount_error_with_evidence() -> Non
     # The prose stays a ValueError match for string-matching callers; the
     # structured ResultError list rides on the typed exception.
     root = VirtualFileSystem(storage=InMemoryStorage())
-    await root.write(path="/site", content="x")
+    await root.write(entries=[Entry(path="/site", content="x")])
     with pytest.raises(MountError, match="Cannot mount at /site") as exc:
         await root.add_mount(InMemoryStorage(), "/site")
     assert isinstance(exc.value, ValueError)
@@ -157,7 +157,7 @@ async def test_remove_mount_rmdir_failure_raises_mount_error_with_evidence() -> 
     backend = InMemoryStorage()
     root = VirtualFileSystem(storage=backend)
     await root.add_mount(InMemoryStorage(name="child"), "/m")
-    await backend.write(path=Path("/m/foreign.txt"), content="secret")  # bypasses the router
+    await backend.write(entries=[Entry(path=Path("/m/foreign.txt"), content="secret")])  # bypasses the router
     with pytest.raises(MountError, match="removing its directory failed") as exc:
         await root.remove_mount("/m")
     assert exc.value.errors[0].kind is VFSErrorKind.not_empty
@@ -392,7 +392,7 @@ async def test_remove_mount_of_a_non_empty_directory_fails_loud_and_leaves_it() 
     backend = InMemoryStorage()
     root = VirtualFileSystem(storage=backend)
     await root.add_mount(InMemoryStorage(name="child"), "/m")
-    await backend.write(path=Path("/m/foreign.txt"), content="secret")  # bypasses the router entirely
+    await backend.write(entries=[Entry(path=Path("/m/foreign.txt"), content="secret")])  # bypasses the router entirely
     with pytest.raises(ValueError, match="removing its directory failed"):
         await root.remove_mount("/m")
     assert Path("/m") not in root._bindings  # the unbind half stands
@@ -507,7 +507,7 @@ async def test_close_cancellation_parks_disposal_for_a_retry() -> None:
     [
         lambda fs: fs.read("/f.txt"),
         lambda fs: fs.ls("/"),
-        lambda fs: fs.write(path="/f.txt", content="x"),
+        lambda fs: fs.write(entries=[Entry(path="/f.txt", content="x")]),
         lambda fs: fs.glob("*.py"),
         lambda fs: fs.mkedge("/a.py", "/b.py", "imports"),
         lambda fs: fs.move(src="/a", dest="/b"),
@@ -631,7 +631,7 @@ async def test_readonly_root_makes_a_writable_mount_readonly() -> None:
     root = VirtualFileSystem(storage=backend, permissions="read")
     child = RecorderStorage()
     await root.bind(child, "/scratch", permissions="read_write")
-    result = await root.write(path="/scratch/f.txt", content="x")
+    result = await root.write(entries=[Entry(path="/scratch/f.txt", content="x")])
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.read_only
     assert child.calls == []
