@@ -49,7 +49,12 @@ from ulid import ULID
 
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.results import ResultError, VFSErrorKind
-from vfs.storage.backends.database.dialects import DialectProfile, is_retryable, profile_for
+from vfs.storage.backends.database.dialects import (
+    DialectProfile,
+    is_retryable,
+    membership_budget,
+    profile_for,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -127,6 +132,11 @@ class EngineHost:
     def parameter_budget(self) -> int:
         """Bind params per statement — SQLAlchemy's own declared datum."""
         return self._policy().dialect.insertmanyvalues_max_parameters
+
+    @property
+    def membership_budget(self) -> int:
+        """Elements per ``IN``-list chunk under this dialect's budgets."""
+        return membership_budget(self.profile, self.parameter_budget)
 
     async def ensure_ready(self) -> ResultError | None:
         """Idempotent first touch; ``None`` when the mount is serving."""

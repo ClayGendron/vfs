@@ -12,26 +12,41 @@ classification).
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import event, insert, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from ulid import ULID
 
-from vfs.models import Entry
+from vfs.models import Entry, Observation
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import ObjectKind, Path
 from vfs.results import VFSErrorKind
-from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose, SupportsTraits
+from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import (
     GENERIC,
+    MSSQL,
     POSTGRESQL,
     SQLITE,
     is_retryable,
+    membership_budget,
     profile_for,
 )
+from vfs.storage.backends.database.engine import EngineHost
+from vfs.storage.backends.database.staging import StagedEntry
+from vfs.storage.backends.database.writes import (
+    _entry_values,
+    _resolve_rows,
+    _update_materials,
+    _upsert_constructor,
+)
+from vfs.storage.replace import EditOperation
 
 
 def _url(tmp_path) -> str:
@@ -422,8 +437,6 @@ class TestReadFamily:
         assert "Is a directory" in result.errors[0].message
 
     async def test_read_batch_keeps_good_rows_and_classifies_misses(self, storage: DatabaseStorage) -> None:
-        from vfs.models import Observation
-
         targets = [Observation(path=Path("/docs/a.txt")), Observation(path=Path("/missing.txt"))]
         result = await storage.read(observations=targets)
         assert result.success is False
@@ -458,8 +471,6 @@ class TestReadFamily:
             assert result.errors[0].path == "/top.txt"
 
     async def test_sibling_misses_under_one_dead_ancestor_stay_distinct(self, storage: DatabaseStorage) -> None:
-        from vfs.models import Observation
-
         targets = [Observation(path=Path("/dead/x")), Observation(path=Path("/dead/y"))]
         result = await storage.stat(observations=targets)
         assert len(result.errors) == 2
@@ -642,10 +653,6 @@ class TestReadFailureHandling:
         await storage.close()
 
     async def test_with_retry_restarts_on_a_retryable_error(self, tmp_path) -> None:
-        from sqlalchemy.exc import DBAPIError
-
-        from vfs.storage.backends.database.engine import EngineHost
-
         host = EngineHost(url=_url(tmp_path), retry_base_delay=0.001)
         calls = 0
 
@@ -661,10 +668,6 @@ class TestReadFailureHandling:
         await host.close()
 
     async def test_with_retry_gives_up_after_the_attempt_budget(self, tmp_path) -> None:
-        from sqlalchemy.exc import DBAPIError
-
-        from vfs.storage.backends.database.engine import EngineHost
-
         host = EngineHost(url=_url(tmp_path), retry_attempts=2, retry_base_delay=0.001)
 
         async def always_busy() -> None:
@@ -679,8 +682,6 @@ class TestUnlandedVerbStubs:
     """Every undeclared verb refuses classified; capabilities stay honest."""
 
     async def test_unlanded_verbs_refuse_as_unsupported(self, tmp_path) -> None:
-        from vfs.storage import ResolvedPair
-
         storage = DatabaseStorage(url=_url(tmp_path))
         pair = [ResolvedPair(src=Path("/a"), dest=Path("/b"))]
         calls = [
@@ -802,8 +803,6 @@ class TestWriteMechanics:
         await storage.close()
 
     async def test_batch_statement_count_is_bounded_by_tables_not_entries(self, tmp_path) -> None:
-        from sqlalchemy import event
-
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         statements: list[str] = []
@@ -822,8 +821,6 @@ class TestWriteMechanics:
         await storage.close()
 
     async def test_write_statement_counts_are_pinned(self, tmp_path) -> None:
-        from sqlalchemy import event
-
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         statements: list[str] = []
@@ -883,8 +880,6 @@ class TestWriteMechanics:
         await storage.close()
 
     async def test_over_key_byte_budget_classifies_unaddressable(self, tmp_path) -> None:
-        from dataclasses import replace
-
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         storage._host._profile = replace(storage._host.profile, key_byte_budget=32)
@@ -936,8 +931,6 @@ class TestArbitration:
     """Both arbitration arms resolve conflicts the plan could not see."""
 
     async def test_catch_retry_arm_serves_the_write_family(self, tmp_path) -> None:
-        from dataclasses import replace
-
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         storage._host._profile = replace(storage._host.profile, arbitration="catch_retry")
@@ -950,9 +943,24 @@ class TestArbitration:
         assert again.observations[0].status == "updated"
         await storage.close()
 
-    async def test_resolve_rows_converts_or_classifies_per_occupant(self, tmp_path) -> None:
-        from vfs.storage.backends.database.writes import _entry_values, _resolve_rows, _Staged
+    async def test_catch_retry_serves_engines_without_multirow_insert(self, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        storage._host._profile = replace(storage._host.profile, arbitration="catch_retry")
+        # Oracle's posture: no multirow VALUES — the insert must take
+        # driver executemany and recover ids via the chunked read-back.
+        monkeypatch.setattr(storage._host.engine.sync_engine.dialect, "supports_multivalues_insert", False)
+        entries = [Entry(path=Path(f"/bulk/d{i // 10}/f{i:03}.txt"), content=f"v{i}") for i in range(50)]
+        written = await storage.write(entries=entries, parents=True)
+        assert written.success is True, written.errors[:3]
+        created = [o for o in written.observations if str(o.path).endswith(".txt")]
+        assert len(created) == 50
+        assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"
+        again = await storage.write(entries=[Entry(path=Path("/bulk/d0/f007.txt"), content="y")])
+        assert again.observations[0].status == "updated"
+        await storage.close()
 
+    async def test_resolve_rows_converts_or_classifies_per_occupant(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="rival")])
         await storage.mkdir(path=Path("/dir"))
@@ -962,8 +970,8 @@ class TestArbitration:
             root_id = (await conn.execute(select(entry.c.id).where(entry.c.path == "/"))).scalar_one()
             now = datetime.now(UTC)
 
-            def staged_for(path: str, kind: ObjectKind) -> _Staged:
-                return _Staged(path=Path(path), parent=Path("/"), kind=kind, created=True, content="mine")
+            def staged_for(path: str, kind: ObjectKind) -> StagedEntry:
+                return StagedEntry(path=Path(path), parent=Path("/"), kind=kind, created=True, content="mine")
 
             # overwrite=True over a rival file: converted to a clobbering update.
             clobber = staged_for("/f.txt", "file")
@@ -996,15 +1004,13 @@ class TestArbitration:
         await storage.close()
 
     async def test_stale_guard_classifies_conflict(self, tmp_path) -> None:
-        from vfs.storage.backends.database.writes import _Staged, _update_materials
-
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")])
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
             conn = await session.connection(execution_options={"vfs_writer": True})
             row = (await conn.execute(select(entry.c.id).where(entry.c.path == "/f.txt"))).one()
-            stale = _Staged(
+            stale = StagedEntry(
                 path=Path("/f.txt"),
                 parent=Path("/"),
                 kind="file",
@@ -1014,17 +1020,73 @@ class TestArbitration:
                 base_revision=999_999,  # a rival moved the row past our snapshot
                 revision=1_000_000,
             )
-            errors = await _update_materials(session, entry, [stale], user_id=None, now=datetime.now(UTC))
+            budget = storage._host.membership_budget
+            errors = await _update_materials(session, entry, budget, [stale], user_id=None, now=datetime.now(UTC))
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
         assert "Concurrent modification" in errors[0].message
         await storage.close()
 
     def test_upsert_constructor_is_dialect_bound(self) -> None:
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
-        from vfs.storage.backends.database.dialects import POSTGRESQL, SQLITE
-        from vfs.storage.backends.database.writes import _upsert_constructor
-
         assert _upsert_constructor(SQLITE) is sqlite_insert
         assert _upsert_constructor(POSTGRESQL) is pg_insert
+
+
+class TestMembershipChunking:
+    """No statement grows unboundedly with batch size — the ETL contract.
+
+    Every membership predicate (``path IN``, ``id IN``, glob's anchor
+    fan) chunks by ``membership_budget`` and merges, so a batch's SQL
+    stays within every engine's limits (Oracle's 1,000-element IN floor,
+    MSSQL's 2,100 bind params) regardless of N.
+    """
+
+    def test_membership_budget_honors_both_caps(self) -> None:
+        # The generic floor is Oracle's 1,000-element IN-list cap.
+        assert membership_budget(GENERIC, 32_700) == 1_000
+        # A parameter-capped engine binds through the tighter budget.
+        assert membership_budget(MSSQL, 2_099) == 2_099 - 32
+        # Degenerate budgets never chunk below one element.
+        assert membership_budget(GENERIC, 8) == 1
+
+    async def test_tiny_budget_batch_survives_every_verb(self, tmp_path, monkeypatch) -> None:
+        # Budget 48 → membership 16: far below the batch size, so every
+        # membership site must chunk-and-merge to serve correctly.
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        paths = [Path(f"/etl/part{i:02}/f{i:03}.txt") for i in range(60)]
+        written = await storage.write(
+            entries=[Entry(path=p, content=f"row {i}") for i, p in enumerate(paths)], parents=True
+        )
+        assert written.success is True, written.errors
+        stats = await storage.stat(observations=written.observations)
+        assert {str(o.path) for o in stats.observations} >= {str(p) for p in paths}
+        edited = await storage.edit(
+            edits=[EditOperation(old="row", new="line")],
+            observations=[o for o in written.observations if o.path in paths],
+        )
+        assert edited.success is True, edited.errors
+        reread = await storage.read(path=paths[0])
+        assert reread.observations[0].content == "line 0"
+        # Misses beyond the budget still classify per-target, and glob's
+        # scope fan chunks: 60 anchors at 8 per statement.
+        misses = await storage.stat(observations=[Observation(path=Path(f"/ghost/g{i}.txt")) for i in range(40)])
+        assert len(misses.errors) == 40
+        assert {e.kind for e in misses.errors} == {VFSErrorKind.not_found}
+        scoped = await storage.glob(pattern="*.txt", paths=tuple(p.parent_dir for p in paths))
+        assert len(scoped.observations) == 60
+        await storage.close()
+
+    async def test_ten_thousand_entry_batch_round_trips(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [
+            Entry(path=Path(f"/lake/d{i // 500:02}/r{i:05}.json"), content=f'{{"row": {i}}}') for i in range(10_000)
+        ]
+        written = await storage.write(entries=entries, parents=True)
+        assert written.success is True, written.errors[:3]
+        created = [o for o in written.observations if str(o.path).endswith(".json")]
+        assert len(created) == 10_000
+        assert all(o.status == "created" for o in created)
+        stats = await storage.stat(observations=created)
+        assert stats.success is True, stats.errors[:3]
+        assert len(stats.observations) == 10_000
+        await storage.close()

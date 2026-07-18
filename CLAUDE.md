@@ -18,6 +18,44 @@ getting there as a planning detail, not a reason to shrink the idea. Green
 means each landing leaves the tree working; it does not mean changes must be
 small.
 
+### Production posture: real databases, real scale, two audiences
+
+vfs is built to run in production, not just to pass a demo. Two audiences
+share the same storage backend and both are first-class:
+
+- **Agents** doing read → edit → write and search loops (small batches,
+  latency-sensitive, high concurrency).
+- **ETL devs and data pipelines** doing bulk ingest and transform —
+  **batches of 10,000+ files in a single call are a supported contract,
+  not an edge case.** Every write/read builder must stay correct and
+  bounded at that size.
+
+Consequences that bind design work:
+
+- **Never assume SQLite.** Production runs on Postgres, SQL Server,
+  Oracle, and other SQLAlchemy-compatible engines; SQLite is the dev/test
+  default, not the target. A design that only works within SQLite's
+  generous limits is a bug. The tightest known engine caps are the floor
+  to design against (e.g. Oracle's 1,000-element `IN`-list limit,
+  ORA-01795; SQL Server's ~2,100 bind parameters).
+- **No statement may grow unboundedly with batch size.** Any `IN (...)`
+  list, bulk insert, or bulk update must chunk by a declared budget and
+  merge results. Bind-parameter budgets come from SQLAlchemy where it
+  models them (`dialect.insertmanyvalues_max_parameters`); the `IN`-list
+  element cap, which SQLAlchemy does **not** model, is a declared
+  per-dialect `DialectProfile` field (`in_list_budget`). The chunk size
+  is `membership_budget(profile, parameter_budget)` — the tighter of the
+  two caps — and the shared `chunked()` helper does the slicing. See
+  `storage/backends/database/dialects.py`.
+- **Lean on SQLAlchemy; keep profiles lightweight.** Read facts off the
+  live `Dialect` object rather than hardcoding them. A `DialectProfile`
+  field is justified only for a decision SQLAlchemy takes no position on
+  (arbitration mode, key-byte budget, `IN`-list cap, isolation pins).
+  Before adding a profile constant, check whether SQLAlchemy already
+  exposes it.
+- **Unknown dialects are served, not refused** — they resolve to the
+  conservative `GENERIC` floor stamped with their own name.
+
 ### Live code vs archived reference: `src/`+`tests/` vs `src2/`+`tests2/`
 
 - **`src/` and `tests/` are live.** New and updated code and tests go here;

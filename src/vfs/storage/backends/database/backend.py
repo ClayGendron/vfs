@@ -102,7 +102,10 @@ class DatabaseStorage:
         user_id: str | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
-        return await self._execute("read", lambda session: read_rows(session, self._host.tables, targets, columns))
+        return await self._execute(
+            "read",
+            lambda session: read_rows(session, self._host.tables, self._host.membership_budget, targets, columns),
+        )
 
     async def stat(
         self,
@@ -113,7 +116,10 @@ class DatabaseStorage:
         user_id: str | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
-        return await self._execute("stat", lambda session: stat_rows(session, self._host.tables, targets, columns))
+        return await self._execute(
+            "stat",
+            lambda session: stat_rows(session, self._host.tables, self._host.membership_budget, targets, columns),
+        )
 
     async def ls(
         self,
@@ -124,7 +130,9 @@ class DatabaseStorage:
         user_id: str | None = None,
     ) -> Result:
         targets = targets_of(path, observations, default=ROOT)
-        return await self._execute("ls", lambda session: ls_rows(session, self._host.tables, targets, columns))
+        return await self._execute(
+            "ls", lambda session: ls_rows(session, self._host.tables, self._host.membership_budget, targets, columns)
+        )
 
     async def tree(
         self,
@@ -140,7 +148,10 @@ class DatabaseStorage:
                 errors=[ResultError(kind=VFSErrorKind.invalid, message=f"max_depth must be >= 1, got {max_depth}")],
             )
         return await self._execute(
-            "tree", lambda session: tree_rows(session, self._host.tables, path, max_depth, columns)
+            "tree",
+            lambda session: tree_rows(
+                session, self._host.tables, self._host.membership_budget, path, max_depth, columns
+            ),
         )
 
     # -------------------------------------------------------------------
@@ -164,6 +175,7 @@ class DatabaseStorage:
             lambda session: glob_rows(
                 session,
                 self._host.tables,
+                self._host.membership_budget,
                 pattern=pattern,
                 scope=scope,
                 ext=ext,
@@ -215,6 +227,7 @@ class DatabaseStorage:
                 self._host.tables,
                 self._host.profile,
                 self._host.parameter_budget,
+                self._host.membership_budget,
                 entries=entries,
                 overwrite=overwrite,
                 parents=parents,
@@ -238,6 +251,7 @@ class DatabaseStorage:
                 self._host.tables,
                 self._host.profile,
                 self._host.parameter_budget,
+                self._host.membership_budget,
                 edits=edits,
                 targets=targets,
                 user_id=user_id,
@@ -270,6 +284,7 @@ class DatabaseStorage:
                 self._host.tables,
                 self._host.profile,
                 self._host.parameter_budget,
+                self._host.membership_budget,
                 path=path,
                 parents=parents,
                 exist_ok=exist_ok,

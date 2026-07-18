@@ -23,7 +23,10 @@ never by message text.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
 
 # ---------------------------------------------------------------------------
 # Profiles
@@ -35,17 +38,21 @@ class DialectProfile:
     """One engine's declared policy.
 
     ``key_byte_budget`` caps index-key bytes on path/name columns (a
-    lawful path over it classifies at the backend); ``arbitration``
-    names how concurrent create resolves (native upsert vs
-    catch-and-retry — the portable fallback). ``session_settings`` run
-    at every op-session start (connection state a borrowed pool cannot
-    be assumed to carry); ``file_settings`` run once at first touch
-    (database-file state). Isolation pins are ``None`` where the
+    lawful path over it classifies at the backend); ``in_list_budget``
+    caps elements per ``IN`` expression list — a limit SQLAlchemy does
+    not model and some engines enforce independently of bind-parameter
+    count (Oracle's ORA-01795 at 1,000 is the generic floor);
+    ``arbitration`` names how concurrent create resolves (native upsert
+    vs catch-and-retry — the portable fallback). ``session_settings``
+    run at every op-session start (connection state a borrowed pool
+    cannot be assumed to carry); ``file_settings`` run once at first
+    touch (database-file state). Isolation pins are ``None`` where the
     engine's default is the declared choice.
     """
 
     name: str
     key_byte_budget: int
+    in_list_budget: int
     arbitration: Literal["upsert", "catch_retry"]
     op_isolation: str | None = None
     topology_isolation: str | None = None
@@ -58,6 +65,7 @@ class DialectProfile:
 SQLITE: Final = DialectProfile(
     name="sqlite",
     key_byte_budget=4_096,
+    in_list_budget=32_766,
     arbitration="upsert",
     session_settings=(
         "PRAGMA busy_timeout = 5000",
@@ -77,6 +85,7 @@ SQLITE: Final = DialectProfile(
 POSTGRESQL: Final = DialectProfile(
     name="postgresql",
     key_byte_budget=2_704,
+    in_list_budget=65_535,
     arbitration="upsert",
     op_isolation="REPEATABLE READ",
     topology_isolation="READ COMMITTED",
@@ -85,14 +94,16 @@ POSTGRESQL: Final = DialectProfile(
 MSSQL: Final = DialectProfile(
     name="mssql",
     key_byte_budget=1_700,
+    in_list_budget=2_100,
     arbitration="catch_retry",
 )
 
 # The floor for engines this project has not measured: the tightest known
-# key budget, no settings, serialization-failure SQLSTATEs only.
+# key and IN-list budgets, no settings, serialization-failure SQLSTATEs only.
 GENERIC: Final = DialectProfile(
     name="generic",
     key_byte_budget=1_700,
+    in_list_budget=1_000,
     arbitration="catch_retry",
 )
 
@@ -114,6 +125,33 @@ def profile_for(dialect_name: str) -> DialectProfile:
     if known is not None:
         return known
     return replace(GENERIC, name=dialect_name)
+
+
+# ---------------------------------------------------------------------------
+# Statement chunking — membership predicates never outgrow an engine
+# ---------------------------------------------------------------------------
+
+# Bind params held back from each membership chunk for a statement's
+# fixed predicates (trash/liveness filters, projection, depth caps).
+_FILTER_BIND_RESERVE: Final = 32
+
+
+def membership_budget(profile: DialectProfile, parameter_budget: int) -> int:
+    """Elements per ``IN``-list chunk: the element cap net of fixed binds.
+
+    Every membership predicate (``path IN``, ``id IN``, glob's anchor
+    fan) chunks by this and merges results, so batch size never reaches
+    an engine limit — the ETL contract that 10,000+-entry batches serve
+    on every dialect.
+    """
+    return max(1, min(profile.in_list_budget, parameter_budget - _FILTER_BIND_RESERVE))
+
+
+def chunked[T](items: Sequence[T], size: int) -> Iterator[Sequence[T]]:
+    """Slices of *items* at most *size* long, in order."""
+    step = max(1, size)
+    for index in range(0, len(items), step):
+        yield items[index : index + step]
 
 
 # ---------------------------------------------------------------------------

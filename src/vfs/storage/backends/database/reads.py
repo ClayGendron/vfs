@@ -35,11 +35,12 @@ from vfs.storage.backends.database.descent import (
     liveness_filters,
     trash_filters,
 )
+from vfs.storage.backends.database.dialects import chunked
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sqlalchemy import ColumnElement, Select
+    from sqlalchemy import ColumnElement, Select, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,22 +111,24 @@ def effective_columns(columns: frozenset[str] | None, *, content: bool) -> froze
 async def read_rows(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=True)
-    rows, errors = await _point_rows(session, tables, targets, fetched, content_only=True)
+    rows, errors = await _point_rows(session, tables, membership, targets, fetched, content_only=True)
     return Result(ops=("read",), observations=rows, errors=errors)
 
 
 async def stat_rows(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
-    rows, errors = await _point_rows(session, tables, targets, fetched, content_only=False)
+    rows, errors = await _point_rows(session, tables, membership, targets, fetched, content_only=False)
     return Result(ops=("stat",), observations=rows, errors=errors)
 
 
@@ -137,13 +140,14 @@ async def stat_rows(
 async def ls_rows(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    anchors = await _mappings_by_path(session, tables, targets, fetched, with_id=True)
-    miss_errors = await _miss_errors(session, tables, targets, anchors)
+    anchors = await _mappings_by_path(session, tables, membership, targets, fetched, with_id=True)
+    miss_errors = await _miss_errors(session, tables, membership, targets, anchors)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
@@ -166,16 +170,17 @@ async def ls_rows(
 async def tree_rows(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     path: Path,
     max_depth: int | None,
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    anchors = await _mappings_by_path(session, tables, [path], fetched, with_id=False)
+    anchors = await _mappings_by_path(session, tables, membership, [path], fetched, with_id=False)
     anchor = anchors.get(path)
     if anchor is None:
-        return Result(ops=("tree",), errors=[(await classify_misses(session, entry, [path]))[0]])
+        return Result(ops=("tree",), errors=[(await classify_misses(session, entry, [path], membership))[0]])
     if anchor["kind"] != "directory":
         return Result(ops=("tree",), observations=[_observe(anchor, fetched)])
     prefix = "" if path == ROOT else escape_like(str(path))
@@ -203,6 +208,7 @@ async def tree_rows(
 async def glob_rows(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     *,
     pattern: str,
     scope: tuple[Path, ...],
@@ -223,22 +229,10 @@ async def glob_rows(
         filters.append(subject_column.like(like, escape=LIKE_ESCAPE))
     else:
         filters.append(subject_column.like(escape_like(_literal_prefix(pattern)) + "%", escape=LIKE_ESCAPE))
-    if scope and ROOT not in scope:
-        filters.append(
-            or_(
-                *(
-                    or_(
-                        entry.c.path == str(anchor),
-                        entry.c.path.like(escape_like(str(anchor)) + "/%", escape=LIKE_ESCAPE),
-                    )
-                    for anchor in scope
-                ),
-            ),
-        )
-    stmt = select(*_entry_columns(entry, fetched)).where(*filters).order_by(entry.c.path)
+    candidates = await _glob_candidates(session, entry, membership, scope, filters, fetched)
     wanted_ext = frozenset(e.lstrip(".").lower() for e in ext)
     rows: list[Observation] = []
-    for mapping in (await session.execute(stmt)).mappings():
+    for mapping in candidates:
         if max_count is not None and len(rows) >= max_count:
             break
         candidate = Path(mapping["path"])
@@ -259,14 +253,15 @@ async def glob_rows(
 async def _point_rows(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     targets: Sequence[Path],
     fetched: frozenset[str],
     *,
     content_only: bool,
 ) -> tuple[list[Observation], list[ResultError]]:
     """Fetch, classify, and observe *targets* one row at a time, in order."""
-    found = await _mappings_by_path(session, tables, targets, fetched, with_id=False)
-    miss_errors = await _miss_errors(session, tables, targets, found)
+    found = await _mappings_by_path(session, tables, membership, targets, fetched, with_id=False)
+    miss_errors = await _miss_errors(session, tables, membership, targets, found)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
@@ -286,29 +281,67 @@ async def _point_rows(
 async def _mappings_by_path(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     targets: Sequence[Path],
     fetched: frozenset[str],
     *,
     with_id: bool,
 ) -> dict[str, RowMapping]:
-    """One ``path IN`` select for the batch, keyed by the stored path string."""
+    """Chunked ``path IN`` selects for the batch, keyed by the stored path string."""
     if not targets:
         return {}
     entry = tables.entry
-    stmt = _entry_select(tables, fetched, with_id=with_id).where(
-        entry.c.path.in_([str(t) for t in targets]), *trash_filters(entry)
-    )
-    return {mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()}
+    found: dict[str, RowMapping] = {}
+    for chunk in chunked(sorted({str(t) for t in targets}), membership):
+        stmt = _entry_select(tables, fetched, with_id=with_id).where(entry.c.path.in_(chunk), *trash_filters(entry))
+        found.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
+    return found
+
+
+async def _glob_candidates(
+    session: AsyncSession,
+    entry: Table,
+    membership: int,
+    scope: tuple[Path, ...],
+    filters: list[ColumnElement[bool]],
+    fetched: frozenset[str],
+) -> list[RowMapping]:
+    """Prefiltered candidate rows in path order; scope anchors fan out chunked.
+
+    Each anchor costs two binds (equality + prefix LIKE), so chunks hold
+    ``membership // 2`` anchors; the merge dict dedupes rows nested
+    anchors both match, and one Python sort restores path order —
+    codepoint order equals the binary-collated column's byte order.
+    """
+    columns = _entry_columns(entry, fetched)
+    if not scope or ROOT in scope:
+        stmt = select(*columns).where(*filters).order_by(entry.c.path)
+        return list((await session.execute(stmt)).mappings())
+    merged: dict[str, RowMapping] = {}
+    for chunk in chunked(sorted({str(anchor) for anchor in scope}), max(1, membership // 2)):
+        fan = or_(
+            *(
+                or_(
+                    entry.c.path == anchor,
+                    entry.c.path.like(escape_like(anchor) + "/%", escape=LIKE_ESCAPE),
+                )
+                for anchor in chunk
+            ),
+        )
+        result = await session.execute(select(*columns).where(*filters, fan))
+        merged.update({mapping["path"]: mapping for mapping in result.mappings()})
+    return [merged[path] for path in sorted(merged)]
 
 
 async def _miss_errors(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     targets: Sequence[Path],
     found: dict[str, RowMapping],
 ) -> dict[Path, ResultError]:
     misses = [target for target in targets if target not in found]
-    return dict(zip(misses, await classify_misses(session, tables.entry, misses), strict=True))
+    return dict(zip(misses, await classify_misses(session, tables.entry, misses, membership), strict=True))
 
 
 def _entry_select(tables: VFSTables, fetched: frozenset[str], *, with_id: bool) -> Select[Any]:
@@ -323,7 +356,7 @@ def _entry_select(tables: VFSTables, fetched: frozenset[str], *, with_id: bool) 
     return select(*columns, content.c.content).select_from(joined)
 
 
-def _entry_columns(entry: Any, fetched: frozenset[str]) -> list[Any]:
+def _entry_columns(entry: Table, fetched: frozenset[str]) -> list[Any]:
     return [entry.c[field] for field in sorted(fetched - {"content"})]
 
 
@@ -337,7 +370,7 @@ def _observe(mapping: RowMapping, fetched: frozenset[str]) -> Observation:
     return Observation(**values, populated=fetched)
 
 
-def _slash_count(entry: Any) -> ColumnElement[int]:
+def _slash_count(entry: Table) -> ColumnElement[int]:
     """Portable segment-depth expression: slashes in the path column."""
     return func.char_length(entry.c.path) - func.char_length(func.replace(entry.c.path, "/", ""))
 

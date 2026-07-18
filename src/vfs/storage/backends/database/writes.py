@@ -5,7 +5,9 @@ one ``path IN`` select fetches committed state for the batch's targets
 and ancestors, a pure staging pass replays the POSIX parent/site gates
 against committed-plus-staged state and accumulates classified per-entry
 errors, and only an error-free plan executes — a failed batch runs no
-mutation statement at all. Execution is a handful of bulk Core
+mutation statement at all. The staging half lives in ``staging.py``
+(``WritePlan`` and ``StagedEntry``); this module owns the read that seeds
+it and the execution that drains it. Execution is a handful of bulk Core
 statements in pinned order: entry inserts layered parents-before-children
 (chunked by the dialect's parameter budget), guarded material updates
 with a verification read, content delete-then-insert, and unconditional
@@ -24,9 +26,8 @@ per-mount counter, and no two entries' revisions are comparable.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final
 
 from pydantic import ValidationError
 from sqlalchemy import bindparam, delete, insert, select, update
@@ -41,14 +42,15 @@ from vfs.storage.backends.database.descent import (
     ancestor_chain,
     classified,
     classify_misses,
-    in_trash,
     trash_filters,
 )
+from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.backends.database.reads import CONTENT_KINDS
+from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.replace import replace
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Sequence
     from typing import Any
 
     from sqlalchemy import Table
@@ -56,11 +58,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import VFSTables
-    from vfs.paths import ObjectKind, Path
+    from vfs.paths import Path
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.replace import EditOperation
-
-_Status = Literal["created", "updated", "unchanged"]
 
 # Columns an overwrite clobbers when arbitration lands on a rival's row:
 # identity stays, revision increments SQL-side, material state is ours.
@@ -78,25 +78,6 @@ _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
 )
 
 
-@dataclass
-class _Staged:
-    """One path's planned final state: a create or a material update."""
-
-    path: Path
-    parent: Path
-    kind: ObjectKind
-    created: bool
-    content: str | None = None
-    content_hash: str | None = None
-    size_bytes: int = 0
-    lines: int = 0
-    ext: str | None = None
-    mime_type: str | None = None
-    entry_id: int | None = None  # committed id for updates; creates learn theirs at insert
-    base_revision: int | None = None  # the update guard; None = unguarded (arbitration clobber)
-    revision: int = 1  # creates mint 1; updates stage base + 1; clobbers learn theirs post-execution
-
-
 # ---------------------------------------------------------------------------
 # Write-family builders
 # ---------------------------------------------------------------------------
@@ -107,14 +88,15 @@ async def write_rows(
     tables: VFSTables,
     profile: DialectProfile,
     parameter_budget: int,
+    membership: int,
     *,
     entries: list[Entry],
     overwrite: bool,
     parents: bool,
     user_id: str | None,
 ) -> Result:
-    committed = await _fetch_committed(session, tables, {entry.path for entry in entries})
-    plan = _Plan(committed, user_id=user_id, budget=profile.key_byte_budget)
+    committed = await _fetch_committed(session, tables, membership, {entry.path for entry in entries})
+    plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     for entry in entries:
         if entry.kind == "directory":
             status = plan.put_dir(entry.path, parents=parents)
@@ -133,7 +115,7 @@ async def write_rows(
             )
         if status is not None:
             plan.pending.append((entry.path, status))
-    return await _finish(session, tables, profile, parameter_budget, plan, op="write", overwrite=overwrite)
+    return await _finish(session, tables, profile, parameter_budget, membership, plan, op="write", overwrite=overwrite)
 
 
 async def mkdir_rows(
@@ -141,28 +123,31 @@ async def mkdir_rows(
     tables: VFSTables,
     profile: DialectProfile,
     parameter_budget: int,
+    membership: int,
     *,
     path: Path,
     parents: bool,
     exist_ok: bool,
     user_id: str | None,
 ) -> Result:
-    committed = await _fetch_committed(session, tables, {path})
-    plan = _Plan(committed, user_id=user_id, budget=profile.key_byte_budget)
+    committed = await _fetch_committed(session, tables, membership, {path})
+    plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     if not plan.outside_trash(path):
         return Result(ops=("mkdir",), errors=plan.errors)
     occupant = plan.kind_of(path)
     if occupant is not None:
         if exist_ok and occupant == "directory":
             plan.pending.append((path, "unchanged"))
-            return await _finish(session, tables, profile, parameter_budget, plan, op="mkdir", overwrite=False)
+            return await _finish(
+                session, tables, profile, parameter_budget, membership, plan, op="mkdir", overwrite=False
+            )
         return Result(ops=("mkdir",), errors=[classified(VFSErrorKind.exists, f"Already exists: {path}", path)])
     if not plan.within_budget(path) or not plan.parent_gate(path, parents=parents, target=path):
         return Result(ops=("mkdir",), errors=plan.errors)
     minted = plan.mint_chain(path)
     plan.stage_create(path, kind="directory")
     plan.pending.extend((p, "created") for p in (*minted, path))
-    return await _finish(session, tables, profile, parameter_budget, plan, op="mkdir", overwrite=False)
+    return await _finish(session, tables, profile, parameter_budget, membership, plan, op="mkdir", overwrite=False)
 
 
 async def edit_rows(
@@ -170,15 +155,16 @@ async def edit_rows(
     tables: VFSTables,
     profile: DialectProfile,
     parameter_budget: int,
+    membership: int,
     *,
     edits: list[EditOperation],
     targets: Sequence[Path],
     user_id: str | None,
 ) -> Result:
-    committed = await _fetch_committed(session, tables, set(targets), with_content=True)
+    committed = await _fetch_committed(session, tables, membership, set(targets), with_content=True)
     misses = [t for t in dict.fromkeys(targets) if str(t) not in committed]
-    miss_errors = dict(zip(misses, await classify_misses(session, tables.entry, misses), strict=True))
-    plan = _Plan(committed, user_id=user_id, budget=profile.key_byte_budget)
+    miss_errors = dict(zip(misses, await classify_misses(session, tables.entry, misses, membership), strict=True))
+    plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     for target in targets:
         row = committed.get(str(target))
         if row is None:
@@ -218,7 +204,7 @@ async def edit_rows(
             mime_type=row["mime_type"],
         )
         plan.pending.append((target, "updated"))
-    return await _finish(session, tables, profile, parameter_budget, plan, op="edit", overwrite=True)
+    return await _finish(session, tables, profile, parameter_budget, membership, plan, op="edit", overwrite=True)
 
 
 # ---------------------------------------------------------------------------
@@ -226,249 +212,15 @@ async def edit_rows(
 # ---------------------------------------------------------------------------
 
 
-class _Plan:
-    """Staged batch state: the committed snapshot, staged rows, bumps, errors.
-
-    ``staged`` overlays ``committed`` for every gate, so entries in one
-    batch see the parents earlier entries minted; ``bumps`` collects the
-    committed directories whose membership changed, and ``bump_revisions``
-    holds their read-back values when an observation needs one. Any error
-    fails the batch whole — an errored plan is never executed.
-    """
-
-    def __init__(self, committed: dict[str, RowMapping], *, user_id: str | None, budget: int) -> None:
-        self.committed = committed
-        self.user_id = user_id
-        self.budget = budget
-        self.staged: dict[Path, _Staged] = {}
-        self.bumps: set[str] = set()
-        self.bump_revisions: dict[str, int] = {}
-        self.errors: list[ResultError] = []
-        self.pending: list[tuple[Path, _Status]] = []
-
-    def kind_of(self, path: Path) -> str | None:
-        staged = self.staged.get(path)
-        if staged is not None:
-            return staged.kind
-        row = self.committed.get(str(path))
-        return row["kind"] if row is not None else None
-
-    def outside_trash(self, path: Path) -> bool:
-        """Refuse the reserved trash subtree as a write target.
-
-        Rows minted there would be invisible to every read verb — a
-        write-only hole, since the liveness filter hides the trash scope.
-        """
-        if not in_trash(path):
-            return True
-        self.errors.append(
-            classified(
-                VFSErrorKind.invalid,
-                f"Cannot write into the reserved trash namespace: {path}",
-                path,
-                target=path,
-            )
-        )
-        return False
-
-    def within_budget(self, path: Path) -> bool:
-        """A lawful path can still exceed an engine's index-key byte cap."""
-        if len(str(path).encode()) <= self.budget:
-            return True
-        self.errors.append(
-            classified(
-                VFSErrorKind.unaddressable,
-                f"Path exceeds this engine's {self.budget}-byte key budget: {path}",
-                path,
-                target=path,
-            )
-        )
-        return False
-
-    def parent_gate(self, path: Path, *, parents: bool, target: Path) -> bool:
-        """The POSIX parent rule: wrong_kind is unconditional; absence needs the flag."""
-        for ancestor in ancestor_chain(path):
-            kind = self.kind_of(ancestor)
-            if kind is None:
-                if parents:
-                    return True
-                self.errors.append(
-                    classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
-                )
-                return False
-            if kind != "directory":
-                self.errors.append(
-                    classified(VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target)
-                )
-                return False
-        return True
-
-    def put_file(
-        self,
-        target: Path,
-        *,
-        kind: ObjectKind,
-        content: str | None,
-        content_hash: str | None,
-        size_bytes: int,
-        lines: int,
-        ext: str | None,
-        mime_type: str | None,
-        overwrite: bool,
-        parents: bool,
-    ) -> _Status | None:
-        """Gate and stage one content-bearing row; ``None`` means an error was appended."""
-        if not self.outside_trash(target) or not self.within_budget(target):
-            return None
-        if not self.parent_gate(target, parents=parents, target=target):
-            return None
-        occupant = self.kind_of(target)
-        if occupant is not None:
-            if occupant == "directory":
-                self.errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {target}", target))
-                return None
-            if not overwrite:
-                self.errors.append(classified(VFSErrorKind.exists, f"Already exists: {target}", target))
-                return None
-        self.mint_chain(target)
-        stage = self.stage_create if occupant is None else self.stage_update
-        stage(
-            target,
-            kind=kind,
-            content=content,
-            content_hash=content_hash,
-            size_bytes=size_bytes,
-            lines=lines,
-            ext=ext,
-            mime_type=mime_type,
-        )
-        return "created" if occupant is None else "updated"
-
-    def put_dir(self, target: Path, *, parents: bool) -> _Status | None:
-        if not self.outside_trash(target):
-            return None
-        occupant = self.kind_of(target)
-        if occupant is not None:
-            if occupant != "directory":
-                self.errors.append(classified(VFSErrorKind.wrong_kind, f"Not a directory: {target}", target))
-                return None
-            return "unchanged"
-        if not self.within_budget(target) or not self.parent_gate(target, parents=parents, target=target):
-            return None
-        self.mint_chain(target)
-        self.stage_create(target, kind="directory")
-        return "created"
-
-    def mint_chain(self, path: Path) -> list[Path]:
-        """Stage the missing ancestor directories of *path*, shallowest first."""
-        minted: list[Path] = []
-        for ancestor in ancestor_chain(path):
-            if self.kind_of(ancestor) is None:
-                self.stage_create(ancestor, kind="directory")
-                minted.append(ancestor)
-        return minted
-
-    def stage_create(
-        self,
-        path: Path,
-        *,
-        kind: ObjectKind,
-        content: str | None = None,
-        content_hash: str | None = None,
-        size_bytes: int = 0,
-        lines: int = 0,
-        ext: str | None = None,
-        mime_type: str | None = None,
-    ) -> None:
-        prior = self.staged.get(path)
-        if prior is not None:  # a repeat target folds into the one staged row
-            self._refresh(prior, kind, content, content_hash, size_bytes, lines, ext, mime_type)
-            return
-        self.staged[path] = _Staged(
-            path=path,
-            parent=path.parent_dir,
-            kind=kind,
-            created=True,
-            content=content,
-            content_hash=content_hash,
-            size_bytes=size_bytes,
-            lines=lines,
-            ext=ext,
-            mime_type=mime_type,
-        )
-        self.bump_parent(path)
-
-    def stage_update(
-        self,
-        path: Path,
-        *,
-        kind: ObjectKind,
-        content: str | None,
-        content_hash: str | None,
-        size_bytes: int,
-        lines: int,
-        ext: str | None,
-        mime_type: str | None,
-    ) -> None:
-        prior = self.staged.get(path)
-        if prior is not None:
-            self._refresh(prior, kind, content, content_hash, size_bytes, lines, ext, mime_type)
-            return
-        row = self.committed[str(path)]
-        self.staged[path] = _Staged(
-            path=path,
-            parent=path.parent_dir,
-            kind=kind,
-            created=False,
-            content=content,
-            content_hash=content_hash,
-            size_bytes=size_bytes,
-            lines=lines,
-            ext=ext,
-            mime_type=mime_type,
-            entry_id=row["id"],
-            base_revision=row["revision"],
-            revision=row["revision"] + 1,
-        )
-
-    def bump_parent(self, path: Path) -> None:
-        """Mark a namespace mutation at *path*: its committed parent gets a bump.
-
-        A batch-minted parent is skipped — its single fresh revision already
-        reflects the membership it was created with.
-        """
-        parent = path.parent_dir
-        if parent not in self.staged and str(parent) in self.committed:
-            self.bumps.add(str(parent))
-
-    def _refresh(
-        self,
-        prior: _Staged,
-        kind: ObjectKind,
-        content: str | None,
-        content_hash: str | None,
-        size_bytes: int,
-        lines: int,
-        ext: str | None,
-        mime_type: str | None,
-    ) -> None:
-        prior.kind = kind
-        prior.content = content
-        prior.content_hash = content_hash
-        prior.size_bytes = size_bytes
-        prior.lines = lines
-        prior.ext = ext
-        prior.mime_type = mime_type
-
-
 async def _fetch_committed(
     session: AsyncSession,
     tables: VFSTables,
+    membership: int,
     targets: set[Path],
     *,
     with_content: bool = False,
 ) -> dict[str, RowMapping]:
-    """One ``path IN`` select for the batch: targets, their ancestors, the root."""
+    """Chunked ``path IN`` selects for the batch: targets, ancestors, the root."""
     entry = tables.entry
     paths = {str(t) for t in targets} | {str(a) for t in targets for a in ancestor_chain(t)} | {"/"}
     columns: list[Any] = [
@@ -483,8 +235,11 @@ async def _fetch_committed(
     if with_content:
         columns.append(tables.content.c.content)
         source = entry.outerjoin(tables.content, tables.content.c.entry_id == entry.c.id)
-    stmt = select(*columns).select_from(source).where(entry.c.path.in_(sorted(paths)), *trash_filters(entry))
-    return {mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()}
+    committed: dict[str, RowMapping] = {}
+    for chunk in chunked(sorted(paths), membership):
+        stmt = select(*columns).select_from(source).where(entry.c.path.in_(chunk), *trash_filters(entry))
+        committed.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
+    return committed
 
 
 async def _finish(
@@ -492,7 +247,8 @@ async def _finish(
     tables: VFSTables,
     profile: DialectProfile,
     parameter_budget: int,
-    plan: _Plan,
+    membership: int,
+    plan: WritePlan,
     *,
     op: str,
     overwrite: bool,
@@ -500,7 +256,7 @@ async def _finish(
     """Execute an error-free plan and assemble the batch's observations."""
     if plan.errors:
         return Result(ops=(op,), errors=plan.errors)
-    late = await _apply(session, tables, profile, parameter_budget, plan, overwrite=overwrite)
+    late = await _apply(session, tables, profile, parameter_budget, membership, plan, overwrite=overwrite)
     if late:
         return Result(ops=(op,), errors=late)
     rows: list[Observation] = []
@@ -530,7 +286,8 @@ async def _apply(
     tables: VFSTables,
     profile: DialectProfile,
     parameter_budget: int,
-    plan: _Plan,
+    membership: int,
+    plan: WritePlan,
     *,
     overwrite: bool,
 ) -> list[ResultError]:
@@ -540,18 +297,18 @@ async def _apply(
     now = datetime.now(UTC)
     creates = [s for s in plan.staged.values() if s.created]
     errors = await _insert_creates(
-        session, tables.entry, profile, parameter_budget, creates, plan, overwrite=overwrite, now=now
+        session, tables.entry, profile, parameter_budget, membership, creates, plan, overwrite=overwrite, now=now
     )
     if errors:
         return errors
     # Arbitration may convert a create into a clobbering update of the
     # rival's row, so the update set is collected only after inserts ran.
     updates = [s for s in plan.staged.values() if not s.created]
-    errors = await _update_materials(session, tables.entry, updates, user_id=plan.user_id, now=now)
+    errors = await _update_materials(session, tables.entry, membership, updates, user_id=plan.user_id, now=now)
     if errors:
         return errors
-    await _replace_content(session, tables.content, list(plan.staged.values()))
-    await _bump_parents(session, tables.entry, plan)
+    await _replace_content(session, tables.content, membership, list(plan.staged.values()))
+    await _bump_parents(session, tables.entry, membership, plan)
     return []
 
 
@@ -560,8 +317,9 @@ async def _insert_creates(
     entry: Table,
     profile: DialectProfile,
     parameter_budget: int,
-    creates: list[_Staged],
-    plan: _Plan,
+    membership: int,
+    creates: list[StagedEntry],
+    plan: WritePlan,
     *,
     overwrite: bool,
     now: datetime,
@@ -569,7 +327,7 @@ async def _insert_creates(
     """Bulk-insert created rows, parents before children, arbitrating conflicts."""
     if not creates:
         return []
-    by_depth: dict[int, list[_Staged]] = {}
+    by_depth: dict[int, list[StagedEntry]] = {}
     for staged in creates:
         by_depth.setdefault(str(staged.path).count("/"), []).append(staged)
     for depth in sorted(by_depth):
@@ -579,7 +337,9 @@ async def _insert_creates(
         if profile.arbitration == "upsert":
             errors = await _upsert_layer(session, entry, profile, layer, rows, per_statement, overwrite=overwrite)
         else:
-            errors = await _catch_retry_layer(session, entry, layer, rows, per_statement, overwrite=overwrite)
+            errors = await _catch_retry_layer(
+                session, entry, layer, rows, per_statement, membership, overwrite=overwrite
+            )
         if errors:
             # Fail fast: children of an unresolved parent cannot be wired.
             return errors
@@ -590,7 +350,7 @@ async def _upsert_layer(
     session: AsyncSession,
     entry: Table,
     profile: DialectProfile,
-    layer: list[_Staged],
+    layer: list[StagedEntry],
     rows: list[dict[str, Any]],
     per_statement: int,
     *,
@@ -610,7 +370,7 @@ async def _upsert_layer(
     files = [(s, r) for s, r in pairs if s.kind != "directory"]
     errors: list[ResultError] = []
     for group, clobber in ((directories, False), (files, overwrite)):
-        for chunk in _chunked(group, per_statement):
+        for chunk in chunked(group, per_statement):
             stmt = constructor(entry).values([r for _, r in chunk])
             if clobber:
                 # A clobbered rival's revision increments off the target row,
@@ -641,21 +401,36 @@ async def _upsert_layer(
 async def _catch_retry_layer(
     session: AsyncSession,
     entry: Table,
-    layer: list[_Staged],
+    layer: list[StagedEntry],
     rows: list[dict[str, Any]],
     per_statement: int,
+    membership: int,
     *,
     overwrite: bool,
 ) -> list[ResultError]:
-    """Portable arbitration: savepointed bulk insert, per-row resolution on conflict."""
+    """Portable arbitration: savepointed bulk insert, per-row resolution on conflict.
+
+    Engines whose live dialect declares multirow ``VALUES`` support take
+    the chunked ``INSERT ... VALUES (...), (...) RETURNING`` fast path;
+    the rest (Oracle among them) take driver executemany, and the ids
+    come back through a chunked ``path IN`` read of the layer's rows.
+    """
+    multirow = session.get_bind().dialect.supports_multivalues_insert
+    returned: dict[str, int] = {}
     try:
         async with session.begin_nested():
-            returned: dict[str, int] = {}
-            for chunk in _chunked(rows, per_statement):
-                result = await session.execute(insert(entry).values(chunk).returning(entry.c.id, entry.c.path))
-                returned.update({mapping["path"]: mapping["id"] for mapping in result.mappings()})
+            if multirow:
+                for chunk in chunked(rows, per_statement):
+                    result = await session.execute(insert(entry).values(chunk).returning(entry.c.id, entry.c.path))
+                    returned.update({mapping["path"]: mapping["id"] for mapping in result.mappings()})
+            else:
+                await session.execute(insert(entry), rows)
     except IntegrityError:
         return await _resolve_rows(session, entry, layer, rows, overwrite=overwrite)
+    if not multirow:
+        for chunk in chunked(sorted(row["path"] for row in rows), membership):
+            result = await session.execute(select(entry.c.id, entry.c.path).where(entry.c.path.in_(chunk)))
+            returned.update({mapping["path"]: mapping["id"] for mapping in result.mappings()})
     for staged in layer:
         staged.entry_id = returned[str(staged.path)]
     return []
@@ -664,7 +439,7 @@ async def _catch_retry_layer(
 async def _resolve_rows(
     session: AsyncSession,
     entry: Table,
-    layer: list[_Staged],
+    layer: list[StagedEntry],
     rows: list[dict[str, Any]],
     *,
     overwrite: bool,
@@ -702,7 +477,8 @@ async def _resolve_rows(
 async def _update_materials(
     session: AsyncSession,
     entry: Table,
-    updates: list[_Staged],
+    membership: int,
+    updates: list[StagedEntry],
     *,
     user_id: str | None,
     now: datetime,
@@ -749,10 +525,10 @@ async def _update_materials(
     if unguarded:
         stmt = update(entry).where(entry.c.id == bindparam("b_id")).values(**material, revision=entry.c.revision + 1)
         await session.execute(stmt, [_update_params(s, user_id, now) for s in unguarded])
-    check = await session.execute(
-        select(entry.c.id, entry.c.revision).where(entry.c.id.in_([s.entry_id for s in updates]))
-    )
-    actual = {row.id: row.revision for row in check}
+    actual: dict[int, int] = {}
+    for chunk in chunked([s.entry_id for s in updates], membership):
+        check = await session.execute(select(entry.c.id, entry.c.revision).where(entry.c.id.in_(chunk)))
+        actual.update({row.id: row.revision for row in check})
     errors: list[ResultError] = []
     for staged in updates:
         observed = actual.get(staged.entry_id)
@@ -764,16 +540,21 @@ async def _update_materials(
     return errors
 
 
-async def _replace_content(session: AsyncSession, content: Table, staged: list[_Staged]) -> None:
-    """Delete-then-insert the batch's content rows — portable, idempotent."""
+async def _replace_content(session: AsyncSession, content: Table, membership: int, staged: list[StagedEntry]) -> None:
+    """Delete-then-insert the batch's content rows — portable, idempotent.
+
+    The insert is driver executemany — SQLAlchemy batches it by its own
+    parameter budget; only the membership delete needs chunking here.
+    """
     bearing = [s for s in staged if s.content is not None and s.kind in CONTENT_KINDS]
     if not bearing:
         return
-    await session.execute(delete(content).where(content.c.entry_id.in_([s.entry_id for s in bearing])))
+    for chunk in chunked([s.entry_id for s in bearing], membership):
+        await session.execute(delete(content).where(content.c.entry_id.in_(chunk)))
     await session.execute(insert(content), [{"entry_id": s.entry_id, "content": s.content} for s in bearing])
 
 
-async def _bump_parents(session: AsyncSession, entry: Table, plan: _Plan) -> None:
+async def _bump_parents(session: AsyncSession, entry: Table, membership: int, plan: WritePlan) -> None:
     """One SQL-side increment for every bumped directory, read back only on need.
 
     ``revision = revision + 1`` composes where a client-assigned value would
@@ -784,13 +565,16 @@ async def _bump_parents(session: AsyncSession, entry: Table, plan: _Plan) -> Non
     if not plan.bumps:
         return
     bump_ids = [plan.committed[path]["id"] for path in sorted(plan.bumps)]
-    await session.execute(update(entry).where(entry.c.id.in_(bump_ids)).values(revision=entry.c.revision + 1))
+    for chunk in chunked(bump_ids, membership):
+        await session.execute(update(entry).where(entry.c.id.in_(chunk)).values(revision=entry.c.revision + 1))
     needed = {str(path) for path, _ in plan.pending if path not in plan.staged and str(path) in plan.bumps}
     if not needed:
         return
     ids = [plan.committed[path]["id"] for path in sorted(needed)]
-    result = await session.execute(select(entry.c.path, entry.c.revision).where(entry.c.id.in_(ids)))
-    plan.bump_revisions = {row.path: row.revision for row in result}
+    plan.bump_revisions = {}
+    for chunk in chunked(ids, membership):
+        result = await session.execute(select(entry.c.path, entry.c.revision).where(entry.c.id.in_(chunk)))
+        plan.bump_revisions.update({row.path: row.revision for row in result})
 
 
 def _upsert_constructor(profile: DialectProfile) -> Any:
@@ -798,14 +582,14 @@ def _upsert_constructor(profile: DialectProfile) -> Any:
     return sqlite_insert if profile.name == "sqlite" else pg_insert
 
 
-def _parent_id(plan: _Plan, staged: _Staged) -> int:
+def _parent_id(plan: WritePlan, staged: StagedEntry) -> int:
     parent = plan.staged.get(staged.parent)
     if parent is not None and parent.entry_id is not None:
         return parent.entry_id
     return plan.committed[str(staged.parent)]["id"]
 
 
-def _entry_values(staged: _Staged, parent_id: int, user_id: str | None, now: datetime) -> dict[str, Any]:
+def _entry_values(staged: StagedEntry, parent_id: int, user_id: str | None, now: datetime) -> dict[str, Any]:
     return {
         "node_id": str(ULID()),
         "parent_id": parent_id,
@@ -826,7 +610,7 @@ def _entry_values(staged: _Staged, parent_id: int, user_id: str | None, now: dat
     }
 
 
-def _update_params(staged: _Staged, user_id: str | None, now: datetime) -> dict[str, Any]:
+def _update_params(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, Any]:
     return {
         "b_id": staged.entry_id,
         "b_kind": staged.kind,
@@ -838,8 +622,3 @@ def _update_params(staged: _Staged, user_id: str | None, now: datetime) -> dict[
         "b_owner": user_id,
         "b_updated": now,
     }
-
-
-def _chunked[T](items: list[T], per_statement: int) -> Iterator[list[T]]:
-    for index in range(0, len(items), per_statement):
-        yield items[index : index + per_statement]

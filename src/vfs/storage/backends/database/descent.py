@@ -26,6 +26,7 @@ from sqlalchemy import select
 
 from vfs.paths import METADATA_ROOT, Path
 from vfs.results import ResultError, VFSErrorKind
+from vfs.storage.backends.database.dialects import chunked
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -47,8 +48,10 @@ LIKE_ESCAPE: Final = "\\"
 # ---------------------------------------------------------------------------
 
 
-async def classify_misses(session: AsyncSession, entry: Table, targets: Sequence[Path]) -> list[ResultError]:
-    """Classify every missed *target*; one ancestor query serves the batch.
+async def classify_misses(
+    session: AsyncSession, entry: Table, targets: Sequence[Path], membership: int
+) -> list[ResultError]:
+    """Classify every missed *target*; one chunked ancestor query serves the batch.
 
     The ancestor query carries the trash scope too: descent through a
     trashed row must read it as missing, never surface its kind — else
@@ -56,9 +59,9 @@ async def classify_misses(session: AsyncSession, entry: Table, targets: Sequence
     """
     ancestors = {ancestor for target in targets for ancestor in ancestor_chain(target)}
     kinds: dict[str, str] = {}
-    if ancestors:
-        stmt = select(entry.c.path, entry.c.kind).where(entry.c.path.in_(sorted(ancestors)), *trash_filters(entry))
-        kinds = {row.path: row.kind for row in await session.execute(stmt)}
+    for chunk in chunked(sorted(ancestors), membership):
+        stmt = select(entry.c.path, entry.c.kind).where(entry.c.path.in_(chunk), *trash_filters(entry))
+        kinds.update({row.path: row.kind for row in await session.execute(stmt)})
     return [_classify_miss(target, kinds) for target in targets]
 
 
