@@ -80,7 +80,7 @@ TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
 TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
     "grep_tier": frozenset({"indexed", "scan"}),
     "grep_staleness": frozenset({"none", "watermark"}),
-    "revision_encoding": frozenset({"counter64"}),
+    "revision_encoding": frozenset({"per_entry64"}),
     "durability": frozenset({"full", "relaxed"}),
     "arbitration": frozenset({"upsert", "catch_retry"}),
 }

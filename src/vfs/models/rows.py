@@ -236,7 +236,8 @@ def build_vfs_tables(
 
     # Chunks: the indexed/embedded unit, keyed by entry identity — never by
     # path (a rename rewrites zero chunk rows). The integer PK feeds posting
-    # doc_ids, hence AUTOINCREMENT.
+    # doc_ids, hence AUTOINCREMENT. ``encoded`` is the per-chunk gram-index
+    # dirty flag; embedding staleness needs none (``embedding IS NULL``).
     chunks = Table(
         f"{table_name}_chunks",
         metadata,
@@ -246,6 +247,7 @@ def build_vfs_tables(
         Column("line_start", Integer, nullable=False),
         Column("line_end", Integer, nullable=False),
         Column("content_hash", String(64)),
+        Column("encoded", Boolean, nullable=False, default=False),
         Column("embedding", embedding_type),
         Column("content", String(), nullable=False),
         UniqueConstraint("entry_id", "chunk_index", name=f"uq_{table_name}_chunks_entry_index"),
@@ -273,35 +275,31 @@ def build_vfs_tables(
 
     # Single-row mount metadata: the schema-format version first touch
     # verifies, the durable mount identity that keys the per-mount advisory
-    # lock, the revision high-water mark, and the current-epoch pointer whose
-    # one-row flip publishes a rebuilt gram index atomically.
-    # ``revision_counter`` is the per-mount monotone sequence — a durable
-    # high-water mark, never MAX(revision): permanent deletes shrink the max,
-    # and a regressed counter re-stamps values at or below a published index
-    # watermark (the silent-false-negative class the dirty overlay forbids).
+    # lock, and the current-epoch pointer whose one-row flip publishes a
+    # rebuilt gram index atomically. Revisions are per-entry monotone
+    # values on their own rows — the mount keeps no revision sequence.
     meta = Table(
         f"{table_name}_meta",
         metadata,
         Column("id", Integer, primary_key=True, autoincrement=False),
         Column("schema_format_version", Integer, nullable=False),
         Column("mount_identity", String(ULID_LENGTH), nullable=False),
-        Column("revision_counter", BigInteger, nullable=False),
         Column("current_gram_epoch", Integer),
         Column("created_at", DateTime(timezone=True)),
         CheckConstraint("id = 1", name=f"ck_{table_name}_meta_single_row"),
         schema=schema,
     )
 
-    # One row per gram-index build: the three-part fingerprint (format
-    # version, options hash, max-revision watermark). Rows outside the
-    # current epoch are reclaimable garbage, swept by the reindex verb.
+    # One row per gram-index build: the two-part fingerprint (format
+    # version, options hash) — coverage is per-row flag state, not a
+    # revision threshold. Rows outside the current epoch are reclaimable
+    # garbage, swept by the reindex verb.
     gram_epochs = Table(
         f"{table_name}_gram_epochs",
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("format_version", Integer, nullable=False),
         Column("options_hash", String(64), nullable=False),
-        Column("watermark", BigInteger, nullable=False),
         Column("created_at", DateTime(timezone=True)),
         schema=schema,
     )

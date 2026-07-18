@@ -6,18 +6,20 @@ and ancestors, a pure staging pass replays the POSIX parent/site gates
 against committed-plus-staged state and accumulates classified per-entry
 errors, and only an error-free plan executes — a failed batch runs no
 mutation statement at all. Execution is a handful of bulk Core
-statements in pinned order: revision allocation, entry inserts layered
-parents-before-children (chunked by the dialect's parameter budget),
-guarded material updates with a verification read, content
-delete-then-insert, and unconditional parent bumps. Every function
-takes the op's live ``AsyncSession`` and never begins or commits — the
-protocol method in ``backend.py`` owns its one transaction.
+statements in pinned order: entry inserts layered parents-before-children
+(chunked by the dialect's parameter budget), guarded material updates
+with a verification read, content delete-then-insert, and unconditional
+parent bumps. Every function takes the op's live ``AsyncSession`` and
+never begins or commits — the protocol method in ``backend.py`` owns its
+one transaction.
 
 Concurrent create arbitration follows the dialect's declared mode:
 ``upsert`` rides ``ON CONFLICT`` on the ``(parent_id, name)`` index,
 ``catch_retry`` wraps the bulk insert in a savepoint and resolves each
-conflicting row individually. Revisions come from the durable per-mount
-counter via :func:`allocate_revisions`.
+conflicting row individually. Revisions are per-entry monotone values —
+creation mints 1, every material write adds exactly one, and a parent
+bump adds one, all against the row's own current value. There is no
+per-mount counter, and no two entries' revisions are comparable.
 """
 
 from __future__ import annotations
@@ -61,11 +63,9 @@ if TYPE_CHECKING:
 _Status = Literal["created", "updated", "unchanged"]
 
 # Columns an overwrite clobbers when arbitration lands on a rival's row:
-# the row keeps its identity (id, node_id, site, created_at) and takes
-# our material state.
+# identity stays, revision increments SQL-side, material state is ours.
 _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
     "kind",
-    "revision",
     "content_hash",
     "mime_type",
     "ext",
@@ -94,28 +94,7 @@ class _Staged:
     mime_type: str | None = None
     entry_id: int | None = None  # committed id for updates; creates learn theirs at insert
     base_revision: int | None = None  # the update guard; None = unguarded (arbitration clobber)
-    revision: int = 0  # assigned from the allocated range before execution
-
-
-# ---------------------------------------------------------------------------
-# Revision allocation — the per-mount monotone sequence
-# ---------------------------------------------------------------------------
-
-
-async def allocate_revisions(session: AsyncSession, meta: Table, count: int) -> int:
-    """Claim *count* values from the mount's revision sequence; return the high end.
-
-    The claimed values are ``high - count + 1 .. high``. The counter row's
-    lock is held to commit, which serializes write transactions per mount
-    and makes commit order equal allocation order — the property the index
-    watermark leans on. A provider that needs concurrent writers per mount
-    may replace this with a native sequence (``nextval`` range,
-    ``sp_sequence_get_range``), provided reindex then captures its
-    watermark under a writer fence instead of assuming ordered commits.
-    """
-    bump = update(meta).where(meta.c.id == 1).values(revision_counter=meta.c.revision_counter + count)
-    await session.execute(bump)
-    return (await session.execute(select(meta.c.revision_counter).where(meta.c.id == 1))).scalar_one()
+    revision: int = 1  # creates mint 1; updates stage base + 1; clobbers learn theirs post-execution
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +231,9 @@ class _Plan:
 
     ``staged`` overlays ``committed`` for every gate, so entries in one
     batch see the parents earlier entries minted; ``bumps`` collects the
-    committed directories whose membership changed. Any error fails the
-    batch whole — an errored plan is never executed.
+    committed directories whose membership changed, and ``bump_revisions``
+    holds their read-back values when an observation needs one. Any error
+    fails the batch whole — an errored plan is never executed.
     """
 
     def __init__(self, committed: dict[str, RowMapping], *, user_id: str | None, budget: int) -> None:
@@ -448,6 +428,7 @@ class _Plan:
             mime_type=mime_type,
             entry_id=row["id"],
             base_revision=row["revision"],
+            revision=row["revision"] + 1,
         )
 
     def bump_parent(self, path: Path) -> None:
@@ -554,20 +535,10 @@ async def _apply(
     overwrite: bool,
 ) -> list[ResultError]:
     """Run the pinned statement sequence; a non-empty return fails the batch."""
-    creates = [s for s in plan.staged.values() if s.created]
-    updates = [s for s in plan.staged.values() if not s.created]
-    total = len(creates) + len(updates) + len(plan.bumps)
-    if total == 0:
+    if not plan.staged and not plan.bumps:
         return []
     now = datetime.now(UTC)
-    high = await allocate_revisions(session, tables.meta, total)
-    values = iter(range(high - total + 1, high + 1))
-    for staged in (*creates, *updates):
-        staged.revision = next(values)
-    # Kept on the plan: an "unchanged" observation of a bumped directory
-    # must report the bump, not its pre-batch revision.
-    plan.bump_revisions = {path: next(values) for path in sorted(plan.bumps)}
-
+    creates = [s for s in plan.staged.values() if s.created]
     errors = await _insert_creates(
         session, tables.entry, profile, parameter_budget, creates, plan, overwrite=overwrite, now=now
     )
@@ -580,14 +551,7 @@ async def _apply(
     if errors:
         return errors
     await _replace_content(session, tables.content, list(plan.staged.values()))
-    if plan.bump_revisions:
-        entry = tables.entry
-        rows = [
-            {"b_id": plan.committed[path]["id"], "b_rev": revision} for path, revision in plan.bump_revisions.items()
-        ]
-        await session.execute(
-            update(entry).where(entry.c.id == bindparam("b_id")).values(revision=bindparam("b_rev")), rows
-        )
+    await _bump_parents(session, tables.entry, plan)
     return []
 
 
@@ -635,8 +599,10 @@ async def _upsert_layer(
     """``ON CONFLICT`` arbitration on the ``(parent_id, name)`` index.
 
     Directory creates never clobber (``DO NOTHING``); file creates clobber
-    a non-directory rival under ``overwrite``. A row missing from RETURNING
-    lost arbitration and classifies — a definite outcome, never retried.
+    a non-directory rival under ``overwrite``. RETURNING carries the final
+    revision, so winners and clobberers stamp theirs without a read-back.
+    A row missing from RETURNING lost arbitration and classifies — a
+    definite outcome, never retried.
     """
     constructor = _upsert_constructor(profile)
     pairs = list(zip(layer, rows, strict=True))
@@ -647,19 +613,24 @@ async def _upsert_layer(
         for chunk in _chunked(group, per_statement):
             stmt = constructor(entry).values([r for _, r in chunk])
             if clobber:
+                # A clobbered rival's revision increments off the target row,
+                # not the excluded value, keeping its history monotone.
+                set_: dict[str, Any] = {column: stmt.excluded[column] for column in _CLOBBER_COLUMNS}
+                set_["revision"] = entry.c.revision + 1
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["parent_id", "name"],
-                    set_={column: stmt.excluded[column] for column in _CLOBBER_COLUMNS},
+                    set_=set_,
                     where=entry.c.kind != "directory",
                 )
             else:
                 stmt = stmt.on_conflict_do_nothing(index_elements=["parent_id", "name"])
-            result = await session.execute(stmt.returning(entry.c.id, entry.c.path))
-            returned = {mapping["path"]: mapping["id"] for mapping in result.mappings()}
+            result = await session.execute(stmt.returning(entry.c.id, entry.c.path, entry.c.revision))
+            returned = {mapping["path"]: mapping for mapping in result.mappings()}
             for staged, _ in chunk:
                 won = returned.get(str(staged.path))
                 if won is not None:
-                    staged.entry_id = won
+                    staged.entry_id = won["id"]
+                    staged.revision = won["revision"]
                 elif clobber:
                     errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {staged.path}", staged.path))
                 else:
@@ -738,12 +709,16 @@ async def _update_materials(
 ) -> list[ResultError]:
     """Material updates with the revision guard, verified by one read-back.
 
-    The guard's zero-rowcount arm is unreachable on SQLite (single writer)
+    The guarded arm writes ``base + 1`` under ``WHERE revision = base``;
+    the guard's zero-rowcount arm is unreachable on SQLite (single writer)
     and on Postgres at REPEATABLE READ (rivals surface as 40001); it is
     load-bearing at READ COMMITTED — topology verbs, the generic-dialect
-    floor — where a lost update is otherwise silent. The read-back
-    attributes conflicts portably instead of trusting per-driver
-    executemany rowcounts.
+    floor — where a lost update is otherwise silent. The unguarded arm
+    (arbitration clobbers) increments SQL-side, last-writer-wins by
+    design. The read-back attributes conflicts portably instead of
+    trusting per-driver executemany rowcounts: a guarded row must show
+    exactly ``base + 1``; an unguarded row takes the observed value as
+    truth and conflicts only if it vanished.
     """
     if not updates:
         return []
@@ -751,7 +726,6 @@ async def _update_materials(
     unguarded = [s for s in updates if s.base_revision is None]
     material = {
         "kind": bindparam("b_kind"),
-        "revision": bindparam("b_rev"),
         "content_hash": bindparam("b_hash"),
         "mime_type": bindparam("b_mime"),
         "ext": bindparam("b_ext"),
@@ -768,21 +742,26 @@ async def _update_materials(
         stmt = (
             update(entry)
             .where(entry.c.id == bindparam("b_id"), entry.c.revision == bindparam("b_base"))
-            .values(**material)
+            .values(**material, revision=bindparam("b_rev"))
         )
-        await session.execute(stmt, [_update_params(s, user_id, now) | {"b_base": s.base_revision} for s in guarded])
+        params = [_update_params(s, user_id, now) | {"b_base": s.base_revision, "b_rev": s.revision} for s in guarded]
+        await session.execute(stmt, params)
     if unguarded:
-        stmt = update(entry).where(entry.c.id == bindparam("b_id")).values(**material)
+        stmt = update(entry).where(entry.c.id == bindparam("b_id")).values(**material, revision=entry.c.revision + 1)
         await session.execute(stmt, [_update_params(s, user_id, now) for s in unguarded])
     check = await session.execute(
         select(entry.c.id, entry.c.revision).where(entry.c.id.in_([s.entry_id for s in updates]))
     )
     actual = {row.id: row.revision for row in check}
-    return [
-        classified(VFSErrorKind.conflict, f"Concurrent modification: {s.path}", s.path, target=s.path)
-        for s in updates
-        if actual.get(s.entry_id) != s.revision
-    ]
+    errors: list[ResultError] = []
+    for staged in updates:
+        observed = actual.get(staged.entry_id)
+        if observed is None or (staged.base_revision is not None and observed != staged.revision):
+            message = f"Concurrent modification: {staged.path}"
+            errors.append(classified(VFSErrorKind.conflict, message, staged.path, target=staged.path))
+        elif staged.base_revision is None:
+            staged.revision = observed
+    return errors
 
 
 async def _replace_content(session: AsyncSession, content: Table, staged: list[_Staged]) -> None:
@@ -792,6 +771,26 @@ async def _replace_content(session: AsyncSession, content: Table, staged: list[_
         return
     await session.execute(delete(content).where(content.c.entry_id.in_([s.entry_id for s in bearing])))
     await session.execute(insert(content), [{"entry_id": s.entry_id, "content": s.content} for s in bearing])
+
+
+async def _bump_parents(session: AsyncSession, entry: Table, plan: _Plan) -> None:
+    """One SQL-side increment for every bumped directory, read back only on need.
+
+    ``revision = revision + 1`` composes where a client-assigned value would
+    overwrite a concurrent rival's bump. The read-back runs only when an
+    "unchanged" pending row was bumped by a sibling in this batch — its
+    observation must equal a post-commit stat of its path.
+    """
+    if not plan.bumps:
+        return
+    bump_ids = [plan.committed[path]["id"] for path in sorted(plan.bumps)]
+    await session.execute(update(entry).where(entry.c.id.in_(bump_ids)).values(revision=entry.c.revision + 1))
+    needed = {str(path) for path, _ in plan.pending if path not in plan.staged and str(path) in plan.bumps}
+    if not needed:
+        return
+    ids = [plan.committed[path]["id"] for path in sorted(needed)]
+    result = await session.execute(select(entry.c.path, entry.c.revision).where(entry.c.id.in_(ids)))
+    plan.bump_revisions = {row.path: row.revision for row in result}
 
 
 def _upsert_constructor(profile: DialectProfile) -> Any:
@@ -831,7 +830,6 @@ def _update_params(staged: _Staged, user_id: str | None, now: datetime) -> dict[
     return {
         "b_id": staged.entry_id,
         "b_kind": staged.kind,
-        "b_rev": staged.revision,
         "b_hash": staged.content_hash,
         "b_mime": staged.mime_type,
         "b_ext": staged.ext,

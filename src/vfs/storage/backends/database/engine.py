@@ -264,7 +264,6 @@ class EngineHost:
                 id=1,
                 schema_format_version=SCHEMA_FORMAT_VERSION,
                 mount_identity=str(ULID()),
-                revision_counter=0,
                 created_at=now,
             )
         )
@@ -275,7 +274,7 @@ class EngineHost:
                 path="/",
                 name="",
                 kind="directory",
-                revision=0,
+                revision=1,
                 created_at=now,
                 updated_at=now,
             )

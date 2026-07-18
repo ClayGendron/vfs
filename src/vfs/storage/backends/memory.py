@@ -61,12 +61,16 @@ _CONTENT_KINDS = frozenset({"file", "chunk", "version"})
 
 @dataclass
 class _Row:
-    """One stored object: the kind plus whatever content/metadata it carries."""
+    """One stored object: the kind plus whatever content/metadata it carries.
+
+    ``revision`` is per-entry monotone: fresh rows mint 1, every material
+    mutation or bump adds 1. Two rows' revisions are never comparable.
+    """
 
     kind: ObjectKind
     content: str | None = None
     edge_type: str | None = None
-    revision: int = 0
+    revision: int = 1
 
 
 class InMemoryStorage:
@@ -90,14 +94,13 @@ class InMemoryStorage:
         self.description = description
         self._allow_files = allow_files
         self._rows: dict[Path, _Row] = {ROOT: _Row(kind="directory")}
-        self._revision = 0
 
     def capabilities(self) -> frozenset[Op]:
         return storage_ops(self)
 
     def traits(self) -> Mapping[str, str]:
         # Live-state scan: no index tier, so results are never stale.
-        return {"grep_tier": "scan", "grep_staleness": "none", "revision_encoding": "counter64"}
+        return {"grep_tier": "scan", "grep_staleness": "none", "revision_encoding": "per_entry64"}
 
     # -------------------------------------------------------------------
     # Read family
@@ -331,7 +334,7 @@ class InMemoryStorage:
             except ValidationError as exc:
                 errors.append(_classified(VFSErrorKind.invalid, exc.errors()[0]["msg"], target))
                 continue
-            staged[target] = clone_row(row, content=content, revision=self._next_revision())
+            staged[target] = clone_row(row, content=content, revision=row.revision + 1)
             edited.append(target)
         if errors:
             return Result(ops=("edit",), errors=errors)
@@ -406,7 +409,7 @@ class InMemoryStorage:
         if gate is not None:
             return gate
         minted = self._mint_chain(staged, path)
-        staged[path] = _Row(kind="directory", revision=self._next_revision())
+        staged[path] = _Row(kind="directory")
         self._bump_parent(staged, path)
         # Observe after every stamp and bump so each row reports its
         # committed revision, not a mid-batch one.
@@ -453,8 +456,10 @@ class InMemoryStorage:
         # Edge projections are internal machinery — their meta ancestors are
         # minted implicitly, exempt from the strict parent rule.
         self._mint_chain(staged, edge_path)
-        status = "updated" if edge_path in staged else "created"
-        staged[edge_path] = _Row(kind="edge", edge_type=edge_type, revision=self._next_revision())
+        prior = staged.get(edge_path)
+        status = "updated" if prior is not None else "created"
+        revision = prior.revision + 1 if prior is not None else 1
+        staged[edge_path] = _Row(kind="edge", edge_type=edge_type, revision=revision)
         if status == "created":
             self._bump_parent(staged, edge_path)
         self._rows = staged
@@ -492,11 +497,6 @@ class InMemoryStorage:
             status=status,
         )
 
-    def _next_revision(self) -> int:
-        """Next value of the per-instance monotone sequence (gaps are fine)."""
-        self._revision += 1
-        return self._revision
-
     def _bump_parent(self, rows: dict[Path, _Row], path: Path) -> None:
         """Unconditional parent-revision bump for a namespace mutation at *path*.
 
@@ -506,7 +506,7 @@ class InMemoryStorage:
         """
         parent = rows.get(path.parent_dir)
         if parent is not None:
-            rows[path.parent_dir] = clone_row(parent, revision=self._next_revision())
+            rows[path.parent_dir] = clone_row(parent, revision=parent.revision + 1)
 
     def _directories_only(self, op: str) -> Result:
         return _fail(op, VFSErrorKind.unsupported, "This storage holds directories only; file content is not supported")
@@ -551,7 +551,7 @@ class InMemoryStorage:
         minted: list[Path] = []
         for ancestor in _ancestor_chain(path):
             if ancestor not in rows:
-                rows[ancestor] = _Row(kind="directory", revision=self._next_revision())
+                rows[ancestor] = _Row(kind="directory")
                 self._bump_parent(rows, ancestor)
                 minted.append(ancestor)
         return minted
@@ -584,7 +584,8 @@ class InMemoryStorage:
             if not overwrite:
                 return _fail(op, VFSErrorKind.exists, f"Already exists: {path}", path)
         self._mint_chain(staged, path)
-        staged[path] = _Row(kind=kind, content=content, revision=self._next_revision())
+        revision = occupant.revision + 1 if occupant is not None else 1
+        staged[path] = _Row(kind=kind, content=content, revision=revision)
         if occupant is None:
             self._bump_parent(staged, path)
         return "updated" if occupant is not None else "created"
@@ -609,7 +610,7 @@ class InMemoryStorage:
                     errors.extend(gate.errors)
                     continue
                 self._mint_chain(staged, entry.path)
-                staged[entry.path] = _Row(kind="directory", revision=self._next_revision())
+                staged[entry.path] = _Row(kind="directory")
                 self._bump_parent(staged, entry.path)
                 pending.append((entry.path, "created"))
                 continue
@@ -705,15 +706,19 @@ class InMemoryStorage:
             except ValueError as exc:
                 errors.append(_classified(VFSErrorKind.unaddressable, f"Cannot {op} {src}: {exc}", dest))
                 continue
-            # Copy mints new nodes, so every copied row gets a fresh revision;
-            # move keeps descendants' revisions (a reparent is a material
-            # write of the moved node plus both parent bumps, nothing more).
+            # Copy mints new nodes at revision 1 (an overwritten occupant is
+            # a material update instead); move keeps descendants' revisions
+            # (a reparent is a material write of the moved node plus both
+            # parent bumps, nothing more).
             for (p, row), new_path in zip(moved, dests, strict=True):
-                staged[new_path] = clone_row(row, revision=self._next_revision() if op == "copy" else row.revision)
-                if op == "move":
+                if op == "copy":
+                    prior = staged.get(new_path)
+                    staged[new_path] = clone_row(row, revision=prior.revision + 1 if prior is not None else 1)
+                else:
+                    staged[new_path] = clone_row(row, revision=row.revision)
                     del staged[p]
             if op == "move":
-                staged[dest] = clone_row(staged[dest], revision=self._next_revision())
+                staged[dest] = clone_row(staged[dest], revision=staged[dest].revision + 1)
                 self._bump_parent(staged, src)
                 self._bump_parent(staged, dest)
             elif occupant is None:

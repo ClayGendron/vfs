@@ -54,7 +54,7 @@ def test_traits_declares_the_scan_tier_within_the_vocabulary() -> None:
     traits = InMemoryStorage().traits()
     assert traits["grep_tier"] == "scan"
     assert traits["grep_staleness"] == "none"
-    assert traits["revision_encoding"] == "counter64"
+    assert traits["revision_encoding"] == "per_entry64"
     for key, value in traits.items():
         assert key in TRAIT_KEYS
         assert value in TRAIT_VALUES[key]

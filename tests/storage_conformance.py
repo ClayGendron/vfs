@@ -890,8 +890,10 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/src/f.txt"), content="x")])
         source = await _revision_of(storage, "/src/f.txt")
         await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/dst"))])
-        assert await _revision_of(storage, "/dst") > source
-        assert await _revision_of(storage, "/dst/f.txt") > source
+        # Copied rows are fresh nodes: per-entry revisions start at 1, and
+        # the source keeps its own value untouched.
+        assert await _revision_of(storage, "/dst") == 1
+        assert await _revision_of(storage, "/dst/f.txt") == 1
         assert await _revision_of(storage, "/src/f.txt") == source
 
     @needs("write", "mkdir", "delete", "stat")

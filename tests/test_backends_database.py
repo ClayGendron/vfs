@@ -780,26 +780,23 @@ class TestPoolExhaustion:
 
 
 class TestWriteMechanics:
-    """One transaction per batch, bounded statements, durable revision counter."""
+    """One transaction per batch, bounded statements, per-entry revisions."""
 
-    async def test_failed_batch_commits_nothing_including_the_counter(self, tmp_path) -> None:
+    async def test_failed_batch_commits_nothing(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         good = await storage.write(entries=[Entry(path=Path("/keep.txt"), content="x")])
         assert good.success is True
         tables = storage._host.tables
         async with storage._host.engine.connect() as conn:
-            counter_before = (await conn.execute(select(tables.meta.c.revision_counter))).scalar_one()
             rows_before = len((await conn.execute(select(tables.entry.c.id))).all())
         bad = await storage.write(
             entries=[Entry(path=Path("/new.txt"), content="y"), Entry(path=Path("/ghost/deep.txt"), content="z")]
         )
         assert bad.success is False
         async with storage._host.engine.connect() as conn:
-            counter_after = (await conn.execute(select(tables.meta.c.revision_counter))).scalar_one()
             rows_after = len((await conn.execute(select(tables.entry.c.id))).all())
             orphans = (await conn.execute(select(tables.content.c.entry_id))).all()
-        assert counter_after == counter_before  # the allocation rolled back too
         assert rows_after == rows_before
         assert len(orphans) == 1  # /keep.txt only
         await storage.close()
@@ -819,23 +816,61 @@ class TestWriteMechanics:
         result = await storage.write(entries=entries)
         assert result.success is True
         assert len(result.observations) == 100
-        # BEGIN + plan select + counter update/select + one insert chunk +
+        # BEGIN + session PRAGMAs + plan select + one insert chunk +
         # content delete/insert + parent bump — O(tables), never O(entries).
         assert len(statements) <= 12, statements
         await storage.close()
 
-    async def test_revision_counter_survives_restart(self, tmp_path) -> None:
+    async def test_write_statement_counts_are_pinned(self, tmp_path) -> None:
+        from sqlalchemy import event
+
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        def mutations() -> list[str]:
+            return [s for s in statements if not s.startswith(("BEGIN", "COMMIT", "PRAGMA"))]
+
+        created = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="a")])
+        assert created.success is True
+        # The round-trip budget is a contract: fetch, insert, content
+        # delete + insert, parent bump.
+        assert len(mutations()) == 5, mutations()
+        statements.clear()
+        overwritten = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="b")])
+        assert overwritten.success is True
+        # Fetch, guarded update, verification read-back, content delete + insert.
+        assert len(mutations()) == 5, mutations()
+        await storage.close()
+
+    async def test_revisions_are_per_entry_and_survive_restart(self, tmp_path) -> None:
         first = DatabaseStorage(url=_url(tmp_path))
-        await first.write(entries=[Entry(path=Path("/a.txt"), content="1")])
-        before = (await first.stat(path=Path("/a.txt"))).observations[0].revision
-        assert before is not None
+        created = await first.write(entries=[Entry(path=Path("/docs/a.txt"), content="1")], parents=True)
+        assert created.observations[0].revision == 1
+        minted = (await first.stat(path=Path("/docs"))).observations[0]
+        assert minted.revision == 1  # minted ancestors are fresh rows too
         await first.close()
         second = DatabaseStorage(url=_url(tmp_path))
-        await second.write(entries=[Entry(path=Path("/a.txt"), content="2")])
-        after = (await second.stat(path=Path("/a.txt"))).observations[0].revision
-        assert after is not None
-        assert after > before
+        overwritten = await second.write(entries=[Entry(path=Path("/docs/a.txt"), content="2")])
+        assert overwritten.observations[0].revision == 2  # base + 1 off the row, no mount state
         await second.close()
+
+    async def test_unchanged_directory_reports_the_sibling_bump(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/docs"))
+        result = await storage.write(
+            entries=[Entry(path=Path("/docs"), kind="directory"), Entry(path=Path("/docs/new.txt"), content="x")]
+        )
+        assert result.success is True
+        by_path = {str(o.path): o for o in result.observations}
+        assert by_path["/docs"].status == "unchanged"
+        stat = (await storage.stat(path=Path("/docs"))).observations[0]
+        assert by_path["/docs"].revision == stat.revision
+        await storage.close()
 
     async def test_overwrite_restamps_the_owner(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))

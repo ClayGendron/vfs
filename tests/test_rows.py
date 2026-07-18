@@ -150,9 +150,7 @@ class TestBuildVFSTables:
         default = tables.posting_list.c.encoding.default
         assert isinstance(default, ColumnDefault)
         assert default.arg == ENCODING_DELTA_VARINT
-        assert {"epoch", "format_version", "options_hash", "watermark", "created_at"} == set(
-            tables.gram_epochs.c.keys()
-        )
+        assert {"epoch", "format_version", "options_hash", "created_at"} == set(tables.gram_epochs.c.keys())
 
     def test_ext_kind_composite_index(self, tables: VFSTables) -> None:
         by_name = {str(index.name): index for index in tables.entry.indexes}
@@ -250,7 +248,6 @@ class TestDDL:
             "id": 1,
             "schema_format_version": SCHEMA_FORMAT_VERSION,
             "mount_identity": "0" * ULID_LENGTH,
-            "revision_counter": 0,
         }
         with engine.begin() as conn:
             conn.execute(insert(tables.meta), [row])
