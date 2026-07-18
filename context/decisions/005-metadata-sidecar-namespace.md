@@ -1,6 +1,6 @@
 # 005. Metadata Lives in a Hidden Sidecar Tree, Never as Children of the File
 
-- **Status:** accepted
+- **Status:** superseded by 016
 - **Date:** 2026-07-16 (decision landed with story 002, 2026-04-20; this
   record promotes it out of the archived story)
 - **Deciders:** Clay Gendron
@@ -104,3 +104,15 @@ The settled semantics, all live in `src/vfs/paths.py`:
 Executed by story 002
 (`context/specs/archive/002-posix-aligned-sidecar-namespace/`); the
 live grammar is `src/vfs/paths.py`.
+
+---
+
+**Superseded by ADR 016 (2026-07-18).** The load-bearing premise here — that
+a FUSE/POSIX projection *requires* metadata to be path-addressable — is
+refuted: FUSE ships a non-namespace xattr surface
+(`libfuse/include/fuse.h:576-585`), so metadata need not be a path at all.
+ADR 016 retires the `__meta__` per-file metadata grammar and makes chunks,
+versions, and edges entry-scoped metadata keyed by owner + discriminator,
+retrieved by verbs. `METADATA_ROOT` (`/.vfs`) survives as the meta scope for
+trash (ADR 014); only the `__meta__` projection under it is removed. See
+`research/2026-07-18-metadata-namespace-vs-verbs.md`.
