@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from vfs.results import ResultError, VFSErrorKind
-from vfs.storage.backends.database.descent import ancestor_chain, classified, in_trash
+from vfs.storage.backends.database.descent import ancestor_chain, classified
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
@@ -82,24 +82,6 @@ class WritePlan:
         row = self.committed.get(str(path))
         return row["kind"] if row is not None else None
 
-    def outside_trash(self, path: Path) -> bool:
-        """Refuse the reserved trash subtree as a write target.
-
-        Rows minted there would be invisible to every read verb — a
-        write-only hole, since the liveness filter hides the trash scope.
-        """
-        if not in_trash(path):
-            return True
-        self.errors.append(
-            classified(
-                VFSErrorKind.invalid,
-                f"Cannot write into the reserved trash namespace: {path}",
-                path,
-                target=path,
-            )
-        )
-        return False
-
     def within_budget(self, path: Path) -> bool:
         """A lawful path can still exceed an engine's index-key byte cap."""
         if len(str(path).encode()) <= self.budget:
@@ -147,7 +129,7 @@ class WritePlan:
         parents: bool,
     ) -> Status | None:
         """Gate and stage one content-bearing row; ``None`` means an error was appended."""
-        if not self.outside_trash(target) or not self.within_budget(target):
+        if not self.within_budget(target):
             return None
         if not self.parent_gate(target, parents=parents, target=target):
             return None
@@ -174,8 +156,6 @@ class WritePlan:
         return "created" if occupant is None else "updated"
 
     def put_dir(self, target: Path, *, parents: bool) -> Status | None:
-        if not self.outside_trash(target):
-            return None
         occupant = self.kind_of(target)
         if occupant is not None:
             if occupant != "directory":

@@ -1,7 +1,9 @@
 # 075 — Trash normal-fs parity: one scope, ordinary writes
 
-- **Status:** shaped — drafted 2026-07-18 directly from accepted ADR
-  014; no open markers. Ready for plan.md.
+- **Status:** implemented 2026-07-18 (plan.md steps 1–5 landed in the
+  working tree; all acceptance criteria verified — suite green,
+  `ruff`/`ty` at zero, retired symbols absent from `src/`). Awaiting
+  commit.
 - **Date:** 2026-07-18
 - **Owner:** Clay Gendron
 - **Kind:** contract change (namespace scoping on every read and write

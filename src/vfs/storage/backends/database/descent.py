@@ -7,15 +7,14 @@ that component, an ancestor stored as a non-directory is ``wrong_kind``
 there, and only when the whole parent chain is sound is the miss the
 leaf's own ``not_found``. The first failing boundary wins and the walk
 never looks ahead, so ancestor errors dominate leaf errors structurally.
-A trashed ancestor reads as missing on both of its paths: the old path
-was rewritten away, and the trash-prefixed one is filtered out of the
-ancestor query — the walk never surfaces a kind point reads would hide.
 
-:func:`liveness_filters` is the two-scope namespace filter enumeration
-verbs apply: the trash subtree is always invisible, and the ``/.vfs``
-meta subtree is excluded from default-scope enumeration while a
-directly-addressed anchor inside it bypasses the meta exclusion — never
-the trash one.
+:func:`liveness_filters` is the one-scope namespace filter enumeration
+verbs apply: the ``/.vfs`` meta subtree is excluded from default-scope
+enumeration, and a directly-addressed anchor inside it bypasses the
+exclusion. Trash is an ordinary subtree under that meta scope — a
+deleted file's original path reads as missing because the reparent
+rewrote its path cache (stable-node-identity), not because any filter
+hides the trash side.
 """
 
 from __future__ import annotations
@@ -36,8 +35,8 @@ if TYPE_CHECKING:
 
 ROOT = Path("/")
 
-# The reserved internal prefix trashed rows' path caches live under.
-# Ingress never admits it, so no gated Path can ever equal one.
+# The conventional trash location: an ordinary meta subtree the delete
+# verb reparents into — browsable, writable, no scope of its own.
 TRASH_ROOT: Final = f"{METADATA_ROOT}/trash"
 
 LIKE_ESCAPE: Final = "\\"
@@ -51,16 +50,11 @@ LIKE_ESCAPE: Final = "\\"
 async def classify_misses(
     session: AsyncSession, entry: Table, targets: Sequence[Path], membership: int
 ) -> list[ResultError]:
-    """Classify every missed *target*; one chunked ancestor query serves the batch.
-
-    The ancestor query carries the trash scope too: descent through a
-    trashed row must read it as missing, never surface its kind — else
-    the walk leaks what point reads hide.
-    """
+    """Classify every missed *target*; one chunked ancestor query serves the batch."""
     ancestors = {ancestor for target in targets for ancestor in ancestor_chain(target)}
     kinds: dict[str, str] = {}
     for chunk in chunked(sorted(ancestors), membership):
-        stmt = select(entry.c.path, entry.c.kind).where(entry.c.path.in_(chunk), *trash_filters(entry))
+        stmt = select(entry.c.path, entry.c.kind).where(entry.c.path.in_(chunk))
         kinds.update({row.path: row.kind for row in await session.execute(stmt)})
     return [_classify_miss(target, kinds) for target in targets]
 
@@ -88,44 +82,23 @@ def classified(
 
 
 # ---------------------------------------------------------------------------
-# Namespace scoping — the two-scope liveness prefix filter
+# Namespace scoping — the meta-scope liveness prefix filter
 # ---------------------------------------------------------------------------
 
 
 def liveness_filters(entry: Table, *, include_meta: bool) -> list[ColumnElement[bool]]:
-    """Enumeration-scope predicates: trash always hidden, meta unless anchored inside."""
-    filters = trash_filters(entry)
-    if not include_meta:
-        filters.append(entry.c.path != METADATA_ROOT)
-        filters.append(~entry.c.path.like(escape_like(METADATA_ROOT) + "/%", escape=LIKE_ESCAPE))
-    return filters
-
-
-def trash_filters(entry: Table) -> list[ColumnElement[bool]]:
-    """The unconditional scope: no verb ever surfaces a trashed row.
-
-    Applied to point reads as well as enumeration — a directly-addressed
-    meta path bypasses the meta exclusion but never this one, so a
-    trashed row's rewritten path cache classifies ``not_found``.
-    """
+    """Enumeration-scope predicates: meta hidden unless anchored inside it."""
+    if include_meta:
+        return []
     return [
-        entry.c.path != TRASH_ROOT,
-        ~entry.c.path.like(escape_like(TRASH_ROOT) + "/%", escape=LIKE_ESCAPE),
+        entry.c.path != METADATA_ROOT,
+        ~entry.c.path.like(escape_like(METADATA_ROOT) + "/%", escape=LIKE_ESCAPE),
     ]
 
 
 def in_meta(path: Path) -> bool:
     """Whether *path* addresses into the reserved ``/.vfs`` meta subtree."""
     return path == METADATA_ROOT or path.startswith(METADATA_ROOT + "/")
-
-
-def in_trash(path: Path) -> bool:
-    """Whether *path* addresses into the reserved internal trash subtree.
-
-    Ingress never admits these paths, but backends take bare ``Path``
-    objects — a write allowed here would mint rows no read verb can see.
-    """
-    return path == TRASH_ROOT or path.startswith(TRASH_ROOT + "/")
 
 
 def escape_like(text: str) -> str:

@@ -42,7 +42,6 @@ from vfs.storage.backends.database.descent import (
     ancestor_chain,
     classified,
     classify_misses,
-    trash_filters,
 )
 from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.backends.database.reads import CONTENT_KINDS
@@ -132,8 +131,6 @@ async def mkdir_rows(
 ) -> Result:
     committed = await _fetch_committed(session, tables, membership, {path})
     plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
-    if not plan.outside_trash(path):
-        return Result(ops=("mkdir",), errors=plan.errors)
     occupant = plan.kind_of(path)
     if occupant is not None:
         if exist_ok and occupant == "directory":
@@ -237,7 +234,7 @@ async def _fetch_committed(
         source = entry.outerjoin(tables.content, tables.content.c.entry_id == entry.c.id)
     committed: dict[str, RowMapping] = {}
     for chunk in chunked(sorted(paths), membership):
-        stmt = select(*columns).select_from(source).where(entry.c.path.in_(chunk), *trash_filters(entry))
+        stmt = select(*columns).select_from(source).where(entry.c.path.in_(chunk))
         committed.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
     return committed
 

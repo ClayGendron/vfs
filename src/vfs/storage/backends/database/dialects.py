@@ -132,7 +132,7 @@ def profile_for(dialect_name: str) -> DialectProfile:
 # ---------------------------------------------------------------------------
 
 # Bind params held back from each membership chunk for a statement's
-# fixed predicates (trash/liveness filters, projection, depth caps).
+# fixed predicates (the liveness filter, projection, depth caps).
 _FILTER_BIND_RESERVE: Final = 32
 
 

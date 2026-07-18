@@ -33,7 +33,6 @@ from vfs.storage.backends.database.descent import (
     escape_like,
     in_meta,
     liveness_filters,
-    trash_filters,
 )
 from vfs.storage.backends.database.dialects import chunked
 
@@ -293,7 +292,7 @@ async def _mappings_by_path(
     entry = tables.entry
     found: dict[str, RowMapping] = {}
     for chunk in chunked(sorted({str(t) for t in targets}), membership):
-        stmt = _entry_select(tables, fetched, with_id=with_id).where(entry.c.path.in_(chunk), *trash_filters(entry))
+        stmt = _entry_select(tables, fetched, with_id=with_id).where(entry.c.path.in_(chunk))
         found.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
     return found
 

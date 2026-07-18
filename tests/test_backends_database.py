@@ -574,7 +574,7 @@ class TestReadFamily:
 
 
 class TestNamespaceScopes:
-    """The two-scope liveness filter: meta hidden by default, trash always."""
+    """The meta-scope liveness filter: hidden by default, served when anchored."""
 
     @pytest.fixture
     async def storage(self, tmp_path):
@@ -605,37 +605,39 @@ class TestNamespaceScopes:
         listing = await storage.ls(path=version.parent_dir)
         assert [o.path for o in listing.observations] == [str(version)]
 
-    async def test_trash_is_invisible_even_from_a_meta_anchor(self, storage: DatabaseStorage) -> None:
-        # ls of /.vfs is a direct meta address: docs serves, trash never.
+    async def test_trash_serves_beside_other_meta_children_when_anchored(self, storage: DatabaseStorage) -> None:
+        # Trash is an ordinary meta subtree: an ls of /.vfs lists it.
         listing = await storage.ls(path=Path("/.vfs"))
-        assert [o.path for o in listing.observations] == ["/.vfs/docs"]
+        assert [o.path for o in listing.observations] == ["/.vfs/docs", "/.vfs/trash"]
         subtree = await storage.tree(path=Path("/.vfs"))
-        assert all("/trash" not in str(o.path) for o in subtree.observations)
+        assert "/.vfs/trash/bucket/01ARZ" in [str(o.path) for o in subtree.observations]
 
-    async def test_a_trashed_path_classifies_not_found_through_every_read_verb(self, storage: DatabaseStorage) -> None:
+    async def test_a_trash_side_path_serves_through_every_read_verb(self, storage: DatabaseStorage) -> None:
         trashed = Path("/.vfs/trash/bucket/01ARZ")
-        for verb in (storage.read, storage.stat, storage.ls, storage.tree):
-            result = await verb(path=trashed)
-            assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.not_found
+        assert (await storage.read(path=trashed)).observations[0].content == "needle in the trash"
+        assert (await storage.stat(path=trashed)).observations[0].kind == "file"
+        listing = await storage.ls(path=trashed.parent_dir)
+        assert [o.path for o in listing.observations] == [str(trashed)]
+        scoped = await storage.glob(pattern="*", paths=(Path("/.vfs/trash"),))
+        assert str(trashed) in [str(o.path) for o in scoped.observations]
 
-    async def test_descent_through_a_trashed_row_never_surfaces_it(self, storage: DatabaseStorage) -> None:
-        # A child under a trashed FILE must not classify wrong_kind naming
-        # the trashed row — the walk would leak what point reads hide.
+    async def test_descent_through_a_trash_side_file_takes_the_standard_ladder(self, storage: DatabaseStorage) -> None:
+        # A child under a trash-side FILE classifies wrong_kind naming the
+        # file — identical to descent anywhere else in the namespace.
         result = await storage.read(path=Path("/.vfs/trash/bucket/01ARZ/child"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].path == "/.vfs/trash/bucket/01ARZ"
 
-    async def test_trash_misses_classify_uniformly_regardless_of_bucket_existence(
-        self, storage: DatabaseStorage
-    ) -> None:
-        # Identical classification whether or not internal trash rows exist
-        # on the probed path — error shape must not reveal trash structure.
+    async def test_trash_misses_classify_at_their_first_failing_component(self, storage: DatabaseStorage) -> None:
+        # The standard descent ladder, not a uniform concealment shape:
+        # each miss names its own first missing ancestor.
         under_real_bucket = await storage.stat(path=Path("/.vfs/trash/bucket/GHOST/x"))
+        assert under_real_bucket.errors[0].kind == VFSErrorKind.not_found
+        assert under_real_bucket.errors[0].path == "/.vfs/trash/bucket/GHOST"
         under_no_bucket = await storage.stat(path=Path("/.vfs/trash/NOBUCKET/x"))
-        for result in (under_real_bucket, under_no_bucket):
-            assert result.errors[0].kind == VFSErrorKind.not_found
-            assert result.errors[0].path == "/.vfs/trash"
+        assert under_no_bucket.errors[0].kind == VFSErrorKind.not_found
+        assert under_no_bucket.errors[0].path == "/.vfs/trash/NOBUCKET"
 
 
 class TestReadFailureHandling:
@@ -893,32 +895,48 @@ class TestWriteMechanics:
         await storage.close()
 
 
-class TestTrashWriteRefusal:
-    """The reserved trash namespace is never a write target."""
+class TestTrashWritability:
+    """Trash is an ordinary write target: standard gates, no trash-specific arm."""
 
-    async def test_writes_into_trash_classify_invalid_and_mint_nothing(self, tmp_path) -> None:
-        # Entry validation already refuses inferred content under the
-        # reserved skeleton; the backend guard covers what still constructs.
+    async def test_write_into_trash_mints_the_bucket_chain_and_reads_back(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.first_touch()
-        written = await storage.write(
-            entries=[Entry(path=Path("/.vfs/trash/bucket/x.txt"), kind="file", content="x")], parents=True
-        )
-        assert written.success is False
-        assert written.errors[0].kind == VFSErrorKind.invalid
-        as_dir = await storage.write(entries=[Entry(path=Path("/.vfs/trash/bucket"), kind="directory")], parents=True)
-        assert as_dir.success is False
-        assert as_dir.errors[0].kind == VFSErrorKind.invalid
-        made = await storage.mkdir(path=Path("/.vfs/trash/bucket"), parents=True)
-        assert made.success is False
-        assert made.errors[0].kind == VFSErrorKind.invalid
-        entry = storage._host.tables.entry
-        async with storage._host.engine.connect() as conn:
-            minted = (await conn.execute(select(entry.c.path).where(entry.c.path.like("/.vfs%")))).all()
-        assert minted == []  # nothing minted, not even ancestors
+        target = Path("/.vfs/trash/2026-07-18-10/x.txt")
+        written = await storage.write(entries=[Entry(path=target, kind="file", content="x")], parents=True)
+        assert written.success is True
+        assert written.observations[0].status == "created"
+        assert (await storage.read(path=target)).observations[0].content == "x"
+        bucket = (await storage.stat(path=target.parent_dir)).observations[0]
+        assert bucket.kind == "directory"
+        listing = await storage.ls(path=target.parent_dir)
+        assert [o.path for o in listing.observations] == [str(target)]
         await storage.close()
 
-    async def test_meta_paths_outside_trash_still_write(self, tmp_path) -> None:
+    async def test_mkdir_and_edit_under_trash_take_the_ordinary_paths(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        bucket = Path("/.vfs/trash/2026-07-18-10")
+        assert (await storage.mkdir(path=bucket, parents=True)).success is True
+        target = bucket / "x.txt"
+        await storage.write(entries=[Entry(path=target, kind="file", content="old text")])
+        edited = await storage.edit(path=target, edits=[EditOperation(old="old", new="new")])
+        assert edited.success is True
+        assert (await storage.read(path=target)).observations[0].content == "new text"
+        await storage.close()
+
+    async def test_trash_writes_fail_through_the_standard_error_arms(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        target = Path("/.vfs/trash/2026-07-18-10/x.txt")
+        await storage.write(entries=[Entry(path=target, kind="file", content="x")], parents=True)
+        taken = await storage.write(entries=[Entry(path=target, kind="file", content="y")], overwrite=False)
+        assert taken.errors[0].kind == VFSErrorKind.exists
+        through_file = await storage.mkdir(path=target / "sub", parents=True)
+        assert through_file.errors[0].kind == VFSErrorKind.wrong_kind
+        assert through_file.errors[0].path == str(target)
+        orphan = Entry(path=Path("/.vfs/trash/GHOST/y.txt"), kind="file", content="y")
+        no_parents = await storage.write(entries=[orphan])
+        assert no_parents.errors[0].kind == VFSErrorKind.not_found
+        await storage.close()
+
+    async def test_meta_paths_beside_trash_still_write(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         version = Path("/.vfs/docs/a.txt/__meta__/versions/1")
         result = await storage.write(entries=[Entry(path=version, kind="version", content="v1")], parents=True)
