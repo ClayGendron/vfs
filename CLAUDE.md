@@ -106,6 +106,21 @@ most relevant to this project:
 - **Databases**: `sqlite`, `postgres`, `turso`, `sqlalchemy`
 - **Code search & indexing** (trigram-index stories): `zoekt`, `codesearch`,
   `scip`
+- **Graphs & relation stores** (edge/graph stories): `neo4j`, `kuzu`
+  (archived upstream — kept as a frozen design record), `ladybug` (Kuzu's
+  community successor), `age` (graph on Postgres), `gel` (typed links
+  compiled onto Postgres), `cayley` (graph over SQL/KV backends),
+  `terminusdb` (versioned KG), `helix-db`, `FalkorDB` (SSPL — study
+  only), `tinkerpop` (Gremlin traversal API), `networkx`, `rustworkx`,
+  `spicedb`, `openfga`
+- **Graph query standards**: `openCypher`, `opengql-grammar` (LDBC's ISO
+  GQL 2024 grammar), `GraphLite` (early embedded ISO-GQL), `duckpgq`
+  (SQL/PGQ on DuckDB)
+- **Knowledge graphs, agent memory & ontologies**: `graphrag`, `graphiti`,
+  `cognee`, `LightRAG`, `graphify`, `letta`, `mem0`, `memori`
+  (bring-your-own-SQL agent memory), `MemOS`, `HippoRAG`, `KAG`,
+  `youtu-graphrag`, `basic-memory` (files-as-KG over MCP; AGPL — study
+  only), `ontogpt`, `rdflib`, `oxigraph`, `jena`
 - **MCP**: `modelcontextprotocol`, `python-sdk`, `fastmcp`
 
 ## Imports
