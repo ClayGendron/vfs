@@ -19,11 +19,14 @@ as a regenerable cache (unique, binary-collated) that nothing references.
 mounts never share schema objects. Only the storage backend should ever touch
 these tables; rows never escape it.
 
-Entry fields live across the family: the narrow ``entries`` row carries
-identity and metadata (never bodies), and :data:`ENTRY_FIELD_HOMES` maps each
-remaining domain field to its home table. Binary collation is pinned in DDL on
-path/name key columns — a pagination-correctness and LIKE-sargability
-prerequisite, not an ordering nicety.
+The domain models mirror the family one-to-one — ``Entry`` ↔ ``entries`` (+
+``content`` for the body), ``Version`` ↔ ``versions``, ``Chunk`` ↔ ``chunks``,
+``Edge`` ↔ ``edges`` — and the per-table constants below declare the columns
+with no model field (the id backbone, restore metadata) and the model fields
+with no column yet, so the drift test can pin each model to its own table.
+Binary collation is pinned in DDL on path/name key columns — a
+pagination-correctness and LIKE-sargability prerequisite, not an ordering
+nicety.
 """
 
 from __future__ import annotations
@@ -51,27 +54,49 @@ from vfs.models.vector import NativeEmbeddingConfig, VectorType
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH
 
 # Entries-table columns with no counterpart field on the domain model: the id
-# backbone plus the identity-based restore metadata (never paths — a trashed
-# entry restores by parent identity, immune to ancestor renames).
+# backbone, the identity-based restore metadata (never paths — a trashed
+# entry restores by parent identity, immune to ancestor renames), and the
+# per-entry version — minted and guarded storage-side, reported on
+# observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
-    {"id", "node_id", "parent_id", "original_parent_id", "original_name"},
+    {"id", "node_id", "parent_id", "original_parent_id", "original_name", "version"},
 )
 
-# Where each Entry field that is NOT an entries-table column lives:
-# field name -> (VFSTables attribute, column name). Bodies and per-kind
-# payloads leave the narrow entries row so metadata writes never rewrite
-# content. The drift test walks this mapping.
-ENTRY_FIELD_HOMES: Final[dict[str, tuple[str, str]]] = {
-    "content": ("content", "content"),
-    "version_diff": ("versions", "version_diff"),
-    "is_snapshot": ("versions", "is_snapshot"),
-    "created_by": ("versions", "created_by"),
-    "line_start": ("chunks", "line_start"),
-    "line_end": ("chunks", "line_end"),
-    "embedding": ("chunks", "embedding"),
-    "edge_type": ("edges", "edge_type"),
-    "edge_weight": ("edges", "weight"),
-    "edge_distance": ("edges", "distance"),
+# The Entry field homed in the content table rather than the entries row —
+# bodies leave the narrow row so metadata writes never rewrite content.
+ENTRY_CONTENT_FIELDS: Final[frozenset[str]] = frozenset({"content"})
+
+# Per-model column exemptions for the metadata family: the id backbone plus
+# the owner references, which the models carry as Path fields (below) and
+# the persistence layer resolves to integer ids.
+VERSION_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"entry_id"})
+CHUNK_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "entry_id"})
+EDGE_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "source_id", "target_id"})
+
+# Owner-reference fields per model: the Path field standing in for the row's
+# id reference. The drift test excuses these from column matching.
+MODEL_OWNER_FIELDS: Final[dict[str, frozenset[str]]] = {
+    "Version": frozenset({"file"}),
+    "Chunk": frozenset({"file"}),
+    "Edge": frozenset({"source", "target"}),
+}
+
+# Model fields with no backing column yet, and the spec that resolves each:
+# Edge.version is the per-edge monotone value (ADR 013) awaiting the
+# edge-wiring spec's column.
+MODEL_FIELD_ONLY: Final[dict[str, frozenset[str]]] = {
+    "Version": frozenset(),
+    "Chunk": frozenset(),
+    "Edge": frozenset({"version"}),
+}
+
+# Field-name → column-name divergences per model. ``Version.number`` keeps
+# the self-describing ``version_number`` column (bare-SQL clarity, and NUMBER
+# is an Oracle reserved word); unlisted fields share their column's name.
+MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
+    "Version": {"number": "version_number"},
+    "Chunk": {},
+    "Edge": {},
 }
 
 # First-touch writes this into the meta row; every later first touch compares
@@ -182,15 +207,12 @@ def build_vfs_tables(
         Column("path", _binary_string(MAX_PATH_LENGTH), nullable=False, unique=True, index=True),
         Column("name", _binary_string(MAX_SEGMENT_LENGTH), nullable=False),
         Column("kind", String(32), nullable=False, index=True),
-        Column("revision", BigInteger),
+        Column("version", BigInteger),
         Column("content_hash", String(64)),
         Column("mime_type", String(MAX_SEGMENT_LENGTH)),
         Column("ext", String(32), index=True),
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
-        Column("chunked", Boolean, nullable=False, default=False, index=True),
-        Column("encoded", Boolean, nullable=False, default=False, index=True),
-        Column("version_number", Integer),
         Column("owner_id", String(255), index=True),
         Column("original_parent_id", BigInteger),
         Column("original_name", _binary_string(MAX_SEGMENT_LENGTH)),
@@ -276,8 +298,8 @@ def build_vfs_tables(
     # Single-row mount metadata: the schema-format version first touch
     # verifies, the durable mount identity that keys the per-mount advisory
     # lock, and the current-epoch pointer whose one-row flip publishes a
-    # rebuilt gram index atomically. Revisions are per-entry monotone
-    # values on their own rows — the mount keeps no revision sequence.
+    # rebuilt gram index atomically. Versions are per-entry monotone
+    # values on their own rows — the mount keeps no version sequence.
     meta = Table(
         f"{table_name}_meta",
         metadata,
@@ -292,7 +314,7 @@ def build_vfs_tables(
 
     # One row per gram-index build: the two-part fingerprint (format
     # version, options hash) — coverage is per-row flag state, not a
-    # revision threshold. Rows outside the current epoch are reclaimable
+    # version threshold. Rows outside the current epoch are reclaimable
     # garbage, swept by the reindex verb.
     gram_epochs = Table(
         f"{table_name}_gram_epochs",

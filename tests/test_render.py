@@ -368,16 +368,15 @@ class TestActionRendering:
     def test_write_empty_is_nothing_to_do(self) -> None:
         assert str(Result(ops=("write",))) == "write: nothing to do"
 
-    def test_write_summary_counts_kinds_and_excludes_versions(self) -> None:
+    def test_write_summary_counts_files_and_directories(self) -> None:
         result = Result(
             ops=("write",),
             observations=[
                 obs("/a.md", kind="file", status="created"),
-                obs("/a.md/.vfs/chunks/1/1_5", kind="chunk"),
-                obs("/a.md/.vfs/versions/1", kind="version"),
+                obs("/docs", kind="directory", status="created"),
             ],
         )
-        assert str(result) == "write success: 1 file, 1 chunk\n\n  created /a.md"
+        assert str(result) == "write success: 1 file, 1 directory\n\n  created /a.md"
 
     def test_write_breakdown_reconciles_with_file_count(self) -> None:
         # A file with no status reads as created; the buckets must sum to 3.
@@ -409,12 +408,12 @@ class TestActionRendering:
         result = Result(ops=("write",), observations=[obs("/a.md", kind="file")])
         assert str(result) == "write success: 1 file\n\n  created /a.md"
 
-    def test_write_chunks_only_has_no_file_part(self) -> None:
+    def test_write_directories_only_has_no_file_part(self) -> None:
         result = Result(
             ops=("write",),
-            observations=[obs("/a.md/.vfs/chunks/1/1_5", kind="chunk"), obs("/a.md/.vfs/chunks/2/6_9", kind="chunk")],
+            observations=[obs("/docs", kind="directory"), obs("/docs/sub", kind="directory")],
         )
-        assert str(result) == "write success: 2 chunks"
+        assert str(result) == "write success: 2 directories"
 
     def test_write_results_still_validate_projection(self) -> None:
         result = Result(ops=("write",), observations=[obs("/a.md", kind="file")])

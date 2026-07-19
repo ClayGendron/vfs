@@ -10,7 +10,7 @@ errored plan.
 
 ``StagedEntry`` is one path's planned final state — a create or a material
 update — carrying the persistence bookkeeping a domain ``Entry`` never holds:
-the row ``entry_id``, the ``base_revision`` guard, and the create/update
+the row ``entry_id``, the ``base_version`` guard, and the create/update
 discriminator. That is why it lives here beside the plan and not among the
 session-free models.
 """
@@ -46,8 +46,8 @@ class StagedEntry:
     ext: str | None = None
     mime_type: str | None = None
     entry_id: int | None = None  # committed id for updates; creates learn theirs at insert
-    base_revision: int | None = None  # the update guard; None = unguarded (arbitration clobber)
-    revision: int = 1  # creates mint 1; updates stage base + 1; clobbers learn theirs post-execution
+    base_version: int | None = None  # the update guard; None = unguarded (arbitration clobber)
+    version: int = 1  # creates mint 1; updates stage base + 1; clobbers learn theirs post-execution
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ class WritePlan:
 
     ``staged`` overlays ``committed`` for every gate, so entries in one
     batch see the parents earlier entries minted; ``bumps`` collects the
-    committed directories whose membership changed, and ``bump_revisions``
+    committed directories whose membership changed, and ``bump_versions``
     holds their read-back values when an observation needs one. Any error
     fails the batch whole — an errored plan is never executed.
     """
@@ -71,7 +71,7 @@ class WritePlan:
         self.budget = budget
         self.staged: dict[Path, StagedEntry] = {}
         self.bumps: set[str] = set()
-        self.bump_revisions: dict[str, int] = {}
+        self.bump_versions: dict[str, int] = {}
         self.errors: list[ResultError] = []
         self.pending: list[tuple[Path, Status]] = []
 
@@ -236,14 +236,14 @@ class WritePlan:
             ext=ext,
             mime_type=mime_type,
             entry_id=row["id"],
-            base_revision=row["revision"],
-            revision=row["revision"] + 1,
+            base_version=row["version"],
+            version=row["version"] + 1,
         )
 
     def bump_parent(self, path: Path) -> None:
         """Mark a namespace mutation at *path*: its committed parent gets a bump.
 
-        A batch-minted parent is skipped — its single fresh revision already
+        A batch-minted parent is skipped — its single fresh version already
         reflects the membership it was created with.
         """
         parent = path.parent_dir

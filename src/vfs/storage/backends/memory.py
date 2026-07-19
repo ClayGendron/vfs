@@ -36,8 +36,8 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
 
-from vfs.models import Entry, Match, Observation
-from vfs.paths import Path, edge_out_path, extract_extension
+from vfs.models import Edge, Entry, Match, Observation
+from vfs.paths import Path, extract_extension
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage import storage_ops
 from vfs.storage.replace import replace
@@ -61,16 +61,15 @@ _CONTENT_KINDS = frozenset({"file", "chunk", "version"})
 
 @dataclass
 class _Row:
-    """One stored object: the kind plus whatever content/metadata it carries.
+    """One stored object: the kind plus whatever content it carries.
 
-    ``revision`` is per-entry monotone: fresh rows mint 1, every material
-    mutation or bump adds 1. Two rows' revisions are never comparable.
+    ``version`` is per-entry monotone: fresh rows mint 1, every material
+    mutation or bump adds 1. Two rows' versions are never comparable.
     """
 
     kind: ObjectKind
     content: str | None = None
-    edge_type: str | None = None
-    revision: int = 1
+    version: int = 1
 
 
 class InMemoryStorage:
@@ -94,13 +93,16 @@ class InMemoryStorage:
         self.description = description
         self._allow_files = allow_files
         self._rows: dict[Path, _Row] = {ROOT: _Row(kind="directory")}
+        # Edges are entry-scoped metadata, not namespace rows: keyed by the
+        # identity triple, holding the per-edge version.
+        self._edges: dict[tuple[Path, Path, str], int] = {}
 
     def capabilities(self) -> frozenset[Op]:
         return storage_ops(self)
 
     def traits(self) -> Mapping[str, str]:
         # Live-state scan: no index tier, so results are never stale.
-        return {"grep_tier": "scan", "grep_staleness": "none", "revision_encoding": "per_entry64"}
+        return {"grep_tier": "scan", "grep_staleness": "none", "version_encoding": "per_entry64"}
 
     # -------------------------------------------------------------------
     # Read family
@@ -270,7 +272,7 @@ class InMemoryStorage:
                 p,
                 row.content,
                 regex,
-                revision=row.revision,
+                version=row.version,
                 invert_match=invert_match,
                 before_context=before_context,
                 after_context=after_context,
@@ -334,7 +336,7 @@ class InMemoryStorage:
             except ValidationError as exc:
                 errors.append(_classified(VFSErrorKind.invalid, exc.errors()[0]["msg"], target))
                 continue
-            staged[target] = clone_row(row, content=content, revision=row.revision + 1)
+            staged[target] = clone_row(row, content=content, version=row.version + 1)
             edited.append(target)
         if errors:
             return Result(ops=("edit",), errors=errors)
@@ -412,7 +414,7 @@ class InMemoryStorage:
         staged[path] = _Row(kind="directory")
         self._bump_parent(staged, path)
         # Observe after every stamp and bump so each row reports its
-        # committed revision, not a mid-batch one.
+        # committed version, not a mid-batch one.
         rows = [self._observe(p, staged[p], status="created") for p in (*minted, path)]
         self._rows = staged
         return Result(ops=("mkdir",), observations=rows)
@@ -449,21 +451,20 @@ class InMemoryStorage:
             if endpoint not in self._rows:
                 return _fail("mkedge", VFSErrorKind.not_found, f"Not found: {endpoint}", endpoint)
         try:
-            edge_path = edge_out_path(source, target, edge_type)
-        except ValueError as exc:
-            return _fail("mkedge", VFSErrorKind.invalid, str(exc))
-        staged = dict(self._rows)
-        # Edge projections are internal machinery — their meta ancestors are
-        # minted implicitly, exempt from the strict parent rule.
-        self._mint_chain(staged, edge_path)
-        prior = staged.get(edge_path)
-        status = "updated" if prior is not None else "created"
-        revision = prior.revision + 1 if prior is not None else 1
-        staged[edge_path] = _Row(kind="edge", edge_type=edge_type, revision=revision)
-        if status == "created":
-            self._bump_parent(staged, edge_path)
-        self._rows = staged
-        return Result(ops=("mkedge",), observations=[self._observe(edge_path, staged[edge_path], status=status)])
+            # The Edge model is the validation door: endpoint eligibility and
+            # edge-type lawfulness classify here, not downstream.
+            edge = Edge(source=source, target=target, edge_type=edge_type)
+        except ValidationError as exc:
+            return _fail("mkedge", VFSErrorKind.invalid, exc.errors()[0]["msg"])
+        key = (edge.source, edge.target, edge.edge_type)
+        prior = self._edges.get(key)
+        status: _Status = "updated" if prior is not None else "created"
+        version = prior + 1 if prior is not None else 1
+        self._edges[key] = version
+        # An edge is entry-scoped metadata addressed by its endpoints: the
+        # observation names the source entry, edge_type populated.
+        row = Observation(path=edge.source, edge_type=edge.edge_type, version=version, status=status)
+        return Result(ops=("mkedge",), observations=[row])
 
     # -------------------------------------------------------------------
     # Internal helpers
@@ -491,14 +492,13 @@ class InMemoryStorage:
             path=path,
             kind=row.kind,
             content=row.content if content else None,
-            edge_type=row.edge_type,
             size_bytes=size,
-            revision=row.revision,
+            version=row.version,
             status=status,
         )
 
     def _bump_parent(self, rows: dict[Path, _Row], path: Path) -> None:
-        """Unconditional parent-revision bump for a namespace mutation at *path*.
+        """Unconditional parent-version bump for a namespace mutation at *path*.
 
         Clones the parent row — *rows* may be a staged copy sharing row
         objects with the committed dict, and a failed batch must not leave
@@ -506,7 +506,7 @@ class InMemoryStorage:
         """
         parent = rows.get(path.parent_dir)
         if parent is not None:
-            rows[path.parent_dir] = clone_row(parent, revision=parent.revision + 1)
+            rows[path.parent_dir] = clone_row(parent, version=parent.version + 1)
 
     def _directories_only(self, op: str) -> Result:
         return _fail(op, VFSErrorKind.unsupported, "This storage holds directories only; file content is not supported")
@@ -570,7 +570,7 @@ class InMemoryStorage:
         """Gate and stage one content-bearing row; a ``Result`` is the failure.
 
         Returns the staged row's status — callers observe after the whole
-        batch is staged, so no observation carries a mid-batch revision.
+        batch is staged, so no observation carries a mid-batch version.
         """
         if not self._allow_files and kind != "directory":
             return self._directories_only(op)
@@ -584,8 +584,8 @@ class InMemoryStorage:
             if not overwrite:
                 return _fail(op, VFSErrorKind.exists, f"Already exists: {path}", path)
         self._mint_chain(staged, path)
-        revision = occupant.revision + 1 if occupant is not None else 1
-        staged[path] = _Row(kind=kind, content=content, revision=revision)
+        version = occupant.version + 1 if occupant is not None else 1
+        staged[path] = _Row(kind=kind, content=content, version=version)
         if occupant is None:
             self._bump_parent(staged, path)
         return "updated" if occupant is not None else "created"
@@ -706,19 +706,19 @@ class InMemoryStorage:
             except ValueError as exc:
                 errors.append(_classified(VFSErrorKind.unaddressable, f"Cannot {op} {src}: {exc}", dest))
                 continue
-            # Copy mints new nodes at revision 1 (an overwritten occupant is
-            # a material update instead); move keeps descendants' revisions
+            # Copy mints new nodes at version 1 (an overwritten occupant is
+            # a material update instead); move keeps descendants' versions
             # (a reparent is a material write of the moved node plus both
             # parent bumps, nothing more).
             for (p, row), new_path in zip(moved, dests, strict=True):
                 if op == "copy":
                     prior = staged.get(new_path)
-                    staged[new_path] = clone_row(row, revision=prior.revision + 1 if prior is not None else 1)
+                    staged[new_path] = clone_row(row, version=prior.version + 1 if prior is not None else 1)
                 else:
-                    staged[new_path] = clone_row(row, revision=row.revision)
+                    staged[new_path] = clone_row(row, version=row.version)
                     del staged[p]
             if op == "move":
-                staged[dest] = clone_row(staged[dest], revision=staged[dest].revision + 1)
+                staged[dest] = clone_row(staged[dest], version=staged[dest].version + 1)
                 self._bump_parent(staged, src)
                 self._bump_parent(staged, dest)
             elif occupant is None:
@@ -812,7 +812,7 @@ def _grep_file(
     content: str,
     regex: re.Pattern[str],
     *,
-    revision: int,
+    version: int,
     invert_match: bool,
     before_context: int,
     after_context: int,
@@ -833,10 +833,10 @@ def _grep_file(
     if not regions:
         return None
     if output_mode == "files":
-        return Observation(path=path, kind="file", revision=revision)
+        return Observation(path=path, kind="file", version=version)
     if output_mode == "count":
-        return Observation(path=path, kind="file", revision=revision, score=float(len(regions)))
-    return Observation(path=path, kind="file", revision=revision, content=content, matches=regions)
+        return Observation(path=path, kind="file", version=version, score=float(len(regions)))
+    return Observation(path=path, kind="file", version=version, content=content, matches=regions)
 
 
 __all__ = ["InMemoryStorage"]

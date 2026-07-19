@@ -82,7 +82,7 @@ class DatabaseStorage:
 
     def traits(self) -> Mapping[str, str]:
         declared = {
-            "revision_encoding": "per_entry64",
+            "version_encoding": "per_entry64",
             "arbitration": self._host.profile.arbitration,
         }
         if self._host.profile.name in ("sqlite", "postgresql", "mssql"):

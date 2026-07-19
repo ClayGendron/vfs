@@ -1,22 +1,28 @@
-"""Tests for the pure-Pydantic domain models: Entry, Observation, Match."""
+"""Tests for the pure-Pydantic domain models: Entry, Chunk, Version, Edge, Observation."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from types import UnionType
 from typing import Union, get_args, get_origin
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from vfs.models import (
+    ENTRY_OWNED_MIRRORS,
     OBSERVATION_MIRROR_FIELDS,
+    OBSERVATION_MIRROR_OWNERS,
     OBSERVATION_QUERY_FIELDS,
+    Chunk,
+    Edge,
     Entry,
     Match,
     Observation,
+    Version,
 )
-from vfs.paths import Path, chunk_path, edge_out_path, skill_path, tool_path, version_path
+from vfs.paths import Path, skill_path, tool_path
 
 # ---------------------------------------------------------------------------
 # model_fields_set — the repo-wide explicitness contract
@@ -66,10 +72,6 @@ class TestConstructionValidation:
         with pytest.raises(ValidationError, match="null bytes"):
             Entry(path=Path("/a.md"), content="a\x00b")
 
-    def test_null_bytes_in_version_diff_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="null bytes"):
-            Entry(path=version_path(Path("/a.md"), 2), version_diff="a\x00b")
-
     def test_empty_name_rejected_for_non_root(self) -> None:
         with pytest.raises(ValidationError, match="name must not be empty"):
             Entry(path=Path("/src/auth.py"), name="")
@@ -86,21 +88,43 @@ class TestConstructionValidation:
         with pytest.raises(ValidationError):
             Entry(content="x")  # ty: ignore[missing-argument]
 
-    def test_version_row_rejects_content_and_diff_together(self) -> None:
-        with pytest.raises(ValidationError, match="must not set both"):
-            Entry(path=version_path(Path("/a.md"), 1), content="x", version_diff="y")
+    def test_kind_vocabulary_is_file_or_directory_only(self) -> None:
+        for retired in ("chunk", "version", "edge", "tool", "skill"):
+            with pytest.raises(ValidationError, match="kind"):
+                Entry(path=Path("/x"), kind=retired)  # ty: ignore[invalid-argument-type]
 
-    def test_tool_and_skill_are_content_free_like_directories(self) -> None:
+    def test_metadata_fields_left_the_model(self) -> None:
+        dropped = {
+            "version_diff",
+            "version_number",
+            "is_snapshot",
+            "created_by",
+            "line_start",
+            "line_end",
+            "edge_type",
+            "edge_weight",
+            "edge_distance",
+            "embedding",
+        }
+        assert not dropped & set(Entry.model_fields)
+        assert set(Entry.model_computed_fields) == {"parent_dir"}
+
+    def test_tool_and_skill_units_are_plain_directories(self) -> None:
         for path in (tool_path("clone-repo"), skill_path("pdf-processing")):
             entry = Entry(path=path)
-            assert entry.kind in {"tool", "skill"}
+            assert entry.kind == "directory"
             assert entry.content is None
-            assert entry.parent_file is None
             assert entry.ext is None
 
-    def test_with_content_rejected_on_tool(self) -> None:
-        with pytest.raises(ValueError, match="Cannot set content on a tool"):
+    def test_with_content_rejected_on_a_unit_directory(self) -> None:
+        with pytest.raises(ValueError, match="Cannot set content on a directory"):
             Entry(path=tool_path("clone-repo")).with_content("x")
+
+    def test_directory_with_dotted_name_carries_its_ext(self) -> None:
+        entry = Entry(path=Path("/a/foo.bar"), kind="directory")
+        assert entry.kind == "directory"
+        assert entry.ext == "bar"
+        assert entry.content is None
 
 
 # ---------------------------------------------------------------------------
@@ -124,25 +148,16 @@ class TestAuthoringIntent:
         assert inferred_dir.content is None
         assert Entry(path=Path("/notes/todo")).kind == "file"
 
-    def test_content_bearing_inference_stands(self) -> None:
-        chunk = Entry(path=chunk_path(Path("/a.md"), "1_10", 1), content="chunk text")
-        assert chunk.kind == "chunk"
-        assert chunk.content == "chunk text"
-        version = Entry(path=version_path(Path("/a.md"), 2), content="v2 text")
-        assert version.kind == "version"
-        assert version.content == "v2 text"
+    def test_content_reclassifies_meta_scope_paths_like_ordinary_ones(self) -> None:
+        # Trash-side paths are ordinary paths in the meta scope: the name
+        # lottery reclassifies under content exactly as it would anywhere.
+        entry = Entry(path=Path("/.vfs/trash/bucket"), content="x")
+        assert entry.kind == "file"
+        assert entry.content == "x"
 
     def test_explicit_directory_with_content_raises(self) -> None:
         with pytest.raises(ValidationError, match="carries no content"):
             Entry(path=Path("/notes/journal"), kind="directory", content="x")
-
-    def test_explicit_tool_with_content_raises(self) -> None:
-        with pytest.raises(ValidationError, match="carries no content"):
-            Entry(path=tool_path("clone-repo"), kind="tool", content="x")
-
-    def test_explicit_skill_with_content_raises(self) -> None:
-        with pytest.raises(ValidationError, match="carries no content"):
-            Entry(path=skill_path("pdf-processing"), kind="skill", content="x")
 
     def test_empty_string_content_is_content(self) -> None:
         entry = Entry(path=Path("/notes/journal"), content="")
@@ -166,16 +181,16 @@ class TestAuthoringIntent:
         assert root.kind == "directory"
         assert root.content is None
 
-    def test_reserved_meta_directory_refuses_content(self) -> None:
-        chunk_version_dir = chunk_path(Path("/a.md"), "1_10", 1).parent_dir
-        versions_dir = version_path(Path("/a.md"), 2).parent_dir
-        for path in (chunk_version_dir, versions_dir):
-            with pytest.raises(ValidationError, match="carries no content"):
-                Entry(path=path, content="x")
-
-    def test_tool_and_skill_unit_dirs_refuse_content(self) -> None:
-        for path in (tool_path("clone-repo"), skill_path("pdf-processing")):
-            with pytest.raises(ValidationError, match="carries no content"):
+    def test_reserved_directories_refuse_content(self) -> None:
+        # Structural spots are never the name lottery: content aimed at them
+        # is a caller error, not a file in disguise.
+        for path in (
+            Path("/.vfs"),
+            Path("/.agents"),
+            tool_path("clone-repo"),
+            skill_path("pdf-processing"),
+        ):
+            with pytest.raises(ValidationError, match="structurally a directory"):
                 Entry(path=path, content="x")
 
     def test_unhashable_kind_is_a_clean_validation_error(self) -> None:
@@ -207,37 +222,7 @@ class TestAuthoringIntent:
 
 
 # ---------------------------------------------------------------------------
-# Derived relationship projections
-# ---------------------------------------------------------------------------
-
-
-class TestDerivedProjections:
-    def test_file_projections(self) -> None:
-        file = Entry(path=Path("/docs/a.md"), content="x")
-        assert file.parent_dir == "/docs"
-        assert isinstance(file.parent_dir, Path)
-        assert file.parent_file is None  # files own chunks; nothing owns them
-        assert file.source_file is None
-        assert file.target_file is None
-
-    def test_edge_identity_and_endpoints_derive_from_path(self) -> None:
-        edge = Entry(path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"))
-        assert edge.kind == "edge"
-        assert edge.edge_type == "references"
-        assert edge.source_file == "/a.md"
-        assert edge.target_file == "/b.md"
-        assert edge.parent_file == "/a.md"
-
-    def test_explicit_edge_type_is_preserved(self) -> None:
-        edge = Entry(
-            path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"),
-            edge_type="custom",
-        )
-        assert edge.edge_type == "custom"
-
-
-# ---------------------------------------------------------------------------
-# Entry / Observation drift
+# Observation mirror drift — each mirror pinned to its owning model
 # ---------------------------------------------------------------------------
 
 
@@ -248,21 +233,34 @@ def _inner_types(annotation: object) -> set[object]:
     return {annotation}
 
 
-class TestObservationMirrorsEntry:
+class TestObservationMirrors:
     def test_partition_is_total_and_disjoint(self) -> None:
         assert set(Observation.model_fields) == OBSERVATION_MIRROR_FIELDS | OBSERVATION_QUERY_FIELDS
         assert not (OBSERVATION_MIRROR_FIELDS & OBSERVATION_QUERY_FIELDS)
 
-    def test_every_mirror_matches_its_entry_field_type(self) -> None:
-        for name in sorted(OBSERVATION_MIRROR_FIELDS):
-            assert name in Entry.model_fields, f"Observation.{name} mirrors no Entry field"
-            obs = _inner_types(Observation.model_fields[name].annotation)
-            entry = _inner_types(Entry.model_fields[name].annotation)
-            assert obs == entry, f"type drift on {name!r}: Observation {obs} != Entry {entry}"
+    def test_owner_map_covers_exactly_the_mirror_set(self) -> None:
+        assert set(OBSERVATION_MIRROR_OWNERS) == OBSERVATION_MIRROR_FIELDS
+        assert {f for f, (owner, _) in OBSERVATION_MIRROR_OWNERS.items() if owner is Entry} == ENTRY_OWNED_MIRRORS
 
-    def test_query_fields_never_exist_on_entry(self) -> None:
+    def test_every_mirror_matches_its_owning_model_field_type(self) -> None:
+        for name in sorted(OBSERVATION_MIRROR_FIELDS):
+            owner, owner_field = OBSERVATION_MIRROR_OWNERS[name]
+            assert owner_field in owner.model_fields, f"Observation.{name} mirrors no {owner.__name__} field"
+            obs = _inner_types(Observation.model_fields[name].annotation)
+            owned = _inner_types(owner.model_fields[owner_field].annotation)
+            assert obs == owned, f"type drift on {name!r}: Observation {obs} != {owner.__name__}.{owner_field} {owned}"
+
+    def test_non_entry_mirrors_resolve_to_version_and_edge(self) -> None:
+        assert OBSERVATION_MIRROR_OWNERS["version"] == (Version, "number")
+        assert OBSERVATION_MIRROR_OWNERS["edge_type"] == (Edge, "edge_type")
+        assert OBSERVATION_MIRROR_OWNERS["edge_weight"] == (Edge, "weight")
+        assert OBSERVATION_MIRROR_OWNERS["edge_distance"] == (Edge, "distance")
+
+    def test_query_fields_never_exist_on_any_model(self) -> None:
+        models: tuple[type[BaseModel], ...] = (Entry, Chunk, Version, Edge)
         for name in sorted(OBSERVATION_QUERY_FIELDS):
-            assert name not in Entry.model_fields, f"query field {name!r} leaked onto Entry"
+            for model in models:
+                assert name not in model.model_fields, f"query field {name!r} leaked onto {model.__name__}"
 
 
 # ---------------------------------------------------------------------------
@@ -271,30 +269,18 @@ class TestObservationMirrorsEntry:
 
 
 class TestEntryToObservation:
-    def test_projection_covers_every_mirror_field(self) -> None:
-        # No single kind populates every mirror — a file carries content
-        # metrics, an edge carries edge metadata. Across both, every mirror
-        # projects, and their union covers the whole mirror set.
-        file = Entry(
-            path=Path("/docs/a.md"),
-            content="hello",
-            mime_type="text/markdown",
-            version_number=3,
-            revision=7,
-        )
-        edge = Entry(
-            path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"),
-            edge_weight=0.5,
-            edge_distance=1.5,
-        )
-        populated: set[str] = set()
-        for entry in (file, edge):
-            obs = entry.to_observation()
-            for name in OBSERVATION_MIRROR_FIELDS:
-                assert getattr(obs, name) == getattr(entry, name), f"mirror {name!r} not projected"
-                if getattr(entry, name) is not None:
-                    populated.add(name)
-        assert populated == OBSERVATION_MIRROR_FIELDS, f"unpopulated mirrors: {OBSERVATION_MIRROR_FIELDS - populated}"
+    def test_projection_covers_every_entry_owned_mirror(self) -> None:
+        entry = Entry(path=Path("/docs/a.md"), content="hello", mime_type="text/markdown")
+        obs = entry.to_observation()
+        for name in ENTRY_OWNED_MIRRORS:
+            assert getattr(obs, name) == getattr(entry, name), f"mirror {name!r} not projected"
+            assert getattr(obs, name) is not None, f"mirror {name!r} unexercised by this entry"
+
+    def test_non_entry_mirrors_stay_unpopulated(self) -> None:
+        obs = Entry(path=Path("/a.md"), content="x").to_observation()
+        for name in OBSERVATION_MIRROR_FIELDS - ENTRY_OWNED_MIRRORS:
+            assert getattr(obs, name) is None
+            assert name not in obs.populated
 
     def test_query_fields_come_from_the_operation(self) -> None:
         entry = Entry(path=Path("/a.md"), content="x")
@@ -331,13 +317,13 @@ class TestObservationPopulatedMask:
         assert obs.content is None
         assert obs.populated == frozenset({"path", "content"})
 
-    def test_to_observation_populates_every_mirror(self) -> None:
+    def test_to_observation_populates_every_entry_owned_mirror(self) -> None:
         obs = Entry(path=Path("/a.md"), content="x").to_observation()
-        assert obs.populated == OBSERVATION_MIRROR_FIELDS
+        assert obs.populated == ENTRY_OWNED_MIRRORS
 
     def test_to_observation_adds_supplied_query_fields(self) -> None:
         obs = Entry(path=Path("/a.md"), content="x").to_observation(score=0.5, status="created")
-        assert obs.populated == OBSERVATION_MIRROR_FIELDS | {"score", "status"}
+        assert obs.populated == ENTRY_OWNED_MIRRORS | {"score", "status"}
 
     def test_rebasing_preserves_the_mask(self) -> None:
         obs = Observation(path=Path("/docs/a.md"), populated=frozenset({"path", "content"}))
@@ -393,16 +379,12 @@ class TestMountRebasing:
 
 class TestWithContent:
     def test_returns_refreshed_copy(self) -> None:
-        entry = Entry(path=Path("/docs/a.md"), content="old", chunked=True, encoded=True)
+        entry = Entry(path=Path("/docs/a.md"), content="old")
         updated = entry.with_content("new content")
         assert updated.content == "new content"
         assert updated.content_hash != entry.content_hash
         assert updated.size_bytes == len(b"new content")
-        assert updated.version_diff is None
-        assert updated.chunked is False  # new content must be re-indexed
-        assert updated.encoded is False
         assert entry.content == "old"  # original untouched
-        assert entry.chunked is True
 
     def test_metrics_match_fresh_construction(self) -> None:
         updated = Entry(path=Path("/a.md"), content="seed").with_content("hello\nworld")
@@ -421,203 +403,145 @@ class TestWithContent:
 
 
 # ---------------------------------------------------------------------------
-# Versioning — create_version_row, with_version, reconstruction
+# Version — creation, payloads, reconstruction
 # ---------------------------------------------------------------------------
 
 
-class TestVersioning:
+def _full_metrics(content: str) -> tuple[str, int, int]:
+    encoded = content.encode()
+    return hashlib.sha256(encoded).hexdigest(), len(encoded), content.count("\n") + 1 if content else 0
+
+
+def _version(number: int, content: str, prev: str | None, **kwargs: object) -> Version:
+    return Version.create(
+        file=Path("/a.md"),
+        number=number,
+        version_content=content,
+        prev_content=prev,
+        created_by="auto",
+        **kwargs,  # ty: ignore[invalid-argument-type]
+    )
+
+
+class TestVersion:
     def test_v1_row_is_a_snapshot(self) -> None:
-        row = Entry.create_version_row(
-            file_path="/docs/a.md",
-            version_number=1,
-            version_content="hello",
-            prev_content=None,
-            created_by="auto",
-            force_snapshot=True,
-        )
-        assert row.kind == "version"
+        row = _version(1, "hello", None, force_snapshot=True)
+        assert row.file == "/a.md"
         assert row.is_snapshot is True
         assert row.content == "hello"
         assert row.version_diff is None
-        assert row.name == "1"
-        assert row.path.parent_file == "/docs/a.md"
 
     def test_diff_row_keeps_full_content_metrics(self) -> None:
-        row = Entry.create_version_row(
-            file_path="/docs/a.md",
-            version_number=2,
-            version_content="hello\nworld",
-            prev_content="hello",
-            created_by="auto",
-        )
+        row = _version(2, "hello\nworld", "hello")
         assert row.is_snapshot is False
         assert row.content is None  # diff rows store no snapshot text
         assert row.version_diff
         # metrics describe the full version content, not the stored diff
-        full_hash, full_size, full_lines = Entry._content_metadata("hello\nworld")
+        full_hash, full_size, full_lines = _full_metrics("hello\nworld")
         assert row.content_hash == full_hash
         assert row.size_bytes == full_size
         assert row.lines == full_lines
 
+    def test_hydrated_diff_row_is_never_re_measured(self) -> None:
+        # A stored diff row round-trips: construction must keep the explicit
+        # full-content metrics rather than measuring the diff payload.
+        row = _version(2, "hello\nworld", "hello")
+        hydrated = Version(**row.model_dump())
+        assert hydrated.content_hash == row.content_hash
+        assert hydrated.size_bytes == row.size_bytes
+        assert hydrated.lines == row.lines
+
     def test_reconstruction_walks_snapshot_plus_diffs(self) -> None:
         contents = ["one", "one\ntwo", "one\ntwo\nthree"]
-        rows = [
-            Entry.create_version_row(
-                file_path="/a.md",
-                version_number=n + 1,
-                version_content=contents[n],
-                prev_content=contents[n - 1] if n else None,
-                created_by="auto",
-            )
-            for n in range(3)
-        ]
-        assert Entry._reconstruct_file_version(rows, 3) == "one\ntwo\nthree"
-        assert Entry._reconstruct_file_version(rows, 2) == "one\ntwo"
+        rows = [_version(n + 1, contents[n], contents[n - 1] if n else None) for n in range(3)]
+        assert Version.reconstruct(rows, 3) == "one\ntwo\nthree"
+        assert Version.reconstruct(rows, 2) == "one\ntwo"
 
     def test_reconstruction_detects_missing_rows(self) -> None:
-        v1 = Entry.create_version_row(
-            file_path="/a.md",
-            version_number=1,
-            version_content="one",
-            prev_content=None,
-            created_by="auto",
-        )
+        v1 = _version(1, "one", None)
         with pytest.raises(ValueError, match="Missing version row"):
-            Entry._reconstruct_file_version([v1], 2)
-
-    def test_with_version_on_file_keeps_path(self) -> None:
-        file = Entry(path=Path("/a.md"), content="x")
-        bumped = file.with_version(4)
-        assert bumped.version_number == 4
-        assert bumped.path == file.path
-        assert file.version_number is None  # original untouched
-
-    def test_with_version_rebuilds_version_path_and_name(self) -> None:
-        v1 = Entry.create_version_row(
-            file_path="/a.md",
-            version_number=1,
-            version_content="x",
-            prev_content=None,
-            created_by="auto",
-        )
-        v2 = v1.with_version(2)
-        assert v2.path == version_path(Path("/a.md"), 2)
-        assert v2.name == "2"
-        assert v1.name == "1"  # original untouched
-
-    def test_with_version_moves_chunk_keeping_leaf(self) -> None:
-        chunk = Entry(path=chunk_path(Path("/a.md"), "10_42", 1), content="seg")
-        moved = chunk.with_version(2)
-        assert moved.path == chunk_path(Path("/a.md"), "10_42", 2)
-        assert moved.name == "10_42"
-        assert moved.version_number == 2
-
-    def test_with_version_rejects_other_kinds(self) -> None:
-        with pytest.raises(ValueError, match="applies only to"):
-            Entry(path=Path("/docs")).with_version(2)
-
-    def test_with_version_requires_an_owning_file(self) -> None:
-        rootless = Entry(path=Path("/a.md"), kind="version")  # forced kind, plain file path
-        with pytest.raises(ValueError, match="no owning file"):
-            rootless.with_version(2)
-
-    def test_stored_payload_requires_version_kind(self) -> None:
-        with pytest.raises(ValueError, match="non-version"):
-            Entry(path=Path("/a.md"), content="x")._stored_version_payload()
-
-    def test_stored_payload_must_exist(self) -> None:
-        hollow = Entry(path=version_path(Path("/a.md"), 1), is_snapshot=True)
-        with pytest.raises(ValueError, match="missing stored payload"):
-            hollow._stored_version_payload()
+            Version.reconstruct([v1], 2)
 
     def test_reconstruction_requires_a_snapshot(self) -> None:
-        diff_only = Entry.create_version_row(
-            file_path="/a.md",
-            version_number=2,
-            version_content="two",
-            prev_content="one",
-            created_by="auto",
-        )
+        diff_only = _version(2, "two", "one")
         with pytest.raises(ValueError, match="Missing snapshot"):
-            Entry._reconstruct_file_version([diff_only], 2)
+            Version.reconstruct([diff_only], 2)
 
-    def test_reconstruction_detects_gap_in_diff_chain(self) -> None:
-        v1 = Entry.create_version_row(
-            file_path="/a.md",
-            version_number=1,
-            version_content="one",
-            prev_content=None,
-            created_by="auto",
-        )
-        v3 = Entry.create_version_row(
-            file_path="/a.md",
-            version_number=3,
-            version_content="three",
-            prev_content="two",
-            created_by="auto",
-        )
-        with pytest.raises(ValueError, match="Missing version row for v2"):
-            Entry._reconstruct_file_version([v1, v3], 3)
+    def test_gapped_labels_reconstruct_in_row_order(self) -> None:
+        # Labels are version values (ADR 017): a move ticked the version
+        # between v1 and v4, so no row is labeled 2 or 3 — the diff chains
+        # from the previous stored row, whatever the label distance.
+        v1 = _version(1, "one", None)
+        v4 = _version(4, "one\ntwo", "one")
+        assert v4.is_snapshot is False
+        assert Version.reconstruct([v1, v4], 4) == "one\ntwo"
+
+    def test_a_lost_intermediate_row_fails_the_integrity_net(self) -> None:
+        # Numbering continuity is not a signal under gapped labels: a lost
+        # diff row surfaces as a failed diff application or a hash mismatch.
+        v1 = _version(1, "a\nb\nc", None)
+        v2 = _version(2, "a\nb\nc\nd", "a\nb\nc")
+        v3 = _version(3, "a\nb\nc\ne", "a\nb\nc\nd")
+        assert Version.reconstruct([v1, v2, v3], 3) == "a\nb\nc\ne"
+        with pytest.raises(ValueError):
+            Version.reconstruct([v1, v3], 3)  # v2 lost, not a legitimate gap
 
     def test_reconstruction_verifies_content_hash(self) -> None:
-        v1 = Entry.create_version_row(
-            file_path="/a.md",
-            version_number=1,
-            version_content="one",
-            prev_content=None,
-            created_by="auto",
-        )
-        tampered = v1.model_copy(update={"content_hash": "0" * 64})
+        tampered = _version(1, "one", None).model_copy(update={"content_hash": "0" * 64})
         with pytest.raises(ValueError, match="Hash mismatch"):
-            Entry._reconstruct_file_version([tampered], 1)
+            Version.reconstruct([tampered], 1)
+
+    def test_stored_payload_must_exist(self) -> None:
+        hollow = Version(file=Path("/a.md"), number=1, is_snapshot=True, content_hash="0" * 64)
+        with pytest.raises(ValueError, match="missing stored payload"):
+            hollow.stored_payload()
+
+    def test_both_payloads_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="must not set both"):
+            Version(
+                file=Path("/a.md"),
+                number=1,
+                is_snapshot=True,
+                content="x",
+                version_diff="y",
+                content_hash="0" * 64,
+            )
+
+    def test_null_bytes_in_payloads_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="null bytes"):
+            Version(file=Path("/a.md"), number=1, is_snapshot=False, version_diff="a\x00b", content_hash="0" * 64)
+
+    def test_number_and_file_are_validated(self) -> None:
+        with pytest.raises(ValidationError, match="number must be >= 1"):
+            Version(file=Path("/a.md"), number=0, is_snapshot=True, content="x", content_hash="0" * 64)
+        with pytest.raises(ValidationError, match="file must reference a file"):
+            Version(file=Path("/"), number=1, is_snapshot=True, content="x", content_hash="0" * 64)
 
 
 # ---------------------------------------------------------------------------
-# Chunking — pure derivation of chunk entries
+# Chunk — split derivation and validation
 # ---------------------------------------------------------------------------
 
 
-class TestChunking:
-    def test_small_file_yields_single_whole_chunk(self) -> None:
-        file = Entry(path=Path("/docs/a.md"), content="hello\nworld", owner_id="u1")
-        chunks = file.chunk()
+class TestChunk:
+    def test_small_content_yields_single_whole_chunk(self) -> None:
+        chunks = Chunk.split(file=Path("/docs/a.md"), content="hello\nworld", ext="md")
         assert len(chunks) == 1
         (c,) = chunks
-        assert c.kind == "chunk"
+        assert c.file == "/docs/a.md"
+        assert c.chunk_index == 0
         assert c.content == "hello\nworld"
         assert (c.line_start, c.line_end) == (1, 2)
-        assert c.name == "1_2"
-        assert c.path == chunk_path(file.path, "1_2", 1)
-        assert c.version_number == 1  # file had no version yet
-        assert c.owner_id == "u1"
-        assert c.parent_file == "/docs/a.md"
-
-    def test_chunk_is_pure_pipeline_owns_the_flag(self) -> None:
-        file = Entry(path=Path("/a.md"), content="hello world")
-        file.chunk()
-        assert file.chunked is False  # marking chunked is the pipeline's job
+        assert c.content_hash == hashlib.sha256(b"hello\nworld").hexdigest()
 
     def test_sub_gram_content_produces_no_chunks(self) -> None:
-        assert Entry(path=Path("/a.md"), content="hi").chunk() == []
+        assert Chunk.split(file=Path("/a.md"), content="hi", ext="md") == []
 
-    def test_file_version_flows_into_chunk_paths(self) -> None:
-        file = Entry(path=Path("/a.md"), content="some content", version_number=3)
-        (c,) = file.chunk()
-        assert c.path == chunk_path(file.path, "1_1", 3)
-        assert c.version_number == 3
-
-    def test_colliding_line_ranges_get_offset_suffix(self) -> None:
-        file = Entry(path=Path("/big.txt"), content="x" * 5000)  # one line, three slices
-        chunks = file.chunk()
-        assert len(chunks) == 3
-        names = [c.name for c in chunks]
-        assert len(set(names)) == len(names)  # disambiguated
-        assert all(n.startswith("1_1@") for n in names)
-        assert sum(len(c.content or "") for c in chunks) == 5000
-
-    def test_non_file_rejected(self) -> None:
-        with pytest.raises(ValueError, match="applies only to files"):
-            Entry(path=Path("/docs")).chunk()
+    def test_indexes_enumerate_the_split_in_order(self) -> None:
+        chunks = Chunk.split(file=Path("/big.txt"), content="x" * 5000, ext="txt")  # one line, three slices
+        assert [c.chunk_index for c in chunks] == [0, 1, 2]
+        assert all((c.line_start, c.line_end) == (1, 1) for c in chunks)
+        assert sum(len(c.content) for c in chunks) == 5000
 
     def test_notebooks_split_by_cell_source(self) -> None:
         notebook = json.dumps(
@@ -630,18 +554,51 @@ class TestChunking:
                 "nbformat": 4,
             },
         )
-        chunks = Entry(path=Path("/nb.ipynb"), content=notebook).chunk()
+        chunks = Chunk.split(file=Path("/nb.ipynb"), content=notebook, ext="ipynb")
         assert chunks
-        joined = "\n".join(c.content or "" for c in chunks)
+        joined = "\n".join(c.content for c in chunks)
         assert "print('hello')" in joined
         assert '"cells"' not in joined  # cell sources, never the raw JSON
 
-    def test_unfindable_duplicate_text_falls_back_to_cursor_offset(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Two identical pieces over one occurrence: the second find() misses
-        # and the cursor stands in as the disambiguating offset.
-        monkeypatch.setattr(Entry, "split_content", staticmethod(lambda content, ext: [("ab", 1, 1), ("ab", 1, 1)]))
-        chunks = Entry(path=Path("/a.md"), content="ab").chunk()
-        assert [c.name for c in chunks] == ["1_1@0", "1_1@1"]
+    def test_shape_validation(self) -> None:
+        with pytest.raises(ValidationError, match="null bytes"):
+            Chunk(file=Path("/a.md"), chunk_index=0, line_start=1, line_end=1, content="a\x00b")
+        with pytest.raises(ValidationError, match="chunk_index must be >= 0"):
+            Chunk(file=Path("/a.md"), chunk_index=-1, line_start=1, line_end=1, content="x")
+        with pytest.raises(ValidationError, match="invalid line range"):
+            Chunk(file=Path("/a.md"), chunk_index=0, line_start=5, line_end=2, content="x")
+        with pytest.raises(ValidationError, match="file must reference a file"):
+            Chunk(file=Path("/"), chunk_index=0, line_start=1, line_end=1, content="x")
+
+
+# ---------------------------------------------------------------------------
+# Edge — endpoint and type validation
+# ---------------------------------------------------------------------------
+
+
+class TestEdge:
+    def test_valid_edge_defaults(self) -> None:
+        edge = Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type="imports")
+        assert edge.weight is None
+        assert edge.distance is None
+        assert edge.version == 1
+
+    def test_root_endpoint_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="source must not be the root"):
+            Edge(source=Path("/"), target=Path("/b.md"), edge_type="imports")
+
+    def test_meta_endpoint_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="target must not be a reserved metadata path"):
+            Edge(source=Path("/a.md"), target=Path("/.vfs/trash/x"), edge_type="imports")
+
+    def test_unlawful_edge_type_rejected(self) -> None:
+        for bad in ("im/ports", "", ".."):
+            with pytest.raises(ValidationError, match="edge_type"):
+                Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type=bad)
+
+    def test_revision_must_be_positive(self) -> None:
+        with pytest.raises(ValidationError, match="version must be >= 1"):
+            Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type="imports", version=0)
 
 
 # ---------------------------------------------------------------------------
@@ -662,13 +619,8 @@ class TestObservation:
         assert obs.path == "/a.md"
         assert obs.path.name == "a.md"
 
-    def test_edge_fields_surface_on_observation(self) -> None:
-        edge = Entry(
-            path=edge_out_path(Path("/a.md"), Path("/b.md"), "references"),
-            edge_weight=0.5,
-            edge_distance=1.5,
-        )
-        obs = edge.to_observation()
+    def test_edge_mirrors_surface_on_observation(self) -> None:
+        obs = Observation(path=Path("/a.md"), edge_type="references", edge_weight=0.5, edge_distance=1.5)
         assert obs.edge_type == "references"
         assert obs.edge_weight == 0.5
         assert obs.edge_distance == 1.5

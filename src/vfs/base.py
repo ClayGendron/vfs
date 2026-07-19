@@ -42,10 +42,10 @@ from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 from pydantic import ValidationError
 
 from vfs.exceptions import MountError
-from vfs.models import Entry, Observation
+from vfs.models import Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
-from vfs.paths import METADATA_ROOT, Path, edge_in_path, edge_out_path, resolve_path, validate_edge_endpoint
+from vfs.paths import METADATA_ROOT, Path, resolve_path
 from vfs.permissions import (
     Permission,
     PermissionLayer,
@@ -871,10 +871,10 @@ class VirtualFileSystem:
         """Create a typed edge from *source* to *target*.
 
         Both endpoints must resolve to the same entry (``cross_mount``
-        otherwise — cross-backend edges are a later story).  The entry
-        writes the canonical ``edges/out`` projection; the inverse ``in``
-        path is derived, never a write target, and is permission-gated in
-        the owning entry's coordinates like any other write.
+        otherwise — cross-backend edges are a later story).  An edge is
+        entry-scoped metadata on both endpoints, so the write is
+        permission-gated at both endpoint paths; the ``Edge`` model is the
+        validation door for endpoint eligibility and the edge type.
         """
         refusal = self._gate_params("mkedge", source=source, target=target, edge_type=edge_type, user_id=user_id)
         if refusal is not None:
@@ -893,10 +893,9 @@ class VirtualFileSystem:
         # Endpoint eligibility is a path fact and outranks the table fact
         # below — the same bad endpoint classifies alike on any topology.
         try:
-            validate_edge_endpoint(src_terminal.rel, "source")
-            validate_edge_endpoint(tgt_terminal.rel, "target")
-        except ValueError as exc:
-            return self._error(str(exc), kind=VFSErrorKind.invalid, op="mkedge")
+            Edge(source=src_terminal.rel, target=tgt_terminal.rel, edge_type=edge_type)
+        except ValidationError as exc:
+            return self._error(exc.errors()[0]["msg"], kind=VFSErrorKind.invalid, op="mkedge")
         if src_terminal.binding.path != tgt_terminal.binding.path:
             return self._error(
                 f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different mounts",
@@ -908,12 +907,10 @@ class VirtualFileSystem:
         if err is not None:
             return err
 
-        try:
-            full_edge = edge_out_path(src_terminal.rel, tgt_terminal.rel, edge_type).with_mount(binding.path)
-            full_inverse = edge_in_path(src_terminal.rel, tgt_terminal.rel, edge_type).with_mount(binding.path)
-        except ValueError as exc:
-            return self._error(str(exc), kind=VFSErrorKind.invalid, op="mkedge")
-        for full in (full_edge, full_inverse):
+        # An edge write mutates both endpoints' metadata sets, so both
+        # endpoint paths must be writable in global coordinates.
+        for terminal in (src_terminal, tgt_terminal):
+            full = terminal.rel.with_mount(binding.path)
             denied = check_writable_composed(self._permission_layers(full), "mkedge")
             if denied is not None:
                 return denied

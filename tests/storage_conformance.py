@@ -4,7 +4,7 @@
 identically regardless of engine: the POSIX parent/site rules, the shared
 error-ordering descent ladder and per-verb leaf tables, read/ls/tree
 shapes, move/copy subtree semantics, edit/delete atomicity, glob/grep
-modes, per-row batch classification, revision stamping, and the
+modes, per-row batch classification, version stamping, and the
 populated-field mask. **Zero per-engine conditional assertions** — a
 backend that needs a special case here is out of contract.
 
@@ -29,7 +29,7 @@ from typing import Protocol
 import pytest
 
 from vfs.models import Entry, Observation
-from vfs.paths import Path, edge_out_path
+from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import (
@@ -53,9 +53,9 @@ class ConformanceBackend(StorageBackend, SupportsPatternSearch, SupportsMutation
 
 async def _revision_of(storage: ConformanceBackend, path: str) -> int:
     result = await storage.stat(path=Path(path))
-    revision = result.observations[0].revision
-    assert revision is not None
-    return revision
+    version = result.observations[0].version
+    assert version is not None
+    return version
 
 
 class StorageContract:
@@ -695,15 +695,15 @@ class StorageContract:
         assert result.errors[0].path == "/dst.py"
 
     @needs("write", "mkedge")
-    async def test_mkedge_creates_the_edge_row_at_the_derived_path(self, storage: ConformanceBackend) -> None:
+    async def test_mkedge_observes_the_source_entry_with_the_edge_type(self, storage: ConformanceBackend) -> None:
+        # An edge is entry-scoped metadata, not a namespace row: the
+        # observation names the owning source entry, never a derived path.
         await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
         await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
-        expected_path = edge_out_path(Path("/src.py"), Path("/dst.py"), "imports")
         result = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
         assert result.success is True
         row = result.observations[0]
-        assert row.path == expected_path
-        assert row.kind == "edge"
+        assert row.path == "/src.py"
         assert row.edge_type == "imports"
         assert row.status == "created"
 
@@ -796,7 +796,7 @@ class StorageContract:
         assert result.observations == []
 
     # ------------------------------------------------------------------
-    # Revision stamping and the populated mask
+    # Version stamping and the populated mask
     # ------------------------------------------------------------------
 
     @needs("write", "mkdir", "stat", "read", "ls", "tree", "glob", "grep")
@@ -812,8 +812,8 @@ class StorageContract:
             await storage.grep(pattern="x"),
         ):
             for o in result.observations:
-                assert o.revision is not None
-                assert {"path", "kind", "revision"} <= o.populated
+                assert o.version is not None
+                assert {"path", "kind", "version"} <= o.populated
 
     @needs("write", "stat", "read", "ls", "glob")
     async def test_the_mask_never_omits_a_populated_field(self, storage: ConformanceBackend) -> None:
@@ -890,7 +890,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/src/f.txt"), content="x")])
         source = await _revision_of(storage, "/src/f.txt")
         await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/dst"))])
-        # Copied rows are fresh nodes: per-entry revisions start at 1, and
+        # Copied rows are fresh nodes: per-entry versions start at 1, and
         # the source keeps its own value untouched.
         assert await _revision_of(storage, "/dst") == 1
         assert await _revision_of(storage, "/dst/f.txt") == 1
@@ -911,7 +911,7 @@ class StorageContract:
     # ------------------------------------------------------------------
     # Batch observations reflect committed state, never a mid-batch one
     # ------------------------------------------------------------------
-    # A revision value is never observable before the state it stamps: a
+    # A version value is never observable before the state it stamps: a
     # later entry/pair in the same batch may re-stamp a row staged earlier
     # (sibling parent bumps, repeated targets), so every observation a
     # successful batch returns must equal a post-commit stat of its path.
@@ -928,7 +928,7 @@ class StorageContract:
         assert result.success is True
         for o in result.observations:
             committed = (await storage.stat(path=o.path)).observations[0]
-            assert o.revision == committed.revision
+            assert o.version == committed.version
 
     @needs("write", "stat", "read")
     async def test_batch_write_repeated_path_reports_the_committed_row(self, storage: ConformanceBackend) -> None:
@@ -937,7 +937,7 @@ class StorageContract:
         )
         assert result.success is True
         committed = (await storage.stat(path=Path("/f.txt"))).observations[0]
-        assert all(o.revision == committed.revision for o in result.observations)
+        assert all(o.version == committed.version for o in result.observations)
         assert (await storage.read(path=Path("/f.txt"))).observations[0].content == "second"
 
     @needs("write", "mkdir", "move", "stat")
@@ -956,7 +956,7 @@ class StorageContract:
         assert result.success is True
         for o in result.observations:
             committed = (await storage.stat(path=o.path)).observations[0]
-            assert o.revision == committed.revision
+            assert o.version == committed.version
 
     @needs("write", "mkdir", "copy", "stat")
     async def test_batch_copy_observations_match_the_committed_state(self, storage: ConformanceBackend) -> None:
@@ -972,13 +972,13 @@ class StorageContract:
         assert result.success is True
         for o in result.observations:
             committed = (await storage.stat(path=o.path)).observations[0]
-            assert o.revision == committed.revision
+            assert o.version == committed.version
 
     @needs("write", "mkdir", "stat")
     async def test_batch_unchanged_directory_reports_the_bumped_revision(self, storage: ConformanceBackend) -> None:
         # A pre-existing directory forgiven as "unchanged" is still bumped
         # when a later entry creates a child under it — its observation
-        # must carry the bump, not its pre-batch revision.
+        # must carry the bump, not its pre-batch version.
         await storage.mkdir(path=Path("/d"))
         result = await storage.write(
             entries=[Entry(path=Path("/d"), kind="directory"), Entry(path=Path("/d/child.txt"), content="x")]
@@ -987,7 +987,7 @@ class StorageContract:
         unchanged = next(o for o in result.observations if str(o.path) == "/d")
         assert unchanged.status == "unchanged"
         committed = (await storage.stat(path=Path("/d"))).observations[0]
-        assert unchanged.revision == committed.revision
+        assert unchanged.version == committed.version
 
     @needs("write", "edit", "stat")
     async def test_batch_edit_repeated_target_reports_the_committed_revision(self, storage: ConformanceBackend) -> None:
@@ -996,7 +996,7 @@ class StorageContract:
         result = await storage.edit(edits=[EditOperation(old="a", new="aa", replace_all=True)], observations=targets)
         assert result.success is True
         committed = (await storage.stat(path=Path("/f.txt"))).observations[0]
-        assert all(o.revision == committed.revision for o in result.observations)
+        assert all(o.version == committed.version for o in result.observations)
 
     # ------------------------------------------------------------------
     # Overlapping batch targets are order-independent

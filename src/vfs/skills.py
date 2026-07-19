@@ -12,10 +12,12 @@ manifest, and projects to the entry set that materializes the skill under
         instructions="## Steps\\n1. ...",
     ).to_entries()
 
-The skill *directory* is the unit (``kind="skill"``); its ``SKILL.md`` is a
-plain indexable file, and any bundled ``scripts``/``references``/``assets`` ride
-along as further files. Intermediate directories are materialized by the write
-chokepoint, so only the unit directory and the leaf files are emitted here.
+The skill *directory* is the unit — a plain directory whose location under
+``/.agents/skills`` is what makes it a skill (discovery is by path, never by
+kind); its ``SKILL.md`` is a plain indexable file, and any bundled
+``scripts``/``references``/``assets`` ride along as further files.
+Intermediate directories are materialized by the write chokepoint, so only
+the unit directory and the leaf files are emitted here.
 """
 
 from __future__ import annotations
@@ -190,13 +192,14 @@ class Skill(BaseModel):
     def to_entries(self) -> list[Entry]:
         """Project to the entries that create this skill, unit directory first.
 
-        The unit directory is ``kind="skill"``; the ``SKILL.md`` manifest —
-        which carries the name and ``description`` in its frontmatter — and
-        every bundled resource are ordinary indexable files under it.
+        The unit is a plain directory under ``/.agents/skills``; the
+        ``SKILL.md`` manifest — which carries the name and ``description`` in
+        its frontmatter — and every bundled resource are ordinary indexable
+        files under it.
         """
         root = skill_path(self.name)
         entries = [
-            Entry(path=root, kind="skill"),
+            Entry(path=root, kind="directory"),
             Entry(path=skill_manifest_path(self.name), kind="file", content=self.render_manifest()),
         ]
         for resource in self.resources:

@@ -327,7 +327,7 @@ class RunnerStorage(RecorderStorage):
     async def read(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
         self.calls.append(("read", {"path": path, **kwargs}))
         target = path if path is not None else Path("/")
-        return Result(ops=("read",), observations=[Observation(path=target, kind="tool")])
+        return Result(ops=("read",), observations=[Observation(path=target, kind="directory")])
 
     async def run(
         self,
@@ -339,7 +339,7 @@ class RunnerStorage(RecorderStorage):
     ) -> Result:
         assert path is not None
         self.calls.append(("run", {"path": path, "arguments": arguments}))
-        return Result(ops=("run",), observations=[Observation(path=path, kind="tool")])
+        return Result(ops=("run",), observations=[Observation(path=path, kind="directory")])
 
 
 class EchoStorage(RecorderStorage):

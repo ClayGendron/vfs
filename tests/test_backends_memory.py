@@ -2,7 +2,7 @@
 
 The shared backend contract (POSIX parent/site rules, error ordering,
 move/copy/edit/delete semantics, glob/grep modes, batch classification,
-revision stamping, the mask) lives in ``storage_conformance.py`` and runs
+version stamping, the mask) lives in ``storage_conformance.py`` and runs
 via ``test_storage_conformance.py``. This file keeps only what is true of
 the memory backend specifically: its identity defaults, its exact
 capability and trait declarations, the ``allow_files=False``
@@ -54,7 +54,7 @@ def test_traits_declares_the_scan_tier_within_the_vocabulary() -> None:
     traits = InMemoryStorage().traits()
     assert traits["grep_tier"] == "scan"
     assert traits["grep_staleness"] == "none"
-    assert traits["revision_encoding"] == "per_entry64"
+    assert traits["version_encoding"] == "per_entry64"
     for key, value in traits.items():
         assert key in TRAIT_KEYS
         assert value in TRAIT_VALUES[key]
@@ -137,32 +137,19 @@ async def test_grep_finds_nothing_honestly_without_allow_files() -> None:
 
 
 # ----------------------------------------------------------------------
-# Meta-path minting
+# Edges — entry-scoped metadata, off the namespace
 # ----------------------------------------------------------------------
 
 
-async def test_read_of_an_edge_row_names_the_actual_kind() -> None:
-    # The refusal kind is wrong_kind either way; the prose an agent reads
-    # must not call a directly-addressed edge projection a directory.
-    storage = InMemoryStorage()
-    await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
-    await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
-    edge = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
-    result = await storage.read(path=edge.observations[0].path)
-    assert result.success is False
-    assert result.errors[0].kind == VFSErrorKind.wrong_kind
-    assert "edge" in result.errors[0].message
-    assert "directory" not in result.errors[0].message
-
-
-async def test_mkedge_mints_meta_ancestors_exempt_from_the_strict_parent_rule() -> None:
-    # No prior mkdir under /.vfs was ever done — mkedge mints its own frame.
+async def test_mkedge_stores_no_namespace_row() -> None:
+    # An edge is entry-scoped metadata: creating one mints no namespace
+    # rows — no projection path, no meta ancestors, nothing to read.
     storage = InMemoryStorage()
     await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
     await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
     result = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
     assert result.success is True
-    edge_path = result.observations[0].path
-    ancestor = await storage.stat(path=edge_path.parent_dir)
-    assert ancestor.success is True
-    assert ancestor.observations[0].kind == "directory"
+    assert result.observations[0].path == "/src.py"
+    assert result.observations[0].edge_type == "imports"
+    listing = await storage.tree(path=Path("/"))
+    assert [str(o.path) for o in listing.observations] == ["/dst.py", "/src.py"]

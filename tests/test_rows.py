@@ -1,4 +1,4 @@
-"""Tests for the hand-written Core row definitions and their Entry lockstep."""
+"""Tests for the hand-written Core row definitions and their model lockstep."""
 
 from __future__ import annotations
 
@@ -11,14 +11,20 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import ColumnDefault, CreateIndex, CreateTable
 
-from vfs.models import Entry
+from vfs.models import Chunk, Edge, Entry, Version
 from vfs.models.rows import (
+    CHUNK_ROW_ONLY_COLUMNS,
+    EDGE_ROW_ONLY_COLUMNS,
     ENCODING_DELTA_VARINT,
-    ENTRY_FIELD_HOMES,
+    ENTRY_CONTENT_FIELDS,
     ENTRY_ROW_ONLY_COLUMNS,
     MAX_TABLE_NAME_LENGTH,
+    MODEL_COLUMN_RENAMES,
+    MODEL_FIELD_ONLY,
+    MODEL_OWNER_FIELDS,
     SCHEMA_FORMAT_VERSION,
     ULID_LENGTH,
+    VERSION_ROW_ONLY_COLUMNS,
     VFSTables,
     build_vfs_tables,
 )
@@ -27,6 +33,14 @@ from vfs.paths import Path
 
 TABLE_ATTRS = ("entry", "content", "versions", "chunks", "edges", "meta", "gram_epochs", "posting_list")
 
+# The metadata family: each model, its table attribute, and the table's
+# columns with no model field (the id backbone and owner references).
+METADATA_MODELS = (
+    (Version, "versions", VERSION_ROW_ONLY_COLUMNS),
+    (Chunk, "chunks", CHUNK_ROW_ONLY_COLUMNS),
+    (Edge, "edges", EDGE_ROW_ONLY_COLUMNS),
+)
+
 
 @pytest.fixture
 def tables() -> VFSTables:
@@ -34,7 +48,7 @@ def tables() -> VFSTables:
 
 
 # ---------------------------------------------------------------------------
-# Entry ⇄ row drift — the lockstep the hand-written schema must hold
+# Model ⇄ row drift — each model pinned to its own table
 # ---------------------------------------------------------------------------
 
 
@@ -47,28 +61,58 @@ def _allows_none(annotation: object) -> bool:
 
 class TestEntryRowDrift:
     def test_entries_columns_are_the_resident_fields_plus_row_only(self, tables: VFSTables) -> None:
-        resident = set(Entry.model_fields) - set(ENTRY_FIELD_HOMES)
+        resident = set(Entry.model_fields) - ENTRY_CONTENT_FIELDS
         assert set(tables.entry.c.keys()) == resident | ENTRY_ROW_ONLY_COLUMNS
 
-    def test_every_homed_field_has_its_column(self, tables: VFSTables) -> None:
-        for field, (table_attr, column) in ENTRY_FIELD_HOMES.items():
-            assert field in Entry.model_fields, f"homed field {field!r} left Entry without a mapping update"
-            table = getattr(tables, table_attr)
-            assert column in table.c, f"{field!r} maps to missing column {table_attr}.{column}"
+    def test_content_table_homes_the_body(self, tables: VFSTables) -> None:
+        for field in ENTRY_CONTENT_FIELDS:
+            assert field in Entry.model_fields
+            assert field in tables.content.c
 
     def test_row_only_columns_never_exist_on_entry(self) -> None:
         assert not ENTRY_ROW_ONLY_COLUMNS & set(Entry.model_fields)
 
-    def test_homes_never_claim_entries_resident_fields(self) -> None:
-        assert not set(ENTRY_FIELD_HOMES) & ENTRY_ROW_ONLY_COLUMNS
-
     def test_nullability_matches_entry_optionality_for_resident_fields(self, tables: VFSTables) -> None:
         for name, field in Entry.model_fields.items():
-            if name in ENTRY_FIELD_HOMES:
+            if name in ENTRY_CONTENT_FIELDS:
                 continue
             column = tables.entry.c[name]
             assert column.nullable == _allows_none(field.annotation), (
                 f"nullability drift on {name!r}: column nullable={column.nullable}, Entry annotation {field.annotation}"
+            )
+
+
+class TestMetadataModelRowDrift:
+    @pytest.mark.parametrize(("model", "table_attr", "row_only"), METADATA_MODELS)
+    def test_model_fields_are_the_table_columns(self, tables: VFSTables, model, table_attr, row_only) -> None:
+        owner = MODEL_OWNER_FIELDS[model.__name__]
+        field_only = MODEL_FIELD_ONLY[model.__name__]
+        renames = MODEL_COLUMN_RENAMES[model.__name__]
+        mirrored = {renames.get(field, field) for field in set(model.model_fields) - owner - field_only}
+        assert set(getattr(tables, table_attr).c.keys()) == mirrored | row_only
+
+    @pytest.mark.parametrize(("model", "table_attr", "row_only"), METADATA_MODELS)
+    def test_owner_references_are_path_fields(self, tables: VFSTables, model, table_attr, row_only) -> None:
+        # The models reference their owner by Path; persistence resolves the
+        # Path to the integer id the row-only columns carry.
+        for name in MODEL_OWNER_FIELDS[model.__name__]:
+            assert model.model_fields[name].annotation is Path
+        assert not MODEL_OWNER_FIELDS[model.__name__] & set(getattr(tables, table_attr).c.keys())
+
+    @pytest.mark.parametrize(("model", "table_attr", "row_only"), METADATA_MODELS)
+    def test_row_only_columns_never_exist_on_the_model(self, tables: VFSTables, model, table_attr, row_only) -> None:
+        assert not row_only & set(model.model_fields)
+
+    @pytest.mark.parametrize(("model", "table_attr", "row_only"), METADATA_MODELS)
+    def test_nullability_matches_model_optionality(self, tables: VFSTables, model, table_attr, row_only) -> None:
+        table = getattr(tables, table_attr)
+        renames = MODEL_COLUMN_RENAMES[model.__name__]
+        for name, field in model.model_fields.items():
+            if name in MODEL_OWNER_FIELDS[model.__name__] | MODEL_FIELD_ONLY[model.__name__]:
+                continue
+            column = table.c[renames.get(name, name)]
+            assert column.nullable == _allows_none(field.annotation), (
+                f"nullability drift on {model.__name__}.{name!r}: column nullable={column.nullable}"
             )
 
 
@@ -182,9 +226,14 @@ class TestBuildVFSTables:
 
 
 def _entries_row(entry: Entry, *, node_id: str, parent_id: int | None) -> dict[str, object]:
-    """The entries-table row for *entry*: resident fields plus the id backbone."""
-    resident = entry.model_dump(exclude=set(ENTRY_FIELD_HOMES) | set(Entry.model_computed_fields))
-    return {**resident, "node_id": node_id, "parent_id": parent_id, "original_parent_id": None, "original_name": None}
+    """The entries-table row for *entry*: resident fields plus the storage-stamped columns.
+
+    ``version`` is minted storage-side (never authored on an Entry), so the
+    helper stamps a fresh row's 1 the way the write path would.
+    """
+    resident = entry.model_dump(exclude=set(ENTRY_CONTENT_FIELDS) | set(Entry.model_computed_fields))
+    stamped = {"node_id": node_id, "parent_id": parent_id, "version": 1}
+    return {**resident, **stamped, "original_parent_id": None, "original_name": None}
 
 
 class TestTableNameBudget:
@@ -224,7 +273,7 @@ class TestDDL:
     def test_entry_splits_into_entries_plus_content_and_reads_back(self, tables: VFSTables) -> None:
         engine = create_engine("sqlite://")
         tables.metadata.create_all(engine)
-        entry = Entry(path=Path("/docs/a.md"), content="hello", revision=1)
+        entry = Entry(path=Path("/docs/a.md"), content="hello")
         ulid = "0" * ULID_LENGTH
         with engine.begin() as conn:
             entry_id = conn.execute(
@@ -237,7 +286,7 @@ class TestDDL:
         assert entry_id is not None
         assert row["path"] == "/docs/a.md"
         assert row["node_id"] == ulid
-        assert row["revision"] == 1
+        assert row["version"] == 1
         assert "content" not in row
         assert body == "hello"
 

@@ -337,12 +337,12 @@ async def test_mkedge_invalid_endpoint_beats_cross_mount() -> None:
         assert result.errors[0].kind is VFSErrorKind.invalid
 
 
-async def test_mkedge_gates_the_derived_inverse_path() -> None:
-    # The in projection is never a write target, but it is still gated:
-    # a region-denied inverse refuses before any dispatch.
+async def test_mkedge_gates_the_target_endpoint_path() -> None:
+    # An edge write mutates both endpoints' metadata sets, so a
+    # region-denied target refuses before any dispatch.
     root = VirtualFileSystem()
     child = RecorderStorage()
-    await root.add_mount(child, "/m", permissions=read_write(read=["/.vfs/b.py"]))
+    await root.add_mount(child, "/m", permissions=read_write(read=["/b.py"]))
     result = await root.mkedge("/m/a.py", "/m/b.py", "imports")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.read_only
@@ -729,13 +729,17 @@ async def test_write_entries_capability_gate_blocks() -> None:
     assert child.calls == []
 
 
-async def test_write_entries_inverse_edge_target_rejected() -> None:
+async def test_write_entries_meta_root_rejected_but_meta_scope_admitted() -> None:
+    # Only the two roots are ingress-refused; deeper meta-scope targets
+    # (trash-side writes) flow through the ordinary grammar.
     fs = RecorderFS()
-    entry = Entry(path=Path("/.vfs/a.py/__meta__/edges/in/imports/b.py"))
-    result = await fs.write(entries=[entry])
+    result = await fs.write(entries=[Entry(path=Path("/.vfs"))])
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
     assert fs.calls == []
+    admitted = await fs.write(entries=[Entry(path=Path("/.vfs/trash/2026-07-18-10/x.txt"), kind="file", content="x")])
+    assert admitted.success is True
+    assert fs.calls and fs.calls[0][0] == "write"
 
 
 # ----------------------------------------------------------------------

@@ -1,7 +1,58 @@
 # 076 — Entry model split: Entry + Chunk + Version + Edge
 
-- **Status:** shaped — drafted 2026-07-18 from accepted ADRs 015 and 016;
-  no open markers. Ready for plan.md.
+- **Status:** implemented 2026-07-18 (plan.md written and executed in the
+  working tree; all acceptance criteria verified — suite green at 1461
+  passed, `ruff`/`ty` at zero, retired symbols absent from `src/`). Two
+  pin deviations resolved in plan.md: `Chunk` drops `name` and
+  `version_number` (pin 4 listed them; the acceptance criteria and the
+  chunks table have neither), and `Edge`'s endpoints are named
+  `source`/`target` (pin 5 said `source_file`/`target_file`). Follow-up
+  decision (Clay, same session, amending pin 1's field inventory):
+  `Entry` also drops the `chunked`/`encoded` index flags and their
+  entry-table columns — they were pipeline-progress bookkeeping from the
+  pre-rebuild write→chunk→index staging, which no code read; the write
+  wiring will mint chunks in the write transaction, and gram-index
+  coverage is tracked per-chunk (`chunks.encoded`) + epoch. Second
+  follow-up decision (Clay, same session, amending pins 4/6 and ADR 015
+  pin 4): the `Entry.chunk()`/`Entry.create_version()` delegating
+  factories are dropped — no pipeline caller ever holds an `Entry` at
+  minting time (the write path holds staged rows, the future pack verb
+  holds stored `Version` rows), so `Chunk.split` and `Version.create`
+  are the only doors. Versioning is a storage-side effect of write/edit
+  per the 2026-07-13 W3 inversion: full snapshots minted in the write
+  transaction, diffs deferred to the pack verb (git loose-object/gc
+  precedent; SQL temporal tables for same-transaction history). Third
+  follow-up, decided as ADR 017 (accepted 2026-07-18): version numbers
+  are revision values — one per-entry sequence, version rows minted for
+  content writes only, labels may gap, reconstruction is order-based
+  (landed in `Version.reconstruct`), and the dormant entries-table
+  `version_number` column is dropped. Resolves the alignment parked in
+  spec 074. ADR 017's naming addendum then landed across the tree: the
+  per-entry value is named `version` everywhere (column, staging,
+  observations, trait key `version_encoding`), `Entry` carries no
+  version field (storage-stamped, never authored — amends ADR 015
+  pin 1 again), `Observation`'s two mirrors collapse into one
+  `version` field owned by `Version.number`, and `Version`'s
+  discriminator is `number` over the kept `version_number` column.
+  Fourth follow-up (Clay, 2026-07-19 review session), two review
+  resolutions: **(a)** `Chunk`/`Version`'s owner-reference field is named
+  `file`, not `owner` — "owner" already means a principal on
+  `Entry.owner_id` (and in POSIX heritage, `st_uid`), so the owning-file
+  reference takes a bare noun in the `Edge` `source`/`target` style;
+  ADR 016's "owner + discriminator" stands as the identity *scheme*, not
+  a field name (`base_path` was rejected — "base" is claimed by
+  `StagedEntry.base_version`'s concurrency sense). **(b)** Version
+  history is pinned content-only: a version row records a content state,
+  never an entry state — entry identity and authored metadata (path,
+  name, ext, mime_type) are current-entry facts with no history, the
+  label gap being the entire record of a non-content change (ADR 017
+  pin 2 + the no-change-log decision), and reconstruction is
+  self-contained over stored rows. Deliberate departure from git, which
+  recovers historical names via tree objects; compensated by
+  surrogate-keyed chains following the entry through renames with zero
+  heuristics. Recovering historical metadata would reopen ADR 017
+  option (b) — a new ADR, never a quiet field. Pinned in `version.py`'s
+  module docstring. Awaiting commit.
 - **Date:** 2026-07-18
 - **Owner:** Clay Gendron
 - **Kind:** domain-model refactor (split one kinded `Entry` into four

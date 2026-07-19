@@ -44,8 +44,8 @@ class VFSErrorKind(StrEnum):
 
     **Per-kind ``data`` records** (absence means "not known", never a
     default): ``busy`` / ``unavailable.*`` / ``timeout`` may carry
-    ``retry_after_ms``; ``conflict`` may carry ``revision`` (the current
-    revision to retry with). Envelope machinery writes only
+    ``retry_after_ms``; ``conflict`` may carry ``version`` (the current
+    version to retry with). Envelope machinery writes only
     ``vfs.``-prefixed keys into ``data`` (``vfs.overflow``, ``vfs.rollup``,
     ``vfs.quarantine``, ``vfs.claim``); producer keys are unprefixed.
 
@@ -118,7 +118,7 @@ class RetryClass(StrEnum):
     ``never``: no retry of this request can succeed as-is. ``transient``:
     retry after a delay may succeed (honor ``retry_after_ms`` when
     present). ``refresh``: re-read state first, then retry with current
-    preconditions (e.g. the ``revision`` in ``data``).
+    preconditions (e.g. the ``version`` in ``data``).
     """
 
     never = "never"
@@ -189,8 +189,8 @@ KIND_CONTRACTS: dict[VFSErrorKind, KindContract] = {
     ),
     VFSErrorKind.conflict: KindContract(
         RetryClass.refresh,
-        "Re-read the entry and retry with its current revision.",
-        "the entry whose revision is stale",
+        "Re-read the entry and retry with its current version.",
+        "the entry whose version is stale",
     ),
     VFSErrorKind.busy: KindContract(
         RetryClass.transient,

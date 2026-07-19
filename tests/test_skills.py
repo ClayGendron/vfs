@@ -126,7 +126,7 @@ class TestToEntries:
         assert len(entries) == 2
         unit, manifest = entries
         assert unit.path == skill_path("pdf")
-        assert unit.kind == "skill"
+        assert unit.kind == "directory"
         assert unit.content is None
         assert manifest.path == skill_manifest_path("pdf")
         assert manifest.kind == "file"

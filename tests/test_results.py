@@ -50,7 +50,7 @@ class TestResultError:
     def test_data_round_trips_on_the_wire(self) -> None:
         err = ResultError(
             kind=VFSErrorKind.conflict,
-            message="stale revision",
+            message="stale version",
             path=Path("/a.md"),
             data={"expected": 3, "actual": 5},
         )

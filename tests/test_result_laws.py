@@ -394,7 +394,7 @@ class TestWireLeniency:
 
 
 # ---------------------------------------------------------------------------
-# Merge under the populated mask — fill by mask, revision agree-or-null
+# Merge under the populated mask — fill by mask, version agree-or-null
 # ---------------------------------------------------------------------------
 
 
@@ -407,21 +407,21 @@ class TestMaskedMerge:
     def test_fill_is_mask_driven_never_null_driven(self) -> None:
         # Left fetched content and observed null — that is a fact, and the
         # right's value must not overwrite it.
-        left = Result(observations=[masked("/a.md", {"content", "revision"}, revision=5)])
-        right = Result(observations=[masked("/a.md", {"content", "revision"}, content="ghost", revision=5)])
+        left = Result(observations=[masked("/a.md", {"content", "version"}, version=5)])
+        right = Result(observations=[masked("/a.md", {"content", "version"}, content="ghost", version=5)])
         merged = (left | right).one()
         assert merged.content is None
         assert "content" in merged.populated
 
     def test_fill_adds_only_never_fetched_fields_and_unions_the_mask(self) -> None:
-        left = Result(observations=[masked("/a.md", {"kind", "revision"}, kind="file", revision=5)])
+        left = Result(observations=[masked("/a.md", {"kind", "version"}, kind="file", version=5)])
         right = Result(
-            observations=[masked("/a.md", {"content", "size_bytes", "revision"}, content="x", size_bytes=1, revision=5)]
+            observations=[masked("/a.md", {"content", "size_bytes", "version"}, content="x", size_bytes=1, version=5)]
         )
         merged = (left | right).one()
         assert merged.content == "x"
         assert merged.size_bytes == 1
-        assert {"kind", "content", "size_bytes", "revision"} <= merged.populated
+        assert {"kind", "content", "size_bytes", "version"} <= merged.populated
 
     def test_merged_values_never_exceed_the_mask(self) -> None:
         # The conformance invariant, held by algebra-produced rows too.
@@ -432,42 +432,42 @@ class TestMaskedMerge:
         assert valued <= merged.populated
 
     def test_same_revision_merge_keeps_the_revision(self) -> None:
-        left = Result(observations=[masked("/a.md", {"kind", "revision"}, kind="file", revision=7)])
-        right = Result(observations=[masked("/a.md", {"content", "revision"}, content="x", revision=7)])
-        assert (left | right).one().revision == 7
+        left = Result(observations=[masked("/a.md", {"kind", "version"}, kind="file", version=7)])
+        right = Result(observations=[masked("/a.md", {"content", "version"}, content="x", version=7)])
+        assert (left | right).one().version == 7
 
     def test_cross_revision_merge_nulls_the_revision_but_keeps_it_masked(self) -> None:
         # stat@5 | read@3 must not claim rev-3 content as the rev-5 state:
         # a composite of two snapshots carries no single coordinate.
-        left = Result(observations=[masked("/a.md", {"kind", "revision"}, kind="file", revision=5)])
-        right = Result(observations=[masked("/a.md", {"content", "revision"}, content="x", revision=3)])
+        left = Result(observations=[masked("/a.md", {"kind", "version"}, kind="file", version=5)])
+        right = Result(observations=[masked("/a.md", {"content", "version"}, content="x", version=3)])
         merged = (left | right).one()
         assert merged.content == "x"
-        assert merged.revision is None
-        assert "revision" in merged.populated
+        assert merged.version is None
+        assert "version" in merged.populated
 
     def test_one_sided_revision_fills_normally(self) -> None:
         left = Result(observations=[masked("/a.md", {"kind"}, kind="file")])
-        right = Result(observations=[masked("/a.md", {"revision"}, revision=3)])
-        assert (left | right).one().revision == 3
+        right = Result(observations=[masked("/a.md", {"version"}, version=3)])
+        assert (left | right).one().version == 3
 
     def test_masked_merge_is_associative_across_revision_disagreement(self) -> None:
-        a = Result(observations=[masked("/a.md", {"kind", "revision"}, kind="file", revision=1)])
-        b = Result(observations=[masked("/a.md", {"content", "revision"}, content="x", revision=2)])
-        c = Result(observations=[masked("/a.md", {"size_bytes", "revision"}, size_bytes=9, revision=1)])
+        a = Result(observations=[masked("/a.md", {"kind", "version"}, kind="file", version=1)])
+        b = Result(observations=[masked("/a.md", {"content", "version"}, content="x", version=2)])
+        c = Result(observations=[masked("/a.md", {"size_bytes", "version"}, size_bytes=9, version=1)])
         assert ((a | b) | c).one() == (a | (b | c)).one()
 
     def test_bind_path_decoration_still_fills_across_unrelated_counters(self) -> None:
         # The router's seam: the owner's directory row and the mounted
         # root's row are the same entry from both sides — their counters
-        # are unrelated, so the decorated row honestly claims no revision.
-        owner = Result(observations=[masked("/data", {"kind", "revision"}, kind="directory", revision=41)])
-        child_fields = {"kind", "size_bytes", "revision"}
-        child_root = Result(observations=[masked("/data", child_fields, kind="directory", size_bytes=0, revision=3)])
+        # are unrelated, so the decorated row honestly claims no version.
+        owner = Result(observations=[masked("/data", {"kind", "version"}, kind="directory", version=41)])
+        child_fields = {"kind", "size_bytes", "version"}
+        child_root = Result(observations=[masked("/data", child_fields, kind="directory", size_bytes=0, version=3)])
         decorated = Result.merge([owner, child_root], op="ls").one()
         assert decorated.size_bytes == 0
-        assert decorated.revision is None
-        assert {"kind", "size_bytes", "revision"} <= decorated.populated
+        assert decorated.version is None
+        assert {"kind", "size_bytes", "version"} <= decorated.populated
 
 
 # ---------------------------------------------------------------------------

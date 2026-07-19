@@ -242,12 +242,15 @@ async def test_root_and_reserved_targets_rejected(op: str, target: str) -> None:
     assert fs.calls == []
 
 
-async def test_inverse_edge_projection_is_not_a_write_target() -> None:
+async def test_meta_root_is_not_a_write_target_but_the_scope_is() -> None:
     fs = RecorderFS()
-    result = await fs.write(path="/.vfs/a.py/__meta__/edges/in/imports/b.py", content="x")
+    result = await fs.write(path="/.vfs", content="x")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
     assert fs.calls == []
+    admitted = await fs.write(path="/.vfs/trash/2026-07-18-10/x.txt", content="x")
+    assert admitted.success is True
+    assert fs.calls and fs.calls[0][0] == "write"
 
 
 # ----------------------------------------------------------------------
@@ -314,14 +317,13 @@ async def test_gate_failures_carry_the_router_side_path(call: Any, kind: VFSErro
     assert result.errors[0].path == path
 
 
-async def test_mkedge_permission_denial_reports_the_derived_edge_path() -> None:
-    # mkedge's write target is the derived canonical out-edge path — the one
-    # gate error implicating a path the caller never typed — and even that
-    # path is reported router-side, rebased under the mount prefix.
+async def test_mkedge_permission_denial_reports_the_endpoint_path() -> None:
+    # mkedge's write targets are the two endpoint paths; the denial reports
+    # the endpoint router-side, rebased under the mount prefix.
     root = await _gated_namespace()
     result = await root.mkedge("/ro/a.py", "/ro/b.py", "imports")
     assert result.errors[0].kind is VFSErrorKind.read_only
-    assert result.errors[0].path == "/ro/.vfs/a.py/__meta__/edges/out/imports/b.py"
+    assert result.errors[0].path == "/ro/a.py"
 
 
 async def test_gate_order_capability_outranks_permission() -> None:

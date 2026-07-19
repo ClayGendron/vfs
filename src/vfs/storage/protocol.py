@@ -74,13 +74,13 @@ class ResolvedPair(NamedTuple):
 # Declared operating-quality traits — how a backend serves its verbs, not
 # which verbs it serves (that is ``capabilities()``). An absent key means
 # the trait is not declared, never a default.
-TraitKey = Literal["grep_tier", "grep_staleness", "revision_encoding", "durability", "arbitration"]
+TraitKey = Literal["grep_tier", "grep_staleness", "version_encoding", "durability", "arbitration"]
 TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
 
 TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
     "grep_tier": frozenset({"indexed", "scan"}),
     "grep_staleness": frozenset({"none", "watermark"}),
-    "revision_encoding": frozenset({"per_entry64"}),
+    "version_encoding": frozenset({"per_entry64"}),
     "durability": frozenset({"full", "relaxed"}),
     "arbitration": frozenset({"upsert", "catch_retry"}),
 }
@@ -323,7 +323,7 @@ class SupportsTraits(Protocol):
     """Optional declared operating qualities — how the verbs are served.
 
     ``capabilities()`` says which ops a backend answers; ``traits()`` says
-    with what qualities — grep's tier and staleness window, the revision
+    with what qualities — grep's tier and staleness window, the version
     encoding, the durability tier, the create-arbitration mode. Keys come
     from :data:`TRAIT_KEYS`, values from :data:`TRAIT_VALUES`; an absent
     key is "not declared," never an implied default. Declaration beats

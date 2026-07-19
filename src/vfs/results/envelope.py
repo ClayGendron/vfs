@@ -240,8 +240,8 @@ class Result(BaseModel):
       ``|`` is a pure fold — associative, idempotent over path-distinct
       rows, with ``Result()`` as identity — and rebase distributes over
       it. Overlapping paths merge **left wins by mask**: the right fills
-      only fields the left never fetched, masks union, and a revision
-      disagreement stamps the merged revision null (see
+      only fields the left never fetched, masks union, and a version
+      disagreement stamps the merged version null (see
       :meth:`_merge_observation`). Policy lives outside the algebra:
       ``merge`` is the plain fold, ``merge_branches`` adds fan-out
       demotion.
@@ -369,11 +369,11 @@ class Result(BaseModel):
         conflation the mask exists to kill). Filled list fields are copied
         so frozen rows never share a mutable list across results.
 
-        ``revision`` is the row's snapshot coordinate, not fillable state:
-        when both sides carry differing revisions the merged row stamps
-        ``revision=None`` (still masked) — a composite of two snapshots
-        claims no single one, and a revision-guarded consumer must re-stat.
-        Same-revision and one-sided merges keep the value, so the rule is
+        ``version`` is the row's snapshot coordinate, not fillable state:
+        when both sides carry differing versions the merged row stamps
+        ``version=None`` (still masked) — a composite of two snapshots
+        claims no single one, and a version-guarded consumer must re-stat.
+        Same-version and one-sided merges keep the value, so the rule is
         agree-or-null: associative, commutative, idempotent.
         """
         updates: dict[str, Any] = {}
@@ -382,8 +382,8 @@ class Result(BaseModel):
                 continue
             value = getattr(b, name)
             updates[name] = list(value) if isinstance(value, list) else value
-        if "revision" in a.populated and "revision" in b.populated and a.revision != b.revision:
-            updates["revision"] = None
+        if "version" in a.populated and "version" in b.populated and a.version != b.version:
+            updates["version"] = None
         mask = a.populated | b.populated
         if mask != a.populated:
             updates["populated"] = mask
@@ -459,7 +459,7 @@ class Result(BaseModel):
         same global path fuse left-wins by mask; at bind paths this
         decorates the owner's row with the mounted root's fields (the two
         rows are the same entry seen from both sides of the seam — their
-        counters are unrelated, so the decorated row's revision reads
+        counters are unrelated, so the decorated row's version reads
         null) — bind paths are the one place branch row-sets are *not*
         disjoint.
         """

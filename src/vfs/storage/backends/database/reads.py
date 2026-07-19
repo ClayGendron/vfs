@@ -2,7 +2,7 @@
 
 Column selects narrowed by the caller's projection, reconstructed into
 :class:`~vfs.models.Observation` rows with an explicit populated mask
-(``populated == requested + {path, kind, revision}``, fetched-and-null
+(``populated == requested + {path, kind, version}``, fetched-and-null
 included). Every function takes the op's live ``AsyncSession`` and only
 executes SELECTs; none begins or commits — the protocol method in
 ``backend.py`` owns its one transaction.
@@ -46,14 +46,15 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
 
 # Observation fields served directly by entries-table columns (the two
-# vocabularies share these names by construction).
+# vocabularies share these names by construction). A file's current version
+# label IS its version (one per-entry sequence); version_number surfaces
+# only on Version rows, never from the entries table.
 ENTRY_OBSERVATION_FIELDS: Final[frozenset[str]] = frozenset(
-    {"path", "kind", "revision", "content_hash", "mime_type", "size_bytes"}
-    | {"version_number", "created_at", "updated_at"},
+    {"path", "kind", "version", "content_hash", "mime_type", "size_bytes"} | {"created_at", "updated_at"},
 )
 
 # Identity fields every observation carries regardless of projection.
-ALWAYS_ON_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind", "revision"})
+ALWAYS_ON_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind", "version"})
 
 # Stored kinds whose rows carry text content; everything else refuses
 # content reads and surfaces no content metrics.

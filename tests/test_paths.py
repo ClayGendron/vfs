@@ -16,24 +16,15 @@ from vfs.paths import (
     MAX_PATH_LENGTH,
     MAX_SEGMENT_LENGTH,
     METADATA_ROOT,
-    EdgeParts,
     Path,
     RelativePath,
     ResolvedPath,
     ResolvedRelativePath,
-    _canonical_endpoint_path,
-    _is_reserved_metadata_directory,
-    _split_edge_path,
-    _split_nested_endpoint,
     check_mutable_path,
-    chunk_path,
     compute_parent_dir,
-    compute_parent_file,
-    decompose_edge,
-    edge_in_path,
-    edge_out_path,
     extract_extension,
     is_meta_path,
+    is_reserved_directory,
     normalize_path,
     normalize_relative_path,
     parse_kind,
@@ -46,7 +37,7 @@ from vfs.paths import (
     tool_path,
     validate_path,
     validate_relative_path,
-    version_path,
+    validate_segment,
 )
 
 # =========================================================================
@@ -88,7 +79,7 @@ class TestNormalizePath:
 
     def test_nfc_normalization(self):
         # NFD é (e + combining acute) should collapse to NFC é
-        nfd = "/café"
+        nfd = "/café"
         nfc = "/café"
         assert normalize_path(nfd) == normalize_path(nfc)
 
@@ -158,17 +149,11 @@ class TestSplitPath:
     def test_nested(self):
         assert split_path(Path("/src/auth.py")) == ("/src", "auth.py")
 
-    def test_metadata_path_is_literal_split(self):
-        # split_path is a pure string operation, not metadata-aware
-        assert split_path("/.vfs/src/auth.py/__meta__/chunks/login") == (  # ty: ignore[invalid-argument-type]
-            "/.vfs/src/auth.py/__meta__/chunks",
-            "login",
-        )
-
-    def test_edge_path_is_literal_split(self):
-        assert split_path(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")) == (
-            "/.vfs/src/auth.py/__meta__/edges/out/imports/src",
-            "utils.py",
+    def test_meta_scope_path_is_literal_split(self):
+        # split_path is a pure string operation, scope-unaware.
+        assert split_path(Path("/.vfs/trash/2026-07-18-10/x.txt")) == (
+            "/.vfs/trash/2026-07-18-10",
+            "x.txt",
         )
 
 
@@ -183,7 +168,7 @@ class TestValidatePath:
             "/src/auth.py",
             "/",
             "/a",
-            "/.vfs/src/auth.py/__meta__/chunks/1/login",
+            "/.vfs/trash/2026-07-18-10/x.txt",
             "/documents/quarterly-report.pdf",
         ]
         for p in valid:
@@ -235,6 +220,33 @@ class TestValidatePath:
         ok, _ = validate_path("/")
         assert ok
 
+    def test_meta_scope_paths_take_the_ordinary_grammar(self):
+        # No per-file metadata grammar remains: any structurally-sound shape
+        # under /.vfs is a lawful path, __meta__ included as a plain name.
+        for p in ("/.vfs/anything/at/all", "/.vfs/__meta__", "/a/__meta__/b/__meta__/c"):
+            ok, msg = validate_path(p)
+            assert ok, f"{p!r} should be valid: {msg}"
+
+
+# =========================================================================
+# validate_segment
+# =========================================================================
+
+
+class TestValidateSegment:
+    def test_valid_segment_returns_itself(self):
+        assert validate_segment("imports", "edge_type") == "imports"
+
+    @pytest.mark.parametrize("bad", ["", "   ", "a/b", ".", ".."])
+    def test_empty_slash_and_traversal_rejected(self, bad):
+        with pytest.raises(ValueError, match="label"):
+            validate_segment(bad, "label")
+
+    @pytest.mark.parametrize("bad", ["a\x00b", "a\nb", "a\x7fb", "bad‮", "a﻿b", "a" + chr(0xD800) + "b"])
+    def test_gate_rejected_characters_rejected(self, bad):
+        with pytest.raises(ValueError, match="label"):
+            validate_segment(bad, "label")
+
 
 # =========================================================================
 # check_mutable_path
@@ -248,34 +260,14 @@ class TestCheckMutablePath:
     def test_reserved_metadata_root_is_not_mutable(self):
         assert check_mutable_path(Path(METADATA_ROOT)) == (False, "Cannot mutate reserved metadata root '/.vfs'")
 
-    def test_inverse_edge_paths_are_read_only(self):
-        valid, err = check_mutable_path(edge_in_path(Path("/src/a.py"), Path("/src/b.py"), "imports"))
-        assert valid is False
-        assert "inverse edge paths" in err
-
-    def test_reserved_metadata_directories_are_allowed(self):
-        assert check_mutable_path(Path("/.vfs/src/auth.py/__meta__/chunks")) == (True, "")
-
-    def test_meta_segment_directory_is_allowed(self):
-        assert check_mutable_path(Path("/.vfs/src/auth.py/__meta__")) == (True, "")
-
     def test_non_metadata_paths_are_mutable(self):
         assert check_mutable_path(Path("/src/auth.py")) == (True, "")
 
-    def test_chunk_and_version_paths_are_mutable(self):
-        assert check_mutable_path(Path("/.vfs/src/auth.py/__meta__/chunks/1/login")) == (True, "")
-        assert check_mutable_path(Path("/.vfs/src/auth.py/__meta__/versions/3")) == (True, "")
-
-    def test_outbound_edge_paths_are_mutable(self):
-        assert check_mutable_path(edge_out_path(Path("/src/a.py"), Path("/src/b.py"), "imports")) == (True, "")
-
-    def test_non_reserved_meta_segment_suffix_is_allowed(self):
-        assert check_mutable_path(Path("/.vfs/src/auth.py/custom/__meta__")) == (True, "")
-
-    def test_arbitrary_content_in_reserved_metadata_space_is_rejected(self):
-        valid, err = check_mutable_path(Path("/.vfs/src/auth.py/random.txt"))
-        assert valid is False
-        assert "reserved metadata space" in err
+    def test_meta_scope_paths_are_mutable(self):
+        # Trash-side writes are ordinary writes: the meta scope hides rows
+        # from default enumeration; it does not refuse mutation.
+        assert check_mutable_path(Path("/.vfs/trash/2026-07-18-10/x.txt")) == (True, "")
+        assert check_mutable_path(Path("/.vfs/trash")) == (True, "")
 
 
 # =========================================================================
@@ -381,54 +373,12 @@ class TestPath:
         [
             "/src/auth.py",
             "/src",
-            "/.vfs/src/auth.py/__meta__/chunks/1/login",
-            "/.vfs/src/auth.py/__meta__/versions/3",
-            "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py",
+            "/.vfs/trash/2026-07-18-10/x.txt",
+            "/.agents/tools/clone-repo",
         ],
     )
     def test_parent_dir_matches_helper(self, path):
         assert Path(path).parent_dir == compute_parent_dir(path)
-
-    def test_parent_file_none_for_plain_paths(self):
-        assert Path("/src/auth.py").parent_file is None
-        assert Path("/src").parent_file is None
-
-    @pytest.mark.parametrize(
-        "path",
-        [
-            "/.vfs/src/auth.py/__meta__/chunks/1/login",
-            "/.vfs/src/auth.py/__meta__/versions/3",
-            "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py",
-        ],
-    )
-    def test_parent_file_matches_helper(self, path):
-        expected = compute_parent_file(Path(path))
-        assert expected is not None
-        result = Path(path).parent_file
-        assert result == expected
-        assert isinstance(result, Path)
-
-    @pytest.mark.parametrize(
-        "path",
-        [
-            "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py",
-            "/.vfs/src/auth.py/__meta__/edges/in/imports/src/utils.py",
-        ],
-    )
-    def test_source_target_file_match_decompose(self, path):
-        parts = decompose_edge(Path(path))
-        assert parts is not None
-        source = Path(path).source_file
-        target = Path(path).target_file
-        assert source == parts.source
-        assert target == parts.target
-        assert isinstance(source, Path)
-        assert isinstance(target, Path)
-
-    def test_source_target_file_none_for_non_edge(self):
-        for path in ("/src/auth.py", "/.vfs/src/auth.py/__meta__/versions/3"):
-            assert Path(path).source_file is None
-            assert Path(path).target_file is None
 
     @pytest.mark.parametrize(
         "path,name",
@@ -442,9 +392,8 @@ class TestPath:
         [
             "/src/auth.py",
             "/src",
-            "/.vfs/src/auth.py/__meta__/chunks/1/login",
-            "/.vfs/src/auth.py/__meta__/versions/3",
-            "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py",
+            "/.vfs/trash/2026-07-18-10/x.txt",
+            "/.agents/skills/pdf-processing",
         ],
     )
     def test_kind_matches_helper(self, path):
@@ -457,13 +406,12 @@ class TestPath:
             ("/src/Foo.PY", "py"),  # lowercased
             ("/Makefile", None),  # extensionless file
             ("/.env", None),  # dotfile
-            ("/src", None),  # directory
-            ("/.vfs/src/auth.py/__meta__/chunks/1/login", None),  # chunk
-            ("/.vfs/src/auth.py/__meta__/versions/3", None),  # version
-            ("/.vfs/a.py/__meta__/edges/out/imports/src/utils.py", None),  # edge: .py leaf gated to None
+            ("/src", None),  # no dotted leaf
+            ("/a/foo.bar", "bar"),  # dotted leaf carries ext for any kind
+            ("/.vfs/trash/2026-07-18-10/x.txt", "txt"),  # meta scope, ordinary rules
         ],
     )
-    def test_ext_is_kind_gated(self, path, ext):
+    def test_ext_derives_from_the_path_never_the_kind(self, path, ext):
         assert Path(path).ext == ext
 
     @pytest.mark.parametrize(
@@ -479,7 +427,7 @@ class TestPath:
             "/src/auth.py",
             "/",
             "/.vfs",
-            "/.vfs/src/auth.py/__meta__/chunks/1/login",
+            "/.vfs/trash/2026-07-18-10/x.txt",
         ],
     )
     def test_is_mutable_target_matches_helper(self, path):
@@ -616,7 +564,7 @@ class TestPathMount:
             "/bar.py",
             "/",
             "/a/b/c",
-            "/.vfs/src/auth.py/__meta__/chunks/1/0_5",
+            "/.vfs/trash/2026-07-18-10/x.txt",
             "/Makefile",
         ],
     )
@@ -687,7 +635,7 @@ class TestRebaseLengthPolicy:
 
     @pytest.mark.parametrize(
         "path",
-        ["/", "/bar.py", "/a/b/c", "/Makefile", "/.vfs/src/auth.py/__meta__/chunks/1/0_5"],
+        ["/", "/bar.py", "/a/b/c", "/Makefile", "/.vfs/trash/2026-07-18-10/x.txt"],
     )
     @pytest.mark.parametrize("mount", ["/", "/mnt", "/mnt/foo", "/deep/mount/point"])
     def test_with_mount_matches_gate_construction(self, path, mount):
@@ -699,7 +647,7 @@ class TestRebaseLengthPolicy:
 
     @pytest.mark.parametrize(
         "path",
-        ["/", "/bar.py", "/a/b/c", "/Makefile", "/.vfs/src/auth.py/__meta__/chunks/1/0_5"],
+        ["/", "/bar.py", "/a/b/c", "/Makefile", "/.vfs/trash/2026-07-18-10/x.txt"],
     )
     @pytest.mark.parametrize("mount", ["/", "/mnt", "/mnt/foo", "/deep/mount/point"])
     def test_rebase_inverse_law(self, path, mount):
@@ -715,17 +663,6 @@ class TestRebaseLengthPolicy:
 
 
 class TestParseKind:
-    # --- Metadata markers ---
-
-    def test_chunk(self):
-        assert parse_kind(Path("/.vfs/src/auth.py/__meta__/chunks/1/login")) == "chunk"
-
-    def test_version(self):
-        assert parse_kind(Path("/.vfs/src/auth.py/__meta__/versions/3")) == "version"
-
-    def test_edge(self):
-        assert parse_kind(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")) == "edge"
-
     # --- Files with extensions ---
 
     @pytest.mark.parametrize("path", ["/src/auth.py", "/docs/readme.md", "/data/report.pdf"])
@@ -751,8 +688,6 @@ class TestParseKind:
     def test_dotfile_with_extension(self):
         assert parse_kind(Path("/.env.local")) == "file"
 
-    # --- Dot-prefixed user paths remain ordinary files ---
-
     @pytest.mark.parametrize("name", [".chunks", ".versions", ".connections"])
     def test_dot_prefixed_metadata_like_names_are_files(self, name):
         assert parse_kind(Path(f"/foo/{name}")) == "file"
@@ -776,31 +711,67 @@ class TestParseKind:
     def test_directories(self, path):
         assert parse_kind(path) == "directory"
 
-    def test_nested_chunk_descendants_stay_classified_as_chunks(self):
-        # Grammar-invalid as a Path, so parse_kind sees the raw string.
-        kind = parse_kind("/.vfs/src/auth.py/__meta__/chunks/login/body.txt")  # ty: ignore[invalid-argument-type]
-        assert kind == "chunk"
-
-    def test_nested_version_descendants_stay_classified_as_versions(self):
-        kind = parse_kind("/.vfs/src/auth.py/__meta__/versions/3/body.txt")  # ty: ignore[invalid-argument-type]
-        assert kind == "version"
-
-    def test_incomplete_edge_without_target_is_a_directory(self):
-        # Edge type but no target is not a complete projected edge — it is the
-        # type-scoped directory, mirroring the incomplete-chunk rule.
-        assert parse_kind(Path("/.vfs/foo/__meta__/edges/out/imports")) == "directory"
-
-    # --- Marker boundary (no false positives) ---
-
     def test_similar_name_not_misclassified(self):
-        # Similar user paths should not be mistaken for reserved metadata roots.
         assert parse_kind(Path("/my-connections/file.sql")) == "file"
 
+    # --- The meta scope takes the ordinary rules; only its root is structural ---
+
     def test_metadata_root_is_classified_as_directory(self):
+        # ".vfs" is a dotted leaf — without the structural pin it would read
+        # as a file through the name lottery.
         assert parse_kind(Path(METADATA_ROOT)) == "directory"
 
-    def test_metadata_tree_paths_are_classified_as_directories(self):
-        assert parse_kind(Path("/.vfs/src/auth.py")) == "directory"
+    @pytest.mark.parametrize(
+        "path,kind",
+        [
+            ("/.vfs/trash", "directory"),
+            ("/.vfs/trash/2026-07-18-10", "directory"),
+            ("/.vfs/trash/2026-07-18-10/x.txt", "file"),
+            ("/.vfs/src/auth.py", "file"),
+        ],
+    )
+    def test_meta_scope_paths_take_the_ordinary_rules(self, path, kind):
+        assert parse_kind(Path(path)) == kind
+
+    def test_meta_marker_names_are_ordinary_segments(self):
+        # The retired grammar's marker is just a name now, anywhere.
+        assert parse_kind(Path("/foo/__meta__")) == "directory"
+        assert parse_kind(Path("/foo/__meta__/login.txt")) == "file"
+
+
+# =========================================================================
+# is_reserved_directory — the structural-spot predicate
+# =========================================================================
+
+
+class TestIsReservedDirectory:
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/",
+            "/.vfs",
+            "/.agents",
+            "/.agents/tools",
+            "/.agents/skills",
+            "/.agents/tools/clone-repo",
+            "/.agents/skills/pdf-processing",
+        ],
+    )
+    def test_structural_spots(self, path):
+        assert is_reserved_directory(Path(path)) is True
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/src",
+            "/.vfs/trash",
+            "/.agents/memories",  # unknown family
+            "/.agents/tools/clone-repo/scripts",  # deeper than the unit
+            "/.agents-archive/tools/x",  # lookalike root
+        ],
+    )
+    def test_ordinary_spots(self, path):
+        assert is_reserved_directory(Path(path)) is False
 
 
 # =========================================================================
@@ -809,13 +780,13 @@ class TestParseKind:
 
 
 class TestAgentNamespace:
-    # --- parse_kind ---
+    # --- parse_kind: units are plain directories, discovered by path ---
 
-    def test_tool_unit_directory(self):
-        assert parse_kind(Path("/.agents/tools/clone-repo")) == "tool"
+    def test_tool_unit_is_a_directory(self):
+        assert parse_kind(Path("/.agents/tools/clone-repo")) == "directory"
 
-    def test_skill_unit_directory(self):
-        assert parse_kind(Path("/.agents/skills/pdf-processing")) == "skill"
+    def test_skill_unit_is_a_directory(self):
+        assert parse_kind(Path("/.agents/skills/pdf-processing")) == "directory"
 
     def test_agents_root_is_a_directory(self):
         # Its dotfile leaf would otherwise read as a file.
@@ -824,6 +795,10 @@ class TestAgentNamespace:
     @pytest.mark.parametrize("path", ["/.agents/tools", "/.agents/skills"])
     def test_family_roots_are_directories(self, path):
         assert parse_kind(path) == "directory"
+
+    def test_dotted_unit_name_stays_a_directory(self):
+        # The structural pin keeps a dotted unit name out of the name lottery.
+        assert parse_kind(Path("/.agents/tools/clone.repo")) == "directory"
 
     def test_tool_manifest_is_a_plain_indexable_file(self):
         # The manifest is a file, not the unit — so it chunks/indexes like any file.
@@ -856,8 +831,8 @@ class TestAgentNamespace:
         assert skill_manifest_path("pdf-processing") == "/.agents/skills/pdf-processing/SKILL.md"
 
     def test_builder_kind_roundtrip(self):
-        assert parse_kind(tool_path("x")) == "tool"
-        assert parse_kind(skill_path("y")) == "skill"
+        assert parse_kind(tool_path("x")) == "directory"
+        assert parse_kind(skill_path("y")) == "directory"
         assert parse_kind(tool_manifest_path("x")) == "file"
 
     @pytest.mark.parametrize("bad", ["", "a/b", ".", ".."])
@@ -867,26 +842,16 @@ class TestAgentNamespace:
 
 
 # =========================================================================
-# meta_root + endpoint_root + compute_parent_file
+# is_meta_path
 # =========================================================================
 
 
-class TestNamespaceRoots:
-    def test_compute_parent_file_for_chunk(self):
-        assert compute_parent_file(Path("/.vfs/src/auth.py/__meta__/chunks/1/login")) == "/src/auth.py"
-
-    def test_compute_parent_file_for_version(self):
-        assert compute_parent_file(Path("/.vfs/src/auth.py/__meta__/versions/3")) == "/src/auth.py"
-
-    def test_compute_parent_file_for_edge(self):
-        assert compute_parent_file(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py")) == "/src/auth.py"
-
-    def test_compute_parent_file_none_for_plain_file(self):
-        assert compute_parent_file(Path("/src/auth.py")) is None
-
-    def test_is_meta_path_requires_exact_reserved_prefix(self):
+class TestIsMetaPath:
+    def test_requires_exact_reserved_prefix(self):
         assert is_meta_path(Path("/.vfs/src/auth.py")) is True
+        assert is_meta_path(Path("/.vfs")) is True
         assert is_meta_path(Path("/.vfssrc/auth.py")) is False
+        assert is_meta_path(Path("/src/auth.py")) is False
 
 
 # =========================================================================
@@ -904,176 +869,13 @@ class TestParentDir:
     def test_root_is_own_parent(self):
         assert compute_parent_dir(Path("/")) == "/"
 
-    def test_chunk(self):
-        # Grammar-invalid as a Path, so the helper splits the raw string.
-        parent = compute_parent_dir("/.vfs/src/auth.py/__meta__/chunks/login")  # ty: ignore[invalid-argument-type]
-        assert parent == "/.vfs/src/auth.py/__meta__/chunks"
+    def test_meta_scope_path(self):
+        assert compute_parent_dir(Path("/.vfs/trash/2026-07-18-10/x.txt")) == "/.vfs/trash/2026-07-18-10"
 
-    def test_version(self):
-        assert (
-            compute_parent_dir(Path("/.vfs/src/auth.py/__meta__/versions/3")) == "/.vfs/src/auth.py/__meta__/versions"
-        )
-
-    def test_edge(self):
-        assert (
-            compute_parent_dir(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py"))
-            == "/.vfs/src/auth.py/__meta__/edges/out/imports/src"
-        )
-
-    def test_bare_metadata_dir(self):
-        assert compute_parent_dir(Path("/.vfs/src/auth.py/__meta__/chunks")) == "/.vfs/src/auth.py/__meta__"
-
-
-# =========================================================================
-# chunk_path
-# =========================================================================
-
-
-class TestChunkPath:
-    def test_basic(self):
-        assert chunk_path(Path("/src/auth.py"), "login", 1) == "/.vfs/src/auth.py/__meta__/chunks/1/login"
-
-    def test_normalizes_file_path(self):
-        # Path canonicalizes the base at construction; the builder no longer does.
-        assert chunk_path(Path("src/auth.py"), "login", 2) == "/.vfs/src/auth.py/__meta__/chunks/2/login"
-
-    def test_roundtrip_parse_kind(self):
-        assert parse_kind(chunk_path(Path("/f.py"), "x", 1)) == "chunk"
-
-    def test_empty_name_rejected(self):
-        with pytest.raises(ValueError, match="chunk_name"):
-            chunk_path(Path("/f.py"), "", 1)
-
-    def test_slash_in_name_rejected(self):
-        with pytest.raises(ValueError, match="chunk_name"):
-            chunk_path(Path("/f.py"), "a/b", 1)
-
-    def test_metadata_base_rejected(self):
-        with pytest.raises(ValueError, match="metadata"):
-            chunk_path(Path("/.vfs/f.py/__meta__/chunks/1/login"), "x", 1)
-
-    def test_reserved_ending_rejected(self):
-        with pytest.raises(ValueError, match="metadata path"):
-            chunk_path(Path("/.vfs/foo/__meta__/chunks"), "x", 1)
-
-    def test_root_base_rejected(self):
-        with pytest.raises(ValueError, match="root or reserved metadata root"):
-            chunk_path(Path("/"), "x", 1)
-
-
-# =========================================================================
-# version_path
-# =========================================================================
-
-
-class TestVersionPath:
-    def test_basic(self):
-        assert version_path(Path("/src/auth.py"), 3) == "/.vfs/src/auth.py/__meta__/versions/3"
-
-    def test_roundtrip_parse_kind(self):
-        assert parse_kind(version_path(Path("/f.py"), 1)) == "version"
-
-    def test_negative_rejected(self):
-        with pytest.raises(ValueError, match="version_number"):
-            version_path(Path("/f.py"), -1)
-
-    def test_zero_rejected(self):
-        with pytest.raises(ValueError, match="version_number"):
-            version_path(Path("/f.py"), 0)
-
-    def test_metadata_base_rejected(self):
-        with pytest.raises(ValueError, match="metadata"):
-            version_path(Path("/.vfs/f.py/__meta__/versions/1"), 2)
-
-
-# =========================================================================
-# edge_out_path + decompose_edge (roundtrip)
-# =========================================================================
-
-
-class TestEdgePath:
-    def test_basic(self):
-        assert (
-            edge_out_path(Path("/src/auth.py"), Path("/src/utils.py"), "imports")
-            == "/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py"
-        )
-
-    def test_roundtrip(self):
-        cases = [
-            ("/src/auth.py", "/src/utils.py", "imports"),
-            ("/jira/PROJ-1", "/src/auth.py", "references"),
-            ("/a.py", "/deep/nested/path.py", "calls"),
-        ]
-        for s, t, c in cases:
-            path = edge_out_path(Path(s), Path(t), c)
-            parts = decompose_edge(path)
-            assert parts == EdgeParts(source=Path(s), target=Path(t), edge_type=c, direction="out")
-
-    def test_normalizes_target(self):
-        p = edge_out_path(Path("/a.py"), Path("src//utils.py"), "imports")
-        assert p == "/.vfs/a.py/__meta__/edges/out/imports/src/utils.py"
-
-    def test_empty_type_rejected(self):
-        with pytest.raises(ValueError, match="edge_type"):
-            edge_out_path(Path("/a.py"), Path("/b.py"), "")
-
-    def test_slash_in_type_rejected(self):
-        with pytest.raises(ValueError, match="edge_type"):
-            edge_out_path(Path("/a.py"), Path("/b.py"), "calls/async")
-
-    def test_root_target_rejected(self):
-        with pytest.raises(ValueError, match="target"):
-            edge_out_path(Path("/a.py"), Path("/"), "imports")
-
-    def test_source_meta_path_rejected(self):
-        with pytest.raises(ValueError, match="metadata path"):
-            edge_out_path(Path("/.vfs/a.py/__meta__/edges/out/imports/b.py"), Path("/c.py"), "calls")
-
-    def test_target_meta_path_rejected(self):
-        with pytest.raises(ValueError, match="metadata path"):
-            edge_out_path(Path("/a.py"), Path("/.vfs/b.py/__meta__/edges/out"), "calls")
-
-    def test_bare_meta_endpoint_rejected(self):
-        # An edge endpoint may not live in reserved /.vfs space, even without a __meta__ frame.
-        with pytest.raises(ValueError, match="metadata path"):
-            edge_out_path(Path("/.vfs/foo"), Path("/b.py"), "imports")
-
-
-class TestDecomposeEdge:
-    def test_basic(self):
-        result = decompose_edge(Path("/.vfs/src/auth.py/__meta__/edges/out/imports/src/utils.py"))
-        assert result == EdgeParts(
-            source=Path("/src/auth.py"),
-            target=Path("/src/utils.py"),
-            edge_type="imports",
-            direction="out",
-        )
-
-    def test_not_a_connection(self):
-        assert decompose_edge(Path("/src/auth.py")) is None
-
-    def test_type_only_no_target(self):
-        assert decompose_edge(Path("/.vfs/foo/__meta__/edges/out/imports")) is None
-
-    def test_deep_target(self):
-        result = decompose_edge(Path("/.vfs/a.py/__meta__/edges/out/calls/src/deep/nested/path.py"))
-        assert result is not None
-        assert result.source == "/a.py"
-        assert result.target == "/src/deep/nested/path.py"
-        assert result.edge_type == "calls"
-        assert result.direction == "out"
-
-    def test_named_access(self):
-        result = decompose_edge(Path("/.vfs/a.py/__meta__/edges/out/imports/b.py"))
-        assert result is not None
-        assert result.source == "/a.py"
-        assert result.target == "/b.py"
-        assert result.edge_type == "imports"
-        # Positional matches named
-        assert result[0] == result.source
-        assert result[1] == result.target
-        assert result[2] == result.edge_type
-        assert result[3] == result.direction
+    def test_returns_vfspath(self):
+        result = compute_parent_dir(Path("/src/auth.py"))
+        assert isinstance(result, Path)
+        assert result == "/src"
 
 
 # =========================================================================
@@ -1109,6 +911,10 @@ class TestExtractExtension:
     def test_directory(self):
         assert extract_extension(Path("/src")) is None
 
+    def test_dotted_directory_name_carries_its_ext(self):
+        # POSIX parity: derivation is path-only, kind never gates it.
+        assert extract_extension(Path("/a/foo.bar")) == "bar"
+
     def test_trailing_dot(self):
         assert extract_extension(Path("/src/foo.")) is None
 
@@ -1126,296 +932,6 @@ class TestExtractExtension:
 
     def test_path_normalized_first(self):
         assert extract_extension("/src//auth.py") == "py"  # ty: ignore[invalid-argument-type]
-
-
-# =========================================================================
-# Internal helper coverage
-# =========================================================================
-
-
-class TestPathInternals:
-    def test_edge_path_split_requires_embedded_path(self):
-        assert _split_edge_path("/.vfs/a.py/__meta__/edges/out/imports") is None
-
-    def test_edge_path_split_requires_edge_type(self):
-        assert _split_edge_path("/.vfs/a.py/__meta__/edges/out//b.py") is None
-
-    def test_canonical_endpoint_leaves_user_paths_unchanged(self):
-        assert _canonical_endpoint_path("/src/auth.py") == "/src/auth.py"
-
-    def test_canonical_endpoint_rejects_reserved_metadata_root(self):
-        with pytest.raises(ValueError, match="not a canonical endpoint"):
-            _canonical_endpoint_path(METADATA_ROOT)
-
-    def test_canonical_endpoint_strips_metadata_root_prefix(self):
-        assert _canonical_endpoint_path("/.vfs/src/auth.py") == "/src/auth.py"
-
-    def test_canonical_endpoint_preserves_nested_chunk_root(self):
-        assert _canonical_endpoint_path("/.vfs/src/auth.py/__meta__/chunks/1/login/body.txt") == (
-            "/.vfs/src/auth.py/__meta__/chunks/1/login"
-        )
-
-    def test_split_nested_endpoint_returns_endpoint_when_path_stops_at_version(self):
-        path = "/.vfs/src/auth.py/__meta__/versions/3"
-        assert _split_nested_endpoint(path) == path
-
-    def test_split_nested_endpoint_collapses_descendant_to_nested_root(self):
-        assert _split_nested_endpoint("/.vfs/src/auth.py/__meta__/versions/3/body.txt") == (
-            "/.vfs/src/auth.py/__meta__/versions/3"
-        )
-
-    def test_reserved_metadata_directory_check_is_false_outside_metadata_tree(self):
-        assert _is_reserved_metadata_directory("/src/auth.py/__meta__/chunks") is False
-
-
-# =========================================================================
-# Metadata classification is anchored at /.vfs
-# =========================================================================
-
-
-class TestMetadataAnchoring:
-    """A path NOT under /.vfs is never metadata, even if it embeds the markers."""
-
-    def test_ordinary_edge_marker_path_is_not_an_edge(self):
-        assert parse_kind(Path("/foo/__meta__/edges/out/imports/bar.py")) == "file"
-
-    def test_ordinary_chunk_marker_path_is_not_a_chunk(self):
-        # Leaf has no extension and is not an extensionless special -> directory.
-        assert parse_kind(Path("/foo/__meta__/chunks/1/login")) == "directory"
-
-    def test_ordinary_chunk_marker_path_with_extension_is_a_file(self):
-        assert parse_kind(Path("/foo/__meta__/chunks/1/login.txt")) == "file"
-
-    def test_decompose_edge_returns_none_for_non_meta_path(self):
-        assert decompose_edge(Path("/foo/__meta__/edges/out/imports/bar")) is None
-
-    def test_compute_parent_file_none_for_non_meta_marker_path(self):
-        assert compute_parent_file(Path("/foo/__meta__/chunks/1/login")) is None
-
-    def test_split_edge_path_requires_metadata_root(self):
-        assert _split_edge_path("/foo/__meta__/edges/out/imports/bar") is None
-
-    def test_split_nested_endpoint_requires_metadata_root(self):
-        assert _split_nested_endpoint("/foo/__meta__/chunks/1/login") is None
-
-    def test_metadata_under_vfs_still_classifies(self):
-        # Sanity: real metadata still works after anchoring.
-        assert parse_kind(Path("/.vfs/foo/__meta__/edges/out/imports/bar")) == "edge"
-        assert parse_kind(Path("/.vfs/foo/__meta__/chunks/1/login")) == "chunk"
-
-
-# =========================================================================
-# Nested __meta__ frames are rejected at the gate
-# =========================================================================
-
-
-class TestNestedMetaRejected:
-    """At most one ``__meta__`` segment per path; cross-family nesting is illegal."""
-
-    @pytest.mark.parametrize(
-        "path",
-        [
-            # chunk cannot contain versions
-            "/.vfs/f.py/__meta__/chunks/1/x/__meta__/versions/2",
-            # versions cannot contain edges
-            "/.vfs/f.py/__meta__/versions/2/__meta__/edges/out/imports/g.py",
-            # edges cannot contain chunks
-            "/.vfs/f.py/__meta__/edges/out/imports/g.py/__meta__/chunks/1/x",
-        ],
-    )
-    def test_validate_path_rejects_nested_meta(self, path):
-        ok, reason = validate_path(path)
-        assert ok is False
-        assert "__meta__" in reason or "nested" in reason.lower()
-
-    def test_resolve_path_rejects_nested_meta(self):
-        result = resolve_path("/.vfs/f.py/__meta__/chunks/1/x/__meta__/versions/2")
-        assert result.path is None
-        assert result.error
-
-    def test_single_meta_frame_is_allowed(self):
-        ok, _ = validate_path("/.vfs/f.py/__meta__/chunks/1/x")
-        assert ok is True
-
-    def test_inverse_edge_mutability_bypass_is_rejected_at_gate(self):
-        # Crafted out-after-in path that previously parsed as a writable out-edge.
-        bypass = "/.vfs/A/__meta__/edges/in/t/B/__meta__/edges/out/t2/C"
-        assert resolve_path(bypass, mutation=True).path is None
-        assert resolve_path(bypass).path is None
-
-    def test_single_meta_in_ordinary_path_is_still_allowed(self):
-        # One literal __meta__ segment outside /.vfs is a normal directory name.
-        ok, _ = validate_path("/foo/__meta__/bar")
-        assert ok is True
-
-
-# =========================================================================
-# The metadata grammar is enforced at the gate
-# =========================================================================
-
-
-class TestMetaGrammarRejected:
-    """Malformed metadata paths are not valid Paths — the gate rejects them."""
-
-    @pytest.mark.parametrize(
-        "path",
-        [
-            # descendants below a complete endpoint (endpoints are terminal)
-            "/.vfs/f.py/__meta__/chunks/1/name/extra",
-            "/.vfs/f.py/__meta__/chunks/1/name/a/b/c",
-            "/.vfs/f.py/__meta__/versions/3/extra",
-            # versions must be canonical positive integers
-            "/.vfs/f.py/__meta__/versions/abc",
-            "/.vfs/f.py/__meta__/versions/0",
-            "/.vfs/f.py/__meta__/versions/-1",
-            "/.vfs/f.py/__meta__/versions/01",
-            "/.vfs/f.py/__meta__/chunks/notanumber/x",
-            "/.vfs/f.py/__meta__/chunks/0/x",
-            # malformed edges / unknown families
-            "/.vfs/f.py/__meta__/edges/sideways/imports/t",
-            "/.vfs/f.py/__meta__/garbage",
-            "/.vfs/f.py/__meta__/garbage/x",
-            # owner-less meta frames (nothing between /.vfs and __meta__)
-            "/.vfs/__meta__",
-            "/.vfs/__meta__/chunks/1/x",
-            "/.vfs/__meta__/versions/3",
-            "/.vfs/__meta__/edges/out/t/x",
-        ],
-    )
-    def test_malformed_meta_path_is_not_a_vfspath(self, path):
-        with pytest.raises(ValueError):
-            Path(path)
-        assert resolve_path(path).path is None
-
-    def test_empty_owner_edge_does_not_raise_at_mutation_gate(self):
-        # Regression: this used to reach decompose_edge and raise instead of rejecting.
-        result = resolve_path("/.vfs/__meta__/edges/out/t/x", mutation=True)
-        assert result.path is None
-        assert result.error
-
-
-class TestMetaGrammarAccepted:
-    """Well-formed skeleton directories and endpoints construct and classify."""
-
-    @pytest.mark.parametrize(
-        "path,kind",
-        [
-            ("/.vfs", "directory"),
-            ("/.vfs/f.py", "directory"),
-            ("/.vfs/f.py/__meta__", "directory"),
-            ("/.vfs/f.py/__meta__/chunks", "directory"),
-            ("/.vfs/f.py/__meta__/chunks/1", "directory"),  # version-scoped dir
-            ("/.vfs/f.py/__meta__/chunks/1/login", "chunk"),
-            ("/.vfs/f.py/__meta__/versions", "directory"),
-            ("/.vfs/f.py/__meta__/versions/3", "version"),
-            ("/.vfs/f.py/__meta__/edges", "directory"),
-            ("/.vfs/f.py/__meta__/edges/out", "directory"),
-            ("/.vfs/f.py/__meta__/edges/out/imports", "directory"),
-            ("/.vfs/f.py/__meta__/edges/out/imports/src/utils.py", "edge"),
-            ("/.vfs/f.py/__meta__/edges/in/imports/src/a.py", "edge"),
-        ],
-    )
-    def test_wellformed_meta_path_constructs_and_classifies(self, path, kind):
-        vp = Path(path)
-        assert vp.kind == kind
-
-
-# =========================================================================
-# Builders reject dangerous segments and bad versions
-# =========================================================================
-
-
-class TestBuilderSegmentValidation:
-    @pytest.mark.parametrize("name", ["..", ".", "a/b"])
-    def test_chunk_name_rejects_traversal_and_slash(self, name):
-        with pytest.raises(ValueError, match="chunk_name"):
-            chunk_path(Path("/a.py"), name, 1)
-
-    @pytest.mark.parametrize("name", ["a\x00b", "a\nb", "a\x7fb"])
-    def test_chunk_name_rejects_null_and_control(self, name):
-        with pytest.raises(ValueError, match="chunk_name"):
-            chunk_path(Path("/a.py"), name, 1)
-
-    @pytest.mark.parametrize("edge_type", ["..", ".", "a\x00b", "a\nb"])
-    def test_edge_type_rejects_traversal_null_and_control(self, edge_type):
-        with pytest.raises(ValueError, match="edge_type"):
-            edge_out_path(Path("/a.py"), Path("/b.py"), edge_type)
-
-    def test_file_base_rejects_embedded_meta_segment(self):
-        with pytest.raises(ValueError, match="metadata"):
-            chunk_path(Path("/a/__meta__/edges/out/imports/x"), "login", 1)
-
-    def test_edge_endpoint_rejects_embedded_meta_segment(self):
-        with pytest.raises(ValueError, match="metadata"):
-            edge_out_path(Path("/x/__meta__/edges/out/imports/y"), Path("/b.py"), "rel")
-
-    @pytest.mark.parametrize("version", [0, -1, -5])
-    def test_chunk_path_rejects_non_positive_version(self, version):
-        with pytest.raises(ValueError, match="version"):
-            chunk_path(Path("/a.py"), "x", version)
-
-    @pytest.mark.parametrize("version", [2.9, 2.0, True])
-    def test_chunk_version_must_be_int(self, version):
-        with pytest.raises(ValueError, match="int"):
-            chunk_path(Path("/a.py"), "x", version)
-
-    @pytest.mark.parametrize("version", [2.9, 2.0, True])
-    def test_version_number_must_be_int(self, version):
-        with pytest.raises(ValueError, match="int"):
-            version_path(Path("/a.py"), version)
-
-    def test_valid_builders_still_work(self):
-        # Guard against over-rejection.
-        assert chunk_path(Path("/a.py"), "login", 1) == "/.vfs/a.py/__meta__/chunks/1/login"
-        edge = edge_out_path(Path("/a.py"), Path("/b.py"), "imports")
-        assert edge == "/.vfs/a.py/__meta__/edges/out/imports/b.py"
-
-
-# =========================================================================
-# Builders take Path endpoints and return a branded Path
-# =========================================================================
-
-
-class TestBuilderPath:
-    def test_chunk_path_returns_vfspath(self):
-        result = chunk_path(Path("/a.py"), "login", 1)
-        assert isinstance(result, Path)
-        assert result == "/.vfs/a.py/__meta__/chunks/1/login"
-
-    def test_version_path_returns_vfspath(self):
-        result = version_path(Path("/a.py"), 3)
-        assert isinstance(result, Path)
-        assert result == "/.vfs/a.py/__meta__/versions/3"
-
-    def test_edge_out_path_returns_vfspath(self):
-        result = edge_out_path(Path("/a.py"), Path("/b.py"), "imports")
-        assert isinstance(result, Path)
-        assert result == "/.vfs/a.py/__meta__/edges/out/imports/b.py"
-
-    def test_edge_in_path_returns_vfspath(self):
-        result = edge_in_path(Path("/a.py"), Path("/b.py"), "imports")
-        assert isinstance(result, Path)
-
-    def test_branded_output_round_trips(self):
-        path = edge_out_path(Path("/src/a.py"), Path("/src/b.py"), "imports")
-        assert decompose_edge(path) == EdgeParts(Path("/src/a.py"), Path("/src/b.py"), "imports", "out")
-
-    def test_branded_chunk_output_parses_back_to_chunk(self):
-        assert parse_kind(chunk_path(Path("/a.py"), "login", 1)) == "chunk"
-
-
-class TestBuilderRejectsGateRejectedSegments:
-    """A name segment the gate would reject must be rejected at build time."""
-
-    @pytest.mark.parametrize("name", ["bad‮", "a﻿b", "a" + chr(0xD800) + "b"])
-    def test_chunk_name_rejects_format_and_surrogate(self, name):
-        with pytest.raises(ValueError, match="chunk_name"):
-            chunk_path(Path("/f.py"), name, 1)
-
-    @pytest.mark.parametrize("edge_type", ["bad‮", "a﻿b", "a" + chr(0xD800) + "b"])
-    def test_edge_type_rejects_format_and_surrogate(self, edge_type):
-        with pytest.raises(ValueError, match="edge_type"):
-            edge_out_path(Path("/a.py"), Path("/b.py"), edge_type)
 
 
 # =========================================================================
@@ -1508,59 +1024,6 @@ class TestDangerousUnicode:
         # ZWNJ / ZWJ are legitimate in scripts and emoji sequences.
         ok, _ = validate_path(f"/a{chr(code)}b")
         assert ok is True
-
-
-# =========================================================================
-# Incomplete chunk endpoints are directories, not mutable chunks
-# =========================================================================
-
-
-class TestIncompleteEndpoints:
-    def test_chunk_version_dir_without_name_is_a_directory(self):
-        assert parse_kind(Path("/.vfs/f.py/__meta__/chunks/1")) == "directory"
-
-    def test_complete_chunk_is_a_chunk(self):
-        assert parse_kind(Path("/.vfs/f.py/__meta__/chunks/1/login")) == "chunk"
-
-    def test_complete_version_is_a_version(self):
-        assert parse_kind(Path("/.vfs/f.py/__meta__/versions/3")) == "version"
-
-    def test_incomplete_chunk_dir_is_not_a_mutable_chunk(self):
-        ok, _ = check_mutable_path(Path("/.vfs/f.py/__meta__/chunks/1"))
-        assert ok is False
-
-
-# =========================================================================
-# Entry-attribute derivations take a Path and return a branded path
-# =========================================================================
-
-
-class TestEntryDerivationPath:
-    def test_compute_parent_dir_returns_vfspath(self):
-        result = compute_parent_dir(Path("/src/auth.py"))
-        assert isinstance(result, Path)
-        assert result == "/src"
-
-    def test_compute_parent_file_returns_vfspath_for_chunk(self):
-        result = compute_parent_file(Path("/.vfs/src/auth.py/__meta__/chunks/1/login"))
-        assert isinstance(result, Path)
-        assert result == "/src/auth.py"
-
-    def test_compute_parent_file_none_for_plain_file(self):
-        assert compute_parent_file(Path("/src/auth.py")) is None
-
-    def test_parse_kind_on_vfspath(self):
-        assert parse_kind(Path("/.vfs/src/auth.py/__meta__/chunks/1/login")) == "chunk"
-        assert parse_kind(Path("/src/auth.py")) == "file"
-
-    def test_vfspath_property_delegates_stay_branded(self):
-        p = Path("/.vfs/src/auth.py/__meta__/chunks/1/login")
-        assert isinstance(p.parent_dir, Path)
-        assert isinstance(p.parent_file, Path)
-
-    def test_extract_extension_accepts_vfspath(self):
-        assert extract_extension(Path("/src/auth.py")) == "py"
-        assert extract_extension(Path("/Makefile")) is None
 
 
 # =========================================================================

@@ -192,7 +192,7 @@ def _format_field(name: str, value: Any) -> str:
 
 
 _RIGHT_ALIGN_FIELDS: frozenset[str] = frozenset(
-    {"size_bytes", "score", "in_degree", "out_degree", "version_number"},
+    {"size_bytes", "score", "in_degree", "out_degree", "version"},
 )
 """Projection fields that render right-aligned in Markdown tables — numeric values."""
 
@@ -441,9 +441,8 @@ def _render_action(result: Result) -> str:
     return f"{verb} {count} paths"
 
 
-# Kinds counted in the write-success summary. Versions are deliberately omitted
-# (they are bookkeeping rows the agent does not need to know about).
-_WRITE_SUMMARY_KINDS: tuple[str, ...] = ("file", "directory", "chunk", "edge")
+# Kinds counted in the write-success summary.
+_WRITE_SUMMARY_KINDS: tuple[str, ...] = ("file", "directory")
 
 # File write statuses, in breakdown order. A missing status reads as created.
 _FILE_STATUSES: tuple[str, ...] = ("created", "updated", "unchanged")
@@ -453,8 +452,7 @@ def _render_write(result: Result) -> str:
     """Render a ``write`` result.
 
     Up to two blocks, errors first when present. Empty results render
-    ``write: nothing to do``. The summary line counts
-    files/directories/chunks/edges; version rows are excluded.
+    ``write: nothing to do``. The summary line counts files and directories.
     Single-file batches append a ``  <status> <path>`` line below the
     summary.
     """
@@ -477,13 +475,13 @@ def _render_write_errors(errors: list[ResultError]) -> str:
 
 
 def _render_write_success(observations: list[Observation]) -> str:
-    """Summarize a write: a reconciling file breakdown plus other-kind counts.
+    """Summarize a write: a reconciling file breakdown plus a directory count.
 
     File rows are reported by status — created / updated / unchanged — and the
     buckets always sum to the file count (a missing status reads as created).
-    Directories, chunks, and edges are bare counts — a directory-only batch
-    is a real write, never ``nothing to do``; version rows are excluded. A
-    single-file write appends a ``  <status> <path>`` detail line.
+    Directories are a bare count — a directory-only batch is a real write,
+    never ``nothing to do``. A single-file write appends a
+    ``  <status> <path>`` detail line.
     """
     files = [o for o in observations if o.kind == "file"]
     other: dict[str, int] = {}

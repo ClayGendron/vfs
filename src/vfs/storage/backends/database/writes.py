@@ -18,10 +18,10 @@ one transaction.
 Concurrent create arbitration follows the dialect's declared mode:
 ``upsert`` rides ``ON CONFLICT`` on the ``(parent_id, name)`` index,
 ``catch_retry`` wraps the bulk insert in a savepoint and resolves each
-conflicting row individually. Revisions are per-entry monotone values —
+conflicting row individually. Versions are per-entry monotone values —
 creation mints 1, every material write adds exactly one, and a parent
 bump adds one, all against the row's own current value. There is no
-per-mount counter, and no two entries' revisions are comparable.
+per-mount counter, and no two entries' versions are comparable.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from vfs.storage.replace import EditOperation
 
 # Columns an overwrite clobbers when arbitration lands on a rival's row:
-# identity stays, revision increments SQL-side, material state is ours.
+# identity stays, version increments SQL-side, material state is ours.
 _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
     "kind",
     "content_hash",
@@ -70,8 +70,6 @@ _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
     "ext",
     "lines",
     "size_bytes",
-    "chunked",
-    "encoded",
     "owner_id",
     "updated_at",
 )
@@ -224,7 +222,7 @@ async def _fetch_committed(
         entry.c.id,
         entry.c.path,
         entry.c.kind,
-        entry.c.revision,
+        entry.c.version,
         entry.c.ext,
         entry.c.mime_type,
     ]
@@ -265,7 +263,7 @@ async def _finish(
                     path=path,
                     kind=staged.kind,
                     size_bytes=staged.size_bytes if staged.content is not None else None,
-                    revision=staged.revision,
+                    version=staged.version,
                     status=status,
                 )
             )
@@ -273,8 +271,8 @@ async def _finish(
             # A later entry may have bumped this unchanged row; the
             # observation must equal a post-commit stat of its path.
             row = plan.committed[str(path)]
-            revision = plan.bump_revisions.get(str(path), row["revision"])
-            rows.append(Observation(path=path, kind=row["kind"], revision=revision, status=status))
+            version = plan.bump_versions.get(str(path), row["version"])
+            rows.append(Observation(path=path, kind=row["kind"], version=version, status=status))
     return Result(ops=(op,), observations=rows)
 
 
@@ -357,7 +355,7 @@ async def _upsert_layer(
 
     Directory creates never clobber (``DO NOTHING``); file creates clobber
     a non-directory rival under ``overwrite``. RETURNING carries the final
-    revision, so winners and clobberers stamp theirs without a read-back.
+    version, so winners and clobberers stamp theirs without a read-back.
     A row missing from RETURNING lost arbitration and classifies — a
     definite outcome, never retried.
     """
@@ -370,10 +368,10 @@ async def _upsert_layer(
         for chunk in chunked(group, per_statement):
             stmt = constructor(entry).values([r for _, r in chunk])
             if clobber:
-                # A clobbered rival's revision increments off the target row,
+                # A clobbered rival's version increments off the target row,
                 # not the excluded value, keeping its history monotone.
                 set_: dict[str, Any] = {column: stmt.excluded[column] for column in _CLOBBER_COLUMNS}
-                set_["revision"] = entry.c.revision + 1
+                set_["version"] = entry.c.version + 1
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["parent_id", "name"],
                     set_=set_,
@@ -381,13 +379,13 @@ async def _upsert_layer(
                 )
             else:
                 stmt = stmt.on_conflict_do_nothing(index_elements=["parent_id", "name"])
-            result = await session.execute(stmt.returning(entry.c.id, entry.c.path, entry.c.revision))
+            result = await session.execute(stmt.returning(entry.c.id, entry.c.path, entry.c.version))
             returned = {mapping["path"]: mapping for mapping in result.mappings()}
             for staged, _ in chunk:
                 won = returned.get(str(staged.path))
                 if won is not None:
                     staged.entry_id = won["id"]
-                    staged.revision = won["revision"]
+                    staged.version = won["version"]
                 elif clobber:
                     errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {staged.path}", staged.path))
                 else:
@@ -463,7 +461,7 @@ async def _resolve_rows(
             # The rival's row absorbs our write: an unguarded clobbering update.
             staged.created = False
             staged.entry_id = occupant.id
-            staged.base_revision = None
+            staged.base_version = None
         elif staged.kind != "directory" and overwrite:
             errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {staged.path}", staged.path))
         else:
@@ -480,9 +478,9 @@ async def _update_materials(
     user_id: str | None,
     now: datetime,
 ) -> list[ResultError]:
-    """Material updates with the revision guard, verified by one read-back.
+    """Material updates with the version guard, verified by one read-back.
 
-    The guarded arm writes ``base + 1`` under ``WHERE revision = base``;
+    The guarded arm writes ``base + 1`` under ``WHERE version = base``;
     the guard's zero-rowcount arm is unreachable on SQLite (single writer)
     and on Postgres at REPEATABLE READ (rivals surface as 40001); it is
     load-bearing at READ COMMITTED — topology verbs, the generic-dialect
@@ -495,8 +493,8 @@ async def _update_materials(
     """
     if not updates:
         return []
-    guarded = [s for s in updates if s.base_revision is not None]
-    unguarded = [s for s in updates if s.base_revision is None]
+    guarded = [s for s in updates if s.base_version is not None]
+    unguarded = [s for s in updates if s.base_version is None]
     material = {
         "kind": bindparam("b_kind"),
         "content_hash": bindparam("b_hash"),
@@ -504,8 +502,6 @@ async def _update_materials(
         "ext": bindparam("b_ext"),
         "lines": bindparam("b_lines"),
         "size_bytes": bindparam("b_size"),
-        "chunked": False,
-        "encoded": False,
         # Ownership follows the writer, matching _CLOBBER_COLUMNS — the
         # two arbitration arms must leave identical observable state.
         "owner_id": bindparam("b_owner"),
@@ -514,26 +510,26 @@ async def _update_materials(
     if guarded:
         stmt = (
             update(entry)
-            .where(entry.c.id == bindparam("b_id"), entry.c.revision == bindparam("b_base"))
-            .values(**material, revision=bindparam("b_rev"))
+            .where(entry.c.id == bindparam("b_id"), entry.c.version == bindparam("b_base"))
+            .values(**material, version=bindparam("b_ver"))
         )
-        params = [_update_params(s, user_id, now) | {"b_base": s.base_revision, "b_rev": s.revision} for s in guarded]
+        params = [_update_params(s, user_id, now) | {"b_base": s.base_version, "b_ver": s.version} for s in guarded]
         await session.execute(stmt, params)
     if unguarded:
-        stmt = update(entry).where(entry.c.id == bindparam("b_id")).values(**material, revision=entry.c.revision + 1)
+        stmt = update(entry).where(entry.c.id == bindparam("b_id")).values(**material, version=entry.c.version + 1)
         await session.execute(stmt, [_update_params(s, user_id, now) for s in unguarded])
     actual: dict[int, int] = {}
     for chunk in chunked([s.entry_id for s in updates], membership):
-        check = await session.execute(select(entry.c.id, entry.c.revision).where(entry.c.id.in_(chunk)))
-        actual.update({row.id: row.revision for row in check})
+        check = await session.execute(select(entry.c.id, entry.c.version).where(entry.c.id.in_(chunk)))
+        actual.update({row.id: row.version for row in check})
     errors: list[ResultError] = []
     for staged in updates:
         observed = actual.get(staged.entry_id)
-        if observed is None or (staged.base_revision is not None and observed != staged.revision):
+        if observed is None or (staged.base_version is not None and observed != staged.version):
             message = f"Concurrent modification: {staged.path}"
             errors.append(classified(VFSErrorKind.conflict, message, staged.path, target=staged.path))
-        elif staged.base_revision is None:
-            staged.revision = observed
+        elif staged.base_version is None:
+            staged.version = observed
     return errors
 
 
@@ -554,7 +550,7 @@ async def _replace_content(session: AsyncSession, content: Table, membership: in
 async def _bump_parents(session: AsyncSession, entry: Table, membership: int, plan: WritePlan) -> None:
     """One SQL-side increment for every bumped directory, read back only on need.
 
-    ``revision = revision + 1`` composes where a client-assigned value would
+    ``version = version + 1`` composes where a client-assigned value would
     overwrite a concurrent rival's bump. The read-back runs only when an
     "unchanged" pending row was bumped by a sibling in this batch — its
     observation must equal a post-commit stat of its path.
@@ -563,15 +559,15 @@ async def _bump_parents(session: AsyncSession, entry: Table, membership: int, pl
         return
     bump_ids = [plan.committed[path]["id"] for path in sorted(plan.bumps)]
     for chunk in chunked(bump_ids, membership):
-        await session.execute(update(entry).where(entry.c.id.in_(chunk)).values(revision=entry.c.revision + 1))
+        await session.execute(update(entry).where(entry.c.id.in_(chunk)).values(version=entry.c.version + 1))
     needed = {str(path) for path, _ in plan.pending if path not in plan.staged and str(path) in plan.bumps}
     if not needed:
         return
     ids = [plan.committed[path]["id"] for path in sorted(needed)]
-    plan.bump_revisions = {}
+    plan.bump_versions = {}
     for chunk in chunked(ids, membership):
-        result = await session.execute(select(entry.c.path, entry.c.revision).where(entry.c.id.in_(chunk)))
-        plan.bump_revisions.update({row.path: row.revision for row in result})
+        result = await session.execute(select(entry.c.path, entry.c.version).where(entry.c.id.in_(chunk)))
+        plan.bump_versions.update({row.path: row.version for row in result})
 
 
 def _upsert_constructor(profile: DialectProfile) -> Any:
@@ -593,14 +589,12 @@ def _entry_values(staged: StagedEntry, parent_id: int, user_id: str | None, now:
         "path": str(staged.path),
         "name": staged.path.name,
         "kind": staged.kind,
-        "revision": staged.revision,
+        "version": staged.version,
         "content_hash": staged.content_hash,
         "mime_type": staged.mime_type,
         "ext": staged.ext,
         "lines": staged.lines,
         "size_bytes": staged.size_bytes,
-        "chunked": False,
-        "encoded": False,
         "owner_id": user_id,
         "created_at": now,
         "updated_at": now,

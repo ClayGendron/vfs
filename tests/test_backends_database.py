@@ -234,7 +234,7 @@ class TestFirstTouch:
                     path="/",
                     name="",
                     kind="directory",
-                    revision=0,
+                    version=0,
                     created_at=now,
                     updated_at=now,
                 )
@@ -352,7 +352,7 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
 
     Reads land before mutations, so tests seed through Core directly —
     ancestors are minted as directories, files get a content row, and
-    every row gets a distinct revision.
+    every row gets a distinct version.
     """
     assert (await storage.first_touch()).success is True
     tables = storage._host.tables
@@ -361,16 +361,16 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
         conn = await session.connection(execution_options={"vfs_writer": True})
         root_id = (await conn.execute(select(tables.entry.c.id).where(tables.entry.c.path == "/"))).scalar_one()
         ids: dict[str, int] = {"/": root_id}
-        revision = 0
+        version = 0
 
         async def ensure(path: str, kind: str, content: str | None) -> None:
-            nonlocal revision
+            nonlocal version
             if path in ids:
                 return
             parent = path.rsplit("/", 1)[0] or "/"
             if parent not in ids:
                 await ensure(parent, "directory", None)
-            revision += 1
+            version += 1
             result = await conn.execute(
                 insert(tables.entry)
                 .values(
@@ -379,7 +379,7 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
                     path=path,
                     name=path.rsplit("/", 1)[1],
                     kind=kind,
-                    revision=revision,
+                    version=version,
                     size_bytes=len(content.encode()) if content is not None else 0,
                     lines=content.count("\n") + 1 if content else 0,
                     created_at=now,
@@ -427,7 +427,7 @@ class TestReadFamily:
         row = result.observations[0]
         assert row.content == "alpha"
         assert row.kind == "file"
-        assert row.revision is not None
+        assert row.version is not None
         assert "content" in row.populated
 
     async def test_read_on_a_directory_is_wrong_kind(self, storage: DatabaseStorage) -> None:
@@ -449,7 +449,7 @@ class TestReadFamily:
         assert file_row.kind == "file"
         assert file_row.size_bytes == len(b"alpha")
         assert file_row.content is None
-        assert {"path", "kind", "revision"} <= file_row.populated
+        assert {"path", "kind", "version"} <= file_row.populated
 
         dir_row = (await storage.stat(path=Path("/docs"))).observations[0]
         assert dir_row.kind == "directory"
@@ -529,7 +529,7 @@ class TestReadFamily:
     async def test_projection_narrows_the_select_and_stamps_the_mask(self, storage: DatabaseStorage) -> None:
         result = await storage.stat(path=Path("/docs/a.txt"), columns=frozenset({"size_bytes", "mime_type"}))
         row = result.observations[0]
-        assert row.populated == {"path", "kind", "revision", "size_bytes", "mime_type"}
+        assert row.populated == {"path", "kind", "version", "size_bytes", "mime_type"}
         assert row.mime_type is None  # fetched, and null
         assert row.content_hash is None
         assert "content_hash" not in row.populated  # not fetched
@@ -583,7 +583,7 @@ class TestNamespaceScopes:
             storage,
             [
                 ("/real.txt", "file", "needle in the open"),
-                ("/.vfs/docs/a.txt/__meta__/versions/1", "version", "v1 text"),
+                ("/.vfs/docs/a.txt", "file", "meta doc text"),
                 ("/.vfs/trash/bucket/01ARZ", "file", "needle in the trash"),
             ],
         )
@@ -596,14 +596,14 @@ class TestNamespaceScopes:
         assert [o.path for o in (await storage.glob(pattern="*")).observations] == ["/real.txt"]
 
     async def test_direct_meta_address_bypasses_the_meta_exclusion(self, storage: DatabaseStorage) -> None:
-        version = Path("/.vfs/docs/a.txt/__meta__/versions/1")
-        stat = await storage.stat(path=version)
+        doc = Path("/.vfs/docs/a.txt")
+        stat = await storage.stat(path=doc)
         assert stat.success is True
-        assert stat.observations[0].kind == "version"
-        read = await storage.read(path=version)
-        assert read.observations[0].content == "v1 text"
-        listing = await storage.ls(path=version.parent_dir)
-        assert [o.path for o in listing.observations] == [str(version)]
+        assert stat.observations[0].kind == "file"
+        read = await storage.read(path=doc)
+        assert read.observations[0].content == "meta doc text"
+        listing = await storage.ls(path=doc.parent_dir)
+        assert [o.path for o in listing.observations] == [str(doc)]
 
     async def test_trash_serves_beside_other_meta_children_when_anchored(self, storage: DatabaseStorage) -> None:
         # Trash is an ordinary meta subtree: an ls of /.vfs lists it.
@@ -745,7 +745,7 @@ class TestUnicodeAndCollation:
         upper = await storage.stat(path=Path("/dir/A.txt"))
         lower = await storage.stat(path=Path("/dir/a.txt"))
         assert upper.success is True and lower.success is True
-        assert upper.observations[0].revision != lower.observations[0].revision
+        assert upper.observations[0].version != lower.observations[0].version
 
     async def test_glob_stays_case_sensitive_through_the_pool(self, storage: DatabaseStorage) -> None:
         # The LIKE prefilter must not case-fold: case_sensitive_like=ON is
@@ -783,7 +783,7 @@ class TestPoolExhaustion:
 
 
 class TestWriteMechanics:
-    """One transaction per batch, bounded statements, per-entry revisions."""
+    """One transaction per batch, bounded statements, per-entry versions."""
 
     async def test_failed_batch_commits_nothing(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -849,13 +849,13 @@ class TestWriteMechanics:
     async def test_revisions_are_per_entry_and_survive_restart(self, tmp_path) -> None:
         first = DatabaseStorage(url=_url(tmp_path))
         created = await first.write(entries=[Entry(path=Path("/docs/a.txt"), content="1")], parents=True)
-        assert created.observations[0].revision == 1
+        assert created.observations[0].version == 1
         minted = (await first.stat(path=Path("/docs"))).observations[0]
-        assert minted.revision == 1  # minted ancestors are fresh rows too
+        assert minted.version == 1  # minted ancestors are fresh rows too
         await first.close()
         second = DatabaseStorage(url=_url(tmp_path))
         overwritten = await second.write(entries=[Entry(path=Path("/docs/a.txt"), content="2")])
-        assert overwritten.observations[0].revision == 2  # base + 1 off the row, no mount state
+        assert overwritten.observations[0].version == 2  # base + 1 off the row, no mount state
         await second.close()
 
     async def test_unchanged_directory_reports_the_sibling_bump(self, tmp_path) -> None:
@@ -868,7 +868,7 @@ class TestWriteMechanics:
         by_path = {str(o.path): o for o in result.observations}
         assert by_path["/docs"].status == "unchanged"
         stat = (await storage.stat(path=Path("/docs"))).observations[0]
-        assert by_path["/docs"].revision == stat.revision
+        assert by_path["/docs"].version == stat.version
         await storage.close()
 
     async def test_overwrite_restamps_the_owner(self, tmp_path) -> None:
@@ -938,10 +938,10 @@ class TestTrashWritability:
 
     async def test_meta_paths_beside_trash_still_write(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        version = Path("/.vfs/docs/a.txt/__meta__/versions/1")
-        result = await storage.write(entries=[Entry(path=version, kind="version", content="v1")], parents=True)
+        doc = Path("/.vfs/docs/a.txt")
+        result = await storage.write(entries=[Entry(path=doc, kind="file", content="v1")], parents=True)
         assert result.success is True
-        assert (await storage.read(path=version)).observations[0].content == "v1"
+        assert (await storage.read(path=doc)).observations[0].content == "v1"
         await storage.close()
 
 
@@ -997,7 +997,7 @@ class TestArbitration:
                 session, entry, [clobber], [_entry_values(clobber, root_id, None, now)], overwrite=True
             )
             assert errors == []
-            assert clobber.created is False and clobber.entry_id is not None and clobber.base_revision is None
+            assert clobber.created is False and clobber.entry_id is not None and clobber.base_version is None
 
             # overwrite=False over a rival file: a definite exists outcome.
             refused = staged_for("/f.txt", "file")
@@ -1035,8 +1035,8 @@ class TestArbitration:
                 created=False,
                 content="b",
                 entry_id=row.id,
-                base_revision=999_999,  # a rival moved the row past our snapshot
-                revision=1_000_000,
+                base_version=999_999,  # a rival moved the row past our snapshot
+                version=1_000_000,
             )
             budget = storage._host.membership_budget
             errors = await _update_materials(session, entry, budget, [stale], user_id=None, now=datetime.now(UTC))

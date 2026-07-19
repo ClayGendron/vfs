@@ -284,7 +284,7 @@ class EngineHost:
                 path="/",
                 name="",
                 kind="directory",
-                revision=1,
+                version=1,
                 created_at=now,
                 updated_at=now,
             )
