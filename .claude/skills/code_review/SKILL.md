@@ -17,8 +17,9 @@ findings that survive refutation reach the report.
 
 ## Shape
 
-1. **Review** — five agents in parallel, one per skill. Each agent is
-   instructed to read its skill file and follow it exactly:
+1. **Review** — five agents in parallel, one per skill, each running on
+   Fable (`model: 'fable'`). Each agent is instructed to read its skill
+   file and follow it exactly:
    - `.claude/skills/ownership_review/SKILL.md` — structure: who owns each block of logic
    - `.claude/skills/contract_review/SKILL.md` — implementation vs declared contracts
    - `.claude/skills/scale_review/SKILL.md` — bounded at production scale, tightest engine
@@ -27,9 +28,10 @@ findings that survive refutation reach the report.
 2. **Verify** — one agent per finding, following
    `.claude/skills/verify_findings/SKILL.md`. Findings verify as soon as
    their reviewer finishes (pipeline, no barrier between lenses).
-3. **Synthesize** — after all verification completes, one agent merges
-   the surviving findings: dedups across lenses, ranks by severity,
-   and writes the report.
+   Verifier agents run on Opus (`model: 'opus'`).
+3. **Synthesize** — after all verification completes, one agent on
+   Fable (`model: 'fable'`) merges the surviving findings: dedups
+   across lenses, ranks by severity, and writes the report.
 
 ## Per-agent rules (must appear in every prompt)
 
@@ -90,11 +92,11 @@ First read .claude/skills/<LENS>/SKILL.md and follow it exactly.`
 const verified = await pipeline(
   LENSES,
   lens => agent(RULES.replace('<LENS>', lens) + `\nYou are the ${lens} reviewer.`,
-    { label: lens, phase: 'Review', schema: FINDINGS }),
+    { label: lens, phase: 'Review', schema: FINDINGS, model: 'fable' }),
   (review, lens) => parallel((review?.findings ?? []).map(f => () =>
     agent(`Verify one finding per .claude/skills/verify_findings/SKILL.md.\n` +
       RULES + `\nFinding from ${lens}: ${JSON.stringify(f)}`,
-      { label: `verify:${f.title}`, phase: 'Verify', schema: VERDICT })
+      { label: `verify:${f.title}`, phase: 'Verify', schema: VERDICT, model: 'opus' })
       .then(v => ({ ...f, lens, ...v })))),
 )
 const surviving = verified.flat().filter(Boolean).filter(f => f.verdict !== 'REFUTED')
@@ -105,7 +107,7 @@ const report = await agent(
   `(use corrected_severity when present). For each: what is wrong, why it matters, ` +
   `the evidence, and a suggested fix direction. End with what was reviewed and ` +
   `which lenses came back clean.\n${JSON.stringify(surviving)}`,
-  { label: 'report', phase: 'Synthesize' })
+  { label: 'report', phase: 'Synthesize', model: 'fable' })
 return { report, confirmed: surviving.length, raw: verified.flat().filter(Boolean).length }
 ```
 
