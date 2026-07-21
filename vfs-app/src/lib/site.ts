@@ -16,10 +16,10 @@ export type SiteMount = {
 
 export const SITE = {
   name: "vfs",
-  tagline: "Agentic Search on any SQL Database",
-  headline: "Agentic Search on\nany SQL Database",
+  tagline: "Agentic Search on your Database",
+  headline: "Agentic Search on\nyour Database",
   description:
-    "Let agents work in an environment they already know, backed by the database you already have. VFS is a Unix-like virtual file system that makes it easy for developers to build enterprise-scale agentic applications.",
+    "Compose a fully-featured, Unix-like environment for your agents. VFS is built on one claim: glob, grep, glean, and graph are the four verbs any agent needs to navigate a knowledge base.",
   domain: "vfs.dev",
   repo: { owner: "ClayGendron", name: "vfs" },
   github: "https://github.com/ClayGendron/vfs",

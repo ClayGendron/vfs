@@ -1,4 +1,4 @@
-# VFS: Agentic Search on Any SQL Database
+# VFS: Agentic Search on your Database
 
 <p align="center">
   <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/v/vfs-py" alt="PyPI version"></a>
@@ -7,7 +7,7 @@
   <a href="https://github.com/ClayGendron/vfs/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/vfs" alt="License"></a>
 </p>
 
-Let agents work in an environment they already know, backed by the database you already have. VFS is a Unix-like virtual file system that makes it easy for developers to build enterprise-scale agentic applications.
+Compose a fully-featured, Unix-like environment for your agents. VFS is built on one claim: glob, grep, glean, and graph are the four verbs any agent needs to navigate a knowledge base.
 
 ```bash
 pip install vfs-py

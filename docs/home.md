@@ -1,4 +1,6 @@
-# VFS: Agentic Search on any SQL Database
+# VFS: Agentic Search on your Database
+
+Compose a fully-featured, Unix-like environment for your agents. VFS is built on one claim: glob, grep, glean, and graph are the four verbs any agent needs to navigate a knowledge base.
 
 VFS is built on a conviction that creating effective AI agents, from the scale of small local development to the size of an enterprise, is first and foremost a **data engineering** problem. This conviction comes from observing how AI agents work on tasks, noticing the flaws in some components of their current harnesses and tooling, and identifying what well established patterns of computer science can we applied towards making great AI agents. The beliefs below capture an opinionated understanding of what LLMs and AI agents are and how they work and create a high level framework of how to build with them.
 
