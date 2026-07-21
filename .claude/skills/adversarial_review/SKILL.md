@@ -22,8 +22,10 @@ at most a lead to chase with a script, never a finding.
 - **uv project**: everything runs from the repo root as
   `uv run python ...`, `uv run pytest ...`, `uv run ty check ...`.
 - **The repo is read-only.** Never modify, stash, checkout, or commit
-  anything in it. Scratch scripts go ONLY under the session scratchpad
-  directory (from the system prompt), e.g. `<scratchpad>/adversarial/<dimension>/`.
+  anything in it. Scratch scripts go ONLY under the scratchpad
+  directory — the one given to you if you were invoked with a scratch
+  path, otherwise the session scratchpad from the system prompt — in a
+  subdirectory per dimension, e.g. `<scratchpad>/adversarial/<dimension>/`.
 - **Read intent first.** Module docstrings, the touched code's tests, the
   relevant spec in `context/specs/` (or `context/stories/*/spec.md`), and
   ADRs in `context/decisions/`. Intended, documented, or test-pinned
@@ -33,9 +35,15 @@ at most a lead to chase with a script, never a finding.
 
 ### 1. Scope the change under test
 
-- `git status` and `git diff` (plus staged and untracked files, or the
-  branch diff against `main` if reviewing a branch) — know exactly what
-  is new before choosing what to attack.
+- **If you were given an explicit scope, that scope is the change under
+  test** — do not re-derive a different one from git and quietly attack
+  something else. Read it, and use git only to fill in detail (the
+  actual hunks, the untracked files it names).
+- Otherwise: `git status` and `git diff` (plus staged and untracked
+  files, or the branch diff against `main` if reviewing a branch) —
+  know exactly what is new before choosing what to attack. Untracked
+  files are in scope and `git diff` cannot see them; list them
+  separately.
 - Read every touched module in full, its tests, and its governing docs
   (see house rules). Write down a short intent sheet: what the change
   promises, its declared error channels, and its stated limits (budgets,

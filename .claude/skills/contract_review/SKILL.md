@@ -75,8 +75,6 @@ code is correct**. Hunt the classic decay signatures:
   signature.
 - "Always"/"never"/"only" claims falsified by a branch added in this
   diff.
-- Behavior described in the docstring but actually implemented in a
-  callee or every caller — the promise lives in the wrong mouth.
 - Examples in docstrings that would no longer run or return what they
   show.
 - Comments explaining a *why* that the diff just invalidated.
@@ -84,6 +82,12 @@ code is correct**. Hunt the classic decay signatures:
 The fix for a lying comment is usually to fix the comment — but first
 ask whether the prose records the intended behavior and the code
 drifted. Intent decides which side is wrong, not recency.
+
+**Boundary with ownership review.** This lens judges whether the prose
+is *true*, not whether the implementation sits in the right module. A
+promise that is honoured, but honoured in every caller rather than
+where it is declared, is a placement defect owned by
+`ownership_review` — leave it there rather than filing it twice.
 
 ### 5. Probe contract completeness at boundaries
 

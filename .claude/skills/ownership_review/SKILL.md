@@ -1,17 +1,24 @@
 ---
 name: ownership_review
-description: Methodically review and restructure code that has accumulated too much logic by decomposing it into concerns and assigning each to its rightful owner, with duplication as the primary evidence. Use when the user asks to "think in systems", asks "who owns this logic", wants an overloaded function or module restructured, or points at code where "a lot of logic lives here".
+description: Review code that has accumulated too much logic by decomposing it into concerns and assigning each to its rightful owner, with duplication as the primary evidence. Produces an ownership map and proposed moves — it never edits the tree. Use when the user asks to "think in systems", asks "who owns this logic", wants an overloaded function or module reviewed, or points at code where "a lot of logic lives here".
 ---
 
 # Ownership review — think in systems
 
-A procedure for restructuring overloaded code by asking one question per
+A procedure for reviewing overloaded code by asking one question per
 block of logic: **which system owns this?** The output is an ownership
-map and a minimal set of moves — one move per violation — not a rewrite.
+map and a minimal set of proposed moves — one move per violation — not
+a rewrite.
 
 The core insight: an overloaded function is rarely "too long" in the
 abstract. It is hosting logic that belongs to other layers, and every
 symptom below is evidence of a specific owner being bypassed.
+
+**This skill is read-only.** It proposes moves; it never makes them.
+Never modify, stash, checkout, or commit anything in the repo — the
+deliverable is the table, the moves, and the behavior notes, and the
+user decides whether any of it lands. Scratch scripts, if you need one
+to check behavior, go under the session scratchpad only.
 
 ## Process
 
@@ -76,24 +83,49 @@ For each violation, choose the new home by these rules:
   flowing on as a misleading `None`. Choose deliberately per method and
   say which in the docstring.
 
-### 6. Verify behavior preservation before cutting
+### 6. Check behavior preservation for every proposed move
 
-Before editing, chase every subtle difference the move could introduce:
-which of two near-identical values was actually stored (raw vs
-validated), which fields are deliberately preserved from old state,
-whether validators transform values or only reject them. Read the
-implementations involved — do not assume. If the unification *changes*
-behavior (e.g. two consumers quietly disagreed), flag it explicitly to
-the user as part of the proposal; never smuggle a behavior change
-inside a restructure.
+A move is only proposable if it preserves behavior, so chase every
+subtle difference the move *would* introduce: which of two
+near-identical values was actually stored (raw vs validated), which
+fields are deliberately preserved from old state, whether validators
+transform values or only reject them. Read the implementations
+involved — do not assume. If the unification *changes* behavior (e.g.
+two consumers quietly disagreed), that divergence is itself the most
+valuable finding: two copies that were never actually identical are a
+latent bug the duplication was hiding. Report it as its own finding,
+never as a footnote to the move.
 
-### 7. Propose, then land green
+### 7. Evidence standard
 
-Present the ownership table, the moves, and any behavior notes
-**before** implementing — the user approves the design, not a diff.
-After approval, implement in dependency order (deepest home first:
-promoted helpers → engines → shared modules → consumers), then run the
-project's full gate: lint, format check, type check, and the whole test
-suite. All must pass; fix fallout (dead imports, shadowed names left by
-mechanical renames) before reporting. Report what moved, where, and any
-behavior notes the user must know.
+Every finding names the block of logic (`file:line`), the layer that
+should own it, and the layer hosting it today. A duplication finding
+quotes **both** copies with their paths — the distinctive string you
+grepped, in each home. "This function is doing too much" is not a
+finding; "this validation is implemented identically at `a.py:40` and
+`b.py:88`, so neither layer owns the rule" is. If you cannot name the
+rightful owner, you have a question, not a violation.
+
+### 8. Deliver findings
+
+Report the ownership table from step 1 first — it is the map that makes
+every finding legible — then a severity-ordered list of violations.
+Classify each by kind:
+
+- **misplacement** — logic hosted by a module that does not own it.
+- **duplication** — one semantic rule with several homes, so no layer
+  owns the meaning and the copies will drift.
+- **envy** — a block reaching into another object's internals to answer
+  a question that object should answer itself.
+- **leak** — domain knowledge (classification, validation, error
+  minting) inside a module meant to stay a pure leaf.
+- **divergence** — copies that were supposed to be identical and are
+  not; the latent bug from step 6.
+
+Severity follows blast radius, not size: a divergence or a
+misplacement that lets an invariant be bypassed outranks a tidy-looking
+duplication of two constants. For each finding give the proposed move
+in one line (from where, to where, why there) and any behavior note the
+move would carry. Close with the concerns you checked and found
+correctly placed, so a clean area is distinguishable from an unexamined
+one.

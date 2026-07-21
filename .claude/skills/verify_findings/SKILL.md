@@ -121,12 +121,17 @@ Return the original finding annotated with:
 1. **Verdict** — CONFIRMED, REFUTED, or DOWNGRADED.
 2. **Evidence** — the quoted output or contract line that decided it,
    with file paths, per the standard above.
-3. **For CONFIRMED only**: a **corrected severity**, judged from what
-   verification actually showed (reachability, likelihood, blast
-   radius) rather than inherited from the reviewer, and the **minimal
-   repro** — the smallest script/steps that demonstrate the failure,
-   ready for the reader to run with `uv run python`.
-4. **For DOWNGRADED**: the corrected form — the question to ask or the
+3. **A corrected severity — on CONFIRMED and DOWNGRADED alike.** Judge
+   it from what verification actually showed (reachability, likelihood,
+   blast radius) rather than inheriting the reviewer's. This is not
+   optional on a downgrade: "severity inflated" is one of the two
+   things DOWNGRADED means, so a downgrade that omits the corrected
+   severity has stated no verdict at all, and the finding will be read
+   and ranked at its inflated level.
+4. **For CONFIRMED**: the **minimal repro** — the smallest
+   script/steps that demonstrate the failure, ready for the reader to
+   run with `uv run python`.
+5. **For DOWNGRADED**: the corrected form — the question to ask or the
    design note to record — replacing the original claim.
 
 The annotation is the whole deliverable. Do not add new findings you
