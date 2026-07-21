@@ -1609,6 +1609,13 @@ class VirtualFileSystem:
         entry's path is mutation-resolved and write-gated before anything
         dispatches, then each entry group is rebased into local coordinates
         via :meth:`Entry.without_mount`.
+
+        Each group dispatches parents-before-children (stable depth sort),
+        so backends adjudicate the batch as a set — "can all of this be
+        written together" — never as a sequence the caller had to order.
+        A directory entry therefore satisfies the parent gate for deeper
+        entries in the same batch regardless of caller order, while
+        duplicate targets keep caller order and last-write-wins.
         """
         if not self._bindings:
             return self._closed_error("write")
@@ -1644,7 +1651,7 @@ class VirtualFileSystem:
             self._dispatch_entry(
                 binding,
                 "write",
-                entries=group,
+                entries=sorted(group, key=lambda e: str(e.path).count("/")),
                 overwrite=overwrite,
                 parents=parents,
                 user_id=user_id,

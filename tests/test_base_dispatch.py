@@ -700,6 +700,35 @@ async def test_write_entries_batch_groups_and_localizes() -> None:
     assert a.calls[0][1]["overwrite"] is True
 
 
+async def test_write_entries_dispatch_is_depth_sorted_and_stable() -> None:
+    # Parents-before-children dispatch; same-depth entries keep caller order.
+    root = VirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    entries = [
+        Entry(path=Path("/a/d/one.txt"), content="1"),
+        Entry(path=Path("/a/top.txt"), content="t"),
+        Entry(path=Path("/a/d/two.txt"), content="2"),
+    ]
+    result = await root.write(entries, parents=True)
+    assert result.success is True
+    dispatched = [str(e.path) for e in a.calls[0][1]["entries"]]
+    assert dispatched == ["/top.txt", "/d/one.txt", "/d/two.txt"]
+
+
+async def test_write_entries_child_before_parent_adjudicates_as_a_set() -> None:
+    # No parents flag: the batch supplies its own parent, in any order.
+    root = VirtualFileSystem()
+    entries = [
+        Entry(path=Path("/data/new.csv"), content="x"),
+        Entry(path=Path("/data"), kind="directory"),
+    ]
+    result = await root.write(entries)
+    assert result.success is True
+    statuses = {str(o.path): o.status for o in result.observations}
+    assert statuses == {"/data": "created", "/data/new.csv": "created"}
+
+
 async def test_write_entries_one_read_only_target_rejects_all() -> None:
     root = VirtualFileSystem()
     a = RecorderStorage()
