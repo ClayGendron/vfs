@@ -607,6 +607,14 @@ class TestNamespaceScopes:
         listing = await storage.ls(path=doc.parent_dir)
         assert [o.path for o in listing.observations] == [str(doc)]
 
+    async def test_batch_ls_keeps_liveness_scopes_apart(self, storage: DatabaseStorage) -> None:
+        # One batch, both liveness classes: the meta anchor serves its
+        # children while the non-meta parent's listing stays meta-free.
+        batch = [Observation(path=Path("/")), Observation(path=Path("/.vfs"))]
+        listing = await storage.ls(observations=batch)
+        assert listing.success is True
+        assert [str(o.path) for o in listing.observations] == ["/real.txt", "/.vfs/docs", "/.vfs/trash"]
+
     async def test_trash_serves_beside_other_meta_children_when_anchored(self, storage: DatabaseStorage) -> None:
         # Trash is an ordinary meta subtree: an ls of /.vfs lists it.
         listing = await storage.ls(path=Path("/.vfs"))

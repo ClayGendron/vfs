@@ -9,6 +9,8 @@ from uuid import UUID
 import pytest
 from sqlalchemy import String, create_engine, insert, inspect, select
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
+from sqlalchemy.dialects.mssql import pymssql
+from sqlalchemy.dialects.mysql import mariadb
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import ColumnDefault, CreateIndex, CreateTable
 from ulid import ULID
@@ -252,6 +254,10 @@ class TestULIDKey:
                 ("oracle", oracle.dialect()),
                 ("mysql", mysql.dialect()),
                 ("sqlite", sqlite.dialect()),
+                # Non-default dialects whose supports_native_uuid flag lies
+                # about sort order: the allow-list must hold them to bytes.
+                ("mariadb", mariadb.MariaDBDialect()),
+                ("mssql+pymssql", pymssql.MSDialect_pymssql()),
             )
         }
         # mssql is deliberately not UNIQUEIDENTIFIER: its sort order would
@@ -262,6 +268,8 @@ class TestULIDKey:
             "oracle": "RAW(16)",
             "mysql": "BINARY(16)",
             "sqlite": "BINARY(16)",
+            "mariadb": "BINARY(16)",
+            "mssql+pymssql": "BINARY(16)",
         }
 
     def test_bytes_arm_round_trips_and_sorts_like_the_string(self) -> None:
@@ -318,6 +326,17 @@ class TestDDL:
         engine = create_engine("sqlite://")
         tables.metadata.create_all(engine)
         assert set(inspect(engine).get_table_names()) == set(tables.metadata.tables)
+
+    def test_body_columns_compile_to_longtext_on_mysql(self, tables: VFSTables) -> None:
+        # MySQL's plain TEXT caps bodies at 64KB; the pin is LONGTEXT.
+        dialect = mysql.dialect()
+        bodies = (
+            tables.content.c.content,
+            tables.versions.c.content,
+            tables.versions.c.version_diff,
+            tables.chunks.c.content,
+        )
+        assert [column.type.compile(dialect=dialect) for column in bodies] == ["LONGTEXT"] * 4
 
     def test_whole_family_ddl_compiles_on_every_dialect(self, tables: VFSTables) -> None:
         # Served, not refused: no column type may fail DDL compile on any

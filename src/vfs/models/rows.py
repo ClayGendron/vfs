@@ -166,11 +166,12 @@ def _body_text() -> Text:
 def _uuid_native(dialect: Dialect) -> bool:
     """True where the engine's own uuid type keeps ULID time-order.
 
-    MSSQL is pinned out regardless of what the dialect reports:
-    ``UNIQUEIDENTIFIER`` sorts by its own byte grouping, forfeiting the
-    ULID's time-ordered index locality.
+    An allow-list, not ``dialect.supports_native_uuid``: that flag means
+    the driver binds uuid objects and says nothing about sort order —
+    MSSQL's ``UNIQUEIDENTIFIER`` and MariaDB's byte-swapped native uuid
+    both report support while forfeiting time-ordered index locality.
     """
-    return dialect.supports_native_uuid and dialect.name != "mssql"
+    return dialect.name == "postgresql"
 
 
 class ULIDKey(TypeDecorator[str]):
