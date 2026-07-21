@@ -52,7 +52,7 @@
   surrogate-keyed chains following the entry through renames with zero
   heuristics. Recovering historical metadata would reopen ADR 017
   option (b) — a new ADR, never a quiet field. Pinned in `version.py`'s
-  module docstring. Awaiting commit.
+  module docstring. Committed 2026-07-19 in `40408da`.
 - **Date:** 2026-07-18
 - **Owner:** Clay Gendron
 - **Kind:** domain-model refactor (split one kinded `Entry` into four

@@ -99,12 +99,18 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       prefilter/verify structure against Linux/FreeBSD/JuiceFS/
       statx/zoekt; the one contract-level deviation found (fnmatch
       glob semantics) is story 073's charter, decided 2026-07-14.
-- [ ] 11. Slice 8 — `writes.py`: write/edit/mkdir; dict-accumulate →
+- [x] 11. Slice 8 — `writes.py`: write/edit/mkdir; dict-accumulate →
       bulk Core statements in pinned order; one transaction per
       batch, budget chunking, per-entry outcomes; revision stamp +
       WHERE guard + parent bump; upsert arbitration (MSSQL
       savepoint arm); key-byte-budget classification; designed-race
-      savepoints. Mutation conformance rows green.
+      savepoints. Mutation conformance rows green. Landed 2026-07-16
+      (`b488e25`); membership predicates budget-bounded same window
+      (`d9ca522`). Subsequently rewritten in place by specs 074
+      (per-entry revisions replace the ordered counter, `7f152af`),
+      075 (trash scope retired for meta-scope parity, `44aa439`),
+      and 076 (entry model split; version rows minted in the write
+      transaction, `40408da`).
 - [ ] 12. Slice 9 — `topology.py`: move/copy/delete under the
       serialization point (BEGIN IMMEDIATE / advisory lock at READ
       COMMITTED with root-walk ancestry re-check); trash-reparent
@@ -125,7 +131,13 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       Pass C index watermark consumes: reindex must then capture its
       watermark under a brief per-mount shared/exclusive fence
       (writers shared, reindexer momentarily exclusive) instead of
-      assuming ordered commits.
+      assuming ordered commits. **Superseded note (2026-07-20):** the
+      revision-allocation half of this task is dead — ADR 013 / spec
+      074 removed ordered allocation and the counter row entirely
+      (`7f152af`); no sequence replacement is needed, and the index
+      watermark premise it served is gone (the flags are the grep
+      overlay's dirty set). The CI-leg half (Postgres marker, env
+      URL, service wiring, conformance under Postgres) stands.
 - [ ] 14. Pass A close-out: two-instance cycle test, crash-rollback
       consistency, WAL-baseline and metadata-write-amplification
       checks; acceptance-criteria audit; STATUS.md + spec status;
@@ -146,6 +158,13 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       family) + recursive-CTE `graph` with budgets/truncation;
       liveness joins (trashed endpoint invisible; sweep leaves no
       dangling edge). Session end: pytest/ruff/ty; STATUS.md.
+      **Reshaped note (2026-07-20):** ADR 018 (accepted 2026-07-19)
+      redesigned this surface — batch-native `mkedge`/`rmedge`,
+      touch/upsert semantics, materialized reserved-type fs edges
+      minted in the namespace-mutating transactions, `parent_id`
+      kept as write-side arbiter. This slice waits on ADR 018's
+      wiring spec (which also owns user-edge fate on delete, pin 9)
+      rather than the shape sketched here.
 - [ ] 18. Pack verb (`versions.py`, unblocked after task 15): batch
       rewrite to snapshot-interval + forward diffs, one transaction
       per chain, idempotent-cheap on unchanged watermark;

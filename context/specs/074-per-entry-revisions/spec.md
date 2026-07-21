@@ -1,7 +1,11 @@
 # 074 — Per-entry revisions: drop the ordered per-mount counter
 
-- **Status:** shaped — drafted 2026-07-17 directly from accepted ADR 013;
-  no open markers. Ready for plan.md.
+- **Status:** implemented — drafted 2026-07-17 directly from accepted
+  ADR 013; no open markers. plan.md + tasks.md executed same day (all
+  nine tasks checked); landed 2026-07-17 in `7f152af`. The dormant
+  entries-table `version_number` column noted in §6 was subsequently
+  resolved by ADR 017 / spec 076 (version numbers are revision values;
+  column dropped, landed in `40408da`).
 - **Date:** 2026-07-17
 - **Owner:** Clay Gendron
 - **Kind:** contract + schema change (revision semantics on every

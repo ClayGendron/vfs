@@ -25,7 +25,17 @@
   same day — 11 confirmed + 3 contested findings written up in
   `pressure-findings-stage1.md` (four ready-to-implement, six
   decision-gated) — resolve before Pass A slice 6
-  (`backends/database/` skeleton, tasks.md task 9)
+  (`backends/database/` skeleton, tasks.md task 9). True-up
+  2026-07-20: slices 6–8 landed (skeleton `5238324`, read family +
+  glob `f69824a`, mutation core `b488e25`; membership predicates
+  budget-bounded `d9ca522`) and were then rewritten in place by
+  specs 074 (per-entry revisions, `7f152af`), 075 (trash normal-fs
+  parity, `44aa439`), and 076 (entry model split, `40408da`) — §5's
+  ordered revision counter and §9's reserved trash scope are
+  superseded by ADRs 013/014 as recorded in those specs. Live
+  surface: read/stat/ls/tree/glob + write/edit/mkdir; grep, delete,
+  move, copy, mkedge remain classified stubs. Next in sequence:
+  task 12 (slice 9, `topology.py` move/copy/delete)
 - **Date:** 2026-07-12
 - **Owner:** Clay Gendron
 - **Kind:** feature (the database backend port that ADR 001 and ADR 002

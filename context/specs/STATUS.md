@@ -5,94 +5,95 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 open/seed/draft specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-07-10, against `main` at `fee073d`
-  (story 071 landed); 068/039/044/017 entries trued up 2026-07-11
-  when 068 landed; 072 entry added 2026-07-12 (research + spike day).
-- **Method:** every spec's status line collected, then the
-  draft/seed/in-progress stories verified against the actual code
-  (`base.py`, `permissions.py`, `ops.py`, `params.py`, `results/`).
+- **Last reviewed:** 2026-07-20, against `main` at `2cf80b7`
+  (ADR 018 docs landed). This pass trued up the 072–076 storage arc
+  (specs 074/075/076 landed; 072 slices 6–8 landed and rewritten in
+  place; tasks.md 11/13/17 annotated). Router-story entries (051,
+  053, 056, 070, etc.) carry forward from the 2026-07-10/11 review —
+  not re-verified this pass, and no commits since have claimed router
+  work.
+- **Method (this pass):** recent spec status lines read, then verified
+  against the live backend surface
+  (`storage/backends/database/backend.py` — which verbs delegate vs
+  stub), 072's task checklist, and `git log` hashes.
+
+## The active line: 072 database backend and its rewrites
+
+- **072 — database storage backend** (in progress). Landed: slice 6
+  skeleton (`5238324`), slice 7 read family + glob (`f69824a`),
+  slice 8 mutation core (`b488e25`), membership-predicate budget
+  bounding (`d9ca522`). Live surface: read/stat/ls/tree/glob +
+  write/edit/mkdir; **grep, delete, move, copy, mkedge are classified
+  stubs.** Next in sequence: task 12 (slice 9, `topology.py`
+  move/copy/delete), then the Postgres CI leg (task 13 — its
+  revision-allocation half is dead per ADR 013, see tasks.md note).
+  Task 17 (edges slice) is reshaped by ADR 018 and waits on its
+  wiring spec.
+- **074 — per-entry revisions**: **landed 2026-07-17** (`7f152af`).
+  Ordered per-mount counter gone; revisions are per-entry monotone
+  values; ADR 013 executed in full.
+- **075 — trash normal-fs parity**: **landed 2026-07-18** (`44aa439`).
+  `/.vfs/trash` is an ordinary subtree under the meta scope; the
+  reserved-scope filters and gates of 072 §9 are retired (ADR 014).
+- **076 — entry model split**: **landed 2026-07-19** (`40408da`).
+  `Entry` + `Chunk` + `Version` + `Edge`; chunks/versions/edges off
+  the namespace; version numbers are revision values (ADR 017);
+  version history pinned content-only.
+- **073 — glob segment semantics** (shaped, ready for plan.md).
+  Owner decision and open questions resolved 2026-07-14; soundness
+  machine-verified. Land before or with Pass C grep (shared pattern
+  language).
+
+## Decided but unspecified — the next spec to write
+
+- **ADR 018 — edge authoring** (accepted 2026-07-19, `2cf80b7`; docs
+  only). Batch-native `mkedge`/`rmedge`, touch/upsert, materialized
+  reserved-type `"fs"` hierarchy edges minted storage-side,
+  `parent_id` retained as write-side arbiter. **No spec exists yet**;
+  pin 9 (user-edge fate on entry delete) and pin 8's conformance
+  invariant (fs edges mirror `parent_id` after every mutating verb)
+  are explicitly the wiring spec's to own. The live `mkedge`
+  (`base.py`; stubbed in the database backend) predates the ADR.
+  Feeds 067 (graph traversal-only).
 
 ## Outstanding work that touches `base.py`
 
-Ordered by a suggested sequence (051 next, with 070 whenever — 068
-landed before it, so the `Principal` rename now ripples through
-`add_mount`/`remove_mount`'s internal calls only).
+Carried forward from the 2026-07-10/11 review (not re-verified this
+pass):
 
-- **068 — mount admin completeness**: **landed 2026-07-11** (features
-  1–3: `mounts()`/`MountInfo`, atomic `remount`, `deny_ops` mask on
-  constructor/`bind`/`add_mount`/`remount`; `MountMeta` now stores
-  `declared_caps` + `deny_ops` with derived post-mask `caps`).
-  Features 4 (`move_mount`) and 5 (`LazyStorage`) stay demand-gated —
-  split into new stories if picked up.
+- **068 — mount admin completeness**: landed 2026-07-11 (features
+  1–3). Features 4 (`move_mount`) and 5 (`LazyStorage`) stay
+  demand-gated — split into new stories if picked up.
 - **039 — execute permission tier** (draft; superseded in practice by
-  068's `deny_ops` — see its status line). `run` stays outside the
-  permission-map vocabulary; denied execution classifies
-  `unsupported`. Reopen only for per-path/per-principal execute
+  068's `deny_ops`). Reopen only for per-path/per-principal execute
   policy.
 - **051 — fanout deadline** (draft; premise intact). No time budget
-  anywhere in fan-out — `_gather_settled` gathers with no deadline;
-  the `timeout` error kind exists in `results/kinds.py` but is unused.
-  Do not confuse with the hop *budget* (`_hop_budget`/`_HopGrant`),
-  which is mount-loop prevention, not a deadline.
+  anywhere in fan-out; the `timeout` error kind exists in
+  `results/kinds.py` but is unused.
 - **070 — principal-scoped sessions** (draft; decisions 1–4 recorded
-  2026-07-10). The largest pending change: `user_id: str | None` →
-  verified `Principal` on every public verb, every `_route_*` helper,
-  and the storage funnel (~87 `user_id` references in `base.py`).
-  Supersedes 058's `user_id` phrasing and delivers the `Principal`
-  that 058's grants consume.
-- **053 — router review cleanups** (draft; mostly stale after 069/071
-  — see its status line). Only the bare-assert item clearly survives.
+  2026-07-10). The largest pending `base.py` change: `user_id` →
+  verified `Principal` everywhere. Supersedes 058's `user_id`
+  phrasing.
+- **053 — router review cleanups** (draft; mostly stale — only the
+  bare-assert item clearly survives).
 
 ## Outstanding work that does NOT touch `base.py`
 
-- **056 Pass B and Pass C** — the `VFSStorageAdapter` (`adapter.py`)
-  and the MCP trio (`backends/mcp.py`, `mcp_server.py`, `mcp` dep) are
-  unlanded (tasks 19–27, acceptance criteria unmet). All new-file
-  work; Pass A already carried every `base.py` change. Also carries
-  057 decision 13's inbound half (`VFSStorage` treating a parseable
-  vfs payload as authoritative), which waits on Pass C.
-- **044 — mount rights mask**: **superseded by 068 feature 3**
-  (landed 2026-07-11). Its signed-off decisions carried over onto
-  `MountMeta.caps`/`_gate_entry`; its `Rights`-in-terminal-gate
-  mechanism is retired with it.
+- **056 Pass B and Pass C** — `VFSStorageAdapter` and the MCP trio
+  (`backends/mcp.py`, `mcp_server.py`, `mcp` dep) unlanded (tasks
+  19–27). All new-file work; carries 057 decision 13's inbound half.
 - **045 — verb wire contract** (draft; doc/contract artifact). No
-  schema artifact exists yet; post-071 `params.py` `ParamSpec` tables
-  are a better drift-test substrate than the raw signatures the spec
-  assumed.
-- **054 — serve() locks topology** (policy decision). Waits on
-  `serve()` existing; its `allow_child_mounts` premise is stale (see
-  its status line).
-- **058 — row-level grants** (seed; eleven clarification forks; needs
-  070's `Principal`). Enforcement lands in `permissions.py`/query
-  construction, not the router.
-- **067 — graph traversal-only** (seed). Work is in the future graph
-  subsystem and `results/` rendering; `base.py` dispatch unaffected.
-- **072 — database storage backend** (seed, added 2026-07-12). The
-  `DatabaseStorage` port. Same-day: nine-repo reference review
-  (`../research/2026-07-13-database-storage-backend.md`), grep-index
-  deep-dive (`../research/2026-07-13-database-storage-grep-index.md`),
-  and a measured SQLite+Postgres spike at ~1M docs
-  (`spike-results.md`). Spec §6 (search ladder) is **resolved**:
-  grep ships with the byte-trigram index write+read together,
-  index-required by default (classified refusal + `allow_scan`
-  opt-out), batch-only reindex (staging/fold dropped — supersedes
-  014's auto-index-on-write and 030's incremental premise as
-  direction; both remain quarry), posting encoding delta+varint
-  (delta+gamma dropped). Remaining §4/§5/§8/§9/§12 clarification
-  markers still open; identity option (c) awaits 059.
-
-## Closed or trued-up in this review (2026-07-10)
-
-- **069** — status corrected: landed in `22a3f33` (was "pending
-  commit").
-- **047** — closed: both findings fixed as side effects of 069 + 071.
-- **055** — closed: core landed via 056 Pass A; the fused
-  mkdir→bind `add_mount` shape was superseded by 056 decisions 4/5.
-- **053** — re-triage note added (items 2–4 stale/obsolete).
-- **054** — stale `allow_child_mounts` premise flagged.
+  schema artifact yet; post-071 `ParamSpec` tables are the better
+  drift-test substrate.
+- **054 — serve() locks topology** (policy decision; waits on
+  `serve()` existing; `allow_child_mounts` premise stale).
+- **058 — row-level grants** (seed; needs 070's `Principal`).
+- **067 — graph traversal-only** (seed; now downstream of ADR 018's
+  wiring spec — traversal reads the one edges table).
 
 ## Fully landed and verified in code (recent line)
 
-049 → 055 → 056 Pass A → 057 (Passes A+B, complete — no Pass C
-exists) → 069 → 071. `base.py` has no TODO/FIXME markers and no
-unmerged branches carry router work.
+049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–8 → 074 →
+075 → 076. ADRs 001–018 accepted (005 superseded by 016);
+013/014/015/016/017 executed in code, 018 awaiting its spec. Tree green at 1461 passed, `ruff`/`ty`
+at zero (076's landing verification).
