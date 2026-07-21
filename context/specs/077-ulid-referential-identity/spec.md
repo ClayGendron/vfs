@@ -2,16 +2,20 @@
 
 - **Status:** implemented 2026-07-21 (ADR 019 accepted same day; plan.md
   executed in the working tree — suite green at 1460 passed, `ruff`/`ty`
-  at zero, the portability acceptance test passing on first run). One
-  pin deviation, resolved in plan.md: pin 4 said `_upsert_layer`
-  RETURNING carries "path and version only", but it must also carry
-  ``entry_id`` — a clobber lands on the rival's row, which keeps its
-  identity, so the staged entry adopts the returned ``entry_id`` or its
-  content rows would wire to a ULID that owns no entry row. The
-  catch-retry layer, by contrast, learns nothing back (a clean insert
-  is all our own rows; its conflict arm adopts identity via the
-  occupant probe in ``_resolve_rows``), and its ``membership_budget``
-  parameter fell away with the read-back.
+  at zero, the portability acceptance test passing on first run). Two
+  conscious departures, both recorded in plan.md. First, pin 4 said
+  `_upsert_layer` RETURNING carries "path and version only", but it must
+  also carry ``entry_id`` — a clobber lands on the rival's row, which
+  keeps its identity, so the staged entry adopts the returned
+  ``entry_id`` or its content rows would wire to a ULID that owns no
+  entry row. The catch-retry layer, by contrast, learns nothing back (a
+  clean insert is all our own rows; its conflict arm adopts identity via
+  the occupant probe in ``_resolve_rows``), and its
+  ``membership_budget`` parameter fell away with the read-back. Second,
+  pin 1's closing clause ("the module docstring's identity paragraph
+  re-cites ADR 004 + 019") was dropped: the repo rule is that
+  traceability lives in `context/`, never in code comments or
+  docstrings, and the pin predated that rule's application here.
 - **Decision:** ADR 019 (amends ADR 004 pin 2). Evidence:
   `context/research/2026-07-21-ulid-referential-identity.md`.
 
