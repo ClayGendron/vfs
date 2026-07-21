@@ -53,7 +53,7 @@ from vfs.permissions import (
     check_writable_composed,
     coerce_permissions,
 )
-from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results import Result, ResultError, VFSErrorKind, validation_message
 from vfs.results.kinds import Severity, kind_family
 from vfs.storage import (
     ResolvedPair,
@@ -763,7 +763,7 @@ class VirtualFileSystem:
         try:
             entry = Entry(path=str(resolved.path), content=content)
         except ValidationError as exc:
-            return self._error(exc.errors()[0]["msg"], kind=VFSErrorKind.invalid, op="write")
+            return self._error(validation_message(exc), kind=VFSErrorKind.invalid, op="write")
         return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, user_id=user_id)
 
     async def edit(
@@ -895,7 +895,7 @@ class VirtualFileSystem:
         try:
             Edge(source=src_terminal.rel, target=tgt_terminal.rel, edge_type=edge_type)
         except ValidationError as exc:
-            return self._error(exc.errors()[0]["msg"], kind=VFSErrorKind.invalid, op="mkedge")
+            return self._error(validation_message(exc), kind=VFSErrorKind.invalid, op="mkedge")
         if src_terminal.binding.path != tgt_terminal.binding.path:
             return self._error(
                 f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different mounts",

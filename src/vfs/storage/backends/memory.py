@@ -38,9 +38,9 @@ from pydantic import ValidationError
 
 from vfs.models import Edge, Entry, Match, Observation
 from vfs.paths import Path, extract_extension
-from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results import Result, ResultError, VFSErrorKind, classified, validation_message
 from vfs.storage import storage_ops
-from vfs.storage.replace import replace
+from vfs.storage.editing import CONTENT_KINDS, edited_entry
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -53,10 +53,6 @@ if TYPE_CHECKING:
 _Status = Literal["created", "updated", "unchanged", "deleted"]
 
 ROOT = Path("/")
-
-# Stored kinds that carry editable text content; everything else is
-# shape or metadata and refuses read/edit of content.
-_CONTENT_KINDS = frozenset({"file", "chunk", "version"})
 
 
 @dataclass
@@ -125,11 +121,11 @@ class InMemoryStorage:
             if row is None:
                 errors.append(self._classify_miss(self._rows, target))
                 continue
-            if row.kind not in _CONTENT_KINDS:
+            if row.kind not in CONTENT_KINDS:
                 # The prose names the row's actual kind — a directly
                 # addressed edge row is not a directory.
                 article = "an" if row.kind[0] in "aeiou" else "a"
-                errors.append(_classified(VFSErrorKind.wrong_kind, f"Is {article} {row.kind}: {target}", target))
+                errors.append(classified(VFSErrorKind.wrong_kind, f"Is {article} {row.kind}: {target}", target))
                 continue
             rows.append(self._observe(target, row, content=True))
         return Result(ops=("read",), observations=rows, errors=errors)
@@ -259,7 +255,7 @@ class InMemoryStorage:
         rows: list[Observation] = []
         for p in sorted(self._rows):
             row = self._rows[p]
-            if row.content is None or row.kind not in _CONTENT_KINDS or not _in_scope(p, scope):
+            if row.content is None or row.kind not in CONTENT_KINDS or not _in_scope(p, scope):
                 continue
             file_ext = extract_extension(p) or ""
             if (want and file_ext not in want) or file_ext in avoid:
@@ -315,28 +311,11 @@ class InMemoryStorage:
             if row is None:
                 errors.append(self._classify_miss(staged, target))
                 continue
-            if row.kind not in _CONTENT_KINDS or row.content is None:
-                errors.append(_classified(VFSErrorKind.wrong_kind, f"No editable content: {target}", target))
+            entry = edited_entry(target, kind=row.kind, content=row.content, edits=edits)
+            if isinstance(entry, ResultError):
+                errors.append(entry)
                 continue
-            content = row.content
-            failed: ResultError | None = None
-            for op in edits:
-                outcome = replace(content, op.old, op.new, replace_all=op.replace_all)
-                if not outcome.success or outcome.content is None:
-                    failed = _classified(VFSErrorKind.invalid, outcome.error or "edit failed", target)
-                    break
-                content = outcome.content
-            if failed is not None:
-                errors.append(failed)
-                continue
-            try:
-                # Edits synthesize content, so the result re-enters the same
-                # gate writes pass: Entry owns every content invariant.
-                Entry(path=target, kind=row.kind, content=content)
-            except ValidationError as exc:
-                errors.append(_classified(VFSErrorKind.invalid, exc.errors()[0]["msg"], target))
-                continue
-            staged[target] = clone_row(row, content=content, version=row.version + 1)
+            staged[target] = clone_row(row, content=entry.content, version=row.version + 1)
             edited.append(target)
         if errors:
             return Result(ops=("edit",), errors=errors)
@@ -363,7 +342,7 @@ class InMemoryStorage:
         seen: set[Path] = set()
         for target in requested:
             if target == ROOT:
-                errors.append(_classified(VFSErrorKind.invalid, "Cannot delete the root directory", target))
+                errors.append(classified(VFSErrorKind.invalid, "Cannot delete the root directory", target))
                 continue
             # A target inside another target's cascade — or a repeat — is
             # subsumed: judged against committed state, order-independent.
@@ -382,7 +361,7 @@ class InMemoryStorage:
                 continue
             descendants = [p for p in staged if p.startswith(target + "/")]
             if descendants and not cascade:
-                errors.append(_classified(VFSErrorKind.not_empty, f"Directory not empty: {target}", target))
+                errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {target}", target))
                 continue
             for p in (*descendants, target):
                 staged.pop(p, None)
@@ -455,7 +434,7 @@ class InMemoryStorage:
             # edge-type lawfulness classify here, not downstream.
             edge = Edge(source=source, target=target, edge_type=edge_type)
         except ValidationError as exc:
-            return _fail("mkedge", VFSErrorKind.invalid, exc.errors()[0]["msg"])
+            return _fail("mkedge", VFSErrorKind.invalid, validation_message(exc))
         key = (edge.source, edge.target, edge.edge_type)
         prior = self._edges.get(key)
         status: _Status = "updated" if prior is not None else "created"
@@ -525,10 +504,10 @@ class InMemoryStorage:
         for ancestor in _ancestor_chain(target):
             row = rows.get(ancestor)
             if row is None:
-                return _classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
+                return classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
             if row.kind != "directory":
-                return _classified(VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target)
-        return _classified(VFSErrorKind.not_found, f"Not found: {target}", target, target=target)
+                return classified(VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target)
+        return classified(VFSErrorKind.not_found, f"Not found: {target}", target, target=target)
 
     def _parent_gate(self, rows: dict[Path, _Row], op: str, path: Path, *, parents: bool) -> Result | None:
         """The POSIX parent rule: wrong_kind is unconditional; absence needs the flag."""
@@ -599,9 +578,7 @@ class InMemoryStorage:
                 occupant = staged.get(entry.path)
                 if occupant is not None:
                     if occupant.kind != "directory":
-                        errors.append(
-                            _classified(VFSErrorKind.wrong_kind, f"Not a directory: {entry.path}", entry.path)
-                        )
+                        errors.append(classified(VFSErrorKind.wrong_kind, f"Not a directory: {entry.path}", entry.path))
                         continue
                     pending.append((entry.path, "unchanged"))
                     continue
@@ -651,12 +628,12 @@ class InMemoryStorage:
                     errors.append(self._classify_miss(self._rows, src))
                 elif move_srcs.count(src) > 1:
                     errors.append(
-                        _classified(VFSErrorKind.invalid, f"Duplicate move source in batch: {src}", src, target=src)
+                        classified(VFSErrorKind.invalid, f"Duplicate move source in batch: {src}", src, target=src)
                     )
                 else:
                     ancestor = _covering_src(src, move_srcs)
                     errors.append(
-                        _classified(
+                        classified(
                             VFSErrorKind.invalid,
                             f"Cannot move {src}: inside {ancestor}, which this batch also moves",
                             src,
@@ -669,7 +646,7 @@ class InMemoryStorage:
                 errors.append(self._classify_miss(staged, src))
                 continue
             if src == ROOT or dest == ROOT:
-                errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} the root directory"))
+                errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} the root directory"))
                 continue
             if dest == src:
                 # POSIX rename-to-self: a successful no-op, never a refusal.
@@ -683,20 +660,20 @@ class InMemoryStorage:
             # kind, both directions), then kind, then emptiness — last.
             occupant = staged.get(dest)
             if occupant is not None and not overwrite:
-                errors.append(_classified(VFSErrorKind.exists, f"Already exists: {dest}", dest))
+                errors.append(classified(VFSErrorKind.exists, f"Already exists: {dest}", dest))
                 continue
             if dest.startswith(src + "/"):
-                errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))
+                errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))
                 continue
             if src.startswith(dest + "/"):
-                errors.append(_classified(VFSErrorKind.invalid, f"Cannot {op} {src} onto its own ancestor: {dest}"))
+                errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} {src} onto its own ancestor: {dest}"))
                 continue
             if occupant is not None:
                 if (src_row.kind == "directory") != (occupant.kind == "directory"):
-                    errors.append(_classified(VFSErrorKind.wrong_kind, f"Cannot {op} onto: {dest}", dest))
+                    errors.append(classified(VFSErrorKind.wrong_kind, f"Cannot {op} onto: {dest}", dest))
                     continue
                 if occupant.kind == "directory" and any(p.startswith(dest + "/") for p in staged):
-                    errors.append(_classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest))
+                    errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest))
                     continue
             moved = [(p, staged[p]) for p in list(staged) if p == src or p.startswith(src + "/")]
             # Mint every destination before mutating: one unaddressable row
@@ -704,7 +681,7 @@ class InMemoryStorage:
             try:
                 dests = [Path(dest + p[len(src) :]) if p != src else dest for p, _ in moved]
             except ValueError as exc:
-                errors.append(_classified(VFSErrorKind.unaddressable, f"Cannot {op} {src}: {exc}", dest))
+                errors.append(classified(VFSErrorKind.unaddressable, f"Cannot {op} {src}: {exc}", dest))
                 continue
             # Copy mints new nodes at version 1 (an overwritten occupant is
             # a material update instead); move keeps descendants' versions
@@ -744,19 +721,6 @@ def _covering_src(src: Path, srcs: list[Path]) -> Path | None:
     return next((other for other in srcs if other != src and src.startswith(other + "/")), None)
 
 
-def _classified(
-    kind: VFSErrorKind,
-    message: str,
-    path: Path | None = None,
-    *,
-    target: Path | None = None,
-) -> ResultError:
-    # ``target`` names the requested row so value-identical errors from
-    # distinct batch targets survive merge dedup (envelope's discriminator).
-    data = {"target": str(target)} if target is not None else None
-    return ResultError(kind=kind, message=message, path=path, data=data)
-
-
 def _fail(
     op: str,
     kind: VFSErrorKind,
@@ -765,7 +729,7 @@ def _fail(
     *,
     target: Path | None = None,
 ) -> Result:
-    return Result(ops=(op,), errors=[_classified(kind, message, path, target=target)])
+    return Result(ops=(op,), errors=[classified(kind, message, path, target=target)])
 
 
 def _ancestor_chain(path: Path) -> list[Path]:

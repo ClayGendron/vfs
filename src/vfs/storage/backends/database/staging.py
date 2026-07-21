@@ -20,8 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from vfs.results import ResultError, VFSErrorKind
-from vfs.storage.backends.database.descent import ancestor_chain, classified
+from vfs.results import ResultError, VFSErrorKind, classified
+from vfs.storage.backends.database.descent import ancestor_chain
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
@@ -101,6 +101,18 @@ class WritePlan:
             return staged.kind
         row = self.committed.get(str(path))
         return row["kind"] if row is not None else None
+
+    def material_of(self, path: Path) -> tuple[str, str | None]:
+        """Current kind and content through the staged overlay.
+
+        Lawful only for a present path whose snapshot was fetched with
+        content — a repeat target reads its own staged output.
+        """
+        staged = self.staged.get(path)
+        if staged is not None:
+            return staged.kind, staged.content
+        row = self.committed[str(path)]
+        return row["kind"], row["content"]
 
     def within_budget(self, path: Path) -> bool:
         """A lawful path can still exceed an engine's index-key byte cap."""

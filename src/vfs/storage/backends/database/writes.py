@@ -29,7 +29,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
-from pydantic import ValidationError
 from sqlalchemy import bindparam, delete, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -37,16 +36,11 @@ from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from vfs.models import Entry, Observation
-from vfs.results import Result, ResultError, VFSErrorKind
-from vfs.storage.backends.database.descent import (
-    ancestor_chain,
-    classified,
-    classify_misses,
-)
+from vfs.results import Result, ResultError, VFSErrorKind, classified
+from vfs.storage.backends.database.descent import ancestor_chain, classify_misses
 from vfs.storage.backends.database.dialects import chunked
-from vfs.storage.backends.database.reads import CONTENT_KINDS
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
-from vfs.storage.replace import replace
+from vfs.storage.editing import CONTENT_KINDS, edited_entry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -93,6 +87,17 @@ async def write_rows(
     parents: bool,
     user_id: str | None,
 ) -> Result:
+    """Adjudicate and apply a batch of entry writes as a set.
+
+    One snapshot read seeds the plan, then every entry runs the gate
+    ladder — key-byte budget, POSIX parent rule, site check — against
+    committed-plus-staged state, so entries may rely on parents minted
+    earlier in the same batch. Directories route through ``put_dir``
+    (an existing directory is "unchanged", a file at the site is
+    ``wrong_kind``); files route through ``put_file`` (a directory at
+    the site is ``wrong_kind``; an occupied site needs ``overwrite``).
+    Any error fails the whole batch before a statement runs.
+    """
     committed = await _fetch_committed(session, tables, membership_budget, {entry.path for entry in entries})
     plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     for entry in entries:
@@ -130,6 +135,15 @@ async def mkdir_rows(
     exist_ok: bool,
     user_id: str | None,
 ) -> Result:
+    """Create one directory with POSIX mkdir semantics.
+
+    An occupied site is ``exists`` whatever its kind — ``ENOTDIR`` is a
+    path-prefix error, never the target's — and ``exist_ok`` forgives a
+    directory occupant only, matching ``pathlib.Path.mkdir``. The forgiven
+    arm still runs ``_finish`` so the observation equals a post-commit
+    stat. With ``parents``, the minted ancestor chain reports alongside
+    the target, shallowest first.
+    """
     committed = await _fetch_committed(session, tables, membership_budget, {path})
     plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     occupant = plan.kind_of(path)
@@ -161,6 +175,17 @@ async def edit_rows(
     targets: Sequence[Path],
     user_id: str | None,
 ) -> Result:
+    """Apply the same edit sequence to every target's content.
+
+    The snapshot read joins content; each target reads its current state
+    through the staged overlay — a repeated target edits its own staged
+    output — and runs the shared edit semantics (``edited_entry``): the
+    editable gate, sequential replacement, ``Entry`` revalidation.
+    Misses are classified by a descent probe (``not_found`` vs
+    ``wrong_kind``); a failed or invalid edit fails the whole batch.
+    Every update is version-guarded — edits never create and never
+    clobber, so a concurrent rival surfaces as ``conflict``.
+    """
     committed = await _fetch_committed(session, tables, membership_budget, set(targets), with_content=True)
     misses = [t for t in dict.fromkeys(targets) if str(t) not in committed]
     miss_errors = dict(
@@ -172,32 +197,14 @@ async def edit_rows(
         if row is None:
             plan.errors.append(miss_errors[target])
             continue
-        staged = plan.staged.get(target)
-        kind = staged.kind if staged is not None else row["kind"]
-        current = staged.content if staged is not None else row["content"]
-        if kind not in CONTENT_KINDS or current is None:
-            plan.errors.append(classified(VFSErrorKind.wrong_kind, f"No editable content: {target}", target))
-            continue
-        failed: ResultError | None = None
-        for op in edits:
-            outcome = replace(current, op.old, op.new, replace_all=op.replace_all)
-            if not outcome.success or outcome.content is None:
-                failed = classified(VFSErrorKind.invalid, outcome.error or "edit failed", target)
-                break
-            current = outcome.content
-        if failed is not None:
-            plan.errors.append(failed)
-            continue
-        try:
-            # Edits synthesize content, so the result re-enters the same
-            # gate writes pass: Entry owns every content invariant.
-            edited = Entry(path=target, kind=kind, content=current)
-        except ValidationError as exc:
-            plan.errors.append(classified(VFSErrorKind.invalid, exc.errors()[0]["msg"], target))
+        kind, current = plan.material_of(target)
+        edited = edited_entry(target, kind=kind, content=current, edits=edits)
+        if isinstance(edited, ResultError):
+            plan.errors.append(edited)
             continue
         plan.stage_update(
             target,
-            kind=kind,
+            kind=edited.kind,
             content=edited.content,
             content_hash=edited.content_hash,
             size_bytes=edited.size_bytes,

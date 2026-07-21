@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Final
 from sqlalchemy import select
 
 from vfs.paths import METADATA_ROOT, Path
-from vfs.results import ResultError, VFSErrorKind
+from vfs.results import ResultError, VFSErrorKind, classified
 from vfs.storage.backends.database.dialects import chunked
 
 if TYPE_CHECKING:
@@ -67,18 +67,6 @@ def ancestor_chain(path: Path) -> list[Path]:
         chain.append(node)
         node = node.parent_dir
     return list(reversed(chain))
-
-
-def classified(
-    kind: VFSErrorKind,
-    message: str,
-    path: Path | None = None,
-    *,
-    target: Path | None = None,
-) -> ResultError:
-    """One classified error; *target* names the requested row for merge dedup."""
-    data = {"target": str(target)} if target is not None else None
-    return ResultError(kind=kind, message=message, path=path, data=data)
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
 
 
@@ -338,3 +338,19 @@ def replace(
         success=False,
         error="old_string not found in file content.",
     )
+
+
+def apply_edits(content: str, edits: Sequence[EditOperation]) -> ReplaceResult:
+    """Thread *edits* through :func:`replace` sequentially.
+
+    Each edit sees the content the previous one left — the composition
+    ``EditOperation`` promises. The first failure returns unchanged;
+    success carries the final content. An empty sequence is a success
+    that returns the input.
+    """
+    for op in edits:
+        outcome = replace(content, op.old, op.new, replace_all=op.replace_all)
+        if not outcome.success or outcome.content is None:
+            return outcome
+        content = outcome.content
+    return ReplaceResult(success=True, content=content)

@@ -24,17 +24,17 @@ from sqlalchemy import func, or_, select
 
 from vfs.models import Observation
 from vfs.paths import Path, extract_extension
-from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results import Result, ResultError, VFSErrorKind, classified
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     ROOT,
-    classified,
     classify_misses,
     escape_like,
     in_meta,
     liveness_filters,
 )
 from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.editing import CONTENT_KINDS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -55,10 +55,6 @@ ENTRY_OBSERVATION_FIELDS: Final[frozenset[str]] = frozenset(
 
 # Identity fields every observation carries regardless of projection.
 ALWAYS_ON_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind", "version"})
-
-# Stored kinds whose rows carry text content; everything else refuses
-# content reads and surfaces no content metrics.
-CONTENT_KINDS: Final[frozenset[str]] = frozenset({"file", "chunk", "version"})
 
 # fnmatch character classes have no LIKE equivalent; those patterns fall
 # back to a literal-prefix prefilter with fnmatch as the only filter.

@@ -208,6 +208,31 @@ class ResultError(BaseModel):
         return self.model_copy(update=updates) if updates else self
 
 
+def classified(
+    kind: VFSErrorKind,
+    message: str,
+    path: Path | None = None,
+    *,
+    target: Path | None = None,
+) -> ResultError:
+    """One classified error; *target* names the requested row for merge dedup.
+
+    The ``data`` discriminator keeps value-identical failures from distinct
+    batch targets as distinct facts — the envelope's documented contract.
+    """
+    data = {"target": str(target)} if target is not None else None
+    return ResultError(kind=kind, message=message, path=path, data=data)
+
+
+def validation_message(exc: ValidationError) -> str:
+    """Flatten a pydantic ``ValidationError`` into one agent-facing line.
+
+    Every failure reports — deduplicated, caller order — so a multi-field
+    rejection reads whole instead of surfacing one arbitrary first error.
+    """
+    return "; ".join(dict.fromkeys(error["msg"] for error in exc.errors()))
+
+
 # ---------------------------------------------------------------------------
 # Result — unified envelope
 # ---------------------------------------------------------------------------
