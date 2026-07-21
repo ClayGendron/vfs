@@ -1,8 +1,9 @@
 # 077 — ULID referential identity: durable references move to `entry_id`
 
 - **Status:** implemented 2026-07-21 (ADR 019 accepted same day; plan.md
-  executed in the working tree — suite green at 1460 passed, `ruff`/`ty`
-  at zero, the portability acceptance test passing on first run). Two
+  executed in the working tree — suite green at 1460 passed at landing,
+  1468 after the same-day five-lens review hardening; `ruff`/`ty` at
+  zero, the portability acceptance test passing on first run). Two
   conscious departures, both recorded in plan.md. First, pin 4 said
   `_upsert_layer` RETURNING carries "path and version only", but it must
   also carry ``entry_id`` — a clobber lands on the rival's row, which
