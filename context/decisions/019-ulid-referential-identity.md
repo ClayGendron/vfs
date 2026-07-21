@@ -106,3 +106,24 @@ and to text encodings).
 Executes through story 077
 (`context/specs/077-ulid-referential-identity/`). Evidence:
 `context/research/2026-07-21-ulid-referential-identity.md`.
+
+## Amendments (2026-07-21, from the post-landing five-lens review)
+
+- **Decision 4 caveat — adoption, not minting, on clobbers.** "RETURNING
+  no longer harvests ids for wiring" holds for rows the batch itself
+  creates. On an overwrite conflict the rival row survives and keeps its
+  `entry_id`, and the staged entry *adopts* it — from RETURNING on the
+  upsert arm, from the occupant probe on catch-retry — so content rows
+  wire to the row that exists. Client-side minting governs created rows;
+  adoption governs clobbered ones. (The suite pins this:
+  `test_upsert_layer_adopts_identity_or_classifies_per_rival`.)
+- **Decision 3 stated the election incompletely.** "Via SQLAlchemy's
+  `Uuid` type" read literally would store CHAR(32) hex *text* on SQLite,
+  MySQL, and Oracle — outlawed by this decision's own headline. The
+  landed election is three-armed: the engine's native uuid only where
+  its sort preserves ULID time-order (Postgres); `RAW(16)` on Oracle;
+  fixed-width `BINARY(16)` everywhere else. The gate is an allow-list,
+  not `supports_native_uuid` — that flag means driver uuid-object
+  handling and says nothing about sort order (MSSQL's
+  `UNIQUEIDENTIFIER` and MariaDB's byte-swapped native uuid both report
+  support while mis-sorting).

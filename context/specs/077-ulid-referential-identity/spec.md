@@ -35,9 +35,11 @@ arbitration modes, and the two-budget chunking discipline.
 ## Pins
 
 1. **Schema (`rows.py`).** `entries.node_id` → `entries.entry_id`,
-   binary-16 (SQLAlchemy `Uuid`; `BINARY(16)` variant on SQL Server —
-   `UNIQUEIDENTIFIER` sort order forfeits time-locality; text ULID in
-   an indexed role is out of spec). Re-typed to match: `parent_id`,
+   binary-16 on every engine (native uuid only where its sort preserves
+   ULID time-order — Postgres; `RAW(16)` on Oracle; fixed `BINARY(16)`
+   everywhere else, SQL Server included, whose `UNIQUEIDENTIFIER` sort
+   order forfeits time-locality; text ULID in an indexed role is out of
+   spec). Re-typed to match: `parent_id`,
    `original_parent_id`, `content.entry_id`, `versions.entry_id`,
    `chunks.entry_id`, `edges.source_id`/`target_id`.
    `UNIQUE(parent_id, name)` moves with the type. `id` stays the
@@ -69,9 +71,34 @@ arbitration modes, and the two-budget chunking discipline.
      learn winners before wiring children (arbitration-loss detection,
      ADR 019 pin 4).
 5. **Read family (`reads.py`, `descent.py`).** Content joins on
-   `entries.entry_id`; `ls` stays parent-equality with the converted
-   binary param; descent/miss classification is path-based and
-   unchanged.
+   `entries.entry_id`; `ls` stays parent-keyed — batched into chunked
+   `parent_id IN` selects regrouped per parent; descent/miss
+   classification is path-based and unchanged.
+
+## Hardening record (2026-07-21, five-lens review of the landing)
+
+On-disk and shape deltas the review landed beyond the pins as written —
+recorded here so the format story is complete before this spec's
+residue flows backward:
+
+- **ULIDKey's storage election is three-armed** (pin 1 now states it):
+  Postgres native uuid, Oracle `RAW(16)`, `BINARY(16)` everywhere else,
+  gated by a postgresql allow-list because `supports_native_uuid` is
+  not sort-aware (MSSQL and MariaDB both report it while mis-sorting).
+- **Body columns re-typed** — `content.content`, `versions.content`,
+  `versions.version_diff`, `chunks.content` went `String()` →
+  `Text().with_variant(LONGTEXT, "mysql")`: bare `String()` is a MySQL
+  DDL hard-fail and MySQL's plain TEXT caps bodies at 64KB. An emitted-
+  DDL change on every engine (TEXT/CLOB/VARCHAR(max)/LONGTEXT).
+- **The standalone `parent_id` index is dropped.** Every parent-equality
+  path (`ls` children, arbitration occupant probe) rides the leading
+  column of `UNIQUE(parent_id, name)`, which also serves the name
+  ordering; the extra B-tree bought no read and taxed every insert.
+- **`ls` batches its children reads** — chunked `parent_id IN` regrouped
+  per parent (pin 5 now states it), replacing one SELECT per anchor.
+- **Catch-retry arbitration savepoints per chunk** — a conflict
+  re-drives only its own budget-sized chunk row-at-a-time, never the
+  whole depth layer.
 
 ## Acceptance criteria
 
