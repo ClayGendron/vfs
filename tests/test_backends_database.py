@@ -41,10 +41,12 @@ from vfs.storage.backends.database.dialects import (
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
+    _CLOBBER_COLUMNS,
     _catch_retry_layer,
     _entry_values,
     _fetch_committed,
     _finish,
+    _material_values,
     _resolve_rows,
     _update_materials,
     _upsert_constructor,
@@ -795,6 +797,15 @@ class TestPoolExhaustion:
 class TestWriteMechanics:
     """One transaction per batch, bounded statements, per-entry versions."""
 
+    def test_material_values_and_clobber_columns_stay_in_lockstep(self) -> None:
+        # Two encodings of the material-column set, one invariant: a key
+        # added to either alone silently diverges create vs overwrite.
+        staged = StagedEntry(
+            path=Path("/f.txt"), parent=Path("/"), kind="file", created=True, entry_id=str(ULID()), content="x"
+        )
+        material = _material_values(staged, "someone", datetime.now(UTC))
+        assert set(material) == set(_CLOBBER_COLUMNS)
+
     async def test_failed_batch_commits_nothing(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
@@ -1036,6 +1047,37 @@ class TestArbitration:
         probes = [s for s in statements if s.lstrip().startswith("SELECT")]
         assert len(inserts) == 3 + 4, statements
         assert len(probes) == 1, statements
+        await storage.close()
+
+    async def test_conflicts_in_separate_chunks_all_classify(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(
+            entries=[Entry(path=Path("/f001.txt"), content="rival"), Entry(path=Path("/f009.txt"), content="rival")]
+        )
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            root_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
+            now = datetime.now(UTC)
+            layer = [
+                StagedEntry(
+                    path=Path(f"/f{i:03}.txt"),
+                    parent=Path("/"),
+                    kind="file",
+                    created=True,
+                    entry_id=str(ULID()),
+                    content="mine",
+                )
+                for i in range(12)
+            ]
+            rows = [_entry_values(s, root_key, None, now) for s in layer]
+            errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=False)
+        # Rivals sit in chunks 1 and 3: both classify — errors accumulate
+        # across conflicted chunks, the last chunk never wins alone.
+        assert sorted((e.kind, str(e.path)) for e in errors) == [
+            (VFSErrorKind.exists, "/f001.txt"),
+            (VFSErrorKind.exists, "/f009.txt"),
+        ]
         await storage.close()
 
     async def test_resolve_rows_converts_or_classifies_per_occupant(self, tmp_path) -> None:

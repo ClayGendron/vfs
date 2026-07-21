@@ -35,7 +35,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
 from vfs.models import Entry, Observation
-from vfs.results import Result, ResultError, VFSErrorKind, classified
+from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, is_a_directory
 from vfs.storage.backends.database.descent import ancestor_chain, classify_misses
 from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
@@ -152,7 +152,7 @@ async def mkdir_rows(
             return await _finish(
                 session, tables, profile, parameter_budget, membership_budget, plan, op="mkdir", overwrite=False
             )
-        return Result(ops=("mkdir",), errors=[classified(VFSErrorKind.exists, f"Already exists: {path}", path)])
+        return Result(ops=("mkdir",), errors=[already_exists(path)])
     if not plan.within_budget(path) or not plan.parent_gate(path, parents=parents, target=path):
         return Result(ops=("mkdir",), errors=plan.errors)
     minted = plan.mint_chain(path)
@@ -372,7 +372,7 @@ async def _upsert_layer(
     a non-directory rival under ``overwrite``. RETURNING carries the
     surviving identity and final version: a clobber lands on the rival's
     row, which keeps its ``entry_id``, so the staged entry adopts it —
-    content and children must wire to the row that exists. A row missing
+    its content rows must wire to the row that exists. A row missing
     from RETURNING lost arbitration and classifies — a definite outcome,
     never retried.
     """
@@ -404,9 +404,9 @@ async def _upsert_layer(
                     staged.entry_id = won["entry_id"]
                     staged.version = won["version"]
                 elif clobber:
-                    errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {staged.path}", staged.path))
+                    errors.append(is_a_directory(staged.path))
                 else:
-                    errors.append(classified(VFSErrorKind.exists, f"Already exists: {staged.path}", staged.path))
+                    errors.append(already_exists(staged.path))
     return errors
 
 
@@ -475,9 +475,9 @@ async def _resolve_rows(
             staged.entry_id = occupant.entry_id
             staged.base_version = None
         elif staged.kind != "directory" and overwrite:
-            errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {staged.path}", staged.path))
+            errors.append(is_a_directory(staged.path))
         else:
-            errors.append(classified(VFSErrorKind.exists, f"Already exists: {staged.path}", staged.path))
+            errors.append(already_exists(staged.path))
     return errors
 
 

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ulid import ULID
 
-from vfs.results import ResultError, VFSErrorKind, classified
+from vfs.results import ResultError, VFSErrorKind, already_exists, classified, is_a_directory
 from vfs.storage.backends.database.descent import ancestor_chain
 
 if TYPE_CHECKING:
@@ -120,9 +120,9 @@ class WritePlan:
     def parent_id_of(self, staged: StagedEntry) -> str:
         """The parent row's ``entry_id`` through the staged overlay.
 
-        Read per depth layer, after the parent's layer has executed:
-        arbitration can hand a losing parent its rival's identity, and
-        children must wire to the row that exists.
+        Staged-first because a parent minted in this batch has no
+        committed row; a parent that loses arbitration fails the batch
+        before its children's rows are ever built.
         """
         parent = self.staged.get(staged.parent)
         if parent is not None:
@@ -183,10 +183,10 @@ class WritePlan:
         occupant = self.kind_of(target)
         if occupant is not None:
             if occupant == "directory":
-                self.errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {target}", target))
+                self.errors.append(is_a_directory(target))
                 return None
             if not overwrite:
-                self.errors.append(classified(VFSErrorKind.exists, f"Already exists: {target}", target))
+                self.errors.append(already_exists(target))
                 return None
         self.mint_chain(target)
         stage = self.stage_create if occupant is None else self.stage_update

@@ -38,7 +38,15 @@ from pydantic import ValidationError
 
 from vfs.models import Edge, Entry, Match, Observation
 from vfs.paths import Path, extract_extension
-from vfs.results import Result, ResultError, VFSErrorKind, classified, validation_message
+from vfs.results import (
+    Result,
+    ResultError,
+    VFSErrorKind,
+    already_exists,
+    classified,
+    is_a_directory,
+    validation_message,
+)
 from vfs.storage import storage_ops
 from vfs.storage.editing import CONTENT_KINDS, edited_entry
 
@@ -385,7 +393,7 @@ class InMemoryStorage:
         if occupant is not None:
             if exist_ok and occupant.kind == "directory":
                 return Result(ops=("mkdir",), observations=[self._observe(path, occupant, status="unchanged")])
-            return _fail("mkdir", VFSErrorKind.exists, f"Already exists: {path}", path)
+            return Result(ops=("mkdir",), errors=[already_exists(path)])
         gate = self._parent_gate(staged, "mkdir", path, parents=parents)
         if gate is not None:
             return gate
@@ -559,9 +567,9 @@ class InMemoryStorage:
         occupant = staged.get(path)
         if occupant is not None:
             if occupant.kind == "directory":
-                return _fail(op, VFSErrorKind.wrong_kind, f"Is a directory: {path}", path)
+                return Result(ops=(op,), errors=[is_a_directory(path)])
             if not overwrite:
-                return _fail(op, VFSErrorKind.exists, f"Already exists: {path}", path)
+                return Result(ops=(op,), errors=[already_exists(path)])
         self._mint_chain(staged, path)
         version = occupant.version + 1 if occupant is not None else 1
         staged[path] = _Row(kind=kind, content=content, version=version)
@@ -660,7 +668,7 @@ class InMemoryStorage:
             # kind, both directions), then kind, then emptiness — last.
             occupant = staged.get(dest)
             if occupant is not None and not overwrite:
-                errors.append(classified(VFSErrorKind.exists, f"Already exists: {dest}", dest))
+                errors.append(already_exists(dest))
                 continue
             if dest.startswith(src + "/"):
                 errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))

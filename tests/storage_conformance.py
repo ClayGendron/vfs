@@ -778,6 +778,23 @@ class StorageContract:
         assert result.success is False
         assert result.observations == []
 
+    @needs("write", "ls")
+    async def test_ls_batch_groups_children_under_their_own_parents(self, storage: ConformanceBackend) -> None:
+        await storage.write(
+            entries=[
+                Entry(path=Path("/a/n.txt"), content="1"),
+                Entry(path=Path("/a/m.txt"), content="2"),
+                Entry(path=Path("/b/z.txt"), content="3"),
+                Entry(path=Path("/b/y.txt"), content="4"),
+            ],
+            parents=True,
+        )
+        result = await storage.ls(observations=[Observation(path=Path("/b")), Observation(path=Path("/a"))])
+        assert result.success is True
+        # Each child under its own anchor, anchors in target order,
+        # children name-ordered within each parent.
+        assert [str(o.path) for o in result.observations] == ["/b/y.txt", "/b/z.txt", "/a/m.txt", "/a/n.txt"]
+
     @needs("write", "mkdir", "ls")
     async def test_ls_batch_classifies_each_row(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a"))

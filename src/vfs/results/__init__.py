@@ -4,7 +4,14 @@
 vocabulary; ``render`` and ``projection`` shape results for output.
 """
 
-from vfs.results.envelope import Result, ResultError, classified, validation_message
+from vfs.results.envelope import (
+    Result,
+    ResultError,
+    already_exists,
+    classified,
+    is_a_directory,
+    validation_message,
+)
 from vfs.results.kinds import (
     KIND_CONTRACTS,
     KindContract,
@@ -22,7 +29,9 @@ __all__ = [
     "RetryClass",
     "Severity",
     "VFSErrorKind",
+    "already_exists",
     "classified",
+    "is_a_directory",
     "kind_family",
     "validation_message",
 ]

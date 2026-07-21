@@ -224,6 +224,16 @@ def classified(
     return ResultError(kind=kind, message=message, path=path, data=data)
 
 
+def already_exists(path: Path) -> ResultError:
+    """The one construction of the occupied-site ``exists`` classification."""
+    return classified(VFSErrorKind.exists, f"Already exists: {path}", path)
+
+
+def is_a_directory(path: Path) -> ResultError:
+    """The one construction of the directory-occupant ``wrong_kind``."""
+    return classified(VFSErrorKind.wrong_kind, f"Is a directory: {path}", path)
+
+
 def validation_message(exc: ValidationError) -> str:
     """Flatten a pydantic ``ValidationError`` into one agent-facing line.
 

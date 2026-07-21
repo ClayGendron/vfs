@@ -127,3 +127,8 @@ Executes through story 077
   handling and says nothing about sort order (MSSQL's
   `UNIQUEIDENTIFIER` and MariaDB's byte-swapped native uuid both report
   support while mis-sorting).
+- **Where the seam lives.** The consequences said the storage-type seam
+  "joins the DialectProfile family of declared decisions"; it is
+  deliberately homed as SQLAlchemy type variants beside the schema in
+  `rows.py` instead — the profile records only decisions SQLAlchemy
+  takes no position on, and column storage form is not one of them.
