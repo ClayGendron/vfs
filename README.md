@@ -4,6 +4,7 @@
   <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/v/vfs-py" alt="PyPI version"></a>
   <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/pyversions/vfs-py" alt="Python"></a>
   <a href="https://github.com/ClayGendron/vfs/actions/workflows/test.yml"><img src="https://github.com/ClayGendron/vfs/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://codecov.io/gh/ClayGendron/vfs"><img src="https://codecov.io/gh/ClayGendron/vfs/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://github.com/ClayGendron/vfs/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/vfs" alt="License"></a>
 </p>
 
@@ -13,7 +14,7 @@ Compose a fully-featured, Unix-like environment for your agents. VFS is built on
 pip install vfs-py
 ```
 
-> ⚠️ **Alpha, mid-rebuild.** The core described below is the v2 design landing in this repo now — the router and its fundamentals are implemented and covered by a 1,094-test suite; the SQL backends are being ported onto it next. The current PyPI release (`vfs-py 0.0.22`) still ships the previous-generation API. Pin versions and expect change.
+> ⚠️ **Alpha, mid-rebuild.** The core described below is the v2 design landing in this repo now — the router and its fundamentals are implemented at 100% coverage by a 1,600-test suite; the SQL backends are being ported onto it next. The current PyPI release (`vfs-py 0.0.22`) still ships the previous-generation API. Pin versions and expect change.
 
 ## Why a file system?
 
