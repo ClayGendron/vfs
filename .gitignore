@@ -1,5 +1,6 @@
-# Claude Code
-.claude/
+# Claude Code — machine-local state stays ignored; skills are shared and tracked
+.claude/*
+!.claude/skills/
 OLD_CLAUDE.md
 
 # Obsidian
