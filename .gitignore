@@ -230,3 +230,6 @@ node_modules/
 *.db
 *.db-wal
 *.db-shm
+demo_vfs.sqlite*
+*.ipynb
+.ipynb_checkpoints/
