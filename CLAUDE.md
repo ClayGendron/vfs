@@ -169,9 +169,10 @@ private *types and constants* stay next to what they support.
 - Inline comments and comment blocks are **2 lines maximum** — this includes
   multi-line `#` blocks above a statement. State the what/why directly; if it
   needs more room, it belongs in a docstring.
-- Do **not** reference story/spec numbers (e.g. "spec 030 §5.2", "Phase 4")
-  in code comments **or docstrings**. Traceability lives in
-  `context/specs/`, not inline.
+- Do **not** reference story/spec numbers or decision records (e.g.
+  "spec 030 §5.2", "Phase 4", "ADR 019") in code comments **or
+  docstrings**. Traceability lives in `context/specs/` and
+  `context/decisions/`, not inline.
 
 ## Code smells
 

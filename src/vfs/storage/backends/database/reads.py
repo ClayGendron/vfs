@@ -141,25 +141,20 @@ async def ls_rows(
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
-    entry = tables.entry
     anchors = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_id=True)
     miss_errors = await _miss_errors(session, tables, membership_budget, targets, anchors)
+    directories = [t for t in targets if (a := anchors.get(t)) is not None and a["kind"] == "directory"]
+    children = await _children_by_parent(session, tables.entry, membership_budget, directories, anchors, fetched)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
         anchor = anchors.get(target)
         if anchor is None:
             errors.append(miss_errors[target])
-            continue
-        if anchor["kind"] != "directory":
+        elif anchor["kind"] != "directory":
             rows.append(_observe(anchor, fetched))
-            continue
-        children = (
-            select(*_entry_columns(entry, fetched))
-            .where(entry.c.parent_id == anchor["id"], *liveness_filters(entry, include_meta=in_meta(target)))
-            .order_by(entry.c.name)
-        )
-        rows.extend(_observe(child, fetched) for child in (await session.execute(children)).mappings())
+        else:
+            rows.extend(children.get(anchor["entry_id"], ()))
     return Result(ops=("ls",), observations=rows, errors=errors)
 
 
@@ -176,7 +171,7 @@ async def tree_rows(
     anchors = await _mappings_by_path(session, tables, membership_budget, [path], fetched, with_id=False)
     anchor = anchors.get(path)
     if anchor is None:
-        return Result(ops=("tree",), errors=[(await classify_misses(session, entry, [path], membership_budget))[0]])
+        return Result(ops=("tree",), errors=await classify_misses(session, entry, [path], membership_budget))
     if anchor["kind"] != "directory":
         return Result(ops=("tree",), observations=[_observe(anchor, fetched)])
     prefix = "" if path == ROOT else escape_like(str(path))
@@ -340,15 +335,43 @@ async def _miss_errors(
     return dict(zip(misses, await classify_misses(session, tables.entry, misses, membership_budget), strict=True))
 
 
+async def _children_by_parent(
+    session: AsyncSession,
+    entry: Table,
+    membership_budget: int,
+    directories: Sequence[Path],
+    anchors: dict[str, RowMapping],
+    fetched: frozenset[str],
+) -> dict[str, list[Observation]]:
+    """Chunked ``parent_id IN`` children selects, regrouped per parent.
+
+    One scope per liveness class (meta-anchored targets see meta rows).
+    Chunks partition parents, so each parent's children arrive whole and
+    name-ordered; the dict preserves that order per parent.
+    """
+    children: dict[str, list[Observation]] = {}
+    for include_meta in (False, True):
+        scope = sorted({anchors[target]["entry_id"] for target in directories if in_meta(target) == include_meta})
+        for chunk in chunked(scope, membership_budget):
+            stmt = (
+                select(entry.c.parent_id, *_entry_columns(entry, fetched))
+                .where(entry.c.parent_id.in_(chunk), *liveness_filters(entry, include_meta=include_meta))
+                .order_by(entry.c.parent_id, entry.c.name)
+            )
+            for mapping in (await session.execute(stmt)).mappings():
+                children.setdefault(mapping["parent_id"], []).append(_observe(mapping, fetched))
+    return children
+
+
 def _entry_select(tables: VFSTables, fetched: frozenset[str], *, with_id: bool) -> Select[*tuple[object, ...]]:
     entry = tables.entry
     columns = _entry_columns(entry, fetched)
     if with_id:
-        columns = [entry.c.id, *columns]
+        columns = [entry.c.entry_id, *columns]
     if "content" not in fetched:
         return select(*columns)
     content = tables.content
-    joined = entry.outerjoin(content, content.c.entry_id == entry.c.id)
+    joined = entry.outerjoin(content, content.c.entry_id == entry.c.entry_id)
     return select(*columns, content.c.content).select_from(joined)
 
 

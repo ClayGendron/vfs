@@ -1,6 +1,9 @@
 # 004. Stable Node Identity: ULID Logical ID, Integer Surrogate Key, Path as Regenerable Cache
 
-- **Status:** accepted
+- **Status:** accepted; pin 2 amended by
+  [019-ulid-referential-identity](019-ulid-referential-identity.md)
+  (accepted 2026-07-21 — durable references move from the integer
+  surrogate to the ULID, renamed ``entry_id``)
 - **Date:** 2026-07-14
 - **Deciders:** Clay Gendron
 - **Decided by:** human (option (c) confirmed 2026-07-13 during story 072

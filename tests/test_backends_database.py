@@ -26,7 +26,7 @@ from ulid import ULID
 from vfs.models import Entry, Observation
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import ObjectKind, Path
-from vfs.results import VFSErrorKind
+from vfs.results import ResultError, VFSErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import (
@@ -39,12 +39,15 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
 )
 from vfs.storage.backends.database.engine import EngineHost
-from vfs.storage.backends.database.staging import StagedEntry
+from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
     _entry_values,
+    _fetch_committed,
+    _finish,
     _resolve_rows,
     _update_materials,
     _upsert_constructor,
+    _upsert_layer,
 )
 from vfs.storage.replace import EditOperation
 
@@ -229,7 +232,7 @@ class TestFirstTouch:
             await conn.run_sync(tables.metadata.create_all)
             await conn.execute(
                 insert(tables.entry).values(
-                    node_id=str(ULID()),
+                    entry_id=str(ULID()),
                     parent_id=None,
                     path="/",
                     name="",
@@ -359,8 +362,8 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
     now = datetime.now(UTC)
     async with storage._host.session_factory() as session:
         conn = await session.connection(execution_options={"vfs_writer": True})
-        root_id = (await conn.execute(select(tables.entry.c.id).where(tables.entry.c.path == "/"))).scalar_one()
-        ids: dict[str, int] = {"/": root_id}
+        root_key = (await conn.execute(select(tables.entry.c.entry_id).where(tables.entry.c.path == "/"))).scalar_one()
+        ids: dict[str, str] = {"/": root_key}
         version = 0
 
         async def ensure(path: str, kind: str, content: str | None) -> None:
@@ -371,10 +374,10 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
             if parent not in ids:
                 await ensure(parent, "directory", None)
             version += 1
-            result = await conn.execute(
-                insert(tables.entry)
-                .values(
-                    node_id=str(ULID()),
+            entry_key = str(ULID())
+            await conn.execute(
+                insert(tables.entry).values(
+                    entry_id=entry_key,
                     parent_id=ids[parent],
                     path=path,
                     name=path.rsplit("/", 1)[1],
@@ -385,12 +388,10 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
                     created_at=now,
                     updated_at=now,
                 )
-                .returning(tables.entry.c.id)
             )
-            entry_id = result.scalar_one()
-            ids[path] = entry_id
+            ids[path] = entry_key
             if content is not None:
-                await conn.execute(insert(tables.content).values(entry_id=entry_id, content=content))
+                await conn.execute(insert(tables.content).values(entry_id=entry_key, content=content))
 
         for path, kind, content in rows:
             await ensure(path, kind, content)
@@ -966,13 +967,23 @@ class TestArbitration:
         await storage.first_touch()
         storage._host._profile = replace(storage._host.profile, arbitration="catch_retry")
         # Oracle's posture: no multirow VALUES — the insert must take
-        # driver executemany and recover ids via the chunked read-back.
+        # driver executemany; identity is minted at staging, nothing read back.
         monkeypatch.setattr(storage._host.engine.sync_engine.dialect, "supports_multivalues_insert", False)
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
         entries = [Entry(path=Path(f"/bulk/d{i // 10}/f{i:03}.txt"), content=f"v{i}") for i in range(50)]
         written = await storage.write(entries=entries, parents=True)
         assert written.success is True, written.errors[:3]
         created = [o for o in written.observations if str(o.path).endswith(".txt")]
         assert len(created) == 50
+        # "Nothing read back" is a pin: one plan-fetch SELECT, then three
+        # depth-layer inserts, content delete + insert, parent bump.
+        shapes = [s.split(None, 1)[0] for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
+        assert shapes == ["SELECT", "INSERT", "INSERT", "INSERT", "DELETE", "INSERT", "UPDATE"], statements
         assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"
         again = await storage.write(entries=[Entry(path=Path("/bulk/d0/f007.txt"), content="y")])
         assert again.observations[0].status == "updated"
@@ -985,39 +996,182 @@ class TestArbitration:
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
             conn = await session.connection(execution_options={"vfs_writer": True})
-            root_id = (await conn.execute(select(entry.c.id).where(entry.c.path == "/"))).scalar_one()
+            root_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
+            rival_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/f.txt"))).scalar_one()
             now = datetime.now(UTC)
 
             def staged_for(path: str, kind: ObjectKind) -> StagedEntry:
-                return StagedEntry(path=Path(path), parent=Path("/"), kind=kind, created=True, content="mine")
+                return StagedEntry(
+                    path=Path(path), parent=Path("/"), kind=kind, created=True, entry_id=str(ULID()), content="mine"
+                )
 
-            # overwrite=True over a rival file: converted to a clobbering update.
+            # overwrite=True over a rival file: converted to a clobbering
+            # update that adopts the rival row's identity.
             clobber = staged_for("/f.txt", "file")
             errors = await _resolve_rows(
-                session, entry, [clobber], [_entry_values(clobber, root_id, None, now)], overwrite=True
+                session, entry, [clobber], [_entry_values(clobber, root_key, None, now)], overwrite=True
             )
             assert errors == []
-            assert clobber.created is False and clobber.entry_id is not None and clobber.base_version is None
+            assert clobber.created is False and clobber.entry_id == rival_key and clobber.base_version is None
 
             # overwrite=False over a rival file: a definite exists outcome.
             refused = staged_for("/f.txt", "file")
             errors = await _resolve_rows(
-                session, entry, [refused], [_entry_values(refused, root_id, None, now)], overwrite=False
+                session, entry, [refused], [_entry_values(refused, root_key, None, now)], overwrite=False
             )
             assert [e.kind for e in errors] == [VFSErrorKind.exists]
 
             # overwrite=True where the rival is a directory: wrong_kind.
             blocked = staged_for("/dir", "file")
             errors = await _resolve_rows(
-                session, entry, [blocked], [_entry_values(blocked, root_id, None, now)], overwrite=True
+                session, entry, [blocked], [_entry_values(blocked, root_key, None, now)], overwrite=True
             )
             assert [e.kind for e in errors] == [VFSErrorKind.wrong_kind]
 
             # a directory create losing to any occupant: exists.
             dir_loss = staged_for("/dir", "directory")
             errors = await _resolve_rows(
-                session, entry, [dir_loss], [_entry_values(dir_loss, root_id, None, now)], overwrite=True
+                session, entry, [dir_loss], [_entry_values(dir_loss, root_key, None, now)], overwrite=True
             )
+            assert [e.kind for e in errors] == [VFSErrorKind.exists]
+        await storage.close()
+
+    async def test_resolve_rows_classifies_phantom_conflict_when_no_occupant(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="rival")])
+        await storage.mkdir(path=Path("/dir"))
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            dir_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/dir"))).scalar_one()
+            # The unique path index collides while (parent_id, name) is
+            # vacant: the insert fails yet the occupant probe sees nothing.
+            phantom = StagedEntry(
+                path=Path("/f.txt"),
+                parent=Path("/dir"),
+                kind="file",
+                created=True,
+                entry_id=str(ULID()),
+                content="mine",
+            )
+            minted = phantom.entry_id
+            errors = await _resolve_rows(
+                session, entry, [phantom], [_entry_values(phantom, dir_key, None, datetime.now(UTC))], overwrite=True
+            )
+        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert "lost arbitration" in errors[0].message
+        assert phantom.created is True and phantom.entry_id == minted  # no conversion happened
+        await storage.close()
+
+    async def test_create_to_clobber_conversion_flows_through_apply(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        host = storage._host
+        profile = replace(host.profile, arbitration="catch_retry")
+        target = Path("/f.txt")
+
+        # Snapshot and plan while the site is vacant: a routine create.
+        async with host.session_factory() as reader:
+            committed = await _fetch_committed(reader, host.tables, host.membership_budget, {target})
+        mine = Entry(path=target, content="mine")
+        plan = WritePlan(committed, user_id=None, budget=profile.key_byte_budget)
+        status = plan.put_file(
+            target,
+            kind=mine.kind,
+            content=mine.content,
+            content_hash=mine.content_hash,
+            size_bytes=mine.size_bytes,
+            lines=mine.lines,
+            ext=mine.ext,
+            mime_type=mine.mime_type,
+            overwrite=True,
+            parents=False,
+        )
+        assert status == "created" and plan.errors == []
+        plan.pending.append((target, status))
+
+        # A rival lands between the snapshot and execution.
+        assert (await storage.write(entries=[Entry(path=target, content="rival")])).success is True
+        entry = host.tables.entry
+        async with host.session_factory() as peek:
+            rival_key = (await peek.execute(select(entry.c.entry_id).where(entry.c.path == str(target)))).scalar_one()
+
+        async with host.session_factory() as writer:
+            await writer.connection(execution_options={"vfs_writer": True})
+            result = await _finish(
+                writer,
+                host.tables,
+                profile,
+                host.parameter_budget,
+                host.membership_budget,
+                plan,
+                op="write",
+                overwrite=True,
+            )
+            await writer.commit()
+
+        # The losing create clobbered the rival's row: identity kept, the
+        # version advanced SQL-side, and the observation equals a stat.
+        assert result.success is True
+        assert [(o.status, o.version) for o in result.observations] == [("created", 2)]
+        async with host.session_factory() as peek:
+            rows = (
+                await peek.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.path == str(target)))
+            ).all()
+        assert rows == [(rival_key, 2)]
+        assert (await storage.read(path=target)).observations[0].content == "mine"
+        await storage.close()
+
+    async def test_upsert_layer_adopts_identity_or_classifies_per_rival(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="rival")])
+        await storage.mkdir(path=Path("/dir"))
+        entry = storage._host.tables.entry
+        profile = storage._host.profile
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            root_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
+            rival = (
+                await conn.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.path == "/f.txt"))
+            ).one()
+            now = datetime.now(UTC)
+
+            def staged_for(path: str, kind: ObjectKind) -> StagedEntry:
+                return StagedEntry(
+                    path=Path(path), parent=Path("/"), kind=kind, created=True, entry_id=str(ULID()), content="mine"
+                )
+
+            async def run(layer: list[StagedEntry], *, overwrite: bool) -> list[ResultError]:
+                rows = [_entry_values(s, root_key, None, now) for s in layer]
+                return await _upsert_layer(session, entry, profile, layer, rows, 50, overwrite=overwrite)
+
+            # overwrite=True over a rival file: the clobber lands on the
+            # rival's row and adopts its identity and bumped version...
+            clobber = staged_for("/f.txt", "file")
+            fresh = staged_for("/new.txt", "file")
+            minted = fresh.entry_id
+            errors = await run([clobber, fresh], overwrite=True)
+            assert errors == []
+            assert clobber.entry_id == rival.entry_id
+            assert clobber.version == rival.version + 1
+            # ...while the non-conflicted winner in the same statement
+            # keeps its staged-minted identity untouched.
+            assert fresh.entry_id == minted and fresh.version == 1
+
+            # overwrite=False over a rival file: DO NOTHING, a definite exists.
+            refused = staged_for("/f.txt", "file")
+            errors = await run([refused], overwrite=False)
+            assert [e.kind for e in errors] == [VFSErrorKind.exists]
+
+            # overwrite=True where the rival is a directory: the clobber's
+            # kind guard refuses to update it — wrong_kind.
+            blocked = staged_for("/dir", "file")
+            errors = await run([blocked], overwrite=True)
+            assert [e.kind for e in errors] == [VFSErrorKind.wrong_kind]
+
+            # a directory create losing to any occupant never clobbers: exists.
+            dir_loss = staged_for("/dir", "directory")
+            errors = await run([dir_loss], overwrite=True)
             assert [e.kind for e in errors] == [VFSErrorKind.exists]
         await storage.close()
 
@@ -1027,14 +1181,14 @@ class TestArbitration:
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
             conn = await session.connection(execution_options={"vfs_writer": True})
-            row = (await conn.execute(select(entry.c.id).where(entry.c.path == "/f.txt"))).one()
+            row = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/f.txt"))).one()
             stale = StagedEntry(
                 path=Path("/f.txt"),
                 parent=Path("/"),
                 kind="file",
                 created=False,
+                entry_id=row.entry_id,
                 content="b",
-                entry_id=row.id,
                 base_version=999_999,  # a rival moved the row past our snapshot
                 version=1_000_000,
             )

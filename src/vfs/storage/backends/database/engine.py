@@ -279,7 +279,7 @@ class EngineHost:
         )
         await conn.execute(
             insert(self.tables.entry).values(
-                node_id=str(ULID()),
+                entry_id=str(ULID()),
                 parent_id=None,
                 path="/",
                 name="",

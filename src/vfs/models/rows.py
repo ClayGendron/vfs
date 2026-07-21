@@ -7,12 +7,15 @@ The tables are written by hand and never derived from :class:`vfs.models.Entry`
 drift test instead, so a schema change is always a deliberate edit here, never
 a side effect of touching the domain model.
 
-Identity is stable, never location-derived (decision record 004): ``node_id``
-(ULID) is the permanent logical identity; every table keeps an integer
-surrogate key for compact row references, and every dependent table — content,
-versions, chunks, edges, postings — keys on the integer, never the ULID and
-never the path. ``parent_id`` is the one structural pointer; ``path`` survives
-as a regenerable cache (unique, binary-collated) that nothing references.
+Identity is stable, never location-derived: ``entry_id`` (ULID, stored
+binary-16 via :class:`ULIDKey`) is the permanent
+logical identity **and** the referential identity — every durable dependent
+table (content, versions, chunks, edges) keys on it, and ``parent_id`` is the
+one structural pointer, also an ``entry_id`` value. Each table keeps an
+integer surrogate primary key as a local row locator that nothing durable
+references; only regenerable stores (posting-list doc ids) may key on it —
+the same doctrine that keeps ``path`` honest as a regenerable cache (unique,
+binary-collated) that nothing references.
 
 :func:`build_vfs_tables` mints one mount's tables on a fresh
 :class:`MetaData`, so a single ``create_all`` provisions them all and two
@@ -31,9 +34,10 @@ nicety.
 
 from __future__ import annotations
 
-from typing import Final, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import (
+    BINARY,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -47,11 +51,21 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Table,
+    Text,
+    TypeDecorator,
     UniqueConstraint,
+    Uuid,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.oracle import RAW
+from ulid import ULID
 
 from vfs.models.vector import NativeEmbeddingConfig, VectorType
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Dialect
+    from sqlalchemy.types import TypeEngine
 
 # Entries-table columns with no counterpart field on the domain model: the id
 # backbone, the identity-based restore metadata (never paths — a trashed
@@ -59,7 +73,7 @@ from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH
 # per-entry version — minted and guarded storage-side, reported on
 # observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
-    {"id", "node_id", "parent_id", "original_parent_id", "original_name", "version"},
+    {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "version"},
 )
 
 # The Entry field homed in the content table rather than the entries row —
@@ -68,7 +82,7 @@ ENTRY_CONTENT_FIELDS: Final[frozenset[str]] = frozenset({"content"})
 
 # Per-model column exemptions for the metadata family: the id backbone plus
 # the owner references, which the models carry as Path fields (below) and
-# the persistence layer resolves to integer ids.
+# the persistence layer resolves to entry identities.
 VERSION_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"entry_id"})
 CHUNK_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "entry_id"})
 EDGE_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "source_id", "target_id"})
@@ -137,6 +151,63 @@ def _binary_string(length: int) -> String:
     )
 
 
+def _body_text() -> Text:
+    """An unbounded text body that provisions on every engine.
+
+    Bare ``String()`` carries no length and MySQL's DDL compiler refuses
+    it outright; ``Text`` maps to each engine's unbounded form (CLOB on
+    Oracle, VARCHAR(max) on MSSQL), with MySQL pinned to LONGTEXT — its
+    bare TEXT caps bodies at 64KB.
+    """
+    return Text().with_variant(LONGTEXT(), "mysql")
+
+
+def _uuid_native(dialect: Dialect) -> bool:
+    """True where the engine's own uuid type keeps ULID time-order.
+
+    MSSQL is pinned out regardless of what the dialect reports:
+    ``UNIQUEIDENTIFIER`` sorts by its own byte grouping, forfeiting the
+    ULID's time-ordered index locality.
+    """
+    return dialect.supports_native_uuid and dialect.name != "mssql"
+
+
+class ULIDKey(TypeDecorator[str]):
+    """A 128-bit identity column speaking 26-char ULID strings in Python.
+
+    The one conversion home: every bound value and every fetched value
+    crosses here, so no other module translates identity. Storage is
+    binary-16 on every engine, never text: the native ``uuid`` type where
+    the dialect binds one and its sort preserves time-order (Postgres),
+    ``RAW(16)`` on Oracle, and fixed-width ``BINARY(16)`` everywhere
+    else — including engines whose only uuid-shaped alternative would be
+    the CHAR(32) hex fallback or a wrongly-sorted ``UNIQUEIDENTIFIER``.
+    """
+
+    impl = Uuid
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
+        if _uuid_native(dialect):
+            return dialect.type_descriptor(Uuid())
+        if dialect.name == "oracle":
+            return dialect.type_descriptor(RAW(16))
+        return dialect.type_descriptor(BINARY(16))
+
+    def process_bind_param(self, value: str | None, dialect: Dialect) -> Any:
+        if value is None:
+            return None
+        ulid = ULID.from_str(value)
+        return ulid.to_uuid() if _uuid_native(dialect) else ulid.bytes
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> str | None:
+        if value is None:
+            return None
+        if _uuid_native(dialect):
+            return str(ULID.from_uuid(value))
+        return str(ULID.from_bytes(value))
+
+
 # ---------------------------------------------------------------------------
 # Table construction
 # ---------------------------------------------------------------------------
@@ -201,8 +272,8 @@ def build_vfs_tables(
         table_name,
         metadata,
         Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True),
-        Column("node_id", String(ULID_LENGTH), nullable=False, unique=True, index=True),
-        Column("parent_id", BigInteger, index=True),
+        Column("entry_id", ULIDKey(), nullable=False, unique=True, index=True),
+        Column("parent_id", ULIDKey()),
         Column("external_id", String(1024)),
         Column("path", _binary_string(MAX_PATH_LENGTH), nullable=False, unique=True, index=True),
         Column("name", _binary_string(MAX_SEGMENT_LENGTH), nullable=False),
@@ -214,7 +285,7 @@ def build_vfs_tables(
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
         Column("owner_id", String(255), index=True),
-        Column("original_parent_id", BigInteger),
+        Column("original_parent_id", ULIDKey()),
         Column("original_name", _binary_string(MAX_SEGMENT_LENGTH)),
         Column("created_at", DateTime(timezone=True)),
         Column("updated_at", DateTime(timezone=True)),
@@ -225,14 +296,14 @@ def build_vfs_tables(
         sqlite_autoincrement=True,
     )
 
-    # Current content, one body per row, keyed by the entries integer id.
-    # The body column is physically last: width changes to earlier columns
-    # never rewrite the blob's pages.
+    # Current content, one body per row, keyed by entry identity. The body
+    # column is physically last: width changes to earlier columns never
+    # rewrite the blob's pages.
     content = Table(
         f"{table_name}_content",
         metadata,
-        Column("entry_id", BigInteger, primary_key=True, autoincrement=False),
-        Column("content", String(), nullable=False),
+        Column("entry_id", ULIDKey(), primary_key=True),
+        Column("content", _body_text(), nullable=False),
         schema=schema,
     )
 
@@ -243,7 +314,7 @@ def build_vfs_tables(
     versions = Table(
         f"{table_name}_versions",
         metadata,
-        Column("entry_id", BigInteger, primary_key=True, autoincrement=False),
+        Column("entry_id", ULIDKey(), primary_key=True),
         Column("version_number", Integer, primary_key=True, autoincrement=False),
         Column("is_snapshot", Boolean, nullable=False),
         Column("content_hash", String(64), nullable=False),
@@ -251,8 +322,8 @@ def build_vfs_tables(
         Column("size_bytes", Integer, nullable=False, default=0),
         Column("created_by", String(255)),
         Column("created_at", DateTime(timezone=True)),
-        Column("content", String()),
-        Column("version_diff", String()),
+        Column("content", _body_text()),
+        Column("version_diff", _body_text()),
         schema=schema,
     )
 
@@ -264,14 +335,14 @@ def build_vfs_tables(
         f"{table_name}_chunks",
         metadata,
         Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True),
-        Column("entry_id", BigInteger, nullable=False, index=True),
+        Column("entry_id", ULIDKey(), nullable=False, index=True),
         Column("chunk_index", Integer, nullable=False),
         Column("line_start", Integer, nullable=False),
         Column("line_end", Integer, nullable=False),
         Column("content_hash", String(64)),
         Column("encoded", Boolean, nullable=False, default=False),
         Column("embedding", embedding_type),
-        Column("content", String(), nullable=False),
+        Column("content", _body_text(), nullable=False),
         UniqueConstraint("entry_id", "chunk_index", name=f"uq_{table_name}_chunks_entry_index"),
         schema=schema,
         sqlite_autoincrement=True,
@@ -283,8 +354,8 @@ def build_vfs_tables(
         f"{table_name}_edges",
         metadata,
         Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True),
-        Column("source_id", BigInteger, nullable=False),
-        Column("target_id", BigInteger, nullable=False),
+        Column("source_id", ULIDKey(), nullable=False),
+        Column("target_id", ULIDKey(), nullable=False),
         Column("edge_type", String(MAX_SEGMENT_LENGTH), nullable=False),
         Column("weight", Float),
         Column("distance", Float),

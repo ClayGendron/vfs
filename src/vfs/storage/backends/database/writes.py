@@ -33,7 +33,6 @@ from sqlalchemy import bindparam, delete, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
-from ulid import ULID
 
 from vfs.models import Entry, Observation
 from vfs.results import Result, ResultError, VFSErrorKind, classified
@@ -233,7 +232,7 @@ async def _fetch_committed(
     entry = tables.entry
     paths = {str(t) for t in targets} | {str(a) for t in targets for a in ancestor_chain(t)} | {"/"}
     columns: list[Column[object]] = [
-        entry.c.id,
+        entry.c.entry_id,
         entry.c.path,
         entry.c.kind,
         entry.c.version,
@@ -243,7 +242,7 @@ async def _fetch_committed(
     source: FromClause = entry
     if with_content:
         columns.append(tables.content.c.content)
-        source = entry.outerjoin(tables.content, tables.content.c.entry_id == entry.c.id)
+        source = entry.outerjoin(tables.content, tables.content.c.entry_id == entry.c.entry_id)
     committed: dict[str, RowMapping] = {}
     for chunk in chunked(sorted(paths), membership_budget):
         stmt = select(*columns).select_from(source).where(entry.c.path.in_(chunk))
@@ -305,15 +304,16 @@ async def _apply(
         return []
     now = datetime.now(UTC)
     creates = [s for s in plan.staged.values() if s.created]
-    errors = await _insert_creates(
-        session, tables.entry, profile, parameter_budget, membership_budget, creates, plan, overwrite=overwrite, now=now
-    )
-    if errors:
+    if errors := await _insert_creates(
+        session, tables.entry, profile, parameter_budget, creates, plan, overwrite=overwrite, now=now
+    ):
         return errors
-
+    # After the insert pass on purpose: arbitration may convert a losing
+    # create into an unguarded clobber (created=False) that must update here.
     updates = [s for s in plan.staged.values() if not s.created]
-    errors = await _update_materials(session, tables.entry, membership_budget, updates, user_id=plan.user_id, now=now)
-    if errors:
+    if errors := await _update_materials(
+        session, tables.entry, membership_budget, updates, user_id=plan.user_id, now=now
+    ):
         return errors
     await _replace_content(session, tables.content, membership_budget, list(plan.staged.values()))
     await _bump_parents(session, tables.entry, membership_budget, plan)
@@ -325,14 +325,18 @@ async def _insert_creates(
     entry: Table,
     profile: DialectProfile,
     parameter_budget: int,
-    membership_budget: int,
     creates: list[StagedEntry],
     plan: WritePlan,
     *,
     overwrite: bool,
     now: datetime,
 ) -> list[ResultError]:
-    """Bulk-insert created rows, parents before children, arbitrating conflicts."""
+    """Bulk-insert created rows, parents before children, arbitrating conflicts.
+
+    Identity is minted at staging, so rows are fully wired client-side;
+    the layers exist to learn each depth's arbitration outcome before its
+    children commit to a parent that may have lost.
+    """
     if not creates:
         return []
     by_depth: dict[int, list[StagedEntry]] = {}
@@ -341,13 +345,12 @@ async def _insert_creates(
     for depth in sorted(by_depth):
         layer = by_depth[depth]
         rows = [_entry_values(s, _parent_id(plan, s), plan.user_id, now) for s in layer]
-        per_statement = max(1, parameter_budget // len(rows[0]))
+        widest = max(map(len, rows))
+        per_statement = max(1, parameter_budget // widest)
         if profile.arbitration == "upsert":
             errors = await _upsert_layer(session, entry, profile, layer, rows, per_statement, overwrite=overwrite)
         else:
-            errors = await _catch_retry_layer(
-                session, entry, layer, rows, per_statement, membership_budget, overwrite=overwrite
-            )
+            errors = await _catch_retry_layer(session, entry, layer, rows, per_statement, overwrite=overwrite)
         if errors:
             # Fail fast: children of an unresolved parent cannot be wired.
             return errors
@@ -367,10 +370,12 @@ async def _upsert_layer(
     """``ON CONFLICT`` arbitration on the ``(parent_id, name)`` index.
 
     Directory creates never clobber (``DO NOTHING``); file creates clobber
-    a non-directory rival under ``overwrite``. RETURNING carries the final
-    version, so winners and clobberers stamp theirs without a read-back.
-    A row missing from RETURNING lost arbitration and classifies — a
-    definite outcome, never retried.
+    a non-directory rival under ``overwrite``. RETURNING carries the
+    surviving identity and final version: a clobber lands on the rival's
+    row, which keeps its ``entry_id``, so the staged entry adopts it —
+    content and children must wire to the row that exists. A row missing
+    from RETURNING lost arbitration and classifies — a definite outcome,
+    never retried.
     """
     constructor = _upsert_constructor(profile)
     pairs = list(zip(layer, rows, strict=True))
@@ -392,12 +397,12 @@ async def _upsert_layer(
                 )
             else:
                 stmt = stmt.on_conflict_do_nothing(index_elements=["parent_id", "name"])
-            result = await session.execute(stmt.returning(entry.c.id, entry.c.path, entry.c.version))
+            result = await session.execute(stmt.returning(entry.c.entry_id, entry.c.path, entry.c.version))
             returned = {mapping["path"]: mapping for mapping in result.mappings()}
             for staged, _ in chunk:
                 won = returned.get(str(staged.path))
                 if won is not None:
-                    staged.entry_id = won["id"]
+                    staged.entry_id = won["entry_id"]
                     staged.version = won["version"]
                 elif clobber:
                     errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {staged.path}", staged.path))
@@ -412,35 +417,26 @@ async def _catch_retry_layer(
     layer: list[StagedEntry],
     rows: list[dict[str, object]],
     per_statement: int,
-    membership_budget: int,
     *,
     overwrite: bool,
 ) -> list[ResultError]:
     """Portable arbitration: savepointed bulk insert, per-row resolution on conflict.
 
     Engines whose live dialect declares multirow ``VALUES`` support take
-    the chunked ``INSERT ... VALUES (...), (...) RETURNING`` fast path;
-    the rest (Oracle among them) take driver executemany, and the ids
-    come back through a chunked ``path IN`` read of the layer's rows.
+    the chunked ``INSERT ... VALUES (...), (...)`` fast path; the rest
+    (Oracle among them) take driver executemany. Identity is minted at
+    staging, so a clean insert learns nothing back.
     """
     multirow = session.get_bind().dialect.supports_multivalues_insert
-    returned: dict[str, int] = {}
     try:
         async with session.begin_nested():
             if multirow:
                 for chunk in chunked(rows, per_statement):
-                    result = await session.execute(insert(entry).values(chunk).returning(entry.c.id, entry.c.path))
-                    returned.update({mapping["path"]: mapping["id"] for mapping in result.mappings()})
+                    await session.execute(insert(entry).values(chunk))
             else:
                 await session.execute(insert(entry), rows)
     except IntegrityError:
         return await _resolve_rows(session, entry, layer, rows, overwrite=overwrite)
-    if not multirow:
-        for chunk in chunked(sorted(str(s.path) for s in layer), membership_budget):
-            result = await session.execute(select(entry.c.id, entry.c.path).where(entry.c.path.in_(chunk)))
-            returned.update({mapping["path"]: mapping["id"] for mapping in result.mappings()})
-    for staged in layer:
-        staged.entry_id = returned[str(staged.path)]
     return []
 
 
@@ -457,12 +453,11 @@ async def _resolve_rows(
     for staged, values in zip(layer, rows, strict=True):
         try:
             async with session.begin_nested():
-                result = await session.execute(insert(entry).values(**values).returning(entry.c.id))
-                staged.entry_id = result.scalar_one()
+                await session.execute(insert(entry).values(**values))
             continue
         except IntegrityError:
             pass
-        occupant_query = select(entry.c.id, entry.c.kind).where(
+        occupant_query = select(entry.c.entry_id, entry.c.kind).where(
             entry.c.parent_id == values["parent_id"], entry.c.name == values["name"]
         )
         occupant = (await session.execute(occupant_query)).one_or_none()
@@ -473,7 +468,7 @@ async def _resolve_rows(
         elif staged.kind != "directory" and overwrite and occupant.kind != "directory":
             # The rival's row absorbs our write: an unguarded clobbering update.
             staged.created = False
-            staged.entry_id = occupant.id
+            staged.entry_id = occupant.entry_id
             staged.base_version = None
         elif staged.kind != "directory" and overwrite:
             errors.append(classified(VFSErrorKind.wrong_kind, f"Is a directory: {staged.path}", staged.path))
@@ -508,33 +503,24 @@ async def _update_materials(
         return []
     guarded = [s for s in updates if s.base_version is not None]
     unguarded = [s for s in updates if s.base_version is None]
-    material = {
-        "kind": bindparam("b_kind"),
-        "content_hash": bindparam("b_hash"),
-        "mime_type": bindparam("b_mime"),
-        "ext": bindparam("b_ext"),
-        "lines": bindparam("b_lines"),
-        "size_bytes": bindparam("b_size"),
-        # Ownership follows the writer, matching _CLOBBER_COLUMNS — the
-        # two arbitration arms must leave identical observable state.
-        "owner_id": bindparam("b_owner"),
-        "updated_at": bindparam("b_updated"),
-    }
+    material = {column: bindparam(f"b_{column}") for column in _CLOBBER_COLUMNS}
     if guarded:
         stmt = (
             update(entry)
-            .where(entry.c.id == bindparam("b_id"), entry.c.version == bindparam("b_base"))
+            .where(entry.c.entry_id == bindparam("b_id"), entry.c.version == bindparam("b_base"))
             .values(**material, version=bindparam("b_ver"))
         )
         params = [_update_params(s, user_id, now) | {"b_base": s.base_version, "b_ver": s.version} for s in guarded]
         await session.execute(stmt, params)
     if unguarded:
-        stmt = update(entry).where(entry.c.id == bindparam("b_id")).values(**material, version=entry.c.version + 1)
+        stmt = (
+            update(entry).where(entry.c.entry_id == bindparam("b_id")).values(**material, version=entry.c.version + 1)
+        )
         await session.execute(stmt, [_update_params(s, user_id, now) for s in unguarded])
-    actual: dict[int, int] = {}
+    actual: dict[str, int] = {}
     for chunk in chunked([s.entry_id for s in updates], membership_budget):
-        check = await session.execute(select(entry.c.id, entry.c.version).where(entry.c.id.in_(chunk)))
-        actual.update({row.id: row.version for row in check})
+        check = await session.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.entry_id.in_(chunk)))
+        actual.update({row.entry_id: row.version for row in check})
     errors: list[ResultError] = []
     for staged in updates:
         observed = actual.get(staged.entry_id)
@@ -572,16 +558,16 @@ async def _bump_parents(session: AsyncSession, entry: Table, membership_budget: 
     """
     if not plan.bumps:
         return
-    bump_ids = [plan.committed[path]["id"] for path in sorted(plan.bumps)]
+    bump_ids = [plan.committed[path]["entry_id"] for path in sorted(plan.bumps)]
     for chunk in chunked(bump_ids, membership_budget):
-        await session.execute(update(entry).where(entry.c.id.in_(chunk)).values(version=entry.c.version + 1))
+        await session.execute(update(entry).where(entry.c.entry_id.in_(chunk)).values(version=entry.c.version + 1))
     needed = {str(path) for path, _ in plan.pending if path not in plan.staged and str(path) in plan.bumps}
     if not needed:
         return
-    ids = [plan.committed[path]["id"] for path in sorted(needed)]
+    ids = [plan.committed[path]["entry_id"] for path in sorted(needed)]
     plan.bump_versions = {}
     for chunk in chunked(ids, membership_budget):
-        result = await session.execute(select(entry.c.path, entry.c.version).where(entry.c.id.in_(chunk)))
+        result = await session.execute(select(entry.c.path, entry.c.version).where(entry.c.entry_id.in_(chunk)))
         plan.bump_versions.update({row.path: row.version for row in result})
 
 
@@ -590,41 +576,38 @@ def _upsert_constructor(profile: DialectProfile) -> Callable[[Table], SQLiteInse
     return sqlite_insert if profile.name == "sqlite" else pg_insert
 
 
-def _parent_id(plan: WritePlan, staged: StagedEntry) -> int:
+def _parent_id(plan: WritePlan, staged: StagedEntry) -> str:
     parent = plan.staged.get(staged.parent)
-    if parent is not None and parent.entry_id is not None:
+    if parent is not None:
         return parent.entry_id
-    return plan.committed[str(staged.parent)]["id"]
+    return plan.committed[str(staged.parent)]["entry_id"]
 
 
-def _entry_values(staged: StagedEntry, parent_id: int, user_id: str | None, now: datetime) -> dict[str, object]:
+def _material_values(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:
+    """The clobber-column values for *staged*; ownership follows the writer."""
     return {
-        "node_id": str(ULID()),
-        "parent_id": parent_id,
-        "path": str(staged.path),
-        "name": staged.path.name,
         "kind": staged.kind,
-        "version": staged.version,
         "content_hash": staged.content_hash,
         "mime_type": staged.mime_type,
         "ext": staged.ext,
         "lines": staged.lines,
         "size_bytes": staged.size_bytes,
         "owner_id": user_id,
-        "created_at": now,
         "updated_at": now,
     }
 
 
-def _update_params(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:
+def _entry_values(staged: StagedEntry, parent_id: str, user_id: str | None, now: datetime) -> dict[str, object]:
     return {
-        "b_id": staged.entry_id,
-        "b_kind": staged.kind,
-        "b_hash": staged.content_hash,
-        "b_mime": staged.mime_type,
-        "b_ext": staged.ext,
-        "b_lines": staged.lines,
-        "b_size": staged.size_bytes,
-        "b_owner": user_id,
-        "b_updated": now,
-    }
+        "entry_id": staged.entry_id,
+        "parent_id": parent_id,
+        "path": str(staged.path),
+        "name": staged.path.name,
+        "version": staged.version,
+        "created_at": now,
+    } | _material_values(staged, user_id, now)
+
+
+def _update_params(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:
+    material = _material_values(staged, user_id, now)
+    return {"b_id": staged.entry_id} | {f"b_{column}": material[column] for column in _CLOBBER_COLUMNS}

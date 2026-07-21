@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from types import UnionType
 from typing import Union, get_args, get_origin
+from uuid import UUID
 
 import pytest
 from sqlalchemy import String, create_engine, insert, inspect, select
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import ColumnDefault, CreateIndex, CreateTable
+from ulid import ULID
 
 from vfs.models import Chunk, Edge, Entry, Version
 from vfs.models.rows import (
@@ -25,6 +27,7 @@ from vfs.models.rows import (
     SCHEMA_FORMAT_VERSION,
     ULID_LENGTH,
     VERSION_ROW_ONLY_COLUMNS,
+    ULIDKey,
     VFSTables,
     build_vfs_tables,
 )
@@ -94,7 +97,7 @@ class TestMetadataModelRowDrift:
     @pytest.mark.parametrize(("model", "table_attr", "row_only"), METADATA_MODELS)
     def test_owner_references_are_path_fields(self, tables: VFSTables, model, table_attr, row_only) -> None:
         # The models reference their owner by Path; persistence resolves the
-        # Path to the integer id the row-only columns carry.
+        # Path to the entry identity the row-only columns carry.
         for name in MODEL_OWNER_FIELDS[model.__name__]:
             assert model.model_fields[name].annotation is Path
         assert not MODEL_OWNER_FIELDS[model.__name__] & set(getattr(tables, table_attr).c.keys())
@@ -148,10 +151,9 @@ class TestBuildVFSTables:
     def test_identity_backbone(self, tables: VFSTables) -> None:
         assert tables.entry.c.id.primary_key
         assert tables.entry.kwargs["sqlite_autoincrement"] is True
-        assert tables.entry.c.node_id.unique
-        node_type = tables.entry.c.node_id.type
-        assert isinstance(node_type, String)
-        assert node_type.length == ULID_LENGTH
+        assert tables.entry.c.entry_id.unique
+        assert isinstance(tables.entry.c.entry_id.type, ULIDKey)
+        assert isinstance(tables.entry.c.parent_id.type, ULIDKey)
         assert tables.entry.c.parent_id.nullable  # null for the root row
         assert tables.entry.c.path.unique
 
@@ -176,12 +178,13 @@ class TestBuildVFSTables:
         assert list(tables.versions.c.keys())[-2:] == ["content", "version_diff"]
         assert list(tables.chunks.c.keys())[-1] == "content"
 
-    def test_dependent_tables_key_on_the_integer_never_path(self, tables: VFSTables) -> None:
+    def test_dependent_tables_key_on_entry_identity_never_path(self, tables: VFSTables) -> None:
         for table in (tables.content, tables.versions, tables.chunks):
-            assert "entry_id" in table.c
+            assert isinstance(table.c.entry_id.type, ULIDKey)
             assert not any("path" in column.name for column in table.c)
-        for column in tables.edges.c:
-            assert "path" not in column.name
+        for name in ("source_id", "target_id"):
+            assert isinstance(tables.edges.c[name].type, ULIDKey)
+        assert not any("path" in column.name for column in tables.edges.c)
 
     def test_edges_are_narrow_id_triples_indexed_both_directions(self, tables: VFSTables) -> None:
         assert {"id", "source_id", "target_id", "edge_type", "weight", "distance"} == set(tables.edges.c.keys())
@@ -225,15 +228,65 @@ class TestBuildVFSTables:
 # ---------------------------------------------------------------------------
 
 
-def _entries_row(entry: Entry, *, node_id: str, parent_id: int | None) -> dict[str, object]:
+def _entries_row(entry: Entry, *, entry_id: str, parent_id: str | None) -> dict[str, object]:
     """The entries-table row for *entry*: resident fields plus the storage-stamped columns.
 
     ``version`` is minted storage-side (never authored on an Entry), so the
     helper stamps a fresh row's 1 the way the write path would.
     """
     resident = entry.model_dump(exclude=set(ENTRY_CONTENT_FIELDS) | set(Entry.model_computed_fields))
-    stamped = {"node_id": node_id, "parent_id": parent_id, "version": 1}
+    stamped = {"entry_id": entry_id, "parent_id": parent_id, "version": 1}
     return {**resident, **stamped, "original_parent_id": None, "original_name": None}
+
+
+class TestULIDKey:
+    """The one identity-conversion home: storage form and round-trip per arm."""
+
+    def test_storage_form_is_binary_16_per_dialect_never_text(self) -> None:
+        key = ULIDKey()
+        forms = {
+            name: key.compile(dialect=dialect)
+            for name, dialect in (
+                ("postgresql", postgresql.dialect()),
+                ("mssql", mssql.dialect()),
+                ("oracle", oracle.dialect()),
+                ("mysql", mysql.dialect()),
+                ("sqlite", sqlite.dialect()),
+            )
+        }
+        # mssql is deliberately not UNIQUEIDENTIFIER: its sort order would
+        # forfeit the ULID's time-ordered index locality.
+        assert forms == {
+            "postgresql": "UUID",
+            "mssql": "BINARY(16)",
+            "oracle": "RAW(16)",
+            "mysql": "BINARY(16)",
+            "sqlite": "BINARY(16)",
+        }
+
+    def test_bytes_arm_round_trips_and_sorts_like_the_string(self) -> None:
+        key = ULIDKey()
+        dialect = mssql.dialect()
+        ulids = sorted(str(ULID()) for _ in range(64))
+        bound = [key.process_bind_param(u, dialect) for u in ulids]
+        assert all(isinstance(b, bytes) and len(b) == 16 for b in bound)
+        # Stored byte order equals 26-char string order — the property
+        # that keeps binary identity indexes time-local.
+        assert sorted(bound) == bound
+        assert [key.process_result_value(b, dialect) for b in bound] == ulids
+        assert key.process_bind_param(None, dialect) is None
+        assert key.process_result_value(None, dialect) is None
+
+    def test_uuid_arm_round_trips_and_sorts_like_the_string(self) -> None:
+        key = ULIDKey()
+        dialect = postgresql.dialect()
+        ulids = sorted(str(ULID()) for _ in range(64))
+        bound = [key.process_bind_param(u, dialect) for u in ulids]
+        assert all(isinstance(b, UUID) for b in bound)
+        assert sorted(bound) == bound
+        assert [key.process_result_value(b, dialect) for b in bound] == ulids
+        assert key.process_bind_param(None, dialect) is None
+        assert key.process_result_value(None, dialect) is None
 
 
 class TestTableNameBudget:
@@ -266,6 +319,16 @@ class TestDDL:
         tables.metadata.create_all(engine)
         assert set(inspect(engine).get_table_names()) == set(tables.metadata.tables)
 
+    def test_whole_family_ddl_compiles_on_every_dialect(self, tables: VFSTables) -> None:
+        # Served, not refused: no column type may fail DDL compile on any
+        # engine class — MySQL once refused the unbounded String() bodies.
+        for module in (postgresql, mssql, oracle, mysql, sqlite):
+            dialect = module.dialect()
+            for table in tables.metadata.tables.values():
+                CreateTable(table).compile(dialect=dialect)
+                for index in table.indexes:
+                    CreateIndex(index).compile(dialect=dialect)
+
     def test_native_embedding_ddl_compiles_off_postgres(self) -> None:
         native = build_vfs_tables(table_name="t", native_embedding=NativeEmbeddingConfig(dimension=8))
         native.metadata.create_all(create_engine("sqlite://"))  # VectorType falls back to TEXT
@@ -276,16 +339,15 @@ class TestDDL:
         entry = Entry(path=Path("/docs/a.md"), content="hello")
         ulid = "0" * ULID_LENGTH
         with engine.begin() as conn:
-            entry_id = conn.execute(
-                insert(tables.entry), [_entries_row(entry, node_id=ulid, parent_id=None)]
+            pk = conn.execute(
+                insert(tables.entry), [_entries_row(entry, entry_id=ulid, parent_id=None)]
             ).inserted_primary_key
-            stored_id = conn.execute(select(tables.entry.c.id)).scalar_one()
-            conn.execute(insert(tables.content), [{"entry_id": stored_id, "content": entry.content}])
+            conn.execute(insert(tables.content), [{"entry_id": ulid, "content": entry.content}])
             row = conn.execute(select(tables.entry)).mappings().one()
-            body = conn.execute(select(tables.content.c.content)).scalar_one()
-        assert entry_id is not None
+            body = conn.execute(select(tables.content.c.content).where(tables.content.c.entry_id == ulid)).scalar_one()
+        assert pk is not None
         assert row["path"] == "/docs/a.md"
-        assert row["node_id"] == ulid
+        assert row["entry_id"] == ulid
         assert row["version"] == 1
         assert "content" not in row
         assert body == "hello"
@@ -307,8 +369,13 @@ class TestDDL:
         engine = create_engine("sqlite://")
         tables.metadata.create_all(engine)
         first = Entry(path=Path("/docs/a.md"), content="x")
+        shared_parent = "2" * ULID_LENGTH
         with engine.begin() as conn:
-            conn.execute(insert(tables.entry), [_entries_row(first, node_id="0" * ULID_LENGTH, parent_id=7)])
+            conn.execute(
+                insert(tables.entry), [_entries_row(first, entry_id="0" * ULID_LENGTH, parent_id=shared_parent)]
+            )
         clone = Entry(path=Path("/docs2/a.md"), content="y")  # distinct path, same (parent_id, name)
         with pytest.raises(IntegrityError), engine.begin() as conn:
-            conn.execute(insert(tables.entry), [_entries_row(clone, node_id="1" * ULID_LENGTH, parent_id=7)])
+            conn.execute(
+                insert(tables.entry), [_entries_row(clone, entry_id="1" * ULID_LENGTH, parent_id=shared_parent)]
+            )

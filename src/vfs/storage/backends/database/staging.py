@@ -10,7 +10,8 @@ errored plan.
 
 ``StagedEntry`` is one path's planned final state — a create or a material
 update — carrying the persistence bookkeeping a domain ``Entry`` never holds:
-the row ``entry_id``, the ``base_version`` guard, and the create/update
+the durable ``entry_id`` (minted here for creates, copied from the committed
+row for updates), the ``base_version`` guard, and the create/update
 discriminator. That is why it lives here beside the plan and not among the
 session-free models.
 """
@@ -19,6 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
+
+from ulid import ULID
 
 from vfs.results import ResultError, VFSErrorKind, classified
 from vfs.storage.backends.database.descent import ancestor_chain
@@ -39,13 +42,13 @@ class StagedEntry:
     parent: Path
     kind: ObjectKind
     created: bool
+    entry_id: str  # durable identity: minted for creates; an arbitration clobber adopts the rival's
     content: str | None = None
     content_hash: str | None = None
     size_bytes: int = 0
     lines: int = 0
     ext: str | None = None
     mime_type: str | None = None
-    entry_id: int | None = None  # committed id for updates; creates learn theirs at insert
     base_version: int | None = None  # the update guard; None = unguarded (arbitration clobber)
     version: int = 1  # creates mint 1; updates stage base + 1; clobbers learn theirs post-execution
 
@@ -238,6 +241,7 @@ class WritePlan:
             parent=path.parent_dir,
             kind=kind,
             created=True,
+            entry_id=str(ULID()),
             content=content,
             content_hash=content_hash,
             size_bytes=size_bytes,
@@ -277,13 +281,13 @@ class WritePlan:
             parent=path.parent_dir,
             kind=kind,
             created=False,
+            entry_id=row["entry_id"],
             content=content,
             content_hash=content_hash,
             size_bytes=size_bytes,
             lines=lines,
             ext=ext,
             mime_type=mime_type,
-            entry_id=row["id"],
             base_version=row["version"],
             version=row["version"] + 1,
         )
