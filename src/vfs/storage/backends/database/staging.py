@@ -117,6 +117,18 @@ class WritePlan:
         row = self.committed[str(path)]
         return row["kind"], row["content"]
 
+    def parent_id_of(self, staged: StagedEntry) -> str:
+        """The parent row's ``entry_id`` through the staged overlay.
+
+        Read per depth layer, after the parent's layer has executed:
+        arbitration can hand a losing parent its rival's identity, and
+        children must wire to the row that exists.
+        """
+        parent = self.staged.get(staged.parent)
+        if parent is not None:
+            return parent.entry_id
+        return self.committed[str(staged.parent)]["entry_id"]
+
     def within_budget(self, path: Path) -> bool:
         """A lawful path can still exceed an engine's index-key byte cap."""
         if len(str(path).encode()) <= self.budget:

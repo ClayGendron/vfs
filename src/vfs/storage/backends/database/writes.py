@@ -242,7 +242,7 @@ async def _fetch_committed(
     source: FromClause = entry
     if with_content:
         columns.append(tables.content.c.content)
-        source = entry.outerjoin(tables.content, tables.content.c.entry_id == entry.c.entry_id)
+        source = tables.content_joined()
     committed: dict[str, RowMapping] = {}
     for chunk in chunked(sorted(paths), membership_budget):
         stmt = select(*columns).select_from(source).where(entry.c.path.in_(chunk))
@@ -344,9 +344,8 @@ async def _insert_creates(
         by_depth.setdefault(str(staged.path).count("/"), []).append(staged)
     for depth in sorted(by_depth):
         layer = by_depth[depth]
-        rows = [_entry_values(s, _parent_id(plan, s), plan.user_id, now) for s in layer]
-        widest = max(map(len, rows))
-        per_statement = max(1, parameter_budget // widest)
+        rows = [_entry_values(s, plan.parent_id_of(s), plan.user_id, now) for s in layer]
+        per_statement = max(1, parameter_budget // len(rows[0]))
         if profile.arbitration == "upsert":
             errors = await _upsert_layer(session, entry, profile, layer, rows, per_statement, overwrite=overwrite)
         else:
@@ -574,13 +573,6 @@ async def _bump_parents(session: AsyncSession, entry: Table, membership_budget: 
 def _upsert_constructor(profile: DialectProfile) -> Callable[[Table], SQLiteInsert | PostgresInsert]:
     """The dialect's ``ON CONFLICT`` insert — only upsert-arbitration engines get here."""
     return sqlite_insert if profile.name == "sqlite" else pg_insert
-
-
-def _parent_id(plan: WritePlan, staged: StagedEntry) -> str:
-    parent = plan.staged.get(staged.parent)
-    if parent is not None:
-        return parent.entry_id
-    return plan.committed[str(staged.parent)]["entry_id"]
 
 
 def _material_values(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:

@@ -65,6 +65,7 @@ from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Dialect
+    from sqlalchemy.sql import FromClause
     from sqlalchemy.types import TypeEngine
 
 # Entries-table columns with no counterpart field on the domain model: the id
@@ -225,6 +226,10 @@ class VFSTables(NamedTuple):
     meta: Table
     gram_epochs: Table
     posting_list: Table
+
+    def content_joined(self) -> FromClause:
+        """Entries LEFT-joined to content on ``entry_id`` — the one canonical join."""
+        return self.entry.outerjoin(self.content, self.content.c.entry_id == self.entry.c.entry_id)
 
 
 def build_vfs_tables(

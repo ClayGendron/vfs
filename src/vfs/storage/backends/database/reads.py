@@ -141,7 +141,7 @@ async def ls_rows(
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
-    anchors = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_id=True)
+    anchors = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=True)
     miss_errors = await _miss_errors(session, tables, membership_budget, targets, anchors)
     directories = [t for t in targets if (a := anchors.get(t)) is not None and a["kind"] == "directory"]
     children = await _children_by_parent(session, tables.entry, membership_budget, directories, anchors, fetched)
@@ -168,7 +168,7 @@ async def tree_rows(
 ) -> Result:
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    anchors = await _mappings_by_path(session, tables, membership_budget, [path], fetched, with_id=False)
+    anchors = await _mappings_by_path(session, tables, membership_budget, [path], fetched, with_entry_id=False)
     anchor = anchors.get(path)
     if anchor is None:
         return Result(ops=("tree",), errors=await classify_misses(session, entry, [path], membership_budget))
@@ -251,7 +251,7 @@ async def _point_rows(
     content_only: bool,
 ) -> tuple[list[Observation], list[ResultError]]:
     """Fetch, classify, and observe *targets* one row at a time, in order."""
-    found = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_id=False)
+    found = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=False)
     miss_errors = await _miss_errors(session, tables, membership_budget, targets, found)
     rows: list[Observation] = []
     errors: list[ResultError] = []
@@ -276,7 +276,7 @@ async def _mappings_by_path(
     targets: Sequence[Path],
     fetched: frozenset[str],
     *,
-    with_id: bool,
+    with_entry_id: bool,
 ) -> dict[str, RowMapping]:
     """Chunked ``path IN`` selects for the batch, keyed by the stored path string."""
     if not targets:
@@ -284,7 +284,7 @@ async def _mappings_by_path(
     entry = tables.entry
     found: dict[str, RowMapping] = {}
     for chunk in chunked(sorted({str(t) for t in targets}), membership_budget):
-        stmt = _entry_select(tables, fetched, with_id=with_id).where(entry.c.path.in_(chunk))
+        stmt = _entry_select(tables, fetched, with_entry_id=with_entry_id).where(entry.c.path.in_(chunk))
         found.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
     return found
 
@@ -363,16 +363,14 @@ async def _children_by_parent(
     return children
 
 
-def _entry_select(tables: VFSTables, fetched: frozenset[str], *, with_id: bool) -> Select[*tuple[object, ...]]:
+def _entry_select(tables: VFSTables, fetched: frozenset[str], *, with_entry_id: bool) -> Select[*tuple[object, ...]]:
     entry = tables.entry
     columns = _entry_columns(entry, fetched)
-    if with_id:
+    if with_entry_id:
         columns = [entry.c.entry_id, *columns]
     if "content" not in fetched:
         return select(*columns)
-    content = tables.content
-    joined = entry.outerjoin(content, content.c.entry_id == entry.c.entry_id)
-    return select(*columns, content.c.content).select_from(joined)
+    return select(*columns, tables.content.c.content).select_from(tables.content_joined())
 
 
 def _entry_columns(entry: Table, fetched: frozenset[str]) -> list[Column[object]]:
