@@ -347,6 +347,14 @@ class TestRebaseOverflow:
         assert rebased.path is not None
         assert len(rebased.path) == MAX_PATH_LENGTH
 
+    def test_error_overflow_with_a_foreign_source_keeps_the_path_whole(self) -> None:
+        # source is not a prefix of path: the local strip fails closed and
+        # the overflow record carries the path unstripped.
+        err = ResultError(kind=VFSErrorKind.not_found, message="missing", path=DEEP_LOCAL, source="/elsewhere")
+        rebased = err.with_mount(LONG_MOUNT)
+        assert rebased.path is None
+        assert (rebased.data or {})["vfs.overflow"] == {"local_path": str(DEEP_LOCAL)}
+
 
 # ---------------------------------------------------------------------------
 # Serialization — the wire contract

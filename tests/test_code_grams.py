@@ -222,6 +222,13 @@ class TestGroupSplicing:
         assert query.required_grams() == unique_code_grams("abc") | unique_code_grams("def")
         assert_no_false_negative("abc([xy])def", "zzabcydefzz")
 
+    def test_nested_non_literal_group_breaks_adjacency(self) -> None:
+        # The inner group is not pure literal, so the outer group cannot
+        # be spliced either — both anchors stand alone.
+        query = build_code_gram_query("abc(d(e.))ghi")
+        assert query.required_grams() == unique_code_grams("abc") | unique_code_grams("ghi")
+        assert_no_false_negative("abc(d(e.))ghi", "zzabcdeXghizz")
+
     def test_capturing_alternation_breaks_adjacency(self) -> None:
         # Unlike (?:xx|yy), which sre inlines to a bare BRANCH, a capturing
         # group keeps its SUBPATTERN node — the arm that spliced unsoundly.

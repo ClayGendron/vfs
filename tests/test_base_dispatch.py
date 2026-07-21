@@ -70,6 +70,35 @@ async def test_edit_requires_old_new_or_edits() -> None:
     assert fs.calls == []
 
 
+async def test_write_requires_entries_or_path_and_content() -> None:
+    fs = RecorderFS()
+    result = await fs.write()
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert "entries or path and content" in result.errors[0].message
+    assert fs.calls == []
+
+
+async def test_write_rechecks_the_form_even_if_the_param_gate_drifts(monkeypatch) -> None:
+    # Defense in depth: the param gate refuses first, but the verb owns
+    # the requires-both rule and must refuse on its own if the gate drifts.
+    fs = RecorderFS()
+    monkeypatch.setattr(fs, "_gate_params", lambda *args, **kwargs: None)
+    result = await fs.write(path="/f.txt")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert "path and content, or entries" in result.errors[0].message
+    assert fs.calls == []
+
+
+async def test_write_single_form_rejects_invalid_content_before_dispatch() -> None:
+    fs = RecorderFS()
+    result = await fs.write(path="/f.txt", content="a\x00b")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert fs.calls == []
+
+
 async def test_tree_routes_with_depth_passthrough() -> None:
     root = VirtualFileSystem()
     child = RecorderStorage()

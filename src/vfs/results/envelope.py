@@ -811,9 +811,11 @@ def _quarantine(item: Any, exc: Exception, severity: Severity, what: str) -> Res
         try:
             serialized = json.dumps(raw)
         except (TypeError, ValueError):
-            serialized = repr(raw)
-        if len(serialized) > _QUARANTINE_CLIP:
-            raw = _clip(serialized)
+            # Unserializable even as a dict: only its repr may ride the wire.
+            raw = _clip(repr(raw))
+        else:
+            if len(serialized) > _QUARANTINE_CLIP:
+                raw = _clip(serialized)
     return ResultError(
         kind=VFSErrorKind.internal,
         message=f"Quarantined malformed {what} from peer payload",

@@ -1100,6 +1100,20 @@ class StorageContract:
         assert result.success is False
         assert all(e.kind == VFSErrorKind.invalid for e in result.errors)
 
+    @needs("move")
+    async def test_move_duplicate_missing_source_classifies_the_miss(self, storage: ConformanceBackend) -> None:
+        # The miss outranks the batch-shape conflict: a duplicated source
+        # that never existed classifies not_found at each occurrence.
+        result = await storage.move(
+            operations=[
+                ResolvedPair(src=Path("/ghost"), dest=Path("/a")),
+                ResolvedPair(src=Path("/ghost"), dest=Path("/b")),
+            ]
+        )
+        assert result.success is False
+        assert [e.kind for e in result.errors] == [VFSErrorKind.not_found, VFSErrorKind.not_found]
+        assert {str(e.path) for e in result.errors} == {"/ghost"}
+
     @needs("write", "copy", "read")
     async def test_copy_allows_the_same_source_to_fan_out(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])

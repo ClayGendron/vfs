@@ -14,9 +14,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 
 import pytest
-from sqlalchemy import event, insert, select, text, update
+from sqlalchemy import create_engine, event, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError
@@ -38,7 +39,7 @@ from vfs.storage.backends.database.dialects import (
     membership_budget,
     profile_for,
 )
-from vfs.storage.backends.database.engine import EngineHost
+from vfs.storage.backends.database.engine import EngineHost, _install_sqlite_transaction_control
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
     _CLOBBER_COLUMNS,
@@ -53,6 +54,9 @@ from vfs.storage.backends.database.writes import (
     _upsert_layer,
 )
 from vfs.storage.replace import EditOperation
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncConnection
 
 
 def _url(tmp_path) -> str:
@@ -137,6 +141,20 @@ class TestDialectPolicy:
         host = storage._host
         assert host.parameter_budget == host.engine.dialect.insertmanyvalues_max_parameters
         assert host.parameter_budget >= 999
+
+    async def test_classify_failure_survives_a_raising_is_disconnect(self, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        host = storage._host
+
+        def broken(*args: object) -> bool:
+            raise RuntimeError("driver probe blew up")
+
+        monkeypatch.setattr(host._dialect, "is_disconnect", broken)
+        error = host.classify_failure(DBAPIError("SELECT 1", None, _SqliteError(5)), context="stat")
+        assert error.kind == VFSErrorKind.unavailable
+        assert error.retryable is True
+        await storage.close()
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +285,34 @@ class TestFirstTouch:
         await a.close()
         await b.close()
 
+    async def test_concurrent_ensure_ready_on_one_host_serves_both_waiters(self, tmp_path) -> None:
+        host = EngineHost(url=_url(tmp_path))
+        first, second = await asyncio.gather(host.ensure_ready(), host.ensure_ready())
+        assert first is None and second is None
+        assert host.mount_identity is not None
+        await host.close()
+
+    async def test_serialization_point_takes_the_postgres_advisory_lock(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        host = storage._host
+
+        class _RecordingConn:
+            def __init__(self) -> None:
+                self.statements: list[object] = []
+
+            async def execute(self, statement: object) -> None:
+                self.statements.append(statement)
+
+        conn = _RecordingConn()
+        await host._serialization_point(cast("AsyncConnection", conn))
+        assert conn.statements == []  # sqlite serializes via BEGIN IMMEDIATE, not a lock statement
+        host._profile = POSTGRESQL
+        await host._serialization_point(cast("AsyncConnection", conn))
+        assert len(conn.statements) == 1
+        assert "pg_advisory_xact_lock" in str(conn.statements[0])
+        await storage.close()
+
 
 # ---------------------------------------------------------------------------
 # Loops and close
@@ -346,6 +392,16 @@ class TestLifecycle:
         await storage.first_touch()
         await storage.close()
         await storage.close()
+
+    def test_sqlite_transaction_control_installs_once_per_engine(self) -> None:
+        # Two hosts borrowing one bind: the second install must be a no-op.
+        engine = create_engine("sqlite://")
+        _install_sqlite_transaction_control(engine, SQLITE)
+        installed = len(engine.pool.dispatch.checkout)  # ty: ignore[unresolved-attribute]
+        _install_sqlite_transaction_control(engine, SQLITE)
+        assert getattr(engine, "_vfs_sqlite_control", False) is True
+        assert len(engine.pool.dispatch.checkout) == installed  # ty: ignore[unresolved-attribute]
+        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -691,6 +747,26 @@ class TestReadFailureHandling:
             await host.with_retry(always_busy)
         await host.close()
 
+    async def test_write_failure_classifies_unavailable(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        async with storage._host.engine.begin() as conn:
+            await conn.exec_driver_sql("DROP TABLE vfs")
+        result = await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert result.errors[0].retryable is True
+        await storage.close()
+
+    async def test_unreachable_database_refuses_stub_verbs_classified(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/absent/vfs.sqlite")
+        result = await storage.grep(pattern="x")  # a stub verb still gates on first touch
+        assert result.ops == ("grep",)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert "First touch failed" in result.errors[0].message
+        await storage.close()
+
 
 class TestUnlandedVerbStubs:
     """Every undeclared verb refuses classified; capabilities stay honest."""
@@ -914,6 +990,39 @@ class TestWriteMechanics:
         assert made.success is False
         assert made.errors[0].kind == VFSErrorKind.unaddressable
         await storage.close()
+
+    async def test_edit_of_a_missing_target_classifies_at_the_failing_component(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        result = await storage.edit(edits=[EditOperation(old="a", new="b")], path=Path("/ghost/a.txt"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].path == "/ghost"
+        await storage.close()
+
+    async def test_unchanged_directory_observation_reads_back_its_bump(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        result = await storage.write(
+            entries=[Entry(path=Path("/d"), kind="directory"), Entry(path=Path("/d/f.txt"), content="x")]
+        )
+        assert result.success is True
+        observed = {str(o.path): o for o in result.observations}
+        assert observed["/d"].status == "unchanged"
+        stat = await storage.stat(path=Path("/d"))
+        assert observed["/d"].version == stat.observations[0].version == 2
+        await storage.close()
+
+    def test_stage_create_folds_a_repeat_target_into_one_row(self) -> None:
+        plan = WritePlan({}, user_id=None, budget=SQLITE.key_byte_budget)
+        target = Path("/f.txt")
+        plan.stage_create(target, kind="file", content="one", content_hash="h1", size_bytes=3, lines=1)
+        minted = plan.staged[target].entry_id
+        plan.stage_create(target, kind="file", content="two", content_hash="h2", size_bytes=3, lines=1)
+        assert list(plan.staged) == [target]
+        assert plan.staged[target].entry_id == minted
+        assert plan.staged[target].created is True
+        assert (plan.staged[target].content, plan.staged[target].content_hash) == ("two", "h2")
 
 
 class TestTrashWritability:
@@ -1287,6 +1396,103 @@ class TestArbitration:
             errors = await _update_materials(session, entry, budget, [stale], user_id=None, now=datetime.now(UTC))
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
         assert "Concurrent modification" in errors[0].message
+        await storage.close()
+
+    async def test_losing_create_without_overwrite_fails_the_batch(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        host = storage._host
+        profile = replace(host.profile, arbitration="catch_retry")
+        target = Path("/f.txt")
+
+        # Snapshot and plan while the site is vacant: a routine create.
+        async with host.session_factory() as reader:
+            committed = await _fetch_committed(reader, host.tables, host.membership_budget, {target})
+        mine = Entry(path=target, content="mine")
+        plan = WritePlan(committed, user_id=None, budget=profile.key_byte_budget)
+        status = plan.put_file(
+            target,
+            kind=mine.kind,
+            content=mine.content,
+            content_hash=mine.content_hash,
+            size_bytes=mine.size_bytes,
+            lines=mine.lines,
+            ext=mine.ext,
+            mime_type=mine.mime_type,
+            overwrite=False,
+            parents=False,
+        )
+        assert status == "created" and plan.errors == []
+        plan.pending.append((target, status))
+
+        # A rival lands between the snapshot and execution; without
+        # overwrite the losing create cannot clobber — the batch fails.
+        assert (await storage.write(entries=[Entry(path=target, content="rival")])).success is True
+
+        async with host.session_factory() as writer:
+            await writer.connection(execution_options={"vfs_writer": True})
+            result = await _finish(
+                writer,
+                host.tables,
+                profile,
+                host.parameter_budget,
+                host.membership_budget,
+                plan,
+                op="write",
+                overwrite=False,
+            )
+        assert result.success is False
+        assert [e.kind for e in result.errors] == [VFSErrorKind.exists]
+        assert (await storage.read(path=target)).observations[0].content == "rival"
+        await storage.close()
+
+    async def test_guarded_update_losing_its_row_fails_the_batch(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="v1")])
+        host = storage._host
+        target = Path("/f.txt")
+
+        # Snapshot at version 1 and stage a guarded update over it.
+        async with host.session_factory() as reader:
+            committed = await _fetch_committed(reader, host.tables, host.membership_budget, {target})
+        mine = Entry(path=target, content="mine")
+        plan = WritePlan(committed, user_id=None, budget=host.profile.key_byte_budget)
+        status = plan.put_file(
+            target,
+            kind=mine.kind,
+            content=mine.content,
+            content_hash=mine.content_hash,
+            size_bytes=mine.size_bytes,
+            lines=mine.lines,
+            ext=mine.ext,
+            mime_type=mine.mime_type,
+            overwrite=True,
+            parents=False,
+        )
+        assert status == "updated" and plan.errors == []
+        plan.pending.append((target, status))
+
+        # Two rival writes move the row past base + 1, so the read-back
+        # can attribute the guarded update's miss unambiguously.
+        assert (await storage.write(entries=[Entry(path=target, content="v2")])).success is True
+        assert (await storage.write(entries=[Entry(path=target, content="v3")])).success is True
+
+        async with host.session_factory() as writer:
+            await writer.connection(execution_options={"vfs_writer": True})
+            result = await _finish(
+                writer,
+                host.tables,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                plan,
+                op="write",
+                overwrite=True,
+            )
+        assert result.success is False
+        assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
+        assert "Concurrent modification" in result.errors[0].message
+        assert (await storage.read(path=target)).observations[0].content == "v3"
         await storage.close()
 
     def test_upsert_constructor_is_dialect_bound(self) -> None:

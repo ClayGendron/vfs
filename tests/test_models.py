@@ -109,6 +109,10 @@ class TestConstructionValidation:
         assert not dropped & set(Entry.model_fields)
         assert set(Entry.model_computed_fields) == {"parent_dir"}
 
+    def test_parent_dir_is_the_containing_directory(self) -> None:
+        assert Entry(path=Path("/a/b.txt"), content="x").parent_dir == Path("/a")
+        assert Entry(path=Path("/top.txt"), content="x").parent_dir == Path("/")
+
     def test_tool_and_skill_units_are_plain_directories(self) -> None:
         for path in (tool_path("clone-repo"), skill_path("pdf-processing")):
             entry = Entry(path=path)

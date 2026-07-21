@@ -313,6 +313,25 @@ async def test_remount_unknown_path_and_closed_table_raise() -> None:
         await fs.remount("/", permissions="read")
 
 
+async def test_remount_refuses_when_the_probed_mount_is_rebound_mid_flight(monkeypatch) -> None:
+    # refresh_caps probes capabilities() outside the lock; a rival
+    # rebinding the entry before the lock lands must refuse, not adopt.
+    fs = VirtualFileSystem(storage=BindableStorage())
+    child = RecorderStorage(name="child")
+    await fs.bind(child, "/m")
+    key = next(k for k in fs._bindings if str(k) == "/m")
+    rival = RecorderStorage(name="rival")
+    real = child.capabilities
+
+    def swap_binding() -> frozenset[Op]:
+        fs._bindings[key] = fs._bindings[key]._replace(storage=rival)
+        return real()
+
+    monkeypatch.setattr(child, "capabilities", swap_binding)
+    with pytest.raises(ValueError, match="changed while remounting"):
+        await fs.remount("/m", refresh_caps=True)
+
+
 async def test_no_overlay_remount_grandfathers_children_and_ratchets() -> None:
     fs = VirtualFileSystem(storage=BindableStorage())
     parent = BindableStorage(name="parent")

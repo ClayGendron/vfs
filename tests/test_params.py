@@ -50,6 +50,8 @@ GARBAGE = [
     ("read-non-str-column-item", lambda fs: fs.read("/f.txt", columns=frozenset({"path", 7}))),
     ("read-user-id", lambda fs: fs.read("/f.txt", user_id=123)),
     ("read-both-targets", lambda fs: fs.read("/f.txt", observations=[])),
+    ("stat-both-targets", lambda fs: fs.stat("/f.txt", observations=[])),
+    ("ls-both-targets", lambda fs: fs.ls("/f.txt", observations=[])),
     ("tree-bool-depth", lambda fs: fs.tree("/", max_depth=True)),
     ("tree-str-depth", lambda fs: fs.tree("/", max_depth="2")),
     ("tree-missing-path", lambda fs: fs.tree(None)),

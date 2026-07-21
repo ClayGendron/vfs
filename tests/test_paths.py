@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import posixpath
 import time
+from typing import cast
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -675,6 +676,14 @@ class TestParseKind:
     def test_trailing_dot(self):
         # file. has a dot at position > 0
         assert parse_kind(Path("/file.")) == "file"
+
+    def test_root_is_a_directory(self):
+        assert parse_kind(Path("/")) == "directory"
+
+    def test_degenerate_empty_name_fails_safe_to_directory(self):
+        # Out-of-contract input: not reserved, splits to an empty leaf —
+        # the guard classifies directory instead of joining the lottery.
+        assert parse_kind(cast("Path", "")) == "directory"
 
     # --- Dotfiles ---
 

@@ -12,6 +12,7 @@ rollup, and the zero-progress merge policy.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator, Mapping
 
 import pytest
 from pydantic import ValidationError
@@ -327,6 +328,61 @@ class TestWireLeniency:
             r = Result.from_payload(garbage)
             assert r.success is False
             assert r.errors[0].kind is VFSErrorKind.internal
+
+    def test_hostile_mapping_is_hopeless_never_raises(self) -> None:
+        # A Mapping whose iteration blows up reaches past the per-item
+        # quarantine; the outer boundary still returns, never raises.
+        class Hostile(Mapping):
+            def __getitem__(self, key: object) -> object:
+                raise RuntimeError("boom")
+
+            def __iter__(self) -> Iterator[str]:
+                raise RuntimeError("boom")
+
+            def __len__(self) -> int:
+                return 1
+
+        r = Result.from_payload(Hostile())
+        assert r.success is False
+        assert r.errors[0].kind is VFSErrorKind.internal
+        assert "boom" in (r.errors[0].data or {})["vfs.quarantine"]["reason"]
+
+    def test_single_item_payloads_are_wrapped_into_lists(self) -> None:
+        r = Result.from_payload(
+            {
+                "observations": {"path": "/one.txt", "kind": "file"},
+                "errors": {"kind": "vfs.timeout", "message": "slow"},
+            }
+        )
+        assert r.paths == ("/one.txt",)
+        assert [e.kind for e in r.errors] == [VFSErrorKind.timeout]
+
+    def test_oversized_string_item_quarantines_clipped(self) -> None:
+        r = Result.from_payload({"observations": ["x" * (2 * _QUARANTINE_CLIP)]})
+        [quarantine] = r.errors
+        kept = (quarantine.data or {})["vfs.quarantine"]["item"]
+        assert kept.endswith("…")
+        assert len(kept) == _QUARANTINE_CLIP + 1
+
+    def test_oversized_unserializable_item_is_kept_as_clipped_repr(self) -> None:
+        r = Result.from_payload({"observations": [{"path": object(), "pad": "y" * (2 * _QUARANTINE_CLIP)}]})
+        [quarantine] = r.errors
+        kept = (quarantine.data or {})["vfs.quarantine"]["item"]
+        assert isinstance(kept, str)
+        assert "object object at" in kept
+        assert kept.endswith("…")
+
+    def test_small_unserializable_item_still_becomes_a_string_and_survives_the_wire(self) -> None:
+        # Even under the clip budget, an unserializable item may not ride
+        # raw — the quarantine record itself must stay JSON-serializable.
+        r = Result.from_payload({"observations": [{"path": object()}]})
+        [quarantine] = r.errors
+        kept = (quarantine.data or {})["vfs.quarantine"]["item"]
+        assert isinstance(kept, str)
+        assert "object object at" in kept
+        assert not kept.endswith("…")
+        wire = json.loads(r.to_json())
+        assert wire["errors"][0]["data"]["vfs.quarantine"]["item"] == kept
 
     def test_reconciliation_synthesizes_the_missing_failure(self) -> None:
         r = Result.from_payload({"success": False, "observations": [], "errors": []})
