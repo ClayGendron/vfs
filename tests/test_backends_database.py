@@ -41,6 +41,7 @@ from vfs.storage.backends.database.dialects import (
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
+    _catch_retry_layer,
     _entry_values,
     _fetch_committed,
     _finish,
@@ -987,6 +988,46 @@ class TestArbitration:
         assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"
         again = await storage.write(entries=[Entry(path=Path("/bulk/d0/f007.txt"), content="y")])
         assert again.observations[0].status == "updated"
+        await storage.close()
+
+    async def test_conflicted_chunk_resolves_alone_not_the_layer(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f005.txt"), content="rival")])
+        entry = storage._host.tables.entry
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            root_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
+            rival_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/f005.txt"))).scalar_one()
+            now = datetime.now(UTC)
+            layer = [
+                StagedEntry(
+                    path=Path(f"/f{i:03}.txt"),
+                    parent=Path("/"),
+                    kind="file",
+                    created=True,
+                    entry_id=str(ULID()),
+                    content="mine",
+                )
+                for i in range(12)
+            ]
+            rows = [_entry_values(s, root_key, None, now) for s in layer]
+            statements.clear()
+            errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=True)
+        assert errors == []
+        assert layer[5].created is False and layer[5].entry_id == rival_key  # rival's row absorbed the write
+        assert all(s.created for i, s in enumerate(layer) if i != 5)
+        # One conflict re-drives its own 4-row chunk, never the 12-row layer:
+        # three chunk inserts, four row retries, one occupant probe.
+        inserts = [s for s in statements if s.startswith("INSERT INTO")]
+        probes = [s for s in statements if s.lstrip().startswith("SELECT")]
+        assert len(inserts) == 3 + 4, statements
+        assert len(probes) == 1, statements
         await storage.close()
 
     async def test_resolve_rows_converts_or_classifies_per_occupant(self, tmp_path) -> None:

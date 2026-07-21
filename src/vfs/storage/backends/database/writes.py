@@ -17,8 +17,8 @@ one transaction.
 
 Concurrent create arbitration follows the dialect's declared mode:
 ``upsert`` rides ``ON CONFLICT`` on the ``(parent_id, name)`` index,
-``catch_retry`` wraps the bulk insert in a savepoint and resolves each
-conflicting row individually. Versions are per-entry monotone values —
+``catch_retry`` inserts each chunk under its own savepoint and re-runs
+only a conflicted chunk row-by-row. Versions are per-entry monotone values —
 creation mints 1, every material write adds exactly one, and a parent
 bump adds one, all against the row's own current value. There is no
 per-mount counter, and no two entries' versions are comparable.
@@ -419,24 +419,29 @@ async def _catch_retry_layer(
     *,
     overwrite: bool,
 ) -> list[ResultError]:
-    """Portable arbitration: savepointed bulk insert, per-row resolution on conflict.
+    """Portable arbitration: savepoint per chunk, conflicted chunks re-run row-wise.
 
-    Engines whose live dialect declares multirow ``VALUES`` support take
-    the chunked ``INSERT ... VALUES (...), (...)`` fast path; the rest
-    (Oracle among them) take driver executemany. Identity is minted at
+    Engines whose live dialect declares multirow ``VALUES`` support the
+    ``INSERT ... VALUES (...), (...)`` fast path; the rest (Oracle among
+    them) take driver executemany. Each budget-sized chunk inserts under
+    its own savepoint, so a conflict rolls back and re-drives only its
+    chunk — O(conflicted chunks), never O(layer). Identity is minted at
     staging, so a clean insert learns nothing back.
     """
     multirow = session.get_bind().dialect.supports_multivalues_insert
-    try:
-        async with session.begin_nested():
-            if multirow:
-                for chunk in chunked(rows, per_statement):
-                    await session.execute(insert(entry).values(chunk))
-            else:
-                await session.execute(insert(entry), rows)
-    except IntegrityError:
-        return await _resolve_rows(session, entry, layer, rows, overwrite=overwrite)
-    return []
+    errors: list[ResultError] = []
+    for chunk in chunked(list(zip(layer, rows, strict=True)), per_statement):
+        chunk_rows = [values for _, values in chunk]
+        try:
+            async with session.begin_nested():
+                if multirow:
+                    await session.execute(insert(entry).values(chunk_rows))
+                else:
+                    await session.execute(insert(entry), chunk_rows)
+        except IntegrityError:
+            resolved = await _resolve_rows(session, entry, [s for s, _ in chunk], chunk_rows, overwrite=overwrite)
+            errors.extend(resolved)
+    return errors
 
 
 async def _resolve_rows(
@@ -447,7 +452,7 @@ async def _resolve_rows(
     *,
     overwrite: bool,
 ) -> list[ResultError]:
-    """Re-run a conflicted layer row-at-a-time, each insert in its own savepoint."""
+    """Re-run a conflicted chunk row-at-a-time, each insert in its own savepoint."""
     errors: list[ResultError] = []
     for staged, values in zip(layer, rows, strict=True):
         try:
