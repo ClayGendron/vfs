@@ -48,12 +48,12 @@ LIKE_ESCAPE: Final = "\\"
 
 
 async def classify_misses(
-    session: AsyncSession, entry: Table, targets: Sequence[Path], membership: int
+    session: AsyncSession, entry: Table, targets: Sequence[Path], membership_budget: int
 ) -> list[ResultError]:
     """Classify every missed *target*; one chunked ancestor query serves the batch."""
     ancestors = {ancestor for target in targets for ancestor in ancestor_chain(target)}
     kinds: dict[str, str] = {}
-    for chunk in chunked(sorted(ancestors), membership):
+    for chunk in chunked(sorted(ancestors), membership_budget):
         stmt = select(entry.c.path, entry.c.kind).where(entry.c.path.in_(chunk))
         kinds.update({row.path: row.kind for row in await session.execute(stmt)})
     return [_classify_miss(target, kinds) for target in targets]

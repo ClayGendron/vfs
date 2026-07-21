@@ -49,6 +49,26 @@ class StagedEntry:
     base_version: int | None = None  # the update guard; None = unguarded (arbitration clobber)
     version: int = 1  # creates mint 1; updates stage base + 1; clobbers learn theirs post-execution
 
+    def refresh_material(
+        self,
+        *,
+        kind: ObjectKind,
+        content: str | None,
+        content_hash: str | None,
+        size_bytes: int,
+        lines: int,
+        ext: str | None,
+        mime_type: str | None,
+    ) -> None:
+        """Replace material state, preserving identity and persistence bookkeeping."""
+        self.kind = kind
+        self.content = content
+        self.content_hash = content_hash
+        self.size_bytes = size_bytes
+        self.lines = lines
+        self.ext = ext
+        self.mime_type = mime_type
+
 
 # ---------------------------------------------------------------------------
 # Write plan
@@ -191,7 +211,15 @@ class WritePlan:
     ) -> None:
         prior = self.staged.get(path)
         if prior is not None:  # a repeat target folds into the one staged row
-            self._refresh(prior, kind, content, content_hash, size_bytes, lines, ext, mime_type)
+            prior.refresh_material(
+                kind=kind,
+                content=content,
+                content_hash=content_hash,
+                size_bytes=size_bytes,
+                lines=lines,
+                ext=ext,
+                mime_type=mime_type,
+            )
             return
         self.staged[path] = StagedEntry(
             path=path,
@@ -221,7 +249,15 @@ class WritePlan:
     ) -> None:
         prior = self.staged.get(path)
         if prior is not None:
-            self._refresh(prior, kind, content, content_hash, size_bytes, lines, ext, mime_type)
+            prior.refresh_material(
+                kind=kind,
+                content=content,
+                content_hash=content_hash,
+                size_bytes=size_bytes,
+                lines=lines,
+                ext=ext,
+                mime_type=mime_type,
+            )
             return
         row = self.committed[str(path)]
         self.staged[path] = StagedEntry(
@@ -249,22 +285,3 @@ class WritePlan:
         parent = path.parent_dir
         if parent not in self.staged and str(parent) in self.committed:
             self.bumps.add(str(parent))
-
-    def _refresh(
-        self,
-        prior: StagedEntry,
-        kind: ObjectKind,
-        content: str | None,
-        content_hash: str | None,
-        size_bytes: int,
-        lines: int,
-        ext: str | None,
-        mime_type: str | None,
-    ) -> None:
-        prior.kind = kind
-        prior.content = content
-        prior.content_hash = content_hash
-        prior.size_bytes = size_bytes
-        prior.lines = lines
-        prior.ext = ext
-        prior.mime_type = mime_type
