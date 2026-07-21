@@ -7,7 +7,7 @@ from typing import Union, get_args, get_origin
 from uuid import UUID
 
 import pytest
-from sqlalchemy import String, create_engine, insert, inspect, select
+from sqlalchemy import Engine, String, insert, inspect, select
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 from sqlalchemy.dialects.mssql import pymssql
 from sqlalchemy.dialects.mysql import mariadb
@@ -322,8 +322,7 @@ class TestTableNameBudget:
 
 
 class TestDDL:
-    def test_one_create_all_provisions_the_whole_family(self, tables: VFSTables) -> None:
-        engine = create_engine("sqlite://")
+    def test_one_create_all_provisions_the_whole_family(self, tables: VFSTables, engine: Engine) -> None:
         tables.metadata.create_all(engine)
         assert set(inspect(engine).get_table_names()) == set(tables.metadata.tables)
 
@@ -348,12 +347,11 @@ class TestDDL:
                 for index in table.indexes:
                     CreateIndex(index).compile(dialect=dialect)
 
-    def test_native_embedding_ddl_compiles_off_postgres(self) -> None:
+    def test_native_embedding_ddl_compiles_off_postgres(self, engine: Engine) -> None:
         native = build_vfs_tables(table_name="t", native_embedding=NativeEmbeddingConfig(dimension=8))
-        native.metadata.create_all(create_engine("sqlite://"))  # VectorType falls back to TEXT
+        native.metadata.create_all(engine)  # VectorType falls back to TEXT
 
-    def test_entry_splits_into_entries_plus_content_and_reads_back(self, tables: VFSTables) -> None:
-        engine = create_engine("sqlite://")
+    def test_entry_splits_into_entries_plus_content_and_reads_back(self, tables: VFSTables, engine: Engine) -> None:
         tables.metadata.create_all(engine)
         entry = Entry(path=Path("/docs/a.md"), content="hello")
         ulid = "0" * ULID_LENGTH
@@ -371,8 +369,7 @@ class TestDDL:
         assert "content" not in row
         assert body == "hello"
 
-    def test_meta_table_enforces_the_single_row(self, tables: VFSTables) -> None:
-        engine = create_engine("sqlite://")
+    def test_meta_table_enforces_the_single_row(self, tables: VFSTables, engine: Engine) -> None:
         tables.metadata.create_all(engine)
         row = {
             "id": 1,
@@ -384,8 +381,7 @@ class TestDDL:
         with pytest.raises(IntegrityError), engine.begin() as conn:
             conn.execute(insert(tables.meta), [{**row, "id": 2}])
 
-    def test_duplicate_names_under_one_parent_are_refused(self, tables: VFSTables) -> None:
-        engine = create_engine("sqlite://")
+    def test_duplicate_names_under_one_parent_are_refused(self, tables: VFSTables, engine: Engine) -> None:
         tables.metadata.create_all(engine)
         first = Entry(path=Path("/docs/a.md"), content="x")
         shared_parent = "2" * ULID_LENGTH

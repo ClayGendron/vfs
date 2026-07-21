@@ -69,10 +69,12 @@ def _url(tmp_path) -> str:
 
 
 class TestConstruction:
-    def test_url_and_session_factory_together_are_refused(self, tmp_path) -> None:
-        factory = async_sessionmaker(create_async_engine(_url(tmp_path)), expire_on_commit=False)
+    async def test_url_and_session_factory_together_are_refused(self, tmp_path) -> None:
+        engine = create_async_engine(_url(tmp_path))
+        factory = async_sessionmaker(engine, expire_on_commit=False)
         with pytest.raises(ValueError, match="exactly one"):
             DatabaseStorage(url=_url(tmp_path), session_factory=factory)
+        await engine.dispose()
 
     def test_neither_url_nor_session_factory_is_refused(self) -> None:
         with pytest.raises(ValueError, match="exactly one"):
