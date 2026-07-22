@@ -211,10 +211,9 @@ async def glob_rows(
     entry = tables.entry
     by_path = "/" in pattern
     subject_column = entry.c.path if by_path else entry.c.name
-    filters: list[ColumnElement[bool]] = [
-        entry.c.path != "/",
-        *liveness_filters(entry, include_meta=any(in_meta(s) for s in scope)),
-    ]
+    # Liveness is per scope arm, not per query: _glob_candidates applies
+    # the meta exclusion to every anchor except the meta-addressed ones.
+    filters: list[ColumnElement[bool]] = [entry.c.path != "/"]
     like = _glob_like(pattern)
     if like is not None:
         filters.append(subject_column.like(like, escape=LIKE_ESCAPE))
@@ -296,19 +295,44 @@ async def _glob_candidates(
     filters: list[ColumnElement[bool]],
     fetched: frozenset[str],
 ) -> list[RowMapping]:
-    """Prefiltered candidate rows in path order; scope anchors fan out chunked.
+    """Prefiltered candidate rows in path order, one scope arm per liveness class.
 
-    Each anchor costs two binds (equality + prefix LIKE), so chunks hold
-    ``membership_budget // 2`` anchors; the merge dict dedupes rows nested
-    anchors both match, and one Python sort restores path order —
-    codepoint order equals the binary-collated column's byte order.
+    The meta bypass is per-anchor: a meta-addressed anchor fans with the
+    exclusion lifted, while the default scope and every other anchor
+    (ROOT included) keep the ``/.vfs`` subtree hidden. The merge dict
+    dedupes rows nested anchors both match, and one Python sort restores
+    path order — codepoint order equals the binary-collated byte order.
     """
     columns = _entry_columns(entry, fetched)
-    if not scope or ROOT in scope:
-        stmt = select(*columns).where(*filters).order_by(entry.c.path)
-        return list((await session.execute(stmt)).mappings())
+    live = [anchor for anchor in scope if not in_meta(anchor)]
+    meta = [anchor for anchor in scope if in_meta(anchor)]
+    hidden = [*filters, *liveness_filters(entry, include_meta=False)]
     merged: dict[str, RowMapping] = {}
-    for chunk in chunked(sorted({str(anchor) for anchor in scope}), max(1, membership_budget // 2)):
+    if not scope or ROOT in live:
+        stmt = select(*columns).where(*hidden)
+        merged.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
+    elif live:
+        await _anchor_fan(session, entry, membership_budget, columns, hidden, live, merged)
+    if meta:
+        await _anchor_fan(session, entry, membership_budget, columns, filters, meta, merged)
+    return [merged[path] for path in sorted(merged)]
+
+
+async def _anchor_fan(
+    session: AsyncSession,
+    entry: Table,
+    membership_budget: int,
+    columns: list[Column[object]],
+    filters: list[ColumnElement[bool]],
+    anchors: Sequence[Path],
+    merged: dict[str, RowMapping],
+) -> None:
+    """One liveness class's chunked anchor fan, merged into *merged*.
+
+    Each anchor costs two binds (equality + prefix LIKE), so chunks hold
+    ``membership_budget // 2`` anchors.
+    """
+    for chunk in chunked(sorted({str(anchor) for anchor in anchors}), max(1, membership_budget // 2)):
         fan = or_(
             *(
                 or_(
@@ -320,7 +344,6 @@ async def _glob_candidates(
         )
         result = await session.execute(select(*columns).where(*filters, fan))
         merged.update({mapping["path"]: mapping for mapping in result.mappings()})
-    return [merged[path] for path in sorted(merged)]
 
 
 async def _miss_errors(

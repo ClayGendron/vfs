@@ -33,6 +33,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
+from vfs.storage.backends.database.dialects import op_execution_options
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, targets_of, tree_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
@@ -339,13 +340,19 @@ class DatabaseStorage:
     # -------------------------------------------------------------------
 
     async def _execute(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
-        """One op = one session under retry; failures come back classified."""
+        """One op = one session under retry; failures come back classified.
+
+        A declared op-isolation pin is stamped on the connection up front
+        so every chunked statement observes one committed snapshot.
+        """
         refusal = await self._host.ensure_ready()
         if refusal is not None:
             return Result(ops=(op,), errors=[refusal])
 
         async def attempt() -> Result:
             async with self._host.session_factory() as session:
+                if options := op_execution_options(self._host.profile, writer=False):
+                    await session.connection(execution_options=options)
                 return await fn(session)
 
         try:
@@ -370,7 +377,7 @@ class DatabaseStorage:
 
         async def attempt() -> Result:
             async with self._host.session_factory() as session:
-                await session.connection(execution_options={"vfs_writer": True})
+                await session.connection(execution_options=op_execution_options(self._host.profile, writer=True))
                 result = await fn(session)
                 if result.success:
                     await session.commit()

@@ -236,7 +236,10 @@ class EngineHost:
         async with self.session_factory() as session:
             # Writers carry the vfs_writer option: SQLite's begin listener
             # upgrades their BEGIN to IMMEDIATE (the W7 lock discipline).
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            options: dict[str, str | bool] = {"vfs_writer": True}
+            if self.profile.topology_isolation is not None:
+                options["isolation_level"] = self.profile.topology_isolation
+            conn = await session.connection(execution_options=options)
             await self._serialization_point(conn)
             # DDL joins the serialized transaction where the engine keeps
             # DDL transactional (SQLite/Postgres/MSSQL); elsewhere the

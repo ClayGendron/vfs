@@ -127,6 +127,22 @@ def profile_for(dialect_name: str) -> DialectProfile:
     return replace(GENERIC, name=dialect_name)
 
 
+def op_execution_options(profile: DialectProfile, *, writer: bool) -> dict[str, str | bool]:
+    """Execution options for one op's connection: writer marker, isolation pin.
+
+    Multi-statement verbs must observe a single committed snapshot, so a
+    declared ``op_isolation`` is stamped on every op connection. Empty
+    when nothing is declared — read ops on engines whose default is the
+    declared choice keep their lazy connection checkout.
+    """
+    options: dict[str, str | bool] = {}
+    if writer:
+        options["vfs_writer"] = True
+    if profile.op_isolation is not None:
+        options["isolation_level"] = profile.op_isolation
+    return options
+
+
 # ---------------------------------------------------------------------------
 # Statement chunking — membership predicates never outgrow an engine
 # ---------------------------------------------------------------------------

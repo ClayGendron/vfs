@@ -30,6 +30,7 @@ from vfs.paths import ObjectKind, Path
 from vfs.results import ResultError, VFSErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import (
     GENERIC,
     MSSQL,
@@ -37,6 +38,7 @@ from vfs.storage.backends.database.dialects import (
     SQLITE,
     is_retryable,
     membership_budget,
+    op_execution_options,
     profile_for,
     rows_per_statement,
 )
@@ -145,6 +147,40 @@ class TestDialectPolicy:
         assert host.parameter_budget == host.engine.dialect.insertmanyvalues_max_parameters
         assert host.parameter_budget >= 999
 
+    def test_op_execution_options_stamp_the_declared_isolation_pin(self) -> None:
+        assert op_execution_options(POSTGRESQL, writer=False) == {"isolation_level": "REPEATABLE READ"}
+        assert op_execution_options(POSTGRESQL, writer=True) == {
+            "vfs_writer": True,
+            "isolation_level": "REPEATABLE READ",
+        }
+        # No pin declared: readers keep the empty-options lazy checkout.
+        assert op_execution_options(SQLITE, writer=False) == {}
+        assert op_execution_options(SQLITE, writer=True) == {"vfs_writer": True}
+        assert op_execution_options(GENERIC, writer=False) == {}
+
+    async def test_ops_apply_a_declared_op_isolation_pin(self, tmp_path, monkeypatch) -> None:
+        # SERIALIZABLE is a level the SQLite dialect accepts, so the
+        # stamped connection exercises the same wiring a Postgres pin takes.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
+        host = storage._host
+        monkeypatch.setattr(host, "_profile", replace(host.profile, op_isolation="SERIALIZABLE"))
+        stamped: list[dict[str, object]] = []
+        original = AsyncSession.connection
+
+        async def spy(self: AsyncSession, **kwargs: object) -> AsyncConnection:
+            stamped.append(dict(cast("dict[str, object]", kwargs.get("execution_options") or {})))
+            return await original(self, **kwargs)  # ty: ignore[invalid-argument-type]
+
+        monkeypatch.setattr(AsyncSession, "connection", spy)
+        read = await storage.read(path=Path("/f.txt"))
+        assert read.observations[0].content == "x"
+        write = await storage.write(entries=[Entry(path=Path("/g.txt"), content="y")], overwrite=True)
+        assert write.success is True
+        assert {"isolation_level": "SERIALIZABLE"} in stamped  # the read op
+        assert {"vfs_writer": True, "isolation_level": "SERIALIZABLE"} in stamped  # the write op
+        await storage.close()
+
     async def test_classify_failure_survives_a_raising_is_disconnect(self, tmp_path, monkeypatch) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
@@ -166,6 +202,16 @@ class TestDialectPolicy:
 
 
 class TestFirstTouch:
+    async def test_first_touch_applies_a_declared_topology_isolation_pin(self, tmp_path, monkeypatch) -> None:
+        # SERIALIZABLE is a level the SQLite dialect accepts, so the pinned
+        # provisioning transaction exercises the same wiring a real pin takes.
+        pinned = replace(SQLITE, topology_isolation="SERIALIZABLE")
+        monkeypatch.setattr(engine_module, "profile_for", lambda _name: pinned)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.first_touch()).success is True
+        assert storage._host.profile.topology_isolation == "SERIALIZABLE"
+        await storage.close()
+
     async def test_provisions_meta_and_root_rows(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         result = await storage.first_touch()
@@ -635,6 +681,17 @@ class TestReadFamily:
         assert [o.path for o in result.observations] == ["/da_a.txt"]
         await storage.close()
 
+    async def test_anchor_escaping_bounds_tree_and_scoped_glob(self, tmp_path) -> None:
+        # The anchor-side LIKE is the sole subtree filter for both verbs:
+        # a metacharacter in a directory name must not widen the scope.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/da_a/x.txt", "file", "in"), ("/daxa/y.txt", "file", "out")])
+        subtree = await storage.tree(path=Path("/da_a"))
+        assert [str(o.path) for o in subtree.observations] == ["/da_a/x.txt"]
+        scoped = await storage.glob(pattern="*", paths=(Path("/da_a"),))
+        assert [str(o.path) for o in scoped.observations] == ["/da_a", "/da_a/x.txt"]
+        await storage.close()
+
 
 class TestNamespaceScopes:
     """The meta-scope liveness filter: hidden by default, served when anchored."""
@@ -675,6 +732,17 @@ class TestNamespaceScopes:
         listing = await storage.ls(observations=batch)
         assert listing.success is True
         assert [str(o.path) for o in listing.observations] == ["/real.txt", "/.vfs/docs", "/.vfs/trash"]
+
+    async def test_glob_meta_bypass_is_per_anchor_not_query_wide(self, storage: DatabaseStorage) -> None:
+        # ROOT plus a meta anchor: the meta arm serves only its own
+        # subtree — /.vfs itself and sibling meta trees stay hidden.
+        result = await storage.glob(pattern="*", paths=(Path("/"), Path("/.vfs/trash")))
+        assert [str(o.path) for o in result.observations] == [
+            "/.vfs/trash",
+            "/.vfs/trash/bucket",
+            "/.vfs/trash/bucket/01ARZ",
+            "/real.txt",
+        ]
 
     async def test_trash_serves_beside_other_meta_children_when_anchored(self, storage: DatabaseStorage) -> None:
         # Trash is an ordinary meta subtree: an ls of /.vfs lists it.
