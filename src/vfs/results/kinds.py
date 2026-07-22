@@ -260,4 +260,4 @@ def kind_family(kind: VFSErrorKind | str) -> VFSErrorKind | None:
             return VFSErrorKind(value)
         if "." not in value:
             return None
-        value = value.rsplit(".", 1)[0]
+        value, _ = value.rsplit(".", 1)

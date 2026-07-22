@@ -112,6 +112,7 @@ def raise_if_failed(result: Result) -> Result:
     if result.success:
         return result
     excs = [exception_for_kind(e.kind)(e.message, result) for e in result.failures]
-    if len(excs) == 1:
-        raise excs[0]
+    match excs:
+        case [lone]:
+            raise lone
     raise ExceptionGroup("multiple VFS errors", excs)

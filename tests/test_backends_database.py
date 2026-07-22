@@ -38,6 +38,7 @@ from vfs.storage.backends.database.dialects import (
     is_retryable,
     membership_budget,
     profile_for,
+    rows_per_statement,
 )
 from vfs.storage.backends.database.engine import EngineHost, _install_sqlite_transaction_control
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
@@ -980,6 +981,20 @@ class TestWriteMechanics:
         assert owner == "bob"
         await storage.close()
 
+    async def test_overwrite_preserves_entry_identity(self, tmp_path) -> None:
+        # Durable references (versions, chunks, edges) hang off entry_id:
+        # an overwrite must update the row in place, never re-mint it.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")])
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            minted = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/f.txt"))).scalar_one()
+        assert (await storage.write(entries=[Entry(path=Path("/f.txt"), content="b")])).success is True
+        async with storage._host.engine.connect() as conn:
+            rows = (await conn.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.path == "/f.txt"))).all()
+        assert rows == [(minted, 2)]  # same row, only the version moved
+        await storage.close()
+
     async def test_over_key_byte_budget_classifies_unaddressable(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
@@ -1518,6 +1533,13 @@ class TestMembershipChunking:
         assert membership_budget(MSSQL, 2_099) == 2_099 - 32
         # Degenerate budgets never chunk below one element.
         assert membership_budget(GENERIC, 8) == 1
+
+    def test_rows_per_statement_divides_by_the_widest_row(self) -> None:
+        narrow = {"entry_id": "e1", "path": "/a"}
+        wide = narrow | {"kind": "file", "version": 1}
+        assert rows_per_statement(100, [narrow, wide]) == 100 // len(wide)
+        # A budget narrower than one row still makes progress row-wise.
+        assert rows_per_statement(2, [wide]) == 1
 
     async def test_tiny_budget_batch_survives_every_verb(self, tmp_path, monkeypatch) -> None:
         # Budget 48 → membership 16: far below the batch size, so every

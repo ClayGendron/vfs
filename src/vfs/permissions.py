@@ -166,6 +166,13 @@ class _Resolution(NamedTuple):
     rule_prefix: str | None  # None when only the default applied
 
 
+class _Override(NamedTuple):
+    """One normalized override rule: a directory prefix and its permission."""
+
+    path: str
+    permission: Permission
+
+
 @dataclass(frozen=True, slots=True)
 class PermissionMap:
     """Default permission plus directory-prefix overrides.
@@ -184,7 +191,7 @@ class PermissionMap:
     overrides: tuple[tuple[str, Permission], ...] = field(default=())
 
     def __post_init__(self) -> None:
-        normalized: list[tuple[str, Permission]] = []
+        normalized: list[_Override] = []
         seen: set[str] = set()
         for raw_path, perm in self.overrides:
             path = normalize_path(raw_path)
@@ -195,8 +202,8 @@ class PermissionMap:
                 msg = f"Duplicate override path: {path!r}"
                 raise ValueError(msg)
             seen.add(path)
-            normalized.append((path, validate_permission(perm)))
-        normalized.sort(key=lambda kv: len(kv[0]), reverse=True)
+            normalized.append(_Override(path, validate_permission(perm)))
+        normalized.sort(key=lambda override: len(override.path), reverse=True)
         object.__setattr__(self, "overrides", tuple(normalized))
         object.__setattr__(self, "default", validate_permission(self.default))
 
@@ -319,9 +326,9 @@ def check_writable(
     """
     if op not in MUTATING_OPS:
         return None
-    candidates = _permission_candidates(rel)
-    resolved = permission_map._resolve(candidates[0])
-    for candidate in candidates[1:]:
+    first, *rest = _permission_candidates(rel)
+    resolved = permission_map._resolve(first)
+    for candidate in rest:
         alternate = permission_map._resolve(candidate)
         if alternate.rule_prefix is None:
             continue

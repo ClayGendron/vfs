@@ -231,7 +231,13 @@ def already_exists(path: Path) -> ResultError:
 
 def is_a_directory(path: Path) -> ResultError:
     """The one construction of the directory-occupant ``wrong_kind``."""
-    return classified(VFSErrorKind.wrong_kind, f"Is a directory: {path}", path)
+    return is_a("directory", path)
+
+
+def is_a(kind: str, path: Path) -> ResultError:
+    """The ``wrong_kind`` naming the occupant's actual *kind*, article and all."""
+    article = "an" if kind.startswith(("a", "e", "i", "o", "u")) else "a"
+    return classified(VFSErrorKind.wrong_kind, f"Is {article} {kind}: {path}", path)
 
 
 def validation_message(exc: ValidationError) -> str:
@@ -319,7 +325,10 @@ class Result(BaseModel):
     @property
     def op(self) -> str | None:
         """The sole producing op, or ``None`` for a cross-op merge."""
-        return self.ops[0] if len(self.ops) == 1 else None
+        match self.ops:
+            case (sole,):
+                return sole
+        return None
 
     @property
     def failures(self) -> list[ResultError]:
@@ -347,15 +356,16 @@ class Result(BaseModel):
 
     def first(self) -> Observation | None:
         """First observation, or ``None`` if empty."""
-        return self.observations[0] if self.observations else None
+        return next(iter(self.observations), None)
 
     def one(self) -> Observation:
         """The sole observation. Raises ``ValueError`` unless exactly one row."""
-        if len(self.observations) != 1:
-            fn = f" (op={self.op!r})" if self.op else ""
-            msg = f"expected exactly one observation, got {len(self.observations)}{fn}"
-            raise ValueError(msg)
-        return self.observations[0]
+        match self.observations:
+            case [sole]:
+                return sole
+        fn = f" (op={self.op!r})" if self.op else ""
+        msg = f"expected exactly one observation, got {len(self.observations)}{fn}"
+        raise ValueError(msg)
 
     # -------------------------------------------------------------------
     # Sequence protocol
@@ -738,7 +748,7 @@ class Result(BaseModel):
             groups.setdefault((str(e.kind), str(e.severity), e.retryable), []).append(e)
         rolled: list[ResultError] = []
         for members in groups.values():
-            head, tail = members[0], members[1:]
+            head, *tail = members
             rolled.append(head)
             if tail:
                 sources = [str(e.source) for e in tail if e.source is not None]

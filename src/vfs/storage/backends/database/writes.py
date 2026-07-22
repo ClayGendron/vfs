@@ -37,7 +37,7 @@ from sqlalchemy.exc import IntegrityError
 from vfs.models import Entry, Observation
 from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, is_a_directory
 from vfs.storage.backends.database.descent import ancestor_chain, classify_misses
-from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.dialects import chunked, rows_per_statement
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.editing import CONTENT_KINDS, edited_entry
 
@@ -345,7 +345,7 @@ async def _insert_creates(
     for depth in sorted(by_depth):
         layer = by_depth[depth]
         rows = [_entry_values(s, plan.parent_id_of(s), plan.user_id, now) for s in layer]
-        per_statement = max(1, parameter_budget // len(rows[0]))
+        per_statement = rows_per_statement(parameter_budget, rows)
         if profile.arbitration == "upsert":
             errors = await _upsert_layer(session, entry, profile, layer, rows, per_statement, overwrite=overwrite)
         else:

@@ -49,6 +49,15 @@ def normalize_line_endings(text: str) -> str:
     return text.replace("\r\n", "\n")
 
 
+def _split_dropping_trailing_blank(text: str) -> list[str]:
+    """Split on newlines, dropping the empty line a trailing newline leaves."""
+    lines = text.split("\n")
+    tail = lines.pop()
+    if tail:
+        lines.append(tail)
+    return lines
+
+
 def levenshtein(a: str, b: str) -> int:
     """Calculate Levenshtein distance between two strings."""
     if a == "" or b == "":
@@ -120,10 +129,7 @@ def simple_replacer(content: str, find: str) -> Generator[Match]:
 def line_trimmed_replacer(content: str, find: str) -> Generator[Match]:
     """Match lines after stripping whitespace from each line."""
     content_lines = content.split("\n")
-    find_lines = find.split("\n")
-
-    if find_lines and find_lines[-1] == "":
-        find_lines.pop()
+    find_lines = _split_dropping_trailing_blank(find)
 
     if not find_lines:
         return
@@ -161,19 +167,12 @@ MULTIPLE_CANDIDATES_THRESHOLD = 0.3
 def block_anchor_replacer(content: str, find: str) -> Generator[Match]:
     """Match blocks using first/last lines as anchors with fuzzy middle matching."""
     content_lines = content.split("\n")
-    find_lines = find.split("\n")
+    find_lines = _split_dropping_trailing_blank(find)
 
     if len(find_lines) < 3:
         return
 
-    if find_lines and find_lines[-1] == "":
-        find_lines.pop()
-
-    if len(find_lines) < 3:
-        return
-
-    first_line = find_lines[0].strip()
-    last_line = find_lines[-1].strip()
+    first_line, *_, last_line = (line.strip() for line in find_lines)
 
     candidates: list[tuple[int, int]] = []
     for i in range(len(content_lines)):
@@ -222,7 +221,7 @@ def block_anchor_replacer(content: str, find: str) -> Generator[Match]:
         )
 
     if len(candidates) == 1:
-        start_line, end_line = candidates[0]
+        [(start_line, end_line)] = candidates
         similarity = calculate_similarity(start_line, end_line)
         if similarity >= SINGLE_CANDIDATE_THRESHOLD:
             yield make_match(start_line, end_line, similarity)
@@ -238,7 +237,8 @@ def block_anchor_replacer(content: str, find: str) -> Generator[Match]:
             best_match = (start_line, end_line)
 
     if best_similarity >= MULTIPLE_CANDIDATES_THRESHOLD and best_match:
-        yield make_match(best_match[0], best_match[1], best_similarity)
+        best_start, best_end = best_match
+        yield make_match(best_start, best_end, best_similarity)
 
 
 # Replacers in priority order
@@ -289,7 +289,7 @@ def replace(
         if not matches:
             continue
 
-        method = matches[0].method
+        method = next(iter(matches)).method
         is_exact = method == "exact"
 
         if replace_all and not is_exact:
@@ -310,13 +310,13 @@ def replace(
             )
 
         if len(matches) == 1:
-            match = matches[0]
-            new_content = content[: match.start] + new_string + content[match.end :]
+            [sole] = matches
+            new_content = content[: sole.start] + new_string + content[sole.end :]
             return ReplaceResult(
                 success=True,
                 content=new_content,
                 method_used=method,
-                matches=[match],
+                matches=[sole],
             )
 
         match_info = []

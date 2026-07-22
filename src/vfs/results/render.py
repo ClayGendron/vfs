@@ -292,7 +292,7 @@ def _render_read(result: Result, projection: tuple[str, ...]) -> str:
         # If the caller asks for more than content, fall back to block format.
         return _render_block(result, projection)
     if len(result.observations) == 1:
-        return result.observations[0].content or ""
+        return result.one().content or ""
     blocks = [f"==> {o.path} <==\n{o.content or ''}" for o in sorted(result.observations, key=lambda x: x.path)]
     return "\n\n".join(blocks)
 
@@ -437,7 +437,7 @@ def _render_action(result: Result) -> str:
     if count == 0:
         return "No changes"
     if count == 1:
-        return f"{verb} {result.observations[0].path}"
+        return f"{verb} {result.one().path}"
     return f"{verb} {count} paths"
 
 
@@ -499,7 +499,7 @@ def _render_write_success(observations: list[Observation]) -> str:
 
     summary = "write success: " + ", ".join(parts)
     if len(files) == 1:
-        o = files[0]
+        [o] = files
         return f"{summary}\n\n  {o.status or 'created'} {o.path}"
     return summary
 

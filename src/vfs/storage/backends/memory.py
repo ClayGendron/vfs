@@ -44,6 +44,7 @@ from vfs.results import (
     VFSErrorKind,
     already_exists,
     classified,
+    is_a,
     is_a_directory,
     validation_message,
 )
@@ -132,8 +133,7 @@ class InMemoryStorage:
             if row.kind not in CONTENT_KINDS:
                 # The prose names the row's actual kind — a directly
                 # addressed edge row is not a directory.
-                article = "an" if row.kind[0] in "aeiou" else "a"
-                errors.append(classified(VFSErrorKind.wrong_kind, f"Is {article} {row.kind}: {target}", target))
+                errors.append(is_a(row.kind, target))
                 continue
             rows.append(self._observe(target, row, content=True))
         return Result(ops=("read",), observations=rows, errors=errors)

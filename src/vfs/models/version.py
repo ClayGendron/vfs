@@ -137,8 +137,11 @@ class Version(BaseModel):
         """
         eligible = (row for row in versions if row.number <= target_version)
         ordered = sorted(eligible, key=lambda row: row.number)
-        if not ordered or ordered[-1].number != target_version:
-            msg = f"Missing version row for v{target_version}"
+        msg = f"Missing version row for v{target_version}"
+        if not ordered:
+            raise ValueError(msg)
+        *_, target_row = ordered
+        if target_row.number != target_version:
             raise ValueError(msg)
 
         snapshot_index = next((i for i in range(len(ordered) - 1, -1, -1) if ordered[i].is_snapshot), None)
@@ -148,7 +151,7 @@ class Version(BaseModel):
 
         chain = [(row.is_snapshot, row.stored_payload()) for row in ordered[snapshot_index:]]
         reconstructed = reconstruct_version(chain)
-        expected_hash = ordered[-1].content_hash
+        expected_hash = target_row.content_hash
         actual_hash = hashlib.sha256(reconstructed.encode()).hexdigest()
         if actual_hash != expected_hash:
             msg = f"Hash mismatch for v{target_version}"

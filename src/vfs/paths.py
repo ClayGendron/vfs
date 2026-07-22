@@ -226,7 +226,7 @@ class Path(str):
     @property
     def name(self) -> str:
         """Leaf segment (mirrors ``VFSEntry.name``)."""
-        return split_path(self)[1]
+        return split_path(self).name
 
     @property
     def kind(self) -> ObjectKind:
@@ -411,7 +411,7 @@ class RelativePath(str):
     @property
     def name(self) -> str:
         """Leaf segment (mirrors :attr:`Path.name`)."""
-        return self.rsplit("/", 1)[-1]
+        return posixpath.basename(self)
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -606,7 +606,7 @@ def skill_manifest_path(name: str) -> Path:
 
 def compute_parent_dir(path: Path) -> Path:
     """Return the literal parent directory used by the projected namespace."""
-    return split_path(path)[0]
+    return split_path(path).directory
 
 
 def parse_kind(path: Path) -> ObjectKind:
@@ -652,8 +652,8 @@ def is_reserved_directory(path: Path) -> bool:
         return True
     if not path.startswith(AGENTS_ROOT + "/"):
         return False
-    segments = path[len(AGENTS_ROOT) + 1 :].split("/")
-    return len(segments) <= 2 and segments[0] in AGENT_FAMILIES
+    family, *unit = path[len(AGENTS_ROOT) + 1 :].split("/")
+    return len(unit) <= 1 and family in AGENT_FAMILIES
 
 
 def extract_extension(path: Path) -> str | None:
@@ -673,12 +673,19 @@ def extract_extension(path: Path) -> str | None:
     return ext
 
 
-def split_path(path: Path) -> tuple[Path, str]:
+class SplitPath(NamedTuple):
+    """A canonical path decomposed into its directory and leaf name."""
+
+    directory: Path
+    name: str
+
+
+def split_path(path: Path) -> SplitPath:
     """Split a path into ``(directory, name)``, the directory re-minted as ``Path``."""
     if path == "/":
-        return Path("/"), ""
+        return SplitPath(Path("/"), "")
     directory, name = posixpath.split(path)
-    return Path(directory), name
+    return SplitPath(Path(directory), name)
 
 
 def is_meta_path(path: Path) -> bool:

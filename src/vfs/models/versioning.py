@@ -59,10 +59,11 @@ def compute_diff(old: str, new: str) -> str:
         return ""
     out: list[str] = []
     for line in raw:
-        out.append(line)
-        if line and line[0] in ("+", "-", " ") and not line.endswith("\n"):
-            out[-1] = line + "\n"
+        if line.startswith(("+", "-", " ")) and not line.endswith("\n"):
+            out.append(line + "\n")
             out.append(_NO_NEWLINE_MARKER)
+        else:
+            out.append(line)
     return "".join(out)
 
 
@@ -75,7 +76,7 @@ def apply_diff(base: str, diff: str) -> str:
     if not patch:
         return base
 
-    patched_file = patch[0]
+    patched_file, *_ = patch
     source_lines = base.splitlines(keepends=True)
     result_lines = list(source_lines)
 
@@ -85,12 +86,8 @@ def apply_diff(base: str, diff: str) -> str:
 
         for line in hunk:
             if line.line_type == LINE_TYPE_NO_NEWLINE:
-                if (
-                    prev_line_type in (LINE_TYPE_CONTEXT, LINE_TYPE_ADDED)
-                    and new_lines
-                    and new_lines[-1].endswith("\n")
-                ):
-                    new_lines[-1] = new_lines[-1][:-1]
+                if prev_line_type in (LINE_TYPE_CONTEXT, LINE_TYPE_ADDED) and new_lines:
+                    new_lines.append(new_lines.pop().removesuffix("\n"))
                 prev_line_type = line.line_type
                 continue
 
@@ -128,13 +125,13 @@ def reconstruct_version(versions_asc: list[tuple[bool, str]]) -> str:
     if not versions_asc:
         return ""
 
-    first_is_snap, content = versions_asc[0]
+    (first_is_snap, content), *rest = versions_asc
     if not first_is_snap:
         msg = "First entry must be a snapshot"
         raise ValueError(msg)
 
     result = content
-    for is_snap, stored in versions_asc[1:]:
+    for is_snap, stored in rest:
         result = stored if is_snap else apply_diff(result, stored)
 
     return result

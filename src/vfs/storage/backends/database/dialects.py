@@ -26,7 +26,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Final, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
 # ---------------------------------------------------------------------------
 # Profiles
@@ -154,6 +154,15 @@ def chunked[T](items: Sequence[T], size: int) -> Iterator[Sequence[T]]:
         yield items[index : index + step]
 
 
+def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object]]) -> int:
+    """Rows one multi-row statement may carry: the budget over the widest row.
+
+    The floor of one row keeps a pathological budget (narrower than a
+    single row) making progress instead of stalling ``chunked``.
+    """
+    return max(1, parameter_budget // max(len(row) for row in rows))
+
+
 # ---------------------------------------------------------------------------
 # Retryable-error classification
 # ---------------------------------------------------------------------------
@@ -178,16 +187,20 @@ def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# SQLSTATE codes are exactly five characters (ISO/IEC 9075).
+_SQLSTATE_LENGTH: Final = 5
+
+
 def _sqlstate_of(origin: object) -> str | None:
-    """The five-character SQLSTATE of a driver exception, if it carries one.
+    """The SQLSTATE of a driver exception, if it carries one.
 
     asyncpg and psycopg expose ``sqlstate``, psycopg2 ``pgcode``; pyodbc
-    puts the SQLSTATE (not text) in ``args[0]``.
+    puts the SQLSTATE (not text) first in ``args``.
     """
     state = getattr(origin, "sqlstate", None) or getattr(origin, "pgcode", None)
     if isinstance(state, str):
         return state
-    args = getattr(origin, "args", ())
-    if args and isinstance(args[0], str) and len(args[0]) == 5:
-        return args[0]
+    first = next(iter(getattr(origin, "args", ())), None)
+    if isinstance(first, str) and len(first) == _SQLSTATE_LENGTH:
+        return first
     return None

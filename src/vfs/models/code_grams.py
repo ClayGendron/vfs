@@ -235,7 +235,8 @@ def _pure_literal_text(ast: list) -> str | None:
             parts.append(char)
             continue
         if op is sre_constants.SUBPATTERN:
-            inner = _pure_literal_text(list(arg[3]))
+            _group, _add_flags, _del_flags, subpattern = arg
+            inner = _pure_literal_text(list(subpattern))
             if inner is None:
                 return None
             parts.append(inner)
@@ -360,19 +361,17 @@ def _query_from_ast(ast: list) -> GramQuery:
     Top-level alternation is split here. Otherwise, required grams are
     collected from guaranteed literal runs.
     """
-    # Detect top-level alternation: the AST is exactly ``[(BRANCH, (None, [
-    # branch1, branch2, ... ]))]``.
-    if len(ast) == 1 and ast[0][0] is sre_constants.BRANCH:
-        # A parsed BRANCH always holds two or more alternatives.
-        _none, branches = ast[0][1]
-        compiled: list[GramQuery] = []
-        for branch in branches:
-            sub = _query_from_ast(list(branch))
-            if isinstance(sub, GramAny):
-                # An OR with an unconstrained branch is unconstrained.
-                return GramAny()
-            compiled.append(sub)
-        return GramOr(tuple(compiled))
+    # A parsed BRANCH always holds two or more alternatives.
+    match ast:
+        case [(sre_constants.BRANCH, (None, branches))]:
+            compiled: list[GramQuery] = []
+            for branch in branches:
+                sub = _query_from_ast(list(branch))
+                if isinstance(sub, GramAny):
+                    # An OR with an unconstrained branch is unconstrained.
+                    return GramAny()
+                compiled.append(sub)
+            return GramOr(tuple(compiled))
 
     grams = _grams_from_runs(_collect_runs(ast))
     if not grams:
