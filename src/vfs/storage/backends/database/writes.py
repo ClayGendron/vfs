@@ -27,7 +27,7 @@ per-mount counter, and no two entries' versions are comparable.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import bindparam, delete, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -44,7 +44,7 @@ from vfs.storage.editing import CONTENT_KINDS, edited_entry
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from sqlalchemy import Column, FromClause, Table
+    from sqlalchemy import Column, ColumnElement, FromClause, Table
     from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
     from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
     from sqlalchemy.engine import RowMapping
@@ -387,7 +387,7 @@ async def _upsert_layer(
             if clobber:
                 # A clobbered rival's version increments off the target row,
                 # not the excluded value, keeping its history monotone.
-                set_: dict[str, object] = {column: stmt.excluded[column] for column in _CLOBBER_COLUMNS}
+                set_: dict[str, ColumnElement[Any]] = {column: stmt.excluded[column] for column in _CLOBBER_COLUMNS}
                 set_["version"] = entry.c.version + 1
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["parent_id", "name"],
@@ -537,7 +537,10 @@ async def _update_materials(
 
 
 async def _replace_content(
-    session: AsyncSession, content: Table, membership_budget: int, staged: list[StagedEntry]
+    session: AsyncSession,
+    content: Table,
+    membership_budget: int,
+    staged: list[StagedEntry]
 ) -> None:
     """Delete-then-insert the batch's content rows — portable, idempotent.
 
