@@ -880,7 +880,7 @@ class TestWriteMechanics:
         # Two encodings of the material-column set, one invariant: a key
         # added to either alone silently diverges create vs overwrite.
         staged = StagedEntry(
-            path=Path("/f.txt"), parent=Path("/"), kind="file", created=True, entry_id=str(ULID()), content="x"
+            path=Path("/f.txt"), parent=Path("/"), kind="file", persistence="insert", entry_id=str(ULID()), content="x"
         )
         material = _material_values(staged, "someone", datetime.now(UTC))
         assert set(material) == set(_CLOBBER_COLUMNS)
@@ -1038,7 +1038,7 @@ class TestWriteMechanics:
         plan.stage_create(target, kind="file", content="two", content_hash="h2", size_bytes=3, lines=1)
         assert list(plan.staged) == [target]
         assert plan.staged[target].entry_id == minted
-        assert plan.staged[target].created is True
+        assert plan.staged[target].persistence == "insert"
         assert (plan.staged[target].content, plan.staged[target].content_hash) == ("two", "h2")
 
 
@@ -1155,7 +1155,7 @@ class TestArbitration:
                     path=Path(f"/f{i:03}.txt"),
                     parent=Path("/"),
                     kind="file",
-                    created=True,
+                    persistence="insert",
                     entry_id=str(ULID()),
                     content="mine",
                 )
@@ -1165,8 +1165,8 @@ class TestArbitration:
             statements.clear()
             errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=True)
         assert errors == []
-        assert layer[5].created is False and layer[5].entry_id == rival_key  # rival's row absorbed the write
-        assert all(s.created for i, s in enumerate(layer) if i != 5)
+        assert layer[5].persistence == "absorb" and layer[5].entry_id == rival_key  # rival's row absorbed the write
+        assert all(s.persistence == "insert" for i, s in enumerate(layer) if i != 5)
         # One conflict re-drives its own 4-row chunk, never the 12-row layer:
         # three chunk inserts, four row retries, one occupant probe.
         inserts = [s for s in statements if s.startswith("INSERT INTO")]
@@ -1190,7 +1190,7 @@ class TestArbitration:
                     path=Path(f"/f{i:03}.txt"),
                     parent=Path("/"),
                     kind="file",
-                    created=True,
+                    persistence="insert",
                     entry_id=str(ULID()),
                     content="mine",
                 )
@@ -1219,7 +1219,12 @@ class TestArbitration:
 
             def staged_for(path: str, kind: ObjectKind) -> StagedEntry:
                 return StagedEntry(
-                    path=Path(path), parent=Path("/"), kind=kind, created=True, entry_id=str(ULID()), content="mine"
+                    path=Path(path),
+                    parent=Path("/"),
+                    kind=kind,
+                    persistence="insert",
+                    entry_id=str(ULID()),
+                    content="mine",
                 )
 
             # overwrite=True over a rival file: converted to a clobbering
@@ -1229,7 +1234,7 @@ class TestArbitration:
                 session, entry, [clobber], [_entry_values(clobber, root_key, None, now)], overwrite=True
             )
             assert errors == []
-            assert clobber.created is False and clobber.entry_id == rival_key and clobber.base_version is None
+            assert clobber.persistence == "absorb" and clobber.entry_id == rival_key
 
             # overwrite=False over a rival file: a definite exists outcome.
             refused = staged_for("/f.txt", "file")
@@ -1267,7 +1272,7 @@ class TestArbitration:
                 path=Path("/f.txt"),
                 parent=Path("/dir"),
                 kind="file",
-                created=True,
+                persistence="insert",
                 entry_id=str(ULID()),
                 content="mine",
             )
@@ -1277,7 +1282,7 @@ class TestArbitration:
             )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
         assert "lost arbitration" in errors[0].message
-        assert phantom.created is True and phantom.entry_id == minted  # no conversion happened
+        assert phantom.persistence == "insert" and phantom.entry_id == minted  # no conversion happened
         await storage.close()
 
     async def test_create_to_clobber_conversion_flows_through_apply(self, tmp_path) -> None:
@@ -1355,7 +1360,12 @@ class TestArbitration:
 
             def staged_for(path: str, kind: ObjectKind) -> StagedEntry:
                 return StagedEntry(
-                    path=Path(path), parent=Path("/"), kind=kind, created=True, entry_id=str(ULID()), content="mine"
+                    path=Path(path),
+                    parent=Path("/"),
+                    kind=kind,
+                    persistence="insert",
+                    entry_id=str(ULID()),
+                    content="mine",
                 )
 
             async def run(layer: list[StagedEntry], *, overwrite: bool) -> list[ResultError]:
@@ -1403,7 +1413,7 @@ class TestArbitration:
                 path=Path("/f.txt"),
                 parent=Path("/"),
                 kind="file",
-                created=False,
+                persistence="update",
                 entry_id=row.entry_id,
                 content="b",
                 base_version=999_999,  # a rival moved the row past our snapshot

@@ -11,9 +11,9 @@ errored plan.
 ``StagedEntry`` is one path's planned final state — a create or a material
 update — carrying the persistence bookkeeping a domain ``Entry`` never holds:
 the durable ``entry_id`` (minted here for creates, copied from the committed
-row for updates), the ``base_version`` guard, and the create/update
-discriminator. That is why it lives here beside the plan and not among the
-session-free models.
+row for updates), the ``base_version`` guard, and ``persistence`` — which
+execution pass writes the row's material columns. That is why it lives here
+beside the plan and not among the session-free models.
 """
 
 from __future__ import annotations
@@ -32,6 +32,9 @@ if TYPE_CHECKING:
     from vfs.paths import ObjectKind, Path
 
 Status = Literal["created", "updated", "unchanged"]
+# Which execution pass writes a staged row's material columns. Distinct
+# vocabulary from Status, which reports what a finished op did.
+PersistenceState = Literal["insert", "update", "absorb"]
 
 
 @dataclass
@@ -41,7 +44,7 @@ class StagedEntry:
     path: Path
     parent: Path
     kind: ObjectKind
-    created: bool
+    persistence: PersistenceState  # which pass writes this row; arbitration may rewrite it
     entry_id: str  # durable identity: minted for creates; an arbitration clobber adopts the rival's
     content: str | None = None
     content_hash: str | None = None
@@ -49,8 +52,8 @@ class StagedEntry:
     lines: int = 0
     ext: str | None = None
     mime_type: str | None = None
-    base_version: int | None = None  # the update guard; None = unguarded (arbitration clobber)
-    version: int = 1  # creates mint 1; updates stage base + 1; clobbers learn theirs post-execution
+    base_version: int | None = None  # the version the guarded arm compares against
+    version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb" learns its own post-execution
 
     def refresh_material(
         self,
@@ -252,7 +255,7 @@ class WritePlan:
             path=path,
             parent=path.parent_dir,
             kind=kind,
-            created=True,
+            persistence="insert",
             entry_id=str(ULID()),
             content=content,
             content_hash=content_hash,
@@ -292,7 +295,7 @@ class WritePlan:
             path=path,
             parent=path.parent_dir,
             kind=kind,
-            created=False,
+            persistence="update",
             entry_id=row["entry_id"],
             content=content,
             content_hash=content_hash,

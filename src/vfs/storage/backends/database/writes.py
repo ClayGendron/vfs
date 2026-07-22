@@ -303,14 +303,14 @@ async def _apply(
     if not plan.staged and not plan.bumps:
         return []
     now = datetime.now(UTC)
-    creates = [s for s in plan.staged.values() if s.created]
+    creates = [s for s in plan.staged.values() if s.persistence == "insert"]
     if errors := await _insert_creates(
         session, tables.entry, profile, parameter_budget, creates, plan, overwrite=overwrite, now=now
     ):
         return errors
-    # After the insert pass on purpose: arbitration may convert a losing
-    # create into an unguarded clobber (created=False) that must update here.
-    updates = [s for s in plan.staged.values() if not s.created]
+    # After the insert pass on purpose: arbitration may re-route a losing
+    # create to "absorb", which must be picked up by this pass.
+    updates = [s for s in plan.staged.values() if s.persistence != "insert"]
     if errors := await _update_materials(
         session, tables.entry, membership_budget, updates, user_id=plan.user_id, now=now
     ):
@@ -471,9 +471,8 @@ async def _resolve_rows(
             )
         elif staged.kind != "directory" and overwrite and occupant.kind != "directory":
             # The rival's row absorbs our write: an unguarded clobbering update.
-            staged.created = False
+            staged.persistence = "absorb"
             staged.entry_id = occupant.entry_id
-            staged.base_version = None
         elif staged.kind != "directory" and overwrite:
             errors.append(is_a_directory(staged.path))
         else:
@@ -505,8 +504,8 @@ async def _update_materials(
     """
     if not updates:
         return []
-    guarded = [s for s in updates if s.base_version is not None]
-    unguarded = [s for s in updates if s.base_version is None]
+    guarded = [s for s in updates if s.persistence == "update"]
+    unguarded = [s for s in updates if s.persistence == "absorb"]
     material = {column: bindparam(f"b_{column}") for column in _CLOBBER_COLUMNS}
     if guarded:
         stmt = (
@@ -528,19 +527,16 @@ async def _update_materials(
     errors: list[ResultError] = []
     for staged in updates:
         observed = actual.get(staged.entry_id)
-        if observed is None or (staged.base_version is not None and observed != staged.version):
+        if observed is None or (staged.persistence == "update" and observed != staged.version):
             message = f"Concurrent modification: {staged.path}"
             errors.append(classified(VFSErrorKind.conflict, message, staged.path, target=staged.path))
-        elif staged.base_version is None:
+        elif staged.persistence == "absorb":
             staged.version = observed
     return errors
 
 
 async def _replace_content(
-    session: AsyncSession,
-    content: Table,
-    membership_budget: int,
-    staged: list[StagedEntry]
+    session: AsyncSession, content: Table, membership_budget: int, staged: list[StagedEntry]
 ) -> None:
     """Delete-then-insert the batch's content rows — portable, idempotent.
 
