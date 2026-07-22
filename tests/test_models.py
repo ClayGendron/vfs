@@ -314,6 +314,21 @@ class TestObservationPopulatedMask:
         obs = Observation(path=Path("/a.md"), kind="file", content=None)
         assert obs.populated == frozenset({"path", "kind"})
 
+    def test_non_content_kinds_never_carry_content_metrics(self) -> None:
+        # The model owns the rule: a storage NOT NULL default (or a wire
+        # peer) claiming a directory size is nulled at construction, and a
+        # stamped mask still reports the metric as fetched-and-null.
+        stamped = Observation(
+            path=Path("/d"), kind="directory", size_bytes=5, populated=frozenset({"path", "kind", "size_bytes"})
+        )
+        assert stamped.size_bytes is None
+        assert "size_bytes" in stamped.populated
+        wire = Observation.model_validate({"path": "/d", "kind": "directory", "size_bytes": 5})
+        assert wire.size_bytes is None
+        assert Observation(path=Path("/f"), kind="file", size_bytes=5).size_bytes == 5
+        # An unfetched kind cannot be judged, so the metric is left alone.
+        assert Observation(path=Path("/x"), size_bytes=5).size_bytes == 5
+
     def test_explicit_mask_wins_over_derivation(self) -> None:
         # A fetched-but-null column stays in the mask: the mask records what
         # the call fetched, not which values happen to be non-null.

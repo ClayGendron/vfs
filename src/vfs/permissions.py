@@ -116,7 +116,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict
 
 from vfs.ops import MUTATING_OPS
-from vfs.paths import Path, normalize_path
+from vfs.paths import ROOT, Path, normalize_path
 from vfs.results import Result, ResultError, VFSErrorKind
 
 if TYPE_CHECKING:
@@ -126,8 +126,6 @@ if TYPE_CHECKING:
 Permission = Literal["read", "read_write"]
 """Filesystem-level permission value."""
 
-ROOT = Path("/")
-"""The rebase identity — the default mount prefix when the terminal is the router itself."""
 
 
 class PermissionsPayload(TypedDict):

@@ -28,6 +28,7 @@ from vfs.models import Entry, Observation
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import ObjectKind, Path
 from vfs.results import ResultError, VFSErrorKind
+from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
@@ -36,6 +37,7 @@ from vfs.storage.backends.database.dialects import (
     MSSQL,
     POSTGRESQL,
     SQLITE,
+    fan_budget,
     is_retryable,
     membership_budget,
     op_execution_options,
@@ -43,6 +45,7 @@ from vfs.storage.backends.database.dialects import (
     rows_per_statement,
 )
 from vfs.storage.backends.database.engine import EngineHost, _install_sqlite_transaction_control
+from vfs.storage.backends.database.reads import ENTRY_OBSERVATION_FIELDS
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
     _CLOBBER_COLUMNS,
@@ -657,6 +660,12 @@ class TestReadFamily:
         result = await storage.stat(path=Path("/docs/a.txt"), columns=frozenset({"score", "content"}))
         assert result.success is True
         assert result.observations[0].populated == {"path", "kind", "version"}
+
+    def test_entry_observation_fields_track_the_column_vocabulary(self) -> None:
+        # Drift pin: the servable set is exactly the Observation fields
+        # the entries table backs — a new mirrored column must land here.
+        cols = {c.name for c in build_vfs_tables(table_name="vfs").entry.columns}
+        assert OBSERVATION_FIELDS & cols == ENTRY_OBSERVATION_FIELDS
 
     async def test_glob_matches_names_and_full_paths(self, storage: DatabaseStorage) -> None:
         by_name = await storage.glob(pattern="*.txt")
@@ -1729,6 +1738,16 @@ class TestMembershipChunking:
         # Degenerate budgets never chunk below one element.
         assert membership_budget(GENERIC, 8) == 1
 
+    def test_fan_budget_honors_bind_and_depth_caps(self) -> None:
+        # Depth-capped: an OR chain parses left-deep, so SQLite's huge
+        # bind budget still yields (1,000 - reserve) // 2 anchors.
+        assert fan_budget(SQLITE, 100_000) == 468
+        assert fan_budget(GENERIC, 100_000) == 468  # the unknown-engine floor
+        # Bind-capped: a squeezed parameter budget wins over depth.
+        assert fan_budget(SQLITE, 48) == 8
+        # Degenerate budgets never chunk below one anchor.
+        assert fan_budget(GENERIC, 0) == 1
+
     def test_rows_per_statement_divides_by_the_widest_row(self) -> None:
         narrow = {"entry_id": "e1", "path": "/a"}
         wide = narrow | {"kind": "file", "version": 1}
@@ -1767,6 +1786,22 @@ class TestMembershipChunking:
         listing = await storage.ls(observations=[Observation(path=p.parent_dir) for p in paths])
         assert listing.success is True
         assert sorted(str(o.path) for o in listing.observations) == sorted(str(p) for p in paths)
+        await storage.close()
+
+    async def test_wide_scope_glob_survives_the_expression_depth_cap(self, tmp_path) -> None:
+        # 1,100 anchors: past the 499-anchor point where SQLite's default
+        # SQLITE_MAX_EXPR_DEPTH kills an unchunked fan, and enough to
+        # span multiple fan chunks at the depth-capped budget. Ghost
+        # anchors classify per-anchor (find parity), rows still serve.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        written = await storage.write(entries=[Entry(path=Path("/d/a.txt"), content="x")], parents=True)
+        assert written.success is True
+        scope = (Path("/d"), *(Path(f"/ghost{i:04}") for i in range(1_099)))
+        result = await storage.glob(pattern="*", paths=scope)
+        assert [str(o.path) for o in result.observations] == ["/d", "/d/a.txt"]
+        assert result.success is False
+        assert len(result.errors) == 1_099
+        assert {e.kind for e in result.errors} == {VFSErrorKind.not_found}
         await storage.close()
 
     async def test_nested_glob_anchors_dedupe_across_chunks(self, tmp_path, monkeypatch) -> None:

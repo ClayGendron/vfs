@@ -662,6 +662,65 @@ class StorageContract:
         result = await storage.glob(pattern="*", paths=(Path("/docs"),))
         assert [o.path for o in result.observations] == ["/docs", "/docs/a.txt"]
 
+    @needs("write", "mkdir", "glob")
+    async def test_glob_missing_anchor_classifies_beside_served_anchors(self, storage: ConformanceBackend) -> None:
+        # POSIX find parity: a missing operand errors while the healthy
+        # operands still produce their results — partial output, exit 1.
+        await storage.mkdir(path=Path("/docs"))
+        await storage.write(entries=[Entry(path=Path("/docs/a.txt"), content="x")])
+        result = await storage.glob(pattern="*", paths=(Path("/docs"), Path("/nope")))
+        assert result.success is False
+        assert [o.path for o in result.observations] == ["/docs", "/docs/a.txt"]
+        assert [e.kind for e in result.errors] == [VFSErrorKind.not_found]
+
+    @needs("write", "glob")
+    async def test_glob_file_anchor_is_matched_itself(self, storage: ConformanceBackend) -> None:
+        # find parity: a file operand is matched against the pattern —
+        # served on a hit, an empty clean success on a miss, never an error.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        hit = await storage.glob(pattern="*.txt", paths=(Path("/a.txt"),))
+        assert [o.path for o in hit.observations] == ["/a.txt"]
+        miss = await storage.glob(pattern="*.py", paths=(Path("/a.txt"),))
+        assert miss.success is True
+        assert miss.observations == []
+
+    @needs("write", "grep")
+    async def test_grep_missing_anchor_classifies_beside_served_anchors(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle here")])
+        result = await storage.grep(pattern="needle", paths=(Path("/a.txt"), Path("/nope")))
+        assert result.success is False
+        assert [o.path for o in result.observations] == ["/a.txt"]
+        assert [e.kind for e in result.errors] == [VFSErrorKind.not_found]
+
+    # ------------------------------------------------------------------
+    # Enumeration liveness — the /.vfs meta scope
+    # ------------------------------------------------------------------
+
+    @needs("write", "ls", "tree", "glob")
+    async def test_default_enumeration_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/real.txt"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/.vfs/state/s.txt"), content="m")], parents=True)
+        assert [o.path for o in (await storage.ls(path=Path("/"))).observations] == ["/real.txt"]
+        assert [o.path for o in (await storage.tree(path=Path("/"))).observations] == ["/real.txt"]
+        assert [o.path for o in (await storage.glob(pattern="*")).observations] == ["/real.txt"]
+
+    @needs("write", "ls", "glob")
+    async def test_meta_anchor_serves_its_own_subtree(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/.vfs/state/s.txt"), content="m")], parents=True)
+        listing = await storage.ls(path=Path("/.vfs/state"))
+        assert [o.path for o in listing.observations] == ["/.vfs/state/s.txt"]
+        scoped = await storage.glob(pattern="*", paths=(Path("/.vfs/state"),))
+        assert [o.path for o in scoped.observations] == ["/.vfs/state", "/.vfs/state/s.txt"]
+
+    @needs("write", "grep")
+    async def test_default_grep_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/real.txt"), content="needle in the open")])
+        await storage.write(entries=[Entry(path=Path("/.vfs/state/s.txt"), content="needle hidden")], parents=True)
+        default = await storage.grep(pattern="needle")
+        assert [o.path for o in default.observations] == ["/real.txt"]
+        anchored = await storage.grep(pattern="needle", paths=(Path("/.vfs/state"),))
+        assert [o.path for o in anchored.observations] == ["/.vfs/state/s.txt"]
+
     @needs("write", "grep")
     async def test_grep_default_case_mode_is_sensitive(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="hello world")])

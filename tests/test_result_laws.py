@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -517,13 +518,16 @@ class TestMaskedMerge:
         # The router's seam: the owner's directory row and the mounted
         # root's row are the same entry from both sides — their counters
         # are unrelated, so the decorated row honestly claims no version.
+        # (updated_at is the fill field: a directory lawfully carries it,
+        # while the Observation invariant nulls its content metrics.)
+        stamp = datetime(2026, 7, 22, tzinfo=UTC)
         owner = Result(observations=[masked("/data", {"kind", "version"}, kind="directory", version=41)])
-        child_fields = {"kind", "size_bytes", "version"}
-        child_root = Result(observations=[masked("/data", child_fields, kind="directory", size_bytes=0, version=3)])
+        child_fields = {"kind", "updated_at", "version"}
+        child_root = Result(observations=[masked("/data", child_fields, kind="directory", updated_at=stamp, version=3)])
         decorated = Result.merge([owner, child_root], op="ls").one()
-        assert decorated.size_bytes == 0
+        assert decorated.updated_at == stamp
         assert decorated.version is None
-        assert {"kind", "size_bytes", "version"} <= decorated.populated
+        assert {"kind", "updated_at", "version"} <= decorated.populated
 
 
 # ---------------------------------------------------------------------------

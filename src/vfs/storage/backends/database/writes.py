@@ -34,12 +34,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
-from vfs.models import Entry, Observation
+from vfs.models import CONTENT_KINDS, Entry, Observation
 from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, is_a_directory
 from vfs.storage.backends.database.descent import ancestor_chain, classify_misses
 from vfs.storage.backends.database.dialects import chunked, rows_per_statement
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
-from vfs.storage.editing import CONTENT_KINDS, edited_entry
+from vfs.storage.editing import edited_entry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -275,7 +275,7 @@ async def _finish(
                 Observation(
                     path=path,
                     kind=staged.kind,
-                    size_bytes=staged.size_bytes if staged.content is not None else None,
+                    size_bytes=staged.size_bytes,
                     version=staged.version,
                     status=status,
                 )
@@ -341,7 +341,7 @@ async def _insert_creates(
         return []
     by_depth: dict[int, list[StagedEntry]] = {}
     for staged in creates:
-        by_depth.setdefault(str(staged.path).count("/"), []).append(staged)
+        by_depth.setdefault(staged.path.depth, []).append(staged)
     for depth in sorted(by_depth):
         layer = by_depth[depth]
         rows = [_entry_values(s, plan.parent_id_of(s), plan.user_id, now) for s in layer]

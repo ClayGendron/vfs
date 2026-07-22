@@ -38,6 +38,11 @@ from vfs.models.edge import Edge
 from vfs.models.version import Version
 from vfs.paths import ObjectKind, Path, is_reserved_directory
 
+# Stored kinds whose rows carry text content; everything else refuses
+# content reads and edits and surfaces no content metrics.
+CONTENT_KINDS: Final[frozenset[str]] = frozenset({"file", "chunk", "version"})
+
+
 # ---------------------------------------------------------------------------
 # The namespace object model
 # ---------------------------------------------------------------------------
@@ -404,12 +409,26 @@ class Observation(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _default_populated(cls, data: Any) -> Any:
-        """Default the mask to the non-None supplied fields when not stamped."""
-        if not isinstance(data, dict) or "populated" in data:
+    def _shape_row(cls, data: Any) -> Any:
+        """Enforce the content-metrics invariant, then default the unstamped mask.
+
+        Content metrics belong only to content-bearing kinds: a storage
+        NOT NULL default or a whole-row fetch must never read as a real
+        directory size, so a known non-content kind nulls ``size_bytes``
+        here — the model, not backend discipline, owns the rule. An
+        unfetched (``None``) kind is left alone. The mask then defaults
+        to the non-None supplied fields when the caller didn't stamp it,
+        so a stamped mask still reports the nulled metric as
+        fetched-and-null.
+        """
+        if not isinstance(data, dict):
             return data
         data = dict(data)
-        data["populated"] = frozenset(k for k, v in data.items() if v is not None and k in cls.model_fields)
+        kind = data.get("kind")
+        if kind is not None and kind not in CONTENT_KINDS:
+            data["size_bytes"] = None
+        if "populated" not in data:
+            data["populated"] = frozenset(k for k, v in data.items() if v is not None and k in cls.model_fields)
         return data
 
     # -----------------------------------------------------------------------

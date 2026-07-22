@@ -31,6 +31,15 @@ raises :class:`TransportError` for a dead or unreachable peer, which the
 funnel normalizes to a ``backend_unavailable`` classification.
 Transactions are backend-internal: a backend opens and commits its own
 session inside these methods, and the router never sees it.
+
+Two read semantics every backend implements identically: **enumeration
+liveness** — default-scope enumeration (``ls``, ``tree``, ``glob``,
+``grep``) hides the reserved ``/.vfs`` meta subtree, and a
+meta-addressed anchor serves its own subtree (per-anchor, never
+query-wide); and **scope anchors as POSIX ``find`` operands** — a
+missing ``glob``/``grep`` anchor classifies through the descent ladder
+beside the healthy anchors' rows (partial results, per-anchor errors),
+while an existing file anchor is matched itself against the pattern.
 """
 
 from __future__ import annotations
@@ -346,6 +355,30 @@ class SupportsClose(Protocol):
     """
 
     async def close(self) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Target shaping — the protocol-level addressing rules every backend shares
+# ---------------------------------------------------------------------------
+
+
+def targets_of(
+    path: Path | None,
+    observations: list[Observation] | None,
+    *,
+    default: Path | None = None,
+) -> list[Path]:
+    """The paths an op addresses: the single path, the rows', or *default*."""
+    if path is not None:
+        return [path]
+    if observations is not None:
+        return [o.path for o in observations]
+    return [default] if default is not None else []
+
+
+def scope_of(paths: tuple[Path, ...], observations: list[Observation] | None) -> tuple[Path, ...]:
+    """A search verb's scope anchors: explicit paths, else the rows', else default scope."""
+    return paths or tuple(o.path for o in observations or [])
 
 
 # ---------------------------------------------------------------------------

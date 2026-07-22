@@ -36,6 +36,10 @@ MAX_SEGMENT_LENGTH = 255
 
 METADATA_ROOT = "/.vfs"
 
+# The conventional trash location: an ordinary meta subtree the delete
+# verb reparents into — browsable, writable, no scope of its own.
+TRASH_ROOT = f"{METADATA_ROOT}/trash"
+
 # Reserved user-space capability root. Unlike METADATA_ROOT (derived, no indexable
 # content), /.agents holds real files, so a tool's/skill's manifest indexes normally.
 AGENTS_ROOT = "/.agents"
@@ -246,6 +250,11 @@ class Path(str):
     def is_meta(self) -> bool:
         """Whether this path is under the reserved ``/.vfs`` tree."""
         return is_meta_path(self)
+
+    @property
+    def depth(self) -> int:
+        """Segment depth: 0 for the root, else the path's segment count."""
+        return 0 if self == "/" else str(self).count("/")
 
     @property
     def is_mutable_target(self) -> bool:
@@ -742,3 +751,7 @@ def _under_meta_root(value: str) -> bool:
     The normalization-free str primitive behind :func:`is_meta_path`.
     """
     return value == METADATA_ROOT or value.startswith(METADATA_ROOT + "/")
+
+
+# The canonical root instance — minted once, after the gate it runs through.
+ROOT = Path("/")

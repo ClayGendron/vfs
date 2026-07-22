@@ -9,6 +9,7 @@ one per table; ``rows``, ``vector``, ``versioning``, ``chunking``, and
 from vfs.models.chunk import Chunk
 from vfs.models.edge import Edge
 from vfs.models.entry import (
+    CONTENT_KINDS,
     ENTRY_OWNED_MIRRORS,
     OBSERVATION_MIRROR_FIELDS,
     OBSERVATION_MIRROR_OWNERS,
@@ -20,6 +21,7 @@ from vfs.models.entry import (
 from vfs.models.version import Version
 
 __all__ = [
+    "CONTENT_KINDS",
     "ENTRY_OWNED_MIRRORS",
     "OBSERVATION_MIRROR_FIELDS",
     "OBSERVATION_MIRROR_OWNERS",

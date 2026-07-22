@@ -20,7 +20,9 @@ from vfs.storage.protocol import (
     SupportsTraits,
     TraitKey,
     TransportError,
+    scope_of,
     storage_ops,
+    targets_of,
 )
 
 __all__ = [
@@ -38,5 +40,7 @@ __all__ = [
     "SupportsTraits",
     "TraitKey",
     "TransportError",
+    "scope_of",
     "storage_ops",
+    "targets_of",
 ]

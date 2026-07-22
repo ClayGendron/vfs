@@ -19,24 +19,21 @@ and subtrees by ``path`` — byte-identical across engines.
 
 from __future__ import annotations
 
-import fnmatch
 from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import func, or_, select
 
-from vfs.models import Observation
-from vfs.paths import Path, extract_extension
+from vfs.models import CONTENT_KINDS, Observation
+from vfs.paths import ROOT, Path
 from vfs.results import Result, ResultError, is_a
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
-    ROOT,
     classify_misses,
     escape_like,
-    in_meta,
     liveness_filters,
 )
 from vfs.storage.backends.database.dialects import chunked
-from vfs.storage.editing import CONTENT_KINDS
+from vfs.storage.globbing import compile_glob
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -64,22 +61,8 @@ _GLOB_TRANSLATED: Final[frozenset[str]] = frozenset("*?")
 
 
 # ---------------------------------------------------------------------------
-# Target shaping and projection
+# Projection
 # ---------------------------------------------------------------------------
-
-
-def targets_of(
-    path: Path | None,
-    observations: list[Observation] | None,
-    *,
-    default: Path | None = None,
-) -> list[Path]:
-    """The paths an op addresses: the single path, the rows', or *default*."""
-    if path is not None:
-        return [path]
-    if observations is not None:
-        return [o.path for o in observations]
-    return [default] if default is not None else []
 
 
 def effective_columns(columns: frozenset[str] | None, *, content: bool) -> frozenset[str]:
@@ -182,13 +165,12 @@ async def tree_rows(
         .where(
             entry.c.path.like(prefix + "/%", escape=LIKE_ESCAPE),
             entry.c.path != "/",
-            *liveness_filters(entry, include_meta=in_meta(path)),
+            *liveness_filters(entry, include_meta=path.is_meta),
         )
         .order_by(entry.c.path)
     )
     if max_depth is not None:
-        base_depth = 0 if path == ROOT else str(path).count("/")
-        stmt = stmt.where(_slash_count(entry) <= base_depth + max_depth)
+        stmt = stmt.where(_slash_count(entry) <= path.depth + max_depth)
     rows = [_observe(mapping, fetched) for mapping in (await session.execute(stmt)).mappings()]
     return Result(ops=("tree",), observations=rows)
 
@@ -202,6 +184,7 @@ async def glob_rows(
     session: AsyncSession,
     tables: VFSTables,
     membership_budget: int,
+    fan_budget: int,
     *,
     pattern: str,
     scope: tuple[Path, ...],
@@ -209,10 +192,16 @@ async def glob_rows(
     max_count: int | None,
     columns: frozenset[str] | None,
 ) -> Result:
+    """Glob under *scope*, anchors behaving like POSIX ``find`` operands.
+
+    A missing anchor classifies through the descent ladder beside the
+    healthy anchors' rows — partial results with per-anchor errors; an
+    existing file anchor is matched itself against the pattern.
+    """
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    by_path = "/" in pattern
-    subject_column = entry.c.path if by_path else entry.c.name
+    glob = compile_glob(pattern, ext)
+    subject_column = entry.c.path if glob.by_path else entry.c.name
     # Liveness is per scope arm, not per query: _glob_candidates applies
     # the meta exclusion to every anchor except the meta-addressed ones.
     filters: list[ColumnElement[bool]] = [entry.c.path != "/"]
@@ -221,22 +210,21 @@ async def glob_rows(
         filters.append(subject_column.like(like, escape=LIKE_ESCAPE))
     else:
         filters.append(subject_column.like(escape_like(_literal_prefix(pattern)) + "%", escape=LIKE_ESCAPE))
-    candidates = await _glob_candidates(session, entry, membership_budget, scope, filters, fetched)
-    # Ext filters by the path-derived extension, deliberately not the stored
-    # ext column: explicit-ext rows and NULL-ext directories must still match.
-    wanted_ext = frozenset(e.lstrip(".").lower() for e in ext)
+    errors: list[ResultError] = []
+    if scope:
+        anchors = await _mappings_by_path(
+            session, tables, membership_budget, scope, frozenset({"path", "kind"}), with_entry_id=False
+        )
+        errors = list((await _miss_errors(session, tables, membership_budget, scope, anchors)).values())
+    candidates = await _glob_candidates(session, entry, fan_budget, scope, filters, fetched)
     rows: list[Observation] = []
     for mapping in candidates:
         if max_count is not None and len(rows) >= max_count:
             break
-        candidate = Path(mapping["path"])
-        subject = str(candidate) if by_path else candidate.name
-        if not fnmatch.fnmatchcase(subject, pattern):
-            continue
-        if wanted_ext and (extract_extension(candidate) or "") not in wanted_ext:
+        if not glob.matches(Path(mapping["path"])):
             continue
         rows.append(_observe(mapping, fetched))
-    return Result(ops=("glob",), observations=rows)
+    return Result(ops=("glob",), observations=rows, errors=errors)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +282,7 @@ async def _mappings_by_path(
 async def _glob_candidates(
     session: AsyncSession,
     entry: Table,
-    membership_budget: int,
+    fan_budget: int,
     scope: tuple[Path, ...],
     filters: list[ColumnElement[bool]],
     fetched: frozenset[str],
@@ -308,24 +296,24 @@ async def _glob_candidates(
     path order — codepoint order equals the binary-collated byte order.
     """
     columns = _entry_columns(entry, fetched)
-    live = [anchor for anchor in scope if not in_meta(anchor)]
-    meta = [anchor for anchor in scope if in_meta(anchor)]
+    live = [anchor for anchor in scope if not anchor.is_meta]
+    meta = [anchor for anchor in scope if anchor.is_meta]
     hidden = [*filters, *liveness_filters(entry, include_meta=False)]
     merged: dict[str, RowMapping] = {}
     if not scope or ROOT in live:
         stmt = select(*columns).where(*hidden)
         merged.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
     elif live:
-        await _anchor_fan(session, entry, membership_budget, columns, hidden, live, merged)
+        await _anchor_fan(session, entry, fan_budget, columns, hidden, live, merged)
     if meta:
-        await _anchor_fan(session, entry, membership_budget, columns, filters, meta, merged)
+        await _anchor_fan(session, entry, fan_budget, columns, filters, meta, merged)
     return [merged[path] for path in sorted(merged)]
 
 
 async def _anchor_fan(
     session: AsyncSession,
     entry: Table,
-    membership_budget: int,
+    fan_budget: int,
     columns: list[Column[object]],
     filters: list[ColumnElement[bool]],
     anchors: Sequence[Path],
@@ -333,10 +321,12 @@ async def _anchor_fan(
 ) -> None:
     """One liveness class's chunked anchor fan, merged into *merged*.
 
-    Each anchor costs two binds (equality + prefix LIKE), so chunks hold
-    ``membership_budget // 2`` anchors.
+    Chunks hold ``fan_budget`` anchors — the dialect's declared cap on
+    the tighter of bind count and ``OR``-chain expression depth. Simple
+    planners may scan the table once per chunk (Postgres builds a
+    bitmap-OR); bounded and correct either way.
     """
-    for chunk in chunked(sorted({str(anchor) for anchor in anchors}), max(1, membership_budget // 2)):
+    for chunk in chunked(sorted({str(anchor) for anchor in anchors}), fan_budget):
         fan = or_(
             *(
                 or_(
@@ -377,7 +367,7 @@ async def _children_by_parent(
     """
     children: dict[str, list[Observation]] = {}
     for include_meta in (False, True):
-        scope = sorted({anchors[target]["entry_id"] for target in directories if in_meta(target) == include_meta})
+        scope = sorted({anchors[target]["entry_id"] for target in directories if target.is_meta == include_meta})
         for chunk in chunked(scope, membership_budget):
             stmt = (
                 select(entry.c.parent_id, *_entry_columns(entry, fetched))
@@ -406,10 +396,6 @@ def _entry_columns(entry: Table, fetched: frozenset[str]) -> list[Column[object]
 def _observe(mapping: RowMapping, fetched: frozenset[str]) -> Observation:
     values: dict[str, object] = {field: mapping[field] for field in fetched}
     values["path"] = Path(mapping["path"])
-    # Content metrics are meaningful only on content-bearing kinds; the
-    # NOT NULL storage default of 0 must not read as a real size.
-    if "size_bytes" in values and mapping["kind"] not in CONTENT_KINDS:
-        values["size_bytes"] = None
     values["populated"] = fetched
     return Observation.model_validate(values)
 

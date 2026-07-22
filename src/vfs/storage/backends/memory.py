@@ -1,5 +1,12 @@
 """In-memory storage backend — the reference ``StorageBackend``.
 
+**Interim implementation, not a long-term contract surface.** This
+backend exists to exercise the protocol and the conformance suite; it
+is slated to be replaced by ``DatabaseStorage`` over an embedded SQL
+engine (turso), at which point it retires. It must pass conformance
+while it lives, but never invest here in behavior beyond that bar —
+``columns=`` projection, for one, is deliberately unimplemented.
+
 ``InMemoryStorage`` implements the read, pattern-search, and mutation
 families over a plain dict, honoring the POSIX parent rules natively:
 mutations never mint missing ancestors unless the caller passes
@@ -36,8 +43,8 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
 
-from vfs.models import Edge, Entry, Match, Observation
-from vfs.paths import Path, extract_extension
+from vfs.models import CONTENT_KINDS, Edge, Entry, Match, Observation
+from vfs.paths import ROOT, Path, extract_extension
 from vfs.results import (
     Result,
     ResultError,
@@ -48,8 +55,9 @@ from vfs.results import (
     is_a_directory,
     validation_message,
 )
-from vfs.storage import storage_ops
-from vfs.storage.editing import CONTENT_KINDS, edited_entry
+from vfs.storage import scope_of, storage_ops, targets_of
+from vfs.storage.editing import edited_entry
+from vfs.storage.globbing import compile_glob
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -60,8 +68,6 @@ if TYPE_CHECKING:
     from vfs.storage.replace import EditOperation
 
 _Status = Literal["created", "updated", "unchanged", "deleted"]
-
-ROOT = Path("/")
 
 
 @dataclass
@@ -125,7 +131,7 @@ class InMemoryStorage:
         errors: list[ResultError] = []
         # Per-row: a bad row classifies and the loop continues, so a batch
         # returns every good row plus one error per failure.
-        for target in self._targets(path, observations):
+        for target in targets_of(path, observations):
             row = self._rows.get(target)
             if row is None:
                 errors.append(self._classify_miss(self._rows, target))
@@ -148,7 +154,7 @@ class InMemoryStorage:
     ) -> Result:
         rows: list[Observation] = []
         errors: list[ResultError] = []
-        for target in self._targets(path, observations):
+        for target in targets_of(path, observations):
             row = self._rows.get(target)
             if row is None:
                 errors.append(self._classify_miss(self._rows, target))
@@ -166,7 +172,7 @@ class InMemoryStorage:
     ) -> Result:
         rows: list[Observation] = []
         errors: list[ResultError] = []
-        for target in self._targets(path, observations, default=ROOT):
+        for target in targets_of(path, observations, default=ROOT):
             row = self._rows.get(target)
             if row is None:
                 errors.append(self._classify_miss(self._rows, target))
@@ -174,7 +180,9 @@ class InMemoryStorage:
             if row.kind != "directory":
                 rows.append(self._observe(target, row))
                 continue
-            children = [p for p in self._rows if p != ROOT and p.parent_dir == target]
+            children = [
+                p for p in self._rows if p != ROOT and p.parent_dir == target and (target.is_meta or not p.is_meta)
+            ]
             rows.extend(self._observe(p, self._rows[p]) for p in sorted(children))
         return Result(ops=("ls",), observations=rows, errors=errors)
 
@@ -196,7 +204,9 @@ class InMemoryStorage:
         rows = [
             self._observe(p, self._rows[p])
             for p in sorted(self._rows)
-            if (depth := _depth_below(p, path)) is not None and (max_depth is None or depth <= max_depth)
+            if (depth := _depth_below(p, path)) is not None
+            and (max_depth is None or depth <= max_depth)
+            and (path.is_meta or not p.is_meta)
         ]
         return Result(ops=("tree",), observations=rows)
 
@@ -215,21 +225,21 @@ class InMemoryStorage:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        scope = paths or tuple(o.path for o in observations or [])
-        wanted_ext = frozenset(e.lstrip(".").lower() for e in ext)
+        # Anchors behave like POSIX find operands: a missing anchor
+        # classifies beside the healthy anchors' rows.
+        scope = scope_of(paths, observations)
+        glob = compile_glob(pattern, ext)
+        errors = [self._classify_miss(self._rows, a) for a in dict.fromkeys(scope) if a not in self._rows]
         rows: list[Observation] = []
         for p in sorted(self._rows):
             if max_count is not None and len(rows) >= max_count:
                 break
-            if p == ROOT or not _in_scope(p, scope):
+            if p == ROOT or not _served_scope(p, scope):
                 continue
-            subject = str(p) if "/" in pattern else p.name
-            if not fnmatch.fnmatchcase(subject, pattern):
-                continue
-            if wanted_ext and (extract_extension(p) or "") not in wanted_ext:
+            if not glob.matches(p):
                 continue
             rows.append(self._observe(p, self._rows[p]))
-        return Result(ops=("glob",), observations=rows)
+        return Result(ops=("glob",), observations=rows, errors=errors)
 
     async def grep(
         self,
@@ -257,13 +267,14 @@ class InMemoryStorage:
         regex = _compile_grep(pattern, case_mode=case_mode, fixed_strings=fixed_strings, word_regexp=word_regexp)
         if regex is None:
             return _fail("grep", VFSErrorKind.invalid, f"Invalid pattern: {pattern!r}")
-        scope = paths or tuple(o.path for o in observations or [])
+        scope = scope_of(paths, observations)
         want = frozenset(e.lstrip(".").lower() for e in ext)
         avoid = frozenset(e.lstrip(".").lower() for e in ext_not)
+        errors = [self._classify_miss(self._rows, a) for a in dict.fromkeys(scope) if a not in self._rows]
         rows: list[Observation] = []
         for p in sorted(self._rows):
             row = self._rows[p]
-            if row.content is None or row.kind not in CONTENT_KINDS or not _in_scope(p, scope):
+            if row.content is None or row.kind not in CONTENT_KINDS or not _served_scope(p, scope):
                 continue
             file_ext = extract_extension(p) or ""
             if (want and file_ext not in want) or file_ext in avoid:
@@ -285,7 +296,7 @@ class InMemoryStorage:
             )
             if hit is not None:
                 rows.append(hit)
-        return Result(ops=("grep",), observations=rows)
+        return Result(ops=("grep",), observations=rows, errors=errors)
 
     # -------------------------------------------------------------------
     # Mutation family
@@ -314,7 +325,7 @@ class InMemoryStorage:
         staged = dict(self._rows)
         edited: list[Path] = []
         errors: list[ResultError] = []
-        for target in self._targets(path, observations):
+        for target in targets_of(path, observations):
             row = staged.get(target)
             if row is None:
                 errors.append(self._classify_miss(staged, target))
@@ -345,7 +356,7 @@ class InMemoryStorage:
         staged = dict(self._rows)
         rows: list[Observation] = []
         errors: list[ResultError] = []
-        requested = self._targets(path, observations)
+        requested = targets_of(path, observations)
         unique = set(requested)
         seen: set[Path] = set()
         for target in requested:
@@ -456,20 +467,6 @@ class InMemoryStorage:
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
-
-    def _targets(
-        self,
-        path: Path | None,
-        observations: list[Observation] | None,
-        *,
-        default: Path | None = None,
-    ) -> list[Path]:
-        """The paths an op addresses: the single path, the rows', or *default*."""
-        if path is not None:
-            return [path]
-        if observations is not None:
-            return [o.path for o in observations]
-        return [default] if default is not None else []
 
     def _observe(self, path: Path, row: _Row, *, content: bool = False, status: _Status | None = None) -> Observation:
         # The populated mask derives from the non-None fields here — this
@@ -755,11 +752,20 @@ def _depth_below(path: Path, anchor: Path) -> int | None:
     base = "" if anchor == ROOT else str(anchor)
     if not path.startswith(base + "/") or path == ROOT:
         return None
-    return path[len(base) + 1 :].count("/") + 1
+    return path.depth - anchor.depth
 
 
-def _in_scope(path: Path, scope: tuple[Path, ...]) -> bool:
-    return not scope or any(s == ROOT or path == s or path.startswith(s + "/") for s in scope)
+def _served_scope(path: Path, scope: tuple[Path, ...]) -> bool:
+    """Per-anchor liveness: a meta anchor lifts the ``/.vfs`` exclusion.
+
+    The default scope and every non-meta anchor (ROOT included) keep the
+    meta subtree hidden — scope composition stays monotone.
+    """
+    if any(path == a or path.startswith(a + "/") for a in scope if a.is_meta):
+        return True
+    live = [a for a in scope if not a.is_meta]
+    covered = not scope or any(a == ROOT or path == a or path.startswith(a + "/") for a in live)
+    return covered and not path.is_meta
 
 
 def _compile_grep(

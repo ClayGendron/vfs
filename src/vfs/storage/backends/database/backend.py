@@ -35,8 +35,9 @@ from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import op_execution_options
 from vfs.storage.backends.database.engine import EngineHost
-from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, targets_of, tree_rows
+from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
+from vfs.storage.protocol import scope_of, targets_of
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -170,13 +171,14 @@ class DatabaseStorage:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        scope = paths or tuple(o.path for o in observations or [])
+        scope = scope_of(paths, observations)
         return await self._execute(
             "glob",
             lambda session: glob_rows(
                 session,
                 self._host.tables,
                 self._host.membership_budget,
+                self._host.fan_budget,
                 pattern=pattern,
                 scope=scope,
                 ext=ext,

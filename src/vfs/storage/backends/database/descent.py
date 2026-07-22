@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import select
 
-from vfs.paths import METADATA_ROOT, Path
+from vfs.paths import METADATA_ROOT, ROOT, Path
 from vfs.results import ResultError, VFSErrorKind, classified
 from vfs.storage.backends.database.dialects import chunked
 
@@ -32,12 +32,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy import ColumnElement, Table
     from sqlalchemy.ext.asyncio import AsyncSession
-
-ROOT = Path("/")
-
-# The conventional trash location: an ordinary meta subtree the delete
-# verb reparents into — browsable, writable, no scope of its own.
-TRASH_ROOT: Final = f"{METADATA_ROOT}/trash"
 
 LIKE_ESCAPE: Final = "\\"
 
@@ -82,11 +76,6 @@ def liveness_filters(entry: Table, *, include_meta: bool) -> list[ColumnElement[
         entry.c.path != METADATA_ROOT,
         ~entry.c.path.like(escape_like(METADATA_ROOT) + "/%", escape=LIKE_ESCAPE),
     ]
-
-
-def in_meta(path: Path) -> bool:
-    """Whether *path* addresses into the reserved ``/.vfs`` meta subtree."""
-    return path == METADATA_ROOT or path.startswith(METADATA_ROOT + "/")
 
 
 def escape_like(text: str) -> str:

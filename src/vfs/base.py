@@ -45,7 +45,7 @@ from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
-from vfs.paths import METADATA_ROOT, Path, resolve_path
+from vfs.paths import METADATA_ROOT, ROOT, Path, resolve_path
 from vfs.permissions import (
     Permission,
     PermissionLayer,
@@ -75,8 +75,6 @@ if TYPE_CHECKING:
     from vfs.ops import Op
     from vfs.paths import ResolvedPath
     from vfs.permissions import PermissionsPayload
-
-ROOT = Path("/")
 
 # Router-traversal depth budget for the current request: decremented once
 # per router entered (adapters and wire hops re-enter), never per mount.
@@ -1648,7 +1646,7 @@ class VirtualFileSystem:
             self._dispatch_entry(
                 binding,
                 "write",
-                entries=sorted(group, key=lambda e: str(e.path).count("/")),
+                entries=sorted(group, key=lambda e: e.path.depth),
                 overwrite=overwrite,
                 parents=parents,
                 user_id=user_id,

@@ -9,11 +9,11 @@ in each backend, so it cannot drift.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from vfs.models import Entry
+from vfs.models import CONTENT_KINDS, Entry
 from vfs.results import ResultError, VFSErrorKind, classified, validation_message
 from vfs.storage.replace import apply_edits
 
@@ -22,10 +22,6 @@ if TYPE_CHECKING:
 
     from vfs.paths import ObjectKind, Path
     from vfs.storage.replace import EditOperation
-
-# Stored kinds whose rows carry text content; everything else refuses
-# content reads and edits and surfaces no content metrics.
-CONTENT_KINDS: Final[frozenset[str]] = frozenset({"file", "chunk", "version"})
 
 
 def edited_entry(
