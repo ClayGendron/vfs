@@ -471,8 +471,7 @@ async def _resolve_rows(
             )
         elif staged.kind != "directory" and overwrite and occupant.kind != "directory":
             # The rival's row absorbs our write: an unguarded clobbering update.
-            staged.persistence = "absorb"
-            staged.entry_id = occupant.entry_id
+            staged.absorb(occupant.entry_id)
         elif staged.kind != "directory" and overwrite:
             errors.append(is_a_directory(staged.path))
         else:

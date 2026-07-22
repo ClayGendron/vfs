@@ -230,7 +230,7 @@ def already_exists(path: Path) -> ResultError:
 
 
 def is_a_directory(path: Path) -> ResultError:
-    """The one construction of the directory-occupant ``wrong_kind``."""
+    """The directory special-case of ``is_a`` — the write paths' refusal."""
     return is_a("directory", path)
 
 

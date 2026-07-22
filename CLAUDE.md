@@ -180,8 +180,12 @@ private *types and constants* stay next to what they support.
   smell"** — the classic hints that something may be off: duplicated code,
   long methods, long parameter lists, magic numbers, primitive obsession
   (bare strings/ints/lists where a small type belongs), positional indexing
-  into sequences (`parts[2]`), deep nesting, feature envy, god classes,
-  shotgun surgery, dead code, or speculative generality.
+  that decodes a hidden field of a heterogeneous structure (`parts[2]` where
+  the 2 secretly means "kind" — name the structure instead), deep nesting,
+  feature envy, god classes, shotgun surgery, dead code, or speculative
+  generality. First/last access on a homogeneous sequence (`lines[0]`,
+  `rows[-1]`) is not this smell: there the position *is* the meaning, and it
+  beats a `first, *_, last` destructure that materializes the middle.
 - **A smell is a hint to look closer, not a rule to obey blindly.** When you
   spot one, dig in: understand *why* the code took that shape, and decide
   whether it is justified here.

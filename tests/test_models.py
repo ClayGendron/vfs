@@ -466,6 +466,14 @@ class TestVersion:
         with pytest.raises(ValueError, match="Missing version row"):
             Version.reconstruct([v1], 2)
 
+    def test_reconstruction_with_no_eligible_rows_is_a_missing_row(self) -> None:
+        # Both empty history and all-newer rows leave nothing at or below
+        # the target — the same missing-row refusal, before any walk.
+        with pytest.raises(ValueError, match="Missing version row"):
+            Version.reconstruct([], 1)
+        with pytest.raises(ValueError, match="Missing version row"):
+            Version.reconstruct([_version(2, "two", None)], 1)
+
     def test_reconstruction_requires_a_snapshot(self) -> None:
         diff_only = _version(2, "two", "one")
         with pytest.raises(ValueError, match="Missing snapshot"):

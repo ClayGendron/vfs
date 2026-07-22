@@ -140,7 +140,7 @@ class Version(BaseModel):
         msg = f"Missing version row for v{target_version}"
         if not ordered:
             raise ValueError(msg)
-        *_, target_row = ordered
+        target_row = ordered[-1]
         if target_row.number != target_version:
             raise ValueError(msg)
 

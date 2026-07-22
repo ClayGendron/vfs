@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from vfs.models.versioning import apply_diff, compute_diff, reconstruct_version
+from vfs.models.versioning import _NO_NEWLINE_MARKER, apply_diff, compute_diff, reconstruct_version
 
 
 def test_compute_diff_of_identical_content_is_empty() -> None:
@@ -33,6 +33,12 @@ def test_diff_from_an_empty_base_roundtrips() -> None:
 def test_roundtrip_without_a_trailing_newline() -> None:
     old, new = "a\nb", "a\nc"
     assert apply_diff(old, compute_diff(old, new)) == new
+
+
+def test_no_newline_marker_lands_after_a_trailing_context_line() -> None:
+    # Format-level pin: apply_diff tolerates a missing marker, so a
+    # round-trip cannot catch this — the diff string itself must show it.
+    assert compute_diff("x\ny\nb", "z\ny\nb").endswith(_NO_NEWLINE_MARKER)
 
 
 def test_reconstruct_of_no_versions_is_empty() -> None:

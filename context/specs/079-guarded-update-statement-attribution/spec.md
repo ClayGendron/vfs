@@ -16,7 +16,7 @@ correct — pyodbc, the MSSQL driver, declares
 (`sqlalchemy/lib/sqlalchemy/connectors/pyodbc.py:39`), and asyncpg does
 the same (`dialects/postgresql/asyncpg.py:1083`). But the substitute it
 chose — re-reading the rows and inferring success from the post-image
-(`writes.py:531`) — cannot distinguish *our* write from a rival's,
+(`writes.py:529`) — cannot distinguish *our* write from a rival's,
 because versions are per-entry counters that any writer advances by one.
 
 **The failure, in statement order, on an engine at READ COMMITTED:**
@@ -112,7 +112,7 @@ staging plan; the results envelope and every `Observation`.
    `membership_budget(profile, parameter_budget)` exactly as today's
    membership predicates are; results merge across chunks. A 10,000-
    entry batch stays batch-native with per-row attribution.
-6. **The read-back is deleted, not repurposed.** `writes.py:524-527`
+6. **The read-back is deleted, not repurposed.** `writes.py:522-525`
    goes. Its one legitimate remaining job — letting an `"absorb"` entry
    learn the version the database assigned it — moves onto the
    unguarded arm, which can return it directly on the RETURNING arm or
@@ -120,7 +120,7 @@ staging plan; the results envelope and every `Observation`.
    to decide whether the preceding statement worked.
 7. **Docstring correction.** `_update_materials`' claim that the
    read-back "attributes conflicts portably instead of trusting
-   per-driver executemany rowcounts" (`writes.py:501-504`) is false as
+   per-driver executemany rowcounts" (`writes.py:499-502`) is false as
    written — it attributes them *unsoundly*. The rewritten docstring
    states the ladder and why each rung is chosen.
 

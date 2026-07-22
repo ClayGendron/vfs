@@ -1344,6 +1344,67 @@ class TestArbitration:
         assert (await storage.read(path=target)).observations[0].content == "mine"
         await storage.close()
 
+    async def test_upsert_clobber_stays_insert_through_apply(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        host = storage._host
+        assert host.profile.arbitration == "upsert"
+        target = Path("/f.txt")
+
+        # Snapshot and plan while the site is vacant: a routine create.
+        async with host.session_factory() as reader:
+            committed = await _fetch_committed(reader, host.tables, host.membership_budget, {target})
+        mine = Entry(path=target, content="mine")
+        plan = WritePlan(committed, user_id=None, budget=host.profile.key_byte_budget)
+        status = plan.put_file(
+            target,
+            kind=mine.kind,
+            content=mine.content,
+            content_hash=mine.content_hash,
+            size_bytes=mine.size_bytes,
+            lines=mine.lines,
+            ext=mine.ext,
+            mime_type=mine.mime_type,
+            overwrite=True,
+            parents=False,
+        )
+        assert status == "created" and plan.errors == []
+        plan.pending.append((target, status))
+
+        # A rival lands between the snapshot and execution.
+        assert (await storage.write(entries=[Entry(path=target, content="rival")])).success is True
+        entry = host.tables.entry
+        async with host.session_factory() as peek:
+            rival_key = (await peek.execute(select(entry.c.entry_id).where(entry.c.path == str(target)))).scalar_one()
+
+        async with host.session_factory() as writer:
+            await writer.connection(execution_options={"vfs_writer": True})
+            result = await _finish(
+                writer,
+                host.tables,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                plan,
+                op="write",
+                overwrite=True,
+            )
+            await writer.commit()
+
+        # The upsert clobber already wrote the final row, so the staged
+        # entry stays "insert" and no update pass bumps it a second time.
+        assert result.success is True
+        assert [(o.status, o.version) for o in result.observations] == [("created", 2)]
+        staged = plan.staged[target]
+        assert staged.persistence == "insert" and staged.entry_id == rival_key
+        async with host.session_factory() as peek:
+            rows = (
+                await peek.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.path == str(target)))
+            ).all()
+        assert rows == [(rival_key, 2)]
+        assert (await storage.read(path=target)).observations[0].content == "mine"
+        await storage.close()
+
     async def test_upsert_layer_adopts_identity_or_classifies_per_rival(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="rival")])
@@ -1381,9 +1442,13 @@ class TestArbitration:
             assert errors == []
             assert clobber.entry_id == rival.entry_id
             assert clobber.version == rival.version + 1
+            # The clobber stays "insert": the upsert already wrote its final
+            # row, so the update passes must never see it again.
+            assert clobber.persistence == "insert"
             # ...while the non-conflicted winner in the same statement
             # keeps its staged-minted identity untouched.
             assert fresh.entry_id == minted and fresh.version == 1
+            assert fresh.persistence == "insert"
 
             # overwrite=False over a rival file: DO NOTHING, a definite exists.
             refused = staged_for("/f.txt", "file")
@@ -1421,6 +1486,28 @@ class TestArbitration:
             )
             budget = storage._host.membership_budget
             errors = await _update_materials(session, entry, budget, [stale], user_id=None, now=datetime.now(UTC))
+        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert "Concurrent modification" in errors[0].message
+        await storage.close()
+
+    async def test_absorb_row_vanishing_before_read_back_classifies_conflict(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
+            # An absorb row whose adopted rival vanished before the
+            # read-back: no observed version exists to take as truth.
+            vanished = StagedEntry(
+                path=Path("/f.txt"),
+                parent=Path("/"),
+                kind="file",
+                persistence="absorb",
+                entry_id=str(ULID()),
+                content="mine",
+            )
+            budget = storage._host.membership_budget
+            errors = await _update_materials(session, entry, budget, [vanished], user_id=None, now=datetime.now(UTC))
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
         assert "Concurrent modification" in errors[0].message
         await storage.close()

@@ -75,6 +75,16 @@ class StagedEntry:
         self.ext = ext
         self.mime_type = mime_type
 
+    def absorb(self, entry_id: str) -> None:
+        """Lose insert arbitration to the rival row *entry_id* and clobber it.
+
+        The row becomes an unguarded update onto the rival's identity; its
+        final version is learned from the post-execution read-back, never
+        staged — there is no base to predict a successor from.
+        """
+        self.persistence = "absorb"
+        self.entry_id = entry_id
+
 
 # ---------------------------------------------------------------------------
 # Write plan

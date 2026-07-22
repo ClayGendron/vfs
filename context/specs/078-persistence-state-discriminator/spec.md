@@ -1,6 +1,7 @@
 # 078 — `StagedEntry` persistence state: one named discriminator
 
-- **Status:** proposed 2026-07-22. Not yet implemented.
+- **Status:** implemented 2026-07-22 — spec and implementation landed
+  together (`3c17e8f`); suite green, `ruff`/`ty` at zero.
 - **Evidence:** `context/research/2026-07-22-persistence-state-precedent.md`
   — BSD `nameiop`, Plan 9 `namec` amode, Linux `i_state`/`d_is_negative`
   for the naming argument; SQLAlchemy's unit of work

@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 from vfs.results.kinds import VFSErrorKind, kind_family
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from vfs.results import Result, ResultError
 
 
@@ -93,6 +95,24 @@ def exception_for_kind(kind: VFSErrorKind | str) -> type[VFSError]:
     return _KIND_TO_EXC.get(family, VFSError)
 
 
+def raise_lone_or_group(excs: Sequence[Exception], group_message: str) -> None:
+    """The one raise policy for collected failures: a lone error raises bare.
+
+    A single failure keeps its natural type and traceback — ``except
+    SomeError`` still works — and an ``ExceptionGroup`` appears only when
+    there is genuinely more than one failure to report.  An empty
+    collection raises nothing, so gather-style callers apply this
+    unconditionally after draining a settled batch.
+    """
+    match list(excs):
+        case []:
+            return
+        case [lone]:
+            raise lone
+        case many:
+            raise ExceptionGroup(group_message, many)
+
+
 def raise_if_failed(result: Result) -> Result:
     """Boundary adapter: turn a failed ``Result`` into its kind-mapped exception.
 
@@ -109,10 +129,8 @@ def raise_if_failed(result: Result) -> Result:
     an ``ExceptionGroup`` so a fan-out failure reports every downed
     terminal, not just the first.
     """
-    if result.success:
-        return result
-    excs = [exception_for_kind(e.kind)(e.message, result) for e in result.failures]
-    match excs:
-        case [lone]:
-            raise lone
-    raise ExceptionGroup("multiple VFS errors", excs)
+    if not result.success:
+        raise_lone_or_group(
+            [exception_for_kind(e.kind)(e.message, result) for e in result.failures], "multiple VFS errors"
+        )
+    return result

@@ -157,8 +157,9 @@ def chunked[T](items: Sequence[T], size: int) -> Iterator[Sequence[T]]:
 def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object]]) -> int:
     """Rows one multi-row statement may carry: the budget over the widest row.
 
-    The floor of one row keeps a pathological budget (narrower than a
-    single row) making progress instead of stalling ``chunked``.
+    Requires non-empty *rows* — no caller builds a statement that carries
+    zero rows. The floor of one row keeps a pathological budget (narrower
+    than a single row) making progress instead of stalling ``chunked``.
     """
     return max(1, parameter_budget // max(len(row) for row in rows))
 

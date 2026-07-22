@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 
 from pydantic import ValidationError
 
-from vfs.exceptions import MountError
+from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
@@ -514,11 +514,7 @@ class VirtualFileSystem:
         for item in settled:
             if isinstance(item, BaseException) and not isinstance(item, Exception):
                 raise item
-        match errors:
-            case [lone]:
-                raise lone
-            case [_, *_]:
-                raise ExceptionGroup("errors while closing storages", errors)
+        raise_lone_or_group(errors, "errors while closing storages")
 
     def mounts(self) -> tuple[MountInfo, ...]:
         """The mount table, one JSON-native row per binding — replayable.
@@ -1990,11 +1986,7 @@ class VirtualFileSystem:
                 raise item
             if isinstance(item, Exception):
                 bugs.append(item)
-        match bugs:
-            case [lone]:
-                raise lone
-            case [_, *_]:
-                raise ExceptionGroup("impl errors during dispatch", bugs)
+        raise_lone_or_group(bugs, "impl errors during dispatch")
         return [item for item in settled if isinstance(item, Result)]
 
     def _skip_entry(self, op: Op, binding: Binding) -> ResultError:

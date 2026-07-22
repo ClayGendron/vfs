@@ -172,7 +172,8 @@ def block_anchor_replacer(content: str, find: str) -> Generator[Match]:
     if len(find_lines) < 3:
         return
 
-    first_line, *_, last_line = (line.strip() for line in find_lines)
+    first_line = find_lines[0].strip()
+    last_line = find_lines[-1].strip()
 
     candidates: list[tuple[int, int]] = []
     for i in range(len(content_lines)):
