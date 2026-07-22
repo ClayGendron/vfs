@@ -651,6 +651,13 @@ class TestReadFamily:
         assert with_content.content == "alpha"
         assert "content" in with_content.populated
 
+    async def test_projection_of_an_unbacked_field_serves_identity_only(self, storage: DatabaseStorage) -> None:
+        # A requested field with no entries-table column is dropped from
+        # the mask, never a raw column lookup that would raise past _execute.
+        result = await storage.stat(path=Path("/docs/a.txt"), columns=frozenset({"score", "content"}))
+        assert result.success is True
+        assert result.observations[0].populated == {"path", "kind", "version"}
+
     async def test_glob_matches_names_and_full_paths(self, storage: DatabaseStorage) -> None:
         by_name = await storage.glob(pattern="*.txt")
         assert [o.path for o in by_name.observations] == [
@@ -679,6 +686,29 @@ class TestReadFamily:
         await _seed(storage, [("/da_a.txt", "file", "x"), ("/daxa.txt", "file", "x")])
         result = await storage.glob(pattern="da_a.txt")
         assert [o.path for o in result.observations] == ["/da_a.txt"]
+        await storage.close()
+
+    async def test_read_family_emits_selects_only_and_ls_keys_on_parent_id(self, tmp_path) -> None:
+        # The module docstring's statement-shape promises, pinned the way
+        # the write family pins its counts: SELECTs only, and ls children
+        # come from parent_id equality — never a path prefix scan.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/docs/a.txt", "file", "alpha")])
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        assert (await storage.read(path=Path("/docs/a.txt"))).success is True
+        assert (await storage.stat(path=Path("/docs/a.txt"))).success is True
+        assert (await storage.ls(path=Path("/docs"))).success is True
+        assert (await storage.tree(path=Path("/"))).success is True
+        assert (await storage.glob(pattern="*.txt")).success is True
+        queries = [s for s in statements if not s.startswith(("BEGIN", "COMMIT", "ROLLBACK", "PRAGMA"))]
+        assert queries and all(s.lstrip().startswith("SELECT") for s in queries), queries
+        children = [s for s in queries if "parent_id IN" in s]
+        assert children, queries
         await storage.close()
 
     async def test_anchor_escaping_bounds_tree_and_scoped_glob(self, tmp_path) -> None:
@@ -1732,6 +1762,25 @@ class TestMembershipChunking:
         assert {e.kind for e in misses.errors} == {VFSErrorKind.not_found}
         scoped = await storage.glob(pattern="*.txt", paths=tuple(p.parent_dir for p in paths))
         assert len(scoped.observations) == 60
+        # Batch ls spans chunk boundaries: 60 anchors at 16 per statement,
+        # each parent's single child arriving whole through the merge.
+        listing = await storage.ls(observations=[Observation(path=p.parent_dir) for p in paths])
+        assert listing.success is True
+        assert sorted(str(o.path) for o in listing.observations) == sorted(str(p) for p in paths)
+        await storage.close()
+
+    async def test_nested_glob_anchors_dedupe_across_chunks(self, tmp_path, monkeypatch) -> None:
+        # Budget 48 → fan chunks of 8 anchors: /top lands in the first
+        # chunk and every nested anchor re-matches its rows in later
+        # chunks, so each row must appear exactly once after the merge.
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        files = [Path(f"/top/d{i:02}/f.txt") for i in range(20)]
+        written = await storage.write(entries=[Entry(path=p, content="x") for p in files], parents=True)
+        assert written.success is True, written.errors
+        result = await storage.glob(pattern="*", paths=(Path("/top"), *(p.parent_dir for p in files)))
+        expected = sorted(["/top", *(str(p.parent_dir) for p in files), *(str(p) for p in files)])
+        assert [str(o.path) for o in result.observations] == expected
         await storage.close()
 
     async def test_ten_thousand_entry_batch_round_trips(self, tmp_path) -> None:

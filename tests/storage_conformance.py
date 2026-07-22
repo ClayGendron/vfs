@@ -217,6 +217,29 @@ class StorageContract:
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.not_found
 
+    @needs("mkdir", "ls")
+    async def test_ls_of_an_empty_directory_is_an_empty_success(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/empty"))
+        result = await storage.ls(path=Path("/empty"))
+        assert result.success is True
+        assert result.observations == []
+
+    @needs("mkdir", "tree")
+    async def test_tree_of_an_empty_directory_is_an_empty_success(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/empty"))
+        result = await storage.tree(path=Path("/empty"))
+        assert result.success is True
+        assert result.observations == []
+
+    @needs("write", "read", "stat")
+    async def test_repeated_batch_targets_observe_per_occurrence(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        twice = [Observation(path=Path("/a.txt")), Observation(path=Path("/a.txt"))]
+        read = await storage.read(observations=twice)
+        assert [str(o.path) for o in read.observations] == ["/a.txt", "/a.txt"]
+        stat = await storage.stat(observations=twice)
+        assert [str(o.path) for o in stat.observations] == ["/a.txt", "/a.txt"]
+
     @needs("mkdir", "read")
     async def test_read_on_a_directory_is_wrong_kind(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a"))
@@ -600,6 +623,44 @@ class StorageContract:
             await storage.write(entries=[Entry(path=Path(f"/{name}"), content="x")])
         result = await storage.glob(pattern="*.py", max_count=2)
         assert len(result.observations) == 2
+
+    @needs("write", "glob")
+    async def test_glob_max_count_takes_the_first_n_in_path_order(self, storage: ConformanceBackend) -> None:
+        for name in ("a.py", "b.py", "c.py", "d.py"):
+            await storage.write(entries=[Entry(path=Path(f"/{name}"), content="x")])
+        result = await storage.glob(pattern="*.py", max_count=2)
+        assert [o.path for o in result.observations] == ["/a.py", "/b.py"]
+
+    @needs("write", "glob")
+    async def test_glob_question_mark_matches_exactly_one_character(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/a.py"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/ab.py"), content="x")])
+        result = await storage.glob(pattern="?.py")
+        assert [o.path for o in result.observations] == ["/a.py"]
+
+    @needs("write", "glob")
+    async def test_glob_ext_filter_normalizes_dot_and_case(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/notes.md"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/a.py"), content="x")])
+        result = await storage.glob(pattern="*", ext=(".MD",))
+        assert [o.path for o in result.observations] == ["/notes.md"]
+
+    @needs("write", "mkdir", "glob")
+    async def test_glob_ext_matches_the_path_derived_extension(self, storage: ConformanceBackend) -> None:
+        # The filter reads the path, not the stored column: a dot-named
+        # directory matches even though it stores no extension of its own.
+        await storage.mkdir(path=Path("/v1.py"))
+        await storage.write(entries=[Entry(path=Path("/v1.py/a.py"), content="x")])
+        result = await storage.glob(pattern="*", ext=("py",))
+        assert [o.path for o in result.observations] == ["/v1.py", "/v1.py/a.py"]
+
+    @needs("write", "mkdir", "glob")
+    async def test_scoped_glob_includes_the_anchor_row_itself(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/docs"))
+        await storage.write(entries=[Entry(path=Path("/docs/a.txt"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/other.txt"), content="x")])
+        result = await storage.glob(pattern="*", paths=(Path("/docs"),))
+        assert [o.path for o in result.observations] == ["/docs", "/docs/a.txt"]
 
     @needs("write", "grep")
     async def test_grep_default_case_mode_is_sensitive(self, storage: ConformanceBackend) -> None:

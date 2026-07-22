@@ -2,10 +2,12 @@
 
 Column selects narrowed by the caller's projection, reconstructed into
 :class:`~vfs.models.Observation` rows with an explicit populated mask
-(``populated == requested + {path, kind, version}``, fetched-and-null
-included). Every function takes the op's live ``AsyncSession`` and only
-executes SELECTs; none begins or commits — the protocol method in
-``backend.py`` owns its one transaction.
+(``populated == (requested and servable) + {path, kind, version}``,
+fetched-and-null included; a requested field with no backing column is
+dropped from the mask, never reported as fetched). Every function takes
+the op's live ``AsyncSession`` and only executes SELECTs; none begins
+or commits — the protocol method in ``backend.py`` owns its one
+transaction.
 
 The shapes: point reads are ``path IN`` column selects, content joined
 from the content table; ``ls`` is ``parent_id`` equality only, never a
@@ -220,6 +222,8 @@ async def glob_rows(
     else:
         filters.append(subject_column.like(escape_like(_literal_prefix(pattern)) + "%", escape=LIKE_ESCAPE))
     candidates = await _glob_candidates(session, entry, membership_budget, scope, filters, fetched)
+    # Ext filters by the path-derived extension, deliberately not the stored
+    # ext column: explicit-ext rows and NULL-ext directories must still match.
     wanted_ext = frozenset(e.lstrip(".").lower() for e in ext)
     rows: list[Observation] = []
     for mapping in candidates:

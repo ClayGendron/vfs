@@ -180,8 +180,10 @@ read-pipeline R2):
   re-acquires the metadata/data ordering problem, not an optimization.
 - **Every Observation carries an explicit populated-field mask** (the
   `statx` `stx_mask` precedent): projection is pinned strict —
-  populated == requested ∪ always-on identity fields (path, kind,
-  revision) — and the harness asserts by mask, never by value. This is
+  populated == (requested ∩ servable) ∪ always-on identity fields
+  (path, kind, version); a requested field with no backing column is
+  dropped from the mask, never reported as fetched — and the harness
+  asserts by mask, never by value. This is
   a live-model ripple this story owns in Pass A: `Entry`/`Observation`
   gain `revision` and the mask, `results/projection.py` becomes
   mask-driven, and `InMemoryStorage` stamps revision so the shared
