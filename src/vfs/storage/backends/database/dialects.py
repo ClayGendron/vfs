@@ -48,6 +48,12 @@ class DialectProfile:
     cannot be assumed to carry); ``file_settings`` run once at first
     touch (database-file state). Isolation pins are ``None`` where the
     engine's default is the declared choice.
+
+    ``expression_depth_budget`` caps the parse depth of one statement's
+    expression tree — a left-deep ``OR`` chain's depth tracks its term
+    count, independent of bind-parameter count. The default is SQLite's
+    ``SQLITE_MAX_EXPR_DEPTH`` default (1,000), the tightest known cap;
+    raise it per engine only with measurement.
     """
 
     name: str
@@ -60,6 +66,7 @@ class DialectProfile:
     file_settings: tuple[str, ...] = ()
     retryable_sqlstates: frozenset[str] = frozenset({"40001", "40P01"})
     retryable_sqlite_codes: frozenset[int] = frozenset()
+    expression_depth_budget: int = 1_000
 
 
 SQLITE: Final = DialectProfile(
@@ -151,6 +158,10 @@ def op_execution_options(profile: DialectProfile, *, writer: bool) -> dict[str, 
 # fixed predicates (the liveness filter, projection, depth caps).
 _FILTER_BIND_RESERVE: Final = 32
 
+# Depth units held back from each OR-fan chunk for the fixed predicates
+# AND-chained above the fan.
+_EXPRESSION_DEPTH_RESERVE: Final = 64
+
 
 def membership_budget(profile: DialectProfile, parameter_budget: int) -> int:
     """Elements per ``IN``-list chunk: the element cap net of fixed binds.
@@ -161,6 +172,20 @@ def membership_budget(profile: DialectProfile, parameter_budget: int) -> int:
     on every dialect.
     """
     return max(1, min(profile.in_list_budget, parameter_budget - _FILTER_BIND_RESERVE))
+
+
+def fan_budget(profile: DialectProfile, parameter_budget: int) -> int:
+    """Anchors per ``OR``-fan chunk: the tighter of the bind and depth caps.
+
+    Each anchor costs two binds and two ``OR`` terms, and an ``OR``
+    chain parses left-deep, so its expression depth tracks its term
+    count — an ``IN`` list is depth-flat, an ``OR`` fan is not. On
+    SQLite's default depth cap the fan breaks at 499 anchors while the
+    bind budget alone would allow ~16,000.
+    """
+    by_binds = membership_budget(profile, parameter_budget) // 2
+    by_depth = (profile.expression_depth_budget - _EXPRESSION_DEPTH_RESERVE) // 2
+    return max(1, min(by_binds, by_depth))
 
 
 def chunked[T](items: Sequence[T], size: int) -> Iterator[Sequence[T]]:
