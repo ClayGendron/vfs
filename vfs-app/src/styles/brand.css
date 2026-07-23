@@ -193,116 +193,91 @@
   .vfs-section-grid { grid-template-columns: 1fr; gap: 32px; }
 }
 
-/* ─────────── hero ─────────── */
+/* ─────────── hero (spec sheet · centered) ─────────── */
 .vfs-hero {
-  padding: 64px var(--gutter) var(--hero-pb);
-  min-height: 84vh;
-  display: flex; flex-direction: column;
-  justify-content: center;
+  padding: 88px var(--gutter) 72px;
+  text-align: center;
   border-bottom: 1px solid var(--rule);
 }
 
-.vfs-hero-grid {
-  display: grid;
-  grid-template-columns: 1.1fr 1fr;
-  gap: 56px;
-  align-items: center;
-  flex: 1;
-}
-.vfs-hero-left { display: flex; flex-direction: column; gap: 28px; }
-
-.vfs-hero-headline {
-  font-family: var(--font-brand);
-  font-weight: 500;
-  letter-spacing: -0.022em;
-  /* stepped sizing — jumps at breakpoints rather than scaling continuously */
-  font-size: 34px;
-  line-height: 1.16;
-  margin: 0;
-  max-width: 22ch;
-  color: var(--fg);
-  text-wrap: balance;
-}
-@media (min-width: 640px)  { .vfs-hero-headline { font-size: 42px; } }
-@media (min-width: 900px)  { .vfs-hero-headline { font-size: 52px; } }
-@media (min-width: 1200px) { .vfs-hero-headline { font-size: 60px; } }
-@media (min-width: 1600px) { .vfs-hero-headline { font-size: 68px; } }
-.vfs-hero-headline em { color: var(--accent); font-style: normal; }
-.vfs-hero-headline .accent-dot { color: var(--accent); }
-.vfs-hero-headline-line {
-  display: block;
-  width: max-content;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.vfs-hero-lede {
-  font-family: var(--font-display);
-  font-weight: 300;
-  letter-spacing: -0.005em;
-  font-size: clamp(16px, 1.4vw, 20px);
-  line-height: 1.55;
-  max-width: 56ch;
-  color: var(--muted);
-  margin: 0;
-}
-
-.vfs-hero-meta {
-  display: grid;
-  grid-template-columns: repeat(3, auto);
-  gap: 0;
-  border-top: 1px dashed var(--rule);
-  padding-top: 16px;
-  margin-top: 8px;
+.vfs-hero-eyebrow {
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.28em;
+  font-size: 11px;
+  letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--quiet);
 }
-.vfs-hero-meta > div { padding-right: 28px; }
-.vfs-hero-meta .v {
-  display: block;
+.vfs-hero-eyebrow .dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 10px;
+  vertical-align: middle;
+}
+
+.vfs-hero-headline {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: clamp(38px, 5.4vw, 66px);
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  margin: 22px auto 0;
+  max-width: 15ch;
   color: var(--fg);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  margin-top: 6px;
+  text-wrap: balance;
+}
+.vfs-hero-headline em { color: var(--accent); font-style: normal; }
+
+.vfs-hero-lede {
+  max-width: 62ch;
+  margin: 20px auto 0;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.65;
 }
 
-.vfs-install-row {
-  display: flex; justify-content: center;
-  margin-top: 56px;
-}
-.vfs-install-btn {
-  width: min(420px, 75%);
-  display: flex; align-items: center; gap: 10px;
-  padding: 18px 36px;
-  background: var(--card-strong);
-  color: #f1f1ee;
-  border-radius: var(--r);
-  border: 0;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  position: relative;
-  transition: transform .15s, box-shadow .15s, background .25s;
+/* ─────────── call to action row ─────────── */
+.vfs-cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: center;
+  gap: 12px;
+  margin-top: 32px;
 }
-.vfs-install-btn .sig { color: var(--accent); }
-.vfs-install-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 3px 0 var(--rule);
+.vfs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 22px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+  background: transparent;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.vfs-install-btn.is-copied { background: var(--accent); color: var(--bg); }
-.vfs-install-btn.is-copied .sig { color: #0b0b0d; }
-.vfs-install-btn .copy-status {
-  position: absolute; right: 18px;
-  font-size: 10px; letter-spacing: 0.22em; opacity: .55;
+.vfs-btn:hover { background: var(--hover-tint); border-color: var(--accent); }
+.vfs-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
 }
-
-@media (max-width: 980px) {
-  .vfs-hero-grid { grid-template-columns: 1fr; gap: 32px; align-items: start; }
+.vfs-btn.primary:hover { background: var(--pressed); border-color: var(--pressed); }
+.vfs-btn.ghost { border-color: transparent; color: var(--muted); padding-inline: 8px; }
+.vfs-btn.ghost:hover { color: var(--accent); background: transparent; }
+.vfs-btn .sig { color: var(--accent); }
+.vfs-btn.primary .sig { color: var(--bg); }
+.vfs-btn.is-copied { background: var(--ok); border-color: var(--ok); color: var(--bg); }
+.vfs-btn.is-copied .sig { color: var(--bg); }
+.vfs-btn .copy-status {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.75;
 }
 
 /* ─────────── sample (code block) ─────────── */
@@ -697,52 +672,86 @@
   color: var(--quiet);
 }
 
-/* ── §2 · search verbs (four diagrams) ── */
-.vfs-verbs-wrap { display: flex; flex-direction: column; }
-.vfs-verbs {
+/* ── §2 · search verbs (four-cell strip) ── */
+.vfs-verbstrip {
+  margin: 0 auto;
+  max-width: 1080px;
   border: 1px solid var(--rule);
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  /* cap the total width so each of the four cards reads roughly square */
-  width: 100%;
-  max-width: 840px;
-  margin-inline: auto;
+  grid-template-columns: repeat(4, 1fr);
+  text-align: left;
 }
 .vfs-verb {
-  padding: 26px 26px 24px;
+  padding: 22px 22px 18px;
   border-right: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  background: var(--bg);
-  transition: background .2s;
+  gap: 4px;
+  transition: background 0.2s;
 }
-.vfs-verb:hover { background: var(--hover-tint); }
-.vfs-verb:nth-child(2n) { border-right: 0; }
-.vfs-verb:nth-last-child(-n+2) { border-bottom: 0; }
+.vfs-verb:last-of-type { border-right: 0; }
+.vfs-verb.is-active { background: var(--hover-tint); }
+.vfs-verb-name {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  position: relative;
+  width: max-content;
+}
+.vfs-verb-name::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -5px;
+  height: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.35s ease;
+}
+.vfs-verb.is-active .vfs-verb-name::after { transform: scaleX(1); }
 .vfs-verb-dim {
   font-family: var(--font-mono);
   font-size: 10px;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--quiet);
-}
-.vfs-verb-name {
-  font-family: var(--font-mono);
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  color: var(--fg);
+  margin-top: 10px;
 }
 .vfs-verb-art {
-  /* the shared cobalt accent the diagrams colour in with on hover */
-  color: var(--verb, var(--accent));
-  margin: 10px 0 4px;
-  height: 150px;
+  /* the shared cobalt accent the diagrams colour in with */
+  color: var(--accent);
+  height: 118px;
+  margin-top: 8px;
 }
 .vfs-field { width: 100%; height: 100%; display: block; }
 
-/* glob · abstract file tree — matched paths fill in on hover */
+/* the composed pipeline runs along the foot of the strip */
+.vfs-verbstrip-foot {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--rule);
+  background: var(--card-strong);
+  color: #d6d6d4;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  padding: 12px 18px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  overflow-x: auto;
+}
+.vfs-verbstrip-foot .p { color: var(--accent); }
+
+@media (max-width: 1000px) {
+  .vfs-verbstrip { grid-template-columns: repeat(2, 1fr); }
+  .vfs-verb:nth-child(2n) { border-right: 0; }
+  .vfs-verb:nth-child(-n+2) { border-bottom: 1px solid var(--rule); }
+}
+@media (max-width: 620px) {
+  .vfs-verbstrip { grid-template-columns: 1fr; }
+  .vfs-verb { border-right: 0; border-bottom: 1px solid var(--rule); }
+}
+
 .gb-guide {
   fill: none;
   /* opaque (mixed with --bg, not transparent) so overlapping sibling spines
@@ -800,83 +809,88 @@
   to   { fill: var(--accent); }
 }
 
-/* glean · vector space — query's neighbour links redraw in colour on hover */
-/* every point rests uniform; only the hovered query + its neighbours light up */
-.gf-pt { fill: color-mix(in oklab, var(--fg) 22%, transparent); transition: fill .3s; }
-.gf-pt.is-nn.is-on { fill: var(--accent); }
-.gf-q { fill: color-mix(in oklab, var(--fg) 22%, transparent); transition: fill .3s; }
-.gf-q.is-on { fill: var(--accent); }
-/* links are hidden at rest — they only exist while a query is active */
-.gf-link {
-  stroke: var(--accent);
-  stroke-width: 1.25;
-  stroke-dasharray: 1;
+/* glean · meaning regions — recall lights the points nearest the query and
+   traces a hull around exactly those hits */
+.gl-pt {
+  fill: color-mix(in oklab, var(--fg) 22%, transparent);
+  transition: fill 0.3s ease-out, r 0.3s ease-out, opacity 0.3s ease-out;
+}
+.gl.is-on .gl-pt.is-hit {
+  fill: color-mix(in oklab, var(--accent) var(--mix), transparent);
+  transition-delay: calc(240ms + var(--d) * 60ms);
+}
+/* everything outside the retrieved region recedes */
+.gl.is-on .gl-pt:not(.is-hit) { opacity: 0.45; }
+
+/* region outline: hidden at rest, traces in then washes its interior */
+.gl-hull {
+  fill: color-mix(in oklab, var(--accent) 7%, transparent);
+  stroke: color-mix(in oklab, var(--accent) 55%, transparent);
+  stroke-width: 1;
   opacity: 0;
 }
-.gf-links.is-on .gf-link {
+.gl.is-on .gl-hull.is-lit {
   opacity: 1;
-  stroke-dashoffset: 1;
-  animation: gf-draw 0.5s ease-out forwards;
-  animation-delay: calc(var(--d) * 70ms);
+  stroke-dasharray: 1;
+  animation: gl-trace 0.6s ease-out forwards;
 }
-@keyframes gf-draw { to { stroke-dashoffset: 0; } }
+@keyframes gl-trace {
+  from { stroke-dashoffset: 1; fill-opacity: 0; }
+  55%  { fill-opacity: 0; }
+  to   { stroke-dashoffset: 0; fill-opacity: 1; }
+}
 
-/* graph · two-community network — frozen d3-force layout, SVG + BFS traversal */
+.gl-q {
+  opacity: 0;
+  transform: scale(0.3);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.gl.is-on .gl-q { animation: gl-land 0.35s ease-out forwards; }
+@keyframes gl-land {
+  to { opacity: 1; transform: scale(1); }
+}
+.gl-q-dot { fill: var(--accent); }
+.gl-q-halo { fill: none; stroke: var(--accent); stroke-width: 1; opacity: 0.55; }
+
+/* graph · constellation communities — frozen spring layout, uniform nodes,
+   the meeting traversal revealed one BFS depth per tick */
 .gr-edge {
-  stroke: color-mix(in oklab, var(--fg) 22%, transparent);
+  stroke: color-mix(in oklab, var(--fg) 20%, transparent);
   stroke-width: 1;
   fill: none;
   transition: stroke 0.2s, stroke-width 0.2s;
 }
+/* bridges rest fainter than intra-community edges — clumps stay legible */
+.gr-edge.is-bridge { stroke: color-mix(in oklab, var(--fg) 12%, transparent); }
 .gr-edge.is-lit { stroke: var(--accent); stroke-width: 2.2; }
+
 .gr-node {
-  fill: color-mix(in oklab, var(--fg) 22%, transparent);
-  transition: fill 0.2s, r 0.2s;
+  fill: color-mix(in oklab, var(--fg) 30%, transparent);
+  transition: fill 0.2s, r 0.25s;
 }
 .gr-node.is-lit,
 .gr-node.is-meeting { fill: var(--accent); }
-.vfs-verbs-compose {
-  border: 1px solid var(--rule);
-  border-top: 0;
-  background: var(--card-strong);
-  color: #d6d6d4;
-  font-family: var(--font-mono);
-  font-size: 14px;
-  padding: 16px 24px;
-  white-space: pre;
-  overflow-x: auto;
-  border-radius: 0 0 var(--r2) var(--r2);
+
+/* meeting ring eases in when the traversal converges */
+.gr-mring {
+  fill: none;
+  stroke: color-mix(in oklab, var(--accent) 60%, transparent);
+  stroke-width: 1;
+  opacity: 0;
+  transform: scale(0.5);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity 0.25s ease-out, transform 0.3s ease-out;
 }
-.vfs-verbs-prompt { color: var(--accent); user-select: none; }
-.vfs-verbs-cmd { color: #f1f1ee; }
-.vfs-verbs-arg { color: rgba(214,214,212,0.7); }
-.vfs-verbs-str { color: #a8d99a; }
-.vfs-verbs-pipe { color: color-mix(in oklab, var(--accent) 70%, transparent); }
-.vfs-verbs-cmd.is-lit { color: var(--accent); }
-
-/* ── §2 motion ── hover spotlight only; diagrams rest static ── */
-
-/* spotlight: the hovered verb gets a wash + an underline sweep on its name */
-.vfs-verb.is-active { background: var(--hover-tint); }
-.vfs-verb-name { position: relative; width: max-content; }
-.vfs-verb-name::after {
-  content: "";
-  position: absolute;
-  left: 0; right: 0; bottom: -4px;
-  height: 2px;
-  background: var(--verb, var(--accent));
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-.vfs-verb.is-active .vfs-verb-name::after { transform: scaleX(1); }
-
+.gr-mring.is-lit { opacity: 1; transform: scale(1); }
 /* respect reduced-motion: hold a clean static end state, no draw-in */
 @media (prefers-reduced-motion: reduce) {
   .gb.is-on .gb-sel,
   .gp.is-on .gp-word.is-match,
   .gp.is-on .gp-scan,
-  .gf-links.is-on .gf-link,
+  .gl.is-on .gl-hull.is-lit,
+  .gl.is-on .gl-q,
   .gr-edge.is-lit {
     animation: none !important;
   }
@@ -885,18 +899,13 @@
   .gb.is-on .gb-glyph.is-path,
   .gb.is-on .gb-bar.is-path { transition-delay: 0s; }
   .gb.is-on .gb-sel { opacity: 1; transform: scaleX(1); }
-  .gf-links.is-on .gf-link,
+  .gl.is-on .gl-pt.is-hit { transition-delay: 0s; }
+  .gl.is-on .gl-hull.is-lit { opacity: 1; fill-opacity: 1; stroke-dashoffset: 0; }
+  .gl.is-on .gl-q { opacity: 1; transform: scale(1); }
   .gr-edge.is-lit { stroke-dashoffset: 0; }
   .gp.is-on .gp-scan { opacity: 0; }
   /* matches hold the lit colour instantly when the scan animation is off */
   .gp.is-on .gp-word.is-match { fill: var(--accent); }
-}
-
-@media (max-width: 720px) {
-  .vfs-verbs { grid-template-columns: 1fr; }
-  .vfs-verb { border-right: 0; }
-  .vfs-verb:nth-last-child(-n+2) { border-bottom: 1px solid var(--rule); }
-  .vfs-verb:last-child { border-bottom: 0; }
 }
 
 /* ── §4 · mount map (fstab) ── */
@@ -1305,4 +1314,153 @@
 .vfs-linkline .accent {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+/* ── §3 · value grid (what vfs gives an agent) ── */
+.vfs-values {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--rule);
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.vfs-value {
+  padding: 30px 28px 34px;
+  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  transition: background 0.15s;
+}
+.vfs-value:nth-child(3n) { border-right: 0; }
+.vfs-value:nth-last-child(-n + 3) { border-bottom: 0; }
+.vfs-value:hover { background: var(--hover-tint); }
+.vfs-value .id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  color: var(--accent);
+}
+.vfs-value h3 {
+  font-family: var(--font-display);
+  font-size: 21px;
+  letter-spacing: -0.01em;
+  margin: 12px 0 10px;
+}
+.vfs-value p { color: var(--muted); font-size: 14.5px; line-height: 1.6; margin: 0; }
+.vfs-value .note {
+  display: block;
+  margin-top: 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--quiet);
+}
+
+@media (max-width: 1000px) {
+  .vfs-values { grid-template-columns: repeat(2, 1fr); }
+  .vfs-value:nth-child(3n) { border-right: 1px solid var(--rule); }
+  .vfs-value:nth-child(2n) { border-right: 0; }
+  .vfs-value:nth-last-child(-n + 3) { border-bottom: 1px solid var(--rule); }
+  .vfs-value:nth-last-child(-n + 2) { border-bottom: 0; }
+}
+@media (max-width: 640px) {
+  .vfs-values { grid-template-columns: 1fr; }
+  .vfs-value { border-right: 0; }
+}
+
+/* ── §3 · try-it terminal (canned transcript) ── */
+.vfs-term {
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--card-strong);
+  max-width: 980px;
+  margin: 0 auto;
+}
+.vfs-term-bar {
+  display: grid;
+  grid-template-columns: 60px 1fr 60px;
+  align-items: center;
+  padding: 10px 14px;
+  background: color-mix(in oklab, var(--card-strong) 76%, #ffffff);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.vfs-term-lights { display: inline-flex; gap: 8px; }
+.vfs-term-lights i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+.vfs-term-lights .r { background: #ff5f57; }
+.vfs-term-lights .y { background: #febc2e; }
+.vfs-term-lights .g { background: #28c840; }
+.vfs-term-title {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: rgba(214, 214, 212, 0.6);
+}
+.vfs-term-tag {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(214, 214, 212, 0.35);
+}
+.vfs-term-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #d6d6d4;
+}
+.vfs-term-block { margin-top: 10px; }
+.vfs-term-line { white-space: pre-wrap; word-break: break-word; }
+.vfs-term-line.dim { color: rgba(214, 214, 212, 0.45); }
+.vfs-term-line.sig { color: #79a4ff; }
+.vfs-term-line.hit { color: #f1f1ee; }
+.vfs-term-prompt { color: var(--accent); user-select: none; margin-right: 8px; }
+.vfs-term-cmd { color: #f1f1ee; }
+.vfs-term-input { display: flex; align-items: center; margin-top: 10px; }
+.vfs-term-input input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: #f1f1ee;
+  font: inherit;
+  padding: 0;
+}
+.vfs-term-input input::placeholder { color: rgba(214, 214, 212, 0.3); }
+.vfs-term-input input:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.vfs-term-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in oklab, var(--card-strong) 88%, #ffffff);
+}
+.vfs-term-suggest-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(214, 214, 212, 0.4);
+  margin-right: 4px;
+}
+.vfs-term-chip {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: transparent;
+  color: rgba(214, 214, 212, 0.8);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.vfs-term-chip:hover {
+  color: #fff;
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
 }

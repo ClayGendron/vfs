@@ -5,49 +5,54 @@ import {
   NamespaceTree,
   Positioning,
   Sample,
-  SearchVerbs,
   Section,
   SectionGrid,
   SectionHead,
   SpecHero,
   SpecStrip,
+  TryTerminal,
+  ValueGrid,
+  VerbStrip,
 } from "@/components/brand"
 import { Seo } from "@/components/Seo"
 import { routeMeta, SITE } from "@/lib/site"
 
 export function Home() {
-  const heroCode = (
-    <Sample label="example · python" kind="quickstart">
-{`from vfs `}<span className="kw">{`import`}</span>{` VFSClient
-`}<span className="kw">{`from`}</span>{` vfs.backends `}<span className="kw">{`import`}</span>{` PostgresFileSystem
-`}<span className="kw">{`from`}</span>{` sqlalchemy.ext.asyncio `}<span className="kw">{`import`}</span>{` create_async_engine
-
-g = `}<span className="call">{`VFSClient`}</span>{`()
-engine = `}<span className="call">{`create_async_engine`}</span>{`(uri)
-g.`}<span className="call">{`add_mount`}</span>{`(`}<span className="call">{`PostgresFileSystem`}</span>{`(engine=engine), path=`}<span className="str">{`"/enterprise"`}</span>{`)
-
-`}<span className="comment">{`# one namespace over every mount`}</span>{`
-g.`}<span className="call">{`write`}</span>{`(`}<span className="str">{`"/enterprise/auth.py"`}</span>{`, source)
-
-`}<span className="comment">{`# compose unix verbs over one result envelope`}</span>{`
-hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'grep "authenticate" | nbr | pagerank | top 15'`}</span>{`)
-
-`}<span className="kw">{`for`}</span>{` obs `}<span className="kw">{`in`}</span>{` hits:
-    `}<span className="call">{`print`}</span>{`(obs.path, obs.score)`}
-    </Sample>
-  )
-
   return (
     <>
       <Seo {...routeMeta.home} />
       <SpecHero
-        headline={SITE.headline}
+        eyebrow={`${SITE.stage} · ${SITE.versionFallback} · apache 2.0`}
+        headline={<>Agentic search on <em>your</em> database</>}
         lede={SITE.description}
-        code={heroCode}
-        install={{ cmd: SITE.install.python }}
       />
 
+      <Section tight>
+        <VerbStrip />
+      </Section>
+
       <SpecStrip metrics={SITE.metrics} />
+
+      <Section>
+        <SectionHead tagline={<>A context substrate, not another <em>retriever</em></>}>
+          Six things vfs gives an agent that a vector index, an fsspec mount,
+          or a bespoke tool per query shape does not.
+        </SectionHead>
+        <ValueGrid />
+      </Section>
+
+      <Section>
+        <SectionHead tagline="Run the verbs.">
+          A sandboxed vfs over a sample repo — the same surface an agent gets
+          over MCP. Pick a command below; the transcript is canned for now,
+          and the{" "}
+          <Link to="/terminal" className="accent">
+            live repl
+          </Link>{" "}
+          is a click away.
+        </SectionHead>
+        <TryTerminal />
+      </Section>
 
       <Section>
         <SectionGrid taglineSize="lg" tagline="Treat everything as a file.">
@@ -67,16 +72,6 @@ hits = g.`}<span className="call">{`cli`}</span>{`(`}<span className="str">{`'gr
             <NamespaceTree />
           </div>
         </SectionGrid>
-      </Section>
-
-      <Section>
-        <SectionHead tagline="Search from every angle.">
-          A file carries information four ways: where it sits, what it says,
-          what it means, and what it connects to. VFS gives agents one verb per
-          dimension — and because every result is a set of paths, one
-          verb&rsquo;s output feeds the next.
-        </SectionHead>
-        <SearchVerbs />
       </Section>
 
       <Section>

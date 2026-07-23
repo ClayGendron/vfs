@@ -119,6 +119,146 @@ export const SITE = {
   ],
 } as const
 
+export type ValueArea = {
+  id: string
+  title: string
+  body: string
+  note: string
+}
+
+/** The six things vfs gives an agent that a vector index or a bespoke tool does not. */
+export const VALUE_AREAS: ValueArea[] = [
+  {
+    id: "01",
+    title: "One namespace",
+    body:
+      "Mount Postgres, MSSQL, SQLite, your retrievers and your graph under a single path tree. Agents learn one addressing scheme, not one per store.",
+    note: "/enterprise · /archive · /knowledge",
+  },
+  {
+    id: "02",
+    title: "Four verbs, one contract",
+    body:
+      "glob, grep, glean, graph each return the same VFSResult — a set of paths with scores. Every verb's output is every other verb's input.",
+    note: "VFSResult",
+  },
+  {
+    id: "03",
+    title: "Pipelines, not bespoke tools",
+    body:
+      "Compose with pipes and set algebra (& | −) instead of shipping a new tool per query shape. A pipeline is an expression an agent can write.",
+    note: "grep … | nbr | pagerank | top 15",
+  },
+  {
+    id: "04",
+    title: "Runs on your database",
+    body:
+      "vfs is the protocol, not the storage. Point it at the database you already run — no migration, no new service, no vector store to operate.",
+    note: "postgres · mssql · sqlite",
+  },
+  {
+    id: "05",
+    title: "MCP-native",
+    body:
+      "Serve the same namespace in-process with your app or over MCP. Agents mount vfs the way a machine mounts a disk.",
+    note: "mcp · langchain · langgraph",
+  },
+  {
+    id: "06",
+    title: "Graph in the loop",
+    body:
+      "Neighborhood, PageRank and betweenness run over the relations already in your data, so ranking sees structure and not just text.",
+    note: "rustworkx",
+  },
+]
+
+export type SearchVerb = {
+  name: "glob" | "grep" | "glean" | "graph"
+  dim: string
+}
+
+/** One verb per dimension a file carries information along. */
+export const SEARCH_VERBS: SearchVerb[] = [
+  { name: "glob", dim: "where it sits" },
+  { name: "grep", dim: "what it says" },
+  { name: "glean", dim: "what it means" },
+  { name: "graph", dim: "what it connects to" },
+]
+
+export type TermLine = { kind: "out" | "dim" | "hit" | "sig"; text: string }
+
+export type TermCommand = {
+  cmd: string
+  label: string
+  out: TermLine[]
+}
+
+/**
+ * Canned transcript behind the try-it terminal. The commands are real vfs
+ * pipelines; the output is fixed until the live repl lands.
+ */
+export const TERM_COMMANDS: TermCommand[] = [
+  {
+    cmd: 'glob "/enterprise/**/*.py"',
+    label: "glob",
+    out: [
+      { kind: "out", text: "/enterprise/auth.py" },
+      { kind: "out", text: "/enterprise/session.py" },
+      { kind: "out", text: "/enterprise/api/routes.py" },
+      { kind: "out", text: "/enterprise/api/deps.py" },
+      { kind: "dim", text: "… 212 more · 216 paths in 41ms" },
+    ],
+  },
+  {
+    cmd: 'grep "authenticate"',
+    label: "grep",
+    out: [
+      { kind: "hit", text: "/enterprise/auth.py:88      def authenticate(user, token):" },
+      { kind: "hit", text: "/enterprise/session.py:14   from .auth import authenticate" },
+      { kind: "hit", text: "/archive/2019/legacy.py:301 # authenticate against LDAP" },
+      { kind: "dim", text: "3 paths · 9 spans · bm25 ranked · 22ms" },
+    ],
+  },
+  {
+    cmd: 'glean "how do sessions expire?"',
+    label: "glean",
+    out: [
+      { kind: "sig", text: "0.91  /enterprise/session.py" },
+      { kind: "sig", text: "0.84  /knowledge/rfc/session-ttl.md" },
+      { kind: "sig", text: "0.77  /enterprise/auth.py" },
+      { kind: "dim", text: "semantic · top 3 of 128 candidates · 64ms" },
+    ],
+  },
+  {
+    cmd: "graph nbr /enterprise/auth.py --depth 2",
+    label: "graph",
+    out: [
+      { kind: "out", text: "/enterprise/auth.py" },
+      { kind: "out", text: "├── imports → /enterprise/crypto.py" },
+      { kind: "out", text: "├── imported-by → /enterprise/session.py" },
+      { kind: "out", text: "└── imported-by → /enterprise/api/deps.py" },
+      { kind: "dim", text: "11 nodes · 17 edges · depth 2 · 8ms" },
+    ],
+  },
+  {
+    cmd: 'grep "authenticate" | nbr | pagerank | top 5',
+    label: "pipeline",
+    out: [
+      { kind: "sig", text: "0.142  /enterprise/auth.py" },
+      { kind: "sig", text: "0.098  /enterprise/session.py" },
+      { kind: "sig", text: "0.071  /enterprise/crypto.py" },
+      { kind: "sig", text: "0.055  /enterprise/api/deps.py" },
+      { kind: "sig", text: "0.041  /knowledge/rfc/session-ttl.md" },
+      { kind: "dim", text: "grep → neighborhood → pagerank → top 5 · 96ms" },
+    ],
+  },
+]
+
+export const TERM_BANNER = [
+  `vfs ${SITE.versionFallback} · sandboxed repl over a sample repo`,
+  "pick a command below, or type one yourself",
+]
+
 export type SiteDir = {
   path: string
   desc: string
