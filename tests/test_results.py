@@ -10,7 +10,7 @@ import pytest
 
 from vfs.models import Match, Observation
 from vfs.paths import MAX_PATH_LENGTH, Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, is_a
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, wrong_kind
 
 
 def obs(path: str, **kwargs: Any) -> Observation:
@@ -75,9 +75,9 @@ class TestResultError:
         assert hop.without_mount("/data") == err
 
     def test_is_a_names_the_occupant_kind_article_and_all(self) -> None:
-        edge = is_a("edge", Path("/e"))
+        edge = wrong_kind("edge", Path("/e"))
         assert (edge.kind, edge.message) == (VFSErrorKind.wrong_kind, "Is an edge: /e")
-        assert is_a("file", Path("/f")).message == "Is a file: /f"
+        assert wrong_kind("file", Path("/f")).message == "Is a file: /f"
 
 
 # ---------------------------------------------------------------------------

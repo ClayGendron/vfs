@@ -229,13 +229,8 @@ def already_exists(path: Path) -> ResultError:
     return classified(VFSErrorKind.exists, f"Already exists: {path}", path)
 
 
-def is_a_directory(path: Path) -> ResultError:
-    """The directory special-case of ``is_a`` — the write paths' refusal."""
-    return is_a("directory", path)
-
-
-def is_a(kind: str, path: Path) -> ResultError:
-    """The ``wrong_kind`` naming the occupant's actual *kind*, article and all."""
+def wrong_kind(kind: str, path: Path) -> ResultError:
+    """The ``wrong_kind`` classification naming the occupant's actual *kind*, article and all."""
     article = "an" if kind.startswith(("a", "e", "i", "o", "u")) else "a"
     return classified(VFSErrorKind.wrong_kind, f"Is {article} {kind}: {path}", path)
 

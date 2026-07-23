@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ulid import ULID
 
-from vfs.results import ResultError, VFSErrorKind, already_exists, classified, is_a_directory
+from vfs.results import ResultError, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain
 
 if TYPE_CHECKING:
@@ -196,7 +196,7 @@ class WritePlan:
         occupant = self.kind_of(target)
         if occupant is not None:
             if occupant == "directory":
-                self.errors.append(is_a_directory(target))
+                self.errors.append(wrong_kind("directory", target))
                 return None
             if not overwrite:
                 self.errors.append(already_exists(target))

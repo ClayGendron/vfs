@@ -35,7 +35,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
 from vfs.models import CONTENT_KINDS, Entry, Observation
-from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, is_a_directory
+from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain, classify_misses
 from vfs.storage.backends.database.dialects import chunked, rows_per_statement
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
@@ -404,7 +404,7 @@ async def _upsert_layer(
                     staged.entry_id = won["entry_id"]
                     staged.version = won["version"]
                 elif clobber:
-                    errors.append(is_a_directory(staged.path))
+                    errors.append(wrong_kind("directory", staged.path))
                 else:
                     errors.append(already_exists(staged.path))
     return errors
@@ -473,7 +473,7 @@ async def _resolve_rows(
             # The rival's row absorbs our write: an unguarded clobbering update.
             staged.absorb(occupant.entry_id)
         elif staged.kind != "directory" and overwrite:
-            errors.append(is_a_directory(staged.path))
+            errors.append(wrong_kind("directory", staged.path))
         else:
             errors.append(already_exists(staged.path))
     return errors

@@ -51,9 +51,8 @@ from vfs.results import (
     VFSErrorKind,
     already_exists,
     classified,
-    is_a,
-    is_a_directory,
     validation_message,
+    wrong_kind,
 )
 from vfs.storage import scope_of, storage_ops, targets_of
 from vfs.storage.editing import edited_entry
@@ -139,7 +138,7 @@ class InMemoryStorage:
             if row.kind not in CONTENT_KINDS:
                 # The prose names the row's actual kind — a directly
                 # addressed edge row is not a directory.
-                errors.append(is_a(row.kind, target))
+                errors.append(wrong_kind(row.kind, target))
                 continue
             rows.append(self._observe(target, row, content=True))
         return Result(ops=("read",), observations=rows, errors=errors)
@@ -564,7 +563,7 @@ class InMemoryStorage:
         occupant = staged.get(path)
         if occupant is not None:
             if occupant.kind == "directory":
-                return Result(ops=(op,), errors=[is_a_directory(path)])
+                return Result(ops=(op,), errors=[wrong_kind("directory", path)])
             if not overwrite:
                 return Result(ops=(op,), errors=[already_exists(path)])
         self._mint_chain(staged, path)

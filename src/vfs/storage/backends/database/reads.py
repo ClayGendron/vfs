@@ -25,7 +25,7 @@ from sqlalchemy import func, or_, select
 
 from vfs.models import CONTENT_KINDS, Observation
 from vfs.paths import ROOT, Path
-from vfs.results import Result, ResultError, is_a
+from vfs.results import Result, ResultError, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     classify_misses,
@@ -253,7 +253,7 @@ async def _point_rows(
             continue
         kind = mapping["kind"]
         if content_only and kind not in CONTENT_KINDS:
-            errors.append(is_a(kind, target))
+            errors.append(wrong_kind(kind, target))
             continue
         rows.append(_observe(mapping, fetched))
     return rows, errors
