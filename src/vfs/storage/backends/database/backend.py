@@ -5,12 +5,12 @@ policy, everything else serves on the generic floor (``dialects.py``).
 The read family and glob are live — point reads with projection
 push-down, ``parent_id`` listings, sargable prefix-LIKE subtrees, and
 the descent-ladder classification chokepoint (``descent.py`` /
-``reads.py``) — as is the mutation core: write/edit/mkdir batches
-planned and executed as one transaction each (``writes.py``). The
-topology verbs (delete/move/copy), ``mkedge``, and grep are stubbed to
-a classified refusal and ``capabilities()`` is hand-declared per pass —
-capabilities stay honest mid-story, and the router never routes to an
-undeclared family.
+``reads.py``) — as are the mutation core (write/edit/mkdir batches
+planned and executed as one transaction each, ``writes.py``) and the
+serialized topology verbs delete/move/copy (``topology.py``).
+``mkedge`` and grep are stubbed to a classified refusal and
+``capabilities()`` is hand-declared per pass — capabilities stay honest
+mid-story, and the router never routes to an undeclared family.
 
     storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")     # built
     storage = DatabaseStorage(session_factory=app_sessionmaker)         # borrowed
@@ -27,15 +27,16 @@ classified ``Result`` — never a raw exception.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
-from vfs.storage.backends.database.dialects import PROFILES, op_execution_options
+from vfs.storage.backends.database.dialects import PROFILES, op_execution_options, topology_execution_options
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
+from vfs.storage.backends.database.topology import delete_rows, transfer_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
 from vfs.storage.protocol import scope_of, targets_of
 
@@ -51,8 +52,10 @@ if TYPE_CHECKING:
     from vfs.storage.replace import EditOperation
 
 # Hand-declared per pass: family derivation would over-declare while
-# grep and the topology verbs are still classified stubs.
-_LANDED_OPS: Final[frozenset[Op]] = frozenset({"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir"})
+# grep and mkedge are still classified stubs.
+_LANDED_OPS: Final[frozenset[Op]] = frozenset(
+    {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir", "delete", "move", "copy"}
+)
 
 
 class DatabaseStorage:
@@ -214,7 +217,7 @@ class DatabaseStorage:
         return await self._stub("grep")
 
     # -------------------------------------------------------------------
-    # Mutation core — write / edit / mkdir; topology verbs still stubbed
+    # Mutation core — write / edit / mkdir and the topology verbs
     # -------------------------------------------------------------------
 
     async def write(
@@ -272,7 +275,21 @@ class DatabaseStorage:
         cascade: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        return await self._stub("delete")
+        targets = targets_of(path, observations)
+        return await self._execute_topology(
+            "delete",
+            lambda session: delete_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.membership_budget,
+                targets=targets,
+                permanent=permanent,
+                cascade=cascade,
+                user_id=user_id,
+                lock_key=self._host.topology_key,
+            ),
+        )
 
     async def mkdir(
         self,
@@ -304,7 +321,7 @@ class DatabaseStorage:
         overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        return await self._stub("move")
+        return await self._execute_transfer("move", operations, overwrite=overwrite, user_id=user_id)
 
     async def copy(
         self,
@@ -313,7 +330,7 @@ class DatabaseStorage:
         overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        return await self._stub("copy")
+        return await self._execute_transfer("copy", operations, overwrite=overwrite, user_id=user_id)
 
     async def mkedge(
         self,
@@ -371,9 +388,46 @@ class DatabaseStorage:
 
         The connection carries ``vfs_writer`` so SQLite opens the
         transaction ``BEGIN IMMEDIATE`` — the write lock is held from the
-        plan's first read. A retryable outcome discards the session and
-        restarts the whole method from that first read; a failed plan
-        returns classified errors and the session rolls back on exit.
+        plan's first read.
+        """
+        return await self._mutate(op, fn, op_execution_options(self._host.profile, writer=True))
+
+    async def _execute_transfer(
+        self, op: Literal["move", "copy"], operations: list[ResolvedPair], *, overwrite: bool, user_id: str | None
+    ) -> Result:
+        return await self._execute_topology(
+            op,
+            lambda session: transfer_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.parameter_budget,
+                self._host.membership_budget,
+                op=op,
+                operations=operations,
+                overwrite=overwrite,
+                user_id=user_id,
+                lock_key=self._host.topology_key,
+            ),
+        )
+
+    async def _execute_topology(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
+        """One batch = one serialized transaction; the point is its first statement.
+
+        Topology options trade the op snapshot for the serialization
+        point: the writer marker plus the declared topology-isolation
+        pin, never ``op_isolation``.
+        """
+        return await self._mutate(op, fn, topology_execution_options(self._host.profile))
+
+    async def _mutate(
+        self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]], options: dict[str, str | bool]
+    ) -> Result:
+        """The shared mutation runner: commit iff the batch succeeded.
+
+        A retryable outcome discards the session and restarts the whole
+        method from its first read; a failed batch returns classified
+        errors and the session rolls back on exit.
         """
         refusal = await self._host.ensure_ready()
         if refusal is not None:
@@ -381,7 +435,7 @@ class DatabaseStorage:
 
         async def attempt() -> Result:
             async with self._host.session_factory() as session:
-                await session.connection(execution_options=op_execution_options(self._host.profile, writer=True))
+                await session.connection(execution_options=options)
                 result = await fn(session)
                 if result.success:
                     await session.commit()

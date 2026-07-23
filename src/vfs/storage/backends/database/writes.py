@@ -38,6 +38,7 @@ from vfs.models import CONTENT_KINDS, Entry, Observation
 from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain, classify_misses
 from vfs.storage.backends.database.dialects import chunked, rows_per_statement
+from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.editing import edited_entry
 
@@ -264,6 +265,9 @@ async def _finish(
     """Execute an error-free plan and assemble the batch's observations."""
     if plan.errors:
         return Result(ops=(op,), errors=plan.errors)
+    # The guard's window: snapshot read and staging behind us, no
+    # mutation statement run yet. Tests stage rival commits here.
+    await seam("write:before-apply")
     late = await _apply(session, tables, profile, parameter_budget, membership_budget, plan, overwrite=overwrite)
     if late:
         return Result(ops=(op,), errors=late)

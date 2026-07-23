@@ -29,15 +29,14 @@ from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
-from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database.dialects import op_execution_options
-from vfs.storage.backends.database.staging import WritePlan
-from vfs.storage.backends.database.writes import _fetch_committed, _finish
+from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import AsyncIterator
+
+    from vfs.results import Result
 
 
 class TestMemoryConformance(StorageContract):
@@ -105,70 +104,80 @@ class TestOracleConformance(StorageContract):
             yield storage
 
 
-async def _one_increment_race(storage: DatabaseStorage) -> None:
-    """A rival advancing the version by exactly one must classify ``conflict``.
+async def _one_increment_race(storage: DatabaseStorage) -> Result:
+    """Stage a rival one increment ahead inside the guard's window.
 
-    The guarded update's window: snapshot read, rival commits from the same
-    base, our ``WHERE version = base`` matches nothing. Post-image inference
-    cannot see this — the row lands on exactly the version we staged — so
-    only statement-native attribution fails the batch; a false success tears
-    the row (rival's entry columns, our content).
+    The rival lands through the write path's declared seam — after the
+    snapshot read and staging, before any mutation statement — and the
+    victim is the real public verb, so retry and classification run
+    live; nothing is mirrored. Post-image inference cannot see this
+    rival: the row lands on exactly the version the victim staged, so
+    only statement-native attribution can fail the batch. The handler
+    uninstalls itself so the rival's own write (and any retry of the
+    victim) passes the seam untouched.
     """
     target = Path("/race.txt")
     assert (await storage.write(entries=[Entry(path=target, content="base")])).success
-    host = storage._host
-    mine = Entry(path=target, content="mine")
-    async with host.session_factory() as session:
-        await session.connection(execution_options=op_execution_options(host.profile, writer=True))
-        committed = await _fetch_committed(session, host.tables, host.membership_budget, {target})
-        plan = WritePlan(committed, user_id=None, budget=host.profile.key_byte_budget)
-        status = plan.put_file(
-            target,
-            kind=mine.kind,
-            content=mine.content,
-            content_hash=mine.content_hash,
-            size_bytes=mine.size_bytes,
-            lines=mine.lines,
-            ext=mine.ext,
-            mime_type=mine.mime_type,
-            overwrite=True,
-            parents=False,
-        )
-        assert status == "updated" and plan.errors == []
-        plan.pending.append((target, status))
 
-        # The rival lands inside the guard's window, one increment, and wins.
+    async def rival() -> None:
+        seams.clear("write:before-apply")
         assert (await storage.write(entries=[Entry(path=target, content="rival")])).success
 
-        result = await _finish(
-            session,
-            host.tables,
-            host.profile,
-            host.parameter_budget,
-            host.membership_budget,
-            plan,
-            op="write",
-            overwrite=True,
-        )
-        if result.success:  # mirror the backend: only a successful plan commits
-            await session.commit()
-
-    assert result.success is False
-    assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
-    after = (await storage.read(path=target, columns=frozenset({"content", "content_hash", "version"}))).observations[0]
-    assert after.content == "rival"
-    assert after.content_hash == Entry(path=target, content=after.content).content_hash
+    with seams.installed("write:before-apply", rival):
+        return await storage.write(entries=[Entry(path=target, content="mine")])
 
 
 @pytest.mark.mssql
 class TestMSSQLTornRowRegression:
     async def test_one_increment_rival_classifies_conflict(self) -> None:
+        """READ COMMITTED cannot redrive: the guard must classify, never tear.
+
+        A false success is a torn row — the rival's entry columns over
+        our content rows — which is exactly what the pre-079 read-back
+        produced on this engine.
+        """
         async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
-            await _one_increment_race(storage)
+            result = await _one_increment_race(storage)
+            assert result.success is False
+            assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
+            read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "content_hash"}))
+            after = read.observations[0]
+            assert after.content == "rival"
+            assert after.content_hash == Entry(path=Path("/race.txt"), content=after.content).content_hash
+
+
+@pytest.mark.postgres
+class TestPostgresRivalRedrive:
+    async def test_one_increment_rival_redrives_to_success(self) -> None:
+        """REPEATABLE READ surfaces the rival as 40001 and the method redrives.
+
+        The same staged race that must classify ``conflict`` on MSSQL
+        resolves to a clean success here: the whole method restarts from
+        a fresh snapshot and lands on top of the rival's version.
+        """
+        async with _server_storage("VFS_TEST_POSTGRES_URL") as storage:
+            result = await _one_increment_race(storage)
+            assert result.success is True
+            read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "version"}))
+            after = read.observations[0]
+            assert after.content == "mine"
+            assert after.version == 3
 
 
 @pytest.mark.mysql
 class TestMySQLTornRowRegression:
     async def test_one_increment_rival_classifies_conflict(self) -> None:
+        """InnoDB's REPEATABLE READ current-reads past the rival — no 40001.
+
+        The guarded UPDATE matches nothing and the executemany ladder
+        must classify ``conflict`` from its own rowcounts, exactly the
+        MSSQL contract: the rival's row survives untorn.
+        """
         async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
-            await _one_increment_race(storage)
+            result = await _one_increment_race(storage)
+            assert result.success is False
+            assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
+            read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "content_hash"}))
+            after = read.observations[0]
+            assert after.content == "rival"
+            assert after.content_hash == Entry(path=Path("/race.txt"), content=after.content).content_hash

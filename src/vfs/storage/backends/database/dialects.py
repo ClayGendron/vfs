@@ -127,6 +127,9 @@ MYSQL: Final = DialectProfile(
     in_list_budget=65_535,
     arbitration="catch_retry",
     op_isolation="REPEATABLE READ",
+    # Topology reads must see post-rival state per statement; REPEATABLE
+    # READ would pin a pre-lock snapshot. Mirrors the Postgres pin.
+    topology_isolation="READ COMMITTED",
     # Deadlock (1213) and lock-wait timeout (1205) surface as raw driver
     # errnos; SQLAlchemy maps neither to a SQLSTATE.
     retryable_driver_codes=frozenset({1213, 1205}),
@@ -192,6 +195,21 @@ def op_execution_options(profile: DialectProfile, *, writer: bool) -> dict[str, 
         options["vfs_writer"] = True
     if profile.op_isolation is not None:
         options["isolation_level"] = profile.op_isolation
+    return options
+
+
+def topology_execution_options(profile: DialectProfile) -> dict[str, str | bool]:
+    """Execution options for a topology verb's connection: writer marker, topology pin.
+
+    Topology verbs trade the op snapshot for the serialization point:
+    a declared ``topology_isolation`` — never ``op_isolation`` — stamps
+    the connection, because every refusal check must judge post-rival
+    state read *after* the point is taken, and a repeatable snapshot
+    would freeze the world at the lock call itself.
+    """
+    options: dict[str, str | bool] = {"vfs_writer": True}
+    if profile.topology_isolation is not None:
+        options["isolation_level"] = profile.topology_isolation
     return options
 
 

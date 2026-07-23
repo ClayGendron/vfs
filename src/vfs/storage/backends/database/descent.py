@@ -28,7 +28,7 @@ from vfs.results import ResultError, VFSErrorKind, classified
 from vfs.storage.backends.database.dialects import chunked
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from sqlalchemy import ColumnElement, Table
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,7 +50,23 @@ async def classify_misses(
     for chunk in chunked(sorted(ancestors), membership_budget):
         stmt = select(entry.c.path, entry.c.kind).where(entry.c.path.in_(chunk))
         kinds.update({row.path: row.kind for row in await session.execute(stmt)})
-    return [_classify_miss(target, kinds) for target in targets]
+    return [classify_miss(target, kinds) for target in targets]
+
+
+def classify_miss(target: Path, kinds: Mapping[str, str]) -> ResultError:
+    """The descent ladder against an already-fetched ``path → kind`` map.
+
+    The pure half of :func:`classify_misses`, for callers that classify
+    against a pinned snapshot rather than live state — a first failing
+    boundary in the ancestor chain wins, then the leaf's own miss.
+    """
+    for ancestor in ancestor_chain(target):
+        kind = kinds.get(ancestor)
+        if kind is None:
+            return classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
+        if kind != "directory":
+            return classified(VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target)
+    return classified(VFSErrorKind.not_found, f"Not found: {target}", target, target=target)
 
 
 def ancestor_chain(path: Path) -> list[Path]:
@@ -85,18 +101,3 @@ def escape_like(text: str) -> str:
         .replace("%", LIKE_ESCAPE + "%")
         .replace("_", LIKE_ESCAPE + "_")
     )
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _classify_miss(target: Path, kinds: dict[str, str]) -> ResultError:
-    for ancestor in ancestor_chain(target):
-        kind = kinds.get(ancestor)
-        if kind is None:
-            return classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
-        if kind != "directory":
-            return classified(VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target)
-    return classified(VFSErrorKind.not_found, f"Not found: {target}", target, target=target)

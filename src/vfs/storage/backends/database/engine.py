@@ -55,6 +55,7 @@ from vfs.storage.backends.database.dialects import (
     is_retryable,
     membership_budget,
     profile_for,
+    topology_execution_options,
 )
 
 if TYPE_CHECKING:
@@ -66,6 +67,18 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
 
 T = TypeVar("T")
+
+
+def advisory_key(text: str) -> int:
+    """Stable signed-64 advisory-lock key derived from *text*.
+
+    Every rival instance hashing the same handle — the durable mount
+    identity once adopted, the per-mount table prefix before it exists —
+    lands on the same key, and the signed range is what Postgres's
+    ``pg_advisory_xact_lock(bigint)`` accepts.
+    """
+    digest = hashlib.blake2b(text.encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
 
 
 class _ResolvedPolicy(NamedTuple):
@@ -107,7 +120,7 @@ class EngineHost:
         # know its dialect before its first session exists.
         self._profile: DialectProfile | None = None
         self._dialect: Dialect | None = None
-        self._advisory_key = _advisory_key(table_name)
+        self._table_key = advisory_key(table_name)
         self._retry_attempts = retry_attempts
         self._retry_base_delay = retry_base_delay
         self.mount_identity: str | None = None
@@ -143,6 +156,16 @@ class EngineHost:
     def fan_budget(self) -> int:
         """Anchors per ``OR``-fan chunk under this dialect's budgets."""
         return fan_budget(self.profile, self.parameter_budget)
+
+    @property
+    def topology_key(self) -> int:
+        """Advisory key for topology serialization — keyed on identity, never path.
+
+        The durable mount identity once first touch has adopted it; the
+        table-name key before then, the only handle rivals share pre-touch.
+        """
+        identity = self.mount_identity
+        return advisory_key(identity) if identity is not None else self._table_key
 
     async def ensure_ready(self) -> ResultError | None:
         """Idempotent first touch; ``None`` when the mount is serving."""
@@ -240,12 +263,9 @@ class EngineHost:
         meta = self.tables.meta
         version_and_identity = select(meta.c.schema_format_version, meta.c.mount_identity)
         async with self.session_factory() as session:
-            # Writers carry the vfs_writer option: SQLite's begin listener
-            # upgrades their BEGIN to IMMEDIATE (the W7 lock discipline).
-            options: dict[str, str | bool] = {"vfs_writer": True}
-            if self.profile.topology_isolation is not None:
-                options["isolation_level"] = self.profile.topology_isolation
-            conn = await session.connection(execution_options=options)
+            # First touch is a topology mutation: writer marker (SQLite's
+            # BEGIN IMMEDIATE) plus the declared topology-isolation pin.
+            conn = await session.connection(execution_options=topology_execution_options(self.profile))
             await self._serialization_point(conn)
             # DDL joins the serialized transaction where the engine keeps
             # DDL transactional (SQLite/Postgres/MSSQL); elsewhere the
@@ -306,7 +326,7 @@ class EngineHost:
         # already emitted; engines without a declared point rely on the
         # unique-violation arbitration.
         if self.profile.name == "postgresql":
-            await conn.execute(select(func.pg_advisory_xact_lock(self._advisory_key)))
+            await conn.execute(select(func.pg_advisory_xact_lock(self._table_key)))
 
     def _adopt(self, version: int, identity: str) -> ResultError | None:
         if version != SCHEMA_FORMAT_VERSION:
@@ -324,17 +344,6 @@ class EngineHost:
 # ---------------------------------------------------------------------------
 # Module helpers
 # ---------------------------------------------------------------------------
-
-
-def _advisory_key(table_name: str) -> int:
-    """Stable signed-64 advisory-lock key for first touch.
-
-    The spec keys topology locks by the durable mount identity, which
-    does not exist until first touch completes — the per-mount table
-    prefix is the handle every rival instance shares before then.
-    """
-    digest = hashlib.blake2b(table_name.encode(), digest_size=8).digest()
-    return int.from_bytes(digest, "big", signed=True)
 
 
 def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectProfile) -> None:

@@ -47,10 +47,13 @@ from vfs.storage.backends.database.dialects import (
     op_execution_options,
     profile_for,
     rows_per_statement,
+    topology_execution_options,
 )
-from vfs.storage.backends.database.engine import EngineHost, _install_sqlite_transaction_control
+from vfs.storage.backends.database.engine import EngineHost, _install_sqlite_transaction_control, advisory_key
 from vfs.storage.backends.database.reads import ENTRY_OBSERVATION_FIELDS
+from vfs.storage.backends.database.seams import clear, install, installed, seam
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
+from vfs.storage.backends.database.topology import _serialize, _TrashChain
 from vfs.storage.backends.database.writes import (
     _CLOBBER_COLUMNS,
     _catch_retry_layer,
@@ -966,20 +969,28 @@ class TestUnlandedVerbStubs:
 
     async def test_unlanded_verbs_refuse_as_unsupported(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        pair = [ResolvedPair(src=Path("/a"), dest=Path("/b"))]
         calls = [
             storage.grep(pattern="x"),
-            storage.delete(path=Path("/a")),
-            storage.move(operations=pair),
-            storage.copy(operations=pair),
             storage.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports"),
         ]
         for call in calls:
             result = await call
             assert result.success is False
             assert result.errors[0].kind == VFSErrorKind.unsupported
-        stubbed = {"grep", "delete", "move", "copy", "mkedge"}
-        assert storage.capabilities() == {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir"}
+        stubbed = {"grep", "mkedge"}
+        assert storage.capabilities() == {
+            "read",
+            "stat",
+            "ls",
+            "tree",
+            "glob",
+            "write",
+            "edit",
+            "mkdir",
+            "delete",
+            "move",
+            "copy",
+        }
         assert storage.capabilities().isdisjoint(stubbed)
         await storage.close()
 
@@ -2192,4 +2203,380 @@ class TestMembershipChunking:
         stats = await storage.stat(observations=created)
         assert stats.success is True, stats.errors[:3]
         assert len(stats.observations) == 10_000
+        await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Topology infrastructure — options, keys, serialization point, seams
+# ---------------------------------------------------------------------------
+
+
+class TestTopologyOptions:
+    """Topology connections trade the op snapshot for the serialization point."""
+
+    def test_topology_options_carry_the_writer_marker_only_on_unpinned_engines(self) -> None:
+        assert topology_execution_options(SQLITE) == {"vfs_writer": True}
+        assert topology_execution_options(MSSQL) == {"vfs_writer": True}
+        assert topology_execution_options(GENERIC) == {"vfs_writer": True}
+
+    def test_topology_options_pin_read_committed_where_declared(self) -> None:
+        for profile in (POSTGRESQL, MYSQL, PROFILES["mariadb"]):
+            options = topology_execution_options(profile)
+            assert options == {"vfs_writer": True, "isolation_level": "READ COMMITTED"}
+
+    def test_topology_pin_never_borrows_the_op_pin(self) -> None:
+        # MySQL ops run REPEATABLE READ; its topology pin must differ.
+        assert op_execution_options(MYSQL, writer=True)["isolation_level"] == "REPEATABLE READ"
+        assert topology_execution_options(MYSQL)["isolation_level"] == "READ COMMITTED"
+
+
+class TestTopologyKey:
+    """Topology locks key on the durable mount identity, never the mount path."""
+
+    def test_advisory_key_is_stable_and_signed_64(self) -> None:
+        key = advisory_key("vfs")
+        assert key == advisory_key("vfs")
+        assert -(2**63) <= key < 2**63
+        assert key != advisory_key("other")
+
+    def test_topology_key_falls_back_to_the_table_key_before_adoption(self) -> None:
+        host = EngineHost(url="sqlite+aiosqlite:///:memory:", table_name="vfs")
+        assert host.topology_key == advisory_key("vfs")
+
+    def test_topology_key_prefers_the_adopted_mount_identity(self) -> None:
+        host = EngineHost(url="sqlite+aiosqlite:///:memory:", table_name="vfs")
+        host.mount_identity = str(ULID())
+        assert host.topology_key == advisory_key(host.mount_identity)
+
+
+class _StatementRecorder:
+    """Session double capturing executed statements as compiled SQL text."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    async def execute(self, stmt: Any, params: Any = None) -> SimpleNamespace:
+        self.statements.append(str(stmt.compile(compile_kwargs={"literal_binds": True})))
+        return SimpleNamespace(scalar_one=lambda: 0)
+
+
+class TestSerializationPoint:
+    """The point is the verb's first statement; each engine has its declared arm."""
+
+    def _meta(self):
+        return build_vfs_tables(table_name="vfs").meta
+
+    async def test_sqlite_needs_no_statement(self) -> None:
+        recorder = _StatementRecorder()
+        await _serialize(cast("AsyncSession", recorder), SQLITE, self._meta(), lock_key=7)
+        assert recorder.statements == []
+
+    async def test_postgres_takes_the_advisory_lock_on_the_key(self) -> None:
+        recorder = _StatementRecorder()
+        await _serialize(cast("AsyncSession", recorder), POSTGRESQL, self._meta(), lock_key=advisory_key("vfs"))
+        assert len(recorder.statements) == 1
+        assert "pg_advisory_xact_lock" in recorder.statements[0]
+        assert str(advisory_key("vfs")) in recorder.statements[0]
+
+    async def test_other_engines_x_lock_the_meta_row(self) -> None:
+        for profile in (MSSQL, MYSQL, PROFILES["oracle"], GENERIC):
+            recorder = _StatementRecorder()
+            await _serialize(cast("AsyncSession", recorder), profile, self._meta(), lock_key=7)
+            assert len(recorder.statements) == 1
+            statement = recorder.statements[0]
+            assert statement.startswith("UPDATE")
+            assert "schema_format_version=" in statement.replace(" ", "")
+            assert "id = 1" in statement
+
+
+class TestSeams:
+    """Named no-op points; a test-installed handler stages a rival mid-window."""
+
+    async def test_a_seam_with_no_handler_is_a_no_op(self) -> None:
+        await seam("never-installed")
+
+    async def test_an_installed_handler_fires_and_clears(self) -> None:
+        fired: list[str] = []
+
+        async def handler() -> None:
+            fired.append("ran")
+
+        install("test-point", handler)
+        await seam("test-point")
+        clear("test-point")
+        await seam("test-point")
+        assert fired == ["ran"]
+
+    async def test_installed_context_clears_on_error(self) -> None:
+        async def handler() -> None:
+            raise AssertionError("must not fire")
+
+        with pytest.raises(RuntimeError), installed("test-point", handler):
+            raise RuntimeError("boom")
+        await seam("test-point")
+
+    async def test_clearing_an_absent_seam_is_fine(self) -> None:
+        clear("never-installed")
+
+    async def test_the_write_seam_fires_inside_the_verb(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        fired: list[str] = []
+
+        async def handler() -> None:
+            fired.append("write")
+
+        with installed("write:before-apply", handler):
+            assert (await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])).success
+        assert fired == ["write"]
+        await storage.close()
+
+    async def test_the_delete_seam_fires_after_the_snapshot(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])
+        fired: list[str] = []
+
+        async def handler() -> None:
+            fired.append("delete")
+
+        with installed("delete:post-snapshot", handler):
+            assert (await storage.delete(path=Path("/x.txt"))).success
+        assert fired == ["delete"]
+        await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Delete — the trash arm and the permanent arm beyond the conformance rows
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteTrash:
+    """The default arm reparents into an hourly bucket; trash is normal fs."""
+
+    async def test_delete_reparents_into_the_hourly_bucket(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="body")])
+        assert (await storage.delete(path=Path("/a.txt"))).success
+        buckets = await storage.ls(path=Path("/.vfs/trash"))
+        assert len(buckets.observations) == 1
+        bucket = buckets.observations[0]
+        listing = await storage.ls(path=bucket.path)
+        assert len(listing.observations) == 1
+        trashed = listing.observations[0]
+        # The in-bucket name is the entry's ULID, never the original name.
+        assert len(Path(trashed.path).name) == ULID_LENGTH
+        assert Path(trashed.path).name != "a.txt"
+        read = await storage.read(path=trashed.path)
+        assert read.observations[0].content == "body"
+        await storage.close()
+
+    async def test_trashed_row_records_its_original_site(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/docs"))
+        await storage.write(entries=[Entry(path=Path("/docs/a.txt"), content="x")])
+        assert (await storage.delete(path=Path("/docs/a.txt"))).success
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            row = (await session.execute(select(entry).where(entry.c.original_name == "a.txt"))).mappings().one()
+        assert row["name"] == row["entry_id"]
+        assert row["deleted_at"] is not None
+        assert row["original_parent_id"] is not None
+        parent = await storage.stat(path=Path("/docs"))
+        assert parent.success is True
+        await storage.close()
+
+    async def test_descendant_paths_rewrite_under_the_trash_prefix(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/proj/sub"), parents=True)
+        await storage.write(entries=[Entry(path=Path("/proj/sub/f.txt"), content="deep")])
+        assert (await storage.delete(path=Path("/proj"))).success
+        assert (await storage.stat(path=Path("/proj/sub/f.txt"))).success is False
+        buckets = await storage.ls(path=Path("/.vfs/trash"))
+        bucket_listing = await storage.ls(path=buckets.observations[0].path)
+        trashed_root = bucket_listing.observations[0].path
+        deep = await storage.read(path=Path(f"{trashed_root}/sub/f.txt"))
+        assert deep.observations[0].content == "deep"
+        await storage.close()
+
+    async def test_same_named_deletes_never_collide_in_the_bucket(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/a"))
+        await storage.mkdir(path=Path("/b"))
+        await storage.write(
+            entries=[Entry(path=Path("/a/f.txt"), content="1"), Entry(path=Path("/b/f.txt"), content="2")]
+        )
+        targets = [Observation(path=Path("/a/f.txt")), Observation(path=Path("/b/f.txt"))]
+        result = await storage.delete(observations=targets)
+        assert result.success is True
+        buckets = await storage.ls(path=Path("/.vfs/trash"))
+        listing = await storage.ls(path=buckets.observations[0].path)
+        assert len(listing.observations) == 2
+        await storage.close()
+
+    async def test_a_file_squatting_on_the_trash_chain_refuses_wrong_kind(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/.vfs/trash"), content="squatter")], parents=True)
+        await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])
+        result = await storage.delete(path=Path("/x.txt"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].path == "/.vfs/trash"
+        assert (result.errors[0].data or {}).get("target") == "/x.txt"
+        # The batch never commits: the target survives.
+        assert (await storage.stat(path=Path("/x.txt"))).success is True
+        await storage.close()
+
+    async def test_deleting_an_empty_directory_without_cascade_succeeds(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/empty"))
+        assert (await storage.delete(path=Path("/empty"), cascade=False)).success is True
+        assert (await storage.stat(path=Path("/empty"))).success is False
+        await storage.close()
+
+    async def test_a_trashed_row_can_be_deleted_again_from_the_trash_side(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/gone.txt"), content="x")])
+        assert (await storage.delete(path=Path("/gone.txt"))).success
+        buckets = await storage.ls(path=Path("/.vfs/trash"))
+        listing = await storage.ls(path=buckets.observations[0].path)
+        trash_path = listing.observations[0].path
+        assert (await storage.delete(path=Path(trash_path), permanent=True)).success
+        assert (await storage.stat(path=Path(trash_path))).success is False
+        await storage.close()
+
+    async def test_the_bucket_mint_survives_a_rival_write_racing_the_chain(self, tmp_path) -> None:
+        # The designed benign race: a rival mints the chain link first;
+        # the topology mint loses arbitration and adopts the rival's row.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        entry = storage._host.tables.entry
+        host = storage._host
+        async with host.session_factory() as session:
+            await session.connection(execution_options=op_execution_options(host.profile, writer=True))
+            root_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
+            chain = _TrashChain(entry, root_id=root_id, user_id=None, now=datetime.now(UTC))
+            first = await chain.ensure(session, Path("/x.txt"))
+            assert isinstance(first, str)
+            # A fresh chain re-selects the minted links instead of re-minting.
+            rival = _TrashChain(entry, root_id=root_id, user_id=None, now=datetime.now(UTC))
+            second = await rival.ensure(session, Path("/x.txt"))
+            assert second == first
+            # A direct mint against an occupied link takes the
+            # IntegrityError arm and adopts the winner's row.
+            adopted = await rival._mint(session, "/.vfs", root_id)
+            assert adopted.kind == "directory"
+            await session.rollback()
+        await storage.close()
+
+
+class TestTransferBehavior:
+    """Transfer arms beyond the conformance rows — restore, chains, fallbacks."""
+
+    async def test_move_out_of_trash_is_the_restore_gesture(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/doc.txt"), content="body")])
+        assert (await storage.delete(path=Path("/doc.txt"))).success
+        buckets = await storage.ls(path=Path("/.vfs/trash"))
+        listing = await storage.ls(path=buckets.observations[0].path)
+        trash_path = Path(listing.observations[0].path)
+        restored = await storage.move(operations=[ResolvedPair(src=trash_path, dest=Path("/doc.txt"))])
+        assert restored.success is True
+        assert (await storage.read(path=Path("/doc.txt"))).observations[0].content == "body"
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            row = (await session.execute(select(entry).where(entry.c.path == "/doc.txt"))).mappings().one()
+        # A live row carries no trash metadata, and its name is its own again.
+        assert row["deleted_at"] is None
+        assert row["original_parent_id"] is None
+        assert row["original_name"] is None
+        assert row["name"] == "doc.txt"
+        await storage.close()
+
+    async def test_move_destination_through_a_file_is_wrong_kind(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(
+            entries=[Entry(path=Path("/f.txt"), content="x"), Entry(path=Path("/blocker.txt"), content="x")]
+        )
+        result = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/blocker.txt/f.txt"))])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].path == "/blocker.txt"
+        await storage.close()
+
+    async def test_chained_moves_fall_back_to_the_pair_time_observation(self, tmp_path) -> None:
+        # Pair 2 moves pair 1's destination away: the re-read finds no row
+        # at /b, so pair 1's observation falls back to its captured values.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        result = await storage.move(
+            operations=[
+                ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt")),
+                ResolvedPair(src=Path("/b.txt"), dest=Path("/c.txt")),
+            ]
+        )
+        assert result.success is True
+        first, second = result.observations
+        assert str(first.path) == "/b.txt" and first.status == "created"
+        assert str(second.path) == "/c.txt" and second.status == "created"
+        assert (await storage.stat(path=Path("/b.txt"))).success is False
+        assert (await storage.read(path=Path("/c.txt"))).observations[0].content == "x"
+        await storage.close()
+
+    async def test_the_transfer_seam_fires_after_the_snapshot(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])
+        fired: list[str] = []
+
+        async def handler() -> None:
+            fired.append("transfer")
+
+        with installed("transfer:post-snapshot", handler):
+            assert (await storage.copy(operations=[ResolvedPair(src=Path("/x.txt"), dest=Path("/y.txt"))])).success
+        assert fired == ["transfer"]
+        await storage.close()
+
+
+class TestDeletePermanent:
+    """The permanent arm purges the subtree's rows across every family table."""
+
+    async def test_permanent_delete_purges_family_rows(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/proj"))
+        await storage.write(entries=[Entry(path=Path("/proj/f.txt"), content="x")])
+        tables = storage._host.tables
+        entry = tables.entry
+        async with storage._host.session_factory() as session:
+            target_id = (
+                await session.execute(select(entry.c.entry_id).where(entry.c.path == "/proj/f.txt"))
+            ).scalar_one()
+            await session.execute(
+                insert(tables.versions).values(
+                    entry_id=target_id, version_number=1, is_snapshot=True, content_hash="h", content="x"
+                )
+            )
+            await session.execute(
+                insert(tables.chunks).values(entry_id=target_id, chunk_index=0, line_start=1, line_end=1, content="x")
+            )
+            await session.execute(
+                insert(tables.edges).values(source_id=target_id, target_id=str(ULID()), edge_type="ref")
+            )
+            await session.execute(
+                insert(tables.edges).values(source_id=str(ULID()), target_id=target_id, edge_type="ref")
+            )
+            await session.commit()
+        assert (await storage.delete(path=Path("/proj"), permanent=True)).success
+        async with storage._host.session_factory() as session:
+            for table in (tables.entry, tables.content, tables.versions, tables.chunks):
+                remaining = (await session.execute(select(table).where(table.c.entry_id == target_id))).all()
+                assert remaining == []
+            edges = (
+                await session.execute(
+                    select(tables.edges).where(
+                        (tables.edges.c.source_id == target_id) | (tables.edges.c.target_id == target_id)
+                    )
+                )
+            ).all()
+            assert edges == []
+        assert (await storage.stat(path=Path("/proj"))).success is False
+        # Nothing landed in trash: the purge never mints the bucket chain.
+        assert (await storage.stat(path=Path("/.vfs/trash"))).success is False
         await storage.close()
