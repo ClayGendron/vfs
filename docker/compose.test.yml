@@ -1,0 +1,103 @@
+# Real database engines for the storage conformance suite.
+#
+# Postgres has no profile and starts by default; the heavier engines sit
+# behind profiles so `up` never pays for what you aren't testing. Naming
+# a service explicitly activates its profile, so both of these work:
+#
+#   docker compose -f docker/compose.test.yml up -d --wait            # postgres only
+#   docker compose -f docker/compose.test.yml up -d --wait oracle     # + oracle
+#
+# Every service carries a healthcheck so `--wait` blocks until the
+# engine accepts queries, not merely until the container runs. CI uses
+# this same file (.github/workflows/test-dialects.yml) — images, env,
+# and health probes stay identical between a laptop and a runner.
+#
+# Apple Silicon: postgres, mysql, and gvenzl/oracle-free publish native
+# arm64 images. SQL Server does not — its service pins linux/amd64 and
+# needs Rosetta emulation enabled in Docker Desktop (Settings > General
+# > "Use Rosetta for x86_64/amd64 emulation") or OrbStack (on by
+# default). See docker/README.md for the full macOS setup.
+#
+# Host ports are offset (engine default + a leading digit) so the
+# containers never collide with a Homebrew/Postgres.app/local install
+# already holding the default port.
+
+name: vfs-test
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: vfs
+      POSTGRES_PASSWORD: vfs
+      POSTGRES_DB: vfs
+    ports:
+      - "54320:5432"
+    # Disposable test data; tmpfs skips disk I/O and leaves nothing behind.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vfs -d vfs"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  mysql:
+    profiles: [mysql]
+    image: mysql:8.4
+    environment:
+      MYSQL_USER: vfs
+      MYSQL_PASSWORD: vfs
+      MYSQL_DATABASE: vfs
+      MYSQL_ROOT_PASSWORD: vfs-root
+    ports:
+      # not 33060 — a local MySQL claims that for its X-protocol listener
+      - "33061:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uvfs -pvfs"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  mssql:
+    profiles: [mssql]
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    # No arm64 image exists; Rosetta emulation covers this on Apple Silicon.
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "vfsStr0ngPassw0rd"
+      MSSQL_PID: Developer
+    ports:
+      - "14330:1433"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa
+          -P "$$MSSQL_SA_PASSWORD" -C -l 2 -b -Q "SELECT 1"
+      interval: 5s
+      timeout: 6s
+      retries: 30
+      start_period: 30s
+
+  oracle:
+    profiles: [oracle]
+    # 23ai Free ships native arm64 images; -slim halves the pull.
+    image: gvenzl/oracle-free:23-slim
+    environment:
+      ORACLE_PASSWORD: vfs-sys
+      APP_USER: vfs
+      APP_USER_PASSWORD: vfs
+    ports:
+      - "15210:1521"
+    # healthcheck.sh ships in the image and probes the pluggable DB's OPEN state.
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 40
+      start_period: 30s

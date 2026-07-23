@@ -1,0 +1,111 @@
+name: Dialect tests
+
+# Real-engine conformance legs. Servers come from docker/compose.test.yml —
+# the same file used locally — so images, credentials, and health probes
+# have one source of truth. Postgres/MySQL gate PRs that touch storage;
+# the heavyweight engines (SQL Server, Oracle) also run there but their
+# slow cold starts make nightly + manual dispatch the primary cadence.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/vfs/storage/**"
+      - "src/vfs/models/**"
+      - "tests/**"
+      - "docker/compose.test.yml"
+      - "pyproject.toml"
+      - ".github/workflows/test-dialects.yml"
+  pull_request:
+    paths:
+      - "src/vfs/storage/**"
+      - "src/vfs/models/**"
+      - "tests/**"
+      - "docker/compose.test.yml"
+      - "pyproject.toml"
+      - ".github/workflows/test-dialects.yml"
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.advisory || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dialect: postgres
+            env_var: VFS_TEST_POSTGRES_URL
+            url: "postgresql+asyncpg://vfs:vfs@localhost:54320/vfs"
+          # Advisory until the key-byte-budget DDL question is resolved:
+          # utf8mb4 makes the path unique index 4,096 bytes, past InnoDB's
+          # 3,072 cap, so first touch fails — see context/open-questions.md.
+          - dialect: mysql
+            env_var: VFS_TEST_MYSQL_URL
+            url: "mysql+aiomysql://vfs:vfs@localhost:33061/vfs"
+            advisory: true
+          - dialect: mssql
+            env_var: VFS_TEST_MSSQL_URL
+            url: "mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+          - dialect: oracle
+            env_var: VFS_TEST_ORACLE_URL
+            url: "oracle+oracledb_async://vfs:vfs@localhost:15210/?service_name=FREEPDB1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+
+      # Naming the service activates its compose profile; --wait blocks
+      # on the healthcheck, which probes query-readiness, not liveness.
+      - name: Start ${{ matrix.dialect }}
+        run: >-
+          docker compose -f docker/compose.test.yml
+          up -d --wait --wait-timeout 300 ${{ matrix.dialect }}
+
+      - name: Install ODBC driver
+        if: matrix.dialect == 'mssql'
+        run: |
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc >/dev/null
+          curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list >/dev/null
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+
+      - name: Install dependencies
+        run: uv sync --extra ${{ matrix.dialect }} --group dev
+
+      # Container-healthy can precede login-ready (app-user creation lags
+      # on Oracle); probe with the real driver before handing pytest a
+      # server that refuses its first connection.
+      - name: Probe SQL readiness
+        run: |
+          uv run python - "${{ matrix.url }}" <<'EOF'
+          import asyncio, sys
+          from sqlalchemy import text
+          from sqlalchemy.ext.asyncio import create_async_engine
+
+          async def main(url: str) -> None:
+              last: Exception | None = None
+              for _ in range(60):
+                  engine = create_async_engine(url)
+                  try:
+                      async with engine.connect() as conn:
+                          await conn.execute(text("SELECT 1"))
+                      return
+                  except Exception as exc:
+                      last = exc
+                      await asyncio.sleep(2)
+                  finally:
+                      await engine.dispose()
+              raise SystemExit(f"database never became ready: {last!r}")
+
+          asyncio.run(main(sys.argv[1]))
+          EOF
+
+      - name: Conformance suite
+        run: |
+          export ${{ matrix.env_var }}="${{ matrix.url }}"
+          uv run pytest -m ${{ matrix.dialect }} --tb=short

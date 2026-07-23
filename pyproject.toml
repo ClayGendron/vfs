@@ -53,10 +53,12 @@ pinecone = ["pinecone[asyncio]>=5.0"]
 databricks = ["databricks-vectorsearch>=0.40"]
 postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
 mssql = ["aioodbc>=0.5", "pyodbc>=5.0"]
+mysql = ["aiomysql>=0.2"]
+oracle = ["oracledb>=2.0"]
 deepagents = ["deepagents>=0.4"]
 langchain = ["langchain-core>=0.3"]
 langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
-all = ["vfs-py[search,openai,pinecone,databricks,postgres,mssql,deepagents,langchain,langgraph]"]
+all = ["vfs-py[search,openai,pinecone,databricks,postgres,mssql,mysql,oracle,deepagents,langchain,langgraph]"]
 
 [dependency-groups]
 dev = [
@@ -137,6 +139,10 @@ markers = [
     "slow: marks tests as slow",
     "integration: marks integration tests",
     "needs(*ops): ops a storage-conformance test requires the backend to declare",
+    "postgres: conformance leg against a real PostgreSQL server (VFS_TEST_POSTGRES_URL)",
+    "mysql: conformance leg against a real MySQL server (VFS_TEST_MYSQL_URL)",
+    "mssql: conformance leg against a real SQL Server instance (VFS_TEST_MSSQL_URL)",
+    "oracle: conformance leg against a real Oracle server (VFS_TEST_ORACLE_URL)",
 ]
 
 [tool.coverage.run]
@@ -146,17 +152,6 @@ source = ["src/vfs"]
 concurrency = ["greenlet", "thread"]
 omit = [
     "tests/*",
-    "src_old/*",
-    "tests_old/*",
-    # Integration-only backend: exercised by tests/test_mssql_backend.py
-    # under --mssql against a real SQL Server instance (see docker/mssql/).
-    # Layer-1 unit tests for its helpers still run in CI but aren't
-    # counted — covering the CONTAINSTABLE / REGEXP_LIKE / LIKE pushdown
-    # bodies would require wiring an MSSQL service container into CI.
-    "src/vfs/backends/mssql.py",
-    # Integration-only backend: exercised by tests/test_postgres_backend.py
-    # under --postgres against a real PostgreSQL + pgvector instance.
-    "src/vfs/backends/postgres.py",
 ]
 
 [tool.coverage.report]

@@ -127,7 +127,6 @@ Permission = Literal["read", "read_write"]
 """Filesystem-level permission value."""
 
 
-
 class PermissionsPayload(TypedDict):
     """JSON-native form of a :class:`PermissionMap` — what ``to_payload`` emits.
 

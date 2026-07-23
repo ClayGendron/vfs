@@ -85,6 +85,14 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 - **Options considered:** background accumulator + flush (Oak/JuiceFS pattern); derive directory change from `MAX(updated_at)` over children at read time and drop stored bumps; keep synchronous bumps and accept same-directory fan-in contention
 - **Status:** resolved 2026-07-17 (Clay, in session) — storage owns no background work, so the Oak/JuiceFS accumulator is out. At-scale path: derive directory change from children at read time; stored parent bumps leave the write path (synchronous bumps acceptable until then). Recorded in `research/2026-07-17-write-path-prior-art-and-scaling.md` §4.3.
 
+## The declared key-byte budget never reaches the DDL — MySQL refuses first touch
+
+- **Asked:** 2026-07-23 by Clay + Claude (first run of the real-engine conformance harness, `docker/compose.test.yml`)
+- **Context:** The MySQL conformance leg fails at `create_all` with error 1071 (`max key length is 3072 bytes`): `entries.path` is `_binary_string(MAX_PATH_LENGTH)` — VARCHAR(1024), `unique=True, index=True` (`models/rows.py:284`) — and utf8mb4's 4 bytes/char makes that a 4,096-byte key. `DialectProfile.key_byte_budget` exists and is enforced **at write time** (`writes.py:101,147,193` via `WritePlan`), but no DDL consumes it, so an engine whose cap is tighter than the column's worst case refuses the schema outright — first touch classifies `unavailable` and every mutating verb fails. This contradicts "unknown dialects are served, not refused" on the most common unknown dialect there is.
+- **Blocking:** the MySQL leg of `.github/workflows/test-dialects.yml` (marked `continue-on-error` until resolved); any real MySQL/MariaDB deployment
+- **Options considered:** size indexed key columns from a byte budget rather than a char count (touches every profile; the honest fix); a MySQL `with_variant` using a binary type or per-column charset so 1,024 chars fit the key cap; a prefix index (`mysql_length`) — rejected on its face for the *unique* path index, since prefix uniqueness is stricter than path uniqueness; declare MySQL unsupported — contradicts the GENERIC-floor contract
+- **Status:** open — wants a research → decide pass on how `key_byte_budget` should bind DDL, then a fix story; the regression pin is the MySQL conformance leg itself
+
 ## Guarded-update read-back infers success from the post-image — a reachable torn row on READ COMMITTED
 
 - **Asked:** 2026-07-22 by Clay + Claude (reviewing `_update_materials` while designing spec 078); severity corrected the same day by an independent review
