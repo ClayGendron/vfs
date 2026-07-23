@@ -291,7 +291,9 @@ class EngineHost:
                 entry_id=str(ULID()),
                 parent_id=None,
                 path="/",
-                name="",
+                # "/" is un-typable as a segment name; Oracle folds '' to
+                # NULL, which the NOT NULL name column rightly refuses.
+                name="/",
                 kind="directory",
                 version=1,
                 created_at=now,

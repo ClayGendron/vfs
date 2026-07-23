@@ -45,6 +45,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    Identity,
     Index,
     Integer,
     LargeBinary,
@@ -309,7 +310,9 @@ def build_vfs_tables(
     entry = Table(
         table_name,
         metadata,
-        Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True),
+        # Identity() is explicit for Oracle, whose dialect generates
+        # nothing for a bare autoincrement primary key.
+        Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("entry_id", ULIDKey(), nullable=False, unique=True, index=True),
         Column("parent_id", ULIDKey()),
         Column("external_id", String(1024)),
@@ -372,7 +375,7 @@ def build_vfs_tables(
     chunks = Table(
         f"{table_name}_chunks",
         metadata,
-        Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True),
+        Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("entry_id", ULIDKey(), nullable=False, index=True),
         Column("chunk_index", Integer, nullable=False),
         Column("line_start", Integer, nullable=False),
@@ -391,7 +394,7 @@ def build_vfs_tables(
     edges = Table(
         f"{table_name}_edges",
         metadata,
-        Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True),
+        Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("source_id", ULIDKey(), nullable=False),
         Column("target_id", ULIDKey(), nullable=False),
         Column("edge_type", String(MAX_SEGMENT_LENGTH), nullable=False),
