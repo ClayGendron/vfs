@@ -10,8 +10,8 @@ mutation statement at all. The staging half lives in ``staging.py``
 it and the execution that drains it. Execution is a handful of bulk Core
 statements in pinned order: entry inserts layered parents-before-children
 (chunked by the dialect's parameter budget), guarded material updates
-with a verification read, content delete-then-insert, and unconditional
-parent bumps. Every function takes the op's live ``AsyncSession`` and
+attributed from their own statements, content delete-then-insert, and
+unconditional parent bumps. Every function takes the op's live ``AsyncSession`` and
 never begins or commits — the protocol method in ``backend.py`` owns its
 one transaction.
 
@@ -27,9 +27,9 @@ per-mount counter, and no two entries' versions are comparable.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import bindparam, delete, insert, select, update
+from sqlalchemy import bindparam, column, delete, insert, select, update, values
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -44,10 +44,10 @@ from vfs.storage.editing import edited_entry
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from sqlalchemy import Column, ColumnElement, FromClause, Table
+    from sqlalchemy import Column, ColumnElement, FromClause, Table, Update
     from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
     from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
-    from sqlalchemy.engine import RowMapping
+    from sqlalchemy.engine import CursorResult, RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import VFSTables
@@ -312,7 +312,7 @@ async def _apply(
     # create to "absorb", which must be picked up by this pass.
     updates = [s for s in plan.staged.values() if s.persistence != "insert"]
     if errors := await _update_materials(
-        session, tables.entry, membership_budget, updates, user_id=plan.user_id, now=now
+        session, tables.entry, profile, parameter_budget, membership_budget, updates, user_id=plan.user_id, now=now
     ):
         return errors
     await _replace_content(session, tables.content, membership_budget, list(plan.staged.values()))
@@ -454,15 +454,15 @@ async def _resolve_rows(
 ) -> list[ResultError]:
     """Re-run a conflicted chunk row-at-a-time, each insert in its own savepoint."""
     errors: list[ResultError] = []
-    for staged, values in zip(layer, rows, strict=True):
+    for staged, row_values in zip(layer, rows, strict=True):
         try:
             async with session.begin_nested():
-                await session.execute(insert(entry).values(**values))
+                await session.execute(insert(entry).values(**row_values))
             continue
         except IntegrityError:
             pass
         occupant_query = select(entry.c.entry_id, entry.c.kind).where(
-            entry.c.parent_id == values["parent_id"], entry.c.name == values["name"]
+            entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"]
         )
         occupant = (await session.execute(occupant_query)).one_or_none()
         if occupant is None:
@@ -482,56 +482,189 @@ async def _resolve_rows(
 async def _update_materials(
     session: AsyncSession,
     entry: Table,
+    profile: DialectProfile,
+    parameter_budget: int,
     membership_budget: int,
     updates: list[StagedEntry],
     *,
     user_id: str | None,
     now: datetime,
 ) -> list[ResultError]:
-    """Material updates with the version guard, verified by one read-back.
+    """Material updates with the version guard, attributed from the statement.
 
-    The guarded arm writes ``base + 1`` under ``WHERE version = base``;
-    the guard's zero-rowcount arm is unreachable on SQLite (single writer)
-    and on Postgres at REPEATABLE READ (rivals surface as 40001); it is
-    load-bearing at READ COMMITTED — topology verbs, the generic-dialect
-    floor — where a lost update is otherwise silent. The unguarded arm
-    (arbitration clobbers) increments SQL-side, last-writer-wins by
-    design. The read-back attributes conflicts portably instead of
-    trusting per-driver executemany rowcounts: a guarded row must show
-    exactly ``base + 1``; an unguarded row takes the observed value as
-    truth and conflicts only if it vanished.
+    The guarded arm writes ``base + 1`` under ``WHERE version = base`` and
+    learns which rows its own statement matched — never from a re-read of
+    the post-image, which cannot tell our one increment from a rival's at
+    READ COMMITTED. The ladder, selected from what the live dialect
+    models: a set-based VALUES join whose RETURNING set is the success
+    set; an executemany whose sane aggregate rowcount proves every guard
+    matched (each statement matches at most one row by primary key),
+    rolled back to a savepoint and re-driven row-by-row on mismatch;
+    per-row execution attributed by each statement's own rowcount; or a
+    classified refusal — an unverifiable guarded write never proceeds.
+    The unguarded arm (arbitration clobbers) increments SQL-side,
+    last-writer-wins by design; it only *learns* its assigned versions —
+    from RETURNING, or a select of its own ids — and a vanished row
+    classifies ``conflict``.
     """
     if not updates:
         return []
     guarded = [s for s in updates if s.persistence == "update"]
     unguarded = [s for s in updates if s.persistence == "absorb"]
-    material = {column: bindparam(f"b_{column}") for column in _CLOBBER_COLUMNS}
-    if guarded:
-        stmt = (
-            update(entry)
-            .where(entry.c.entry_id == bindparam("b_id"), entry.c.version == bindparam("b_base"))
-            .values(**material, version=bindparam("b_ver"))
-        )
-        params = [_update_params(s, user_id, now) | {"b_base": s.base_version, "b_ver": s.version} for s in guarded]
-        await session.execute(stmt, params)
-    if unguarded:
-        stmt = (
-            update(entry).where(entry.c.entry_id == bindparam("b_id")).values(**material, version=entry.c.version + 1)
-        )
-        await session.execute(stmt, [_update_params(s, user_id, now) for s in unguarded])
-    actual: dict[str, int] = {}
-    for chunk in chunked([s.entry_id for s in updates], membership_budget):
-        check = await session.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.entry_id.in_(chunk)))
-        actual.update({row.entry_id: row.version for row in check})
+    dialect = session.get_bind().dialect
+    set_based = profile.values_join and dialect.update_returning and dialect.update_returning_multifrom
     errors: list[ResultError] = []
-    for staged in updates:
-        observed = actual.get(staged.entry_id)
-        if observed is None or (staged.persistence == "update" and observed != staged.version):
-            message = f"Concurrent modification: {staged.path}"
-            errors.append(classified(VFSErrorKind.conflict, message, staged.path, target=staged.path))
-        elif staged.persistence == "absorb":
-            staged.version = observed
+    if guarded:
+        if set_based:
+            matched = await _values_update(
+                session, entry, parameter_budget, membership_budget, guarded, user_id=user_id, now=now, guard=True
+            )
+            errors.extend(_conflict(s) for s in guarded if s.entry_id not in matched)
+        elif dialect.supports_sane_multi_rowcount:
+            errors.extend(await _guarded_by_aggregate(session, entry, guarded, user_id=user_id, now=now))
+        elif dialect.supports_sane_rowcount:
+            errors.extend(await _guarded_by_rowcount(session, entry, guarded, user_id=user_id, now=now))
+        else:
+            message = f"Guarded updates cannot be verified on {profile.name}: no UPDATE RETURNING, no sane rowcount"
+            return [ResultError(kind=VFSErrorKind.unsupported, message=message)]
+    if unguarded:
+        if set_based:
+            learned = await _values_update(
+                session, entry, parameter_budget, membership_budget, unguarded, user_id=user_id, now=now, guard=False
+            )
+        else:
+            material = {name: bindparam(f"b_{name}") for name in _CLOBBER_COLUMNS}
+            stmt = (
+                update(entry)
+                .where(entry.c.entry_id == bindparam("b_id"))
+                .values(**material, version=entry.c.version + 1)
+            )
+            await session.execute(stmt, [_update_params(s, user_id, now) for s in unguarded])
+            learned = {}
+            for chunk in chunked([s.entry_id for s in unguarded], membership_budget):
+                found = await session.execute(
+                    select(entry.c.entry_id, entry.c.version).where(entry.c.entry_id.in_(chunk))
+                )
+                learned.update({row.entry_id: row.version for row in found})
+        for staged in unguarded:
+            version = learned.get(staged.entry_id)
+            if version is None:
+                errors.append(_conflict(staged))
+            else:
+                staged.version = version
     return errors
+
+
+async def _values_update(
+    session: AsyncSession,
+    entry: Table,
+    parameter_budget: int,
+    membership_budget: int,
+    staged: list[StagedEntry],
+    *,
+    user_id: str | None,
+    now: datetime,
+    guard: bool,
+) -> dict[str, int]:
+    """Set-based material update over a VALUES join, RETURNING what it matched.
+
+    One tuple per staged row joins the entry table on ``entry_id`` (and,
+    guarded, on ``version = base``); the returned ``entry_id`` set is
+    exactly the rows this statement touched. Chunked by the tighter of
+    the membership budget and the per-tuple bind cost, so a 10,000-entry
+    batch stays batch-native and bounded on every engine.
+    """
+    rows = []
+    for entry_row in staged:
+        material = _material_values(entry_row, user_id, now)
+        ordered = tuple(material[name] for name in _CLOBBER_COLUMNS)
+        rows.append((entry_row.entry_id, entry_row.base_version, entry_row.version, *ordered))
+    width = len(_CLOBBER_COLUMNS) + 3
+    per_statement = max(1, min(membership_budget, parameter_budget // width))
+    matched: dict[str, int] = {}
+    for chunk in chunked(rows, per_statement):
+        incoming = values(
+            column("v_id", entry.c.entry_id.type),
+            column("v_base", entry.c.version.type),
+            column("v_ver", entry.c.version.type),
+            *(column(f"v_{name}", entry.c[name].type) for name in _CLOBBER_COLUMNS),
+            name="incoming",
+        ).data(list(chunk))
+        set_: dict[str, Any] = {name: incoming.c[f"v_{name}"] for name in _CLOBBER_COLUMNS}
+        where = [entry.c.entry_id == incoming.c.v_id]
+        if guard:
+            set_["version"] = incoming.c.v_ver
+            where.append(entry.c.version == incoming.c.v_base)
+        else:
+            set_["version"] = entry.c.version + 1
+        stmt = update(entry).where(*where).values(**set_).returning(entry.c.entry_id, entry.c.version)
+        result = await session.execute(stmt)
+        matched.update({mapping["entry_id"]: mapping["version"] for mapping in result.mappings()})
+    return matched
+
+
+async def _guarded_by_aggregate(
+    session: AsyncSession,
+    entry: Table,
+    guarded: list[StagedEntry],
+    *,
+    user_id: str | None,
+    now: datetime,
+) -> list[ResultError]:
+    """Executemany fast path: an aggregate rowcount of N proves N guards matched.
+
+    On mismatch the savepoint rolls back — guarded updates are not
+    idempotent, so attribution must not re-run them over applied state —
+    and the per-row floor re-drives for exact blame.
+    """
+    params = [_guarded_params(s, user_id, now) for s in guarded]
+    nested = await session.begin_nested()
+    result = cast("CursorResult[Any]", await session.execute(_guarded_stmt(entry), params))
+    if result.rowcount == len(params):
+        await nested.commit()
+        return []
+    await nested.rollback()
+    return await _guarded_by_rowcount(session, entry, guarded, user_id=user_id, now=now)
+
+
+async def _guarded_by_rowcount(
+    session: AsyncSession,
+    entry: Table,
+    guarded: list[StagedEntry],
+    *,
+    user_id: str | None,
+    now: datetime,
+) -> list[ResultError]:
+    """The per-row floor: each statement's own rowcount is the evidence.
+
+    SQLAlchemy's own choice when a version guard must be verified without
+    RETURNING — one row per statement, bounded trivially.
+    """
+    stmt = _guarded_stmt(entry)
+    errors: list[ResultError] = []
+    for staged in guarded:
+        result = cast("CursorResult[Any]", await session.execute(stmt, _guarded_params(staged, user_id, now)))
+        if result.rowcount == 0:
+            errors.append(_conflict(staged))
+    return errors
+
+
+def _guarded_stmt(entry: Table) -> Update:
+    material = {name: bindparam(f"b_{name}") for name in _CLOBBER_COLUMNS}
+    return (
+        update(entry)
+        .where(entry.c.entry_id == bindparam("b_id"), entry.c.version == bindparam("b_base"))
+        .values(**material, version=bindparam("b_ver"))
+    )
+
+
+def _guarded_params(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:
+    return _update_params(staged, user_id, now) | {"b_base": staged.base_version, "b_ver": staged.version}
+
+
+def _conflict(staged: StagedEntry) -> ResultError:
+    message = f"Concurrent modification: {staged.path}"
+    return classified(VFSErrorKind.conflict, message, staged.path, target=staged.path)
 
 
 async def _replace_content(

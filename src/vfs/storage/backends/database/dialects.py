@@ -55,6 +55,13 @@ class DialectProfile:
     count, independent of bind-parameter count. The default is SQLite's
     ``SQLITE_MAX_EXPR_DEPTH`` default (1,000), the tightest known cap;
     raise it per engine only with measurement.
+
+    ``values_join`` declares whether the engine accepts a ``VALUES``
+    table as an UPDATE join source in the column-aliased form SQLAlchemy
+    renders (``(VALUES ...) AS name (col, ...)``) — a capability
+    SQLAlchemy does not model: SQLite declares ``update_returning`` yet
+    rejects that alias syntax. Guarded updates take the set-based
+    RETURNING arm only where this is declared.
     """
 
     name: str
@@ -71,6 +78,7 @@ class DialectProfile:
     # instead of a SQLSTATE (the MySQL family: PyMySQL/aiomysql args[0]).
     retryable_driver_codes: frozenset[int] = frozenset()
     expression_depth_budget: int = 1_000
+    values_join: bool = False
 
 
 SQLITE: Final = DialectProfile(
@@ -100,6 +108,7 @@ POSTGRESQL: Final = DialectProfile(
     arbitration="upsert",
     op_isolation="REPEATABLE READ",
     topology_isolation="READ COMMITTED",
+    values_join=True,
 )
 
 MSSQL: Final = DialectProfile(
@@ -107,6 +116,7 @@ MSSQL: Final = DialectProfile(
     key_byte_budget=1_700,
     in_list_budget=2_100,
     arbitration="catch_retry",
+    values_join=True,
 )
 
 # catch_retry, not upsert: ON DUPLICATE KEY UPDATE takes no conflict

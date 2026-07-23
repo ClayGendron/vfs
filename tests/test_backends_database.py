@@ -14,10 +14,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import create_engine, event, insert, select, text, update
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError
@@ -65,6 +67,8 @@ from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection
+
+    from vfs.storage.backends.database.staging import PersistenceState
 
 
 def _url(tmp_path) -> str:
@@ -174,6 +178,12 @@ class TestDialectPolicy:
         # MAX_PATH_LENGTH bytes — the budget↔DDL gap closes by construction.
         for profile in (*PROFILES.values(), GENERIC):
             assert profile.key_byte_budget >= MAX_PATH_LENGTH
+
+    def test_values_join_is_declared_only_where_proven(self) -> None:
+        # SQLite rejects the column-aliased VALUES join despite declaring
+        # update_returning — the bit is earned per engine, floor stays off.
+        assert POSTGRESQL.values_join and MSSQL.values_join
+        assert not SQLITE.values_join and not MYSQL.values_join and not GENERIC.values_join
 
     def test_parameter_budget_is_read_from_sqlalchemy(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -339,7 +349,7 @@ class TestFirstTouch:
                     entry_id=str(ULID()),
                     parent_id=None,
                     path="/",
-                    name="",
+                    name="/",
                     kind="directory",
                     version=0,
                     created_at=now,
@@ -1070,7 +1080,8 @@ class TestWriteMechanics:
             statements.append(statement)
 
         def mutations() -> list[str]:
-            return [s for s in statements if not s.startswith(("BEGIN", "COMMIT", "PRAGMA"))]
+            control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE")
+            return [s for s in statements if not s.startswith(control)]
 
         created = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="a")])
         assert created.success is True
@@ -1080,8 +1091,9 @@ class TestWriteMechanics:
         statements.clear()
         overwritten = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="b")])
         assert overwritten.success is True
-        # Fetch, guarded update, verification read-back, content delete + insert.
-        assert len(mutations()) == 5, mutations()
+        # Fetch, guarded update, content delete + insert — the update is
+        # attributed from its own statement, so no read-back appears.
+        assert len(mutations()) == 4, mutations()
         await storage.close()
 
     async def test_revisions_are_per_entry_and_survive_restart(self, tmp_path) -> None:
@@ -1622,20 +1634,29 @@ class TestArbitration:
                 base_version=999_999,  # a rival moved the row past our snapshot
                 version=1_000_000,
             )
-            budget = storage._host.membership_budget
-            errors = await _update_materials(session, entry, budget, [stale], user_id=None, now=datetime.now(UTC))
+            host = storage._host
+            errors = await _update_materials(
+                session,
+                entry,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                [stale],
+                user_id=None,
+                now=datetime.now(UTC),
+            )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
         assert "Concurrent modification" in errors[0].message
         await storage.close()
 
-    async def test_absorb_row_vanishing_before_read_back_classifies_conflict(self, tmp_path) -> None:
+    async def test_absorb_row_vanishing_before_version_learning_classifies_conflict(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
             await session.connection(execution_options={"vfs_writer": True})
-            # An absorb row whose adopted rival vanished before the
-            # read-back: no observed version exists to take as truth.
+            # An absorb row whose adopted rival vanished before its
+            # version learning: no assigned version exists to learn.
             vanished = StagedEntry(
                 path=Path("/f.txt"),
                 parent=Path("/"),
@@ -1644,8 +1665,17 @@ class TestArbitration:
                 entry_id=str(ULID()),
                 content="mine",
             )
-            budget = storage._host.membership_budget
-            errors = await _update_materials(session, entry, budget, [vanished], user_id=None, now=datetime.now(UTC))
+            host = storage._host
+            errors = await _update_materials(
+                session,
+                entry,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                [vanished],
+                user_id=None,
+                now=datetime.now(UTC),
+            )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
         assert "Concurrent modification" in errors[0].message
         await storage.close()
@@ -1750,6 +1780,191 @@ class TestArbitration:
     def test_upsert_constructor_is_dialect_bound(self) -> None:
         assert _upsert_constructor(SQLITE) is sqlite_insert
         assert _upsert_constructor(POSTGRESQL) is pg_insert
+
+
+class _CannedReturning:
+    """Result double: canned RETURNING mappings."""
+
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    def mappings(self) -> list[dict[str, object]]:
+        return self._rows
+
+
+class _ReturningSession:
+    """Session double for the VALUES-join arm SQLite cannot execute."""
+
+    def __init__(self, returned: list[dict[str, object]]) -> None:
+        self.returned = returned
+        self.statements: list[Any] = []
+
+    def get_bind(self) -> SimpleNamespace:
+        dialect = SimpleNamespace(
+            update_returning=True,
+            update_returning_multifrom=True,
+            supports_sane_rowcount=True,
+            supports_sane_multi_rowcount=False,
+        )
+        return SimpleNamespace(dialect=dialect)
+
+    async def execute(self, stmt: Any, params: Any = None) -> _CannedReturning:
+        self.statements.append(stmt)
+        return _CannedReturning(self.returned)
+
+
+def _staged_material(path: str, entry_id: str, *, persistence: PersistenceState = "update") -> StagedEntry:
+    return StagedEntry(
+        path=Path(path),
+        parent=Path("/"),
+        kind="file",
+        persistence=persistence,
+        entry_id=entry_id,
+        content="mine",
+        base_version=1,
+        version=2,
+    )
+
+
+class TestGuardedAttribution:
+    """The statement-attribution ladder beyond what SQLite executes natively.
+
+    The default suite drives the aggregate fast path and its per-row
+    fallback on every guarded overwrite; these tests cover the set-based
+    RETURNING arm through a session double — SQLite rejects the
+    column-aliased VALUES join, which is why ``values_join`` is a
+    declared profile bit — plus the forced per-row floor and the
+    classified refusal. The VALUES arm itself is proven live by the
+    postgres and mssql conformance legs.
+    """
+
+    async def test_returning_arm_attributes_guarded_success_by_membership(self) -> None:
+        tables = build_vfs_tables(table_name="vfs")
+        won = _staged_material("/won.txt", str(ULID()))
+        lost = _staged_material("/lost.txt", str(ULID()))
+        double = _ReturningSession([{"entry_id": won.entry_id, "version": 2}])
+        errors = await _update_materials(
+            cast("AsyncSession", double),
+            tables.entry,
+            POSTGRESQL,
+            32_000,
+            900,
+            [won, lost],
+            user_id=None,
+            now=datetime.now(UTC),
+        )
+        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert str(lost.path) in errors[0].message
+        assert len(double.statements) == 1  # both rows rode one chunk
+
+    async def test_returning_arm_statement_is_a_guarded_values_join(self) -> None:
+        tables = build_vfs_tables(table_name="vfs")
+        staged = _staged_material("/f.txt", str(ULID()))
+        double = _ReturningSession([{"entry_id": staged.entry_id, "version": 2}])
+        await _update_materials(
+            cast("AsyncSession", double),
+            tables.entry,
+            POSTGRESQL,
+            32_000,
+            900,
+            [staged],
+            user_id=None,
+            now=datetime.now(UTC),
+        )
+        sql = str(double.statements[0].compile(dialect=postgresql.dialect()))
+        assert "FROM (VALUES" in sql
+        assert "RETURNING" in sql
+        assert "incoming.v_base" in sql  # the version guard joins the VALUES row
+
+    async def test_returning_arm_absorb_learns_returned_version_or_conflicts(self) -> None:
+        tables = build_vfs_tables(table_name="vfs")
+        absorbed = _staged_material("/won.txt", str(ULID()), persistence="absorb")
+        vanished = _staged_material("/gone.txt", str(ULID()), persistence="absorb")
+        double = _ReturningSession([{"entry_id": absorbed.entry_id, "version": 7}])
+        errors = await _update_materials(
+            cast("AsyncSession", double),
+            tables.entry,
+            POSTGRESQL,
+            32_000,
+            900,
+            [absorbed, vanished],
+            user_id=None,
+            now=datetime.now(UTC),
+        )
+        assert absorbed.version == 7  # the statement reported the version it assigned
+        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert str(vanished.path) in errors[0].message
+        sql = str(double.statements[0].compile(dialect=postgresql.dialect()))
+        assert "incoming.v_base" not in sql  # unguarded: increments SQL-side
+
+    async def test_forced_per_row_floor_attributes_each_rowcount(self, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="a"), Entry(path=Path("/b.txt"), content="b")])
+        host = storage._host
+        entry = host.tables.entry
+        # No sane aggregate: the ladder must land on per-row rowcounts.
+        monkeypatch.setattr(host.engine.sync_engine.dialect, "supports_sane_multi_rowcount", False)
+        async with host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
+            found = await session.execute(select(entry.c.entry_id, entry.c.path, entry.c.version))
+            rows = {m["path"]: m for m in found.mappings()}
+            fresh = StagedEntry(
+                path=Path("/a.txt"),
+                parent=Path("/"),
+                kind="file",
+                persistence="update",
+                entry_id=rows["/a.txt"]["entry_id"],
+                content="a2",
+                base_version=rows["/a.txt"]["version"],
+                version=rows["/a.txt"]["version"] + 1,
+            )
+            stale = StagedEntry(
+                path=Path("/b.txt"),
+                parent=Path("/"),
+                kind="file",
+                persistence="update",
+                entry_id=rows["/b.txt"]["entry_id"],
+                content="b2",
+                base_version=999_999,
+                version=1_000_000,
+            )
+            errors = await _update_materials(
+                session,
+                entry,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                [fresh, stale],
+                user_id=None,
+                now=datetime.now(UTC),
+            )
+        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert str(stale.path) in errors[0].message
+        await storage.close()
+
+    async def test_unverifiable_guard_classifies_instead_of_guessing(self, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        host = storage._host
+        dialect = host.engine.sync_engine.dialect
+        monkeypatch.setattr(dialect, "supports_sane_multi_rowcount", False)
+        monkeypatch.setattr(dialect, "supports_sane_rowcount", False)
+        staged = _staged_material("/f.txt", str(ULID()))
+        async with host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
+            errors = await _update_materials(
+                session,
+                host.tables.entry,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                [staged],
+                user_id=None,
+                now=datetime.now(UTC),
+            )
+        assert [e.kind for e in errors] == [VFSErrorKind.unsupported]
+        assert "cannot be verified" in errors[0].message
+        await storage.close()
 
 
 class TestMembershipChunking:
