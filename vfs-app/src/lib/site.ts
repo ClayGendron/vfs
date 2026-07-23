@@ -19,7 +19,7 @@ export const SITE = {
   tagline: "Agentic Search on your Database",
   headline: "Agentic Search on\nyour Database",
   description:
-    "Compose a fully-featured, Unix-like environment for your agents. VFS is built on one claim: glob, grep, glean, and graph are the four verbs any agent needs to navigate a knowledge base.",
+    "Compose a Unix-like environment for your agents. VFS creates one namespace to read, write, retrieve, and run — over a codebase or the whole enterprise.",
   domain: "vfs.dev",
   repo: { owner: "ClayGendron", name: "vfs" },
   github: "https://github.com/ClayGendron/vfs",

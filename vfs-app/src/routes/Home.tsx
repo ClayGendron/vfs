@@ -28,6 +28,10 @@ export function Home() {
       />
 
       <Section tight>
+        <SectionHead tagline="Built on one claim.">
+          Glob, grep, glean, and graph are the four verbs any agent needs to
+          navigate a knowledge base.
+        </SectionHead>
         <VerbStrip />
       </Section>
 
