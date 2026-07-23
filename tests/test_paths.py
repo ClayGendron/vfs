@@ -623,6 +623,16 @@ class TestRebaseLengthPolicy:
         ok, reason = validate_path(long_multibyte)
         assert not ok and "bytes" in reason
 
+    def test_relative_path_limits_denominate_utf8_bytes_not_characters(self):
+        # The same denomination binds the relative-path validator: 128 "é"
+        # segments and a five-segment multibyte path overflow in bytes only.
+        ok, _ = validate_relative_path("é" * 127)
+        assert ok
+        ok, reason = validate_relative_path("é" * 128)
+        assert not ok and "bytes" in reason
+        ok, reason = validate_relative_path("/".join(["é" * 120] * 5))  # 1,204 bytes, 604 chars
+        assert not ok and "bytes" in reason
+
     def test_with_mount_measures_bytes(self):
         # A 22-byte mount + a 1,004-byte multibyte local path > 1,024 bytes,
         # though the char count (504 + 22) is far under the limit.

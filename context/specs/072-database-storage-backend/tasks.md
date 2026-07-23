@@ -121,7 +121,10 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       per-engine serialization design recorded in
       `slice-9-topology-guide.md`; start there. Prerequisite spec
       079 (statement-attributed guarded updates) landed the same
-      day with all four Docker engine legs green.
+      day with all four Docker engine legs green. **Gate (owner
+      decision 2026-07-23): the concurrency-pin seam decision in the
+      guide ("Decide before implementing") must be made before
+      implementation starts.**
 - [ ] 13. Postgres CI leg (with slice 9): `postgres` marker + env
       URL + service wiring; conformance + topology/concurrency tests
       run under it; coverage posture for Postgres-only branches kept

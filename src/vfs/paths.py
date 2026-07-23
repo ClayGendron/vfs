@@ -300,7 +300,7 @@ class Path(str):
             return self
         if self == "/":
             return mount
-        if byte_length(mount) + byte_length(self) > MAX_PATH_LENGTH:
+        if rebase_overflows(mount, self):
             msg = (
                 f"Rebased path too long (max {MAX_PATH_LENGTH} bytes): "
                 f"mount {mount!r} + local path of {byte_length(self)} bytes"
@@ -502,6 +502,18 @@ def normalize_path(path: str) -> str:
 def byte_length(text: str) -> int:
     """UTF-8 bytes of *text* — the denomination of every path limit."""
     return len(text.encode())
+
+
+def rebase_overflows(mount: str, local: str) -> bool:
+    """True when rebasing *local* under *mount* would exceed the path limit.
+
+    The one owner of the rebase-overflow rule: a root on either side is
+    an identity rebase and never overflows; otherwise the concatenation
+    must fit ``MAX_PATH_LENGTH`` bytes.
+    """
+    if mount == "/" or local == "/":
+        return False
+    return byte_length(mount) + byte_length(local) > MAX_PATH_LENGTH
 
 
 def validate_path(path: str) -> tuple[bool, str]:

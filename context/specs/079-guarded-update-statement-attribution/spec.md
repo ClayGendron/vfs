@@ -148,8 +148,9 @@ staging plan; the results envelope and every `Observation`.
   floor, **not** Postgres, which would have to force isolation
   artificially and would prove nothing about the shipped pin.
 - No code path concludes a guarded update succeeded without evidence
-  from the statement that performed it; `grep` shows no re-read of
-  `entry.c.version` in `_update_materials`.
+  from the statement that performed it — no re-read decides guarded
+  success. (The absorb arm's own-ids learning select mandated by pin 6
+  is the one lawful `entry.c.version` read in `_update_materials`.)
 - Statement count and parameter count stay bounded on the RETURNING arm
   at a 10,000-entry batch; the floor arm's per-row cost is measured and
   recorded in `plan.md` rather than assumed negligible.

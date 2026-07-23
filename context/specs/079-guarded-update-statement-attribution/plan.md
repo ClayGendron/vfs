@@ -39,8 +39,9 @@ Flags verified on the live async drivers:
 2. **Executemany + sane aggregate** — `dialect.supports_sane_multi_rowcount`
    (sqlite, mysql/mariadb, oracle). The guarded executemany runs under a
    savepoint; an aggregate rowcount equal to the row count is statement-
-   native proof every guard matched (each statement matches ≤ 1 row by
-   primary key). On mismatch the savepoint rolls back — guarded updates
+   native proof every guard matched (each statement matches ≤ 1 row via
+   the unique `entry_id` index). On mismatch the savepoint rolls back —
+   guarded updates
    are not idempotent, so attribution must not re-run them over applied
    state — and rung 3 re-drives row-by-row.
 3. **Per-row rowcount** — `dialect.supports_sane_rowcount` (the unknown-

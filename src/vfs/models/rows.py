@@ -141,7 +141,7 @@ _MYSQL_FAMILY: Final = ("mysql", "mariadb")
 
 
 class BytewiseString(TypeDecorator[str]):
-    """A bounded key string, bytewise-ordered and byte-budgeted on every engine.
+    """A bounded key string, bytewise-ordered and byte-budgeted where pinned.
 
     *length* denominates UTF-8 bytes — the same unit as the path
     contract and every engine's index-key cap, so a lawful value always
@@ -156,6 +156,12 @@ class BytewiseString(TypeDecorator[str]):
     declared char against InnoDB's 3,072-byte cap, while binary keys
     cost their own bytes and compare bytewise natively — Python still
     speaks ``str``; the conversion lives here alone.
+
+    Oracle and unmeasured engines take the plain ``String`` fallback:
+    character-denominated (``VARCHAR2(n CHAR)`` on Oracle) with no
+    collation pin, so bytewise order and byte budgeting there rest on
+    engine defaults (Oracle's ``NLS_SORT=BINARY``) — an accepted
+    degradation, not a pinned contract.
     """
 
     impl = String
@@ -190,10 +196,10 @@ def _body_text() -> Text:
 
     Bare ``String()`` carries no length and MySQL's DDL compiler refuses
     it outright; ``Text`` maps to each engine's unbounded form (CLOB on
-    Oracle, VARCHAR(max) on MSSQL), with MySQL pinned to LONGTEXT — its
-    bare TEXT caps bodies at 64KB.
+    Oracle, VARCHAR(max) on MSSQL), with the mysql family pinned to
+    LONGTEXT — its bare TEXT caps bodies at 64KB.
     """
-    return Text().with_variant(LONGTEXT(), "mysql")
+    return Text().with_variant(LONGTEXT(), *_MYSQL_FAMILY)
 
 
 def _uuid_native(dialect: Dialect) -> bool:

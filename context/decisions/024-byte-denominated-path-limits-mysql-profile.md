@@ -30,11 +30,16 @@ real filesystem round-trips vfs.
 
 `_binary_string` becomes a `TypeDecorator` that compiles to
 `VARBINARY(n)` on mysql/mariadb (UTF-8 encode on bind, decode on
-result), keeping the existing collation-pinned `String` everywhere
-else. Bytewise ordering — the doctrine the collations existed to pin —
-is native to binary types; LIKE-prefix sargability survives (ASCII
-metacharacters, bytewise comparison). Every variant names **both**
-`"mysql"` and `"mariadb"` — SQLAlchemy resolves variants strictly by
+result), keeping the existing collation-pinned `String` where a pin
+exists (postgres, mssql; SQLite's default BINARY collation is already
+bytewise). Bytewise ordering — the doctrine the collations existed to
+pin — is native to binary types; LIKE-prefix sargability survives
+(ASCII metacharacters, bytewise comparison). Oracle and unmeasured
+engines take the plain character-typed `String` fallback with no
+collation pin (`VARCHAR2(n CHAR)` on Oracle) — bytewise order there
+rests on engine defaults (`NLS_SORT=BINARY`), an accepted degradation,
+not a pinned contract. Every variant names **both** `"mysql"` and
+`"mariadb"` — SQLAlchemy resolves variants strictly by
 `dialect.name`, and MariaDB's is `"mariadb"`.
 
 ### 3. The budget↔DDL gap closes by construction, and is pinned

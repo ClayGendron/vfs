@@ -8,9 +8,9 @@ module declares is only what SQLAlchemy takes no position on: retryable
 SQLSTATEs, connection/file settings, isolation pins, index-key byte
 budgets, and create-arbitration mode.
 
-Known engines (sqlite, postgresql, mssql, and the mysql/mariadb family)
-carry tuned policy; **any other SQLAlchemy dialect resolves to a
-conservative generic profile** — the backend runs on any
+Known engines (sqlite, postgresql, mssql, oracle, and the mysql/mariadb
+family) carry tuned policy; **any other SQLAlchemy dialect resolves to
+a conservative generic profile** — the backend runs on any
 SQLAlchemy-compatible database, degrading to safe defaults rather than
 refusing.
 
@@ -134,6 +134,19 @@ MYSQL: Final = DialectProfile(
 
 MARIADB: Final = replace(MYSQL, name="mariadb")
 
+# Budgets stay at the floor Oracle itself defines (ORA-01795's 1,000
+# IN-list cap; the conservative key budget) — the tuning here is retry
+# classification: python-oracledb exposes no SQLSTATE, so deadlock
+# (ORA-00060) and serialization failure (ORA-08177, reachable only
+# under a future isolation pin) ride the driver-code rung.
+ORACLE: Final = DialectProfile(
+    name="oracle",
+    key_byte_budget=1_700,
+    in_list_budget=1_000,
+    arbitration="catch_retry",
+    retryable_driver_codes=frozenset({60, 8177}),
+)
+
 # The floor for engines this project has not measured: the tightest known
 # key and IN-list budgets, no settings, serialization-failure SQLSTATEs only.
 GENERIC: Final = DialectProfile(
@@ -149,6 +162,7 @@ PROFILES: Final[dict[str, DialectProfile]] = {
     MSSQL.name: MSSQL,
     MYSQL.name: MYSQL,
     MARIADB.name: MARIADB,
+    ORACLE.name: ORACLE,
 }
 
 
@@ -287,7 +301,12 @@ def _driver_code_of(origin: object) -> int | None:
     """The integer driver error number, where the driver leads with one.
 
     The MySQL family (PyMySQL, aiomysql, asyncmy) raises with
-    ``args = (errno, message)`` and exposes no SQLSTATE attribute.
+    ``args = (errno, message)``; python-oracledb raises with a single
+    ``_Error`` argument whose errno lives on ``.code``. Neither exposes
+    a SQLSTATE attribute.
     """
     first = next(iter(getattr(origin, "args", ())), None)
-    return first if isinstance(first, int) else None
+    if isinstance(first, int):
+        return first
+    code = getattr(first, "code", None)
+    return code if isinstance(code, int) else None

@@ -361,6 +361,35 @@ class TestRebaseOverflow:
         assert (rebased.data or {})["vfs.overflow"] == {"local_path": str(DEEP_LOCAL)}
 
 
+# A multibyte twin of DEEP_LOCAL: 504 chars but 1,004 UTF-8 BYTES, so it
+# overflows under LONG_MOUNT only when the seam measures bytes — a
+# char-denominated regression sails through and these pins catch it.
+MULTIBYTE_LOCAL = Path("/" + "/".join(["é" * 125] * 4))
+
+
+class TestRebaseOverflowMeasuresBytes:
+    def test_multibyte_row_overflow_warns_instead_of_raising(self) -> None:
+        result = Result(ops=("glob",), observations=[obs(MULTIBYTE_LOCAL)])
+        rebased = result.with_mount(LONG_MOUNT)
+        assert rebased.success is True  # loss on record — the seam never raises
+        [err] = rebased.errors
+        assert err.kind is VFSErrorKind.unaddressable
+        assert err.severity is Severity.warning
+        assert err.data == {"vfs.overflow": {"local_path": MULTIBYTE_LOCAL}}
+
+    def test_multibyte_error_path_overflow_drops_to_none(self) -> None:
+        err = ResultError(kind=VFSErrorKind.not_found, message="missing", path=MULTIBYTE_LOCAL)
+        rebased = err.with_mount(LONG_MOUNT)
+        assert rebased.path is None
+        assert rebased.source == LONG_MOUNT
+        assert (rebased.data or {})["vfs.overflow"] == {"local_path": str(MULTIBYTE_LOCAL)}
+
+    def test_multibyte_source_overflow_clamps_to_mount(self) -> None:
+        err = ResultError(kind=VFSErrorKind.not_found, message="missing", source=MULTIBYTE_LOCAL)
+        rebased = err.with_mount(LONG_MOUNT)
+        assert rebased.source == LONG_MOUNT
+
+
 # ---------------------------------------------------------------------------
 # Serialization — the wire contract
 # ---------------------------------------------------------------------------

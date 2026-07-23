@@ -107,6 +107,18 @@ class TestConstruction:
         assert set(traits) <= TRAIT_KEYS
         assert all(value in TRAIT_VALUES[key] for key, value in traits.items())
 
+    def test_durability_full_is_declared_per_tuned_profile(self, tmp_path, monkeypatch) -> None:
+        # Durability is a contract a caller must be able to read: every
+        # tuned profile declares it full; the generic floor never does.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for profile in PROFILES.values():
+            monkeypatch.setattr(EngineHost, "profile", property(lambda self, p=profile: p))
+            traits = storage.traits()
+            assert traits["durability"] == "full"
+            assert traits["arbitration"] == profile.arbitration
+        monkeypatch.setattr(EngineHost, "profile", property(lambda self: profile_for("duckdb")))
+        assert "durability" not in storage.traits()
+
 
 # ---------------------------------------------------------------------------
 # Dialect policy — generic floor and retryable classification
@@ -130,6 +142,21 @@ class _MySQLError(Exception):
 
     def __init__(self, errno: int) -> None:
         super().__init__(errno, "deadlock found when trying to get lock")
+
+
+class _OracleErrorValue:
+    """The ``_Error`` object python-oracledb packs as the sole argument."""
+
+    def __init__(self, code: int) -> None:
+        self.code = code
+        self.message = f"ORA-{code:05d}: fault"
+
+
+class _OracleError(Exception):
+    """python-oracledb-shaped: ``args = (_Error,)``, errno on ``.code``, no sqlstate."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(_OracleErrorValue(code))
 
 
 class TestDialectPolicy:
@@ -172,6 +199,19 @@ class TestDialectPolicy:
         assert is_retryable(MYSQL, _MySQLError(1062)) is False
         # The errno rung is profile-scoped: the floor declares no errnos.
         assert is_retryable(GENERIC, _MySQLError(1213)) is False
+
+    def test_oracle_is_tuned_for_retry_classification(self) -> None:
+        # Budgets stay at the floor Oracle itself defines (ORA-01795);
+        # the tuning is the driver-code rung — oracledb exposes no
+        # sqlstate, and its errno rides args[0].code, not args[0].
+        profile = profile_for("oracle")
+        assert profile.name == "oracle"
+        assert profile.in_list_budget == GENERIC.in_list_budget
+        assert profile.key_byte_budget == GENERIC.key_byte_budget
+        assert is_retryable(profile, _OracleError(60)) is True  # deadlock
+        assert is_retryable(profile, _OracleError(8177)) is True  # serialization
+        assert is_retryable(profile, _OracleError(1400)) is False  # NOT NULL
+        assert is_retryable(GENERIC, _OracleError(60)) is False
 
     def test_every_lawful_path_fits_every_declared_key_budget(self) -> None:
         # The contract is byte-denominated, so the worst-case index key is
@@ -269,6 +309,8 @@ class TestFirstTouch:
         assert meta["schema_format_version"] == SCHEMA_FORMAT_VERSION
         assert meta["mount_identity"] == storage.mount_identity
         assert root["path"] == "/"
+        # '/' is un-typable as a real segment (Oracle folds '' to NULL).
+        assert root["name"] == "/"
         assert root["kind"] == "directory"
         assert root["parent_id"] is None
         await storage.close()
@@ -1896,6 +1938,79 @@ class TestGuardedAttribution:
         assert str(vanished.path) in errors[0].message
         sql = str(double.statements[0].compile(dialect=postgresql.dialect()))
         assert "incoming.v_base" not in sql  # unguarded: increments SQL-side
+
+    async def test_values_arm_chunks_by_parameter_budget_and_merges_attribution(self) -> None:
+        # A budget of 2*width - 1 fits exactly one VALUES tuple per statement:
+        # three staged rows must ride three statements, and attribution
+        # must merge across the chunks — statement size never grows with
+        # batch size.
+        tables = build_vfs_tables(table_name="vfs")
+        staged = [_staged_material(f"/f{i}.txt", str(ULID())) for i in range(3)]
+        width = len(_CLOBBER_COLUMNS) + 3
+        double = _ReturningSession([{"entry_id": s.entry_id, "version": 2} for s in staged])
+        errors = await _update_materials(
+            cast("AsyncSession", double),
+            tables.entry,
+            POSTGRESQL,
+            2 * width - 1,
+            900,
+            staged,
+            user_id=None,
+            now=datetime.now(UTC),
+        )
+        assert errors == []
+        assert len(double.statements) == 3
+
+    async def test_aggregate_arm_rolls_back_before_the_per_row_redrive(self, tmp_path) -> None:
+        # A mixed batch through the NATURAL aggregate arm: without the
+        # savepoint rollback the re-drive would judge already-applied
+        # state, and the fresh row would false-conflict beside the stale.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="a"), Entry(path=Path("/b.txt"), content="b")])
+        host = storage._host
+        entry = host.tables.entry
+        async with host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
+            found = await session.execute(select(entry.c.entry_id, entry.c.path, entry.c.version))
+            rows = {m["path"]: m for m in found.mappings()}
+            fresh = StagedEntry(
+                path=Path("/a.txt"),
+                parent=Path("/"),
+                kind="file",
+                persistence="update",
+                entry_id=rows["/a.txt"]["entry_id"],
+                content="a2",
+                base_version=rows["/a.txt"]["version"],
+                version=rows["/a.txt"]["version"] + 1,
+            )
+            stale = StagedEntry(
+                path=Path("/b.txt"),
+                parent=Path("/"),
+                kind="file",
+                persistence="update",
+                entry_id=rows["/b.txt"]["entry_id"],
+                content="b2",
+                base_version=999_999,
+                version=1_000_000,
+            )
+            errors = await _update_materials(
+                session,
+                entry,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                [fresh, stale],
+                user_id=None,
+                now=datetime.now(UTC),
+            )
+            after = await session.execute(select(entry.c.path, entry.c.version))
+            versions = {m["path"]: m["version"] for m in after.mappings()}
+        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert str(stale.path) in errors[0].message
+        # The fresh row applied exactly once; the stale row never moved.
+        assert versions["/a.txt"] == rows["/a.txt"]["version"] + 1
+        assert versions["/b.txt"] == rows["/b.txt"]["version"]
+        await storage.close()
 
     async def test_forced_per_row_floor_attributes_each_rowcount(self, tmp_path, monkeypatch) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))

@@ -253,6 +253,34 @@ hot-directory throughput rationale for unguarded bumps survives. File
 an open-questions entry when the slice lands (it is unreachable until
 then) and give the fix its own story.
 
+## Decide before implementing: the concurrency-pin seam
+
+**A decision is required before `topology.py` work starts — do not
+begin the implementation with this open.** The torn-row regression
+pin (`tests/test_storage_conformance.py:108`) stages its race by
+hand-assembling the backend's write orchestration from private
+`writes.py` parts, because the race window is unreachable through the
+public surface. That mirror is faithful today, but it omits
+`with_retry` and the classification arm, and nothing detects drift:
+if the real orchestration changes and the mirror does not, the pin
+silently guards a machine that no longer exists. Slice 9 multiplies
+the pattern — every topology verb needs rival-injection tests at its
+serialization point.
+
+Decide one of:
+
+1. **The code under test owns the seam** — an injectable hook (or
+   shared helper) between snapshot and finish that tests use to
+   insert a rival mid-window; pins stop mirroring privates entirely.
+2. **The mirror is ratified** — a drift test pins the mirror to the
+   real orchestration (the lockstep-by-test pattern rows.py uses for
+   the model/row split), and the `with_retry`/classification omissions
+   are made explicit and deliberate.
+
+Record the choice as a decision (or in this slice's plan) before the
+first topology verb lands; the existing pin is refactored to match in
+the same slice.
+
 ## Verification workflow
 
 Land with the sqlite suite + coverage first, then run the full

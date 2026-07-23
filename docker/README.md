@@ -73,13 +73,16 @@ retryable); MariaDB rides the same policy under its own dialect name.
 Keep `?charset=utf8mb4` in the URL — the dialect does not default it,
 and unicode text bodies depend on it. This leg is the regression pin
 for the byte-denominated path limits and the `VARBINARY` key columns
-(ADR 024). With MySQL tuned, no real engine exercises the GENERIC
-floor anymore — the floor is pinned synthetically in the dialect tests.
+(ADR 024). With MySQL and Oracle both tuned, no real engine resolves
+to the GENERIC floor anymore — the floor is pinned synthetically in
+the dialect tests, and its budget numbers remain borrowed from
+Oracle's real caps (ORA-01795's 1,000-element `IN`-list).
 
 ## Why these four
 
-- **Postgres** — the pinned REPEATABLE READ profile: serialization
-  failures (40001) and catch-retry arbitration for real.
+- **Postgres** — the pinned REPEATABLE READ profile: native upsert
+  arbitration, and serialization-failure (40001) retry classification
+  for real.
 - **SQL Server** — READ COMMITTED natively, the ~2,100 bind-parameter
   budget, `OUTPUT inserted.*` as the RETURNING arm.
 - **MySQL** — the byte-typed key columns and byte-denominated path

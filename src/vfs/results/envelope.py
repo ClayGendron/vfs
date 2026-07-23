@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from vfs.models import Observation
-from vfs.paths import MAX_PATH_LENGTH, Path, byte_length
+from vfs.paths import MAX_PATH_LENGTH, Path, rebase_overflows
 from vfs.results.kinds import (
     _KIND_ALIASES,
     KIND_CONTRACTS,
@@ -169,14 +169,11 @@ class ResultError(BaseModel):
         never raises, and the nearest addressable locus wins.
         """
         mount = Path(mount)
-        overflows = self.source is not None and byte_length(mount) + byte_length(self.source) > MAX_PATH_LENGTH
-        if self.source is None or (overflows and mount != "/" and self.source != "/"):
-            source = mount
-        else:
-            source = self.source.with_mount(mount)
+        clamps = self.source is None or rebase_overflows(mount, self.source)
+        source = mount if clamps else self.source.with_mount(mount)
         updates: dict[str, Any] = {"source": source}
         if self.path is not None:
-            if mount != "/" and self.path != "/" and byte_length(mount) + byte_length(self.path) > MAX_PATH_LENGTH:
+            if rebase_overflows(mount, self.path):
                 data = dict(self.data or {})
                 if "vfs.overflow" not in data:
                     local = self.path
@@ -605,7 +602,7 @@ class Result(BaseModel):
             return Result(ops=self.ops, observations=self.observations, errors=errors)
         observations: list[Observation] = []
         for o in self.observations:
-            if o.path != "/" and byte_length(mount) + byte_length(o.path) > MAX_PATH_LENGTH:
+            if rebase_overflows(mount, o.path):
                 errors.append(
                     ResultError(
                         kind=VFSErrorKind.unaddressable,

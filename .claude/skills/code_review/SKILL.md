@@ -21,6 +21,14 @@ so the five reviewers run in parallel without overlap; the verifier
 exists because unverified findings cost the reader attention — only
 findings that survive refutation reach the report.
 
+The orchestrator's own procedure is four numbered steps — **resolve
+the scope (§0), author + check + launch the script (§1), verify the
+launch (§2), report (§3)** — and the §1 checker and §2 check are not
+optional: a launch whose scope is wrong or whose prompts did not
+render is a review of nothing, and nothing downstream detects that.
+The *Shape* and *Per-agent rules* sections between §0 and §1 describe
+what the launched workflow does internally.
+
 ## 0. Resolve the commit scope first — inline, before launching
 
 Reviewers cannot review what they were not pointed at, and a scope
@@ -41,6 +49,15 @@ as `args` — never as hand-substituted text in the script:
   `git show <sha>` for each message. Reviewers read whole files and
   surrounding code at the tip to *judge* the change, but report only on
   what the set changed.
+- **Sanity-check the range arithmetic.** `<base>` is the parent of the
+  **oldest** commit in the set — and commit-date order is not
+  guaranteed to match `git log` order, so identify the oldest from the
+  log, not from timestamps. Then confirm
+  `git log --oneline <base>..<tip> | wc -l` equals the number of
+  commits you mean to review: an off-by-one base (the second-oldest's
+  parent) silently drops the oldest commit's diff from the review
+  surface while its message still appears in the scope, and nothing
+  downstream notices.
 - **Commit messages are reviewed material.** Include each commit's
   subject and body in the scope string — a commit message is declared
   intent, and its claims ("all four legs pass", "X is deleted") are
@@ -56,10 +73,11 @@ as `args` — never as hand-substituted text in the script:
   state of those paths, not a diff. Recent `git log` on those paths is
   context worth passing along.
 
-Pass `{ repo, scope, scratch }` as `args`, where `scope` carries the
-resolved SHAs, subjects and messages, the changed-file list, and any
-drift caveat. The script reads them; no `<placeholder>` string ever
-survives into a prompt.
+Materialize `repo`, `scope`, and `scratch` as the authored constants
+block of §1, where `scope` carries the resolved SHAs, subjects and
+messages, the changed-file list, and any drift caveat. No
+`<placeholder>` string and no `undefined` ever survives into a prompt —
+the §1 checker and the §2 post-launch check both enforce this.
 
 ## Shape
 
@@ -113,111 +131,133 @@ survives into a prompt.
   supported scale, unpinned high-risk behavior), `minor` (bounded
   waste, decay, smells), `question` (design notes, ambiguous intent).
 
-## Workflow template
+## 1. Author the script file, check it, launch it
 
-Launch with `args: { repo, scope, scratch }` from step 0:
+The canonical orchestration code lives in
+**`.claude/skills/code_review/workflow_template.js`** — single source
+of truth; fixes to the orchestration go there, never into authored
+copies. The launch is file-based and gated by a checker; never launch
+from an inline `script` string with `args` (the `args` global has been
+observed silently failing to bind — see §2).
 
-```js
-export const meta = {
-  name: 'code-review',
-  description: 'Five review lenses, adversarial verification, one report',
-  phases: [{ title: 'Review' }, { title: 'Verify' }, { title: 'Synthesize' }],
-}
-const FINDINGS = {
-  type: 'object', required: ['findings', 'coverage'],
-  properties: {
-    // The lens's own close-out ledger: surface checked and found clean,
-    // plus anything it deliberately did not reach. Never omit.
-    coverage: { type: 'string' },
-    findings: { type: 'array', items: {
-    type: 'object',
-    required: ['title', 'file', 'severity', 'claim', 'evidence'],
-    properties: {
-      title: { type: 'string' }, file: { type: 'string' },
-      line: { type: 'integer' },
-      severity: { enum: ['critical', 'major', 'minor', 'question'] },
-      category: { type: 'string' },  // the lens's own class label (e.g. breach, blocker, parity gap)
-      claim: { type: 'string' },     // falsifiable statement of the defect
-      evidence: { type: 'string' },  // quoted code/contract/output per the lens's standard
-    },
-  } },
-  },
-}
-const VERDICT = {
-  type: 'object', required: ['verdict', 'evidence'],
-  properties: {
-    verdict: { enum: ['CONFIRMED', 'REFUTED', 'DOWNGRADED'] },
-    evidence: { type: 'string' },
-    corrected_severity: { enum: ['critical', 'major', 'minor', 'question'] },
-    repro: { type: 'string' },   // minimal `uv run python` repro, CONFIRMED only
-    leads: { type: 'string' },   // unverified observations noticed in passing
-  },
-}
-const LENSES = ['ownership_review', 'contract_review', 'scale_review', 'test_review', 'adversarial_review']
-const { repo, scope, scratch } = args
-const RULES = `Repo: ${repo}. Scope under review: ${scope}
-uv for everything; the repo is READ-ONLY (no edits, stash, checkout, commit);
-scratch scripts go only under ${scratch}.`
+1. **Author.** Copy `workflow_template.js` into the session scratchpad
+   and replace its `// __SCOPE_CONSTANTS__` line with the one block
+   you write:
 
-const RANK = { critical: 0, major: 1, minor: 2, question: 3 }
-const votesFor = f => (f.severity === 'critical' || f.severity === 'major') ? 3 : 1
+   ```js
+   // --- scope constants (authored per review; everything else is fixed) ---
+   const repo = '<absolute repo path>'
+   const scratch = '<absolute session-scratchpad path>'
+   const scope = `<the §0 scope: range, commits with subjects and bodies,
+   changed files, drift caveats — escape any backtick and ${ inside>`
+   // --- end scope constants ---
+   ```
 
-// A finding is dropped only by a majority of independent skeptics; a
-// panel that all died is surfaced as UNVERIFIED, never as clean.
-async function adjudicate(f, lens) {
-  const n = votesFor(f)
-  const votes = (await parallel(Array.from({ length: n }, (_, i) => () =>
-    agent(`${RULES}
-Verify exactly one finding per .claude/skills/verify_findings/SKILL.md — read it first and follow it exactly.
-You are verifier ${i + 1} of ${n}. Work independently and from the code itself; the reviewer's
-reasoning chain is a claim to refute, not a premise to build on.
-Finding from ${lens}: ${JSON.stringify(f)}`,
-      { label: `verify:${f.title} #${i + 1}`, phase: 'Verify', schema: VERDICT, model: 'opus', effort: 'high' })
-  ))).filter(Boolean)
-  if (!votes.length) return { ...f, lens, verdict: 'UNVERIFIED', evidence: 'every verifier agent failed' }
-  if (votes.filter(v => v.verdict === 'REFUTED').length * 2 >= votes.length) return null
-  // Keep the most conservative surviving verdict.
-  const kept = votes.find(v => v.verdict === 'DOWNGRADED') ?? votes.find(v => v.verdict === 'CONFIRMED') ?? votes[0]
-  return { ...f, lens, ...kept, votes: votes.map(v => v.verdict) }
-}
+   Everything outside the two marker lines must stay byte-identical to
+   the template; the checker enforces it.
 
-// A lens whose agent died is a hole in coverage, never a clean lens.
-const ledger = []
-const verified = await pipeline(
-  LENSES,
-  lens => agent(`${RULES}
-You are the ${lens} reviewer. First read .claude/skills/${lens}/SKILL.md and follow it exactly.
-Return findings through the schema only — never prose-only. Fill in \`coverage\` with your
-skill's close-out ledger: what you checked and found clean, and what you did not reach.`,
-    { label: lens, phase: 'Review', schema: FINDINGS, model: 'fable' }),
-  (review, lens) => {
-    const found = review?.findings ?? []
-    ledger.push({ lens, raw: found.length, coverage: review?.coverage ?? 'LENS FAILED — no coverage; this surface is unreviewed' })
-    log(`${lens}: ${found.length} raw finding(s)${review ? '' : ' — AGENT FAILED, surface unreviewed'}`)
-    return parallel(found.map(f => () => adjudicate(f, lens)))
-  },
-)
+2. **Check.** Run
+   `uv run python .claude/skills/code_review/check_workflow.py <authored file>`
+   and iterate until PASS. The checker re-derives ground truth from
+   git and fails on: drift from the template outside the authored
+   block; destructuring scope from `args`; `undefined` or placeholders
+   in the scope; range/enumeration mismatches — including the
+   off-by-one base that silently drops the oldest commit and the scope
+   naming the base as if reviewed; a commit subject missing from the
+   scope (bodies warn); working-tree drift over scoped files with no
+   drift caveat naming them; unescaped `${` interpolation. A script
+   that fails the checker is never launched.
 
-const all = verified.flat().filter(Boolean)
-const surviving = all.sort((a, b) => (RANK[a.corrected_severity ?? a.severity] ?? 9) - (RANK[b.corrected_severity ?? b.severity] ?? 9))
-const leads = all.map(f => f.leads).filter(Boolean)
-log(`${surviving.length} finding(s) survived verification`)
-if (!surviving.length) return { report: null, confirmed: 0, ledger, leads }
+3. **Launch** with `{ scriptPath: <authored file> }` — no `script`, no
+   `args`. The tool result returns a task ID, a transcript dir, a
+   `scriptPath`, and a `runId` — keep all four: §2 reads the
+   transcript dir; stopping, salvage, and iteration use the task ID,
+   script path, and run ID.
 
-const report = await agent(
-  `Write the final code-review report from these verified findings.
-Scope reviewed: ${scope}
-Dedup findings that describe the same defect through different lenses (keep the strongest
-evidence, note the converging lenses). They arrive ranked by severity — preserve that order.
-For each: what is wrong, why it matters, the evidence, the minimal repro if one was produced,
-and a suggested fix direction. Flag any UNVERIFIED finding as unverified in the report.
-End with a coverage section built from each lens's own ledger below — what was checked and
-found clean, and what no lens reached. Report a failed lens as unreviewed surface, never as clean.
-Findings: ${JSON.stringify(surviving)}
-Coverage ledger: ${JSON.stringify(ledger)}`,
-  { label: 'report', phase: 'Synthesize', model: 'fable' })
-return { report, confirmed: surviving.length, findings: surviving, ledger, leads }
+## 2. Verify the launch — read the prompts the agents actually got
+
+**The failure this step catches.** `args` can silently fail to bind:
+the script's `args` global has been observed arriving `undefined` even
+though the Workflow call passed a valid JSON object. Every reviewer
+prompt then opens with `Repo: undefined. Scope under review:
+undefined` — five agents dutifully reviewing nothing, returning
+plausible-looking findings and coverage, with no error raised
+anywhere. The §1 flow (inlined constants, checker-gated) exists to
+make this impossible, but §2 stays as the runtime backstop: it is the
+only check that reads what the agents *actually received*, and it
+costs one `head`.
+
+**The check.** As soon as the first review agents appear in the
+transcript dir from §1, read the opening of one transcript — each
+`agent-*.jsonl` line 1 is that agent's prompt:
+
+```sh
+head -1 <transcript-dir>/agent-*.jsonl | head -c 400
 ```
+
+Pass: the text opens with the real repo path and the resolved scope
+(SHAs, commit subjects). Fail: any `undefined` or placeholder where
+those values belong. One transcript is enough — all prompts render
+from the same `RULES` string.
+
+**Recovery when the scope did not render** — the run is invalid and
+every result in it is meaningless, however normal it looks. Recovery
+is a full re-run: the corrected prompts match nothing in the cache, so
+every reviewer runs again at full cost. That makes it an approval
+decision, not an orchestrator reflex:
+
+1. **Get user approval first — DO NOT STOP A RUN WITHOUT GETTING
+   APPROVAL.** Report what the prompts rendered as, what a re-run
+   costs, and wait. Stopping is cheap; what approval protects is the
+   re-run-from-the-top that follows it.
+2. Once approved: `TaskStop` with the task ID from §1, then fix the
+   script per §1 — a legacy args-based script gets its
+   `const { repo, scope, scratch } = args` line replaced by the
+   authored constants block — and run the checker to PASS before
+   relaunching. Inlining is the reliable form: the values live in the
+   script text and nothing depends on `args` binding.
+3. Relaunch fresh with `{ scriptPath }` — **no `resumeFromRunId`**.
+   The invalid run's cache holds answers to the `undefined` prompts;
+   the corrected prompts would miss that cache anyway, and a fresh
+   launch cannot accidentally reuse a bad result.
+4. Run the check again on the new run's transcript dir. Only a run
+   whose rendered prompts carry the real scope counts as a review.
+
+## Stopping, resuming, salvage — never pay for a finished agent twice
+
+The review's cost lives in its agents — five Fable reviewers and up to
+three Opus verifiers per major finding. Losing their finished work by
+restarting from the top is the most expensive mistake this skill can
+make, so these rules bind the orchestrator:
+
+- **DO NOT STOP A RUN AND RE-RUN FROM THE TOP WITHOUT EXPLICIT USER
+  APPROVAL.** One full review is worth its cost; paying for the same
+  review twice is not. This includes stopping to fix a scope
+  imperfection you discovered mid-run: present the defect, the cost of
+  each option, and let the user decide.
+- **Stop-and-resume is safe and needs no approval.** Every completed
+  `agent()` call is journaled by prompt hash. Relaunching with
+  `{ scriptPath, resumeFromRunId }` and an **unchanged** script
+  replays every finished agent from cache instantly and free,
+  re-running only work that was in flight or not yet started.
+- **Editing the script can silently convert a resume into a re-run.**
+  The cache hits only unchanged `(prompt, opts)` pairs, and the
+  reviewers' and verifiers' prompts all embed the shared `RULES`
+  string — so editing `repo`/`scope`/`scratch` or `RULES` invalidates
+  *every* agent at once. Before resuming an edited script, work out
+  which prompts changed; if the answer is "all of them", that is a
+  re-run-from-the-top and needs approval.
+- **A mid-run scope defect rarely justifies a restart.** The default
+  is to let the run finish and caveat the report, then offer a
+  targeted supplement — e.g. one extra reviewer over just the missed
+  surface, its findings verified the same way — which costs one agent,
+  not a fleet.
+- **Approved corrections that must not lose finished work** use a
+  continuation script: read the finished lens results out of
+  `journal.jsonl` (or the `agent-*.jsonl` transcripts), inline them as
+  literal constants in a new script that skips those lenses, and run
+  only the missing or corrected pieces plus their verification and the
+  synthesis.
 
 ## Iterating on a run
 
@@ -230,7 +270,7 @@ result, read `journal.jsonl` in the transcript directory: it records
 what each agent actually returned. Do not assume a lens was clean when
 its agent may simply have failed.
 
-## Reporting
+## 3. Reporting
 
 1. **Relay the synthesized report** — that is the deliverable. Do not
    paste raw per-agent output. Lead with the resolved scope: the exact

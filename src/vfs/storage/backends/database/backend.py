@@ -33,7 +33,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
-from vfs.storage.backends.database.dialects import op_execution_options
+from vfs.storage.backends.database.dialects import PROFILES, op_execution_options
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
@@ -87,7 +87,9 @@ class DatabaseStorage:
             "version_encoding": "per_entry64",
             "arbitration": self._host.profile.arbitration,
         }
-        if self._host.profile.name in ("sqlite", "postgresql", "mssql", "mysql", "mariadb"):
+        # Tuned engines are the measured ones; only they may claim full
+        # durability — unknown dialects resolve to GENERIC-renamed names.
+        if self._host.profile.name in PROFILES:
             declared["durability"] = "full"
         return declared
 

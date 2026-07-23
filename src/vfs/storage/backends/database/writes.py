@@ -498,7 +498,9 @@ async def _update_materials(
     READ COMMITTED. The ladder, selected from what the live dialect
     models: a set-based VALUES join whose RETURNING set is the success
     set; an executemany whose sane aggregate rowcount proves every guard
-    matched (each statement matches at most one row by primary key),
+    matched (each statement matches at most one row via the unique
+    ``entry_id`` index — the upstream staging layer stages one row per
+    entry_id, never duplicates within a batch),
     rolled back to a savepoint and re-driven row-by-row on mismatch;
     per-row execution attributed by each statement's own rowcount; or a
     classified refusal — an unverifiable guarded write never proceeds.

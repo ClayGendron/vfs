@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ulid import ULID
 
+from vfs.paths import byte_length
 from vfs.results import ResultError, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain
 
@@ -144,7 +145,7 @@ class WritePlan:
 
     def within_budget(self, path: Path) -> bool:
         """A lawful path can still exceed an engine's index-key byte cap."""
-        if len(str(path).encode()) <= self.budget:
+        if byte_length(str(path)) <= self.budget:
             return True
         self.errors.append(
             classified(
