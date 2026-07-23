@@ -1,12 +1,20 @@
 ---
 name: test_review
-description: Review the tests of a diff or branch — not the code — asking whether they actually pin the contract the code declares. Use when the user asks to "review the tests", "check test coverage" of a change, asks "would a test catch this", wants to know if a contract is pinned, or before landing a change whose tests were written alongside it.
+description: Review the tests of a commit set (or a named code area) — not the code — asking whether they actually pin the contract the code declares. Use when the user asks to "review the tests", "check test coverage" of a change, asks "would a test catch this", wants to know if a contract is pinned, or after landing a change whose tests were written alongside it.
 ---
 
 # Test review — do the tests pin the contract?
 
 A procedure for reviewing the **tests** of a change, not the code. The
-question is never "is there a test near this code" or "is coverage
+unit of review is a **commit set** — one commit or a contiguous range —
+or an explicitly named code area: the promises the set's code changes
+introduce, and the tests the set added or changed to pin them, both
+read at the tip commit. When invoked standalone with no scope handed
+in, default to the latest commit (widened to the whole landing when the
+tip commits are one change split into pieces) and state the resolved
+SHAs in the report.
+
+The question is never "is there a test near this code" or "is coverage
 high" — executing a line proves nothing about detecting a bug in it.
 The question is: **for each promise the code makes, which test fails
 when that promise breaks?** A promise with no failing-test is an

@@ -1,9 +1,17 @@
 ---
 name: scale_review
-description: Review a diff or branch for correctness and boundedness at production scale — 10,000+-entry batches, the least generous SQL engine, real concurrency. Use when the user asks to "scale review", "check this at scale", "will this survive a 10k batch", "review for Oracle/SQL Server limits", "audit statement growth", or before landing any change that touches the database backend, a write/read builder, or a loop over batch input.
+description: Review a commit set (or a named code area) for correctness and boundedness at production scale — 10,000+-entry batches, the least generous SQL engine, real concurrency. Use when the user asks to "scale review", "check this at scale", "will this survive a 10k batch", "review for Oracle/SQL Server limits", "audit statement growth", or after landing any change that touches the database backend, a write/read builder, or a loop over batch input.
 ---
 
 # Scale review — bounded on the least generous engine
+
+The unit of review is a **commit set** — one commit or a contiguous
+range — or an explicitly named code area; the diff of that set is the
+surface, read whole at the tip commit. When invoked standalone with no
+scope handed in, default to the latest commit (widened to the whole
+landing when the tip commits are one change split into pieces) and
+state the resolved SHAs in the report. "The diff" below means this
+resolved surface.
 
 One question, asked of every touched statement, loop, and collection:
 **does this stay correct and bounded when the batch is 10,000+ entries,

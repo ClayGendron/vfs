@@ -1,15 +1,29 @@
 ---
 name: contract_review
-description: Adversarially verify an implementation against its declared contracts — docstrings, specs, ADRs, type signatures, and error-classification tables — catching both broken promises and behavior no contract mentions. Use when the user asks to "review against the spec", "check the contract", asks "does the code still match the docstring/ADR", wants a diff or branch checked for documentation drift, or before landing a change that touches documented behavior.
+description: Adversarially verify an implementation against its declared contracts — docstrings, specs, ADRs, type signatures, commit messages, and error-classification tables — catching both broken promises and behavior no contract mentions. Use when the user asks to "review against the spec", "check the contract", asks "does the code still match the docstring/ADR", wants a commit set checked for documentation drift, or after landing a change that touches documented behavior.
 ---
 
 # Contract review — the code vs. its promises
 
-A procedure for reviewing a diff or branch through one lens: **every
+A procedure for reviewing a commit set through one lens: **every
 behavior is governed by a written promise, and when code and promise
 disagree, exactly one side is wrong.** The output is a findings list
 where each finding names the wrong side — code or contract — with a
 quote from both.
+
+## Scope
+
+The unit of review is a **commit set** — one commit or a contiguous
+range — or an explicitly named code area. The review surface is the
+diff of that set; judgment reads the full files at the tip commit.
+When invoked standalone with no scope handed in, resolve it before
+reading any code: default to the latest commit, widen to the whole
+landing when the tip commits are one change split into pieces, and
+state the resolved SHAs in the report. "The diff" below always means
+this resolved surface. **Commit messages are contract material**: each
+scoped commit's message enters the register in step 1 — its claims
+("ran red on real MSSQL", "X is deleted", "all legs pass") are
+promises to verify like any docstring.
 
 The core insight: most review defects hide in the gap between what the
 code *does* and what something *says* it does. Prose that lies about

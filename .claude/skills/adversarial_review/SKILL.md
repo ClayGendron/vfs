@@ -1,6 +1,6 @@
 ---
 name: adversarial_review
-description: Attack the current diff or branch single-handedly by writing and executing throwaway scripts against it, with an executed-repros-only evidence standard. Use when the user asks to "adversarially review", "attack", "pressure test", or "try to break" a change, or wants a dynamic review before committing substantive work.
+description: Attack a commit set (or a named code area) single-handedly by writing and executing throwaway scripts against it, with an executed-repros-only evidence standard. Use when the user asks to "adversarially review", "attack", "pressure test", or "try to break" a change or the commits that landed it.
 ---
 
 # Adversarial review — one agent, executed evidence
@@ -38,12 +38,13 @@ at most a lead to chase with a script, never a finding.
 - **If you were given an explicit scope, that scope is the change under
   test** — do not re-derive a different one from git and quietly attack
   something else. Read it, and use git only to fill in detail (the
-  actual hunks, the untracked files it names).
-- Otherwise: `git status` and `git diff` (plus staged and untracked
-  files, or the branch diff against `main` if reviewing a branch) —
-  know exactly what is new before choosing what to attack. Untracked
-  files are in scope and `git diff` cannot see them; list them
-  separately.
+  actual hunks of the named commits, `git show <sha>` for each).
+- Otherwise the unit is a **commit set**: default to the latest commit,
+  widened to the whole landing when the tip commits are one change
+  split into pieces, and say which SHAs you resolved to.
+  `git log --oneline` and `git diff <base>..<tip>` define the surface;
+  attack the behavior those commits introduced, running against the
+  tip's committed state.
 - Read every touched module in full, its tests, and its governing docs
   (see house rules). Write down a short intent sheet: what the change
   promises, its declared error channels, and its stated limits (budgets,

@@ -1,14 +1,27 @@
 ---
 name: ownership_review
-description: Review code that has accumulated too much logic by decomposing it into concerns and assigning each to its rightful owner, with duplication as the primary evidence. Produces an ownership map and proposed moves — it never edits the tree. Use when the user asks to "think in systems", asks "who owns this logic", wants an overloaded function or module reviewed, or points at code where "a lot of logic lives here".
+description: Review the code a commit set touched (or a named code area) for logic that has accumulated in the wrong place, decomposing it into concerns and assigning each to its rightful owner, with duplication as the primary evidence. Produces an ownership map and proposed moves — it never edits the tree. Use when the user asks to "think in systems", asks "who owns this logic", wants a commit's code or an overloaded module reviewed for placement, or points at code where "a lot of logic lives here".
 ---
 
 # Ownership review — think in systems
 
-A procedure for reviewing overloaded code by asking one question per
-block of logic: **which system owns this?** The output is an ownership
-map and a minimal set of proposed moves — one move per violation — not
-a rewrite.
+A procedure for reviewing code by asking one question per block of
+logic: **which system owns this?** The output is an ownership map and
+a minimal set of proposed moves — one move per violation — not a
+rewrite.
+
+## Scope
+
+The unit of review is a **commit set** — one commit or a contiguous
+range — or an explicitly named code area. The functions and modules the
+set's diff touched are the units to decompose; read them whole at the
+tip commit (placement is judged on the full unit, not the hunk), and
+read the neighbors logic might belong to. When invoked standalone with
+no scope handed in, default to the latest commit — widened to the whole
+landing when the tip commits are one change split into pieces — and
+state the resolved SHAs in the report. Report placement defects the set
+introduced or worsened; pre-existing misplacement the diff merely
+brushed is a note, not a finding.
 
 The core insight: an overloaded function is rarely "too long" in the
 abstract. It is hosting logic that belongs to other layers, and every

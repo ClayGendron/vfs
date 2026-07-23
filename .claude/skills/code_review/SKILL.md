@@ -1,39 +1,65 @@
 ---
 name: code_review
-description: Run the full multi-agent code review of the current uncommitted changes or branch — five parallel review agents (ownership_review, contract_review, scale_review, test_review, adversarial_review), an adversarial verifier per finding (verify_findings), and a final synthesis agent. Use when the user asks for a "code review", a "full review", or to "review this change" with the whole suite.
+description: Run the full multi-agent code review of a commit set — one commit or a contiguous range — or an explicitly named code area; five parallel review agents (ownership_review, contract_review, scale_review, test_review, adversarial_review), an adversarial verifier per finding (verify_findings), and a final synthesis agent. Use when the user asks for a "code review", "review the last commit(s)", "review <sha>/ <sha range>", "review the <spec> landing", or "review <module/path>" with the whole suite.
 ---
 
 # Code review — the full suite as one workflow
 
-Orchestrate the five review lenses over one change, verify every finding
-adversarially, and deliver a single synthesized report. Invoking this
-skill is the user's opt-in to multi-agent orchestration: launch it with
-the Workflow tool.
+Orchestrate the five review lenses over one committed change, verify
+every finding adversarially, and deliver a single synthesized report.
+Invoking this skill is the user's opt-in to multi-agent orchestration:
+launch it with the Workflow tool.
+
+Reviews sit at the end of the house pipeline — research → decide →
+specify → code → **commit → review** — so the unit of review is a
+**commit set**: one commit, or a contiguous range that lands one
+change. A named code area (a module, a subsystem) is the alternative
+scope when the user asks for one.
 
 The design follows the suite's contract: each lens owns a defect class,
 so the five reviewers run in parallel without overlap; the verifier
 exists because unverified findings cost the reader attention — only
 findings that survive refutation reach the report.
 
-## 0. Scout the scope first — inline, before launching
+## 0. Resolve the commit scope first — inline, before launching
 
 Reviewers cannot review what they were not pointed at, and a scope
-placeholder that reaches an agent verbatim is a silent no-op. Establish
-the scope yourself in a couple of tool calls, then pass it into the
-workflow as `args` — never as hand-substituted text in the script:
+placeholder that reaches an agent verbatim is a silent no-op. Resolve
+the scope yourself in a few tool calls, then pass it into the workflow
+as `args` — never as hand-substituted text in the script:
 
-- `git status --porcelain` and `git diff --stat` for the working tree.
-- **Untracked files are in scope.** `git diff` cannot see them; list
-  them explicitly (`git status --porcelain | grep '^??'`) and name them
-  in the scope string, or a whole new test file reviews as absent.
-- For a branch review, `git diff --stat <base>...HEAD` plus the commit
-  list. Say which base you used.
-- If the change is large or spans unrelated subsystems, say so in the
-  scope string — reviewers should read enough surrounding code to judge
-  the change, but only report on what changed.
+- **Resolve what the user named** into concrete SHAs: explicit SHAs, a
+  range (`A..B`), "the last N commits", a spec or slice's landing (find
+  its commits in `git log --oneline`), or a path area. Nothing named →
+  the latest commit — widened to the whole landing when the tip commits
+  are one change split into its conventional pieces (fix/feat/docs of
+  the same work); say in the report which commits you resolved to and
+  why.
+- **The diff of the set is the review surface**:
+  `git log --oneline <base>..<tip>` for the list,
+  `git diff --stat <base>..<tip>` for the touched files,
+  `git show <sha>` for each message. Reviewers read whole files and
+  surrounding code at the tip to *judge* the change, but report only on
+  what the set changed.
+- **Commit messages are reviewed material.** Include each commit's
+  subject and body in the scope string — a commit message is declared
+  intent, and its claims ("all four legs pass", "X is deleted") are
+  promises the lenses, contract review especially, verify like any
+  docstring.
+- **Check for drift**: `git status --porcelain`. A dirty working tree
+  over scoped files means the tree no longer matches the tip — name the
+  drifted files in the scope string and instruct reviewers to judge the
+  committed state (`git show <tip>:<path>`) wherever the two differ. A
+  clean tree at the tip needs no ceremony: files read normally.
+- **Area scope** (when the user names code rather than commits): list
+  the paths and state that the review surface is the current committed
+  state of those paths, not a diff. Recent `git log` on those paths is
+  context worth passing along.
 
-Pass `{ repo, scope, scratch }` as `args`. The script reads them; no
-`<placeholder>` string ever survives into a prompt.
+Pass `{ repo, scope, scratch }` as `args`, where `scope` carries the
+resolved SHAs, subjects and messages, the changed-file list, and any
+drift caveat. The script reads them; no `<placeholder>` string ever
+survives into a prompt.
 
 ## Shape
 
@@ -207,7 +233,9 @@ its agent may simply have failed.
 ## Reporting
 
 1. **Relay the synthesized report** — that is the deliverable. Do not
-   paste raw per-agent output.
+   paste raw per-agent output. Lead with the resolved scope: the exact
+   commits (SHA + subject) or paths reviewed, so the report is
+   traceable to a fixed state of the tree.
 2. **Call `ReportFindings` once** with the surviving findings, most
    severe first, so the host UI renders them: map `claim` →
    `summary`, the verifier's repro or failure path →
