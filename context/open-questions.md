@@ -24,6 +24,15 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 
 ---
 
+## Create under a concurrently-trashed (or moved) directory can commit a torn path cache
+
+- **Asked:** 2026-07-23 (filed with slice 9 landing 1, as the slice-9 topology guide directs — the window became reachable when `delete` landed)
+- **Context:** Writes are deliberately not serialized with topology verbs. A write op that creates a child under a directory a rival topology verb is concurrently trashing (or, once landing 2 ships, moving) can commit a child row whose `path` carries the old prefix while its `parent_id` points at the relocated parent — a torn path cache. Reachability per engine: SQLite safe (single writer); Postgres safe (op sessions at REPEATABLE READ — the parent bump on the rival-updated row raises 40001 and the method restarts); **MySQL, MSSQL, Oracle, and the generic floor are exposed** (their bumps current-read past the rival's commit).
+- **Blocking:** nothing lands broken — the window needs a rival interleaving on an exposed engine; the seam infrastructure from landing 1 can stage it for a repro when the fix story starts.
+- **Fix sketch (from the slice-9 guide, deliberately not bolted into slice 9):** make `_bump_parents` guard on `(entry_id, path-at-snapshot)` with 079-style statement attribution — a guard miss means the parent's path changed mid-op and classifies a retryable conflict; sibling writes never disturb the path, so the hot-directory throughput rationale for unguarded bumps survives.
+- **Options considered:** guarded parent bumps with statement attribution (the sketch); serialize writes with topology (rejected — defeats the single-batch-writer throughput doctrine); isolation pins on the exposed engines (partial, engine-by-engine)
+- **Status:** open — wants its own story once slice 9 completes; do not fix inline
+
 ## MySQL-family batch UPDATEs are per-row driver round trips
 
 - **Asked:** 2026-07-23 (multi-agent review of the spec 079 landing; scale lens, CONFIRMED 3/3)

@@ -111,7 +111,7 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       075 (trash scope retired for meta-scope parity, `44aa439`),
       and 076 (entry model split; version rows minted in the write
       transaction, `40408da`).
-- [ ] 12. Slice 9 — `topology.py`: move/copy/delete under the
+- [x] 12. Slice 9 — `topology.py`: move/copy/delete under the
       serialization point (BEGIN IMMEDIATE / advisory lock at READ
       COMMITTED with root-walk ancestry re-check); trash-reparent
       with lazy buckets, ULID in-bucket names, restore-metadata
@@ -124,7 +124,29 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       day with all four Docker engine legs green. **Gate (owner
       decision 2026-07-23): the concurrency-pin seam decision in the
       guide ("Decide before implementing") must be made before
-      implementation starts.**
+      implementation starts — resolved the same day: code owns the
+      seam (see the guide's decision note).**
+      **Landing 1 of 2 built 2026-07-23**: serialization
+      infrastructure (`topology_execution_options`, MySQL topology
+      pin, public `advisory_key` + `EngineHost.topology_key`), the
+      concurrency-seam module (`seams.py`; write-path and delete
+      seams live; torn-row pin refactored off the private mirror
+      onto the public verb), and `delete` (trash reparent, hourly
+      buckets, descendant rewrite, permanent purge). Ten delete
+      conformance rows enforced; all four Docker legs green (an
+      MSSQL `SELECT EXISTS` refusal was caught live and fixed to a
+      one-row probe); coverage 100%.
+      **Landing 2 built 2026-07-23, completing the slice**:
+      `transfer_rows` (one shared move/copy pair ladder mirroring
+      `memory._transfer` row for row — overlap refusals against the
+      committed snapshot, live per-pair reads, exists-before-cycle,
+      cycle-before-kind, byte-overflow refusal), move as reparent +
+      descendant rewrite + restore gesture, copy as fresh-ULID mint
+      (no edges, no `external_id`, occupant keeps identity). All ~36
+      topology conformance rows enforced; four Docker legs green
+      (101/101/101/100); coverage 100%. The
+      create-under-trashed-directory race is filed in
+      `open-questions.md` per the guide.
 - [ ] 13. Postgres CI leg (with slice 9): `postgres` marker + env
       URL + service wiring; conformance + topology/concurrency tests
       run under it; coverage posture for Postgres-only branches kept

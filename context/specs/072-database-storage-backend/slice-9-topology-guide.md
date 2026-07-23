@@ -281,6 +281,34 @@ Record the choice as a decision (or in this slice's plan) before the
 first topology verb lands; the existing pin is refactored to match in
 the same slice.
 
+**Decided 2026-07-23 (Clay, in session): option 1 — the code owns the
+seam.** Ratified after a prior-art verification pass over the reference
+repos: every project that stages deterministic mid-window races owns
+the seam in production code or a production-owned boundary — Postgres
+`INJECTION_POINT` markers (added in PG17 precisely because the
+isolation tester could only pause at statement boundaries or
+heavyweight-lock waits, `src/test/isolation/README:147-149`), SQLite
+`sqlite3FaultSim` call sites (inert without an installed callback,
+compiled out under `SQLITE_UNTESTABLE`), and Oak's injectable
+`DocumentStore` SPI with semaphore-breakpoint wrappers
+(`PausableDocumentStore`). The two that don't — juicefs (brute-force
+goroutines asserting only outcome-set invariants) and seaweedfs (a
+test double behind the production `FilerStore` interface) — never
+assert a specific interleaving's classification, which our pins do,
+and neither mirrors orchestration in tests. Shape: a named, default-off
+async hook invoked at the declared window (post-serialization-point /
+post-snapshot, pre-execution) in the write and topology runners'
+builders; tests install a rival via fixture and drive the real public
+verb, so `with_retry` and the classification arm are exercised, not
+mirrored. The `test_storage_conformance.py` torn-row pin is refactored
+onto the hook in this slice; the hand-assembled mirror is deleted.
+
+**Sequencing (same session): two landings.** Landing 1 — serialization
+infrastructure (dialects/engine/runner + seam) and `delete` (trash
+reparent, descendant rewrite). Landing 2 — `move`/`copy`. Conformance
+rows flip per verb as `capabilities()` declares them, so each landing
+is green and fully enforced for what it ships.
+
 ## Verification workflow
 
 Land with the sqlite suite + coverage first, then run the full
