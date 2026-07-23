@@ -1,4 +1,0 @@
-*
-!Dockerfile
-!docker-entrypoint.sh
-!init-db.sql
