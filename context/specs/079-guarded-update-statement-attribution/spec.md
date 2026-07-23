@@ -1,7 +1,19 @@
 # 079 — Guarded updates attribute success from the statement, not the post-image
 
-- **Status:** proposed 2026-07-22. Not yet implemented. Fixes a shipped
-  data-integrity defect; should not sit behind discretionary work.
+- **Status:** landed 2026-07-23. Regression pin ran red on real MSSQL at
+  READ COMMITTED against the shipped code, green after; all four Docker
+  legs pass. Execution record and pin amendments in `plan.md`.
+- **Amendment (2026-07-23):** pin 2's premise that `dialect.update_returning`
+  suffices for the set-based arm is false on SQLite — it declares the
+  flag yet rejects SQLAlchemy's column-aliased `(VALUES ...) AS name (...)`
+  join source. SQLAlchemy models no capability for that, so the arm is
+  additionally gated by a declared `DialectProfile.values_join` bit
+  (true: postgresql, mssql), per the house rule that a profile field
+  covers exactly what SQLAlchemy takes no position on. Pin 3 gained an
+  aggregate fast rung above the per-row floor: where
+  `dialect.supports_sane_multi_rowcount` holds, one guarded executemany
+  under a savepoint proves all-matched by aggregate count, and only a
+  mismatch re-drives per-row.
 - **Evidence:** `context/open-questions.md` — "Guarded-update read-back
   infers success from the post-image". Prior art verified first-hand in
   SQLAlchemy, jackrabbit-oak, and juicefs; cited per pin below.

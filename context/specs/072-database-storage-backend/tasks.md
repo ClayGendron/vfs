@@ -117,7 +117,11 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
       with lazy buckets, ULID in-bucket names, restore-metadata
       columns, `/.vfs/trash/` path-cache prefix; `permanent=True`
       hard delete; move refusal order; copy = fresh ids/chains, zero
-      edges.
+      edges. **Design settled 2026-07-23** — full orientation and
+      per-engine serialization design recorded in
+      `slice-9-topology-guide.md`; start there. Prerequisite spec
+      079 (statement-attributed guarded updates) landed the same
+      day with all four Docker engine legs green.
 - [ ] 13. Postgres CI leg (with slice 9): `postgres` marker + env
       URL + service wiring; conformance + topology/concurrency tests
       run under it; coverage posture for Postgres-only branches kept
