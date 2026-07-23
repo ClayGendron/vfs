@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import (
     BINARY,
+    VARBINARY,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -133,23 +134,54 @@ ENCODING_DELTA_VARINT: Final = 1
 ENCODING_ROARING: Final = 3
 
 
-def _binary_string(length: int) -> String:
-    """A VARCHAR whose comparison/order is bytewise on every engine.
+# SQLAlchemy resolves type variants strictly by dialect name, and
+# MariaDB's is "mariadb" — every mysql-family branch must name both.
+_MYSQL_FAMILY: Final = ("mysql", "mariadb")
 
-    SQLite's default BINARY collation already is; Postgres and MSSQL need
-    the collation pinned in DDL or pagination order and LIKE sargability
-    silently diverge per engine. MSSQL uses the UTF-8 binary collation
-    (SQL Server 2019+ floor): its byte order equals UTF-8/code-point order
-    on every engine, where NVARCHAR ``_BIN2`` would sort by UTF-16 code
-    unit (diverging on supplementary-plane characters) and would double
-    the byte budget past the 1,700-byte index-key cap even for ASCII
-    paths at full length.
+
+class BytewiseString(TypeDecorator[str]):
+    """A bounded key string, bytewise-ordered and byte-budgeted on every engine.
+
+    *length* denominates UTF-8 bytes — the same unit as the path
+    contract and every engine's index-key cap, so a lawful value always
+    fits the column and the column's worst-case key never outgrows an
+    engine. SQLite's default BINARY collation is already bytewise;
+    Postgres and MSSQL pin it in DDL, or pagination order and LIKE
+    sargability silently diverge per engine. MSSQL uses the UTF-8 binary
+    collation (SQL Server 2019+ floor), whose VARCHAR ``n`` counts bytes
+    — NVARCHAR ``_BIN2`` would sort by UTF-16 code unit and double the
+    byte budget past its 1,700-byte index-key cap. The mysql family gets
+    ``VARBINARY(n)`` outright: utf8mb4 VARCHAR keys cost 4 bytes per
+    declared char against InnoDB's 3,072-byte cap, while binary keys
+    cost their own bytes and compare bytewise natively — Python still
+    speaks ``str``; the conversion lives here alone.
     """
-    return (
-        String(length)
-        .with_variant(String(length, collation="C"), "postgresql")
-        .with_variant(String(length, collation="Latin1_General_100_BIN2_UTF8"), "mssql")
-    )
+
+    impl = String
+    cache_ok = True
+
+    def __init__(self, length: int) -> None:
+        super().__init__(length)
+        self.length = length
+
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
+        if dialect.name in _MYSQL_FAMILY:
+            return dialect.type_descriptor(VARBINARY(self.length))
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(String(self.length, collation="C"))
+        if dialect.name == "mssql":
+            return dialect.type_descriptor(String(self.length, collation="Latin1_General_100_BIN2_UTF8"))
+        return dialect.type_descriptor(String(self.length))
+
+    def process_bind_param(self, value: str | None, dialect: Dialect) -> Any:
+        if value is not None and dialect.name in _MYSQL_FAMILY:
+            return value.encode()
+        return value
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> str | None:
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return bytes(value).decode()
+        return value
 
 
 def _body_text() -> Text:
@@ -281,8 +313,8 @@ def build_vfs_tables(
         Column("entry_id", ULIDKey(), nullable=False, unique=True, index=True),
         Column("parent_id", ULIDKey()),
         Column("external_id", String(1024)),
-        Column("path", _binary_string(MAX_PATH_LENGTH), nullable=False, unique=True, index=True),
-        Column("name", _binary_string(MAX_SEGMENT_LENGTH), nullable=False),
+        Column("path", BytewiseString(MAX_PATH_LENGTH), nullable=False, unique=True, index=True),
+        Column("name", BytewiseString(MAX_SEGMENT_LENGTH), nullable=False),
         Column("kind", String(32), nullable=False, index=True),
         Column("version", BigInteger),
         Column("content_hash", String(64)),
@@ -292,7 +324,7 @@ def build_vfs_tables(
         Column("size_bytes", Integer, nullable=False, default=0),
         Column("owner_id", String(255), index=True),
         Column("original_parent_id", ULIDKey()),
-        Column("original_name", _binary_string(MAX_SEGMENT_LENGTH)),
+        Column("original_name", BytewiseString(MAX_SEGMENT_LENGTH)),
         Column("created_at", DateTime(timezone=True)),
         Column("updated_at", DateTime(timezone=True)),
         Column("deleted_at", DateTime(timezone=True)),

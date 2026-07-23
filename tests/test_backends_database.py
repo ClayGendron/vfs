@@ -26,7 +26,7 @@ from ulid import ULID
 
 from vfs.models import Entry, Observation
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
-from vfs.paths import ObjectKind, Path
+from vfs.paths import MAX_PATH_LENGTH, ObjectKind, Path
 from vfs.results import ResultError, VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
@@ -35,7 +35,9 @@ from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import (
     GENERIC,
     MSSQL,
+    MYSQL,
     POSTGRESQL,
+    PROFILES,
     SQLITE,
     fan_budget,
     is_retryable,
@@ -119,6 +121,13 @@ class _PgError(Exception):
         self.sqlstate = state
 
 
+class _MySQLError(Exception):
+    """PyMySQL-shaped: args lead with the integer errno, no sqlstate attribute."""
+
+    def __init__(self, errno: int) -> None:
+        super().__init__(errno, "deadlock found when trying to get lock")
+
+
 class TestDialectPolicy:
     def test_unknown_dialect_serves_on_the_generic_floor(self) -> None:
         profile = profile_for("duckdb")
@@ -143,6 +152,28 @@ class TestDialectPolicy:
 
     def test_an_exception_with_no_sqlstate_is_not_retryable(self) -> None:
         assert is_retryable(GENERIC, Exception()) is False
+
+    def test_mysql_family_is_tuned_not_generic(self) -> None:
+        for name in ("mysql", "mariadb"):
+            profile = profile_for(name)
+            assert profile.name == name
+            assert profile.key_byte_budget == MYSQL.key_byte_budget
+            assert profile.arbitration == "catch_retry"
+            assert profile.op_isolation == "REPEATABLE READ"
+
+    def test_mysql_deadlock_and_lock_wait_errnos_are_retryable(self) -> None:
+        assert is_retryable(MYSQL, _MySQLError(1213)) is True
+        assert is_retryable(MYSQL, _MySQLError(1205)) is True
+        # Duplicate entry is a definite exists-outcome, never retried.
+        assert is_retryable(MYSQL, _MySQLError(1062)) is False
+        # The errno rung is profile-scoped: the floor declares no errnos.
+        assert is_retryable(GENERIC, _MySQLError(1213)) is False
+
+    def test_every_lawful_path_fits_every_declared_key_budget(self) -> None:
+        # The contract is byte-denominated, so the worst-case index key is
+        # MAX_PATH_LENGTH bytes — the budget↔DDL gap closes by construction.
+        for profile in (*PROFILES.values(), GENERIC):
+            assert profile.key_byte_budget >= MAX_PATH_LENGTH
 
     def test_parameter_budget_is_read_from_sqlalchemy(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))

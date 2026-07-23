@@ -29,12 +29,13 @@ from vfs.models.rows import (
     SCHEMA_FORMAT_VERSION,
     ULID_LENGTH,
     VERSION_ROW_ONLY_COLUMNS,
+    BytewiseString,
     ULIDKey,
     VFSTables,
     build_vfs_tables,
 )
 from vfs.models.vector import NativeEmbeddingConfig, VectorType
-from vfs.paths import Path
+from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, Path
 
 TABLE_ATTRS = ("entry", "content", "versions", "chunks", "edges", "meta", "gram_epochs", "posting_list")
 
@@ -163,15 +164,32 @@ class TestBuildVFSTables:
         unique = {c.name for c in tables.entry.constraints if c.name == "uq_vfs_entries_parent_name"}
         assert unique == {"uq_vfs_entries_parent_name"}
 
-    def test_path_and_name_pin_binary_collation_per_dialect(self, tables: VFSTables) -> None:
+    def test_path_and_name_pin_bytewise_order_per_dialect(self, tables: VFSTables) -> None:
         for column in (tables.entry.c.path, tables.entry.c.name, tables.entry.c.original_name):
-            variants = column.type._variant_mapping
-            postgres, mssql = variants["postgresql"], variants["mssql"]
-            assert isinstance(postgres, String) and isinstance(mssql, String)
-            assert postgres.collation == "C"
+            kind = column.type
+            assert isinstance(kind, BytewiseString)
+            postgres = kind.load_dialect_impl(postgresql.dialect())
+            assert isinstance(postgres, String) and postgres.collation == "C"
             # UTF-8 binary collation: Unicode-safe VARCHAR whose byte order
             # matches SQLite/Postgres-C; plain _BIN2 was a code-page VARCHAR.
-            assert mssql.collation == "Latin1_General_100_BIN2_UTF8"
+            ms = kind.load_dialect_impl(mssql.dialect())
+            assert isinstance(ms, String) and ms.collation == "Latin1_General_100_BIN2_UTF8"
+
+    def test_mysql_family_key_columns_are_byte_typed(self, tables: VFSTables) -> None:
+        # utf8mb4 VARCHAR keys cost 4 bytes/char against InnoDB's 3,072-byte
+        # cap; VARBINARY keys cost their own bytes, so the DDL provisions.
+        for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
+            ddl = str(CreateTable(tables.entry).compile(dialect=dialect))
+            assert f"VARBINARY({MAX_PATH_LENGTH})" in ddl
+            assert f"VARBINARY({MAX_SEGMENT_LENGTH})" in ddl
+
+    def test_bytewise_string_round_trips_utf8_on_the_mysql_family(self) -> None:
+        kind = BytewiseString(MAX_PATH_LENGTH)
+        for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
+            assert kind.process_bind_param("/é.txt", dialect) == "/é.txt".encode()
+            assert kind.process_result_value("/é.txt".encode(), dialect) == "/é.txt"
+        assert kind.process_bind_param("/é.txt", sqlite.dialect()) == "/é.txt"
+        assert kind.process_result_value("/é.txt", sqlite.dialect()) == "/é.txt"
 
     def test_bodies_live_outside_entries_and_sit_last(self, tables: VFSTables) -> None:
         assert "content" not in tables.entry.c

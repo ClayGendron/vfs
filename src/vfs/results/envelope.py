@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from vfs.models import Observation
-from vfs.paths import MAX_PATH_LENGTH, Path
+from vfs.paths import MAX_PATH_LENGTH, Path, byte_length
 from vfs.results.kinds import (
     _KIND_ALIASES,
     KIND_CONTRACTS,
@@ -169,14 +169,14 @@ class ResultError(BaseModel):
         never raises, and the nearest addressable locus wins.
         """
         mount = Path(mount)
-        overflows = self.source is not None and len(mount) + len(self.source) > MAX_PATH_LENGTH
+        overflows = self.source is not None and byte_length(mount) + byte_length(self.source) > MAX_PATH_LENGTH
         if self.source is None or (overflows and mount != "/" and self.source != "/"):
             source = mount
         else:
             source = self.source.with_mount(mount)
         updates: dict[str, Any] = {"source": source}
         if self.path is not None:
-            if mount != "/" and self.path != "/" and len(mount) + len(self.path) > MAX_PATH_LENGTH:
+            if mount != "/" and self.path != "/" and byte_length(mount) + byte_length(self.path) > MAX_PATH_LENGTH:
                 data = dict(self.data or {})
                 if "vfs.overflow" not in data:
                     local = self.path
@@ -605,12 +605,12 @@ class Result(BaseModel):
             return Result(ops=self.ops, observations=self.observations, errors=errors)
         observations: list[Observation] = []
         for o in self.observations:
-            if o.path != "/" and len(mount) + len(o.path) > MAX_PATH_LENGTH:
+            if o.path != "/" and byte_length(mount) + byte_length(o.path) > MAX_PATH_LENGTH:
                 errors.append(
                     ResultError(
                         kind=VFSErrorKind.unaddressable,
                         message=(
-                            f"Path exceeds {MAX_PATH_LENGTH} chars when rebased under "
+                            f"Path exceeds {MAX_PATH_LENGTH} bytes when rebased under "
                             f"'{mount}' and cannot be addressed through this mount"
                         ),
                         severity=Severity.warning,

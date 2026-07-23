@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 
 ObjectKind = Literal["file", "directory"]
 
-MAX_PATH_LENGTH = 1024  # hard namespace-wide invariant — see Path docstring
-MAX_SEGMENT_LENGTH = 255
+MAX_PATH_LENGTH = 1024  # UTF-8 bytes (BSD/macOS PATH_MAX) — see Path docstring
+MAX_SEGMENT_LENGTH = 255  # UTF-8 bytes (POSIX NAME_MAX)
 
 METADATA_ROOT = "/.vfs"
 
@@ -182,17 +182,20 @@ class Path(str):
     ``joinpath`` / ``resolve_path`` when you need it back.
 
     **Length is a hard invariant, not an ingress rule.** No ``Path`` ever
-    exceeds ``MAX_PATH_LENGTH`` (1024) — including the outputs of
+    exceeds ``MAX_PATH_LENGTH`` (1024 UTF-8 bytes — the BSD/macOS
+    ``PATH_MAX``, the tightest major-OS floor) — including the outputs of
     ``with_mount`` / ``without_mount`` / ``joinpath``. This guarantees every
     path a ``Result`` returns is valid input to the next request
     (re-addressability). A rebase that would exceed the limit raises
     ``ValueError`` at the ``Path`` layer; the router's rebase seam
     (``Result.with_mount``) converts that per row into a classified
     ``ResultError`` — an over-long global path can therefore never be
-    observed, raised, or stored anywhere in the system.
+    observed, raised, or stored anywhere in the system. Byte denomination
+    also bounds every engine's index key: a lawful path always fits under
+    the tightest declared ``key_byte_budget``.
 
     Consequence for deep mounts: a child-local path is only reachable through
-    a parent if ``len(mount_prefix) + len(local_path) <= 1024``. Content
+    a parent if mount prefix and local path fit 1024 bytes together. Content
     written *through* the parent always satisfies this (the ingress gate
     bounds the global path); content written directly to a child that is also
     mounted deeper elsewhere may not — such rows surface as ``invalid``
@@ -297,8 +300,11 @@ class Path(str):
             return self
         if self == "/":
             return mount
-        if len(mount) + len(self) > MAX_PATH_LENGTH:
-            msg = f"Rebased path too long (max {MAX_PATH_LENGTH}): mount {mount!r} + local path of {len(self)} chars"
+        if byte_length(mount) + byte_length(self) > MAX_PATH_LENGTH:
+            msg = (
+                f"Rebased path too long (max {MAX_PATH_LENGTH} bytes): "
+                f"mount {mount!r} + local path of {byte_length(self)} bytes"
+            )
             raise ValueError(msg)
         return Path._brand(mount + self)
 
@@ -493,6 +499,11 @@ def normalize_path(path: str) -> str:
     return "/" + "/".join(resolved)
 
 
+def byte_length(text: str) -> int:
+    """UTF-8 bytes of *text* — the denomination of every path limit."""
+    return len(text.encode())
+
+
 def validate_path(path: str) -> tuple[bool, str]:
     """Check the structural correctness of a path, returning ``(ok, reason)``.
 
@@ -505,15 +516,15 @@ def validate_path(path: str) -> tuple[bool, str]:
     if reason is not None:
         return False, f"Path contains {reason}"
 
-    if len(path) > MAX_PATH_LENGTH:
-        return False, f"Path too long (max {MAX_PATH_LENGTH} characters)"
+    if byte_length(path) > MAX_PATH_LENGTH:
+        return False, f"Path too long (max {MAX_PATH_LENGTH} bytes)"
 
     if path == "/":
         return True, ""
 
     for segment in path.split("/")[1:]:
-        if len(segment) > MAX_SEGMENT_LENGTH:
-            return False, f"Path segment too long (max {MAX_SEGMENT_LENGTH}): '{segment[:40]}...'"
+        if byte_length(segment) > MAX_SEGMENT_LENGTH:
+            return False, f"Path segment too long (max {MAX_SEGMENT_LENGTH} bytes): '{segment[:40]}...'"
 
     return True, ""
 
@@ -568,13 +579,13 @@ def validate_relative_path(path: str) -> tuple[bool, str]:
     reason = _forbidden_char_reason(path)
     if reason is not None:
         return False, f"Path contains {reason}"
-    if len(path) > MAX_PATH_LENGTH:
-        return False, f"Path too long (max {MAX_PATH_LENGTH} characters)"
+    if byte_length(path) > MAX_PATH_LENGTH:
+        return False, f"Path too long (max {MAX_PATH_LENGTH} bytes)"
     for segment in path.split("/"):
         if segment == "..":
             return False, "Relative path must not contain '..' segments"
-        if len(segment) > MAX_SEGMENT_LENGTH:
-            return False, f"Path segment too long (max {MAX_SEGMENT_LENGTH}): '{segment[:40]}...'"
+        if byte_length(segment) > MAX_SEGMENT_LENGTH:
+            return False, f"Path segment too long (max {MAX_SEGMENT_LENGTH} bytes): '{segment[:40]}...'"
     return True, ""
 
 

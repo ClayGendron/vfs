@@ -611,6 +611,25 @@ class TestRebaseLengthPolicy:
         ok, reason = validate_path("/" + "a" * (MAX_SEGMENT_LENGTH + 1))
         assert not ok and str(MAX_SEGMENT_LENGTH) in reason
 
+    def test_limits_denominate_utf8_bytes_not_characters(self):
+        # "é" is 2 UTF-8 bytes: 128 of them fit a 255-byte segment where
+        # 128 ASCII pairs would; the same name at 512 chars is 1,024 bytes
+        # and overflows the whole-path limit despite being under it in chars.
+        ok, _ = validate_path("/" + "é" * 127)
+        assert ok
+        ok, reason = validate_path("/" + "é" * 128)
+        assert not ok and "bytes" in reason
+        long_multibyte = "/" + "/".join(["é" * 120] * 5)  # 1,205 bytes, 605 chars
+        ok, reason = validate_path(long_multibyte)
+        assert not ok and "bytes" in reason
+
+    def test_with_mount_measures_bytes(self):
+        # A 22-byte mount + a 1,004-byte multibyte local path > 1,024 bytes,
+        # though the char count (504 + 22) is far under the limit.
+        local = "/" + "/".join(["é" * 125] * 4)  # 504 chars, 1,004 bytes
+        with pytest.raises(ValueError, match="Rebased path too long"):
+            Path(local).with_mount("/" + "m" * 21)
+
     def test_with_mount_at_exactly_the_limit_passes(self):
         mount = "/" + "m" * 19  # 20 + 1004 == 1024
         rebased = Path(DEEP_LOCAL).with_mount(mount)

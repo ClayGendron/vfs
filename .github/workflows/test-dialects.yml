@@ -31,7 +31,6 @@ on:
 jobs:
   conformance:
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.advisory || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -39,13 +38,9 @@ jobs:
           - dialect: postgres
             env_var: VFS_TEST_POSTGRES_URL
             url: "postgresql+asyncpg://vfs:vfs@localhost:54320/vfs"
-          # Advisory until the key-byte-budget DDL question is resolved:
-          # utf8mb4 makes the path unique index 4,096 bytes, past InnoDB's
-          # 3,072 cap, so first touch fails — see context/open-questions.md.
           - dialect: mysql
             env_var: VFS_TEST_MYSQL_URL
-            url: "mysql+aiomysql://vfs:vfs@localhost:33061/vfs"
-            advisory: true
+            url: "mysql+aiomysql://vfs:vfs@localhost:33061/vfs?charset=utf8mb4"
           - dialect: mssql
             env_var: VFS_TEST_MSSQL_URL
             url: "mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"

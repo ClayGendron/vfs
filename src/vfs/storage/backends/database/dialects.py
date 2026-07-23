@@ -8,16 +8,17 @@ module declares is only what SQLAlchemy takes no position on: retryable
 SQLSTATEs, connection/file settings, isolation pins, index-key byte
 budgets, and create-arbitration mode.
 
-Known engines (sqlite, postgresql, mssql) carry tuned policy; **any other
-SQLAlchemy dialect resolves to a conservative generic profile** — the
-backend runs on any SQLAlchemy-compatible database, degrading to safe
-defaults rather than refusing.
+Known engines (sqlite, postgresql, mssql, and the mysql/mariadb family)
+carry tuned policy; **any other SQLAlchemy dialect resolves to a
+conservative generic profile** — the backend runs on any
+SQLAlchemy-compatible database, degrading to safe defaults rather than
+refusing.
 
     profile = profile_for(engine.dialect.name)
     if is_retryable(profile, exc): ...
 
-Retryability is classified by SQLSTATE / SQLite extended error code only,
-never by message text.
+Retryability is classified by SQLSTATE, SQLite extended error code, or
+integer driver error number — never by message text.
 """
 
 from __future__ import annotations
@@ -66,6 +67,9 @@ class DialectProfile:
     file_settings: tuple[str, ...] = ()
     retryable_sqlstates: frozenset[str] = frozenset({"40001", "40P01"})
     retryable_sqlite_codes: frozenset[int] = frozenset()
+    # Integer driver error numbers, for drivers that lead with an errno
+    # instead of a SQLSTATE (the MySQL family: PyMySQL/aiomysql args[0]).
+    retryable_driver_codes: frozenset[int] = frozenset()
     expression_depth_budget: int = 1_000
 
 
@@ -105,6 +109,21 @@ MSSQL: Final = DialectProfile(
     arbitration="catch_retry",
 )
 
+# catch_retry, not upsert: ON DUPLICATE KEY UPDATE takes no conflict
+# target and fires on ANY unique index — unsafe beside two unique keys.
+MYSQL: Final = DialectProfile(
+    name="mysql",
+    key_byte_budget=3_072,
+    in_list_budget=65_535,
+    arbitration="catch_retry",
+    op_isolation="REPEATABLE READ",
+    # Deadlock (1213) and lock-wait timeout (1205) surface as raw driver
+    # errnos; SQLAlchemy maps neither to a SQLSTATE.
+    retryable_driver_codes=frozenset({1213, 1205}),
+)
+
+MARIADB: Final = replace(MYSQL, name="mariadb")
+
 # The floor for engines this project has not measured: the tightest known
 # key and IN-list budgets, no settings, serialization-failure SQLSTATEs only.
 GENERIC: Final = DialectProfile(
@@ -118,6 +137,8 @@ PROFILES: Final[dict[str, DialectProfile]] = {
     SQLITE.name: SQLITE,
     POSTGRESQL.name: POSTGRESQL,
     MSSQL.name: MSSQL,
+    MYSQL.name: MYSQL,
+    MARIADB.name: MARIADB,
 }
 
 
@@ -213,15 +234,19 @@ def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object
 def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
     """Whether *exc* is a transient outcome a whole-method restart can clear.
 
-    Classifies by SQLite extended error code or SQLSTATE, never message
-    text. Unique violations (23505) are definite exists-outcomes after
-    arbitration and are never in any profile's retryable set.
+    Classifies by SQLite extended error code, SQLSTATE, or integer driver
+    error number — never message text. Unique violations (23505) are
+    definite exists-outcomes after arbitration and are never in any
+    profile's retryable set.
     """
     origin = getattr(exc, "orig", None) or exc
     sqlite_code = getattr(origin, "sqlite_errorcode", None)
     if sqlite_code is not None:
         return sqlite_code in profile.retryable_sqlite_codes
-    return _sqlstate_of(origin) in profile.retryable_sqlstates
+    state = _sqlstate_of(origin)
+    if state is not None:
+        return state in profile.retryable_sqlstates
+    return _driver_code_of(origin) in profile.retryable_driver_codes
 
 
 # ---------------------------------------------------------------------------
@@ -246,3 +271,13 @@ def _sqlstate_of(origin: object) -> str | None:
     if isinstance(first, str) and len(first) == _SQLSTATE_LENGTH:
         return first
     return None
+
+
+def _driver_code_of(origin: object) -> int | None:
+    """The integer driver error number, where the driver leads with one.
+
+    The MySQL family (PyMySQL, aiomysql, asyncmy) raises with
+    ``args = (errno, message)`` and exposes no SQLSTATE attribute.
+    """
+    first = next(iter(getattr(origin, "args", ())), None)
+    return first if isinstance(first, int) else None

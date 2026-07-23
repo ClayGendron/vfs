@@ -41,7 +41,7 @@ docker compose -f docker/compose.test.yml --profile mysql --profile mssql --prof
 | Engine | arm64 | Driver extra | URL |
 |---|---|---|---|
 | Postgres 17 | native | `postgres` | `postgresql+asyncpg://vfs:vfs@localhost:54320/vfs` |
-| MySQL 8.4 | native | `mysql` | `mysql+aiomysql://vfs:vfs@localhost:33061/vfs` |
+| MySQL 8.4 | native | `mysql` | `mysql+aiomysql://vfs:vfs@localhost:33061/vfs?charset=utf8mb4` |
 | SQL Server 2022 | Rosetta | `mssql` | `mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes` |
 | Oracle Free 23ai | native | `oracle` | `oracle+oracledb_async://vfs:vfs@localhost:15210/?service_name=FREEPDB1` |
 
@@ -67,13 +67,14 @@ takes 30–60 s while the pluggable database opens; `--wait` covers it.
 The `oracledb` driver runs in thin mode — no Oracle client libraries to
 install.
 
-**MySQL** deliberately has no entry in the backend's `DialectProfile`
-registry: it resolves to the GENERIC floor, so this leg tests the
-"unknown dialects are served, not refused" contract against a real
-engine. **Known red** as of 2026-07-23: the path unique index exceeds
-InnoDB's 3,072-byte key cap under utf8mb4, so first touch fails — see
-the key-byte-budget entry in `context/open-questions.md`. The CI leg is
-`continue-on-error` until that lands; this leg *is* the regression pin.
+**MySQL** carries a tuned profile (3,072-byte key budget, catch-retry
+arbitration, REPEATABLE READ pinned, deadlock/lock-wait errnos
+retryable); MariaDB rides the same policy under its own dialect name.
+Keep `?charset=utf8mb4` in the URL — the dialect does not default it,
+and unicode text bodies depend on it. This leg is the regression pin
+for the byte-denominated path limits and the `VARBINARY` key columns
+(ADR 024). With MySQL tuned, no real engine exercises the GENERIC
+floor anymore — the floor is pinned synthetically in the dialect tests.
 
 ## Why these four
 
@@ -81,8 +82,8 @@ the key-byte-budget entry in `context/open-questions.md`. The CI leg is
   failures (40001) and catch-retry arbitration for real.
 - **SQL Server** — READ COMMITTED natively, the ~2,100 bind-parameter
   budget, `OUTPUT inserted.*` as the RETURNING arm.
-- **MySQL** — the GENERIC floor exercised through the unknown-dialect
-  path.
+- **MySQL** — the byte-typed key columns and byte-denominated path
+  limits under InnoDB's 3,072-byte index cap (ADR 024).
 - **Oracle** — also READ COMMITTED by default, and the engine whose
   1,000-element `IN`-list cap (ORA-01795) defines the GENERIC budget
   floor; a wrong chunking budget turns into a hard error here.

@@ -87,7 +87,7 @@ class DatabaseStorage:
             "version_encoding": "per_entry64",
             "arbitration": self._host.profile.arbitration,
         }
-        if self._host.profile.name in ("sqlite", "postgresql", "mssql"):
+        if self._host.profile.name in ("sqlite", "postgresql", "mssql", "mysql", "mariadb"):
             declared["durability"] = "full"
         return declared
 
