@@ -22,10 +22,11 @@ exists because unverified findings cost the reader attention — only
 findings that survive refutation reach the report.
 
 The orchestrator's own procedure is four numbered steps — **resolve
-the scope (§0), author + check + launch the script (§1), verify the
-launch (§2), report (§3)** — and the §1 checker and §2 check are not
-optional: a launch whose scope is wrong or whose prompts did not
-render is a review of nothing, and nothing downstream detects that.
+the scope (§0), bring up the engines then author + check + launch the
+script (§1), verify the launch (§2), report and tear down (§3)** — and
+the §1 checker and §2 check are not optional: a launch whose scope is
+wrong or whose prompts did not render is a review of nothing, and
+nothing downstream detects that.
 The *Shape* and *Per-agent rules* sections between §0 and §1 describe
 what the launched workflow does internally.
 
@@ -130,8 +131,14 @@ the §1 checker and the §2 post-launch check both enforce this.
   loss, wrong results), `major` (violated contract, failure at
   supported scale, unpinned high-risk behavior), `minor` (bounded
   waste, decay, smells), `question` (design notes, ambiguous intent).
+- **Live engines**: the template's `ENGINES` block puts the four real
+  engines' connection URLs (Postgres, MySQL, MSSQL, Oracle — up,
+  ephemeral data) in every prompt. Agents use them for empirical
+  evidence — scratch scripts or targeted `-m <engine>` test
+  selections, each under its own table namespace so concurrent agents
+  do not collide — and never start, stop, or manage Docker themselves.
 
-## 1. Author the script file, check it, launch it
+## 1. Bring up the engines, author the script, check it, launch it
 
 The canonical orchestration code lives in
 **`.claude/skills/code_review/workflow_template.js`** — single source
@@ -140,7 +147,18 @@ copies. The launch is file-based and gated by a checker; never launch
 from an inline `script` string with `args` (the `args` global has been
 observed silently failing to bind — see §2).
 
-1. **Author.** Copy `workflow_template.js` into the session scratchpad
+1. **Engines up.** The template's prompts promise every agent live
+   database engines; make that true before anything launches. Follow
+   the db_test skill's build-up: start Docker Desktop, bring up all
+   four engines with query-level health waits (postgres via plain
+   `up -d --wait`, the heavyweights by name), and install every
+   driver in one `uv sync --extra postgres --extra mysql --extra
+   mssql --extra oracle --group dev`. The checker refuses to PASS
+   while any engine port is unreachable. Engines stay up for the
+   whole run — reviewers and verifiers both use them — and come down
+   in §3.
+
+2. **Author.** Copy `workflow_template.js` into the session scratchpad
    and replace its `// __SCOPE_CONSTANTS__` line with the one block
    you write:
 
@@ -156,7 +174,7 @@ observed silently failing to bind — see §2).
    Everything outside the two marker lines must stay byte-identical to
    the template; the checker enforces it.
 
-2. **Check.** Run
+3. **Check.** Run
    `uv run python .claude/skills/code_review/check_workflow.py <authored file>`
    and iterate until PASS. The checker re-derives ground truth from
    git and fails on: drift from the template outside the authored
@@ -165,10 +183,11 @@ observed silently failing to bind — see §2).
    off-by-one base that silently drops the oldest commit and the scope
    naming the base as if reviewed; a commit subject missing from the
    scope (bodies warn); working-tree drift over scoped files with no
-   drift caveat naming them; unescaped `${` interpolation. A script
-   that fails the checker is never launched.
+   drift caveat naming them; unescaped `${` interpolation; any of the
+   four engine ports unreachable (see step 1). A script that fails the
+   checker is never launched.
 
-3. **Launch** with `{ scriptPath: <authored file> }` — no `script`, no
+4. **Launch** with `{ scriptPath: <authored file> }` — no `script`, no
    `args`. The tool result returns a task ID, a transcript dir, a
    `scriptPath`, and a `runId` — keep all four: §2 reads the
    transcript dir; stopping, salvage, and iteration use the task ID,
@@ -270,7 +289,7 @@ result, read `journal.jsonl` in the transcript directory: it records
 what each agent actually returned. Do not assume a lens was clean when
 its agent may simply have failed.
 
-## 3. Reporting
+## 3. Reporting and teardown
 
 1. **Relay the synthesized report** — that is the deliverable. Do not
    paste raw per-agent output. Lead with the resolved scope: the exact
@@ -292,3 +311,9 @@ its agent may simply have failed.
    passing, clearly labelled as unverified, at the end.
 5. **Never apply fixes as part of the review.** If the user asks for
    fixes afterward, re-report with `outcome` set per finding.
+6. **Restore the machine.** Once the report is delivered and no
+   follow-up supplement still needs the engines, tear down per the
+   db_test skill: compose down naming every profile, verify no
+   `vfs-test-*` containers remain, quit Docker Desktop. Skip teardown
+   only when something else in the session (a resumed run, another
+   engine task) is still using the containers — then it owns teardown.

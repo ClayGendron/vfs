@@ -13,6 +13,7 @@ from __future__ import annotations
 
 # ruff: noqa: T201 — this is a CLI; print is its output channel
 import re
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,10 @@ TEMPLATE_PATH = Path(__file__).with_name("workflow_template.js")
 PLACEHOLDER = "// __SCOPE_CONSTANTS__"
 START_MARKER = "// --- scope constants"
 END_MARKER = "// --- end scope constants"
+
+# Host ports from docker/compose.test.yml; the template's ENGINES block
+# promises agents these are live, so the checker verifies before launch.
+ENGINE_PORTS = {"postgres": 54320, "mysql": 33061, "mssql": 14330, "oracle": 15210}
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +75,7 @@ def check(script_path: Path) -> tuple[list[str], list[str]]:
 
     _check_range(repo, scope, fails, warns)
     _check_drift(repo, scope, fails)
+    _check_engines(fails)
     return fails, warns
 
 
@@ -160,6 +166,17 @@ def _check_range(repo: str, scope: str, fails: list[str], warns: list[str]) -> N
         )
 
 
+def _check_engines(fails: list[str]) -> None:
+    """The workflow's prompts promise live engines; verify each port answers."""
+    down = sorted(name for name, port in ENGINE_PORTS.items() if not _port_open(port))
+    if down:
+        fails.append(
+            f"database engines unreachable: {', '.join(down)} — the workflow "
+            f"promises every agent live engines; bring them up first (db_test "
+            f"skill build-up) or fix the ports before launching"
+        )
+
+
 def _check_drift(repo: str, scope: str, fails: list[str]) -> None:
     """Dirty working-tree files inside the scoped diff must be declared."""
     m = _find_range(scope)
@@ -212,6 +229,14 @@ def main() -> int:
 
 def _git(repo: str, *argv: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", repo, *argv], capture_output=True, text=True)
+
+
+def _port_open(port: int) -> bool:
+    try:
+        with socket.create_connection(("localhost", port), timeout=2):
+            return True
+    except OSError:
+        return False
 
 
 def _find_range(scope: str) -> re.Match[str] | None:

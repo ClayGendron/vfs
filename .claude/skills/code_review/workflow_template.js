@@ -34,8 +34,17 @@ const VERDICT = {
   },
 }
 const LENSES = ['ownership_review', 'contract_review', 'scale_review', 'test_review', 'adversarial_review']
+// The orchestrator brings these up before launching (db_test skill) and the
+// checker verifies reachability; agents consume them, never manage Docker.
+const ENGINES = `Real database engines are UP and reachable (ephemeral data — safe to fill with test garbage; never start, stop, or otherwise manage Docker yourself):
+- Postgres: postgresql+asyncpg://vfs:vfs@localhost:54320/vfs
+- MySQL:    mysql+aiomysql://vfs:vfs@localhost:33061/vfs?charset=utf8mb4
+- MSSQL:    mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+- Oracle:   oracle+oracledb_async://vfs:vfs@localhost:15210/?service_name=FREEPDB1
+All four drivers are installed in the venv. Prefer empirical evidence over reasoning from the code alone: exercise engine-dependent claims with scratch scripts against the real engines, or run targeted conformance selections (VFS_TEST_<ENGINE>_URL=<url> uv run pytest -m <engine> -k <test>). Give each scratch script its own table namespace so concurrent agents do not collide (tests/test_storage_conformance.py shows how storage is constructed per URL). If an engine turns out unreachable, record that in coverage — never report an engine-dependent claim as verified without having touched the engine.`
 // __SCOPE_CONSTANTS__
 const RULES = `Repo: ${repo}. Scope under review: ${scope}
+${ENGINES}
 uv for everything; the repo is READ-ONLY (no edits, stash, checkout, commit);
 scratch scripts go only under ${scratch}.`
 
