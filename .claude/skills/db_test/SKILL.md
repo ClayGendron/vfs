@@ -72,7 +72,7 @@ VFS_TEST_ORACLE_URL="oracle+oracledb_async://vfs:vfs@localhost:15210/?service_na
 ```
 
 A healthy leg matches the sqlite leg's pass count, with the same
-capability skips (grep and the topology verbs are classified stubs).
+capability skips (grep and mkedge are classified stubs).
 Keep `?charset=utf8mb4` on the MySQL URL — text bodies depend on it.
 Report failures as findings against the code, not the harness: a leg
 that fails on a real engine while sqlite passes is exactly the signal
@@ -81,14 +81,40 @@ was caught).
 
 ## 4. Tear down
 
-Plain `down` skips services behind profiles — name the profiles:
+Plain `down` skips services behind profiles — name the profiles — and
+**always pass `-t 60`**: MSSQL runs amd64-under-Rosetta and routinely
+outlives compose's default 10 s grace, so a bare `down` SIGKILLs it
+(exit 137), which is what has corrupted the daemon's container store
+in the past (see the phantom-record note below):
 
 ```sh
-docker compose -f docker/compose.test.yml --profile mysql --profile mssql --profile oracle down
+docker compose -f docker/compose.test.yml --profile mysql --profile mssql --profile oracle down -t 60
 ```
 
 Data is tmpfs/ephemeral; nothing persists. Verify with
-`docker ps --format '{{.Names}}'` (expect no `vfs-test-*` rows).
+`docker ps -a --format '{{.Names}} {{.Status}}'` — expect **zero**
+rows, not just zero running: an `Exited (137)` remnant is the
+phantom-record precursor and must not be left behind.
+
+### Phantom container records (seen 2026-07-24, fixed same day)
+
+Symptom: `docker ps -a` lists an exited `vfs-test` container that
+`docker rm -f`, `docker system prune`, and daemon restarts all bounce
+off ("No such container" / "no such object") — and `docker compose up`
+for that service fails trying to start the dead record. Recovery, in
+order:
+
+1. **Unblock the run now**: start the affected service under a fresh
+   project name — same image, same host port, tests unaffected:
+   `docker compose -p vfs-test-<letter> -f docker/compose.test.yml up -d --wait mssql`
+   (tear it down later with the same `-p`).
+2. **Actually remove the records** (needs the user's approval — it
+   reaches inside the Docker Desktop VM with a privileged container):
+   list `/var/lib/docker/containers` via
+   `docker run --rm --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh -c 'ls /var/lib/docker/containers'`,
+   `rm -rf` exactly the phantom-id directories (never the helper's own
+   fresh id), then restart Docker Desktop and confirm `docker ps -a`
+   is empty.
 
 ## 5. Quit Docker Desktop
 
