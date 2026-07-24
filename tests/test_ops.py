@@ -56,6 +56,7 @@ def test_expected_vocabulary() -> None:
                 "edit",
                 "delete",
                 "restore",
+                "sweep",
                 "stat",
                 "mkdir",
                 "mkedge",

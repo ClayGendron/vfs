@@ -81,8 +81,8 @@ if TYPE_CHECKING:
 _hop_budget: ContextVar[int | None] = ContextVar("vfs_hop_budget", default=None)
 
 # Single-path mutations whose addressed site the EBUSY guard protects:
-# delete removes it, restore lands on it — both disturb a live binding.
-_BUSY_GUARDED_OPS: frozenset[Op] = frozenset({"delete", "restore"})
+# delete removes it, restore lands on it, sweep destroys beneath it.
+_BUSY_GUARDED_OPS: frozenset[Op] = frozenset({"delete", "restore", "sweep"})
 
 
 @dataclass(slots=True)
@@ -862,6 +862,26 @@ class VirtualFileSystem:
         if refusal is not None:
             return refusal
         return await self._route_single("restore", path, observations, overwrite=overwrite, user_id=user_id)
+
+    async def sweep(
+        self,
+        path: str = "/.vfs/trash",
+        *,
+        user_id: str | None = None,
+    ) -> Result:
+        """Reclaim expired trash buckets under the trash root at *path*.
+
+        Explicit and idempotent — storage owns no background work.
+        Expired hour-buckets drop wholesale (foreign rows inside them
+        included); non-bucket rows directly under the trash root are
+        skipped and surfaced as warnings. The default address sweeps the
+        root mount; pass ``/m/.vfs/trash`` to sweep the mount at ``/m``.
+        A backend that keeps no trash classifies ``unsupported``.
+        """
+        refusal = self._gate_params("sweep", path=path, user_id=user_id)
+        if refusal is not None:
+            return refusal
+        return await self._route_single("sweep", path, None, user_id=user_id)
 
     async def mkdir(
         self,
@@ -1926,6 +1946,10 @@ class VirtualFileSystem:
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
                     return await storage.restore(user_id=user_id, **kwargs)
+                case "sweep":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.sweep(user_id=user_id, **kwargs)
                 case "mkdir":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)

@@ -64,8 +64,16 @@ open/seed/draft specs against `src/vfs/` and update both).
   its capabilities (permanent deletes, no trash) and refuses
   `unsupported`; the conformance restore family gates on
   `@needs("restore")` and is enforced on sqlite plus all four engine
-  legs. Remaining from the trash arc: the sweep verb (ADR 026 pin 5,
-  blocked on the retention-policy open question).
+  legs.
+- **083 — trash sweep**: landed 2026-07-24 (ADR 014 pin 5, ADR 026
+  pin 5 executed; retention decided in session — 90-day default via
+  `DatabaseStorage(trash_days=90)`, size bound demand-gated). `sweep`
+  is a routed op addressed at `/.vfs/trash`; expired hour-buckets
+  (strict `%Y-%m-%d-%H` round-trip, hour fully aged) purge wholesale,
+  non-bucket rows skip and surface as warnings, memory refuses
+  `unsupported`. **The trash arc (081–083) is complete**: delete
+  reports where rows went, restore brings them back, sweep reclaims
+  them.
 - **Housekeeping owed:** 074–079 spec folders still exist despite
   landing — each needs its residue-mining pass and deletion
   (`specs/README.md` lifecycle rule).

@@ -30,7 +30,7 @@ import pytest
 
 from vfs.models import Entry, Observation
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import Severity, VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import (
     TRAIT_KEYS,
@@ -679,6 +679,65 @@ class StorageContract:
         assert by_row.success is False
         assert by_row.errors[0].kind == VFSErrorKind.not_found
         assert (await storage.read(path=trash_path)).observations[0].content == "x"
+
+    # ------------------------------------------------------------------
+    # sweep — reclamation, gated on backends that keep a trash
+    # ------------------------------------------------------------------
+
+    @needs("write", "mkdir", "sweep", "stat")
+    async def test_sweep_drops_an_expired_bucket_wholesale(self, storage: ConformanceBackend) -> None:
+        # Trash is an ordinary subtree, so an aged bucket is creatable
+        # through public verbs — foreign rows inside drop with it.
+        bucket = Path("/.vfs/trash/2020-01-01-00")
+        await storage.mkdir(path=bucket, parents=True)
+        await storage.write(entries=[Entry(path=Path(f"{bucket}/foreign.txt"), content="x")])
+        result = await storage.sweep(path=Path("/.vfs/trash"))
+        assert result.success is True
+        assert [str(o.path) for o in result.observations] == [str(bucket)]
+        assert result.observations[0].status == "deleted"
+        assert (await storage.stat(path=bucket)).success is False
+        assert (await storage.stat(path=Path(f"{bucket}/foreign.txt"))).success is False
+
+    @needs("write", "delete", "sweep", "stat")
+    async def test_sweep_retains_young_buckets(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        deleted = await storage.delete(path=Path("/a.txt"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        result = await storage.sweep(path=Path("/.vfs/trash"))
+        assert result.success is True
+        assert result.observations == []
+        assert (await storage.stat(path=trash_path)).success is True
+
+    @needs("write", "mkdir", "sweep", "stat")
+    async def test_sweep_skips_and_surfaces_non_bucket_rows(self, storage: ConformanceBackend) -> None:
+        # A file, a directory whose name is no date at all, and a near-miss
+        # name strptime would admit but the strict round-trip refuses —
+        # all foreign state, skipped and surfaced.
+        await storage.write(entries=[Entry(path=Path("/.vfs/trash/notes.txt"), content="keep")], parents=True)
+        await storage.mkdir(path=Path("/.vfs/trash/junk"))
+        await storage.mkdir(path=Path("/.vfs/trash/2020-1-1-0"))
+        result = await storage.sweep(path=Path("/.vfs/trash"))
+        assert result.success is True
+        skipped = sorted(str(e.path) for e in result.errors)
+        assert skipped == ["/.vfs/trash/2020-1-1-0", "/.vfs/trash/junk", "/.vfs/trash/notes.txt"]
+        assert all(e.severity == Severity.warning for e in result.errors)
+        for survivor in skipped:
+            assert (await storage.stat(path=Path(survivor))).success is True
+
+    @needs("sweep")
+    async def test_sweep_of_a_never_used_trash_is_an_idempotent_no_op(self, storage: ConformanceBackend) -> None:
+        for _ in range(2):
+            result = await storage.sweep(path=Path("/.vfs/trash"))
+            assert result.success is True
+            assert result.observations == []
+            assert result.errors == []
+
+    @needs("sweep")
+    async def test_sweep_addresses_only_the_trash_root(self, storage: ConformanceBackend) -> None:
+        result = await storage.sweep(path=Path("/docs"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.invalid
 
     # ------------------------------------------------------------------
     # glob / grep

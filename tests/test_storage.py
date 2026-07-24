@@ -76,6 +76,9 @@ class Everything(PatternSearcher):
     async def restore(self, **kwargs: Any) -> Result:
         return _ok("restore")
 
+    async def sweep(self, **kwargs: Any) -> Result:
+        return _ok("sweep")
+
     async def mkdir(self, **kwargs: Any) -> Result:
         return _ok("mkdir")
 
@@ -142,6 +145,9 @@ def test_mutation_family_is_exactly_the_write_gated_ops() -> None:
 
         async def restore(self, **kwargs: Any) -> Result:
             return _ok("restore")
+
+        async def sweep(self, **kwargs: Any) -> Result:
+            return _ok("sweep")
 
         async def mkdir(self, **kwargs: Any) -> Result:
             return _ok("mkdir")

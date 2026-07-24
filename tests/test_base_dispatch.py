@@ -230,6 +230,18 @@ async def test_restore_addressing_a_bind_site_is_busy() -> None:
     assert a.calls == []
 
 
+async def test_sweep_addressing_a_bind_site_is_busy() -> None:
+    # The guard fires on the address before storage can even refuse the
+    # non-trash-root form — a bound region is never sweep's to destroy.
+    root = VirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/m")
+    result = await root.sweep("/m")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.busy
+    assert a.calls == []
+
+
 async def test_delete_region_containing_bind_site_is_busy() -> None:
     root = VirtualFileSystem()
     a = RecorderStorage()

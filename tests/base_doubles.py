@@ -89,6 +89,9 @@ class RecorderStorage:
     async def restore(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
         return self._answer("restore", kwargs)
 
+    async def sweep(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
+        return self._answer("sweep", kwargs)
+
     async def mkdir(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
         return self._answer("mkdir", kwargs)
 
@@ -395,6 +398,7 @@ def _mutate(fs: VirtualFileSystem, op: str, base: str):
         "edit": lambda: fs.edit(path=f"{base}/f.txt", old="a", new="b"),
         "delete": lambda: fs.delete(path=f"{base}/f.txt"),
         "restore": lambda: fs.restore(path=f"{base}/f.txt"),
+        "sweep": lambda: fs.sweep(f"{base}/.vfs/trash"),
         "mkdir": lambda: fs.mkdir(f"{base}/d"),
         "mkedge": lambda: fs.mkedge(f"{base}/a.py", f"{base}/b.py", "imports"),
         "move": lambda: fs.move(src=f"{base}/a.txt", dest=f"{base}/b.txt"),
@@ -410,6 +414,7 @@ def _mutate_at_root(fs: VirtualFileSystem, op: str, target: str):
         "edit": lambda: fs.edit(path=target, old="a", new="b"),
         "delete": lambda: fs.delete(path=target),
         "restore": lambda: fs.restore(path=target),
+        "sweep": lambda: fs.sweep(target),
         "mkdir": lambda: fs.mkdir(target),
         "mkedge": lambda: fs.mkedge(target, "/b.py", "imports"),
         "move": lambda: fs.move(src="/a.txt", dest=target),

@@ -36,7 +36,7 @@ from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import PROFILES, op_execution_options, topology_execution_options
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
-from vfs.storage.backends.database.topology import delete_rows, restore_rows, transfer_rows
+from vfs.storage.backends.database.topology import delete_rows, restore_rows, sweep_rows, transfer_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
 from vfs.storage.protocol import scope_of, targets_of
 
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 # Hand-declared per pass: family derivation would over-declare while
 # grep and mkedge are still classified stubs.
 _LANDED_OPS: Final[frozenset[Op]] = frozenset(
-    {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir", "delete", "restore", "move", "copy"}
+    {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir", "delete", "restore", "sweep", "move", "copy"}
 )
 
 
@@ -70,8 +70,13 @@ class DatabaseStorage:
         schema: str | None = None,
         name: str = "database",
         description: str | None = None,
+        trash_days: int = 90,
     ) -> None:
+        if trash_days < 0:
+            msg = f"trash_days must be non-negative, got {trash_days}"
+            raise ValueError(msg)
         self._host = EngineHost(url=url, session_factory=session_factory, table_name=table_name, schema=schema)
+        self._trash_days = trash_days
         self.name = name
         # Construction stays dialect-free: a borrowed host knows its
         # dialect only at first use, so the default names the tables.
@@ -309,6 +314,26 @@ class DatabaseStorage:
                 self._host.membership_budget,
                 targets=targets,
                 overwrite=overwrite,
+                user_id=user_id,
+                lock_key=self._host.topology_key,
+            ),
+        )
+
+    async def sweep(
+        self,
+        *,
+        path: Path,
+        user_id: str | None = None,
+    ) -> Result:
+        return await self._execute_topology(
+            "sweep",
+            lambda session: sweep_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.membership_budget,
+                path=path,
+                trash_days=self._trash_days,
                 user_id=user_id,
                 lock_key=self._host.topology_key,
             ),

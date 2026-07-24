@@ -359,6 +359,9 @@ class TestActionRendering:
         assert str(Result(ops=("mkdir",), observations=[obs("/d")])) == "Created /d"
         assert str(Result(ops=("mkedge",), observations=[obs("/a.md")])) == "Connected /a.md"
         assert str(Result(ops=("restore",), observations=[obs("/a.md")])) == "Restored /a.md"
+        assert str(Result(ops=("sweep",), observations=[obs("/.vfs/trash/2020-01-01-00")])) == (
+            "Swept /.vfs/trash/2020-01-01-00"
+        )
 
     def test_verb_for_write_and_unmapped_fallback(self) -> None:
         # ``write`` is intercepted by the write formatter before _verb_for, and

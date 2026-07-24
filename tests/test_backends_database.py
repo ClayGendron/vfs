@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -29,7 +29,7 @@ from ulid import ULID
 from vfs.models import Entry, Observation
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import MAX_PATH_LENGTH, ObjectKind, Path, byte_length
-from vfs.results import ResultError, VFSErrorKind
+from vfs.results import ResultError, Severity, VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
@@ -990,6 +990,7 @@ class TestUnlandedVerbStubs:
             "mkdir",
             "delete",
             "restore",
+            "sweep",
             "move",
             "copy",
         }
@@ -2728,6 +2729,44 @@ class TestRestore:
         # The refused batch never commits: the good target stays in trash.
         assert (await storage.stat(path=trash_path)).success is True
         assert (await storage.stat(path=Path("/a.txt"))).success is False
+        await storage.close()
+
+
+class TestSweep:
+    """Sweep arms beyond the conformance rows — retention boundary, config."""
+
+    async def test_trash_days_zero_expires_only_fully_aged_hours(self, tmp_path) -> None:
+        # Retention is a floor: with trash_days=0 the cutoff is now, and
+        # the current hour has not fully elapsed — its bucket survives
+        # while a two-hour-old bucket drops.
+        storage = DatabaseStorage(url=_url(tmp_path), trash_days=0)
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        deleted = await storage.delete(path=Path("/a.txt"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        old = (datetime.now(UTC) - timedelta(hours=2)).strftime("%Y-%m-%d-%H")
+        await storage.mkdir(path=Path(f"/.vfs/trash/{old}"))
+        result = await storage.sweep(path=Path("/.vfs/trash"))
+        assert result.success is True
+        assert [str(o.path) for o in result.observations] == [f"/.vfs/trash/{old}"]
+        assert (await storage.stat(path=trash_path)).success is True
+        await storage.close()
+
+    async def test_negative_trash_days_refuses_at_construction(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match="trash_days"):
+            DatabaseStorage(url=_url(tmp_path), trash_days=-1)
+
+    async def test_sweep_surfaces_a_trash_root_squatter(self, tmp_path) -> None:
+        # A user file sitting at /.vfs/trash itself is foreign state: the
+        # sweep touches nothing and says so, without failing.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/.vfs/trash"), content="squat")], parents=True)
+        result = await storage.sweep(path=Path("/.vfs/trash"))
+        assert result.success is True
+        assert result.observations == []
+        assert result.errors[0].severity == Severity.warning
+        assert result.errors[0].path == "/.vfs/trash"
+        assert (await storage.read(path=Path("/.vfs/trash"))).observations[0].content == "squat"
         await storage.close()
 
 

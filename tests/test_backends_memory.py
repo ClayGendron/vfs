@@ -40,7 +40,7 @@ def test_capabilities_are_read_pattern_search_and_mutation_only() -> None:
     storage = InMemoryStorage()
     caps = storage.capabilities()
     # Restore is carved out: deletes here are permanent, no trash exists.
-    assert caps == (frozenset({"read", "stat", "ls", "tree", "glob", "grep"}) | MUTATING_OPS) - {"restore"}
+    assert caps == (frozenset({"read", "stat", "ls", "tree", "glob", "grep"}) | MUTATING_OPS) - {"restore", "sweep"}
     assert "glean" not in caps
     assert "graph" not in caps
     assert "run" not in caps
@@ -49,6 +49,12 @@ def test_capabilities_are_read_pattern_search_and_mutation_only() -> None:
 async def test_restore_is_a_classified_unsupported_refusal() -> None:
     # Deletes here are permanent — there is no trash to restore from.
     result = await InMemoryStorage().restore(path=Path("/a.txt"))
+    assert result.success is False
+    assert result.errors[0].kind == VFSErrorKind.unsupported
+
+
+async def test_sweep_is_a_classified_unsupported_refusal() -> None:
+    result = await InMemoryStorage().sweep(path=Path("/.vfs/trash"))
     assert result.success is False
     assert result.errors[0].kind == VFSErrorKind.unsupported
 

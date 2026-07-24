@@ -252,6 +252,13 @@ class SupportsMutation(Protocol):
         user_id: str | None = None,
     ) -> Result: ...
 
+    async def sweep(
+        self,
+        *,
+        path: Path,
+        user_id: str | None = None,
+    ) -> Result: ...
+
     async def mkdir(
         self,
         *,

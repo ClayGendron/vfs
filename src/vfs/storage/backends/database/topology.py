@@ -1,5 +1,5 @@
 """Topology-family statement builders for ``DatabaseStorage`` — delete,
-restore, move, copy.
+restore, sweep, move, copy.
 
 Topology verbs rewrite the namespace's shape — parent pointers and path
 caches — so every one of them serializes: its first statement takes the
@@ -35,6 +35,14 @@ parent resolved by identity (``not_found`` fail-and-keep when it died,
 ladder and byte budget. Execution is the shared move executor, so a
 restore and a move out of trash cannot drift apart.
 
+Sweep reclaims expired hour-buckets: a child of the trash root is a
+bucket iff it is a directory whose name round-trips the
+``%Y-%m-%d-%H`` format exactly, and it expires when its hour has fully
+aged past the retention window. Expired buckets purge wholesale —
+foreign rows inside included — while non-bucket rows directly under
+the trash root are skipped and surfaced as warning entries; young
+buckets are retained silently.
+
 Move and copy share one pair ladder mirroring the memory backend row
 for row: batch-shape refusals against the committed snapshot, live
 per-pair reads, no-replace ``exists`` before the cycle checks, cycle
@@ -51,7 +59,7 @@ failed result.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
 from sqlalchemy import bindparam, delete, func, insert, or_, select, update
@@ -60,7 +68,7 @@ from ulid import ULID
 
 from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, METADATA_ROOT, ROOT, TRASH_ROOT, Path, byte_length
-from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     ancestor_chain,
@@ -91,6 +99,9 @@ _SUBTREE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "content_hash", 
 
 # A restore source adds the columns the restore contract consumes.
 _RESTORE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "original_parent_id", "original_name", "deleted_at")
+
+# The hour-bucket name format delete mints and sweep parses back.
+_BUCKET_FORMAT: Final = "%Y-%m-%d-%H"
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +258,62 @@ async def restore_rows(
     finals = await _final_rows(session, entry, membership_budget, [str(p.dest) for p in pending])
     rows = [_observe_transfer(p, finals.get(str(p.dest))) for p in pending]
     return Result(ops=("restore",), observations=rows)
+
+
+# ---------------------------------------------------------------------------
+# Sweep
+# ---------------------------------------------------------------------------
+
+
+async def sweep_rows(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    *,
+    path: Path,
+    trash_days: int,
+    user_id: str | None,
+    lock_key: int,
+) -> Result:
+    """Reclaim expired hour-buckets under the trash root, wholesale.
+
+    The one lawful address is the trash root itself — per-bucket
+    reclamation is already ``delete(permanent=True)``. A missing trash
+    root is the successful no-op (nothing was ever trashed); a
+    non-directory squatter there, and every non-bucket child, is
+    skipped and surfaced as a warning that leaves ``success`` true.
+    Retention is a floor, not a promise: a bucket drops only once its
+    whole hour has aged past *trash_days*. *user_id* is accepted for
+    signature parity; reclamation changes no ownership.
+    """
+    del user_id
+    entry = tables.entry
+    if path != TRASH_ROOT:
+        message = f"Sweep addresses the trash root ({TRASH_ROOT}), not: {path}"
+        return Result(ops=("sweep",), errors=[classified(VFSErrorKind.invalid, message, path)])
+    await _serialize(session, profile, tables.meta, lock_key)
+    cutoff = datetime.now(UTC) - timedelta(days=trash_days)
+    root = await _point_row(session, entry, TRASH_ROOT)
+    if root is None:
+        return Result(ops=("sweep",))
+    if root["kind"] != "directory":
+        return Result(ops=("sweep",), errors=[_skipped(Path(TRASH_ROOT))])
+    columns = [entry.c[name] for name in _SNAPSHOT_COLUMNS]
+    children = (await session.execute(select(*columns).where(entry.c.parent_id == root["entry_id"]))).mappings()
+    rows: list[Observation] = []
+    skips: list[ResultError] = []
+    for child in sorted(children, key=lambda row: row["name"]):
+        hour = _bucket_hour(child["name"]) if child["kind"] == "directory" else None
+        if hour is None:
+            skips.append(_skipped(Path(child["path"])))
+            continue
+        if hour + timedelta(hours=1) > cutoff:
+            continue
+        await _purge_subtree(session, tables, membership_budget, child["path"])
+        await _bump(session, entry, root["entry_id"])
+        rows.append(_observe_deleted(Path(child["path"]), child))
+    return Result(ops=("sweep",), observations=rows, errors=skips)
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +532,7 @@ class _TrashChain:
         self._root_id = root_id
         self._user_id = user_id
         self._now = now
-        self.bucket_path = f"{TRASH_ROOT}/{now:%Y-%m-%d-%H}"
+        self.bucket_path = f"{TRASH_ROOT}/{now.strftime(_BUCKET_FORMAT)}"
         self._bucket_id: str | None = None
 
     def chain_inside(self, target: Path) -> bool:
@@ -562,6 +629,25 @@ def _subsumed_trash_path(
     if byte_length(derived) > MAX_PATH_LENGTH:
         return None
     return Path(derived)
+
+
+def _bucket_hour(name: str) -> datetime | None:
+    """The UTC hour a canonical bucket name marks, else ``None``.
+
+    Strict round-trip: ``strptime`` alone admits unpadded near-misses,
+    and with the closed world gone those are foreign state, not buckets.
+    """
+    try:
+        parsed = datetime.strptime(name, _BUCKET_FORMAT).replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    return parsed if parsed.strftime(_BUCKET_FORMAT) == name else None
+
+
+def _skipped(path: Path) -> ResultError:
+    """A warning-severity skip: the row in bucket position is not a bucket."""
+    message = f"Sweep skipped {path}: not a trash bucket"
+    return ResultError(kind=VFSErrorKind.wrong_kind, message=message, path=path, severity=Severity.warning)
 
 
 class _RestoreSource(NamedTuple):

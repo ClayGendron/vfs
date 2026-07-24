@@ -139,6 +139,10 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("overwrite", "bool", nullable=False, default=False, doc="replace an occupant at the original site"),
         _USER,
     ),
+    "sweep": (
+        ParamSpec("path", "path", doc="the trash root of the mount to sweep; defaults to /.vfs/trash"),
+        _USER,
+    ),
     "mkdir": (
         ParamSpec("path", "path", required=True, doc="the directory to create"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors"),
