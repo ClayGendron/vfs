@@ -43,6 +43,14 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 - **Options considered:** refuse on overflow (`unaddressable`, permanent delete remains available — matches the landed move-verb and memory-backend refusals; no DDL change; the budget becomes a true end-to-end invariant); widen the column with declared trash headroom (≥1,074 → 1,088 — the kernel-analog "unaddressable at read", but reopens the `Path` never-observes-over-budget invariant and adds read-path surface); keep the contradiction filed
 - **Status:** resolved 2026-07-23 (Clay, in session; confirmed against the prior-art pass) — **refuse on overflow.** The trash arm computes every descendant rewrite first and refuses the target `unaddressable` (`Cannot delete <target>: Path too long`) before any statement applies; over-budget paths are never stored, so the read-side ValueError exposure is unreachable. The slice-9 "trash paths lawfully exceed the budget" line was the invention the DDL contradicted, and it is reversed in `topology.py`'s module contract.
 
+## Trash retention policy: TTL, size bound, and eviction observability
+
+- **Asked:** 2026-07-23 by Clay + Claude (trash prior-art pass; ADR 026 pin 5 deliberately left the numbers open)
+- **Context:** ADR 014 pin 5 makes reclamation an explicit idempotent sweep verb and ADR 026 pin 5 keys expiry off parsing `<YYYY-MM-DD-HH>` bucket names — but no retention length is declared anywhere. The field's postures: JuiceFS `--trash-days N` (configurable, default on); iCloud/Photos and Drive/Dropbox fixed 30-day TTL; Purdue entomb ≤24 h backed by real backups; Windows adds a per-volume **size quota** with observable oldest-first eviction plus an oversized-item bypass (items bigger than the bin hard-delete after a prompt). Given the ETL audience's 10,000+-file batches, an unbounded trash is a real capacity risk — a single bulk delete can park an entire dataset in one bucket.
+- **Blocking:** the sweep-verb story (it needs a default retention to sweep against); capacity planning for bulk-delete workloads
+- **Options considered:** mount-level `trash_days`-style config (JuiceFS shape) with a sensible default; fixed TTL (cloud shape); TTL + declared size bound with oldest-bucket-first eviction (Windows shape — likeliest fit for the ETL audience); an oversized-delete bypass (batch bigger than the bound goes straight to permanent, loudly)
+- **Status:** open — owned by the future sweep-verb spec; ADR 026 pins the mechanism (bucket-name parse, wholesale drop), this entry tracks the policy numbers
+
 ## MSSQL silently mangles non-Latin1 path and name characters to `?`
 
 - **Asked:** 2026-07-23 by Clay + Claude (adversarial pressure test of the slice-9 landing, defect 4 — surfaced attacking topology; the defect is on the write path, pre-existing)
