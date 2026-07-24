@@ -137,6 +137,22 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 - **Options considered:** size indexed key columns from a byte budget rather than a char count (touches every profile; the honest fix); a MySQL `with_variant` using a binary type or per-column charset so 1,024 chars fit the key cap; a prefix index (`mysql_length`) — rejected on its face for the *unique* path index, since prefix uniqueness is stricter than path uniqueness; declare MySQL unsupported — contradicts the GENERIC-floor contract
 - **Status:** resolved 2026-07-23 (Clay, in session) — **ADR 024**: path limits became byte-denominated (1024/255 UTF-8 bytes, the BSD/macOS `PATH_MAX`/`NAME_MAX` — Clay's proposed angle, confirmed against fs heritage, juicefs, and Oak), key columns compile to `VARBINARY` on the mysql family, and the budget↔DDL gap closes by construction (`MAX_PATH_LENGTH <= min(key_byte_budget)`, pinned in tests). MySQL/MariaDB gained tuned profiles (catch-retry, REPEATABLE READ, errno-based deadlock retry). Research: `research/2026-07-23-mysql-support-byte-denominated-path-limits.md`. The MySQL conformance leg runs green and enforcing.
 
+## Hermetic-runtime guest bet: Monty, CPython-on-WASI, or both behind one capability contract
+
+- **Asked:** 2026-07-24 by Clay + Claude (hermetic-runtime research memo §7)
+- **Context:** The CLI-as-hermetic-runtime direction needs a sandboxed guest interpreter for agent-written code. Monty (pydantic, 0.0.19) is purpose-built — dict-based host functions, async coroutine externals, pause/resume snapshots — but self-labeled experimental with a real language subset (no inheritance, no generators, nine-module stdlib) and no security audit. CPython-on-WASI under wasmtime is the full language behind the same capability idea, at higher startup/memory cost. The research memo's mitigation: define the guest-visible capability contract once and treat the interpreter as swappable.
+- **Blocking:** the Monty phase of the runtime work — not the wasm-CLI spike, which needs no guest interpreter
+- **Options considered:** Monty first, WASI-CPython later behind the same contract (memo's lean); both from day one; wasm-only until Monty matures
+- **Status:** open — decide when the code-execution phase is specced; the wasm spike proceeds regardless
+
+## Shell pipe payload: Result envelopes with a canonical wire serialization, or bytes at v1?
+
+- **Asked:** 2026-07-24 by Clay + Claude (hermetic-runtime research memo §2, from nushell's documented wart)
+- **Context:** nushell pipes structured values but serializes structured→external-stdin via its *human table renderer* (run_external.rs:502-518) — the display format became the wire format and cannot be fixed post-ship. If vfs shell pipes carry Result envelopes, the structured→wasm-stdin boundary needs a canonical serialization declared before the first shell ships (JSON lines is the obvious candidate — it is what jq eats); the alternative is bytes-only pipes at v1 with structure layered later.
+- **Blocking:** the shell-surface ADR; the wasm spike only touches it at the stdin boundary and can hardcode JSON lines without prejudice
+- **Options considered:** envelopes in the pipe + declared JSON-lines wire format at the external boundary (memo's lean); bytes-only v1; per-command negotiated formats (rejected on its face — nushell's warts show format decisions must be global)
+- **Status:** open
+
 ## Guarded-update read-back infers success from the post-image — a reachable torn row on READ COMMITTED
 
 - **Asked:** 2026-07-22 by Clay + Claude (reviewing `_update_materials` while designing spec 078); severity corrected the same day by an independent review

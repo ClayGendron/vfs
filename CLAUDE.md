@@ -122,6 +122,11 @@ most relevant to this project:
   `youtu-graphrag`, `basic-memory` (files-as-KG over MCP; AGPL — study
   only), `ontogpt`, `rdflib`, `oxigraph`, `jena`
 - **MCP**: `modelcontextprotocol`, `python-sdk`, `fastmcp`
+- **Sandboxed execution & wasm** (hermetic-runtime direction): `monty`
+  (pydantic's sandboxed Python interpreter), `wasmtime-py` (wasm
+  embedding), `browser_wasi_shim` (WASI preview1 over a virtual fs),
+  `WASI` (spec — preview1 lives on branch `origin/wasi-0.1`), `nushell`
+  (structured-value pipelines)
 
 ## Imports
 
