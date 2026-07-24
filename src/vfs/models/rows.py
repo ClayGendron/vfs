@@ -139,6 +139,22 @@ ENCODING_ROARING: Final = 3
 # MariaDB's is "mariadb" — every mysql-family branch must name both.
 _MYSQL_FAMILY: Final = ("mysql", "mariadb")
 
+# MSSQL's byte-wise UTF-8 collation (SQL Server 2019+ floor): VARCHAR n
+# counts bytes, and non-Latin1 survives the database codepage.
+_MSSQL_UTF8_BIN2: Final = "Latin1_General_100_BIN2_UTF8"
+
+
+def _string(length: int) -> String:
+    """A general string column that stores non-Latin1 losslessly everywhere.
+
+    A plain ``String`` on MSSQL compiles with the *database's* default
+    collation — commonly CP-1252 — which squeezes any non-Latin1 value
+    to ``?`` at conversion time; the UTF-8 collation variant closes that
+    on the column side (the bind side is the engine's
+    ``use_setinputsizes=False``).
+    """
+    return String(length).with_variant(String(length, collation=_MSSQL_UTF8_BIN2), "mssql")
+
 
 class BytewiseString(TypeDecorator[str]):
     """A bounded key string, bytewise-ordered and byte-budgeted where pinned.
@@ -177,7 +193,7 @@ class BytewiseString(TypeDecorator[str]):
         if dialect.name == "postgresql":
             return dialect.type_descriptor(String(self.length, collation="C"))
         if dialect.name == "mssql":
-            return dialect.type_descriptor(String(self.length, collation="Latin1_General_100_BIN2_UTF8"))
+            return dialect.type_descriptor(String(self.length, collation=_MSSQL_UTF8_BIN2))
         return dialect.type_descriptor(String(self.length))
 
     def process_bind_param(self, value: str | None, dialect: Dialect) -> Any:
@@ -197,9 +213,11 @@ def _body_text() -> Text:
     Bare ``String()`` carries no length and MySQL's DDL compiler refuses
     it outright; ``Text`` maps to each engine's unbounded form (CLOB on
     Oracle, VARCHAR(max) on MSSQL), with the mysql family pinned to
-    LONGTEXT — its bare TEXT caps bodies at 64KB.
+    LONGTEXT — its bare TEXT caps bodies at 64KB. MSSQL pins the UTF-8
+    collation: VARCHAR(max) under the database codepage mangles
+    non-Latin1 bodies to ``?`` server-side.
     """
-    return Text().with_variant(LONGTEXT(), *_MYSQL_FAMILY)
+    return Text().with_variant(LONGTEXT(), *_MYSQL_FAMILY).with_variant(Text(collation=_MSSQL_UTF8_BIN2), "mssql")
 
 
 def _uuid_native(dialect: Dialect) -> bool:
@@ -321,17 +339,17 @@ def build_vfs_tables(
         Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("entry_id", ULIDKey(), nullable=False, unique=True, index=True),
         Column("parent_id", ULIDKey()),
-        Column("external_id", String(1024)),
+        Column("external_id", _string(1024)),
         Column("path", BytewiseString(MAX_PATH_LENGTH), nullable=False, unique=True, index=True),
         Column("name", BytewiseString(MAX_SEGMENT_LENGTH), nullable=False),
         Column("kind", String(32), nullable=False, index=True),
         Column("version", BigInteger),
         Column("content_hash", String(64)),
-        Column("mime_type", String(MAX_SEGMENT_LENGTH)),
-        Column("ext", String(32), index=True),
+        Column("mime_type", _string(MAX_SEGMENT_LENGTH)),
+        Column("ext", _string(32), index=True),
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
-        Column("owner_id", String(255), index=True),
+        Column("owner_id", _string(255), index=True),
         Column("original_parent_id", ULIDKey()),
         Column("original_name", BytewiseString(MAX_SEGMENT_LENGTH)),
         Column("created_at", DateTime(timezone=True)),
@@ -367,7 +385,7 @@ def build_vfs_tables(
         Column("content_hash", String(64), nullable=False),
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
-        Column("created_by", String(255)),
+        Column("created_by", _string(255)),
         Column("created_at", DateTime(timezone=True)),
         Column("content", _body_text()),
         Column("version_diff", _body_text()),
@@ -403,7 +421,7 @@ def build_vfs_tables(
         Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("source_id", ULIDKey(), nullable=False),
         Column("target_id", ULIDKey(), nullable=False),
-        Column("edge_type", String(MAX_SEGMENT_LENGTH), nullable=False),
+        Column("edge_type", _string(MAX_SEGMENT_LENGTH), nullable=False),
         Column("weight", Float),
         Column("distance", Float),
         UniqueConstraint("source_id", "target_id", "edge_type", name=f"uq_{table_name}_edges_src_tgt_type"),

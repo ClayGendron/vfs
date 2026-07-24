@@ -33,6 +33,7 @@ from vfs.results import ResultError, VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import (
     GENERIC,
@@ -53,7 +54,7 @@ from vfs.storage.backends.database.engine import EngineHost, _install_sqlite_tra
 from vfs.storage.backends.database.reads import ENTRY_OBSERVATION_FIELDS
 from vfs.storage.backends.database.seams import clear, install, installed, seam
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
-from vfs.storage.backends.database.topology import _serialize, _TrashChain
+from vfs.storage.backends.database.topology import _purge_subtree, _serialize, _TrashChain
 from vfs.storage.backends.database.writes import (
     _CLOBBER_COLUMNS,
     _catch_retry_layer,
@@ -2190,6 +2191,34 @@ class TestMembershipChunking:
         assert [str(o.path) for o in result.observations] == expected
         await storage.close()
 
+    async def test_tiny_budget_topology_verbs_cross_chunk_boundaries(self, tmp_path, monkeypatch) -> None:
+        # Budget 48 → membership 16: the snapshot fetch, copy's entry and
+        # content passes, the final re-read, and the purge all chunk, so
+        # every merge must reassemble correctly across boundaries.
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        files = [Path(f"/src/f{i:02}.txt") for i in range(40)]
+        written = await storage.write(
+            entries=[Entry(path=p, content=f"c{i}") for i, p in enumerate(files)], parents=True
+        )
+        assert written.success is True, written.errors
+        copied = await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/dst"))])
+        assert copied.success is True, copied.errors
+        for i in (0, 17, 39):
+            assert (await storage.read(path=Path(f"/dst/f{i:02}.txt"))).observations[0].content == f"c{i}"
+        pairs = [ResolvedPair(src=Path(f"/dst/f{i:02}.txt"), dest=Path(f"/dst/m{i:02}.txt")) for i in range(20)]
+        moved = await storage.move(operations=pairs)
+        assert moved.success is True, moved.errors
+        assert all(o.status == "created" for o in moved.observations)
+        deleted = await storage.delete(observations=[Observation(path=p) for p in files])
+        assert deleted.success is True, deleted.errors
+        assert len(deleted.observations) == 40
+        assert (await storage.ls(path=Path("/src"))).observations == []
+        purged = await storage.delete(path=Path("/dst"), permanent=True)
+        assert purged.success is True, purged.errors
+        assert (await storage.stat(path=Path("/dst"))).success is False
+        await storage.close()
+
     async def test_ten_thousand_entry_batch_round_trips(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [
@@ -2425,13 +2454,6 @@ class TestDeleteTrash:
         assert (await storage.stat(path=Path("/x.txt"))).success is True
         await storage.close()
 
-    async def test_deleting_an_empty_directory_without_cascade_succeeds(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.mkdir(path=Path("/empty"))
-        assert (await storage.delete(path=Path("/empty"), cascade=False)).success is True
-        assert (await storage.stat(path=Path("/empty"))).success is False
-        await storage.close()
-
     async def test_a_trashed_row_can_be_deleted_again_from_the_trash_side(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/gone.txt"), content="x")])
@@ -2489,17 +2511,6 @@ class TestTransferBehavior:
         assert row["original_parent_id"] is None
         assert row["original_name"] is None
         assert row["name"] == "doc.txt"
-        await storage.close()
-
-    async def test_move_destination_through_a_file_is_wrong_kind(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.write(
-            entries=[Entry(path=Path("/f.txt"), content="x"), Entry(path=Path("/blocker.txt"), content="x")]
-        )
-        result = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/blocker.txt/f.txt"))])
-        assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
-        assert result.errors[0].path == "/blocker.txt"
         await storage.close()
 
     async def test_chained_moves_fall_back_to_the_pair_time_observation(self, tmp_path) -> None:
@@ -2579,4 +2590,215 @@ class TestDeletePermanent:
         assert (await storage.stat(path=Path("/proj"))).success is False
         # Nothing landed in trash: the purge never mints the bucket chain.
         assert (await storage.stat(path=Path("/.vfs/trash"))).success is False
+        await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Trash-machinery guard, byte-budget refusal, purge hardening
+# ---------------------------------------------------------------------------
+
+
+async def _assert_no_cycles_or_orphans(storage: DatabaseStorage) -> None:
+    """Raw invariant sweep: parents exist, no cycles, path caches agree."""
+    entry = storage._host.tables.entry
+    async with storage._host.session_factory() as session:
+        rows = (await session.execute(select(entry.c.entry_id, entry.c.parent_id, entry.c.path, entry.c.name))).all()
+    by_id = {row.entry_id: row for row in rows}
+    for row in rows:
+        if row.path == "/":
+            continue
+        assert row.parent_id != row.entry_id, f"self-parented row: {row.path}"
+        parent = by_id.get(row.parent_id)
+        assert parent is not None, f"orphan row: {row.path}"
+        prefix = "" if parent.path == "/" else parent.path
+        assert row.path == f"{prefix}/{row.name}", f"torn path cache: {row.path}"
+        walked: set[str] = set()
+        current = row
+        while current.path != "/":
+            assert current.entry_id not in walked, f"parent cycle through {row.path}"
+            walked.add(current.entry_id)
+            current = by_id[current.parent_id]
+
+
+class TestTrashMachineryGuard:
+    """Deleting the trash machinery hard-deletes; it can never self-parent."""
+
+    async def test_deleting_the_trash_root_hard_deletes_without_cycles(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        assert (await storage.delete(path=Path("/a.txt"))).success
+        result = await storage.delete(path=Path("/.vfs/trash"))
+        assert result.success is True
+        assert result.observations[0].status == "deleted"
+        assert (await storage.stat(path=Path("/.vfs/trash"))).success is False
+        await _assert_no_cycles_or_orphans(storage)
+        # The next delete re-mints a fresh chain cleanly.
+        await storage.write(entries=[Entry(path=Path("/b.txt"), content="x")])
+        assert (await storage.delete(path=Path("/b.txt"))).success
+        assert (await storage.stat(path=Path("/.vfs/trash"))).success is True
+        await _assert_no_cycles_or_orphans(storage)
+        await storage.close()
+
+    async def test_deleting_the_current_bucket_hard_deletes_without_cycles(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        assert (await storage.delete(path=Path("/a.txt"))).success
+        bucket = (await storage.ls(path=Path("/.vfs/trash"))).observations[0].path
+        assert (await storage.delete(path=Path(bucket))).success is True
+        assert (await storage.stat(path=Path(bucket))).success is False
+        # The trash root survives; only the bucket subtree was purged.
+        assert (await storage.stat(path=Path("/.vfs/trash"))).success is True
+        await _assert_no_cycles_or_orphans(storage)
+        await storage.close()
+
+    def test_chain_inside_matches_ancestors_and_the_bucket_only(self) -> None:
+        tables = build_vfs_tables(table_name="vfs")
+        chain = _TrashChain(tables.entry, root_id="r", user_id=None, now=datetime.now(UTC))
+        assert chain.chain_inside(Path("/.vfs")) is True
+        assert chain.chain_inside(Path("/.vfs/trash")) is True
+        assert chain.chain_inside(Path(chain.bucket_path)) is True
+        # A prefix that is not an ancestor, and a bucket from another hour.
+        assert chain.chain_inside(Path("/.vfs/tra")) is False
+        assert chain.chain_inside(Path("/.vfs/trash/1999-01-01-00")) is False
+        assert chain.chain_inside(Path("/docs")) is False
+
+    async def test_trash_delete_refuses_when_a_rewrite_would_overflow(self, tmp_path) -> None:
+        # The bucket prefix is 52 bytes, so a descendant fits iff its
+        # path stays within 1024 - 52 + len(target) bytes — 974 for /d.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        segment = "s" * 255
+        fits = Path(f"/d/{segment}/{segment}/{segment}/" + "f" * 203)
+        over = Path(f"/e/{segment}/{segment}/{segment}/" + "f" * 204)
+        await storage.write(entries=[Entry(path=fits, content="ok")], parents=True)
+        assert (await storage.delete(path=Path("/d"))).success is True
+        await storage.write(entries=[Entry(path=over, content="deep")], parents=True)
+        result = await storage.delete(path=Path("/e"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unaddressable
+        assert result.errors[0].path == "/e"
+        # The refused batch never commits: the tree survives whole.
+        assert (await storage.stat(path=over)).success is True
+        # Permanent delete stays the lawful removal for such trees.
+        assert (await storage.delete(path=Path("/e"), permanent=True)).success is True
+        await storage.close()
+
+
+class TestPurgeHardening:
+    """The purge re-collects until empty and never doubles a chunk's binds."""
+
+    async def test_purge_recollects_rows_committed_after_the_first_collection(self, tmp_path) -> None:
+        # The stale-id-list orphan window: a row appearing between the
+        # collect and the deletes must be swept by the second pass.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/base.txt"), content="x")])
+        host = storage._host
+        tables = host.tables
+        entry = tables.entry
+        async with host.session_factory() as session:
+            await session.connection(execution_options=op_execution_options(host.profile, writer=True))
+            parent_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d"))).scalar_one()
+
+            async def straggler() -> None:
+                clear("purge:post-collect")
+                now = datetime.now(UTC)
+                await session.execute(
+                    insert(entry).values(
+                        entry_id=str(ULID()),
+                        parent_id=parent_id,
+                        path="/d/straggler.txt",
+                        name="straggler.txt",
+                        kind="file",
+                        version=1,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+
+            with installed("purge:post-collect", straggler):
+                await _purge_subtree(session, tables, 1_000, "/d")
+            subtree = (entry.c.path == "/d") | entry.c.path.like("/d/%")
+            remaining = (await session.execute(select(entry.c.path).where(subtree))).all()
+            assert remaining == []
+            await session.rollback()
+        await storage.close()
+
+    async def test_purge_statements_never_double_the_membership_chunk(self, tmp_path, monkeypatch) -> None:
+        # Tiny budget → membership 16. Every purge DELETE must carry at
+        # most one chunk of binds — the edges statement used to OR two
+        # lists together, doubling past the tightest engine's cap.
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        paths = [Path(f"/d/f{i:02}.txt") for i in range(40)]
+        written = await storage.write(entries=[Entry(path=p, content="x") for p in paths], parents=True)
+        assert written.success is True, written.errors
+        tables = storage._host.tables
+        entry = tables.entry
+        async with storage._host.session_factory() as session:
+            found = await session.execute(select(entry.c.entry_id).where(entry.c.path.like("/d/%")))
+            ids = [row.entry_id for row in found]
+            for eid in ids[:20]:
+                await session.execute(
+                    insert(tables.edges).values(source_id=eid, target_id=str(ULID()), edge_type="ref")
+                )
+                await session.execute(
+                    insert(tables.edges).values(source_id=str(ULID()), target_id=eid, edge_type="ref")
+                )
+            await session.commit()
+        counts: list[int] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            if statement.lstrip().upper().startswith("DELETE"):
+                counts.append(statement.count("?"))
+
+        event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
+        try:
+            assert (await storage.delete(path=Path("/d"), permanent=True)).success
+        finally:
+            event.remove(storage._host.engine.sync_engine, "before_cursor_execute", record)
+        budget = membership_budget(storage._host.profile, 48)
+        assert counts and max(counts) <= budget
+        # 41 rows at chunk size 16 → three chunks through all six deletes.
+        assert len(counts) >= 18
+        await storage.close()
+
+
+class TestTopologyOptionsStamping:
+    """Every topology verb stamps the topology options, never the op pin."""
+
+    async def test_topology_verbs_stamp_the_topology_execution_options(self, tmp_path, monkeypatch) -> None:
+        calls: list[object] = []
+        real = backend_module.topology_execution_options
+
+        def spy(profile):
+            calls.append(profile)
+            return real(profile)
+
+        monkeypatch.setattr(backend_module, "topology_execution_options", spy)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        assert (await storage.delete(path=Path("/a.txt"))).success
+        await storage.write(entries=[Entry(path=Path("/b.txt"), content="x")])
+        assert (await storage.move(operations=[ResolvedPair(src=Path("/b.txt"), dest=Path("/c.txt"))])).success
+        assert (await storage.copy(operations=[ResolvedPair(src=Path("/c.txt"), dest=Path("/d.txt"))])).success
+        assert calls == [storage._host.profile] * 3
+        await storage.close()
+
+
+class TestTrashBucketBump:
+    """The bucket is a directory like any other: gaining a member bumps it."""
+
+    async def test_each_delete_bumps_the_bucket_it_lands_in(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(
+            entries=[Entry(path=Path("/a.txt"), content="x"), Entry(path=Path("/b.txt"), content="x")]
+        )
+        assert (await storage.delete(path=Path("/a.txt"))).success
+        assert (await storage.delete(path=Path("/b.txt"))).success
+        buckets = (await storage.ls(path=Path("/.vfs/trash"))).observations
+        if len(buckets) != 1:
+            pytest.skip("hour boundary crossed between deletes")
+        bucket = (await storage.stat(path=buckets[0].path)).observations[0]
+        # Minted at 1, bumped once per member gained.
+        assert bucket.version == 3
         await storage.close()

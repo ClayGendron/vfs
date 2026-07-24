@@ -17,11 +17,13 @@ xdist follower machinery this sequential suite doesn't need.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from storage_conformance import StorageContract
@@ -29,6 +31,7 @@ from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
+from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -162,6 +165,101 @@ class TestPostgresRivalRedrive:
             after = read.observations[0]
             assert after.content == "mine"
             assert after.version == 3
+
+
+async def _purge_sweeps_a_mid_purge_rival(env_var: str) -> None:
+    """A rival write landing inside the purge window is swept, not orphaned.
+
+    Writes are not serialized with topology, so a rival can commit a new
+    child between the purge's id collection and its deletes. The purge's
+    re-collection must sweep it with the subtree — the stale-id-list
+    alternative left a permanent orphan row on every real engine.
+    """
+    async with _server_storage(env_var) as storage:
+        assert (await storage.mkdir(path=Path("/d"))).success
+        assert (await storage.write(entries=[Entry(path=Path("/d/base.txt"), content="x")])).success
+        rival_results: list[Result] = []
+
+        async def rival() -> None:
+            seams.clear("purge:post-collect")
+            rival_results.append(await storage.write(entries=[Entry(path=Path("/d/fresh.txt"), content="rival")]))
+
+        with seams.installed("purge:post-collect", rival):
+            victim = await storage.delete(path=Path("/d"), permanent=True)
+        assert victim.success is True, victim.errors
+        assert rival_results and rival_results[0].success is True
+        assert (await storage.stat(path=Path("/d/fresh.txt"))).success is False
+        assert (await storage.stat(path=Path("/d"))).success is False
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            subtree = (entry.c.path == "/d") | entry.c.path.like("/d/%")
+            leftovers = (await session.execute(select(entry.c.path).where(subtree))).scalars().all()
+        assert leftovers == []
+
+
+async def _serialization_point_blocks_a_rival_topology_verb(env_var: str) -> None:
+    """A rival topology verb launched mid-window waits out the point.
+
+    The rival move is spawned — never awaited — inside the delete's
+    post-snapshot window: it must block on the serialization point and
+    run only after the victim commits, so it finds its source already
+    trashed. Without the point the rival would commit mid-window and
+    both verbs would report success.
+    """
+    async with _server_storage(env_var) as storage:
+        assert (await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])).success
+        tasks: list[asyncio.Task[Result]] = []
+
+        async def rival() -> None:
+            seams.clear("delete:post-snapshot")
+            move = storage.move(operations=[ResolvedPair(src=Path("/x.txt"), dest=Path("/y.txt"))])
+            tasks.append(asyncio.ensure_future(move))
+            # Give the rival time to reach — and block on — the point.
+            await asyncio.sleep(0.5)
+
+        with seams.installed("delete:post-snapshot", rival):
+            victim = await storage.delete(path=Path("/x.txt"))
+        rival_result = await asyncio.wait_for(tasks[0], timeout=60)
+        assert victim.success is True, victim.errors
+        assert rival_result.success is False
+        assert rival_result.errors[0].kind == VFSErrorKind.not_found
+        assert (await storage.stat(path=Path("/y.txt"))).success is False
+
+
+@pytest.mark.postgres
+class TestPostgresTopologyRivals:
+    async def test_purge_sweeps_a_mid_purge_rival_write(self) -> None:
+        await _purge_sweeps_a_mid_purge_rival("VFS_TEST_POSTGRES_URL")
+
+    async def test_the_serialization_point_blocks_a_rival_topology_verb(self) -> None:
+        await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_POSTGRES_URL")
+
+
+@pytest.mark.mysql
+class TestMySQLTopologyRivals:
+    async def test_purge_sweeps_a_mid_purge_rival_write(self) -> None:
+        await _purge_sweeps_a_mid_purge_rival("VFS_TEST_MYSQL_URL")
+
+    async def test_the_serialization_point_blocks_a_rival_topology_verb(self) -> None:
+        await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_MYSQL_URL")
+
+
+@pytest.mark.mssql
+class TestMSSQLTopologyRivals:
+    async def test_purge_sweeps_a_mid_purge_rival_write(self) -> None:
+        await _purge_sweeps_a_mid_purge_rival("VFS_TEST_MSSQL_URL")
+
+    async def test_the_serialization_point_blocks_a_rival_topology_verb(self) -> None:
+        await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_MSSQL_URL")
+
+
+@pytest.mark.oracle
+class TestOracleTopologyRivals:
+    async def test_purge_sweeps_a_mid_purge_rival_write(self) -> None:
+        await _purge_sweeps_a_mid_purge_rival("VFS_TEST_ORACLE_URL")
+
+    async def test_the_serialization_point_blocks_a_rival_topology_verb(self) -> None:
+        await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_ORACLE_URL")
 
 
 @pytest.mark.mysql

@@ -1,4 +1,5 @@
-"""Topology-family statement builders for ``DatabaseStorage`` — delete, move, copy.
+"""Topology-family statement builders for ``DatabaseStorage`` — delete,
+move, copy.
 
 Topology verbs rewrite the namespace's shape — parent pointers and path
 caches — so every one of them serializes: its first statement takes the
@@ -15,9 +16,11 @@ judged against the snapshot, live ``not_empty`` on ``cascade=False``.
 The default arm reparents the row into an hourly trash bucket (path
 rewritten, original site recorded, name swapped to the entry's ULID so
 same-named deletes never collide); ``permanent`` purges the subtree's
-rows across every family table. Trash-side paths are backend-authored
-raw strings, never ``Path`` values — a deep row's trash path may
-lawfully exceed the public path budget.
+rows across every family table — as does a target whose subtree holds
+the bucket chain itself, which trashing would reparent into its own
+cascade. The trash rewrite honors the public byte budget end to end: a
+delete whose bucket prefix would push any descendant's path past it
+refuses ``unaddressable`` — an over-budget path is never stored.
 
 Move and copy share one pair ladder mirroring the memory backend row
 for row: batch-shape refusals against the committed snapshot, live
@@ -134,15 +137,23 @@ async def delete_rows(
         if not cascade and await _has_live_children(session, entry, row["entry_id"]):
             errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {target}", target))
             continue
-        if permanent:
+        # Trashing a target that holds the bucket chain would reparent the
+        # chain into its own subtree — a cycle; memory parity hard-deletes.
+        if permanent or trash.chain_inside(target):
             await _purge_subtree(session, tables, membership_budget, str(target))
         else:
             bucket_id = await trash.ensure(session, target)
             if isinstance(bucket_id, ResultError):
                 errors.append(bucket_id)
                 continue
-            trash_path = await _reparent_to_trash(session, entry, row, bucket_id, trash.bucket_path, now)
-            await _rewrite_descendants(session, entry, str(target), trash_path)
+            trash_path = f"{trash.bucket_path}/{row['entry_id']}"
+            rewrites = await _descendant_rewrites(session, entry, str(target), trash_path)
+            if any(byte_length(rewrite["b_path"]) > MAX_PATH_LENGTH for rewrite in rewrites):
+                message = f"Cannot delete {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
+                errors.append(classified(VFSErrorKind.unaddressable, message, target))
+                continue
+            await _reparent_to_trash(session, entry, row, bucket_id, trash_path, now)
+            await _apply_rewrites(session, entry, rewrites)
             await _bump(session, entry, bucket_id)
         await _bump(session, entry, row["parent_id"])
         rows.append(_observe_deleted(target, row))
@@ -325,20 +336,30 @@ async def _has_live_children(session: AsyncSession, entry: Table, entry_id: str)
 
 
 async def _purge_subtree(session: AsyncSession, tables: VFSTables, membership_budget: int, target: str) -> None:
-    """Hard-delete the subtree's rows across every family table, chunked."""
+    """Hard-delete the subtree's rows across every family table, chunked.
+
+    Collection and deletion repeat until the subtree reads empty: writes
+    are not serialized with topology, so a rival can commit a new child
+    between the collecting select and the deletes — purging from that
+    stale id list alone would leave the child an orphan row.
+    """
     entry = tables.entry
+    edges = tables.edges
     subtree = or_(
         entry.c.path == target,
         entry.c.path.like(escape_like(target) + "/%", escape=LIKE_ESCAPE),
     )
-    ids = [row.entry_id for row in await session.execute(select(entry.c.entry_id).where(subtree))]
-    edges = tables.edges
-    for chunk in chunked(ids, membership_budget):
-        await session.execute(delete(tables.content).where(tables.content.c.entry_id.in_(chunk)))
-        await session.execute(delete(tables.versions).where(tables.versions.c.entry_id.in_(chunk)))
-        await session.execute(delete(tables.chunks).where(tables.chunks.c.entry_id.in_(chunk)))
-        await session.execute(delete(edges).where(or_(edges.c.source_id.in_(chunk), edges.c.target_id.in_(chunk))))
-        await session.execute(delete(entry).where(entry.c.entry_id.in_(chunk)))
+    while ids := [row.entry_id for row in await session.execute(select(entry.c.entry_id).where(subtree))]:
+        await seam("purge:post-collect")
+        for chunk in chunked(ids, membership_budget):
+            await session.execute(delete(tables.content).where(tables.content.c.entry_id.in_(chunk)))
+            await session.execute(delete(tables.versions).where(tables.versions.c.entry_id.in_(chunk)))
+            await session.execute(delete(tables.chunks).where(tables.chunks.c.entry_id.in_(chunk)))
+            # Two single-list deletes: one OR'd statement would carry the
+            # chunk's binds twice, doubling past the tightest engine cap.
+            await session.execute(delete(edges).where(edges.c.source_id.in_(chunk)))
+            await session.execute(delete(edges).where(edges.c.target_id.in_(chunk)))
+            await session.execute(delete(entry).where(entry.c.entry_id.in_(chunk)))
 
 
 class _TrashChain:
@@ -359,6 +380,15 @@ class _TrashChain:
         self._now = now
         self.bucket_path = f"{TRASH_ROOT}/{now:%Y-%m-%d-%H}"
         self._bucket_id: str | None = None
+
+    def chain_inside(self, target: Path) -> bool:
+        """Whether the bucket chain sits at or under *target*.
+
+        Trashing such a target would reparent the chain into the very
+        subtree being deleted; the caller must hard-delete instead.
+        """
+        prefix = str(target)
+        return self.bucket_path == prefix or self.bucket_path.startswith(prefix + "/")
 
     async def ensure(self, session: AsyncSession, target: Path) -> str | ResultError:
         """The bucket's entry id, minting missing links; an error refuses *target*."""
@@ -401,15 +431,14 @@ class _TrashChain:
 
 
 async def _reparent_to_trash(
-    session: AsyncSession, entry: Table, row: RowMapping, bucket_id: str, bucket_path: str, now: datetime
-) -> str:
+    session: AsyncSession, entry: Table, row: RowMapping, bucket_id: str, trash_path: str, now: datetime
+) -> None:
     """Rewrite the row into the bucket; its ULID becomes its in-bucket name.
 
     Deliberately unguarded: under the serialization point the row cannot
     vanish, and a concurrent edit composes — both bump SQL-side off the
     current row, and the reparent touches no material column.
     """
-    trash_path = f"{bucket_path}/{row['entry_id']}"
     await session.execute(
         update(entry)
         .where(entry.c.entry_id == row["entry_id"])
@@ -423,25 +452,36 @@ async def _reparent_to_trash(
             version=entry.c.version + 1,
         )
     )
-    return trash_path
 
 
-async def _rewrite_descendants(session: AsyncSession, entry: Table, old_prefix: str, new_prefix: str) -> None:
-    """Recompute descendant path caches under the moved prefix, in Python.
+async def _descendant_rewrites(
+    session: AsyncSession, entry: Table, old_prefix: str, new_prefix: str
+) -> list[dict[str, str]]:
+    """Each descendant's id and recomputed path cache under the new prefix.
 
-    Raw ``str`` slicing only — trash-side paths may lawfully exceed the
-    public path budget, so no ``Path`` is ever minted here. Descendant
-    rewrites bump no versions and take no guard: nothing observable on
-    the descendant changed, and one directory delete must not flood the
-    dirty overlay.
+    Raw ``str`` slicing, no ``Path`` minted — the caller may still refuse
+    the whole set on the byte budget before anything is applied.
     """
     like = entry.c.path.like(escape_like(old_prefix) + "/%", escape=LIKE_ESCAPE)
     found = await session.execute(select(entry.c.entry_id, entry.c.path).where(like))
-    rows = [{"b_id": r.entry_id, "b_path": new_prefix + r.path[len(old_prefix) :]} for r in found]
+    return [{"b_id": r.entry_id, "b_path": new_prefix + r.path[len(old_prefix) :]} for r in found]
+
+
+async def _apply_rewrites(session: AsyncSession, entry: Table, rows: list[dict[str, str]]) -> None:
+    """Executemany path-cache rewrite; bumps no versions and takes no guard.
+
+    Nothing observable on a descendant changed, and one directory move
+    must not flood the dirty overlay.
+    """
     if not rows:
         return
     stmt = update(entry).where(entry.c.entry_id == bindparam("b_id")).values(path=bindparam("b_path"))
     await session.execute(stmt, rows)
+
+
+async def _rewrite_descendants(session: AsyncSession, entry: Table, old_prefix: str, new_prefix: str) -> None:
+    """Recompute descendant path caches under the moved prefix."""
+    await _apply_rewrites(session, entry, await _descendant_rewrites(session, entry, old_prefix, new_prefix))
 
 
 async def _bump(session: AsyncSession, entry: Table, entry_id: str) -> None:

@@ -43,6 +43,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple, TypeVar
 
 from sqlalchemy import Engine, event, func, insert, select
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from ulid import ULID
@@ -113,7 +114,7 @@ class EngineHost:
             self._engine = None
             self.session_factory = session_factory
         else:
-            engine = create_async_engine(str(url))
+            engine = create_async_engine(str(url), **_engine_kwargs(str(url)))
             self._engine = engine
             self.session_factory = async_sessionmaker(engine, expire_on_commit=False)
         # Dialect policy defers to first use: a borrowed host cannot
@@ -344,6 +345,22 @@ class EngineHost:
 # ---------------------------------------------------------------------------
 # Module helpers
 # ---------------------------------------------------------------------------
+
+
+def _engine_kwargs(url: str) -> dict[str, bool]:
+    """Per-driver engine arguments the lossless byte contract requires.
+
+    SQLAlchemy's pyodbc dialect declares ``String`` binds as ANSI
+    ``SQL_VARCHAR`` via setinputsizes, and the server squeezes those
+    through the database codepage before they reach a UTF-8 column —
+    mangling non-Latin1 to ``?``. Disabling setinputsizes restores
+    pyodbc's Unicode default (``SQL_WVARCHAR``), whose conversion into
+    the UTF-8 collation is lossless. Borrowed session factories carry
+    their builder's engine and must apply this themselves.
+    """
+    if make_url(url).get_backend_name() == "mssql":
+        return {"use_setinputsizes": False}
+    return {}
 
 
 def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectProfile) -> None:

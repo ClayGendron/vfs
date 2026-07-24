@@ -1248,6 +1248,96 @@ class StorageContract:
         assert (await storage.read(path=Path("/c2.txt"))).observations[0].content == "x"
 
     # ------------------------------------------------------------------
+    # Occupant identity, delete observations, unicode round trips
+    # ------------------------------------------------------------------
+
+    @needs("write", "delete", "stat")
+    async def test_delete_observes_the_pre_delete_row(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/obs.txt"), content="12345")])
+        before = (await storage.stat(path=Path("/obs.txt"))).observations[0]
+        result = await storage.delete(path=Path("/obs.txt"))
+        assert result.success is True
+        observed = result.observations[0]
+        assert str(observed.path) == "/obs.txt"
+        assert observed.status == "deleted"
+        assert observed.kind == "file"
+        assert observed.version == before.version
+        assert observed.size_bytes == before.size_bytes
+
+    @needs("mkdir", "delete", "stat")
+    async def test_deleting_an_empty_directory_without_cascade_succeeds(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/empty"))
+        assert (await storage.delete(path=Path("/empty"), cascade=False)).success is True
+        assert (await storage.stat(path=Path("/empty"))).success is False
+
+    @needs("write", "mkdir", "delete", "stat")
+    async def test_delete_batch_may_empty_a_directory_then_delete_it_without_cascade(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # Occupancy reads live state: a target emptied earlier in the
+        # batch deletes cleanly even under cascade=False.
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")])
+        targets = [Observation(path=Path("/d/f.txt")), Observation(path=Path("/d"))]
+        result = await storage.delete(observations=targets, cascade=False)
+        assert result.success is True, result.errors
+        assert (await storage.stat(path=Path("/d"))).success is False
+
+    @needs("write", "move")
+    async def test_move_destination_through_a_file_is_wrong_kind(self, storage: ConformanceBackend) -> None:
+        await storage.write(
+            entries=[Entry(path=Path("/f.txt"), content="x"), Entry(path=Path("/blocker.txt"), content="x")]
+        )
+        result = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/blocker.txt/f.txt"))])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].path == "/blocker.txt"
+
+    @needs("write", "move", "read", "stat")
+    async def test_move_file_over_an_occupied_file_reports_updated(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha")])
+        await storage.write(entries=[Entry(path=Path("/b.txt"), content="beta")])
+        result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], overwrite=True)
+        assert result.success is True
+        assert result.observations[0].status == "updated"
+        assert (await storage.read(path=Path("/b.txt"))).observations[0].content == "alpha"
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+
+    @needs("write", "copy", "read", "stat")
+    async def test_copy_file_over_an_occupied_file_updates_it_in_place(self, storage: ConformanceBackend) -> None:
+        # The occupant keeps its identity: a material update continuing
+        # its version line, never a fresh row at version 1.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha")])
+        await storage.write(entries=[Entry(path=Path("/b.txt"), content="beta")])
+        before = await _revision_of(storage, "/b.txt")
+        result = await storage.copy(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], overwrite=True)
+        assert result.success is True
+        assert result.observations[0].status == "updated"
+        after = (await storage.stat(path=Path("/b.txt"))).observations[0]
+        assert after.version == before + 1
+        assert (await storage.read(path=Path("/b.txt"))).observations[0].content == "alpha"
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "alpha"
+
+    @needs("write", "read", "stat", "move", "copy", "delete")
+    async def test_non_latin1_names_round_trip_through_every_verb(self, storage: ConformanceBackend) -> None:
+        # Multibyte names must survive byte-for-byte on every engine — a
+        # backend that stores a lossy transcription is out of contract.
+        source = Path("/名前/🚀 données.txt")
+        moved = Path("/名前/移動-🌕.md")
+        copied = Path("/名前/प्रतिलिपि.txt")
+        written = await storage.write(entries=[Entry(path=source, content="unicode ✓ содержимое")], parents=True)
+        assert written.success is True, written.errors
+        assert (await storage.stat(path=source)).success is True
+        assert (await storage.read(path=source)).observations[0].content == "unicode ✓ содержимое"
+        assert (await storage.move(operations=[ResolvedPair(src=source, dest=moved)])).success is True
+        assert (await storage.read(path=moved)).observations[0].content == "unicode ✓ содержимое"
+        assert (await storage.copy(operations=[ResolvedPair(src=moved, dest=copied)])).success is True
+        listing = await storage.ls(path=Path("/名前"))
+        assert sorted(str(o.path) for o in listing.observations) == sorted([str(moved), str(copied)])
+        assert (await storage.delete(path=copied)).success is True
+        assert (await storage.stat(path=copied)).success is False
+
+    # ------------------------------------------------------------------
     # Declared traits
     # ------------------------------------------------------------------
 
