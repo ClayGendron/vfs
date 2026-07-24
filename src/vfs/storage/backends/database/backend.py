@@ -7,7 +7,7 @@ push-down, ``parent_id`` listings, sargable prefix-LIKE subtrees, and
 the descent-ladder classification chokepoint (``descent.py`` /
 ``reads.py``) — as are the mutation core (write/edit/mkdir batches
 planned and executed as one transaction each, ``writes.py``) and the
-serialized topology verbs delete/move/copy (``topology.py``).
+serialized topology verbs delete/restore/move/copy (``topology.py``).
 ``mkedge`` and grep are stubbed to a classified refusal and
 ``capabilities()`` is hand-declared per pass — capabilities stay honest
 mid-story, and the router never routes to an undeclared family.
@@ -36,7 +36,7 @@ from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import PROFILES, op_execution_options, topology_execution_options
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
-from vfs.storage.backends.database.topology import delete_rows, transfer_rows
+from vfs.storage.backends.database.topology import delete_rows, restore_rows, transfer_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
 from vfs.storage.protocol import scope_of, targets_of
 
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 # Hand-declared per pass: family derivation would over-declare while
 # grep and mkedge are still classified stubs.
 _LANDED_OPS: Final[frozenset[Op]] = frozenset(
-    {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir", "delete", "move", "copy"}
+    {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir", "delete", "restore", "move", "copy"}
 )
 
 
@@ -286,6 +286,29 @@ class DatabaseStorage:
                 targets=targets,
                 permanent=permanent,
                 cascade=cascade,
+                user_id=user_id,
+                lock_key=self._host.topology_key,
+            ),
+        )
+
+    async def restore(
+        self,
+        *,
+        path: Path | None = None,
+        observations: list[Observation] | None = None,
+        overwrite: bool = False,
+        user_id: str | None = None,
+    ) -> Result:
+        targets = targets_of(path, observations)
+        return await self._execute_topology(
+            "restore",
+            lambda session: restore_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.membership_budget,
+                targets=targets,
+                overwrite=overwrite,
                 user_id=user_id,
                 lock_key=self._host.topology_key,
             ),

@@ -357,6 +357,9 @@ def build_vfs_tables(
         Column("deleted_at", DateTime(timezone=True)),
         UniqueConstraint("parent_id", "name", name=f"uq_{table_name}_parent_name"),
         Index(f"ix_{table_name}_ext_kind", "ext", "kind"),
+        # Restore lookup by original site. Plain composite: a filtered
+        # index over the mostly-NULL restore columns is not portable.
+        Index(f"ix_{table_name}_restore", "original_parent_id", "original_name"),
         schema=schema,
         sqlite_autoincrement=True,
     )

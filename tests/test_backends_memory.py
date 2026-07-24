@@ -39,10 +39,18 @@ def test_constructor_kwargs_override_identity() -> None:
 def test_capabilities_are_read_pattern_search_and_mutation_only() -> None:
     storage = InMemoryStorage()
     caps = storage.capabilities()
-    assert caps == frozenset({"read", "stat", "ls", "tree", "glob", "grep"}) | MUTATING_OPS
+    # Restore is carved out: deletes here are permanent, no trash exists.
+    assert caps == (frozenset({"read", "stat", "ls", "tree", "glob", "grep"}) | MUTATING_OPS) - {"restore"}
     assert "glean" not in caps
     assert "graph" not in caps
     assert "run" not in caps
+
+
+async def test_restore_is_a_classified_unsupported_refusal() -> None:
+    # Deletes here are permanent — there is no trash to restore from.
+    result = await InMemoryStorage().restore(path=Path("/a.txt"))
+    assert result.success is False
+    assert result.errors[0].kind == VFSErrorKind.unsupported
 
 
 def test_capabilities_are_identical_regardless_of_allow_files() -> None:

@@ -80,6 +80,10 @@ if TYPE_CHECKING:
 # per router entered (adapters and wire hops re-enter), never per mount.
 _hop_budget: ContextVar[int | None] = ContextVar("vfs_hop_budget", default=None)
 
+# Single-path mutations whose addressed site the EBUSY guard protects:
+# delete removes it, restore lands on it — both disturb a live binding.
+_BUSY_GUARDED_OPS: frozenset[Op] = frozenset({"delete", "restore"})
+
 
 @dataclass(slots=True)
 class MountMeta:
@@ -835,6 +839,30 @@ class VirtualFileSystem:
             user_id=user_id,
         )
 
+    async def restore(
+        self,
+        path: str | None = None,
+        observations: list[Observation] | None = None,
+        *,
+        overwrite: bool = False,
+        user_id: str | None = None,
+    ) -> Result:
+        """Restore a trashed entry to its original site.
+
+        *path* is either the entry's pre-delete path (the newest matching
+        trash row wins) or its exact trash-side path — the address a
+        delete result reports. An occupied site classifies ``exists``
+        unless *overwrite*; a backend that keeps no trash classifies
+        ``unsupported``. Like delete, a live bind site at the address is
+        ``busy``.
+        """
+        refusal = self._gate_params(
+            "restore", path=path, observations=observations, overwrite=overwrite, user_id=user_id
+        )
+        if refusal is not None:
+            return refusal
+        return await self._route_single("restore", path, observations, overwrite=overwrite, user_id=user_id)
+
     async def mkdir(
         self,
         path: str,
@@ -1193,7 +1221,7 @@ class VirtualFileSystem:
             return self._invalid_path(resolved, path, op)
         full = resolved.path
 
-        if op == "delete":
+        if op in _BUSY_GUARDED_OPS:
             busy = self._busy_guard(op, full, subtree=True)
             if busy is not None:
                 return busy
@@ -1242,7 +1270,7 @@ class VirtualFileSystem:
             resolved = resolve_path(obs.path, mutation=op in MUTATING_OPS)
             if resolved.path is None:
                 return self._invalid_path(resolved, obs.path, op)
-            if op == "delete":
+            if op in _BUSY_GUARDED_OPS:
                 busy = self._busy_guard(op, resolved.path, subtree=True)
                 if busy is not None:
                     return busy
@@ -1894,6 +1922,10 @@ class VirtualFileSystem:
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
                     return await storage.delete(user_id=user_id, **kwargs)
+                case "restore":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.restore(user_id=user_id, **kwargs)
                 case "mkdir":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)

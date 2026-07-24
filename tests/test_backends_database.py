@@ -989,6 +989,7 @@ class TestUnlandedVerbStubs:
             "edit",
             "mkdir",
             "delete",
+            "restore",
             "move",
             "copy",
         }
@@ -2582,6 +2583,151 @@ class TestDeleteTrash:
             adopted = await rival._mint(session, "/.vfs", root_id)
             assert adopted.kind == "directory"
             await session.rollback()
+        await storage.close()
+
+
+class TestRestore:
+    """Restore arms beyond the conformance rows — identity, corruption, budgets."""
+
+    async def test_restore_clears_the_restore_columns(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        deleted = await storage.delete(path=Path("/a.txt"))
+        assert (await storage.restore(path=deleted.observations[0].trash_path)).success is True
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            row = (await session.execute(select(entry).where(entry.c.path == "/a.txt"))).mappings().one()
+        assert row["original_parent_id"] is None
+        assert row["original_name"] is None
+        assert row["deleted_at"] is None
+        assert row["name"] == "a.txt"
+        await storage.close()
+
+    async def test_restore_follows_a_moved_parent(self, tmp_path) -> None:
+        # The trash row holds the parent's identity, not its old path: the
+        # row restores to wherever that parent lives now.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")])
+        deleted = await storage.delete(path=Path("/d/f.txt"))
+        trash_path = deleted.observations[0].trash_path
+        assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))])).success is True
+        by_old_site = await storage.restore(path=Path("/d/f.txt"))
+        assert by_old_site.success is False
+        assert by_old_site.errors[0].kind == VFSErrorKind.not_found
+        restored = await storage.restore(path=trash_path)
+        assert restored.success is True
+        assert restored.observations[0].path == "/e/f.txt"
+        assert (await storage.read(path=Path("/e/f.txt"))).observations[0].content == "x"
+        await storage.close()
+
+    async def test_restore_refuses_when_the_parent_is_itself_in_trash(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")])
+        deleted = await storage.delete(path=Path("/d/f.txt"))
+        assert (await storage.delete(path=Path("/d"))).success is True
+        result = await storage.restore(path=deleted.observations[0].trash_path)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert "restore" in result.errors[0].message
+        await storage.close()
+
+    async def test_restore_refuses_a_corrupted_non_directory_parent(self, tmp_path) -> None:
+        # Foreign-state tolerance: a parent row whose kind was mangled
+        # out from under the trash contract refuses, never mis-restores.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")])
+        deleted = await storage.delete(path=Path("/d/f.txt"))
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            await session.execute(update(entry).where(entry.c.path == "/d").values(kind="file"))
+            await session.commit()
+        result = await storage.restore(path=deleted.observations[0].trash_path)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        await storage.close()
+
+    async def test_restore_destination_overflow_refuses_unaddressable(self, tmp_path) -> None:
+        # The parent moved deeper since the delete: the computed
+        # destination exceeds the byte budget and the row stays in trash.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        name = "n" * 255
+        await storage.write(entries=[Entry(path=Path(f"/d/{name}"), content="x")])
+        deleted = await storage.delete(path=Path(f"/d/{name}"))
+        trash_path = deleted.observations[0].trash_path
+        deep = Path("/" + "a" * 255 + "/" + "b" * 255 + "/" + "c" * 255)
+        await storage.mkdir(path=deep, parents=True)
+        assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path(f"{deep}/d"))])).success is True
+        result = await storage.restore(path=trash_path)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unaddressable
+        assert (await storage.stat(path=trash_path)).success is True
+        await storage.close()
+
+    async def test_restore_descendant_overflow_refuses_unaddressable(self, tmp_path) -> None:
+        # The restored root fits; a descendant rewrite would not.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d/s"), parents=True)
+        await storage.write(entries=[Entry(path=Path("/d/s/" + "f" * 255), content="x")])
+        deleted = await storage.delete(path=Path("/d/s"))
+        trash_path = deleted.observations[0].trash_path
+        deep = Path("/" + "a" * 255 + "/" + "b" * 255 + "/" + "c" * 255)
+        await storage.mkdir(path=deep, parents=True)
+        assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path(f"{deep}/d"))])).success is True
+        result = await storage.restore(path=trash_path)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unaddressable
+        assert (await storage.stat(path=trash_path)).success is True
+        await storage.close()
+
+    async def test_restore_onto_a_wrong_kind_occupant(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        await storage.delete(path=Path("/a.txt"))
+        await storage.mkdir(path=Path("/a.txt"))
+        result = await storage.restore(path=Path("/a.txt"), overwrite=True)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        await storage.close()
+
+    async def test_restore_onto_a_nonempty_directory_occupant(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        await storage.delete(path=Path("/d"))
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/new.txt"), content="x")])
+        result = await storage.restore(path=Path("/d"), overwrite=True)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.not_empty
+        await storage.close()
+
+    async def test_restore_overwrites_an_empty_directory_occupant(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="kept")])
+        await storage.delete(path=Path("/d"))
+        await storage.mkdir(path=Path("/d"))
+        result = await storage.restore(path=Path("/d"), overwrite=True)
+        assert result.success is True
+        assert result.observations[0].status == "updated"
+        assert (await storage.read(path=Path("/d/f.txt"))).observations[0].content == "kept"
+        await storage.close()
+
+    async def test_restore_batch_error_fails_the_batch_whole(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        deleted = await storage.delete(path=Path("/a.txt"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        targets = [Observation(path=trash_path), Observation(path=Path("/ghost.txt"))]
+        result = await storage.restore(observations=targets)
+        assert result.success is False
+        # The refused batch never commits: the good target stays in trash.
+        assert (await storage.stat(path=trash_path)).success is True
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
         await storage.close()
 
 

@@ -83,7 +83,9 @@ Five pins:
    result shape) is the implementing spec's call.
 3. **Restore lookup is by original site and deletion time.** The
    supported flow: query trash by original path/parent
-   (`original_parent_id`, `original_name` — indexed) and disambiguate
+   (`original_parent_id`, `original_name` — indexed; *amendment
+   2026-07-24: these columns were in fact unindexed at acceptance —
+   spec 082 added `ix_<table>_restore`*) and disambiguate
    multiple candidates by `deleted_at`, the field's universal
    disambiguator; the ULID-prefixed trash path is the exact address
    when the caller holds it. The ADR 014 pin 4 restore verb consumes

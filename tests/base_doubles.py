@@ -86,6 +86,9 @@ class RecorderStorage:
     async def delete(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
         return self._answer("delete", kwargs)
 
+    async def restore(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
+        return self._answer("restore", kwargs)
+
     async def mkdir(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
         return self._answer("mkdir", kwargs)
 
@@ -391,6 +394,7 @@ def _mutate(fs: VirtualFileSystem, op: str, base: str):
         "write": lambda: fs.write(path=f"{base}/f.txt", content="x"),
         "edit": lambda: fs.edit(path=f"{base}/f.txt", old="a", new="b"),
         "delete": lambda: fs.delete(path=f"{base}/f.txt"),
+        "restore": lambda: fs.restore(path=f"{base}/f.txt"),
         "mkdir": lambda: fs.mkdir(f"{base}/d"),
         "mkedge": lambda: fs.mkedge(f"{base}/a.py", f"{base}/b.py", "imports"),
         "move": lambda: fs.move(src=f"{base}/a.txt", dest=f"{base}/b.txt"),
@@ -405,6 +409,7 @@ def _mutate_at_root(fs: VirtualFileSystem, op: str, target: str):
         "write": lambda: fs.write(path=target, content="x"),
         "edit": lambda: fs.edit(path=target, old="a", new="b"),
         "delete": lambda: fs.delete(path=target),
+        "restore": lambda: fs.restore(path=target),
         "mkdir": lambda: fs.mkdir(target),
         "mkedge": lambda: fs.mkedge(target, "/b.py", "imports"),
         "move": lambda: fs.move(src="/a.txt", dest=target),

@@ -243,6 +243,15 @@ class SupportsMutation(Protocol):
         user_id: str | None = None,
     ) -> Result: ...
 
+    async def restore(
+        self,
+        *,
+        path: Path | None = None,
+        observations: list[Observation] | None = None,
+        overwrite: bool = False,
+        user_id: str | None = None,
+    ) -> Result: ...
+
     async def mkdir(
         self,
         *,

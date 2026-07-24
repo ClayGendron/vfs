@@ -133,6 +133,12 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("cascade", "bool", nullable=False, default=True, doc="delete the subtree beneath a directory"),
         _USER,
     ),
+    "restore": (
+        ParamSpec("path", "path", doc="the original path — or the exact trash-side path — of the row to restore"),
+        _OBSERVATIONS,
+        ParamSpec("overwrite", "bool", nullable=False, default=False, doc="replace an occupant at the original site"),
+        _USER,
+    ),
     "mkdir": (
         ParamSpec("path", "path", required=True, doc="the directory to create"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors"),
@@ -224,6 +230,7 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     "stat": (_ONE_TARGET,),
     "ls": (_ONE_TARGET,),
     "delete": (_ONE_TARGET,),
+    "restore": (_ONE_TARGET,),
     "graph": (_ONE_TARGET,),
     "edit": (
         _ONE_TARGET,

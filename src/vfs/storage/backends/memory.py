@@ -108,7 +108,8 @@ class InMemoryStorage:
         self._edges: dict[tuple[Path, Path, str], int] = {}
 
     def capabilities(self) -> frozenset[Op]:
-        return storage_ops(self)
+        # Deletes here are permanent — no trash, so restore never can be.
+        return storage_ops(self) - frozenset({"restore"})
 
     def traits(self) -> Mapping[str, str]:
         # Live-state scan: no index tier, so results are never stale.
@@ -389,6 +390,18 @@ class InMemoryStorage:
             return Result(ops=("delete",), errors=errors)
         self._rows = staged
         return Result(ops=("delete",), observations=rows)
+
+    async def restore(
+        self,
+        *,
+        path: Path | None = None,
+        observations: list[Observation] | None = None,
+        overwrite: bool = False,
+        user_id: str | None = None,
+    ) -> Result:
+        """Classified refusal: deletes here are permanent, so there is no trash."""
+        del path, observations, overwrite, user_id
+        return _fail("restore", VFSErrorKind.unsupported, "Restore is not supported: this storage keeps no trash")
 
     async def mkdir(
         self,

@@ -66,6 +66,8 @@ GARBAGE = [
     ("edit-truthy-replace-all", lambda fs: fs.edit("/f.txt", old="a", new="b", replace_all="yes")),
     ("delete-truthy-permanent", lambda fs: fs.delete("/f.txt", permanent="no")),
     ("delete-truthy-cascade", lambda fs: fs.delete("/f.txt", cascade=1)),
+    ("restore-both-forms", lambda fs: fs.restore("/f.txt", observations=[])),
+    ("restore-truthy-overwrite", lambda fs: fs.restore("/f.txt", overwrite=1)),
     ("mkdir-truthy-parents", lambda fs: fs.mkdir("/d", parents="yes")),
     ("mkdir-truthy-exist-ok", lambda fs: fs.mkdir("/d", exist_ok=1)),
     ("mkedge-non-str-type", lambda fs: fs.mkedge("/a.py", "/b.py", 123)),

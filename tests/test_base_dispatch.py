@@ -218,6 +218,18 @@ async def test_delete_bind_site_is_busy() -> None:
     assert a.calls == []
 
 
+async def test_restore_addressing_a_bind_site_is_busy() -> None:
+    # Restore lands on its address; a live binding there is EBUSY exactly
+    # like delete's removal of it.
+    root = VirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    result = await root.restore("/a")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.busy
+    assert a.calls == []
+
+
 async def test_delete_region_containing_bind_site_is_busy() -> None:
     root = VirtualFileSystem()
     a = RecorderStorage()

@@ -53,6 +53,19 @@ open/seed/draft specs against `src/vfs/` and update both).
   spec must add the missing `(original_parent_id, original_name)`
   index — ADR 026's "indexed" claim is stale against
   `models/rows.py`.
+- **082 — restore verb**: landed 2026-07-24 (ADR 014 pin 4, ADR 026
+  pins 3–4 executed): `restore` is a full routed verb — one `path`
+  argument with two address forms (exact trash-side path, or original
+  site matched on the now-indexed restore columns, newest
+  `deleted_at` winning), fail-and-keep on a dead original parent,
+  move-ladder occupant refusals, execution via the shared move
+  executor. `ix_<table>_restore` closes ADR 026 pin 3's stale
+  "indexed" claim (amended in place). Memory carves `restore` out of
+  its capabilities (permanent deletes, no trash) and refuses
+  `unsupported`; the conformance restore family gates on
+  `@needs("restore")` and is enforced on sqlite plus all four engine
+  legs. Remaining from the trash arc: the sweep verb (ADR 026 pin 5,
+  blocked on the retention-policy open question).
 - **Housekeeping owed:** 074–079 spec folders still exist despite
   landing — each needs its residue-mining pass and deletion
   (`specs/README.md` lifecycle rule).

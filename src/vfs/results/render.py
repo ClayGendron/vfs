@@ -542,6 +542,8 @@ def _verb_for(operation: str | None) -> str:
             return "Edited"
         case "delete":
             return "Deleted"
+        case "restore":
+            return "Restored"
         case "move":
             return "Moved"
         case "copy":

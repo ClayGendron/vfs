@@ -1,5 +1,5 @@
 """Topology-family statement builders for ``DatabaseStorage`` — delete,
-move, copy.
+restore, move, copy.
 
 Topology verbs rewrite the namespace's shape — parent pointers and path
 caches — so every one of them serializes: its first statement takes the
@@ -24,6 +24,16 @@ the bucket chain itself, which trashing would reparent into its own
 cascade. The trash rewrite honors the public byte budget end to end: a
 delete whose bucket prefix would push any descendant's path past it
 refuses ``unaddressable`` — an over-budget path is never stored.
+
+Restore is the move machinery with a computed destination. A
+trash-side address names its exact row; any other address is an
+original site, matched on the indexed restore columns with the newest
+``deleted_at`` winning. The refusal ladder runs live per target:
+metadata gate (``invalid`` on a row without restore columns), original
+parent resolved by identity (``not_found`` fail-and-keep when it died,
+``invalid`` when it sits in trash itself), then the move occupant
+ladder and byte budget. Execution is the shared move executor, so a
+restore and a move out of trash cannot drift apart.
 
 Move and copy share one pair ladder mirroring the memory backend row
 for row: batch-shape refusals against the committed snapshot, live
@@ -78,6 +88,9 @@ _SNAPSHOT_COLUMNS: Final[tuple[str, ...]] = ("entry_id", "parent_id", "path", "n
 
 # A transfer subtree adds the material columns a copy reproduces.
 _SUBTREE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "content_hash", "mime_type", "ext", "lines")
+
+# A restore source adds the columns the restore contract consumes.
+_RESTORE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "original_parent_id", "original_name", "deleted_at")
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +180,73 @@ async def delete_rows(
     if errors:
         return Result(ops=("delete",), errors=errors)
     return Result(ops=("delete",), observations=rows)
+
+
+# ---------------------------------------------------------------------------
+# Restore
+# ---------------------------------------------------------------------------
+
+
+async def restore_rows(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    *,
+    targets: list[Path],
+    overwrite: bool,
+    user_id: str | None,
+    lock_key: int,
+) -> Result:
+    """Adjudicate and apply a batch of restores, target by target.
+
+    Every check reads live state inside the serialized transaction, in
+    request order — an earlier restore's effects are visible to later
+    targets. The per-target ladder: address resolution and metadata
+    gate, original-parent gate (fail-and-keep — a refused row stays in
+    trash with its metadata intact, since a failed batch never
+    commits), no-replace ``exists``, occupant kind and emptiness, then
+    byte-budget overflow — no statement runs for a target until every
+    check passes. *user_id* is accepted for signature parity; a restore
+    changes no ownership.
+    """
+    del user_id
+    entry = tables.entry
+    await _serialize(session, profile, tables.meta, lock_key)
+    now = datetime.now(UTC)
+    pending: list[_PendingTransfer] = []
+    errors: list[ResultError] = []
+    for target in targets:
+        resolved = await _resolve_restore(session, entry, target, membership_budget)
+        if isinstance(resolved, ResultError):
+            errors.append(resolved)
+            continue
+        row, dest_parent_id, dest = resolved
+        occupant = await _point_row(session, entry, str(dest))
+        if occupant is not None and not overwrite:
+            errors.append(already_exists(dest))
+            continue
+        if occupant is not None:
+            if (row["kind"] == "directory") != (occupant["kind"] == "directory"):
+                errors.append(classified(VFSErrorKind.wrong_kind, f"Cannot restore onto: {dest}", dest, target=target))
+                continue
+            if occupant["kind"] == "directory" and await _has_live_children(session, entry, occupant["entry_id"]):
+                errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest, target=target))
+                continue
+        subtree = await _fetch_subtree(session, entry, row["path"])
+        new_paths = (str(dest) + r["path"][len(row["path"]) :] for r in subtree)
+        if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths):
+            message = f"Cannot restore {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
+            errors.append(classified(VFSErrorKind.unaddressable, message, target))
+            continue
+        await _execute_move(session, tables, membership_budget, row, dest, dest_parent_id, occupant, now)
+        status: Literal["created", "updated"] = "updated" if occupant is not None else "created"
+        pending.append(_PendingTransfer(dest, status, row["kind"], row["version"] + 1, row["size_bytes"]))
+    if errors:
+        return Result(ops=("restore",), errors=errors)
+    finals = await _final_rows(session, entry, membership_budget, [str(p.dest) for p in pending])
+    rows = [_observe_transfer(p, finals.get(str(p.dest))) for p in pending]
+    return Result(ops=("restore",), observations=rows)
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +562,80 @@ def _subsumed_trash_path(
     if byte_length(derived) > MAX_PATH_LENGTH:
         return None
     return Path(derived)
+
+
+class _RestoreSource(NamedTuple):
+    """A resolved restore target: the trash row and its destination site."""
+
+    row: RowMapping
+    dest_parent_id: str
+    dest: Path
+
+
+async def _resolve_restore(
+    session: AsyncSession, entry: Table, target: Path, membership_budget: int
+) -> _RestoreSource | ResultError:
+    """Resolve *target* to its trash row and destination, or a refusal.
+
+    A trash-side address names its exact row and derives the destination
+    from the restore columns — following the original parent's identity
+    to wherever it lives now. Any other address is an original site: its
+    parent resolves live by path through the shared descent gate, and
+    candidate rows match on the restore columns, newest ``deleted_at``
+    first, ties broken by entry id (ULIDs are time-ordered).
+    """
+    if target == TRASH_ROOT or target.startswith(TRASH_ROOT + "/"):
+        row = await _point_restore_row(session, entry, str(target))
+        if row is None:
+            return (await classify_misses(session, entry, [target], membership_budget))[0]
+        if row["original_parent_id"] is None or row["original_name"] is None:
+            return classified(VFSErrorKind.invalid, f"No restore metadata: {target}", target)
+        parent = await _row_by_id(session, entry, row["original_parent_id"])
+        if parent is None:
+            message = f"Cannot restore {target}: original parent no longer exists"
+            return classified(VFSErrorKind.not_found, message, target)
+        if parent["kind"] != "directory":
+            return classified(
+                VFSErrorKind.wrong_kind, f"Not a directory: {parent['path']}", Path(parent["path"]), target=target
+            )
+        if parent["path"] == TRASH_ROOT or parent["path"].startswith(TRASH_ROOT + "/"):
+            message = f"Cannot restore {target}: original parent is in the trash — restore {parent['path']} first"
+            return classified(VFSErrorKind.invalid, message, target)
+        prefix = "" if parent["path"] == "/" else parent["path"]
+        dest = f"{prefix}/{row['original_name']}"
+        if byte_length(dest) > MAX_PATH_LENGTH:
+            message = f"Cannot restore {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
+            return classified(VFSErrorKind.unaddressable, message, target)
+        return _RestoreSource(row, parent["entry_id"], Path(dest))
+    parent_id = await _dest_parent_id(session, entry, target, membership_budget)
+    if isinstance(parent_id, ResultError):
+        return parent_id
+    row = await _newest_candidate(session, entry, parent_id, target.name)
+    if row is None:
+        return classified(VFSErrorKind.not_found, f"No trashed entry for: {target}", target)
+    return _RestoreSource(row, parent_id, target)
+
+
+async def _point_restore_row(session: AsyncSession, entry: Table, path: str) -> RowMapping | None:
+    columns = [entry.c[name] for name in _RESTORE_COLUMNS]
+    return (await session.execute(select(*columns).where(entry.c.path == path))).mappings().first()
+
+
+async def _row_by_id(session: AsyncSession, entry: Table, entry_id: str) -> RowMapping | None:
+    columns = [entry.c[name] for name in _SNAPSHOT_COLUMNS]
+    return (await session.execute(select(*columns).where(entry.c.entry_id == entry_id))).mappings().first()
+
+
+async def _newest_candidate(session: AsyncSession, entry: Table, parent_id: str, name: str) -> RowMapping | None:
+    """The newest trash row whose original site is (*parent_id*, *name*)."""
+    columns = [entry.c[column] for column in _RESTORE_COLUMNS]
+    stmt = (
+        select(*columns)
+        .where(entry.c.original_parent_id == parent_id, entry.c.original_name == name)
+        .order_by(entry.c.deleted_at.desc(), entry.c.entry_id.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).mappings().first()
 
 
 async def _reparent_to_trash(
