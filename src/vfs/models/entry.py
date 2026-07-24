@@ -365,8 +365,9 @@ class Observation(BaseModel):
     a stat's ``version`` is the entry's current value, a version row's is its
     label) and the ``edge_*`` trio mirrors :class:`~vfs.models.edge.Edge`
     (see ``OBSERVATION_MIRROR_OWNERS``). Query fields are facts about
-    *(entry, operation)* — a score, the matched regions, a write status — and
-    are never persisted. ``name`` / ``ext`` / ``parent_dir`` need no mirrors:
+    *(entry, operation)* — a score, the matched regions, a write status, a
+    delete's trash destination — and are never persisted. ``name`` / ``ext``
+    / ``parent_dir`` need no mirrors:
     ``path`` is a :class:`Path`, so they come free (``obs.path.name``).
 
     ``populated`` is the explicit field mask: the names this call actually
@@ -402,6 +403,7 @@ class Observation(BaseModel):
     in_degree: int | None = None
     out_degree: int | None = None
     status: Literal["created", "updated", "unchanged", "deleted"] | None = None
+    trash_path: Path | None = None
 
     # --- Populated-field mask ------------------------------------------------
 
@@ -436,18 +438,28 @@ class Observation(BaseModel):
     # -----------------------------------------------------------------------
 
     def with_mount(self, mount: str) -> Observation:
-        """Frozen copy re-rooted under *mount* — the router's outbound rebase."""
-        return self.model_copy(update={"path": self.path.with_mount(mount)})
+        """Frozen copy re-rooted under *mount* — the router's outbound rebase.
+
+        ``trash_path`` names the same mount-local namespace as ``path``,
+        so a populated one rebases alongside it.
+        """
+        update: dict[str, Any] = {"path": self.path.with_mount(mount)}
+        if self.trash_path is not None:
+            update["trash_path"] = self.trash_path.with_mount(mount)
+        return self.model_copy(update=update)
 
     def without_mount(self, mount: str) -> Observation:
         """Frozen copy with the *mount* prefix stripped — the inbound rebase."""
-        return self.model_copy(update={"path": self.path.without_mount(mount)})
+        update: dict[str, Any] = {"path": self.path.without_mount(mount)}
+        if self.trash_path is not None:
+            update["trash_path"] = self.trash_path.without_mount(mount)
+        return self.model_copy(update=update)
 
 
 # Mirror/query partition of Observation's fields. The drift test pins every
 # mirror to its owning model's field type; query fields exist on no model.
 OBSERVATION_QUERY_FIELDS: Final[frozenset[str]] = frozenset(
-    {"score", "matches", "in_degree", "out_degree", "status", "populated"},
+    {"score", "matches", "in_degree", "out_degree", "status", "trash_path", "populated"},
 )
 OBSERVATION_MIRROR_FIELDS: Final[frozenset[str]] = frozenset(Observation.model_fields) - OBSERVATION_QUERY_FIELDS
 

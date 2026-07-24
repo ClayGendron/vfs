@@ -390,6 +390,12 @@ class TestMountRebasing:
         assert obs.path == "/docs/a.md"
         assert rebased.without_mount("/data") == obs
 
+    def test_observation_rebase_carries_trash_path(self) -> None:
+        obs = Observation(path=Path("/a.md"), trash_path=Path("/.vfs/trash/2026-07-24-05/01A-a.md"))
+        rebased = obs.with_mount("/data")
+        assert rebased.trash_path == "/data/.vfs/trash/2026-07-24-05/01A-a.md"
+        assert rebased.without_mount("/data") == obs
+
 
 # ---------------------------------------------------------------------------
 # Entry.with_content — content replacement, copy-returning

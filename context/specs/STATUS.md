@@ -44,6 +44,15 @@ open/seed/draft specs against `src/vfs/` and update both).
 - **080 — mysql batch UPDATE statements**: draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `open-questions.md`.
+- **081 — self-describing trash names**: landed 2026-07-24 (ADR 026
+  pins 1–2 executed): trash rows named `<ULID>-<original_name>`
+  (tail-truncated to the segment budget, UTF-8-whole), delete
+  observations report the trash address (`Observation.trash_path`
+  query field, mount-rebased, rendered on the one-liner). The restore
+  verb (pins 3–4) and sweep (pin 5) are the next specs; the restore
+  spec must add the missing `(original_parent_id, original_name)`
+  index — ADR 026's "indexed" claim is stale against
+  `models/rows.py`.
 - **Housekeeping owed:** 074–079 spec folders still exist despite
   landing — each needs its residue-mining pass and deletion
   (`specs/README.md` lifecycle rule).

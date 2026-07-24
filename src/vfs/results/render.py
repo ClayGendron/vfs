@@ -431,13 +431,19 @@ def _render_tree(result: Result) -> str:
 
 
 def _render_action(result: Result) -> str:
-    """Action one-liner — ``{Verb} {path}`` or ``{Verb} {N} paths``."""
+    """Action one-liner — ``{Verb} {path}`` or ``{Verb} {N} paths``.
+
+    A single trashed delete appends where the row went, so the deleting
+    agent learns its trash address without a search.
+    """
     count = len(result.observations)
     verb = _verb_for(result.op)
     if count == 0:
         return "No changes"
     if count == 1:
-        return f"{verb} {result.one().path}"
+        one = result.one()
+        suffix = f" → {one.trash_path}" if one.trash_path is not None else ""
+        return f"{verb} {one.path}{suffix}"
     return f"{verb} {count} paths"
 
 

@@ -345,6 +345,11 @@ class TestActionRendering:
         result = Result(ops=("delete",), observations=[obs("/a.md")])
         assert str(result) == "Deleted /a.md"
 
+    def test_single_delete_appends_the_trash_destination(self) -> None:
+        trashed = obs("/a.md", trash_path=Path("/.vfs/trash/2026-07-24-05/01A-a.md"))
+        result = Result(ops=("delete",), observations=[trashed])
+        assert str(result) == "Deleted /a.md → /.vfs/trash/2026-07-24-05/01A-a.md"
+
     def test_multi_path_action(self) -> None:
         result = Result(ops=("move",), observations=[obs("/a.md"), obs("/b.md")])
         assert str(result) == "Moved 2 paths"

@@ -13,10 +13,13 @@ Delete stages nothing: it fetches one pre-batch committed snapshot for
 classification, then walks targets in request order mirroring the
 memory backend's ladder — root refusal, covered/repeat subsumption
 judged against the snapshot, live ``not_empty`` on ``cascade=False``.
-The default arm reparents the row into an hourly trash bucket (path
-rewritten, original site recorded, name swapped to the entry's ULID so
-same-named deletes never collide); ``permanent`` purges the subtree's
-rows across every family table — as does a target whose subtree holds
+The default arm reparents the row into an hourly trash bucket: path
+rewritten, original site recorded, name rewritten to
+``<ULID>-<original name>`` — unique and time-sorted by its fixed
+prefix, self-describing by its tail-truncated suffix — and the row's
+observation reports the trash path, covered targets deriving theirs
+from the covering root's. ``permanent`` purges the subtree's rows
+across every family table — as does a target whose subtree holds
 the bucket chain itself, which trashing would reparent into its own
 cascade. The trash rewrite honors the public byte budget end to end: a
 delete whose bucket prefix would push any descendant's path past it
@@ -46,7 +49,7 @@ from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from vfs.models import Observation
-from vfs.paths import MAX_PATH_LENGTH, METADATA_ROOT, ROOT, TRASH_ROOT, Path, byte_length
+from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, METADATA_ROOT, ROOT, TRASH_ROOT, Path, byte_length
 from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
@@ -101,8 +104,9 @@ async def delete_rows(
     in-transaction, a live probe would blame the wrong path — while the
     ``cascade=False`` occupancy check reads live state, so a target
     emptied earlier in the batch deletes cleanly. Each deleted row
-    observes its pre-delete snapshot state; there is no post-commit row
-    to stat at the requested path.
+    observes its pre-delete snapshot state — there is no post-commit row
+    to stat at the requested path — plus, on the trash arm, the trash
+    path it now lives at.
     """
     entry = tables.entry
     await _serialize(session, profile, tables.meta, lock_key)
@@ -127,7 +131,8 @@ async def delete_rows(
             if row is None:
                 errors.append(classify_miss(target, kinds))
             else:
-                rows.append(_observe_deleted(target, row))
+                subsumed = _subsumed_trash_path(target, unique, snapshot, trash, cascade=cascade, permanent=permanent)
+                rows.append(_observe_deleted(target, row, trash_path=subsumed))
             continue
         seen.add(target)
         row = snapshot.get(str(target))
@@ -139,6 +144,7 @@ async def delete_rows(
             continue
         # Trashing a target that holds the bucket chain would reparent the
         # chain into its own subtree — a cycle; memory parity hard-deletes.
+        location: Path | None = None
         if permanent or trash.chain_inside(target):
             await _purge_subtree(session, tables, membership_budget, str(target))
         else:
@@ -146,7 +152,7 @@ async def delete_rows(
             if isinstance(bucket_id, ResultError):
                 errors.append(bucket_id)
                 continue
-            trash_path = f"{trash.bucket_path}/{row['entry_id']}"
+            trash_path = f"{trash.bucket_path}/{_trash_name(row['entry_id'], row['name'])}"
             rewrites = await _descendant_rewrites(session, entry, str(target), trash_path)
             if any(byte_length(rewrite["b_path"]) > MAX_PATH_LENGTH for rewrite in rewrites):
                 message = f"Cannot delete {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
@@ -155,8 +161,9 @@ async def delete_rows(
             await _reparent_to_trash(session, entry, row, bucket_id, trash_path, now)
             await _apply_rewrites(session, entry, rewrites)
             await _bump(session, entry, bucket_id)
+            location = Path(trash_path)
         await _bump(session, entry, row["parent_id"])
-        rows.append(_observe_deleted(target, row))
+        rows.append(_observe_deleted(target, row, trash_path=location))
     if errors:
         return Result(ops=("delete",), errors=errors)
     return Result(ops=("delete",), observations=rows)
@@ -430,10 +437,57 @@ class _TrashChain:
         return (await session.execute(probe)).one()
 
 
+def _trash_name(entry_id: str, original_name: str) -> str:
+    """The in-bucket name ``<ULID>-<original name>``, tail-fit to the segment budget.
+
+    The fixed-width ULID prefix carries uniqueness and time order, so
+    truncation only ever costs readable suffix — and ``decode`` dropping
+    the truncated tail sequence keeps every UTF-8 character whole. The
+    name is display: the ``original_*`` columns stay the only authority,
+    and nothing ever parses a trash name back apart.
+    """
+    name = f"{entry_id}-{original_name}"
+    encoded = name.encode()
+    if len(encoded) <= MAX_SEGMENT_LENGTH:
+        return name
+    return encoded[:MAX_SEGMENT_LENGTH].decode(errors="ignore")
+
+
+def _subsumed_trash_path(
+    target: Path,
+    unique: set[Path],
+    snapshot: dict[str, RowMapping],
+    trash: _TrashChain,
+    *,
+    cascade: bool,
+    permanent: bool,
+) -> Path | None:
+    """The trash address a covered or repeated target lands at, or ``None``.
+
+    Derived, not looked up — the covering root may sit later in request
+    order. The outermost covering target is the row actually reparented;
+    the target rides at its old suffix beneath that root's trash name,
+    deterministic from the snapshot and the batch's bucket. ``None``
+    when the root purges instead (permanent, or it holds the bucket
+    chain), or when the derived path overflows the byte budget — that
+    root is refusing the batch, so no address exists to report.
+    """
+    covering = [o for o in unique if o == target or (cascade and target.startswith(o + "/"))]
+    root = min(covering, key=lambda o: len(str(o)))
+    if permanent or trash.chain_inside(root):
+        return None
+    root_row = snapshot[str(root)]
+    name = _trash_name(root_row["entry_id"], root_row["name"])
+    derived = f"{trash.bucket_path}/{name}" + str(target)[len(str(root)) :]
+    if byte_length(derived) > MAX_PATH_LENGTH:
+        return None
+    return Path(derived)
+
+
 async def _reparent_to_trash(
     session: AsyncSession, entry: Table, row: RowMapping, bucket_id: str, trash_path: str, now: datetime
 ) -> None:
-    """Rewrite the row into the bucket; its ULID becomes its in-bucket name.
+    """Rewrite the row into the bucket under its self-describing trash name.
 
     Deliberately unguarded: under the serialization point the row cannot
     vanish, and a concurrent edit composes — both bump SQL-side off the
@@ -444,7 +498,7 @@ async def _reparent_to_trash(
         .where(entry.c.entry_id == row["entry_id"])
         .values(
             parent_id=bucket_id,
-            name=row["entry_id"],
+            name=trash_path.rsplit("/", 1)[-1],
             path=trash_path,
             original_parent_id=row["parent_id"],
             original_name=row["name"],
@@ -702,11 +756,12 @@ def _observe_transfer(pending: _PendingTransfer, final: RowMapping | None) -> Ob
     )
 
 
-def _observe_deleted(target: Path, row: RowMapping) -> Observation:
+def _observe_deleted(target: Path, row: RowMapping, *, trash_path: Path | None = None) -> Observation:
     return Observation(
         path=target,
         kind=row["kind"],
         size_bytes=row["size_bytes"],
         version=row["version"],
         status="deleted",
+        trash_path=trash_path,
     )

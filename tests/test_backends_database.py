@@ -28,7 +28,7 @@ from ulid import ULID
 
 from vfs.models import Entry, Observation
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
-from vfs.paths import MAX_PATH_LENGTH, ObjectKind, Path
+from vfs.paths import MAX_PATH_LENGTH, ObjectKind, Path, byte_length
 from vfs.results import ResultError, VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
@@ -2384,16 +2384,22 @@ class TestDeleteTrash:
     async def test_delete_reparents_into_the_hourly_bucket(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="body")])
-        assert (await storage.delete(path=Path("/a.txt"))).success
+        deleted = await storage.delete(path=Path("/a.txt"))
+        assert deleted.success
         buckets = await storage.ls(path=Path("/.vfs/trash"))
         assert len(buckets.observations) == 1
         bucket = buckets.observations[0]
         listing = await storage.ls(path=bucket.path)
         assert len(listing.observations) == 1
         trashed = listing.observations[0]
-        # The in-bucket name is the entry's ULID, never the original name.
-        assert len(Path(trashed.path).name) == ULID_LENGTH
-        assert Path(trashed.path).name != "a.txt"
+        # The in-bucket name is `<ULID>-<original name>`: unique and
+        # time-sorted by prefix, self-describing by suffix.
+        name = Path(trashed.path).name
+        assert len(name) == ULID_LENGTH + len("-a.txt")
+        assert name.endswith("-a.txt")
+        # The delete result reported exactly this address.
+        assert deleted.observations[0].trash_path == trashed.path
+        assert "trash_path" in deleted.observations[0].populated
         read = await storage.read(path=trashed.path)
         assert read.observations[0].content == "body"
         await storage.close()
@@ -2406,7 +2412,7 @@ class TestDeleteTrash:
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
             row = (await session.execute(select(entry).where(entry.c.original_name == "a.txt"))).mappings().one()
-        assert row["name"] == row["entry_id"]
+        assert row["name"] == f"{row['entry_id']}-a.txt"
         assert row["deleted_at"] is not None
         assert row["original_parent_id"] is not None
         parent = await storage.stat(path=Path("/docs"))
@@ -2439,6 +2445,95 @@ class TestDeleteTrash:
         buckets = await storage.ls(path=Path("/.vfs/trash"))
         listing = await storage.ls(path=buckets.observations[0].path)
         assert len(listing.observations) == 2
+        # Both keep the readable suffix; the ULID prefix tells them apart.
+        names = [Path(o.path).name for o in listing.observations]
+        assert all(n.endswith("-f.txt") for n in names)
+        assert len(set(names)) == 2
+        await storage.close()
+
+    async def test_permanent_delete_reports_no_trash_path(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        result = await storage.delete(path=Path("/a.txt"), permanent=True)
+        obs = result.observations[0]
+        assert obs.trash_path is None
+        assert "trash_path" not in obs.populated
+        await storage.close()
+
+    async def test_covered_targets_derive_their_trash_address(self, tmp_path) -> None:
+        # The covered child is observed before its covering root is
+        # processed; its trash address is derived, not looked up.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/proj/sub"), parents=True)
+        await storage.write(entries=[Entry(path=Path("/proj/sub/f.txt"), content="deep")])
+        targets = [Observation(path=Path("/proj/sub/f.txt")), Observation(path=Path("/proj"))]
+        result = await storage.delete(observations=targets)
+        assert result.success is True
+        by_path = {str(o.path): o for o in result.observations}
+        root_trash = by_path["/proj"].trash_path
+        assert root_trash is not None
+        covered_trash = by_path["/proj/sub/f.txt"].trash_path
+        assert covered_trash == Path(f"{root_trash}/sub/f.txt")
+        read = await storage.read(path=covered_trash)
+        assert read.observations[0].content == "deep"
+        await storage.close()
+
+    async def test_a_repeated_target_reports_the_same_trash_address(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        targets = [Observation(path=Path("/a.txt")), Observation(path=Path("/a.txt"))]
+        result = await storage.delete(observations=targets)
+        assert result.success is True
+        first, second = result.observations
+        assert first.trash_path is not None
+        assert second.trash_path == first.trash_path
+        await storage.close()
+
+    async def test_deleting_the_chain_holder_purges_and_reports_no_address(self, tmp_path) -> None:
+        # /.vfs holds the bucket chain: trashing it would reparent the
+        # chain into its own cascade, so it purges — covered rows too.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])
+        assert (await storage.delete(path=Path("/x.txt"))).success
+        targets = [Observation(path=Path("/.vfs/trash")), Observation(path=Path("/.vfs"))]
+        result = await storage.delete(observations=targets)
+        assert result.success is True
+        assert all(o.trash_path is None for o in result.observations)
+        await storage.close()
+
+    async def test_the_trash_name_truncates_at_the_tail_never_the_ulid(self, tmp_path) -> None:
+        # 26-byte ULID + hyphen leaves 228 bytes of name tail; the
+        # 4-byte emoji straddles the cut and must drop whole.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        original = "x" * 227 + "🚀"
+        await storage.write(entries=[Entry(path=Path(f"/{original}"), content="x")])
+        result = await storage.delete(path=Path(f"/{original}"))
+        assert result.success is True
+        trash_path = result.observations[0].trash_path
+        assert trash_path is not None
+        name = trash_path.name
+        assert byte_length(name) == ULID_LENGTH + 1 + 227
+        assert "🚀" not in name
+        # The row is addressable at the reported path with metadata whole.
+        assert (await storage.stat(path=trash_path)).success is True
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            found = (await session.execute(select(entry).where(entry.c.path == str(trash_path)))).mappings().one()
+        assert found["original_name"] == original
+        await storage.close()
+
+    async def test_a_maximal_name_still_fits_the_path_budget(self, tmp_path) -> None:
+        # Worst case root trash path is the bucket prefix plus a 255-byte
+        # name — ~281 bytes, comfortably inside the 1,024-byte budget.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        original = "n" * 255
+        await storage.write(entries=[Entry(path=Path(f"/{original}"), content="x")])
+        result = await storage.delete(path=Path(f"/{original}"))
+        assert result.success is True
+        trash_path = result.observations[0].trash_path
+        assert trash_path is not None
+        assert byte_length(str(trash_path)) <= MAX_PATH_LENGTH
+        assert (await storage.stat(path=trash_path)).success is True
         await storage.close()
 
     async def test_a_file_squatting_on_the_trash_chain_refuses_wrong_kind(self, tmp_path) -> None:
@@ -2663,12 +2758,12 @@ class TestTrashMachineryGuard:
         assert chain.chain_inside(Path("/docs")) is False
 
     async def test_trash_delete_refuses_when_a_rewrite_would_overflow(self, tmp_path) -> None:
-        # The bucket prefix is 52 bytes, so a descendant fits iff its
-        # path stays within 1024 - 52 + len(target) bytes — 974 for /d.
+        # The trash prefix for /d is 54 bytes (25-byte bucket + "/" +
+        # 28-byte <ULID>-d), so a descendant fits iff its path ≤ 972.
         storage = DatabaseStorage(url=_url(tmp_path))
         segment = "s" * 255
-        fits = Path(f"/d/{segment}/{segment}/{segment}/" + "f" * 203)
-        over = Path(f"/e/{segment}/{segment}/{segment}/" + "f" * 204)
+        fits = Path(f"/d/{segment}/{segment}/{segment}/" + "f" * 201)
+        over = Path(f"/e/{segment}/{segment}/{segment}/" + "f" * 202)
         await storage.write(entries=[Entry(path=fits, content="ok")], parents=True)
         assert (await storage.delete(path=Path("/d"))).success is True
         await storage.write(entries=[Entry(path=over, content="deep")], parents=True)
@@ -2678,6 +2773,11 @@ class TestTrashMachineryGuard:
         assert result.errors[0].path == "/e"
         # The refused batch never commits: the tree survives whole.
         assert (await storage.stat(path=over)).success is True
+        # A covered child of the refusing root derives no address either:
+        # the over-budget derivation yields None instead of raising.
+        both = await storage.delete(observations=[Observation(path=over), Observation(path=Path("/e"))])
+        assert both.success is False
+        assert any(e.kind == VFSErrorKind.unaddressable for e in both.errors)
         # Permanent delete stays the lawful removal for such trees.
         assert (await storage.delete(path=Path("/e"), permanent=True)).success is True
         await storage.close()
