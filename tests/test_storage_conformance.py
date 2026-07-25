@@ -1,9 +1,10 @@
 """Conformance-suite instantiations — one subclass per backend.
 
 The contract itself lives in ``storage_conformance.StorageContract``;
-this file only wires backends in. The sqlite leg runs the families
-``DatabaseStorage`` declares so far — capability gating skips the rest,
-and each mutation slice landing flips its rows from skipped to enforced.
+this file only wires backends in. The memory leg is ``InMemoryStorage``
+— ``DatabaseStorage`` over in-memory SQLite — so it runs the same
+families as the sqlite-file leg, trash arc included; capability gating
+skips only what a backend leaves undeclared.
 
 Real-server legs activate when their ``VFS_TEST_<ENGINE>_URL`` variable
 is set and skip otherwise, so a plain run never needs Docker. Servers
@@ -44,8 +45,10 @@ if TYPE_CHECKING:
 
 class TestMemoryConformance(StorageContract):
     @pytest.fixture
-    def storage(self) -> InMemoryStorage:
-        return InMemoryStorage()
+    async def storage(self) -> AsyncIterator[InMemoryStorage]:
+        storage = InMemoryStorage()
+        yield storage
+        await storage.close()
 
 
 class TestSqliteConformance(StorageContract):
@@ -185,7 +188,7 @@ async def _purge_sweeps_a_mid_purge_rival(env_var: str) -> None:
             rival_results.append(await storage.write(entries=[Entry(path=Path("/d/fresh.txt"), content="rival")]))
 
         with seams.installed("purge:post-collect", rival):
-            victim = await storage.delete(path=Path("/d"), permanent=True)
+            victim = await storage.sweep(path=Path("/d"))
         assert victim.success is True, victim.errors
         assert rival_results and rival_results[0].success is True
         assert (await storage.stat(path=Path("/d/fresh.txt"))).success is False

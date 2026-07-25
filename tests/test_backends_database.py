@@ -2216,7 +2216,7 @@ class TestMembershipChunking:
         assert deleted.success is True, deleted.errors
         assert len(deleted.observations) == 40
         assert (await storage.ls(path=Path("/src"))).observations == []
-        purged = await storage.delete(path=Path("/dst"), permanent=True)
+        purged = await storage.sweep(path=Path("/dst"))
         assert purged.success is True, purged.errors
         assert (await storage.stat(path=Path("/dst"))).success is False
         await storage.close()
@@ -2376,7 +2376,7 @@ class TestSeams:
 
 
 # ---------------------------------------------------------------------------
-# Delete — the trash arm and the permanent arm beyond the conformance rows
+# Delete — the trash arm beyond the conformance rows
 # ---------------------------------------------------------------------------
 
 
@@ -2453,13 +2453,17 @@ class TestDeleteTrash:
         assert len(set(names)) == 2
         await storage.close()
 
-    async def test_permanent_delete_reports_no_trash_path(self, tmp_path) -> None:
+    async def test_delete_batch_observations_all_carry_trash_paths(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
-        result = await storage.delete(path=Path("/a.txt"), permanent=True)
-        obs = result.observations[0]
-        assert obs.trash_path is None
-        assert "trash_path" not in obs.populated
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(
+            entries=[Entry(path=Path("/a.txt"), content="x"), Entry(path=Path("/d/b.txt"), content="y")]
+        )
+        targets = [Observation(path=Path("/a.txt")), Observation(path=Path("/d"))]
+        result = await storage.delete(observations=targets)
+        assert result.success is True
+        assert all(o.trash_path is not None for o in result.observations)
+        assert all("trash_path" in o.populated for o in result.observations)
         await storage.close()
 
     async def test_covered_targets_derive_their_trash_address(self, tmp_path) -> None:
@@ -2491,16 +2495,20 @@ class TestDeleteTrash:
         assert second.trash_path == first.trash_path
         await storage.close()
 
-    async def test_deleting_the_chain_holder_purges_and_reports_no_address(self, tmp_path) -> None:
-        # /.vfs holds the bucket chain: trashing it would reparent the
-        # chain into its own cascade, so it purges — covered rows too.
+    async def test_a_batch_touching_the_chain_holder_refuses_whole(self, tmp_path) -> None:
+        # /.vfs holds the bucket chain: its refusal fails the batch, so
+        # the innocent sibling target survives live — nothing commits.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])
         assert (await storage.delete(path=Path("/x.txt"))).success
-        targets = [Observation(path=Path("/.vfs/trash")), Observation(path=Path("/.vfs"))]
+        await storage.write(entries=[Entry(path=Path("/y.txt"), content="y")])
+        targets = [Observation(path=Path("/y.txt")), Observation(path=Path("/.vfs"))]
         result = await storage.delete(observations=targets)
-        assert result.success is True
-        assert all(o.trash_path is None for o in result.observations)
+        assert result.success is False
+        assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
+        assert result.errors[0].message == "Cannot delete /.vfs: contains the active trash chain — sweep reclaims trash"
+        assert (await storage.stat(path=Path("/y.txt"))).success is True
+        assert (await storage.stat(path=Path("/.vfs/trash"))).success is True
         await storage.close()
 
     async def test_the_trash_name_truncates_at_the_tail_never_the_ulid(self, tmp_path) -> None:
@@ -2551,15 +2559,18 @@ class TestDeleteTrash:
         assert (await storage.stat(path=Path("/x.txt"))).success is True
         await storage.close()
 
-    async def test_a_trashed_row_can_be_deleted_again_from_the_trash_side(self, tmp_path) -> None:
+    async def test_a_trashed_row_can_be_swept_from_the_trash_side(self, tmp_path) -> None:
+        # Per-row reclamation re-homed from the retired permanent flag:
+        # sweep of the exact trash address purges just that row.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/gone.txt"), content="x")])
         assert (await storage.delete(path=Path("/gone.txt"))).success
         buckets = await storage.ls(path=Path("/.vfs/trash"))
         listing = await storage.ls(path=buckets.observations[0].path)
         trash_path = listing.observations[0].path
-        assert (await storage.delete(path=Path(trash_path), permanent=True)).success
+        assert (await storage.sweep(path=Path(trash_path))).success
         assert (await storage.stat(path=Path(trash_path))).success is False
+        assert (await storage.stat(path=buckets.observations[0].path)).success is True
         await storage.close()
 
     async def test_the_bucket_mint_survives_a_rival_write_racing_the_chain(self, tmp_path) -> None:
@@ -2769,6 +2780,30 @@ class TestSweep:
         assert (await storage.read(path=Path("/.vfs/trash"))).observations[0].content == "squat"
         await storage.close()
 
+    async def test_sweep_purge_miss_classifies_through_the_descent_ladder(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        deep = await storage.sweep(path=Path("/ghost/deep"))
+        assert deep.success is False
+        assert deep.errors[0].kind == VFSErrorKind.not_found
+        assert deep.errors[0].path == "/ghost"
+        wrong = await storage.sweep(path=Path("/a.txt/child"))
+        assert wrong.success is False
+        assert wrong.errors[0].kind == VFSErrorKind.wrong_kind
+        assert wrong.errors[0].path == "/a.txt"
+        await storage.close()
+
+    async def test_sweep_purge_bumps_the_parent(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")])
+        before = (await storage.stat(path=Path("/d"))).observations[0].version
+        assert before is not None
+        assert (await storage.sweep(path=Path("/d/f.txt"))).success
+        after = (await storage.stat(path=Path("/d"))).observations[0].version
+        assert after == before + 1
+        await storage.close()
+
 
 class TestTransferBehavior:
     """Transfer arms beyond the conformance rows — restore, chains, fallbacks."""
@@ -2826,10 +2861,10 @@ class TestTransferBehavior:
         await storage.close()
 
 
-class TestDeletePermanent:
-    """The permanent arm purges the subtree's rows across every family table."""
+class TestSweepPurge:
+    """The purge arm sweeps the subtree's rows across every family table."""
 
-    async def test_permanent_delete_purges_family_rows(self, tmp_path) -> None:
+    async def test_sweep_purges_family_rows(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.mkdir(path=Path("/proj"))
         await storage.write(entries=[Entry(path=Path("/proj/f.txt"), content="x")])
@@ -2854,7 +2889,7 @@ class TestDeletePermanent:
                 insert(tables.edges).values(source_id=str(ULID()), target_id=target_id, edge_type="ref")
             )
             await session.commit()
-        assert (await storage.delete(path=Path("/proj"), permanent=True)).success
+        assert (await storage.sweep(path=Path("/proj"))).success
         async with storage._host.session_factory() as session:
             for table in (tables.entry, tables.content, tables.versions, tables.chunks):
                 remaining = (await session.execute(select(table).where(table.c.entry_id == target_id))).all()
@@ -2900,17 +2935,29 @@ async def _assert_no_cycles_or_orphans(storage: DatabaseStorage) -> None:
             current = by_id[current.parent_id]
 
 
-class TestTrashMachineryGuard:
-    """Deleting the trash machinery hard-deletes; it can never self-parent."""
+class TestTrashChainRefusal:
+    """Deleting the active trash machinery refuses; sweep reclaims it."""
 
-    async def test_deleting_the_trash_root_hard_deletes_without_cycles(self, tmp_path) -> None:
+    async def test_deleting_the_trash_root_refuses_and_purges_nothing(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        deleted = await storage.delete(path=Path("/a.txt"))
+        assert deleted.success
+        result = await storage.delete(path=Path("/.vfs/trash"))
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.invalid
+        expected = "Cannot delete /.vfs/trash: contains the active trash chain — sweep reclaims trash"
+        assert result.errors[0].message == expected
+        assert (await storage.stat(path=deleted.observations[0].trash_path)).success is True
+        await _assert_no_cycles_or_orphans(storage)
+        await storage.close()
+
+    async def test_sweeping_the_chain_holder_purges_and_the_chain_reminting_is_clean(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         assert (await storage.delete(path=Path("/a.txt"))).success
-        result = await storage.delete(path=Path("/.vfs/trash"))
-        assert result.success is True
-        assert result.observations[0].status == "deleted"
-        assert (await storage.stat(path=Path("/.vfs/trash"))).success is False
+        assert (await storage.sweep(path=Path("/.vfs"))).success is True
+        assert (await storage.stat(path=Path("/.vfs"))).success is False
         await _assert_no_cycles_or_orphans(storage)
         # The next delete re-mints a fresh chain cleanly.
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="x")])
@@ -2919,12 +2966,12 @@ class TestTrashMachineryGuard:
         await _assert_no_cycles_or_orphans(storage)
         await storage.close()
 
-    async def test_deleting_the_current_bucket_hard_deletes_without_cycles(self, tmp_path) -> None:
+    async def test_sweeping_the_current_bucket_reclaims_it_without_cycles(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         assert (await storage.delete(path=Path("/a.txt"))).success
         bucket = (await storage.ls(path=Path("/.vfs/trash"))).observations[0].path
-        assert (await storage.delete(path=Path(bucket))).success is True
+        assert (await storage.sweep(path=Path(bucket))).success is True
         assert (await storage.stat(path=Path(bucket))).success is False
         # The trash root survives; only the bucket subtree was purged.
         assert (await storage.stat(path=Path("/.vfs/trash"))).success is True
@@ -2963,8 +3010,8 @@ class TestTrashMachineryGuard:
         both = await storage.delete(observations=[Observation(path=over), Observation(path=Path("/e"))])
         assert both.success is False
         assert any(e.kind == VFSErrorKind.unaddressable for e in both.errors)
-        # Permanent delete stays the lawful removal for such trees.
-        assert (await storage.delete(path=Path("/e"), permanent=True)).success is True
+        # The developer-plane sweep stays the lawful removal for such trees.
+        assert (await storage.sweep(path=Path("/e"))).success is True
         await storage.close()
 
 
@@ -3038,7 +3085,7 @@ class TestPurgeHardening:
 
         event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
         try:
-            assert (await storage.delete(path=Path("/d"), permanent=True)).success
+            assert (await storage.sweep(path=Path("/d"))).success
         finally:
             event.remove(storage._host.engine.sync_engine, "before_cursor_execute", record)
         budget = membership_budget(storage._host.profile, 48)

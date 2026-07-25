@@ -276,7 +276,6 @@ class DatabaseStorage:
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        permanent: bool = False,
         cascade: bool = True,
         user_id: str | None = None,
     ) -> Result:
@@ -289,7 +288,6 @@ class DatabaseStorage:
                 self._host.profile,
                 self._host.membership_budget,
                 targets=targets,
-                permanent=permanent,
                 cascade=cascade,
                 user_id=user_id,
                 lock_key=self._host.topology_key,

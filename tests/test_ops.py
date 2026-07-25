@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import inspect
 
+from base_doubles import BindableStorage, RecorderFS, RecorderStorage
 from vfs import ops, permissions
 from vfs.base import VirtualFileSystem
-from vfs.ops import ALL_OPS, EXEC_OPS, MUTATING_OPS, READ_OPS, TWO_PATH_OPS
+from vfs.ops import ALL_OPS, DEVELOPER_OPS, EXEC_OPS, MUTATING_OPS, READ_OPS, TWO_PATH_OPS
 from vfs.results import projection
 
 # Public router methods that manage the mount tree rather than route an op.
@@ -102,6 +103,51 @@ def test_pruned_vocabularies_are_gone() -> None:
     assert not hasattr(projection, "RANKED_SEARCH_FUNCTIONS")
     for stale in ("pagerank", "hits", "vector_search", "semantic_search", "lexical_search", "bm25"):
         assert stale not in projection.KNOWN_FUNCTIONS
+
+
+# ---------------------------------------------------------------------------
+# Developer plane — sweep never reaches an agent surface
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_is_a_developer_plane_op() -> None:
+    assert "sweep" in DEVELOPER_OPS
+    assert DEVELOPER_OPS <= MUTATING_OPS
+    assert not DEVELOPER_OPS & READ_OPS
+
+
+async def test_no_agent_surface_op_ever_dispatches_sweep() -> None:
+    # Route every non-developer op — and the unmount path — through a
+    # recording backend: none may dispatch the sweep verb on storage.
+    fs = RecorderFS(storage=BindableStorage())
+    calls = {
+        "read": lambda: fs.read("/f.txt"),
+        "stat": lambda: fs.stat("/f.txt"),
+        "ls": lambda: fs.ls("/d"),
+        "tree": lambda: fs.tree("/"),
+        "glob": lambda: fs.glob("*.py"),
+        "grep": lambda: fs.grep("needle"),
+        "glean": lambda: fs.glean("how does auth work"),
+        "graph": lambda: fs.graph("ancestors", "/a.py"),
+        "write": lambda: fs.write(path="/f.txt", content="x"),
+        "edit": lambda: fs.edit("/f.txt", old="a", new="b"),
+        "delete": lambda: fs.delete("/f.txt"),
+        "restore": lambda: fs.restore("/f.txt"),
+        "mkdir": lambda: fs.mkdir("/d"),
+        "mkedge": lambda: fs.mkedge("/a.py", "/b.py", "imports"),
+        "move": lambda: fs.move(src="/a.txt", dest="/b.txt"),
+        "copy": lambda: fs.copy(src="/a.txt", dest="/b.txt"),
+        "run": lambda: fs.run("/tool"),
+    }
+    assert frozenset(calls) == ALL_OPS - DEVELOPER_OPS
+    for call in calls.values():
+        result = await call()
+        assert result.success is True
+    await fs.add_mount(RecorderStorage(name="m"), "/m")
+    await fs.remove_mount("/m")
+    assert all(op != "sweep" for op, _ in fs.calls)
+    # The unmount path removed its directory with the trash delete.
+    assert any(op == "delete" for op, _ in fs.calls)
 
 
 # ---------------------------------------------------------------------------

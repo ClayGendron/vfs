@@ -231,12 +231,24 @@ async def test_restore_addressing_a_bind_site_is_busy() -> None:
 
 
 async def test_sweep_addressing_a_bind_site_is_busy() -> None:
-    # The guard fires on the address before storage can even refuse the
-    # non-trash-root form — a bound region is never sweep's to destroy.
+    # The guard fires on the address before storage's purge arm could
+    # accept it — a bound region is never sweep's to destroy.
     root = VirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/m")
     result = await root.sweep("/m")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.busy
+    assert a.calls == []
+
+
+async def test_sweep_region_containing_bind_site_is_busy() -> None:
+    # The purge arm takes arbitrary addresses, so the subtree form of
+    # the guard matters: a bind site inside the target refuses busy.
+    root = VirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/data/a", parents=True)
+    result = await root.sweep("/data")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.busy
     assert a.calls == []
@@ -349,7 +361,12 @@ async def test_mkedge_rejects_bad_edge_type() -> None:
 
 
 async def test_mkedge_missing_endpoints_is_not_found() -> None:
-    root = VirtualFileSystem()
+    # The funnel surfaces the backend's own classification untranslated.
+    miss = Result(
+        ops=("mkedge",),
+        errors=[ResultError(kind=VFSErrorKind.not_found, message="No such entry: /nope/a.py")],
+    )
+    root = VirtualFileSystem(storage=CannedStorage({"mkedge": miss}))
     result = await root.mkedge("/nope/a.py", "/nope/b.py", "imports")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.not_found

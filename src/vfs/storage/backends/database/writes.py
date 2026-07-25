@@ -1,6 +1,6 @@
 """Write-family statement builders for ``DatabaseStorage`` — write, edit, mkdir.
 
-Plan-then-execute, mirroring the memory backend's stage-against-a-copy:
+Plan-then-execute — stage against a copy, commit only a clean plan:
 one ``path IN`` select fetches committed state for the batch's targets
 and ancestors, a pure staging pass replays the POSIX parent/site gates
 against committed-plus-staged state and accumulates classified per-entry

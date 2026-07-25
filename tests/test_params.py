@@ -64,7 +64,6 @@ GARBAGE = [
     ("edit-partial-pair", lambda fs: fs.edit("/f.txt", old="a")),
     ("edit-non-str-old", lambda fs: fs.edit("/f.txt", old=1, new="b")),
     ("edit-truthy-replace-all", lambda fs: fs.edit("/f.txt", old="a", new="b", replace_all="yes")),
-    ("delete-truthy-permanent", lambda fs: fs.delete("/f.txt", permanent="no")),
     ("delete-truthy-cascade", lambda fs: fs.delete("/f.txt", cascade=1)),
     ("restore-both-forms", lambda fs: fs.restore("/f.txt", observations=[])),
     ("restore-truthy-overwrite", lambda fs: fs.restore("/f.txt", overwrite=1)),
@@ -130,7 +129,7 @@ async def test_param_gate_beats_closed_table() -> None:
 async def test_param_gate_beats_busy() -> None:
     root = VirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m/inner", parents=True)
-    result = await root.delete("/m", permanent="x")  # ty: ignore[invalid-argument-type]
+    result = await root.delete("/m", cascade="x")  # ty: ignore[invalid-argument-type]
     assert result.errors[0].kind is VFSErrorKind.invalid
 
 

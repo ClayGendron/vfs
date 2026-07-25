@@ -1,10 +1,12 @@
 """VFS storage backends.
 
-Only the in-memory reference backend lives here today.  The pre-refactor
-database backends (``database``, ``mssql``, ``postgres``) are parked in
-``src2/`` for reference and return here as they are ported.
+``DatabaseStorage`` is the one storage implementation — it runs on any
+SQLAlchemy-compatible database. ``InMemoryStorage`` is its thin
+in-memory face: the same backend pinned to a private
+``sqlite+aiosqlite:///:memory:`` database.
 """
 
+from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
 
-__all__ = ["InMemoryStorage"]
+__all__ = ["DatabaseStorage", "InMemoryStorage"]

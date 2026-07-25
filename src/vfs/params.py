@@ -129,7 +129,6 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     "delete": (
         ParamSpec("path", "path", doc="the entry to delete"),
         _OBSERVATIONS,
-        ParamSpec("permanent", "bool", nullable=False, default=False, doc="skip any trash the backend keeps"),
         ParamSpec("cascade", "bool", nullable=False, default=True, doc="delete the subtree beneath a directory"),
         _USER,
     ),

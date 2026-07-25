@@ -388,11 +388,13 @@ class VirtualFileSystem:
 
         The binding is dropped first (table surgery under the lock), then
         the mount-point directory is removed with a strict, non-recursive
-        delete against whichever storage owns the parent path.  Never a
-        cascade: on shared or persistent storage the directory may have
-        gained rows this router never saw, and unmount must not destroy
-        them.  A failed rmdir leaves the unbind standing and raises — the
-        namespace keeps a plain directory, loud and recoverable.
+        delete against whichever storage owns the parent path — the empty
+        directory row parks in trash like any deleted row, and retention
+        reclaims it.  Never a cascade: on shared or persistent storage the
+        directory may have gained rows this router never saw, and unmount
+        must not destroy them.  A failed rmdir leaves the unbind standing
+        and raises — the namespace keeps a plain directory, loud and
+        recoverable.
 
         Storage lifecycle is untouched: unbinding never disposes an engine
         or session.  Dispose through ``close()`` or by closing a retained
@@ -400,7 +402,7 @@ class VirtualFileSystem:
         """
         mount_path = self._normalize_mount_path(path)
         await self.unbind(str(mount_path))
-        removed = await self.delete(path=str(mount_path), permanent=True, cascade=False)
+        removed = await self.delete(path=str(mount_path), cascade=False)
         if not removed.success:
             detail = removed.error_message or "storage refused the delete"
             msg = f"Unmounted {mount_path}, but removing its directory failed: {detail}"
@@ -815,26 +817,26 @@ class VirtualFileSystem:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        permanent: bool = False,
         cascade: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        """Delete *path* (or each observation row).
+        """Delete *path* (or each observation row) — always recoverable.
 
-        A live bind site is ``busy``: a bound path, or a region holding
-        bound paths, must be unmounted before it can be deleted — the
-        EBUSY rule.
+        Delete is reversible; sweep is not; agents only get the first.
+        Every successful delete reparents its target into the trash and
+        reports the ``trash_path`` restore accepts; what cannot be
+        trashed — the active trash chain — refuses ``invalid``. A live
+        bind site is ``busy``: a bound path, or a region holding bound
+        paths, must be unmounted before it can be deleted — the EBUSY
+        rule.
         """
-        refusal = self._gate_params(
-            "delete", path=path, observations=observations, permanent=permanent, cascade=cascade, user_id=user_id
-        )
+        refusal = self._gate_params("delete", path=path, observations=observations, cascade=cascade, user_id=user_id)
         if refusal is not None:
             return refusal
         return await self._route_single(
             "delete",
             path,
             observations,
-            permanent=permanent,
             cascade=cascade,
             user_id=user_id,
         )
@@ -869,14 +871,18 @@ class VirtualFileSystem:
         *,
         user_id: str | None = None,
     ) -> Result:
-        """Reclaim expired trash buckets under the trash root at *path*.
+        """Destroy at *path* — retention cleanup at a trash root, purge elsewhere.
 
-        Explicit and idempotent — storage owns no background work.
-        Expired hour-buckets drop wholesale (foreign rows inside them
-        included); non-bucket rows directly under the trash root are
-        skipped and surfaced as warnings. The default address sweeps the
-        root mount; pass ``/m/.vfs/trash`` to sweep the mount at ``/m``.
-        A backend that keeps no trash classifies ``unsupported``.
+        Delete is reversible; sweep is not; agents only get the first:
+        sweep is a developer-plane verb, never registered on any
+        agent-facing tool surface. A trash-root address runs retention —
+        expired hour-buckets drop wholesale (foreign rows inside them
+        included); non-bucket rows are skipped and surfaced as warnings.
+        Any other address purges that subtree wholesale, immediately,
+        regardless of retention age. The default address sweeps the root
+        mount's trash; pass ``/m/.vfs/trash`` to sweep the mount at
+        ``/m``. Explicit and idempotent — storage owns no background
+        work.
         """
         refusal = self._gate_params("sweep", path=path, user_id=user_id)
         if refusal is not None:

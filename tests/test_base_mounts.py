@@ -176,7 +176,7 @@ async def test_bind_beneath_a_dead_backend_reports_the_transport_failure() -> No
 async def test_bind_racing_close_refuses_cleanly() -> None:
     # close() may empty the table while the site probe's storage I/O is
     # suspended; bind must refuse as "closed", never escape a KeyError.
-    class GateStatStorage(InMemoryStorage):
+    class GateStatStorage(BindableStorage):
         def __init__(self) -> None:
             super().__init__()
             self.entered = asyncio.Event()
@@ -189,7 +189,6 @@ async def test_bind_racing_close_refuses_cleanly() -> None:
 
     backend = GateStatStorage()
     root = VirtualFileSystem(storage=backend)
-    await backend.mkdir(path=Path("/site"))
     bind_task = asyncio.create_task(root.bind(InMemoryStorage(), "/site"))
     await backend.entered.wait()
     await root.close()
@@ -371,6 +370,37 @@ async def test_remove_mount_unbinds_and_rmdirs() -> None:
     stat = await root.stat("/data")
     assert stat.success is False
     assert stat.errors[0].kind is VFSErrorKind.not_found
+
+
+async def test_remove_mount_parks_the_directory_in_trash_restorable() -> None:
+    # Unmount never destroys: the empty mount directory is an ordinary
+    # trash row, and restore brings it back as a plain directory.
+    root = VirtualFileSystem()
+    await root.add_mount(RecorderStorage(), "/data")
+    await root.remove_mount("/data")
+    assert (await root.stat("/data")).success is False
+    restored = await root.restore("/data")
+    assert restored.success is True
+    assert (await root.stat("/data")).one().kind == "directory"
+
+
+async def test_a_sweep_reclaims_the_trashed_mount_directory() -> None:
+    root = VirtualFileSystem(storage=InMemoryStorage(trash_days=0))
+    await root.add_mount(RecorderStorage(), "/data")
+    await root.remove_mount("/data")
+    buckets = (await root.ls("/.vfs/trash")).observations
+    assert len(buckets) == 1
+    bucket = str(buckets[0].path)
+    rows = (await root.ls(bucket)).observations
+    assert any(str(o.path).endswith("-data") for o in rows)
+    # Even at trash_days=0 the current hour has not fully aged, so the
+    # retention sweep keeps the bucket; the bucket-address arm reclaims it.
+    retained = await root.sweep()
+    assert retained.success is True
+    assert retained.observations == []
+    reclaimed = await root.sweep(bucket)
+    assert reclaimed.success is True
+    assert (await root.stat(bucket)).success is False
 
 
 async def test_remove_mount_rejects_missing() -> None:

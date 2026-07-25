@@ -73,6 +73,10 @@ READ_OPS: Final[frozenset[Op]] = frozenset(
 EXEC_OPS: Final[frozenset[Op]] = frozenset({"run"})
 """Ops that execute a capability — not a namespace mutation, not a read."""
 
+DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep"})
+"""Developer-plane ops: never registered on any agent-facing tool surface
+(MCP serve, CLI) — Python-API only. Sweep destroys; agents only delete."""
+
 ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS
 """Every routed op. The drift test pins the router's public surface to this."""
 

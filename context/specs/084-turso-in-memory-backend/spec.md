@@ -46,9 +46,18 @@ every verb. This spec executes that swap.
    divergence, expected only in `file_settings` (an in-memory
    database wants no WAL or page-size pragmas — likely a shared
    need with the fallback arm).
-3. **`memory.py` is deleted, not preserved.** The module, its
-   direct tests, and its conformance carve-outs go. The
-   `@needs("restore")` / `@needs("sweep")` gates retire — the
+3. **The bespoke implementation is deleted; the names survive as
+   thin subclasses.** The 842-line dict-based backend, its direct
+   tests, and its conformance carve-outs go. In their place, two
+   construction-only subclasses (decided 2026-07-25, Clay in
+   session): `TursoStorage(DatabaseStorage)` pins the Turso dialect
+   and URL construction; `InMemoryStorage(TursoStorage)` pins
+   `:memory:` and its pool posture — keeping the `VFS()` default
+   readable and existing call sites compiling. On the fallback arm,
+   `TursoStorage` is *not* created (no named class over an engine
+   that failed its gate); `InMemoryStorage` subclasses
+   `DatabaseStorage` directly over aiosqlite until Turso clears.
+   The `@needs("restore")` / `@needs("sweep")` gates retire — the
    in-memory leg now declares the full capability set, and the
    trash-arc conformance families run on it beside sqlite-file and
    the four engine legs.
@@ -77,7 +86,8 @@ every verb. This spec executes that swap.
   truncation, trash-path reporting, restore both address forms,
   sweep retention/skips/idempotence) pass on the in-memory leg with
   the same observable results as sqlite-file.
-- `grep -r MemoryStorage src/ tests/` is empty; no `unsupported`
+- No reference to the old dict-based implementation remains
+  (`InMemoryStorage` now names the thin subclass); no `unsupported`
   arm for restore/sweep remains reachable anywhere.
 - Suite wall-clock delta reported in the landing note; a regression
   beyond ~2× on the in-memory leg is a gate finding to raise, not

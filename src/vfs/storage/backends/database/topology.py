@@ -10,20 +10,21 @@ read runs after it inside the same transaction, so refusal checks judge
 post-rival state and later targets see earlier targets' effects.
 
 Delete stages nothing: it fetches one pre-batch committed snapshot for
-classification, then walks targets in request order mirroring the
-memory backend's ladder — root refusal, covered/repeat subsumption
+classification, then walks targets in request order down the ladder
+the conformance suite pins — root refusal, covered/repeat subsumption
 judged against the snapshot, live ``not_empty`` on ``cascade=False``.
-The default arm reparents the row into an hourly trash bucket: path
+Every delete reparents the row into an hourly trash bucket: path
 rewritten, original site recorded, name rewritten to
 ``<ULID>-<original name>`` — unique and time-sorted by its fixed
 prefix, self-describing by its tail-truncated suffix — and the row's
 observation reports the trash path, covered targets deriving theirs
-from the covering root's. ``permanent`` purges the subtree's rows
-across every family table — as does a target whose subtree holds
-the bucket chain itself, which trashing would reparent into its own
-cascade. The trash rewrite honors the public byte budget end to end: a
-delete whose bucket prefix would push any descendant's path past it
-refuses ``unaddressable`` — an over-budget path is never stored.
+from the covering root's. What delete cannot trash it refuses: a
+target whose subtree holds the active bucket chain — which trashing
+would reparent into its own cascade — classifies ``invalid`` and
+names sweep as the reclamation verb. The trash rewrite honors the
+public byte budget end to end: a delete whose bucket prefix would
+push any descendant's path past it refuses ``unaddressable`` — an
+over-budget path is never stored.
 
 Restore is the move machinery with a computed destination. A
 trash-side address names its exact row; any other address is an
@@ -35,16 +36,21 @@ parent resolved by identity (``not_found`` fail-and-keep when it died,
 ladder and byte budget. Execution is the shared move executor, so a
 restore and a move out of trash cannot drift apart.
 
-Sweep reclaims expired hour-buckets: a child of the trash root is a
-bucket iff it is a directory whose name round-trips the
+Sweep is the only destroyer, and the address picks its arm. At the
+trash root it reclaims expired hour-buckets: a child of the trash
+root is a bucket iff it is a directory whose name round-trips the
 ``%Y-%m-%d-%H`` format exactly, and it expires when its hour has fully
 aged past the retention window. Expired buckets purge wholesale —
 foreign rows inside included — while non-bucket rows directly under
 the trash root are skipped and surfaced as warning entries; young
-buckets are retained silently.
+buckets are retained silently. At any other address sweep purges that
+subtree wholesale, immediately, regardless of retention age — the
+root refuses ``invalid``, a miss classifies through the shared
+descent ladder, and the observation reports no trash path: nothing
+recoverable remains.
 
-Move and copy share one pair ladder mirroring the memory backend row
-for row: batch-shape refusals against the committed snapshot, live
+Move and copy share one pair ladder, pinned row for row by the
+conformance suite: batch-shape refusals against the committed snapshot, live
 per-pair reads, no-replace ``exists`` before the cycle checks, cycle
 before occupant kind translation (the Linux rename-trap ordering), and
 a byte-budget overflow refusing the pair before any statement runs. A
@@ -116,7 +122,6 @@ async def delete_rows(
     membership_budget: int,
     *,
     targets: list[Path],
-    permanent: bool,
     cascade: bool,
     user_id: str | None,
     lock_key: int,
@@ -129,8 +134,7 @@ async def delete_rows(
     ``cascade=False`` occupancy check reads live state, so a target
     emptied earlier in the batch deletes cleanly. Each deleted row
     observes its pre-delete snapshot state — there is no post-commit row
-    to stat at the requested path — plus, on the trash arm, the trash
-    path it now lives at.
+    to stat at the requested path — plus the trash path it now lives at.
     """
     entry = tables.entry
     await _serialize(session, profile, tables.meta, lock_key)
@@ -155,7 +159,7 @@ async def delete_rows(
             if row is None:
                 errors.append(classify_miss(target, kinds))
             else:
-                subsumed = _subsumed_trash_path(target, unique, snapshot, trash, cascade=cascade, permanent=permanent)
+                subsumed = _subsumed_trash_path(target, unique, snapshot, trash, cascade=cascade)
                 rows.append(_observe_deleted(target, row, trash_path=subsumed))
             continue
         seen.add(target)
@@ -166,28 +170,27 @@ async def delete_rows(
         if not cascade and await _has_live_children(session, entry, row["entry_id"]):
             errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {target}", target))
             continue
-        # Trashing a target that holds the bucket chain would reparent the
-        # chain into its own subtree — a cycle; memory parity hard-deletes.
-        location: Path | None = None
-        if permanent or trash.chain_inside(target):
-            await _purge_subtree(session, tables, membership_budget, str(target))
-        else:
-            bucket_id = await trash.ensure(session, target)
-            if isinstance(bucket_id, ResultError):
-                errors.append(bucket_id)
-                continue
-            trash_path = f"{trash.bucket_path}/{_trash_name(row['entry_id'], row['name'])}"
-            rewrites = await _descendant_rewrites(session, entry, str(target), trash_path)
-            if any(byte_length(rewrite["b_path"]) > MAX_PATH_LENGTH for rewrite in rewrites):
-                message = f"Cannot delete {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
-                errors.append(classified(VFSErrorKind.unaddressable, message, target))
-                continue
-            await _reparent_to_trash(session, entry, row, bucket_id, trash_path, now)
-            await _apply_rewrites(session, entry, rewrites)
-            await _bump(session, entry, bucket_id)
-            location = Path(trash_path)
+        # Trashing a chain holder would reparent the chain into its own
+        # cascade — refused; only the developer-plane sweep destroys.
+        if trash.chain_inside(target):
+            message = f"Cannot delete {target}: contains the active trash chain — sweep reclaims trash"
+            errors.append(classified(VFSErrorKind.invalid, message, target))
+            continue
+        bucket_id = await trash.ensure(session, target)
+        if isinstance(bucket_id, ResultError):
+            errors.append(bucket_id)
+            continue
+        trash_path = f"{trash.bucket_path}/{_trash_name(row['entry_id'], row['name'])}"
+        rewrites = await _descendant_rewrites(session, entry, str(target), trash_path)
+        if any(byte_length(rewrite["b_path"]) > MAX_PATH_LENGTH for rewrite in rewrites):
+            message = f"Cannot delete {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
+            errors.append(classified(VFSErrorKind.unaddressable, message, target))
+            continue
+        await _reparent_to_trash(session, entry, row, bucket_id, trash_path, now)
+        await _apply_rewrites(session, entry, rewrites)
+        await _bump(session, entry, bucket_id)
         await _bump(session, entry, row["parent_id"])
-        rows.append(_observe_deleted(target, row, trash_path=location))
+        rows.append(_observe_deleted(target, row, trash_path=Path(trash_path)))
     if errors:
         return Result(ops=("delete",), errors=errors)
     return Result(ops=("delete",), observations=rows)
@@ -276,23 +279,34 @@ async def sweep_rows(
     user_id: str | None,
     lock_key: int,
 ) -> Result:
-    """Reclaim expired hour-buckets under the trash root, wholesale.
+    """Destroy at *path* — retention at the trash root, wholesale purge elsewhere.
 
-    The one lawful address is the trash root itself — per-bucket
-    reclamation is already ``delete(permanent=True)``. A missing trash
-    root is the successful no-op (nothing was ever trashed); a
-    non-directory squatter there, and every non-bucket child, is
-    skipped and surfaced as a warning that leaves ``success`` true.
-    Retention is a floor, not a promise: a bucket drops only once its
-    whole hour has aged past *trash_days*. *user_id* is accepted for
-    signature parity; reclamation changes no ownership.
+    The trash root names the retention arm: a missing root is the
+    successful no-op (nothing was ever trashed); a non-directory
+    squatter there, and every non-bucket child, is skipped and
+    surfaced as a warning that leaves ``success`` true; a bucket
+    drops only once its whole hour has aged past *trash_days* —
+    retention is a floor, not a promise. Any other address is the
+    purge arm: the subtree purges wholesale regardless of retention
+    age — the root refuses ``invalid``, a miss classifies through the
+    shared descent ladder, and the observation carries no trash path.
+    *user_id* is accepted for signature parity; reclamation changes
+    no ownership.
     """
     del user_id
     entry = tables.entry
-    if path != TRASH_ROOT:
-        message = f"Sweep addresses the trash root ({TRASH_ROOT}), not: {path}"
+    if path == ROOT:
+        message = "Cannot sweep the root directory"
         return Result(ops=("sweep",), errors=[classified(VFSErrorKind.invalid, message, path)])
     await _serialize(session, profile, tables.meta, lock_key)
+    if path != TRASH_ROOT:
+        row = await _point_row(session, entry, str(path))
+        if row is None:
+            misses = await classify_misses(session, entry, [path], membership_budget)
+            return Result(ops=("sweep",), errors=misses)
+        await _purge_subtree(session, tables, membership_budget, str(path))
+        await _bump(session, entry, row["parent_id"])
+        return Result(ops=("sweep",), observations=[_observe_deleted(path, row)])
     cutoff = datetime.now(UTC) - timedelta(days=trash_days)
     root = await _point_row(session, entry, TRASH_ROOT)
     if root is None:
@@ -356,8 +370,8 @@ async def transfer_rows(
     another moved source — are judged against the committed pre-batch
     snapshot so the outcome is order-independent; every other check
     reads live state inside the serialized transaction, so later pairs
-    see earlier pairs' effects. The per-pair ladder mirrors the memory
-    backend row for row: overlap, source miss, root, rename-to-self,
+    see earlier pairs' effects. The per-pair ladder runs in the order
+    the conformance suite pins: overlap, source miss, root, rename-to-self,
     destination parent gate, no-replace ``exists`` before the cycle
     checks, cycle in both directions as one ``invalid`` kind, occupant
     kind, occupant emptiness, then destination byte-overflow — no
@@ -539,7 +553,7 @@ class _TrashChain:
         """Whether the bucket chain sits at or under *target*.
 
         Trashing such a target would reparent the chain into the very
-        subtree being deleted; the caller must hard-delete instead.
+        subtree being deleted; the caller refuses it, naming sweep.
         """
         prefix = str(target)
         return self.bucket_path == prefix or self.bucket_path.startswith(prefix + "/")
@@ -607,7 +621,6 @@ def _subsumed_trash_path(
     trash: _TrashChain,
     *,
     cascade: bool,
-    permanent: bool,
 ) -> Path | None:
     """The trash address a covered or repeated target lands at, or ``None``.
 
@@ -615,14 +628,11 @@ def _subsumed_trash_path(
     order. The outermost covering target is the row actually reparented;
     the target rides at its old suffix beneath that root's trash name,
     deterministic from the snapshot and the batch's bucket. ``None``
-    when the root purges instead (permanent, or it holds the bucket
-    chain), or when the derived path overflows the byte budget — that
-    root is refusing the batch, so no address exists to report.
+    when the derived path overflows the byte budget — that root is
+    refusing the batch, so no address exists to report.
     """
     covering = [o for o in unique if o == target or (cascade and target.startswith(o + "/"))]
     root = min(covering, key=lambda o: len(str(o)))
-    if permanent or trash.chain_inside(root):
-        return None
     root_row = snapshot[str(root)]
     name = _trash_name(root_row["entry_id"], root_row["name"])
     derived = f"{trash.bucket_path}/{name}" + str(target)[len(str(root)) :]
@@ -684,7 +694,9 @@ async def _resolve_restore(
             return classified(
                 VFSErrorKind.wrong_kind, f"Not a directory: {parent['path']}", Path(parent["path"]), target=target
             )
-        if parent["path"] == TRASH_ROOT or parent["path"].startswith(TRASH_ROOT + "/"):
+        # Strictly inside: the trash root itself is a lawful original
+        # site (a reclaimed bucket restores), a trashed parent is not.
+        if parent["path"].startswith(TRASH_ROOT + "/"):
             message = f"Cannot restore {target}: original parent is in the trash — restore {parent['path']} first"
             return classified(VFSErrorKind.invalid, message, target)
         prefix = "" if parent["path"] == "/" else parent["path"]
@@ -880,7 +892,8 @@ async def _execute_move(
     )
     await _rewrite_descendants(session, entry, src_row["path"], str(dest))
     await _bump(session, entry, src_row["parent_id"])
-    # Both parents bump even when identical — two increments, memory parity.
+    # Both parents bump even when identical — two increments, per the
+    # conformance contract.
     await _bump(session, entry, dest_parent_id)
 
 

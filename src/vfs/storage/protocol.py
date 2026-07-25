@@ -9,9 +9,9 @@ through ``capabilities()`` — self-declaration, never structural sniffing,
 so an adapter or wire client answers with its real set rather than its
 method surface.
 
-    class MemoryStorage:            # the read family = the verb minimum
-        name = "memory"
-        description = "Ephemeral in-process rows"
+    class SnapshotStorage:          # the read family = the verb minimum
+        name = "snapshot"
+        description = "Read-only rows from a frozen snapshot"
 
         def capabilities(self): return frozenset({"read", "stat", "ls", "tree"})
         async def read(self, *, path=None, observations=None, columns=None, user_id=None): ...
@@ -19,7 +19,7 @@ method surface.
         async def ls(self, ...): ...
         async def tree(self, ...): ...
 
-    fs = VirtualFileSystem(storage=MemoryStorage())
+    fs = VirtualFileSystem(storage=SnapshotStorage())
 
 Every path a backend method receives is already gated and terminal-relative
 (the router resolves, gates, and rebases first); every path a backend
@@ -238,7 +238,6 @@ class SupportsMutation(Protocol):
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        permanent: bool = False,
         cascade: bool = True,
         user_id: str | None = None,
     ) -> Result: ...
