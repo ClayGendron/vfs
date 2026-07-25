@@ -97,6 +97,12 @@ research — study prior art there freely (read, grep, cite), but never modify
 them or copy code in wholesale. Run `ls ~/Git/Repos` for the full list; the
 most relevant to this project:
 
+- **Always check the license immediately after cloning a new reference
+  repo.** Keep only clones under clearly permissive open-source licenses
+  (MIT, BSD, Apache-2.0, and similar); if the license is copyleft, missing,
+  or unclear, delete the clone and study that project through its public
+  docs and design writing instead.
+
 - **Filesystem heritage & semantics**: `plan9`, `plan9port`,
   `unix-history-repo`, `freebsd-src`, `linux`, `libfuse`, `pjdfstest`
   (POSIX fs test suite)
@@ -110,17 +116,15 @@ most relevant to this project:
   (archived upstream — kept as a frozen design record), `ladybug` (Kuzu's
   community successor), `age` (graph on Postgres), `gel` (typed links
   compiled onto Postgres), `cayley` (graph over SQL/KV backends),
-  `terminusdb` (versioned KG), `helix-db`, `FalkorDB` (SSPL — study
-  only), `tinkerpop` (Gremlin traversal API), `networkx`, `rustworkx`,
-  `spicedb`, `openfga`
+  `terminusdb` (versioned KG), `helix-db`, `tinkerpop` (Gremlin traversal
+  API), `networkx`, `rustworkx`, `spicedb`, `openfga`
 - **Graph query standards**: `openCypher`, `opengql-grammar` (LDBC's ISO
   GQL 2024 grammar), `GraphLite` (early embedded ISO-GQL), `duckpgq`
   (SQL/PGQ on DuckDB)
 - **Knowledge graphs, agent memory & ontologies**: `graphrag`, `graphiti`,
   `cognee`, `LightRAG`, `graphify`, `letta`, `mem0`, `memori`
   (bring-your-own-SQL agent memory), `MemOS`, `HippoRAG`, `KAG`,
-  `youtu-graphrag`, `basic-memory` (files-as-KG over MCP; AGPL — study
-  only), `ontogpt`, `rdflib`, `oxigraph`, `jena`
+  `youtu-graphrag`, `ontogpt`, `rdflib`, `oxigraph`, `jena`
 - **MCP**: `modelcontextprotocol`, `python-sdk`, `fastmcp`
 - **Sandboxed execution & wasm** (hermetic-runtime direction): `monty`
   (pydantic's sandboxed Python interpreter), `wasmtime-py` (wasm
