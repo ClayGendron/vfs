@@ -58,6 +58,25 @@ skill's job is to make omission safe by keeping a visible plan.
    load nuance that would break the pace.
 8. **End every response with the pace back in the user's hands** —
    they ask questions, request a re-explain, or say "next."
+9. **Learner questions are first-class steps, not interruptions.**
+   Answer them with the same rigor as planned steps (grounding
+   included) — they mark exactly where the mental model is thin, and
+   they can outperform the planned curriculum. If a question exposes
+   a design tension the learner wants to act on, pivot into the
+   house pipeline (research → decide → specify), park the journey
+   explicitly, and resume it cleanly afterward.
+10. **Keep one worked example alive across the whole journey.** The
+    same small tree with the same row ids, carried from the
+    explanation steps through the traces into the tutorial, lets
+    every new step spend its budget on the new idea instead of new
+    setup.
+11. **Tutorials must run green before handoff.** Build the script
+    from idioms mined from the test suite, execute it end to end
+    yourself, and only then hand it over — guaranteed success is
+    what makes a tutorial a tutorial. Leave inline PLAY exercises,
+    persist the artifact for self-directed poking, and include at
+    least one exercise wired to live work (e.g. run the behavior a
+    pending decision will remove).
 
 One-sentence compression: diagnose the learner, find the single causal
 chain the artifact hangs on, show the map, teach only the chain, and
@@ -75,6 +94,31 @@ the user reports what landed or flopped; date each entry.
   reframe-compression, closing hook — drew "that was a great response"
   on the first step. Inverting Diátaxis for an owner-learner was the
   right call.
+
+- **2026-07-25** (topology.py session, full journey): the four
+  quadrants completed in order Explanation (4 steps) → Reference →
+  How-to (3 traces) → Tutorial (5-act script), with detours. What
+  landed:
+  - *Questions outperformed the plan.* The two best exchanges
+    ("does serialize hold reads/writes?", "why is refuse off the
+    table?") were learner-initiated; the second one surfaced a real
+    contract flaw and became ADRs 027/028 — teaching an owner their
+    own code is design review in disguise.
+  - *The Reference map doubled as refactor orientation* — marking
+    every spot a pending decision touches (⚡) made the map serve
+    both the journey and the upcoming spec work.
+  - *Learner-requested quantification* (query counts per verb) —
+    when asked "how many queries?", derive fixed-vs-scaling terms
+    from the code and give concrete numbers with worked examples
+    (5 flat statements per trashed target; copy ~D/140 inserts);
+    numbers beat adjectives.
+  - *Example continuity* — one tree (E1/E2/E3) carried from trace 1
+    through the tutorial; the tutorial's Act 2 dump showed the same
+    facts the trace predicted, closing the loop between reading and
+    running.
+  - *Tutorial verified green before handoff* (first-run success),
+    idioms mined from `tests/` fixtures, PLAY exercises inline,
+    database persisted for poking.
 
 ### What doesn't
 

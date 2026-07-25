@@ -91,12 +91,24 @@ in the past (see the phantom-record note below):
 docker compose -f docker/compose.test.yml --profile mysql --profile mssql --profile oracle down -t 60
 ```
 
+**If this session used a fresh `-p vfs-test-<letter>` project** (the
+phantom-record workaround below), tear that project down too, with
+the same profile flags and grace — it is a separate compose project
+and the default `down` never touches it:
+
+```sh
+docker compose -p vfs-test-<letter> -f docker/compose.test.yml --profile mssql down -t 60
+```
+
 Data is tmpfs/ephemeral; nothing persists. Verify with
 `docker ps -a --format '{{.Names}} {{.Status}}'` — expect **zero**
 rows, not just zero running: an `Exited (137)` remnant is the
-phantom-record precursor and must not be left behind.
+phantom-record precursor and must not be left behind. One exception:
+a *known, already-diagnosed* phantom record (below) will still be
+listed until its removal step actually runs — surface it in the
+report every session it survives; never silently ignore it.
 
-### Phantom container records (seen 2026-07-24, fixed same day)
+### Phantom container records (seen 2026-07-24; workaround re-needed 2026-07-25)
 
 Symptom: `docker ps -a` lists an exited `vfs-test` container that
 `docker rm -f`, `docker system prune`, and daemon restarts all bounce
@@ -108,13 +120,20 @@ order:
    project name — same image, same host port, tests unaffected:
    `docker compose -p vfs-test-<letter> -f docker/compose.test.yml up -d --wait mssql`
    (tear it down later with the same `-p`).
-2. **Actually remove the records** (needs the user's approval — it
-   reaches inside the Docker Desktop VM with a privileged container):
-   list `/var/lib/docker/containers` via
-   `docker run --rm --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh -c 'ls /var/lib/docker/containers'`,
-   `rm -rf` exactly the phantom-id directories (never the helper's own
-   fresh id), then restart Docker Desktop and confirm `docker ps -a`
-   is empty.
+2. **Actually remove the records — in the same session, not later.**
+   The record survives daemon restarts and sessions: until this step
+   runs, step 1's `-p` workaround recurs *every* session (proven
+   2026-07-25 — the 2026-07-24 phantom was still there 36 hours
+   later). It reaches inside the Docker Desktop VM with a privileged
+   container, which the agent's permission mode may refuse — in that
+   case hand the user the exact commands to run themselves (the `!`
+   prefix runs them in-session). List the records via
+   `docker run --rm --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh -c 'ls /var/lib/docker/containers'`
+   (the phantom's full id is also printed by the failing
+   `compose up`), then `rm -rf` exactly the phantom-id directories
+   (never the helper's own fresh id):
+   `docker run --rm --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh -c 'rm -rf /var/lib/docker/containers/<phantom-id>'`,
+   then restart Docker Desktop and confirm `docker ps -a` is empty.
 
 ## 5. Quit Docker Desktop
 
