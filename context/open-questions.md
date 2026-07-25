@@ -41,7 +41,7 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 - **Context:** Slice 9 landed declaring trash-side paths may lawfully exceed the 1,024-byte public budget, but the `path` column is `BytewiseString(MAX_PATH_LENGTH)` — byte-exact DDL on every real engine by ADR 024's own design. The bucket prefix (`/.vfs/trash/<hour>/<ULID>`) is 52 bytes, so the worst-case rewrite is 1,074 bytes: a lawful delete of a shallow directory with a deep descendant failed on **all four** engines (Postgres truncation error, MySQL 1406, MSSQL 42000, Oracle ORA-12899), classified `unavailable`/`retryable=True` on the wrong channel — and such trees could only be deleted with `permanent=True`. Adjacent: reads over stored over-budget state would raise raw `ValueError` out of public verbs, since `Path` minting enforces the budget.
 - **Prior art (verified in-session):** no kernel refuses a mutation for descendant path depth — deep trees are representable-but-unaddressable, failing only at render time (`getcwd` → ENAMETOOLONG, `linux/fs/d_path.c:430-439`) — but only because kernels store one name per edge and never materialize paths (`__d_move` relinks a single edge, `linux/fs/dcache.c:2928`). No kernel has trash at all; userspace trash (the only trash precedent) refuses the move and offers permanent delete as the fallback. vfs materializes a path cache by design, which makes the budget a write-time constraint.
 - **Options considered:** refuse on overflow (`unaddressable`, permanent delete remains available — matches the landed move-verb and memory-backend refusals; no DDL change; the budget becomes a true end-to-end invariant); widen the column with declared trash headroom (≥1,074 → 1,088 — the kernel-analog "unaddressable at read", but reopens the `Path` never-observes-over-budget invariant and adds read-path surface); keep the contradiction filed
-- **Status:** resolved 2026-07-23 (Clay, in session; confirmed against the prior-art pass) — **refuse on overflow.** The trash arm computes every descendant rewrite first and refuses the target `unaddressable` (`Cannot delete <target>: Path too long`) before any statement applies; over-budget paths are never stored, so the read-side ValueError exposure is unreachable. The slice-9 "trash paths lawfully exceed the budget" line was the invention the DDL contradicted, and it is reversed in `topology.py`'s module contract.
+- **Status:** resolved 2026-07-23 (Clay, in session; confirmed against the prior-art pass) — **refuse on overflow.** The trash arm computes every descendant rewrite first and refuses the target `unaddressable` (`Cannot delete <target>: Path too long`) before any statement applies; over-budget paths are never stored, so the read-side ValueError exposure is unreachable. The slice-9 "trash paths lawfully exceed the budget" line was the invention the DDL contradicted, and it is reversed in `topology.py`'s module contract. *Amendment 2026-07-25: ADR 027 retires `permanent=True` from delete, so the fallback for an over-budget trash rewrite is now the developer-plane `sweep` (or piecewise deletes of deeper subtrees) — the refusal itself is unchanged.*
 
 ## Trash retention policy: TTL, size bound, and eviction observability
 
@@ -174,3 +174,56 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
   awaiting review, feeds the content-channel ADR. Hard prerequisite surfaced:
   the live tree has no binary channel at all (`Entry.content` is `str`-only,
   null-byte-rejecting) — the storage bytes story must be settled first.
+
+## Multimodal storage and search — how do media bytes live in the database, and what do the four search verbs mean over them?
+
+- **Asked:** 2026-07-25 by Clay (the storage prerequisite surfaced by the
+  result-content memo, widened to the search half: multimodal embeddings and
+  what `glob`/`grep`/`glean`/`graph` become over media)
+- **Context:** No binary channel exists in the live tree; the hypothesis is a
+  binary sidecar beside the text `content` table — extending the existing
+  bodies-leave-the-narrow-row segmentation — rather than widening text
+  columns to bytes. Search must not be foreclosed by storage: derived-text
+  sidecars (OCR/transcripts/captions) make media greppable; multimodal
+  embedding spaces make `glean` see pixels; `graph` edges to media should be
+  free; all of it must survive 10,000-file batches on the least generous
+  engine and ride trash → restore → sweep.
+- **Blocking:** the storage-bytes ADR, which gates the content-channel ADR;
+  any verb that stores or searches media
+- **Options considered (unstudied):** entry-keyed blob rows vs hash-keyed
+  content-addressed blobs (GC × sweep); inline vs external-reference tiers;
+  one joint embedding space vs multi-space fan-out-and-fuse; see the brief
+  for the full question list
+- **Status:** open — research memo drafted 2026-07-25
+  (`research/2026-07-25-multimodal-storage-and-search.md`, superseding the
+  brief; eight studies under `research/studies/2026-07-25-multimodal-storage/`);
+  awaiting review, feeds the storage-bytes ADR that gates the content-channel
+  ADR. Headline positions: entry-keyed binary sidecar, hash-ready for later
+  content addressing; two new byte-denominated `DialectProfile` budgets;
+  derived-text table keyed to `(entry, content_hash)` feeding ordinary
+  chunks; glean as multi-space fan-out with rank fusion.
+
+## Move/copy overwrite destroys the occupant permanently — the last agent-reachable destruction
+
+- **Asked:** 2026-07-25 by Clay + Claude (surfaced while writing ADR 027; the
+  teaching-session review of `topology.py` established the delete-side
+  contract, and overwrite is the arm it does not cover)
+- **Context:** ADR 027 removes every delete-side path to permanence for
+  agents (delete always trashes; sweep is developer-plane). But
+  `move`/`copy` with `overwrite=True` still hard-purge the destination
+  occupant (`_execute_move` → `_purge_subtree`; `_execute_copy` deletes the
+  occupant's content row) — a file occupant's content is unrecoverable. The
+  refusal ladder limits the blast radius (only a file or an *empty*
+  directory can be overwritten), but a file's content is exactly the data
+  the trash arc exists to protect. This is now the only way an agent can
+  permanently destroy data.
+- **Options considered (unstudied):** trash the occupant before the
+  transfer lands (it gains restore columns at its original site; costs
+  divergence from POSIX rename-unlink parity and puts a same-address
+  trash row beside the incoming row); keep the unlink and document the
+  hole (POSIX parity, one honest exception to the ADR 027 sentence);
+  refuse `overwrite` onto files on the agent surface only (plane-split
+  the flag the way sweep split the verb).
+- **Blocking:** nothing — specs 084/085 land regardless; this decides
+  whether the ADR 027 contract sentence gets a footnote or loses it.
+- **Status:** open.
