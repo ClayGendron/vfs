@@ -690,7 +690,6 @@ async def _values_update(
         rows[0],
         session.get_bind().dialect,
         parameter_budget=parameter_budget,
-        # The ceiling is the row's own arity: every tuple element may bind.
         row_width=len(rows[0]),
         row_cap=membership_budget,
     )
@@ -929,7 +928,6 @@ async def _bump_by_values(
         pairs[0],
         session.get_bind().dialect,
         parameter_budget=parameter_budget,
-        # The ceiling is the pair's own arity: every tuple element may bind.
         row_width=len(pairs[0]),
         row_cap=membership_budget,
     )
