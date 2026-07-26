@@ -19,14 +19,21 @@ plain `uv run pytest`.
 
 ## 1. Start Docker Desktop
 
+**Check whether Docker Desktop is already running before launching
+it** — the user may have it open (or be mid-quit, which can take
+>30 s while the VM winds down; `open -a Docker` during a wind-down
+races the shutdown). Ask/confirm state first, then start:
+
 ```sh
+pgrep -x "Docker Desktop" >/dev/null && echo "already running" || echo "not running"
 open -a Docker
 for i in $(seq 1 45); do docker info >/dev/null 2>&1 && break; sleep 2; done
 docker info --format '{{.ServerVersion}}' || echo "Docker never came up"
 ```
 
-If `docker info` still fails after the loop, stop and report — do not
-retry the suite against a dead daemon.
+If it was already running, skip `open -a Docker` and go straight to
+the `docker info` wait. If `docker info` still fails after the loop,
+stop and report — do not retry the suite against a dead daemon.
 
 ## 2. Build up
 
