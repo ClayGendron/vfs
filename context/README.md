@@ -30,6 +30,8 @@ The directory names matter less than the flow contract between them:
 - **`research/`** — append-mostly, date-prefixed (`YYYY-MM-DD-slug.md`),
   never edited after the fact (supersede with a newer memo). Raw study of
   precedent, benchmarks, landscape. A research memo commits us to nothing.
+  Prior-art study never copies code: studied projects inform the design of
+  our own original implementation — memos cite and describe, nothing more.
 - **`decisions/`** — append-only ADRs. Each cites the research it stands on
   and names what it supersedes. Where "we studied X" becomes "we will do Y."
 - **`specs/`** — **ephemeral by design.** Born from decisions, small enough

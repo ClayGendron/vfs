@@ -94,7 +94,10 @@ Consequences that bind design work:
 
 Sibling checkouts under `~/Git/Repos/` are available **read-only** for
 research — study prior art there freely (read, grep, cite), but never modify
-them or copy code in wholesale. Run `ls ~/Git/Repos` for the full list; the
+them and **never copy code from them**. Prior-art study is design input
+only: we study how others solved a problem to inform the design of our own
+original implementation — research memos cite and describe, and every line
+of vfs code is written by us. Run `ls ~/Git/Repos` for the full list; the
 most relevant to this project:
 
 - **Always check the license immediately after cloning a new reference
