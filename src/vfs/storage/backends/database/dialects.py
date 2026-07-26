@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING, Final, Literal
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
+    from sqlalchemy.engine import Dialect
+
 # ---------------------------------------------------------------------------
 # Stale-snapshot signal
 # ---------------------------------------------------------------------------
@@ -307,6 +309,18 @@ def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object
     than a single row) making progress instead of stalling ``chunked``.
     """
     return max(1, parameter_budget // max(len(row) for row in rows))
+
+
+def supports_values_update(profile: DialectProfile, dialect: Dialect) -> bool:
+    """Whether the set-based ``VALUES``-join ``UPDATE … RETURNING`` can run.
+
+    The profile declares the join form (a decision SQLAlchemy takes no
+    position on); the live dialect must model RETURNING on a
+    multi-FROM UPDATE. Callers that fail this arbitrate down their own
+    fallback ladder — executemany with verification, or a classified
+    ``unsupported``.
+    """
+    return bool(profile.values_join and dialect.update_returning and dialect.update_returning_multifrom)
 
 
 # ---------------------------------------------------------------------------

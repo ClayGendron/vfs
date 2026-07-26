@@ -80,7 +80,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
-from sqlalchemy import Update, bindparam, delete, func, insert, or_, select, update
+from sqlalchemy import Update, bindparam, delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
@@ -88,11 +88,13 @@ from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, METADATA_ROOT, ROOT, TRASH_ROOT, Path, byte_length
 from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import (
-    LIKE_ESCAPE,
     ancestor_chain,
     classify_miss,
     classify_misses,
-    escape_like,
+    descendant_filter,
+    rows_by_path,
+    subtree_filter,
+    targets_with_ancestors,
 )
 from vfs.storage.backends.database.dialects import StaleSnapshot, chunked, rows_per_statement
 from vfs.storage.backends.database.seams import seam
@@ -537,14 +539,9 @@ async def _serialize(session: AsyncSession, profile: DialectProfile, meta: Table
 async def _fetch_snapshot(
     session: AsyncSession, entry: Table, membership_budget: int, targets: list[Path]
 ) -> dict[str, RowMapping]:
-    """Chunked ``path IN`` selects: targets, their ancestors, the root."""
-    paths = {str(t) for t in targets} | {str(a) for t in targets for a in ancestor_chain(t)} | {"/"}
+    """One bounded fetch: targets, their ancestors, the root."""
     columns = [entry.c[name] for name in _SNAPSHOT_COLUMNS]
-    snapshot: dict[str, RowMapping] = {}
-    for chunk in chunked(sorted(paths), membership_budget):
-        stmt = select(*columns).where(entry.c.path.in_(chunk))
-        snapshot.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
-    return snapshot
+    return await rows_by_path(session, entry, targets_with_ancestors(targets), columns, membership_budget)
 
 
 async def _has_live_children(session: AsyncSession, entry: Table, entry_id: str) -> bool:
@@ -572,10 +569,7 @@ async def _purge_subtree(session: AsyncSession, tables: VFSTables, membership_bu
     """
     entry = tables.entry
     edges = tables.edges
-    subtree = or_(
-        entry.c.path == target,
-        entry.c.path.like(escape_like(target) + "/%", escape=LIKE_ESCAPE),
-    )
+    subtree = subtree_filter(entry, target)
     while ids := [row.entry_id for row in await session.execute(select(entry.c.entry_id).where(subtree))]:
         await seam("purge:post-collect")
         for chunk in chunked(ids, membership_budget):
@@ -911,7 +905,7 @@ async def _descendant_rewrites(
     Raw ``str`` slicing, no ``Path`` minted — the caller may still refuse
     the whole set on the byte budget before anything is applied.
     """
-    like = entry.c.path.like(escape_like(old_prefix) + "/%", escape=LIKE_ESCAPE)
+    like = descendant_filter(entry, old_prefix)
     found = await session.execute(select(entry.c.entry_id, entry.c.path).where(like))
     return [{"b_id": r.entry_id, "b_path": new_prefix + r.path[len(old_prefix) :]} for r in found]
 
@@ -983,10 +977,8 @@ async def _dest_parent_id(session: AsyncSession, entry: Table, dest: Path, membe
     """
     chain = ancestor_chain(dest)
     paths = [*(str(ancestor) for ancestor in chain), "/"]
-    found: dict[str, RowMapping] = {}
-    for chunk in chunked(paths, membership_budget):
-        stmt = select(entry.c.entry_id, entry.c.path, entry.c.kind).where(entry.c.path.in_(chunk))
-        found.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
+    columns = [entry.c.entry_id, entry.c.path, entry.c.kind]
+    found = await rows_by_path(session, entry, paths, columns, membership_budget)
     for ancestor in chain:
         row = found.get(str(ancestor))
         if row is None:
@@ -1008,10 +1000,7 @@ async def _fetch_subtree(
     """
     entry = tables.entry
     columns: list[Any] = [entry.c[name] for name in _SUBTREE_COLUMNS]
-    subtree = or_(
-        entry.c.path == src,
-        entry.c.path.like(escape_like(src) + "/%", escape=LIKE_ESCAPE),
-    )
+    subtree = subtree_filter(entry, src)
     stmt = select(*columns).where(subtree)
     if with_content:
         stmt = select(*columns, tables.content.c.content).select_from(tables.content_joined()).where(subtree)
@@ -1187,12 +1176,9 @@ async def _execute_copy(
 async def _final_rows(
     session: AsyncSession, entry: Table, membership_budget: int, dests: list[str]
 ) -> dict[str, RowMapping]:
-    """One chunked re-read of every pending destination after the batch."""
-    finals: dict[str, RowMapping] = {}
-    for chunk in chunked(sorted(set(dests)), membership_budget):
-        stmt = select(entry.c.path, entry.c.kind, entry.c.version, entry.c.size_bytes).where(entry.c.path.in_(chunk))
-        finals.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
-    return finals
+    """One bounded re-read of every pending destination after the batch."""
+    columns = [entry.c.path, entry.c.kind, entry.c.version, entry.c.size_bytes]
+    return await rows_by_path(session, entry, dests, columns, membership_budget)
 
 
 def _observe_transfer(pending: _PendingTransfer, final: RowMapping | None) -> Observation:

@@ -29,8 +29,12 @@ from vfs.results import Result, ResultError, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     classify_misses,
+    descendant_filter,
     escape_like,
     liveness_filters,
+    miss_errors,
+    rows_by_path,
+    subtree_filter,
 )
 from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.globbing import compile_glob
@@ -38,7 +42,7 @@ from vfs.storage.globbing import compile_glob
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sqlalchemy import Column, ColumnElement, Select, Table
+    from sqlalchemy import Column, ColumnElement, FromClause, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -127,7 +131,7 @@ async def ls_rows(
 ) -> Result:
     fetched = effective_columns(columns, content=False)
     anchors = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=True)
-    miss_errors = await _miss_errors(session, tables, membership_budget, targets, anchors)
+    missing = await miss_errors(session, tables.entry, targets, anchors, membership_budget)
     directories = [t for t in targets if (a := anchors.get(t)) is not None and a["kind"] == "directory"]
     children = await _children_by_parent(session, tables.entry, membership_budget, directories, anchors, fetched)
     rows: list[Observation] = []
@@ -135,7 +139,7 @@ async def ls_rows(
     for target in targets:
         anchor = anchors.get(target)
         if anchor is None:
-            errors.append(miss_errors[target])
+            errors.append(missing[target])
         elif anchor["kind"] != "directory":
             rows.append(_observe(anchor, fetched))
         else:
@@ -159,12 +163,10 @@ async def tree_rows(
         return Result(ops=("tree",), errors=await classify_misses(session, entry, [path], membership_budget))
     if anchor["kind"] != "directory":
         return Result(ops=("tree",), observations=[_observe(anchor, fetched)])
-    prefix = "" if path == ROOT else escape_like(str(path))
     stmt = (
         select(*_entry_columns(entry, fetched))
         .where(
-            entry.c.path.like(prefix + "/%", escape=LIKE_ESCAPE),
-            entry.c.path != "/",
+            descendant_filter(entry, str(path)),
             *liveness_filters(entry, include_meta=path.is_meta),
         )
         .order_by(entry.c.path)
@@ -215,7 +217,7 @@ async def glob_rows(
         anchors = await _mappings_by_path(
             session, tables, membership_budget, scope, frozenset({"path", "kind"}), with_entry_id=False
         )
-        errors = list((await _miss_errors(session, tables, membership_budget, scope, anchors)).values())
+        errors = list((await miss_errors(session, tables.entry, scope, anchors, membership_budget)).values())
     candidates = await _glob_candidates(session, entry, fan_budget, scope, filters, fetched)
     rows: list[Observation] = []
     for mapping in candidates:
@@ -243,13 +245,13 @@ async def _point_rows(
 ) -> tuple[list[Observation], list[ResultError]]:
     """Fetch, classify, and observe *targets* one row at a time, in order."""
     found = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=False)
-    miss_errors = await _miss_errors(session, tables, membership_budget, targets, found)
+    missing = await miss_errors(session, tables.entry, targets, found, membership_budget)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
         mapping = found.get(target)
         if mapping is None:
-            errors.append(miss_errors[target])
+            errors.append(missing[target])
             continue
         kind = mapping["kind"]
         if content_only and kind not in CONTENT_KINDS:
@@ -268,15 +270,10 @@ async def _mappings_by_path(
     *,
     with_entry_id: bool,
 ) -> dict[str, RowMapping]:
-    """Chunked ``path IN`` selects for the batch, keyed by the stored path string."""
-    if not targets:
-        return {}
-    entry = tables.entry
-    found: dict[str, RowMapping] = {}
-    for chunk in chunked(sorted({str(t) for t in targets}), membership_budget):
-        stmt = _entry_select(tables, fetched, with_entry_id=with_entry_id).where(entry.c.path.in_(chunk))
-        found.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
-    return found
+    """One bounded fetch for the batch, keyed by the stored path string."""
+    columns, source = _entry_projection(tables, fetched, with_entry_id=with_entry_id)
+    paths = (str(target) for target in targets)
+    return await rows_by_path(session, tables.entry, paths, columns, membership_budget, source=source)
 
 
 async def _glob_candidates(
@@ -327,28 +324,9 @@ async def _anchor_fan(
     bitmap-OR); bounded and correct either way.
     """
     for chunk in chunked(sorted({str(anchor) for anchor in anchors}), fan_budget):
-        fan = or_(
-            *(
-                or_(
-                    entry.c.path == anchor,
-                    entry.c.path.like(escape_like(anchor) + "/%", escape=LIKE_ESCAPE),
-                )
-                for anchor in chunk
-            ),
-        )
+        fan = or_(*(subtree_filter(entry, anchor) for anchor in chunk))
         result = await session.execute(select(*columns).where(*filters, fan))
         merged.update({mapping["path"]: mapping for mapping in result.mappings()})
-
-
-async def _miss_errors(
-    session: AsyncSession,
-    tables: VFSTables,
-    membership_budget: int,
-    targets: Sequence[Path],
-    found: dict[str, RowMapping],
-) -> dict[Path, ResultError]:
-    misses = [target for target in targets if target not in found]
-    return dict(zip(misses, await classify_misses(session, tables.entry, misses, membership_budget), strict=True))
 
 
 async def _children_by_parent(
@@ -379,14 +357,17 @@ async def _children_by_parent(
     return children
 
 
-def _entry_select(tables: VFSTables, fetched: frozenset[str], *, with_entry_id: bool) -> Select[*tuple[object, ...]]:
+def _entry_projection(
+    tables: VFSTables, fetched: frozenset[str], *, with_entry_id: bool
+) -> tuple[list[Column[object]], FromClause | None]:
+    """The select list serving *fetched*, plus the FROM override when content joins."""
     entry = tables.entry
     columns = _entry_columns(entry, fetched)
     if with_entry_id:
         columns = [entry.c.entry_id, *columns]
     if "content" not in fetched:
-        return select(*columns)
-    return select(*columns, tables.content.c.content).select_from(tables.content_joined())
+        return columns, None
+    return [*columns, tables.content.c.content], tables.content_joined()
 
 
 def _entry_columns(entry: Table, fetched: frozenset[str]) -> list[Column[object]]:

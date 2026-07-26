@@ -61,6 +61,18 @@ async def _revision_of(storage: ConformanceBackend, path: str) -> int:
     return version
 
 
+# Directory names holding a LIKE metacharacter, beside the near-miss
+# decoys an unescaped prefix pattern would erroneously match.
+METACHAR_DIRS = ("a%b", "a_b", "a\\b")
+DECOY_DIRS = ("aXb", "ab")
+
+
+async def _mint_metachar_tree(storage: ConformanceBackend) -> None:
+    for name in (*METACHAR_DIRS, *DECOY_DIRS):
+        result = await storage.write(entries=[Entry(path=Path(f"/{name}/inner.txt"), content=name)], parents=True)
+        assert result.success is True
+
+
 class StorageContract:
     """The shared behavior contract. Subclass per backend; see module docstring."""
 
@@ -946,6 +958,59 @@ class StorageContract:
         miss = await storage.glob(pattern="*.py", paths=(Path("/a.txt"),))
         assert miss.success is True
         assert miss.observations == []
+
+    # ------------------------------------------------------------------
+    # LIKE metacharacters in stored paths — near-miss decoys never leak
+    # ------------------------------------------------------------------
+
+    @needs("write", "read")
+    async def test_metachar_paths_write_and_read_exactly(self, storage: ConformanceBackend) -> None:
+        await _mint_metachar_tree(storage)
+        for name in METACHAR_DIRS:
+            result = await storage.read(path=Path(f"/{name}/inner.txt"))
+            assert result.observations[0].content == name
+
+    @needs("write", "tree")
+    async def test_tree_under_a_metachar_name_excludes_like_near_misses(self, storage: ConformanceBackend) -> None:
+        # An unescaped "/a%b/%" or "/a_b/%" prefix would sweep in the
+        # decoys' children; "/a\b/%" would collapse onto "/ab/%".
+        await _mint_metachar_tree(storage)
+        for name in METACHAR_DIRS:
+            result = await storage.tree(path=Path(f"/{name}"))
+            assert [str(o.path) for o in result.observations] == [f"/{name}/inner.txt"]
+
+    @needs("write", "glob")
+    async def test_glob_anchor_with_metachars_stays_inside_its_subtree(self, storage: ConformanceBackend) -> None:
+        await _mint_metachar_tree(storage)
+        for name in METACHAR_DIRS:
+            result = await storage.glob(pattern="*", paths=(Path(f"/{name}"),))
+            assert [str(o.path) for o in result.observations] == [f"/{name}", f"/{name}/inner.txt"]
+
+    @needs("write", "glob")
+    async def test_glob_pattern_with_literal_metachars_matches_literally(self, storage: ConformanceBackend) -> None:
+        for name in ("100%.txt", "100p.txt", "x_y.txt", "xzy.txt"):
+            result = await storage.write(entries=[Entry(path=Path(f"/m/{name}"), content="x")], parents=True)
+            assert result.success is True
+        percent = await storage.glob(pattern="100%*")
+        assert [str(o.path) for o in percent.observations] == ["/m/100%.txt"]
+        underscore = await storage.glob(pattern="x_y*")
+        assert [str(o.path) for o in underscore.observations] == ["/m/x_y.txt"]
+
+    @needs("write", "delete", "tree", "stat")
+    async def test_cascade_delete_of_a_metachar_directory_takes_only_its_subtree(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # The cascade collects and rewrites by prefix, and the trash row's
+        # name keeps the metachars — the trash-side tree re-runs the scan.
+        await _mint_metachar_tree(storage)
+        result = await storage.delete(path=Path("/a%b"))
+        assert result.success is True
+        trash_path = result.observations[0].trash_path
+        assert trash_path is not None
+        for name in ("a_b", "a\\b", *DECOY_DIRS):
+            assert (await storage.stat(path=Path(f"/{name}/inner.txt"))).success is True
+        trashed = await storage.tree(path=trash_path)
+        assert [str(o.path) for o in trashed.observations] == [f"{trash_path}/inner.txt"]
 
     @needs("write", "grep")
     async def test_grep_missing_anchor_classifies_beside_served_anchors(self, storage: ConformanceBackend) -> None:

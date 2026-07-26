@@ -39,8 +39,13 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.models import CONTENT_KINDS, Entry, Observation
 from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, wrong_kind
-from vfs.storage.backends.database.descent import ancestor_chain, classify_misses
-from vfs.storage.backends.database.dialects import StaleSnapshot, chunked, rows_per_statement
+from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors
+from vfs.storage.backends.database.dialects import (
+    StaleSnapshot,
+    chunked,
+    rows_per_statement,
+    supports_values_update,
+)
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.editing import edited_entry
@@ -190,15 +195,12 @@ async def edit_rows(
     clobber, so a concurrent rival surfaces as ``conflict``.
     """
     committed = await _fetch_committed(session, tables, membership_budget, set(targets), with_content=True)
-    misses = [t for t in dict.fromkeys(targets) if str(t) not in committed]
-    miss_errors = dict(
-        zip(misses, await classify_misses(session, tables.entry, misses, membership_budget), strict=True)
-    )
+    missing = await miss_errors(session, tables.entry, targets, committed, membership_budget)
     plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     for target in targets:
         row = committed.get(str(target))
         if row is None:
-            plan.errors.append(miss_errors[target])
+            plan.errors.append(missing[target])
             continue
         kind, current = plan.material_of(target)
         edited = edited_entry(target, kind=kind, content=current, edits=edits)
@@ -232,9 +234,8 @@ async def _fetch_committed(
     *,
     with_content: bool = False,
 ) -> dict[str, RowMapping]:
-    """Chunked ``path IN`` selects for the batch: targets, ancestors, the root."""
+    """One bounded fetch seeds the plan: targets, ancestors, the root."""
     entry = tables.entry
-    paths = {str(t) for t in targets} | {str(a) for t in targets for a in ancestor_chain(t)} | {"/"}
     columns: list[Column[object]] = [
         entry.c.entry_id,
         entry.c.path,
@@ -243,15 +244,12 @@ async def _fetch_committed(
         entry.c.ext,
         entry.c.mime_type,
     ]
-    source: FromClause = entry
+    source: FromClause | None = None
     if with_content:
         columns.append(tables.content.c.content)
         source = tables.content_joined()
-    committed: dict[str, RowMapping] = {}
-    for chunk in chunked(sorted(paths), membership_budget):
-        stmt = select(*columns).select_from(source).where(entry.c.path.in_(chunk))
-        committed.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
-    return committed
+    paths = targets_with_ancestors(targets)
+    return await rows_by_path(session, entry, paths, columns, membership_budget, source=source)
 
 
 async def _finish(
@@ -604,7 +602,7 @@ async def _update_materials(
     guarded = [s for s in updates if s.persistence == "update"]
     unguarded = [s for s in updates if s.persistence == "absorb"]
     dialect = session.get_bind().dialect
-    set_based = profile.values_join and dialect.update_returning and dialect.update_returning_multifrom
+    set_based = supports_values_update(profile, dialect)
     errors: list[ResultError] = []
     if guarded:
         if set_based:
@@ -870,7 +868,7 @@ async def _bump_parents(
         return []
     pairs = [(plan.committed[path]["entry_id"], path) for path in sorted(plan.bumps)]
     dialect = session.get_bind().dialect
-    if profile.values_join and dialect.update_returning and dialect.update_returning_multifrom:
+    if supports_values_update(profile, dialect):
         await _bump_by_values(session, entry, parameter_budget, membership_budget, pairs)
     elif dialect.supports_sane_multi_rowcount or dialect.supports_sane_rowcount:
         per_row = not dialect.supports_sane_multi_rowcount

@@ -1,7 +1,11 @@
 # 089 — Descent shared idioms: name the bounded-SQL loops once
 
-- **Status:** open — born 2026-07-26 from the post-086 verification
-  campaign's extraction review (small refactor; spec.md only).
+- **Status:** landed 2026-07-26 (all four engine legs green including
+  the metachar pins; coverage held at 100% on every touched module) —
+  awaiting the backward-flow mining pass, then deletion. One deviation
+  from acceptance: the consuming modules are net negative as intended
+  (reads −20, topology −16, writes −4), but the tree overall is +54
+  lines, all in the shared helpers' definitions and docstrings.
 - **Evidence:**
   `context/research/2026-07-26-writes-topology-review-verification.md`
   §3 — all sites cite-verified; the escaped-LIKE behavior pinned
