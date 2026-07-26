@@ -30,6 +30,28 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
 # ---------------------------------------------------------------------------
+# Stale-snapshot signal
+# ---------------------------------------------------------------------------
+
+
+class StaleSnapshot(Exception):  # noqa: N818 — a control-flow signal, not an error condition
+    """A guarded statement missed: the snapshot it staged from is stale.
+
+    Raised by write/topology builders when a rowcount-verified guard
+    matches fewer rows than it staged — the world moved between the
+    snapshot read and the mutation. The retry layer treats it exactly
+    like a retryable driver outcome: discard the session (the whole
+    transaction rolls back, staged inserts included) and redrive the
+    method from a fresh snapshot. An exhausted redrive classifies as a
+    retryable ``conflict`` on the public ``Result``.
+    """
+
+    def __init__(self, context: str) -> None:
+        super().__init__(context)
+        self.context = context
+
+
+# ---------------------------------------------------------------------------
 # Profiles
 # ---------------------------------------------------------------------------
 
@@ -62,12 +84,24 @@ class DialectProfile:
     SQLAlchemy does not model: SQLite declares ``update_returning`` yet
     rejects that alias syntax. Guarded updates take the set-based
     RETURNING arm only where this is declared.
+
+    ``guard_miss`` declares what a zero-row guarded UPDATE means on this
+    engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
+    reads and guarded updates judge the same committed state, so a
+    re-probe of the missed row classifies the miss honestly
+    (``not_found`` vs ``conflict``). ``redrive``: the two disagree — on
+    the mysql family at REPEATABLE READ the UPDATE current-reads past
+    the snapshot the probe would report — so the only honest move is
+    :class:`StaleSnapshot`, retrying the whole method from fresh state.
+    The generic floor declares ``redrive``: never classify off a probe
+    an unknown engine may contradict.
     """
 
     name: str
     key_byte_budget: int
     in_list_budget: int
     arbitration: Literal["upsert", "catch_retry"]
+    guard_miss: Literal["reprobe", "redrive"] = "redrive"
     op_isolation: str | None = None
     topology_isolation: str | None = None
     session_settings: tuple[str, ...] = ()
@@ -86,6 +120,7 @@ SQLITE: Final = DialectProfile(
     key_byte_budget=4_096,
     in_list_budget=32_766,
     arbitration="upsert",
+    guard_miss="reprobe",
     session_settings=(
         "PRAGMA busy_timeout = 5000",
         "PRAGMA synchronous = FULL",
@@ -106,6 +141,7 @@ POSTGRESQL: Final = DialectProfile(
     key_byte_budget=2_704,
     in_list_budget=65_535,
     arbitration="upsert",
+    guard_miss="reprobe",
     op_isolation="REPEATABLE READ",
     topology_isolation="READ COMMITTED",
     values_join=True,
@@ -116,6 +152,7 @@ MSSQL: Final = DialectProfile(
     key_byte_budget=1_700,
     in_list_budget=2_100,
     arbitration="catch_retry",
+    guard_miss="reprobe",
     values_join=True,
 )
 
@@ -126,6 +163,9 @@ MYSQL: Final = DialectProfile(
     key_byte_budget=3_072,
     in_list_budget=65_535,
     arbitration="catch_retry",
+    # A zero-row guard at REPEATABLE READ is ambiguous: the UPDATE
+    # current-reads past the snapshot any re-probe would report.
+    guard_miss="redrive",
     op_isolation="REPEATABLE READ",
     # Topology reads must see post-rival state per statement; REPEATABLE
     # READ would pin a pre-lock snapshot. Mirrors the Postgres pin.
@@ -147,6 +187,7 @@ ORACLE: Final = DialectProfile(
     key_byte_budget=1_700,
     in_list_budget=1_000,
     arbitration="catch_retry",
+    guard_miss="reprobe",
     retryable_driver_codes=frozenset({60, 8177}),
 )
 

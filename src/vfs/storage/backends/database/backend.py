@@ -33,7 +33,12 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
-from vfs.storage.backends.database.dialects import PROFILES, op_execution_options, topology_execution_options
+from vfs.storage.backends.database.dialects import (
+    PROFILES,
+    StaleSnapshot,
+    op_execution_options,
+    topology_execution_options,
+)
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.topology import delete_rows, restore_rows, sweep_rows, transfer_rows
@@ -489,6 +494,11 @@ class DatabaseStorage:
 
         try:
             return await self._host.with_retry(attempt)
+        except StaleSnapshot as exc:
+            # Guards kept proving the snapshot stale through every redrive:
+            # an honest transient outcome, never a torn commit.
+            message = f"{op} kept losing to concurrent changes: {exc.context}"
+            return Result(ops=(op,), errors=[ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)])
         except (SQLAlchemyError, OSError) as exc:
             return Result(ops=(op,), errors=[self._host.classify_failure(exc, context=op)])
 

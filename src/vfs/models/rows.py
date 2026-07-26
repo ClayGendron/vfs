@@ -118,7 +118,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 1
+SCHEMA_FORMAT_VERSION: Final = 2
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -371,6 +371,9 @@ def build_vfs_tables(
         f"{table_name}_content",
         metadata,
         Column("entry_id", ULIDKey(), primary_key=True),
+        # Write time of this body row (every overwrite re-mints it) — the
+        # age sweep's orphan-reclaim fence is measured against.
+        Column("created_at", DateTime(timezone=True), nullable=False),
         Column("content", _body_text(), nullable=False),
         schema=schema,
     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import UnionType
 from typing import Union, get_args, get_origin
 from uuid import UUID
@@ -396,7 +397,10 @@ class TestDDL:
             pk = conn.execute(
                 insert(tables.entry), [_entries_row(entry, entry_id=ulid, parent_id=None)]
             ).inserted_primary_key
-            conn.execute(insert(tables.content), [{"entry_id": ulid, "content": entry.content}])
+            conn.execute(
+                insert(tables.content),
+                [{"entry_id": ulid, "created_at": datetime.now(UTC), "content": entry.content}],
+            )
             row = conn.execute(select(tables.entry)).mappings().one()
             body = conn.execute(select(tables.content.c.content).where(tables.content.c.entry_id == ulid)).scalar_one()
         assert pk is not None

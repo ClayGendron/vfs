@@ -11,7 +11,10 @@ it and the execution that drains it. Execution is a handful of bulk Core
 statements in pinned order: entry inserts layered parents-before-children
 (chunked by the dialect's parameter budget), guarded material updates
 attributed from their own statements, content delete-then-insert, and
-unconditional parent bumps. Every function takes the op's live ``AsyncSession`` and
+guarded parent bumps — every bump proves its parent still lives at the
+snapshot's address, so a create under a concurrently relocated or
+destroyed directory aborts whole and redrives instead of committing a
+torn path cache. Every function takes the op's live ``AsyncSession`` and
 never begins or commits — the protocol method in ``backend.py`` owns its
 one transaction.
 
@@ -37,7 +40,7 @@ from sqlalchemy.exc import IntegrityError
 from vfs.models import CONTENT_KINDS, Entry, Observation
 from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain, classify_misses
-from vfs.storage.backends.database.dialects import chunked, rows_per_statement
+from vfs.storage.backends.database.dialects import StaleSnapshot, chunked, rows_per_statement
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.editing import edited_entry
@@ -275,6 +278,9 @@ async def _finish(
     for path, status in plan.pending:
         staged = plan.staged.get(path)
         if staged is not None:
+            # An adopted row's create resolved to a standing equivalent.
+            if staged.persistence == "adopt":
+                status = "unchanged"
             rows.append(
                 Observation(
                     path=path,
@@ -313,15 +319,15 @@ async def _apply(
     ):
         return errors
     # After the insert pass on purpose: arbitration may re-route a losing
-    # create to "absorb", which must be picked up by this pass.
-    updates = [s for s in plan.staged.values() if s.persistence != "insert"]
+    # create to "absorb", which must be picked up by this pass. "adopt"
+    # rows stood down entirely — nothing left to write.
+    updates = [s for s in plan.staged.values() if s.persistence in ("update", "absorb")]
     if errors := await _update_materials(
         session, tables.entry, profile, parameter_budget, membership_budget, updates, user_id=plan.user_id, now=now
     ):
         return errors
-    await _replace_content(session, tables.content, membership_budget, list(plan.staged.values()))
-    await _bump_parents(session, tables.entry, membership_budget, plan)
-    return []
+    await _replace_content(session, tables.content, membership_budget, list(plan.staged.values()), now)
+    return await _bump_parents(session, tables.entry, profile, parameter_budget, membership_budget, plan)
 
 
 async def _insert_creates(
@@ -373,12 +379,17 @@ async def _upsert_layer(
     """``ON CONFLICT`` arbitration on the ``(parent_id, name)`` index.
 
     Directory creates never clobber (``DO NOTHING``); file creates clobber
-    a non-directory rival under ``overwrite``. RETURNING carries the
-    surviving identity and final version: a clobber lands on the rival's
-    row, which keeps its ``entry_id``, so the staged entry adopts it —
-    its content rows must wire to the row that exists. A row missing
-    from RETURNING lost arbitration and classifies — a definite outcome,
-    never retried.
+    a non-directory rival under ``overwrite`` — and only a rival whose
+    stored path equals the requested path: an incoherent row (a legacy
+    torn ghost squatting the address) is never adopted. RETURNING
+    carries the surviving identity and final version: a clobber lands on
+    the rival's row, which keeps its ``entry_id``, so the staged entry
+    adopts it — its content rows must wire to the row that exists. A row
+    missing from RETURNING lost arbitration; a live probe of the
+    occupant classifies it. A unique violation escaping ``ON CONFLICT``
+    (the path index — arbitration declares only ``(parent_id, name)``)
+    rolls back to the chunk's savepoint and re-drives row-by-row for
+    exact, classified blame.
     """
     constructor = _upsert_constructor(profile)
     pairs = list(zip(layer, rows, strict=True))
@@ -396,22 +407,76 @@ async def _upsert_layer(
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["parent_id", "name"],
                     set_=set_,
-                    where=entry.c.kind != "directory",
+                    where=(entry.c.kind != "directory") & (entry.c.path == stmt.excluded["path"]),
                 )
             else:
                 stmt = stmt.on_conflict_do_nothing(index_elements=["parent_id", "name"])
-            result = await session.execute(stmt.returning(entry.c.entry_id, entry.c.path, entry.c.version))
-            returned = {mapping["path"]: mapping for mapping in result.mappings()}
-            for staged, _ in chunk:
+            try:
+                async with session.begin_nested():
+                    result = await session.execute(stmt.returning(entry.c.entry_id, entry.c.path, entry.c.version))
+                    returned = {mapping["path"]: mapping for mapping in result.mappings()}
+            except IntegrityError:
+                errors.extend(
+                    await _resolve_rows(
+                        session, entry, [s for s, _ in chunk], [r for _, r in chunk], overwrite=overwrite
+                    )
+                )
+                continue
+            for staged, row_values in chunk:
                 won = returned.get(str(staged.path))
                 if won is not None:
                     staged.entry_id = won["entry_id"]
                     staged.version = won["version"]
-                elif clobber:
-                    errors.append(wrong_kind("directory", staged.path))
                 else:
-                    errors.append(already_exists(staged.path))
+                    loss = await _classify_arbitration_loss(session, entry, staged, row_values, clobber=clobber)
+                    if loss is not None:
+                        errors.append(loss)
     return errors
+
+
+async def _classify_arbitration_loss(
+    session: AsyncSession,
+    entry: Table,
+    staged: StagedEntry,
+    row_values: dict[str, object],
+    *,
+    clobber: bool,
+) -> ResultError | None:
+    """Probe the occupant that beat *staged*; classify, adopt, or redrive.
+
+    A vanished occupant raises :class:`StaleSnapshot`: the probe may be
+    snapshot-blinded (REPEATABLE READ cannot see the rival), and even an
+    honest vanishing is exactly what a fresh snapshot resolves. A
+    directory losing to a directory at the matching address adopts it —
+    the mkdir-p forgiveness the sequential gates grant — and returns no
+    error.
+    """
+    occupant_query = select(entry.c.entry_id, entry.c.kind, entry.c.path, entry.c.version).where(
+        entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"]
+    )
+    occupant = (await session.execute(occupant_query)).one_or_none()
+    if occupant is None:
+        raise StaleSnapshot(f"the rival that beat {staged.path} is not observable from this snapshot")
+    if occupant.path != str(staged.path):
+        return _incoherent_row(staged.path)
+    if staged.kind == "directory" and occupant.kind == "directory":
+        staged.adopt(occupant.entry_id, occupant.version)
+        return None
+    if clobber:
+        return wrong_kind("directory", staged.path, target=staged.path)
+    return already_exists(staged.path, target=staged.path)
+
+
+def _incoherent_row(path: Path) -> ResultError:
+    """The arbitration refusal for a row whose stored address contradicts the request.
+
+    Retryable by declaration: the caller raced ordinary traffic as far as
+    it can know; the squatting row is a defect decisions upstream repair.
+    """
+    message = f"Address is held by a row this write may not adopt: {path}"
+    return ResultError(
+        kind=VFSErrorKind.conflict, message=message, path=path, data={"target": str(path)}, retryable=True
+    )
 
 
 async def _catch_retry_layer(
@@ -456,7 +521,16 @@ async def _resolve_rows(
     *,
     overwrite: bool,
 ) -> list[ResultError]:
-    """Re-run a conflicted chunk row-at-a-time, each insert in its own savepoint."""
+    """Re-run a conflicted chunk row-at-a-time, each insert in its own savepoint.
+
+    The occupant probe compares the matched row's stored path to the
+    requested path before any adoption: an incoherent row (a legacy torn
+    ghost squatting the address) classifies a retryable ``conflict`` and
+    is never absorbed into. A vanished occupant raises
+    :class:`StaleSnapshot` — the probe may be snapshot-blinded, and a
+    fresh snapshot resolves the race honestly either way. A directory
+    losing to a directory at the matching address adopts it silently.
+    """
     errors: list[ResultError] = []
     for staged, row_values in zip(layer, rows, strict=True):
         try:
@@ -465,21 +539,24 @@ async def _resolve_rows(
             continue
         except IntegrityError:
             pass
-        occupant_query = select(entry.c.entry_id, entry.c.kind).where(
+        occupant_query = select(entry.c.entry_id, entry.c.kind, entry.c.path, entry.c.version).where(
             entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"]
         )
         occupant = (await session.execute(occupant_query)).one_or_none()
         if occupant is None:
-            errors.append(
-                classified(VFSErrorKind.conflict, f"Concurrent write lost arbitration: {staged.path}", staged.path)
-            )
+            raise StaleSnapshot(f"the rival that beat {staged.path} is not observable from this snapshot")
+        if occupant.path != str(staged.path):
+            errors.append(_incoherent_row(staged.path))
+        elif staged.kind == "directory" and occupant.kind == "directory":
+            staged.adopt(occupant.entry_id, occupant.version)
         elif staged.kind != "directory" and overwrite and occupant.kind != "directory":
-            # The rival's row absorbs our write: an unguarded clobbering update.
+            # The rival's row absorbs our write: a clobbering update that
+            # still proves its address (relocations must miss it).
             staged.absorb(occupant.entry_id)
         elif staged.kind != "directory" and overwrite:
-            errors.append(wrong_kind("directory", staged.path))
+            errors.append(wrong_kind("directory", staged.path, target=staged.path))
         else:
-            errors.append(already_exists(staged.path))
+            errors.append(already_exists(staged.path, target=staged.path))
     return errors
 
 
@@ -494,24 +571,33 @@ async def _update_materials(
     user_id: str | None,
     now: datetime,
 ) -> list[ResultError]:
-    """Material updates with the version guard, attributed from the statement.
+    """Material updates with the version-and-path guard, attributed from the statement.
 
-    The guarded arm writes ``base + 1`` under ``WHERE version = base`` and
-    learns which rows its own statement matched — never from a re-read of
-    the post-image, which cannot tell our one increment from a rival's at
-    READ COMMITTED. The ladder, selected from what the live dialect
-    models: a set-based VALUES join whose RETURNING set is the success
-    set; an executemany whose sane aggregate rowcount proves every guard
-    matched (each statement matches at most one row via the unique
-    ``entry_id`` index — the upstream staging layer stages one row per
-    entry_id, never duplicates within a batch),
-    rolled back to a savepoint and re-driven row-by-row on mismatch;
-    per-row execution attributed by each statement's own rowcount; or a
-    classified refusal — an unverifiable guarded write never proceeds.
-    The unguarded arm (arbitration clobbers) increments SQL-side,
-    last-writer-wins by design; it only *learns* its assigned versions —
-    from RETURNING, or a select of its own ids — and a vanished row
-    classifies ``conflict``.
+    The guarded arm writes ``base + 1`` under ``WHERE version = base AND
+    path = path-at-snapshot`` and learns which rows its own statement
+    matched — never from a re-read of the post-image, which cannot tell
+    our one increment from a rival's at READ COMMITTED. The path
+    predicate closes the ancestor-relocation escape: subtree rewrites
+    bump no descendant versions, so a version guard alone reports
+    success at an address that no longer exists. The ladder, selected
+    from what the live dialect models: a set-based VALUES join whose
+    RETURNING set is the success set; an executemany whose sane
+    aggregate rowcount proves every guard matched (each statement
+    matches at most one row via the unique ``entry_id`` index — the
+    upstream staging layer stages one row per entry_id, never
+    duplicates within a batch), rolled back to a savepoint and
+    re-driven row-by-row on mismatch; per-row execution attributed by
+    each statement's own rowcount; or a classified refusal — an
+    unverifiable guarded write never proceeds. A guard miss classifies
+    per the dialect's declared ``guard_miss`` mode: an honest re-probe
+    (``not_found`` vs ``conflict``), or a whole-method redrive where the
+    probe would lie. The absorb arm (arbitration clobbers) increments
+    SQL-side, last-writer-wins between writes by design — but it still
+    proves its address: the update carries the path at probe time (a
+    topology relocation always rewrites the path, so a row trashed or
+    moved mid-window misses), and application is verified from
+    RETURNING or a read-back comparing the stored path; a miss raises
+    :class:`StaleSnapshot` and the whole method redrives.
     """
     if not updates:
         return []
@@ -525,11 +611,20 @@ async def _update_materials(
             matched = await _values_update(
                 session, entry, parameter_budget, membership_budget, guarded, user_id=user_id, now=now, guard=True
             )
-            errors.extend(_conflict(s) for s in guarded if s.entry_id not in matched)
+            missed = [s for s in guarded if s.entry_id not in matched]
+            errors.extend(await _classify_guard_misses(session, entry, profile, membership_budget, missed))
         elif dialect.supports_sane_multi_rowcount:
-            errors.extend(await _guarded_by_aggregate(session, entry, guarded, user_id=user_id, now=now))
+            errors.extend(
+                await _guarded_by_aggregate(
+                    session, entry, profile, membership_budget, guarded, user_id=user_id, now=now
+                )
+            )
         elif dialect.supports_sane_rowcount:
-            errors.extend(await _guarded_by_rowcount(session, entry, guarded, user_id=user_id, now=now))
+            errors.extend(
+                await _guarded_by_rowcount(
+                    session, entry, profile, membership_budget, guarded, user_id=user_id, now=now
+                )
+            )
         else:
             message = f"Guarded updates cannot be verified on {profile.name}: no UPDATE RETURNING, no sane rowcount"
             return [ResultError(kind=VFSErrorKind.unsupported, message=message)]
@@ -538,26 +633,33 @@ async def _update_materials(
             learned = await _values_update(
                 session, entry, parameter_budget, membership_budget, unguarded, user_id=user_id, now=now, guard=False
             )
+            for staged in unguarded:
+                version = learned.get(staged.entry_id)
+                if version is None:
+                    raise StaleSnapshot(f"the occupant absorbing {staged.path} moved past this write's snapshot")
+                staged.version = version
         else:
             material = {name: bindparam(f"b_{name}") for name in _CLOBBER_COLUMNS}
             stmt = (
                 update(entry)
-                .where(entry.c.entry_id == bindparam("b_id"))
+                .where(entry.c.entry_id == bindparam("b_id"), entry.c.path == bindparam("b_path"))
                 .values(**material, version=entry.c.version + 1)
             )
-            await session.execute(stmt, [_update_params(s, user_id, now) for s in unguarded])
-            learned = {}
+            params = [_update_params(s, user_id, now) | {"b_path": str(s.path)} for s in unguarded]
+            await session.execute(stmt, params)
+            # The read-back proves application: the updated row holds its
+            # X-lock, so a stored path disagreeing means the guard missed.
+            found_rows: dict[str, Any] = {}
             for chunk in chunked([s.entry_id for s in unguarded], membership_budget):
                 found = await session.execute(
-                    select(entry.c.entry_id, entry.c.version).where(entry.c.entry_id.in_(chunk))
+                    select(entry.c.entry_id, entry.c.version, entry.c.path).where(entry.c.entry_id.in_(chunk))
                 )
-                learned.update({row.entry_id: row.version for row in found})
-        for staged in unguarded:
-            version = learned.get(staged.entry_id)
-            if version is None:
-                errors.append(_conflict(staged))
-            else:
-                staged.version = version
+                found_rows.update({row.entry_id: row for row in found})
+            for staged in unguarded:
+                row = found_rows.get(staged.entry_id)
+                if row is None or row.path != str(staged.path):
+                    raise StaleSnapshot(f"the occupant absorbing {staged.path} moved past this write's snapshot")
+                staged.version = row.version
     return errors
 
 
@@ -575,17 +677,18 @@ async def _values_update(
     """Set-based material update over a VALUES join, RETURNING what it matched.
 
     One tuple per staged row joins the entry table on ``entry_id`` (and,
-    guarded, on ``version = base``); the returned ``entry_id`` set is
-    exactly the rows this statement touched. Chunked by the tighter of
-    the membership budget and the per-tuple bind cost, so a 10,000-entry
-    batch stays batch-native and bounded on every engine.
+    guarded, on ``version = base`` and ``path`` at snapshot); the
+    returned ``entry_id`` set is exactly the rows this statement
+    touched. Chunked by the tighter of the membership budget and the
+    per-tuple bind cost, so a 10,000-entry batch stays batch-native and
+    bounded on every engine.
     """
     rows = []
     for entry_row in staged:
         material = _material_values(entry_row, user_id, now)
         ordered = tuple(material[name] for name in _CLOBBER_COLUMNS)
-        rows.append((entry_row.entry_id, entry_row.base_version, entry_row.version, *ordered))
-    width = len(_CLOBBER_COLUMNS) + 3
+        rows.append((entry_row.entry_id, entry_row.base_version, entry_row.version, str(entry_row.path), *ordered))
+    width = len(_CLOBBER_COLUMNS) + 4
     per_statement = max(1, min(membership_budget, parameter_budget // width))
     matched: dict[str, int] = {}
     for chunk in chunked(rows, per_statement):
@@ -593,11 +696,13 @@ async def _values_update(
             column("v_id", entry.c.entry_id.type),
             column("v_base", entry.c.version.type),
             column("v_ver", entry.c.version.type),
+            column("v_path", entry.c.path.type),
             *(column(f"v_{name}", entry.c[name].type) for name in _CLOBBER_COLUMNS),
             name="incoming",
         ).data(list(chunk))
         set_: dict[str, Any] = {name: incoming.c[f"v_{name}"] for name in _CLOBBER_COLUMNS}
-        where = [entry.c.entry_id == incoming.c.v_id]
+        # Both arms prove the address; only the guarded arm pins the version.
+        where = [entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path]
         if guard:
             set_["version"] = incoming.c.v_ver
             where.append(entry.c.version == incoming.c.v_base)
@@ -612,6 +717,8 @@ async def _values_update(
 async def _guarded_by_aggregate(
     session: AsyncSession,
     entry: Table,
+    profile: DialectProfile,
+    membership_budget: int,
     guarded: list[StagedEntry],
     *,
     user_id: str | None,
@@ -620,8 +727,10 @@ async def _guarded_by_aggregate(
     """Executemany fast path: an aggregate rowcount of N proves N guards matched.
 
     On mismatch the savepoint rolls back — guarded updates are not
-    idempotent, so attribution must not re-run them over applied state —
-    and the per-row floor re-drives for exact blame.
+    idempotent, so attribution must not re-run them over applied state.
+    A redrive-mode dialect raises :class:`StaleSnapshot` right here (per-row
+    blame would be built on an unreliable probe); everywhere else the
+    per-row floor re-drives for exact blame.
     """
     params = [_guarded_params(s, user_id, now) for s in guarded]
     nested = await session.begin_nested()
@@ -630,12 +739,16 @@ async def _guarded_by_aggregate(
         await nested.commit()
         return []
     await nested.rollback()
-    return await _guarded_by_rowcount(session, entry, guarded, user_id=user_id, now=now)
+    if profile.guard_miss == "redrive":
+        raise StaleSnapshot(f"{len(params) - result.rowcount} guarded update(s) missed their snapshot")
+    return await _guarded_by_rowcount(session, entry, profile, membership_budget, guarded, user_id=user_id, now=now)
 
 
 async def _guarded_by_rowcount(
     session: AsyncSession,
     entry: Table,
+    profile: DialectProfile,
+    membership_budget: int,
     guarded: list[StagedEntry],
     *,
     user_id: str | None,
@@ -647,11 +760,44 @@ async def _guarded_by_rowcount(
     RETURNING — one row per statement, bounded trivially.
     """
     stmt = _guarded_stmt(entry)
-    errors: list[ResultError] = []
+    missed: list[StagedEntry] = []
     for staged in guarded:
         result = cast("CursorResult[Any]", await session.execute(stmt, _guarded_params(staged, user_id, now)))
         if result.rowcount == 0:
+            missed.append(staged)
+    return await _classify_guard_misses(session, entry, profile, membership_budget, missed)
+
+
+async def _classify_guard_misses(
+    session: AsyncSession,
+    entry: Table,
+    profile: DialectProfile,
+    membership_budget: int,
+    missed: list[StagedEntry],
+) -> list[ResultError]:
+    """Interpret zero-row guard outcomes per the dialect's declared mode.
+
+    ``redrive``: the probe would lie about current state, so the whole
+    method retries from a fresh snapshot. ``reprobe``: one chunked
+    re-probe by id splits honest ``not_found`` (the row is gone) from
+    ``conflict`` (the row moved past the snapshot — version or address).
+    """
+    if not missed:
+        return []
+    if profile.guard_miss == "redrive":
+        raise StaleSnapshot(f"{len(missed)} guarded update(s) missed their snapshot")
+    present: set[str] = set()
+    for chunk in chunked([s.entry_id for s in missed], membership_budget):
+        found = await session.execute(select(entry.c.entry_id).where(entry.c.entry_id.in_(chunk)))
+        present.update(row.entry_id for row in found)
+    errors: list[ResultError] = []
+    for staged in missed:
+        if staged.entry_id in present:
             errors.append(_conflict(staged))
+        else:
+            errors.append(
+                classified(VFSErrorKind.not_found, f"Not found: {staged.path}", staged.path, target=staged.path)
+            )
     return errors
 
 
@@ -659,22 +805,29 @@ def _guarded_stmt(entry: Table) -> Update:
     material = {name: bindparam(f"b_{name}") for name in _CLOBBER_COLUMNS}
     return (
         update(entry)
-        .where(entry.c.entry_id == bindparam("b_id"), entry.c.version == bindparam("b_base"))
+        .where(
+            entry.c.entry_id == bindparam("b_id"),
+            entry.c.version == bindparam("b_base"),
+            entry.c.path == bindparam("b_path"),
+        )
         .values(**material, version=bindparam("b_ver"))
     )
 
 
 def _guarded_params(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:
-    return _update_params(staged, user_id, now) | {"b_base": staged.base_version, "b_ver": staged.version}
+    guard = {"b_base": staged.base_version, "b_ver": staged.version, "b_path": str(staged.path)}
+    return _update_params(staged, user_id, now) | guard
 
 
 def _conflict(staged: StagedEntry) -> ResultError:
+    # Retryable by declaration: an identical immediate retry adjudicates
+    # against the rival's committed state and resolves honestly.
     message = f"Concurrent modification: {staged.path}"
-    return classified(VFSErrorKind.conflict, message, staged.path, target=staged.path)
+    return classified(VFSErrorKind.conflict, message, staged.path, target=staged.path, retryable=True)
 
 
 async def _replace_content(
-    session: AsyncSession, content: Table, membership_budget: int, staged: list[StagedEntry]
+    session: AsyncSession, content: Table, membership_budget: int, staged: list[StagedEntry], now: datetime
 ) -> None:
     """Delete-then-insert the batch's content rows — portable, idempotent.
 
@@ -686,30 +839,107 @@ async def _replace_content(
         return
     for chunk in chunked([s.entry_id for s in bearing], membership_budget):
         await session.execute(delete(content).where(content.c.entry_id.in_(chunk)))
-    await session.execute(insert(content), [{"entry_id": s.entry_id, "content": s.content} for s in bearing])
+    rows = [{"entry_id": s.entry_id, "created_at": now, "content": s.content} for s in bearing]
+    await session.execute(insert(content), rows)
 
 
-async def _bump_parents(session: AsyncSession, entry: Table, membership_budget: int, plan: WritePlan) -> None:
-    """One SQL-side increment for every bumped directory, read back only on need.
+async def _bump_parents(
+    session: AsyncSession,
+    entry: Table,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    plan: WritePlan,
+) -> list[ResultError]:
+    """Guarded SQL-side increments: every bump proves its parent's address.
 
-    ``version = version + 1`` composes where a client-assigned value would
-    overwrite a concurrent rival's bump. The read-back runs only when an
-    "unchanged" pending row was bumped by a sibling in this batch — its
-    observation must equal a post-commit stat of its path.
+    ``version = version + 1`` under ``WHERE entry_id AND path-at-snapshot``
+    still composes with rival bumps, while a parent a rival relocated or
+    destroyed mid-window — delete, move, restore, and purge are one
+    failure mode here — misses the guard. The predicate is the path, not
+    ``parent_id``: a grandparent's relocation rewrites only descendant
+    paths, and must miss too. Rowcount is verified per chunk against the
+    chunk's pair count; any shortfall raises :class:`StaleSnapshot`, so
+    the whole batch — the torn creates are uncommitted inserts in this
+    same transaction — rolls back and the method redrives from a fresh
+    snapshot. The read-back runs only when an "unchanged" pending row was
+    bumped by a sibling in this batch — its observation must equal a
+    post-commit stat of its path.
     """
     if not plan.bumps:
-        return
-    bump_ids = [plan.committed[path]["entry_id"] for path in sorted(plan.bumps)]
-    for chunk in chunked(bump_ids, membership_budget):
-        await session.execute(update(entry).where(entry.c.entry_id.in_(chunk)).values(version=entry.c.version + 1))
+        return []
+    pairs = [(plan.committed[path]["entry_id"], path) for path in sorted(plan.bumps)]
+    dialect = session.get_bind().dialect
+    if profile.values_join and dialect.update_returning and dialect.update_returning_multifrom:
+        await _bump_by_values(session, entry, parameter_budget, membership_budget, pairs)
+    elif dialect.supports_sane_multi_rowcount or dialect.supports_sane_rowcount:
+        per_row = not dialect.supports_sane_multi_rowcount
+        await _bump_by_rowcount(session, entry, membership_budget, pairs, per_row=per_row)
+    else:
+        message = f"Guarded parent bumps cannot be verified on {profile.name}: no UPDATE RETURNING, no sane rowcount"
+        return [ResultError(kind=VFSErrorKind.unsupported, message=message)]
     needed = {str(path) for path, _ in plan.pending if path not in plan.staged and str(path) in plan.bumps}
     if not needed:
-        return
+        return []
     ids = [plan.committed[path]["entry_id"] for path in sorted(needed)]
     plan.bump_versions = {}
     for chunk in chunked(ids, membership_budget):
         result = await session.execute(select(entry.c.path, entry.c.version).where(entry.c.entry_id.in_(chunk)))
         plan.bump_versions.update({row.path: row.version for row in result})
+    return []
+
+
+async def _bump_by_values(
+    session: AsyncSession,
+    entry: Table,
+    parameter_budget: int,
+    membership_budget: int,
+    pairs: list[tuple[str, str]],
+) -> None:
+    """Set-based guarded bump over a VALUES join; RETURNING is the proof."""
+    per_statement = max(1, min(membership_budget, parameter_budget // 2))
+    for chunk in chunked(pairs, per_statement):
+        incoming = values(
+            column("v_id", entry.c.entry_id.type),
+            column("v_path", entry.c.path.type),
+            name="incoming",
+        ).data(list(chunk))
+        stmt = (
+            update(entry)
+            .where(entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path)
+            .values(version=entry.c.version + 1)
+            .returning(entry.c.entry_id)
+        )
+        matched = len((await session.execute(stmt)).all())
+        if matched != len(chunk):
+            raise StaleSnapshot(f"{len(chunk) - matched} parent(s) were relocated or destroyed mid-batch")
+
+
+async def _bump_by_rowcount(
+    session: AsyncSession,
+    entry: Table,
+    membership_budget: int,
+    pairs: list[tuple[str, str]],
+    *,
+    per_row: bool,
+) -> None:
+    """Guarded bump verified by rowcount — executemany aggregate, or the per-row floor."""
+    stmt = (
+        update(entry)
+        .where(entry.c.entry_id == bindparam("b_id"), entry.c.path == bindparam("b_path"))
+        .values(version=entry.c.version + 1)
+    )
+    for chunk in chunked(pairs, membership_budget):
+        params = [{"b_id": entry_id, "b_path": path} for entry_id, path in chunk]
+        if per_row:
+            matched = 0
+            for row_params in params:
+                result = cast("CursorResult[Any]", await session.execute(stmt, row_params))
+                matched += result.rowcount
+        else:
+            matched = cast("CursorResult[Any]", await session.execute(stmt, params)).rowcount
+        if matched != len(params):
+            raise StaleSnapshot(f"{len(params) - matched} parent(s) were relocated or destroyed mid-batch")
 
 
 def _upsert_constructor(profile: DialectProfile) -> Callable[[Table], SQLiteInsert | PostgresInsert]:

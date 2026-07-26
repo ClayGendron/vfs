@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 Status = Literal["created", "updated", "unchanged"]
 # Which execution pass writes a staged row's material columns. Distinct
 # vocabulary from Status, which reports what a finished op did.
-PersistenceState = Literal["insert", "update", "absorb"]
+PersistenceState = Literal["insert", "update", "absorb", "adopt"]
 
 
 @dataclass
@@ -85,6 +85,18 @@ class StagedEntry:
         """
         self.persistence = "absorb"
         self.entry_id = entry_id
+
+    def adopt(self, entry_id: str, version: int) -> None:
+        """Lose insert arbitration to an equivalent occupant and stand down.
+
+        Nothing remains to write: the occupant already is what this row
+        meant to create, so identity and version become the occupant's and
+        no execution pass touches the row — the mkdir-p forgiveness the
+        sequential gates grant, applied at arbitration.
+        """
+        self.persistence = "adopt"
+        self.entry_id = entry_id
+        self.version = version
 
 
 # ---------------------------------------------------------------------------

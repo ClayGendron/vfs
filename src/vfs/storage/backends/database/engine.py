@@ -53,6 +53,7 @@ from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.results import ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
     DialectProfile,
+    StaleSnapshot,
     fan_budget,
     is_retryable,
     membership_budget,
@@ -193,13 +194,20 @@ class EngineHost:
                 return self.classify_failure(exc, context="First touch")
 
     async def with_retry(self, fn: Callable[[], Awaitable[T]]) -> T:
-        """Run *fn*, restarting whole on a retryable outcome, with backoff."""
+        """Run *fn*, restarting whole on a retryable outcome, with backoff.
+
+        A :class:`StaleSnapshot` is always retryable: a guard proved the
+        snapshot stale, and a fresh attempt re-derives everything from
+        current state. One that outlives the attempts escapes to the
+        caller's classifier.
+        """
         delay = self._retry_base_delay
         for attempt in range(1, self._retry_attempts + 1):
             try:
                 return await fn()
-            except DBAPIError as exc:
-                if attempt >= self._retry_attempts or not is_retryable(self.profile, exc):
+            except (DBAPIError, StaleSnapshot) as exc:
+                retryable = isinstance(exc, StaleSnapshot) or is_retryable(self.profile, exc)
+                if attempt >= self._retry_attempts or not retryable:
                     raise
                 await asyncio.sleep(delay)
                 delay *= 2

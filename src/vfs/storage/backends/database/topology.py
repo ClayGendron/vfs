@@ -8,6 +8,18 @@ transaction is the lock; a transaction-scoped advisory lock on
 Postgres; an X-lock on the single meta row everywhere else), and every
 read runs after it inside the same transaction, so refusal checks judge
 post-rival state and later targets see earlier targets' effects.
+Writes are deliberately *not* serialized with topology, so every
+reparent/claim/destroy statement is guarded on the row's version at
+the probe that judged it: a rival write committing inside the window
+bumps the row and flips the guard, and the verb redrives whole from a
+fresh snapshot — re-collection is correctness by construction. The
+same discipline covers a destination-address claim lost to an
+unserialized rival: the unique violation redrives, and the fresh
+ladder returns the honest per-pair refusal with the caller's own
+attribution — never a classification off mid-race state, never raw
+driver text. Every guard proves it matched through what the dialect
+verifiably reports (rowcount where sane, RETURNING where modeled) or
+refuses ``unsupported``.
 
 Delete stages nothing: it fetches one pre-batch committed snapshot for
 classification, then walks targets in request order down the ladder
@@ -66,15 +78,15 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
-from sqlalchemy import bindparam, delete, func, insert, or_, select, update
+from sqlalchemy import Update, bindparam, delete, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, METADATA_ROOT, ROOT, TRASH_ROOT, Path, byte_length
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     ancestor_chain,
@@ -82,14 +94,14 @@ from vfs.storage.backends.database.descent import (
     classify_misses,
     escape_like,
 )
-from vfs.storage.backends.database.dialects import chunked, rows_per_statement
+from vfs.storage.backends.database.dialects import StaleSnapshot, chunked, rows_per_statement
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
     from typing import Any
 
-    from sqlalchemy import Table
-    from sqlalchemy.engine import Row, RowMapping
+    from sqlalchemy import Column, Delete, Table
+    from sqlalchemy.engine import CursorResult, Row, RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import VFSTables
@@ -108,6 +120,28 @@ _RESTORE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "original_parent
 
 # The hour-bucket name format delete mints and sweep parses back.
 _BUCKET_FORMAT: Final = "%Y-%m-%d-%H"
+
+
+class _PendingTransfer(NamedTuple):
+    """One executed pair's observation, captured at execution time.
+
+    Shared by restore and move/copy — restore is the move machinery with
+    a computed destination. The captured values are the fallback: after
+    the loop every pending destination is re-read in one chunked pass and
+    the final values win — a later pair may have bumped an earlier
+    destination — but a destination a later pair moved away falls back to
+    these.
+    """
+
+    dest: Path
+    status: Literal["created", "updated", "unchanged"]
+    kind: ObjectKind
+    version: int
+    size_bytes: int
+
+# How old a content row with no entry must be before the retention sweep
+# reclaims it — the field's standard age fence, sized conservatively.
+_ORPHAN_AGE_FENCE: Final = timedelta(hours=24)
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +181,9 @@ async def delete_rows(
     seen: set[Path] = set()
     rows: list[Observation] = []
     errors: list[ResultError] = []
+    # Bumps this batch itself issued, by entry id: a later target's claim
+    # guard expects its snapshot version plus exactly these.
+    local_bumps = Counter[str]()
     for target in targets:
         if target == ROOT:
             errors.append(classified(VFSErrorKind.invalid, "Cannot delete the root directory", target))
@@ -188,10 +225,22 @@ async def delete_rows(
             message = f"Cannot delete {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
             errors.append(classified(VFSErrorKind.unaddressable, message, target))
             continue
-        await _reparent_to_trash(session, entry, row, bucket_id, trash_path, now)
-        await _apply_rewrites(session, entry, rewrites)
+        # The reverse-ordering window: rewrites collected, claim not yet
+        # taken — a rival committing here must flip the claim's guard.
+        await seam("delete:post-collect")
+        expected = row["version"] + local_bumps[row["entry_id"]]
+        refused = await _reparent_to_trash(session, entry, profile, row, expected, bucket_id, trash_path, now)
+        if refused is not None:
+            errors.append(refused)
+            continue
+        # Rewrites re-collect post-claim: a deep child can land under an
+        # unguarded descendant mid-window; the pre-claim list judged bytes.
+        if is_directory:
+            await _rewrite_descendants(session, entry, str(target), trash_path)
         await _bump(session, entry, bucket_id)
         await _bump(session, entry, row["parent_id"])
+        local_bumps[bucket_id] += 1
+        local_bumps[row["parent_id"]] += 1
         rows.append(_observe_deleted(target, row, trash_path=Path(trash_path)))
     if errors:
         return Result(ops=("delete",), errors=errors)
@@ -240,22 +289,30 @@ async def restore_rows(
         row, dest_parent_id, dest = resolved
         occupant = await _point_row(session, entry, str(dest))
         if occupant is not None and not overwrite:
-            errors.append(already_exists(dest))
+            errors.append(already_exists(dest, target=target))
             continue
         if occupant is not None:
             if (row["kind"] == "directory") != (occupant["kind"] == "directory"):
-                errors.append(classified(VFSErrorKind.wrong_kind, f"Cannot restore onto: {dest}", dest, target=target))
+                errors.append(wrong_kind(occupant["kind"], dest, target=target))
                 continue
             if occupant["kind"] == "directory" and await _has_live_children(session, entry, occupant["entry_id"]):
                 errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest, target=target))
                 continue
-        subtree = await _fetch_subtree(session, entry, row["path"])
+        subtree = await _fetch_subtree(session, tables, row["path"])
         new_paths = (str(dest) + r["path"][len(row["path"]) :] for r in subtree)
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths):
             message = f"Cannot restore {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
             errors.append(classified(VFSErrorKind.unaddressable, message, target))
             continue
-        await _execute_move(session, tables, membership_budget, row, dest, dest_parent_id, occupant, now)
+        # The claim window: ladder passed, address not yet taken — a
+        # rival write landing here loses honestly at the claim.
+        await seam("restore:post-resolve")
+        error = await _execute_move(
+            session, tables, profile, membership_budget, row, dest, dest_parent_id, occupant, now, op="restore"
+        )
+        if error is not None:
+            errors.append(error)
+            continue
         status: Literal["created", "updated"] = "updated" if occupant is not None else "created"
         pending.append(_PendingTransfer(dest, status, row["kind"], row["version"] + 1, row["size_bytes"]))
     if errors:
@@ -310,47 +367,31 @@ async def sweep_rows(
         await _bump(session, entry, row["parent_id"])
         return Result(ops=("sweep",), observations=[_observe_deleted(path, row)])
     cutoff = datetime.now(UTC) - timedelta(days=trash_days)
-    root = await _point_row(session, entry, TRASH_ROOT)
-    if root is None:
-        return Result(ops=("sweep",))
-    if root["kind"] != "directory":
-        return Result(ops=("sweep",), errors=[_skipped(Path(TRASH_ROOT))])
-    columns = [entry.c[name] for name in _SNAPSHOT_COLUMNS]
-    children = (await session.execute(select(*columns).where(entry.c.parent_id == root["entry_id"]))).mappings()
     rows: list[Observation] = []
     skips: list[ResultError] = []
-    for child in sorted(children, key=lambda row: row["name"]):
-        hour = _bucket_hour(child["name"]) if child["kind"] == "directory" else None
-        if hour is None:
-            skips.append(_skipped(Path(child["path"])))
-            continue
-        if hour + timedelta(hours=1) > cutoff:
-            continue
-        await _purge_subtree(session, tables, membership_budget, child["path"])
-        await _bump(session, entry, root["entry_id"])
-        rows.append(_observe_deleted(Path(child["path"]), child))
+    root = await _point_row(session, entry, TRASH_ROOT)
+    if root is not None and root["kind"] != "directory":
+        return Result(ops=("sweep",), errors=[_skipped(Path(TRASH_ROOT))])
+    if root is not None:
+        columns = [entry.c[name] for name in _SNAPSHOT_COLUMNS]
+        children = (await session.execute(select(*columns).where(entry.c.parent_id == root["entry_id"]))).mappings()
+        for child in sorted(children, key=lambda row: row["name"]):
+            hour = _bucket_hour(child["name"]) if child["kind"] == "directory" else None
+            if hour is None:
+                skips.append(_skipped(Path(child["path"])))
+                continue
+            if hour + timedelta(hours=1) > cutoff:
+                continue
+            await _purge_subtree(session, tables, membership_budget, child["path"])
+            await _bump(session, entry, root["entry_id"])
+            rows.append(_observe_deleted(Path(child["path"]), child))
+    skips.extend(await _reclaim_orphan_content(session, tables, membership_budget))
     return Result(ops=("sweep",), observations=rows, errors=skips)
 
 
 # ---------------------------------------------------------------------------
 # Move / copy
 # ---------------------------------------------------------------------------
-
-
-class _PendingTransfer(NamedTuple):
-    """One executed pair's observation, captured at execution time.
-
-    The captured values are the fallback: after the loop every pending
-    destination is re-read in one chunked pass and the final values win —
-    a later pair may have bumped an earlier destination — but a
-    destination a later pair moved away falls back to these.
-    """
-
-    dest: Path
-    status: Literal["created", "updated", "unchanged"]
-    kind: ObjectKind
-    version: int
-    size_bytes: int
 
 
 async def transfer_rows(
@@ -416,7 +457,7 @@ async def transfer_rows(
         # kind, both directions), then kind, then emptiness — last.
         occupant = await _point_row(session, entry, str(dest))
         if occupant is not None and not overwrite:
-            errors.append(already_exists(dest))
+            errors.append(already_exists(dest, target=src))
             continue
         if dest.startswith(src + "/"):
             errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))
@@ -426,26 +467,33 @@ async def transfer_rows(
             continue
         if occupant is not None:
             if (src_row["kind"] == "directory") != (occupant["kind"] == "directory"):
-                errors.append(classified(VFSErrorKind.wrong_kind, f"Cannot {op} onto: {dest}", dest))
+                errors.append(wrong_kind(occupant["kind"], dest, target=src))
                 continue
             if occupant["kind"] == "directory" and await _has_live_children(session, entry, occupant["entry_id"]):
                 errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest))
                 continue
-        subtree = await _fetch_subtree(session, entry, str(src))
+        subtree = await _fetch_subtree(session, tables, str(src), with_content=op == "copy")
         new_paths = {row["entry_id"]: str(dest) + row["path"][len(str(src)) :] for row in subtree}
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths.values()):
             message = f"Cannot {op} {src}: Path too long (max {MAX_PATH_LENGTH} bytes)"
             errors.append(classified(VFSErrorKind.unaddressable, message, dest))
             continue
+        # The reverse-ordering window: subtree collected, claim not yet
+        # taken — a rival committing here must flip the claim's guard.
+        await seam("transfer:post-collect")
         if op == "move":
-            await _execute_move(session, tables, membership_budget, src_row, dest, dest_parent_id, occupant, now)
+            error = await _execute_move(
+                session, tables, profile, membership_budget, src_row, dest, dest_parent_id, occupant, now, op=op
+            )
+            if error is not None:
+                errors.append(error)
+                continue
             version = src_row["version"] + 1
         else:
             version = await _execute_copy(
                 session,
                 tables,
                 parameter_budget,
-                membership_budget,
                 subtree=subtree,
                 src_row=src_row,
                 dest=dest,
@@ -512,6 +560,15 @@ async def _purge_subtree(session: AsyncSession, tables: VFSTables, membership_bu
     are not serialized with topology, so a rival can commit a new child
     between the collecting select and the deletes — purging from that
     stale id list alone would leave the child an orphan row.
+
+    Entry rows go first in every chunk, and the side tables follow the
+    same id set only once the entry delete is verified: in the old
+    side-tables-first order a rival's content replace could commit a
+    fresh body row after this purge's content delete had already run —
+    an orphan no re-collection ever sees. With the entry row gone
+    first, a rival's guarded write misses and takes its own rows down
+    with it; whatever side rows remain here were committed before the
+    entry delete and are swept by the passes below.
     """
     entry = tables.entry
     edges = tables.edges
@@ -522,6 +579,12 @@ async def _purge_subtree(session: AsyncSession, tables: VFSTables, membership_bu
     while ids := [row.entry_id for row in await session.execute(select(entry.c.entry_id).where(subtree))]:
         await seam("purge:post-collect")
         for chunk in chunked(ids, membership_budget):
+            await seam("purge:pre-entry-delete")
+            result = cast("CursorResult[Any]", await session.execute(delete(entry).where(entry.c.entry_id.in_(chunk))))
+            # Collected entries cannot vanish under the serialization
+            # point; a shortfall (where rowcount is sane) is a stale list.
+            if 0 <= result.rowcount != len(chunk):
+                raise StaleSnapshot(f"purge lost {len(chunk) - result.rowcount} collected row(s) mid-transaction")
             await session.execute(delete(tables.content).where(tables.content.c.entry_id.in_(chunk)))
             await session.execute(delete(tables.versions).where(tables.versions.c.entry_id.in_(chunk)))
             await session.execute(delete(tables.chunks).where(tables.chunks.c.entry_id.in_(chunk)))
@@ -529,7 +592,40 @@ async def _purge_subtree(session: AsyncSession, tables: VFSTables, membership_bu
             # chunk's binds twice, doubling past the tightest engine cap.
             await session.execute(delete(edges).where(edges.c.source_id.in_(chunk)))
             await session.execute(delete(edges).where(edges.c.target_id.in_(chunk)))
-            await session.execute(delete(entry).where(entry.c.entry_id.in_(chunk)))
+
+
+async def _reclaim_orphan_content(
+    session: AsyncSession, tables: VFSTables, membership_budget: int
+) -> list[ResultError]:
+    """Reclaim content rows that reference no entry, once past the age fence.
+
+    The schema carries no foreign keys, so a body row orphaned before
+    entry-first purge ordering landed — or by any residue an aborted
+    transaction never cleaned — is unreachable by every path-addressed
+    verb. The retention sweep drains them: rows older than the fence
+    are deleted and each reclaim surfaces as a warning; younger rows
+    survive until a later sweep, keeping any in-flight rival's freshly
+    written body out of reach.
+    """
+    content = tables.content
+    entry = tables.entry
+    fence = datetime.now(UTC) - _ORPHAN_AGE_FENCE
+    referenced = select(entry.c.id).where(entry.c.entry_id == content.c.entry_id)
+    stmt = select(content.c.entry_id).where(~referenced.exists(), content.c.created_at < fence)
+    orphans = sorted(row.entry_id for row in await session.execute(stmt))
+    if not orphans:
+        return []
+    for chunk in chunked(orphans, membership_budget):
+        await session.execute(delete(content).where(content.c.entry_id.in_(chunk)))
+    return [
+        ResultError(
+            kind=VFSErrorKind.internal,
+            message=f"Sweep reclaimed an orphaned content row: entry {entry_id}",
+            severity=Severity.warning,
+            data={"entry_id": entry_id},
+        )
+        for entry_id in orphans
+    ]
 
 
 class _TrashChain:
@@ -739,18 +835,60 @@ async def _newest_candidate(session: AsyncSession, entry: Table, parent_id: str,
     return (await session.execute(stmt)).mappings().first()
 
 
+async def _claim(
+    session: AsyncSession,
+    profile: DialectProfile,
+    stmt: Update | Delete,
+    proof: Column[Any],
+    *,
+    miss: str,
+) -> ResultError | None:
+    """Execute a single-row guarded statement and prove exactly one row matched.
+
+    The evidence ladder mirrors the write family's refusal doctrine:
+    rowcount where the dialect declares it sane, RETURNING *proof* where
+    the dialect models it, else a classified ``unsupported`` — an
+    unverifiable guarded claim never proceeds. A proven zero-row outcome
+    raises :class:`StaleSnapshot` with *miss* as its context.
+    """
+    dialect = session.get_bind().dialect
+    returning = dialect.update_returning if isinstance(stmt, Update) else dialect.delete_returning
+    if dialect.supports_sane_rowcount:
+        matched = cast("CursorResult[Any]", await session.execute(stmt)).rowcount
+    elif returning:
+        matched = len((await session.execute(stmt.returning(proof))).all())
+    else:
+        message = f"Guarded claims cannot be verified on {profile.name}: no RETURNING, no sane rowcount"
+        return ResultError(kind=VFSErrorKind.unsupported, message=message)
+    if matched == 0:
+        raise StaleSnapshot(miss)
+    return None
+
+
 async def _reparent_to_trash(
-    session: AsyncSession, entry: Table, row: RowMapping, bucket_id: str, trash_path: str, now: datetime
-) -> None:
+    session: AsyncSession,
+    entry: Table,
+    profile: DialectProfile,
+    row: RowMapping,
+    expected_version: int,
+    bucket_id: str,
+    trash_path: str,
+    now: datetime,
+) -> ResultError | None:
     """Rewrite the row into the bucket under its self-describing trash name.
 
-    Deliberately unguarded: under the serialization point the row cannot
-    vanish, and a concurrent edit composes — both bump SQL-side off the
-    current row, and the reparent touches no material column.
+    Guarded on the expected version: writes are not serialized with
+    topology, and every child create or update bumps this row, so a
+    rival committing between the descendant collection and this claim
+    flips the guard — the collected rewrite list is stale by proof.
+    *expected_version* is the snapshot version plus the bumps this batch
+    itself already issued against the row. The miss raises
+    :class:`StaleSnapshot`; the verb redrives whole and re-collects,
+    which is correctness by construction.
     """
-    await session.execute(
+    stmt = (
         update(entry)
-        .where(entry.c.entry_id == row["entry_id"])
+        .where(entry.c.entry_id == row["entry_id"], entry.c.version == expected_version)
         .values(
             parent_id=bucket_id,
             name=trash_path.rsplit("/", 1)[-1],
@@ -761,6 +899,8 @@ async def _reparent_to_trash(
             version=entry.c.version + 1,
         )
     )
+    miss = f"a rival write moved {row['path']} past the delete's snapshot"
+    return await _claim(session, profile, stmt, entry.c.entry_id, miss=miss)
 
 
 async def _descendant_rewrites(
@@ -789,8 +929,17 @@ async def _apply_rewrites(session: AsyncSession, entry: Table, rows: list[dict[s
 
 
 async def _rewrite_descendants(session: AsyncSession, entry: Table, old_prefix: str, new_prefix: str) -> None:
-    """Recompute descendant path caches under the moved prefix."""
-    await _apply_rewrites(session, entry, await _descendant_rewrites(session, entry, old_prefix, new_prefix))
+    """Recompute descendant path caches under the moved prefix, collected live.
+
+    Runs after the root claim, so a child committed inside the pre-claim
+    window is carried. A late arrival whose rewritten path overflows the
+    byte budget raises :class:`StaleSnapshot` instead of storing it —
+    the redriven ladder then refuses the whole target honestly.
+    """
+    rewrites = await _descendant_rewrites(session, entry, old_prefix, new_prefix)
+    if any(byte_length(r["b_path"]) > MAX_PATH_LENGTH for r in rewrites):
+        raise StaleSnapshot(f"a late arrival under {old_prefix} overflows the path budget")
+    await _apply_rewrites(session, entry, rewrites)
 
 
 async def _bump(session: AsyncSession, entry: Table, entry_id: str) -> None:
@@ -847,41 +996,75 @@ async def _dest_parent_id(session: AsyncSession, entry: Table, dest: Path, membe
     return found[str(dest.parent_dir)]["entry_id"]
 
 
-async def _fetch_subtree(session: AsyncSession, entry: Table, src: str) -> list[RowMapping]:
-    """The source row and every descendant, with the columns a copy reproduces."""
-    columns = [entry.c[name] for name in _SUBTREE_COLUMNS]
+async def _fetch_subtree(
+    session: AsyncSession, tables: VFSTables, src: str, *, with_content: bool = False
+) -> list[RowMapping]:
+    """The source row and every descendant, with the columns a copy reproduces.
+
+    ``with_content`` joins the body in the same select, so a copy stamps
+    metadata and content from one observation — two reads under the
+    READ COMMITTED topology pin can straddle a rival's commit and tear
+    ``content_hash`` from the body it claims to describe.
+    """
+    entry = tables.entry
+    columns: list[Any] = [entry.c[name] for name in _SUBTREE_COLUMNS]
     subtree = or_(
         entry.c.path == src,
         entry.c.path.like(escape_like(src) + "/%", escape=LIKE_ESCAPE),
     )
-    return list((await session.execute(select(*columns).where(subtree))).mappings())
+    stmt = select(*columns).where(subtree)
+    if with_content:
+        stmt = select(*columns, tables.content.c.content).select_from(tables.content_joined()).where(subtree)
+    return list((await session.execute(stmt)).mappings())
 
 
 async def _execute_move(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     src_row: RowMapping,
     dest: Path,
     dest_parent_id: str,
     occupant: RowMapping | None,
     now: datetime,
-) -> None:
+    *,
+    op: str,
+) -> ResultError | None:
     """Reparent the root, rewrite descendants, bump both parents.
 
     An occupant — an empty directory or a file, everything else was
     refused — is hard-deleted first: POSIX rename unlinks the target,
-    no trash hop. The root update is deliberately unguarded (the row
-    cannot vanish under the serialization point) and clears the restore
-    columns unconditionally: a move out of trash is the restore gesture,
-    and a live row must not carry trash metadata.
+    no trash hop. The destroy is fenced by a guarded no-op on the
+    occupant's version at the ladder's probe: a rival's committed child
+    bumps the occupant and flips the guard, so the redriven ladder
+    refuses ``not_empty`` instead of purging a row this pair never
+    judged. The root claim is guarded on the version read this pair
+    (a rival write bumping the source mid-window flips it), and clears
+    the restore columns unconditionally: a move out of trash is the
+    restore gesture, and a live row must not carry trash metadata. A
+    unique violation on the claim — a rival write took the destination
+    address after this pair's occupant probe — redrives too: the fresh
+    ladder returns the honest per-pair refusal, never a classification
+    off mid-race state.
     """
     entry = tables.entry
     if occupant is not None:
+        # Lock-and-prove: X-locks the occupant row without changing it, so
+        # nothing new can commit beneath it before the purge lands.
+        fence = (
+            update(entry)
+            .where(entry.c.entry_id == occupant["entry_id"], entry.c.version == occupant["version"])
+            .values(version=entry.c.version)
+        )
+        miss = f"a rival write reached {dest} after this {op}'s emptiness check"
+        refused = await _claim(session, profile, fence, entry.c.entry_id, miss=miss)
+        if refused is not None:
+            return refused
         await _purge_subtree(session, tables, membership_budget, str(dest))
-    await session.execute(
+    stmt = (
         update(entry)
-        .where(entry.c.entry_id == src_row["entry_id"])
+        .where(entry.c.entry_id == src_row["entry_id"], entry.c.version == src_row["version"])
         .values(
             parent_id=dest_parent_id,
             name=dest.name,
@@ -893,18 +1076,27 @@ async def _execute_move(
             deleted_at=None,
         )
     )
+    try:
+        async with session.begin_nested():
+            refused = await _claim(
+                session, profile, stmt, entry.c.entry_id, miss=f"a rival write moved the source mid-{op}"
+            )
+    except IntegrityError as exc:
+        raise StaleSnapshot(f"a rival write took {dest} before this {op}'s claim") from exc
+    if refused is not None:
+        return refused
     await _rewrite_descendants(session, entry, src_row["path"], str(dest))
     await _bump(session, entry, src_row["parent_id"])
     # Both parents bump even when identical — two increments, per the
     # conformance contract.
     await _bump(session, entry, dest_parent_id)
+    return None
 
 
 async def _execute_copy(
     session: AsyncSession,
     tables: VFSTables,
     parameter_budget: int,
-    membership_budget: int,
     *,
     subtree: list[RowMapping],
     src_row: RowMapping,
@@ -920,14 +1112,21 @@ async def _execute_copy(
     Fresh rows take new ULIDs at version 1, ownership follows the
     writer, and neither ``external_id`` nor any edge row is copied. An
     overwritten occupant keeps its identity — a material update with an
-    SQL-side increment — so rows referencing it stay wired.
+    SQL-side increment — so rows referencing it stay wired. Metadata
+    and bodies both come from the caller's single content-joined
+    subtree read, so the stamped ``content_hash``/``size_bytes`` and
+    the copied body cannot straddle a rival's commit. A unique
+    violation on the inserts — a rival write took an address under the
+    destination after the occupant probe — redrives the verb: the
+    fresh ladder returns the honest per-pair refusal at the address
+    the race actually reached.
     """
     entry = tables.entry
     root_id = src_row["entry_id"]
-    # The point-read src_row lacks material columns; the subtree row has them.
-    root = next(row for row in subtree if row["entry_id"] == root_id)
     id_map = {row["entry_id"]: str(ULID()) for row in subtree}
     if occupant is not None:
+        # The point-read src_row lacks material columns; the subtree row has them.
+        root = next(row for row in subtree if row["entry_id"] == root_id)
         id_map[root_id] = occupant["entry_id"]
         await session.execute(
             update(entry)
@@ -967,16 +1166,18 @@ async def _execute_copy(
     ]
     if values:
         for chunk in chunked(values, rows_per_statement(parameter_budget, values)):
-            await session.execute(insert(entry), list(chunk))
-    content = tables.content
-    bodies: list[dict[str, object]] = []
-    for chunk in chunked([row["entry_id"] for row in subtree], membership_budget):
-        found = await session.execute(
-            select(content.c.entry_id, content.c.content).where(content.c.entry_id.in_(chunk))
-        )
-        bodies.extend({"entry_id": id_map[body.entry_id], "content": body.content} for body in found)
+            try:
+                async with session.begin_nested():
+                    await session.execute(insert(entry), list(chunk))
+            except IntegrityError as exc:
+                raise StaleSnapshot(f"a rival write took an address under {dest} mid-copy") from exc
+    bodies = [
+        {"entry_id": id_map[row["entry_id"]], "created_at": now, "content": row["content"]}
+        for row in subtree
+        if row["content"] is not None
+    ]
     if bodies:
-        await session.execute(insert(content), bodies)
+        await session.execute(insert(tables.content), bodies)
     if occupant is None:
         await _bump(session, entry, dest_parent_id)
         return 1

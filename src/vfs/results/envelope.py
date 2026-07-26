@@ -211,25 +211,31 @@ def classified(
     path: Path | None = None,
     *,
     target: Path | None = None,
+    retryable: bool = False,
 ) -> ResultError:
     """One classified error; *target* names the requested row for merge dedup.
 
     The ``data`` discriminator keeps value-identical failures from distinct
     batch targets as distinct facts — the envelope's documented contract.
+    *retryable* passes through the producing classifier's transient signal.
     """
     data = {"target": str(target)} if target is not None else None
-    return ResultError(kind=kind, message=message, path=path, data=data)
+    return ResultError(kind=kind, message=message, path=path, data=data, retryable=retryable)
 
 
-def already_exists(path: Path) -> ResultError:
-    """The one construction of the occupied-site ``exists`` classification."""
-    return classified(VFSErrorKind.exists, f"Already exists: {path}", path)
+def already_exists(path: Path, *, target: Path | None = None) -> ResultError:
+    """The one construction of the occupied-site ``exists`` classification.
+
+    *target* attributes the refusal to the caller's requested row when it
+    differs from the occupied *path* — a trash-side restore, a batch pair.
+    """
+    return classified(VFSErrorKind.exists, f"Already exists: {path}", path, target=target)
 
 
-def wrong_kind(kind: str, path: Path) -> ResultError:
+def wrong_kind(kind: str, path: Path, *, target: Path | None = None) -> ResultError:
     """The ``wrong_kind`` classification naming the occupant's actual *kind*, article and all."""
     article = "an" if kind.startswith(("a", "e", "i", "o", "u")) else "a"
-    return classified(VFSErrorKind.wrong_kind, f"Is {article} {kind}: {path}", path)
+    return classified(VFSErrorKind.wrong_kind, f"Is {article} {kind}: {path}", path, target=target)
 
 
 def validation_message(exc: ValidationError) -> str:

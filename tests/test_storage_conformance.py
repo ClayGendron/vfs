@@ -267,18 +267,21 @@ class TestOracleTopologyRivals:
 
 @pytest.mark.mysql
 class TestMySQLTornRowRegression:
-    async def test_one_increment_rival_classifies_conflict(self) -> None:
+    async def test_one_increment_rival_redrives_to_success(self) -> None:
         """InnoDB's REPEATABLE READ current-reads past the rival — no 40001.
 
-        The guarded UPDATE matches nothing and the executemany ladder
-        must classify ``conflict`` from its own rowcounts, exactly the
-        MSSQL contract: the rival's row survives untorn.
+        The guarded UPDATE matches nothing, and at this isolation a
+        re-probe would report the stale snapshot rather than the rival —
+        so the declared ``guard_miss`` mode redrives the whole method
+        from fresh state instead of classifying off a lying probe. The
+        outcome converges with the Postgres redrive: a clean success on
+        top of the rival's version, never a torn row.
         """
         async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
             result = await _one_increment_race(storage)
-            assert result.success is False
-            assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
-            read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "content_hash"}))
+            assert result.success is True
+            read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "content_hash", "version"}))
             after = read.observations[0]
-            assert after.content == "rival"
+            assert after.content == "mine"
+            assert after.version == 3
             assert after.content_hash == Entry(path=Path("/race.txt"), content=after.content).content_hash
