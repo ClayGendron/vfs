@@ -67,10 +67,18 @@ services:
     image: mcr.microsoft.com/mssql/server:2022-latest
     # No arm64 image exists; Rosetta emulation covers this on Apple Silicon.
     platform: linux/amd64
+    # Emulated checkpoint+shutdown routinely outlives compose's 10s default
+    # grace; SIGKILL (exit 137) has corrupted the daemon's container store.
+    stop_grace_period: 60s
+    # PID 1 signal forwarding/reaping, so `stop` reaches sqlservr promptly.
+    init: true
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "vfsStr0ngPassw0rd"
       MSSQL_PID: Developer
+      # Bound the engine's memory appetite inside the fixed-size VM;
+      # unbounded growth is the other route to an OOM SIGKILL (exit 137).
+      MSSQL_MEMORY_LIMIT_MB: "2048"
     ports:
       - "14330:1433"
     healthcheck:
@@ -82,7 +90,9 @@ services:
       interval: 5s
       timeout: 6s
       retries: 30
-      start_period: 30s
+      # Emulated first boot is legitimately slow; a short start_period
+      # lets health flapping restart a server that was coming up fine.
+      start_period: 60s
 
   oracle:
     profiles: [oracle]
