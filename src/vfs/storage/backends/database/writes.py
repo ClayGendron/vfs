@@ -44,6 +44,7 @@ from vfs.storage.backends.database.dialects import (
     StaleSnapshot,
     chunked,
     rows_per_statement,
+    statement_budget,
     supports_values_update,
 )
 from vfs.storage.backends.database.seams import seam
@@ -308,7 +309,7 @@ async def _apply(
     overwrite: bool,
 ) -> list[ResultError]:
     """Run the pinned statement sequence; a non-empty return fails the batch."""
-    if not plan.staged and not plan.bumps:
+    if not plan.staged:
         return []
     now = datetime.now(UTC)
     creates = [s for s in plan.staged.values() if s.persistence == "insert"]
@@ -472,9 +473,7 @@ def _incoherent_row(path: Path) -> ResultError:
     it can know; the squatting row is a defect decisions upstream repair.
     """
     message = f"Address is held by a row this write may not adopt: {path}"
-    return ResultError(
-        kind=VFSErrorKind.conflict, message=message, path=path, data={"target": str(path)}, retryable=True
-    )
+    return classified(VFSErrorKind.conflict, message, path, target=path, retryable=True)
 
 
 async def _catch_retry_layer(
@@ -686,30 +685,43 @@ async def _values_update(
         material = _material_values(entry_row, user_id, now)
         ordered = tuple(material[name] for name in _CLOBBER_COLUMNS)
         rows.append((entry_row.entry_id, entry_row.base_version, entry_row.version, str(entry_row.path), *ordered))
-    width = len(_CLOBBER_COLUMNS) + 4
-    per_statement = max(1, min(membership_budget, parameter_budget // width))
+    per_statement = statement_budget(
+        lambda n: _values_update_stmt(entry, (rows * 2)[:n], guard=guard),
+        session.get_bind().dialect,
+        parameter_budget=parameter_budget,
+        row_width=len(_CLOBBER_COLUMNS) + 4,
+        row_cap=membership_budget,
+    )
     matched: dict[str, int] = {}
     for chunk in chunked(rows, per_statement):
-        incoming = values(
-            column("v_id", entry.c.entry_id.type),
-            column("v_base", entry.c.version.type),
-            column("v_ver", entry.c.version.type),
-            column("v_path", entry.c.path.type),
-            *(column(f"v_{name}", entry.c[name].type) for name in _CLOBBER_COLUMNS),
-            name="incoming",
-        ).data(list(chunk))
-        set_: dict[str, Any] = {name: incoming.c[f"v_{name}"] for name in _CLOBBER_COLUMNS}
-        # Both arms prove the address; only the guarded arm pins the version.
-        where = [entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path]
-        if guard:
-            set_["version"] = incoming.c.v_ver
-            where.append(entry.c.version == incoming.c.v_base)
-        else:
-            set_["version"] = entry.c.version + 1
-        stmt = update(entry).where(*where).values(**set_).returning(entry.c.entry_id, entry.c.version)
-        result = await session.execute(stmt)
+        result = await session.execute(_values_update_stmt(entry, chunk, guard=guard))
         matched.update({mapping["entry_id"]: mapping["version"] for mapping in result.mappings()})
     return matched
+
+
+def _values_update_stmt(entry: Table, rows: Sequence[tuple[object, ...]], *, guard: bool) -> Update:
+    """One material-update VALUES join over staged *rows*.
+
+    Both arms prove the address; only the guarded arm pins the version —
+    the unguarded arm increments SQL-side, a fixed bind the budget helper
+    measures off this construction.
+    """
+    incoming = values(
+        column("v_id", entry.c.entry_id.type),
+        column("v_base", entry.c.version.type),
+        column("v_ver", entry.c.version.type),
+        column("v_path", entry.c.path.type),
+        *(column(f"v_{name}", entry.c[name].type) for name in _CLOBBER_COLUMNS),
+        name="incoming",
+    ).data(list(rows))
+    set_: dict[str, Any] = {name: incoming.c[f"v_{name}"] for name in _CLOBBER_COLUMNS}
+    where = [entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path]
+    if guard:
+        set_["version"] = incoming.c.v_ver
+        where.append(entry.c.version == incoming.c.v_base)
+    else:
+        set_["version"] = entry.c.version + 1
+    return update(entry).where(*where).values(**set_).returning(entry.c.entry_id, entry.c.version)
 
 
 async def _guarded_by_aggregate(
@@ -851,6 +863,10 @@ async def _bump_parents(
 ) -> list[ResultError]:
     """Guarded SQL-side increments: every bump proves its parent's address.
 
+    The bump set is derived here, from the staged rows' final states —
+    never at staging, where arbitration (absorb, adopt) can silently
+    invalidate it — so a parent acquired by adoption is affirmed like any
+    committed parent, from the identity the staged entry carries.
     ``version = version + 1`` under ``WHERE entry_id AND path-at-snapshot``
     still composes with rival bumps, while a parent a rival relocated or
     destroyed mid-window — delete, move, restore, and purge are one
@@ -860,13 +876,14 @@ async def _bump_parents(
     chunk's pair count; any shortfall raises :class:`StaleSnapshot`, so
     the whole batch — the torn creates are uncommitted inserts in this
     same transaction — rolls back and the method redrives from a fresh
-    snapshot. The read-back runs only when an "unchanged" pending row was
-    bumped by a sibling in this batch — its observation must equal a
-    post-commit stat of its path.
+    snapshot. The read-back covers every pending row this pass bumped —
+    "unchanged" occupants and adopted parents alike — because their
+    observations must equal a post-commit stat of their paths.
     """
-    if not plan.bumps:
+    bumps = plan.derive_bumps()
+    if not bumps:
         return []
-    pairs = [(plan.committed[path]["entry_id"], path) for path in sorted(plan.bumps)]
+    pairs = [(bumps[path], path) for path in sorted(bumps)]
     dialect = session.get_bind().dialect
     if supports_values_update(profile, dialect):
         await _bump_by_values(session, entry, parameter_budget, membership_budget, pairs)
@@ -876,14 +893,24 @@ async def _bump_parents(
     else:
         message = f"Guarded parent bumps cannot be verified on {profile.name}: no UPDATE RETURNING, no sane rowcount"
         return [ResultError(kind=VFSErrorKind.unsupported, message=message)]
-    needed = {str(path) for path, _ in plan.pending if path not in plan.staged and str(path) in plan.bumps}
+    needed: set[str] = set()
+    for path, _ in plan.pending:
+        staged = plan.staged.get(path)
+        if staged is None:
+            if str(path) in bumps:
+                needed.add(str(path))
+        elif staged.persistence == "adopt" and str(staged.path) in bumps:
+            needed.add(str(staged.path))
     if not needed:
         return []
-    ids = [plan.committed[path]["entry_id"] for path in sorted(needed)]
+    ids = [bumps[path] for path in sorted(needed)]
     plan.bump_versions = {}
     for chunk in chunked(ids, membership_budget):
         result = await session.execute(select(entry.c.path, entry.c.version).where(entry.c.entry_id.in_(chunk)))
         plan.bump_versions.update({row.path: row.version for row in result})
+    for staged in plan.staged.values():
+        if staged.persistence == "adopt" and (bumped := plan.bump_versions.get(str(staged.path))) is not None:
+            staged.version = bumped
     return []
 
 
@@ -895,22 +922,33 @@ async def _bump_by_values(
     pairs: list[tuple[str, str]],
 ) -> None:
     """Set-based guarded bump over a VALUES join; RETURNING is the proof."""
-    per_statement = max(1, min(membership_budget, parameter_budget // 2))
+    per_statement = statement_budget(
+        lambda n: _bump_values_stmt(entry, (pairs * 2)[:n]),
+        session.get_bind().dialect,
+        parameter_budget=parameter_budget,
+        row_width=2,
+        row_cap=membership_budget,
+    )
     for chunk in chunked(pairs, per_statement):
-        incoming = values(
-            column("v_id", entry.c.entry_id.type),
-            column("v_path", entry.c.path.type),
-            name="incoming",
-        ).data(list(chunk))
-        stmt = (
-            update(entry)
-            .where(entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path)
-            .values(version=entry.c.version + 1)
-            .returning(entry.c.entry_id)
-        )
+        stmt = _bump_values_stmt(entry, chunk)
         matched = len((await session.execute(stmt)).all())
         if matched != len(chunk):
             raise StaleSnapshot(f"{len(chunk) - matched} parent(s) were relocated or destroyed mid-batch")
+
+
+def _bump_values_stmt(entry: Table, pairs: Sequence[tuple[str, str]]) -> Update:
+    """One guarded-bump VALUES join over *pairs* of ``(entry_id, path)``."""
+    incoming = values(
+        column("v_id", entry.c.entry_id.type),
+        column("v_path", entry.c.path.type),
+        name="incoming",
+    ).data(list(pairs))
+    return (
+        update(entry)
+        .where(entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path)
+        .values(version=entry.c.version + 1)
+        .returning(entry.c.entry_id)
+    )
 
 
 async def _bump_by_rowcount(

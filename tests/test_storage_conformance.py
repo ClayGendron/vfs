@@ -134,6 +134,21 @@ async def _one_increment_race(storage: DatabaseStorage) -> Result:
 
 
 @pytest.mark.mssql
+class TestMSSQLBindBudget:
+    async def test_bumping_over_a_thousand_parents_stays_under_the_cap(self) -> None:
+        """The steady-state ingest shape: one batch of files under more
+        pre-existing parents than a single bump statement may carry —
+        chunked under the measured bind budget, never the raw cap."""
+        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
+            n = 1_100
+            dirs = [Entry(path=Path(f"/p{i:04d}"), kind="directory") for i in range(n)]
+            assert (await storage.write(entries=dirs)).success is True
+            files = [Entry(path=Path(f"/p{i:04d}/f.txt"), content="x") for i in range(n)]
+            result = await storage.write(entries=files)
+            assert result.success is True, result.errors[:3]
+
+
+@pytest.mark.mssql
 class TestMSSQLTornRowRegression:
     async def test_one_increment_rival_classifies_conflict(self) -> None:
         """READ COMMITTED cannot redrive: the guard must classify, never tear.

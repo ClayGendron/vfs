@@ -24,12 +24,13 @@ integer driver error number — never by message text.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from sqlalchemy.engine import Dialect
+    from sqlalchemy.sql import ClauseElement
 
 # ---------------------------------------------------------------------------
 # Stale-snapshot signal
@@ -309,6 +310,43 @@ def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object
     than a single row) making progress instead of stalling ``chunked``.
     """
     return max(1, parameter_budget // max(len(row) for row in rows))
+
+
+# Bind slots held back from every measured multi-row statement: driver
+# wrappers (ODBC's sp_prepexec among them) spend from the same server cap.
+_STATEMENT_BIND_RESERVE: Final = 8
+
+
+def statement_budget(
+    build: Callable[[int], ClauseElement[Any]],
+    dialect: Dialect,
+    *,
+    parameter_budget: int,
+    row_width: int,
+    row_cap: int | None = None,
+) -> int:
+    """Rows per multi-row statement, measured off the compiled bind registry.
+
+    *build(n)* returns the statement carrying its first *n* rows. One- and
+    two-row probes compile on the live dialect: the bind-count delta of
+    the duplicated row is that row's true per-row cost, and the remainder
+    of the one-row count is the statement's fixed overhead — a bind
+    outside the per-row tuple (a compiled literal, a fixed predicate) can
+    never escape the arithmetic. The declared *row_width* is the all-bind
+    ceiling the chunk is charged at (``NULL`` cells compile inline, so
+    the measured delta may undershoot it); a delta *exceeding* the
+    declaration is drift and fails loudly here, never at an engine's cap.
+    *row_cap* is an optional additional ceiling (the membership budget,
+    where a caller also bounds row count).
+    """
+    one = len(build(1).compile(dialect=dialect).bind_names)
+    two = len(build(2).compile(dialect=dialect).bind_names)
+    per_row = two - one
+    if per_row > row_width:
+        raise AssertionError(f"declared row width {row_width} < compiled per-row bind delta {per_row}")
+    fixed = one - per_row
+    rows = max(1, (parameter_budget - fixed - _STATEMENT_BIND_RESERVE) // max(1, row_width))
+    return rows if row_cap is None else max(1, min(row_cap, rows))
 
 
 def supports_values_update(profile: DialectProfile, dialect: Dialect) -> bool:

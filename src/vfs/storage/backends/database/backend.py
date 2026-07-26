@@ -429,6 +429,9 @@ class DatabaseStorage:
 
         try:
             return await self._host.with_retry(attempt)
+        except StaleSnapshot as exc:
+            message = f"{op} kept losing to concurrent changes: {exc.context}"
+            return Result(ops=(op,), errors=[ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)])
         except (SQLAlchemyError, OSError) as exc:
             # SQLAlchemyError, not just DBAPIError: pool exhaustion
             # (TimeoutError) is an operating condition, never a raise.

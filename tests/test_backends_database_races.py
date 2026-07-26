@@ -1,4 +1,4 @@
-"""Write-vs-topology races against real database servers — spec 086's test family.
+"""Write-vs-topology races against real database servers — the race pin family.
 
 Two legs. **Seam-staged one-shots**: each closed window is re-staged
 through the declared seams with genuine second transactions — the
@@ -345,6 +345,10 @@ class TestAncestorMintConvergence:
                     assert right.success is True, (i, right.errors)
                     assert (await writer.stat(path=Path(f"/g{i}/f1.txt"))).success is True
                     assert (await writer.stat(path=Path(f"/g{i}/f2.txt"))).success is True
+                    # The adopted parent is affirmed: the minter leaves 1,
+                    # the adopter's attach bumps exactly once — parity.
+                    parent = await writer.stat(path=Path(f"/g{i}"))
+                    assert parent.observations[0].version == 2, (i, parent.observations)
                 await _audit(writer)
             finally:
                 await rival.close()
@@ -384,6 +388,8 @@ class TestObservationHonesty:
             assert rival_results and rival_results[0].success is True
             assert victim.success is False
             assert [e.kind for e in victim.errors] == [self._EXPECTED[env_var]]
+            if victim.errors[0].kind == VFSErrorKind.conflict:
+                assert victim.errors[0].retryable is True
             # The relocated row is untouched at its real address.
             after = await storage.read(path=Path("/e/f.txt"))
             assert after.observations[0].content == "old"
@@ -552,3 +558,86 @@ class TestNaturalTimingStorm:
                     await _audit(writer)
             finally:
                 await rival.close()
+
+
+# ---------------------------------------------------------------------------
+# Adopt affirmation — an adopting write arbitrates with topology
+# ---------------------------------------------------------------------------
+
+
+class TestAdoptAffirmation:
+    """A child can never commit under a parent a rival concurrently trashed."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_adopting_write_never_lands_under_a_trashed_parent(self, env_var: str) -> None:
+        # Natural timing, no seams: write(parents=True) races mkdir+delete
+        # of the same fresh directory. The adopted parent's affirming bump
+        # forces the write and the delete's claim to arbitrate — a child
+        # standing under a trashed parent is the torn state the audit fails.
+        rounds = int(os.environ.get("VFS_ADOPT_ROUNDS", "15"))
+        async with _server_storage(env_var) as writer:
+            rival = DatabaseStorage(url=os.environ[env_var])
+            try:
+                assert (await rival.first_touch()).success is True
+                # Pre-mint the trash chain: a fresh-DB delete would take the
+                # root lock ladder mid-storm (the campaign's known trap).
+                assert (await rival.write(entries=[Entry(path=Path("/warm.txt"), content="w")])).success
+                assert (await rival.delete(path=Path("/warm.txt"))).success
+                for i in range(rounds):
+
+                    async def churn(i: int = i) -> None:
+                        await rival.mkdir(path=Path(f"/z{i}"))
+                        await rival.delete(path=Path(f"/z{i}"))
+
+                    await asyncio.gather(
+                        writer.write(entries=[Entry(path=Path(f"/z{i}/a.txt"), content="x")], parents=True),
+                        churn(),
+                    )
+                    # Every interleaving is lawful except a torn namespace:
+                    # a live child's parent chain must resolve.
+                    child = await writer.stat(path=Path(f"/z{i}/a.txt"))
+                    if child.success:
+                        listing = await writer.ls(path=Path(f"/z{i}"))
+                        assert listing.success is True, (i, listing.errors)
+                        assert any(str(o.path) == f"/z{i}/a.txt" for o in listing.observations), i
+                    await _audit(writer)
+            finally:
+                await rival.close()
+
+
+# ---------------------------------------------------------------------------
+# Exhaustion classification — one channel on every engine
+# ---------------------------------------------------------------------------
+
+
+class TestExhaustionClassification:
+    """A lost race is a retryable conflict everywhere — never unavailable,
+    never raw driver text, however it exhausted."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_hot_row_storm_reports_only_clean_conflicts(self, env_var: str) -> None:
+        writers, per_writer = 8, 6
+        async with _server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/hot.txt"), content="0")])).success
+            instances = [DatabaseStorage(url=os.environ[env_var]) for _ in range(writers)]
+            try:
+                for instance in instances:
+                    assert (await instance.first_touch()).success is True
+
+                async def hammer(instance: DatabaseStorage, tag: int) -> list[Result]:
+                    outcomes = []
+                    for n in range(per_writer):
+                        entries = [Entry(path=Path("/hot.txt"), content=f"{tag}-{n}")]
+                        outcomes.append(await instance.write(entries=entries, overwrite=True))
+                    return outcomes
+
+                rounds = await asyncio.gather(*(hammer(instance, k) for k, instance in enumerate(instances)))
+                for result in (r for burst in rounds for r in burst):
+                    for error in result.errors:
+                        assert error.kind == VFSErrorKind.conflict, (error.kind, error.message)
+                        assert error.retryable is True
+                        assert "asyncpg" not in error.message and "pyodbc" not in error.message
+                await _audit(storage)
+            finally:
+                for instance in instances:
+                    await instance.close()

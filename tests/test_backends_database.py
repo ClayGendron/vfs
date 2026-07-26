@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import Select, create_engine, delete, event, insert, select, text, update
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import mssql, postgresql
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -29,7 +29,7 @@ from ulid import ULID
 from vfs.models import Entry, Observation
 from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import MAX_PATH_LENGTH, ObjectKind, Path, byte_length
-from vfs.results import ResultError, Severity, VFSErrorKind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, ResolvedPair, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
@@ -49,6 +49,7 @@ from vfs.storage.backends.database.dialects import (
     op_execution_options,
     profile_for,
     rows_per_statement,
+    statement_budget,
     topology_execution_options,
 )
 from vfs.storage.backends.database.engine import EngineHost, _install_sqlite_transaction_control, advisory_key
@@ -69,6 +70,7 @@ from vfs.storage.backends.database.writes import (
     _CLOBBER_COLUMNS,
     _bump_by_values,
     _bump_parents,
+    _bump_values_stmt,
     _catch_retry_layer,
     _classify_arbitration_loss,
     _classify_guard_misses,
@@ -955,13 +957,23 @@ class TestReadFailureHandling:
         await host.close()
 
     async def test_with_retry_gives_up_after_the_attempt_budget(self, tmp_path) -> None:
+        # Exhaustion has one channel: a retryable engine outcome leaves as
+        # StaleSnapshot with the native error as its cause, never raw.
         host = EngineHost(url=_url(tmp_path), retry_attempts=2, retry_base_delay=0.001)
 
         async def always_busy() -> None:
             raise DBAPIError("SELECT 1", None, _SqliteError(5))
 
-        with pytest.raises(DBAPIError):
+        with pytest.raises(StaleSnapshot) as caught:
             await host.with_retry(always_busy)
+        assert isinstance(caught.value.__cause__, DBAPIError)
+        assert "outlived 2 attempts" in caught.value.context
+
+        async def never_retryable() -> None:
+            raise DBAPIError("SELECT 1", None, _SqliteError(1))
+
+        with pytest.raises(DBAPIError):
+            await host.with_retry(never_retryable)
         await host.close()
 
     async def test_write_failure_classifies_unavailable(self, tmp_path) -> None:
@@ -1743,7 +1755,42 @@ class TestArbitration:
                 now=datetime.now(UTC),
             )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert errors[0].retryable is True
         assert "Concurrent modification" in errors[0].message
+        await storage.close()
+
+    async def test_absorb_row_relocated_before_version_learning_redrives(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/f.txt"), content="theirs")])).success
+        host = storage._host
+        entry = host.tables.entry
+        async with host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
+            row_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/f.txt"))).scalar_one()
+            # A rival relocation rewrote the row's address mid-window: the
+            # absorb's read-back must catch the mismatch and redrive.
+            relocate = update(entry).where(entry.c.entry_id == row_id).values(path="/moved.txt", name="moved.txt")
+            await session.execute(relocate)
+            relocated = StagedEntry(
+                path=Path("/f.txt"),
+                parent=Path("/"),
+                kind="file",
+                persistence="absorb",
+                entry_id=row_id,
+                content="mine",
+            )
+            with pytest.raises(StaleSnapshot):
+                await _update_materials(
+                    session,
+                    entry,
+                    host.profile,
+                    host.parameter_budget,
+                    host.membership_budget,
+                    [relocated],
+                    user_id=None,
+                    now=datetime.now(UTC),
+                )
+            await session.rollback()
         await storage.close()
 
     async def test_absorb_row_vanishing_before_version_learning_redrives(self, tmp_path) -> None:
@@ -1869,6 +1916,7 @@ class TestArbitration:
             )
         assert result.success is False
         assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
+        assert result.errors[0].retryable is True
         assert "Concurrent modification" in result.errors[0].message
         assert (await storage.read(path=target)).observations[0].content == "v3"
         await storage.close()
@@ -1911,12 +1959,13 @@ class _ReturningSession:
         self.statements: list[Any] = []
 
     def get_bind(self) -> SimpleNamespace:
-        dialect = SimpleNamespace(
-            update_returning=True,
-            update_returning_multifrom=True,
-            supports_sane_rowcount=True,
-            supports_sane_multi_rowcount=False,
-        )
+        # A real dialect so probe statements compile; flags declared as
+        # the double intends, independent of the driver's own defaults.
+        dialect = postgresql.dialect()
+        dialect.update_returning = True
+        dialect.update_returning_multifrom = True
+        dialect.supports_sane_rowcount = True
+        dialect.supports_sane_multi_rowcount = False
         return SimpleNamespace(dialect=dialect)
 
     async def execute(self, stmt: Any, params: Any = None) -> _CannedReturning:
@@ -3964,7 +4013,7 @@ class TestWriteVsTopologyCoherence:
 
         def plan() -> WritePlan:
             built = WritePlan({"/d": {"entry_id": parent_id, "path": "/d"}}, user_id=None, budget=4_096)  # ty: ignore[invalid-argument-type]
-            built.bumps.add("/d")
+            built.stage_create(Path("/d/f.txt"), kind="file", content="x")
             return built
 
         # The set-based arm: a guarded VALUES join, verified by RETURNING.
@@ -4256,12 +4305,139 @@ class TestWriteVsTopologyCoherence:
                     parents=True,
                     user_id=None,
                 )
+            stored = (await session.execute(select(entry.c.version).where(entry.c.path == "/x"))).scalar_one()
             await session.rollback()
         assert result.success is True, result.errors
         by_path = {str(o.path): o for o in result.observations}
         assert by_path["/x"].status == "unchanged"
         assert by_path["/x/f.txt"].status == "created"
+        # The adopted parent is affirmed: attaching f.txt bumped the
+        # rival's row, and the observation equals the stored state.
+        assert stored == 2
+        assert by_path["/x"].version == 2
         await storage.close()
+
+    async def test_adopting_without_attaching_children_bumps_nothing(self, tmp_path) -> None:
+        # An adopted create that changed no membership registers no bump:
+        # neither the rival's row nor the grandparent moves — the same
+        # versions a sequential exist_ok mkdir would leave.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        host = storage._host
+        entry = host.tables.entry
+        now = datetime.now(UTC)
+        async with host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
+            root_before = (await session.execute(select(entry.c.version).where(entry.c.path == "/"))).scalar_one()
+
+            async def rival() -> None:
+                root_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
+                await session.execute(
+                    insert(entry).values(
+                        entry_id=str(ULID()),
+                        parent_id=root_id,
+                        path="/x",
+                        name="x",
+                        kind="directory",
+                        version=1,
+                        size_bytes=0,
+                        lines=0,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+
+            with installed("write:before-apply", rival):
+                result = await write_rows(
+                    session,
+                    host.tables,
+                    host.profile,
+                    host.parameter_budget,
+                    host.membership_budget,
+                    entries=[Entry(path=Path("/x"), kind="directory")],
+                    overwrite=False,
+                    parents=False,
+                    user_id=None,
+                )
+            root_after = (await session.execute(select(entry.c.version).where(entry.c.path == "/"))).scalar_one()
+            adopted = (await session.execute(select(entry.c.version).where(entry.c.path == "/x"))).scalar_one()
+            await session.rollback()
+        assert result.success is True, result.errors
+        assert result.observations[0].status == "unchanged"
+        assert result.observations[0].version == 1
+        assert adopted == 1
+        assert root_after == root_before
+        await storage.close()
+
+    async def test_write_refuses_when_the_parent_bump_cannot_be_verified(self, tmp_path, monkeypatch) -> None:
+        # The writes-side twin of the topology capability test: a dialect
+        # that can prove nothing refuses the whole write — never a child
+        # committed under an unaffirmed parent.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.mkdir(path=Path("/d"))).success
+        parent_version = (await storage.stat(path=Path("/d"))).observations[0].version
+        dialect = storage._host.engine.sync_engine.dialect
+        monkeypatch.setattr(dialect, "supports_sane_rowcount", False)
+        monkeypatch.setattr(dialect, "supports_sane_multi_rowcount", False)
+        result = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")])
+        assert result.success is False
+        assert [e.kind for e in result.errors] == [VFSErrorKind.unsupported]
+        monkeypatch.undo()
+        assert (await storage.stat(path=Path("/d/f.txt"))).success is False
+        assert (await storage.stat(path=Path("/d"))).observations[0].version == parent_version
+        await storage.close()
+
+    async def test_read_retry_exhaustion_classifies_conflict(self, tmp_path, monkeypatch) -> None:
+        # Both retry channels exhaust identically on the read path too:
+        # a retryable conflict with clean text, never raw driver output.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+
+        async def exhausted(fn: object) -> Result:
+            raise StaleSnapshot("a retryable engine conflict outlived 3 attempts")
+
+        monkeypatch.setattr(storage._host, "with_retry", exhausted)
+        result = await storage.stat(path=Path("/"))
+        assert result.success is False
+        error = result.errors[0]
+        assert error.kind == VFSErrorKind.conflict
+        assert error.retryable is True
+        assert "outlived 3 attempts" in error.message
+        await storage.close()
+
+    def test_statement_budget_measures_fixed_binds_and_caps_width(self) -> None:
+        # The bump statement carries one fixed bind (the SQL-side
+        # increment); the helper measures it off the compiled statement
+        # and keeps the reserve clear of the engine cap.
+        tables = build_vfs_tables(table_name="vfs")
+        entry = tables.entry
+        pairs = [("A" * 26, "/a")]
+        dialect = mssql.dialect()
+        rows = statement_budget(
+            lambda n: _bump_values_stmt(entry, (pairs * 2)[:n]),
+            dialect,
+            parameter_budget=2_099,
+            row_width=2,
+        )
+        assert rows == (2_099 - 1 - 8) // 2
+        assert rows * 2 + 1 <= 2_099 - 8
+        capped = statement_budget(
+            lambda n: _bump_values_stmt(entry, (pairs * 2)[:n]),
+            dialect,
+            parameter_budget=2_099,
+            row_width=2,
+            row_cap=100,
+        )
+        assert capped == 100
+        # An understated width is drift: it must fail loudly at the
+        # helper, never at row N of a production batch.
+        with pytest.raises(AssertionError, match="row width"):
+            statement_budget(
+                lambda n: _bump_values_stmt(entry, (pairs * 2)[:n]),
+                dialect,
+                parameter_budget=2_099,
+                row_width=1,
+            )
 
     async def test_upsert_escape_that_classifies_keeps_the_chunk_loop_going(self) -> None:
         # An IntegrityError escaping ON CONFLICT re-drives row-wise; when

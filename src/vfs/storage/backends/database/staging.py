@@ -105,13 +105,15 @@ class StagedEntry:
 
 
 class WritePlan:
-    """Staged batch state: the committed snapshot, staged rows, bumps, errors.
+    """Staged batch state: the committed snapshot, staged rows, errors.
 
     ``staged`` overlays ``committed`` for every gate, so entries in one
-    batch see the parents earlier entries minted; ``bumps`` collects the
-    committed directories whose membership changed, and ``bump_versions``
-    holds their read-back values when an observation needs one. Any error
-    fails the batch whole — an errored plan is never executed.
+    batch see the parents earlier entries minted. Staging declares facts
+    (which rows attach where); execution derives obligations from them —
+    :meth:`derive_bumps` after arbitration has settled every row's final
+    state, with ``bump_versions`` holding read-back values when an
+    observation needs one. Any error fails the batch whole — an errored
+    plan is never executed.
     """
 
     def __init__(self, committed: dict[str, RowMapping], *, user_id: str | None, budget: int) -> None:
@@ -119,7 +121,6 @@ class WritePlan:
         self.user_id = user_id
         self.budget = budget
         self.staged: dict[Path, StagedEntry] = {}
-        self.bumps: set[str] = set()
         self.bump_versions: dict[str, int] = {}
         self.errors: list[ResultError] = []
         self.pending: list[tuple[Path, Status]] = []
@@ -287,7 +288,6 @@ class WritePlan:
             ext=ext,
             mime_type=mime_type,
         )
-        self.bump_parent(path)
 
     def stage_update(
         self,
@@ -330,12 +330,25 @@ class WritePlan:
             version=row["version"] + 1,
         )
 
-    def bump_parent(self, path: Path) -> None:
-        """Mark a namespace mutation at *path*: its committed parent gets a bump.
+    def derive_bumps(self) -> dict[str, str]:
+        """The directories whose membership this batch changes: path → entry_id.
 
-        A batch-minted parent is skipped — its single fresh version already
-        reflects the membership it was created with.
+        Derived from final staged states, after arbitration, so it cannot
+        go stale: every surviving insert attaches a child to its parent. A
+        parent standing as this batch's own insert already reflects that
+        membership in its fresh row; a committed parent — including one
+        acquired at arbitration (adopt), whose identity the staged entry
+        carries — owes a guarded bump proving it still lives at its
+        address. Absorb and adopt rows attach nothing themselves: the
+        occupant they resolved to already held the address.
         """
-        parent = path.parent_dir
-        if parent not in self.staged and str(parent) in self.committed:
-            self.bumps.add(str(parent))
+        bumps: dict[str, str] = {}
+        for staged in self.staged.values():
+            if staged.persistence != "insert":
+                continue
+            parent = self.staged.get(staged.parent)
+            if parent is None:
+                bumps[str(staged.parent)] = self.committed[str(staged.parent)]["entry_id"]
+            elif parent.persistence != "insert":
+                bumps[str(parent.path)] = parent.entry_id
+        return bumps

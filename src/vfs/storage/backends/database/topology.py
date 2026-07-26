@@ -55,11 +55,13 @@ root is a bucket iff it is a directory whose name round-trips the
 aged past the retention window. Expired buckets purge wholesale —
 foreign rows inside included — while non-bucket rows directly under
 the trash root are skipped and surfaced as warning entries; young
-buckets are retained silently. At any other address sweep purges that
-subtree wholesale, immediately, regardless of retention age — the
-root refuses ``invalid``, a miss classifies through the shared
-descent ladder, and the observation reports no trash path: nothing
-recoverable remains.
+buckets are retained silently. The retention arm also reclaims
+orphaned content rows past an age fence — whether or not a trash
+root exists — each reclaim surfacing as a warning. At any other
+address sweep purges that subtree wholesale, immediately, regardless
+of retention age — the root refuses ``invalid``, a miss classifies
+through the shared descent ladder, and the observation reports no
+trash path: nothing recoverable remains.
 
 Move and copy share one pair ladder, pinned row for row by the
 conformance suite: batch-shape refusals against the committed snapshot, live
@@ -342,17 +344,19 @@ async def sweep_rows(
 ) -> Result:
     """Destroy at *path* — retention at the trash root, wholesale purge elsewhere.
 
-    The trash root names the retention arm: a missing root is the
-    successful no-op (nothing was ever trashed); a non-directory
-    squatter there, and every non-bucket child, is skipped and
-    surfaced as a warning that leaves ``success`` true; a bucket
-    drops only once its whole hour has aged past *trash_days* —
-    retention is a floor, not a promise. Any other address is the
-    purge arm: the subtree purges wholesale regardless of retention
-    age — the root refuses ``invalid``, a miss classifies through the
-    shared descent ladder, and the observation carries no trash path.
-    *user_id* is accepted for signature parity; reclamation changes
-    no ownership.
+    The trash root names the retention arm: a missing root drops no
+    buckets (nothing was ever trashed) but still runs the orphan
+    reclaim below; a non-directory squatter there, and every
+    non-bucket child, is skipped and surfaced as a warning that
+    leaves ``success`` true; a bucket drops only once its whole hour
+    has aged past *trash_days* — retention is a floor, not a promise.
+    Every retention-arm sweep also reclaims content rows that
+    reference no entry once they age past the orphan fence, each
+    surfacing as a warning. Any other address is the purge arm: the
+    subtree purges wholesale regardless of retention age — the root
+    refuses ``invalid``, a miss classifies through the shared descent
+    ladder, and the observation carries no trash path. *user_id* is
+    accepted for signature parity; reclamation changes no ownership.
     """
     del user_id
     entry = tables.entry
@@ -443,7 +447,7 @@ async def transfer_rows(
             errors.append((await classify_misses(session, entry, [src], membership_budget))[0])
             continue
         if src == ROOT or dest == ROOT:
-            errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} the root directory"))
+            errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} the root directory", target=src))
             continue
         if dest == src:
             # POSIX rename-to-self: a successful no-op, never a refusal.
@@ -472,13 +476,13 @@ async def transfer_rows(
                 errors.append(wrong_kind(occupant["kind"], dest, target=src))
                 continue
             if occupant["kind"] == "directory" and await _has_live_children(session, entry, occupant["entry_id"]):
-                errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest))
+                errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest, target=src))
                 continue
         subtree = await _fetch_subtree(session, tables, str(src), with_content=op == "copy")
         new_paths = {row["entry_id"]: str(dest) + row["path"][len(str(src)) :] for row in subtree}
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths.values()):
             message = f"Cannot {op} {src}: Path too long (max {MAX_PATH_LENGTH} bytes)"
-            errors.append(classified(VFSErrorKind.unaddressable, message, dest))
+            errors.append(classified(VFSErrorKind.unaddressable, message, dest, target=src))
             continue
         # The reverse-ordering window: subtree collected, claim not yet
         # taken — a rival committing here must flip the claim's guard.
@@ -1101,7 +1105,11 @@ async def _execute_copy(
     Fresh rows take new ULIDs at version 1, ownership follows the
     writer, and neither ``external_id`` nor any edge row is copied. An
     overwritten occupant keeps its identity — a material update with an
-    SQL-side increment — so rows referencing it stay wired. Metadata
+    SQL-side increment — so rows referencing it stay wired. A rival
+    child committed under the destination mid-window merges rather than
+    refusing: the outcome equals the legal serial history copy-then-
+    write, and a copy destroys nothing, so the overwrite fence's
+    destruction guard has nothing to protect here. Metadata
     and bodies both come from the caller's single content-joined
     subtree read, so the stamped ``content_hash``/``size_bytes`` and
     the copied body cannot straddle a rival's commit. A unique

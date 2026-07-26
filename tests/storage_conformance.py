@@ -712,6 +712,32 @@ class StorageContract:
         assert (await storage.restore(path=Path("/a.txt"))).success is True
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "one"
 
+    @needs("write", "delete", "restore")
+    async def test_batch_refusals_onto_one_destination_stay_distinct(self, storage: ConformanceBackend) -> None:
+        # Two trash rows refusing onto one occupied destination each carry
+        # their own trash-side attribution — two errors, never one.
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="one")])
+        first = (await storage.delete(path=Path("/f.txt"))).observations[0].trash_path
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="two")])
+        second = (await storage.delete(path=Path("/f.txt"))).observations[0].trash_path
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="occupant")])
+        assert first is not None and second is not None
+        result = await storage.restore(observations=[Observation(path=first), Observation(path=second)])
+        assert result.success is False
+        assert [e.kind for e in result.errors] == [VFSErrorKind.exists] * 2
+        assert {e.data["target"] for e in result.errors if e.data} == {str(first), str(second)}
+
+    @needs("write", "mkdir", "move")
+    async def test_move_refusals_onto_one_destination_carry_their_sources(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/s1"))
+        await storage.mkdir(path=Path("/s2"))
+        await storage.write(entries=[Entry(path=Path("/d/kid.txt"), content="x")], parents=True)
+        pairs = [ResolvedPair(src=Path("/s1"), dest=Path("/d")), ResolvedPair(src=Path("/s2"), dest=Path("/d"))]
+        result = await storage.move(operations=pairs, overwrite=True)
+        assert result.success is False
+        assert [e.kind for e in result.errors] == [VFSErrorKind.not_empty] * 2
+        assert {e.data["target"] for e in result.errors if e.data} == {"/s1", "/s2"}
+
     @needs("write", "delete", "read")
     async def test_restore_occupied_site_is_exists_until_overwrite(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="old")])
