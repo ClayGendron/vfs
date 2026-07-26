@@ -1,7 +1,11 @@
 # 086 — Write-vs-topology coherence: two-sided guards on the parent row
 
-- **Status:** open — born 2026-07-25 from the adversarial concurrency
-  campaign and the six-domain prior-art survey.
+- **Status:** landed 2026-07-26 (uncommitted on `main`; all four
+  engine legs green, throughput within noise) — awaiting the
+  backward-flow mining pass, then deletion. Decision 8's
+  classify-at-the-seam arm is partially superseded by spec 087
+  decision 3 (verification campaign,
+  `../../research/2026-07-26-writes-topology-review-verification.md`).
 - **Evidence:**
   `context/research/2026-07-25-write-vs-topology-adversarial-campaign.md`
   (executed repros; §7 is the decision list this spec answers);
