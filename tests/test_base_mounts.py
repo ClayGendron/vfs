@@ -4,6 +4,7 @@ the busy guard, shadow filtering, decoration, and terminal resolution."""
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -396,6 +397,8 @@ async def test_a_sweep_reclaims_the_trashed_mount_directory() -> None:
     # Even at trash_days=0 the current hour has not fully aged, so the
     # retention sweep keeps the bucket; the bucket-address arm reclaims it.
     retained = await root.sweep()
+    if bucket != f"/.vfs/trash/{datetime.now(UTC).strftime('%Y-%m-%d-%H')}":
+        pytest.skip("hour boundary crossed between unmount and sweep")
     assert retained.success is True
     assert retained.observations == []
     reclaimed = await root.sweep(bucket)

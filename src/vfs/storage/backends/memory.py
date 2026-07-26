@@ -11,8 +11,9 @@ pins it, on the same code path production engines run.
 
 The database lives for the storage object's lifetime and vanishes at
 ``close()``. SQLAlchemy serves ``:memory:`` through a single shared
-connection (``StaticPool``), so access serializes on this backend —
-the declared single-process posture; concurrency behavior under real
+connection (``StaticPool``), and the engine host serializes sessions
+on it — each op holds the host lock for its whole transaction, so
+concurrent callers queue instead of colliding. Concurrency under real
 rivals is exercised on the server engine legs.
 """
 

@@ -90,8 +90,11 @@ the same line.
   `invalid` naming sweep, nothing purged, on the in-memory leg,
   sqlite-file, and all four engine legs; an older bucket still
   trashes (nested), and restore brings it back.
-- Every successful delete observation carries a `trash_path` that
-  restore round-trips.
+- Every successful delete observation carries a `trash_path` naming
+  where its row now lives. A standalone target's round-trips through
+  restore; a covered target's derives from its covering root —
+  restore accepts the covering root's `trash_path`, and covered rows
+  ride back with it.
 - Sweep purge arm: an arbitrary directory and a single file purge
   wholesale on every leg; sweep of `/` refuses; a missing address
   classifies `not_found`; a bind site inside the target refuses

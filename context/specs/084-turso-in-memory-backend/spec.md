@@ -58,9 +58,11 @@ every verb. This spec executes that swap.
    that failed its gate); `InMemoryStorage` subclasses
    `DatabaseStorage` directly over aiosqlite until Turso clears.
    The `@needs("restore")` / `@needs("sweep")` gates retire — the
-   in-memory leg now declares the full capability set, and the
-   trash-arc conformance families run on it beside sqlite-file and
-   the four engine legs.
+   in-memory leg now declares `DatabaseStorage`'s landed capability
+   set, so the trash-arc conformance families run on it beside
+   sqlite-file and the four engine legs. `grep` and `mkedge` remain
+   classified stubs on that set, so their conformance rows now skip
+   on the in-memory leg until those passes land.
 4. **"Memory parity" language retires with the backend.** Docstrings
    that cite the memory backend as the semantic reference
    (`topology.py`'s "mirroring the memory backend's ladder",

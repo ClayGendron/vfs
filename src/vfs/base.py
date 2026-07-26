@@ -823,9 +823,12 @@ class VirtualFileSystem:
         """Delete *path* (or each observation row) — always recoverable.
 
         Delete is reversible; sweep is not; agents only get the first.
-        Every successful delete reparents its target into the trash and
-        reports the ``trash_path`` restore accepts; what cannot be
-        trashed — the active trash chain — refuses ``invalid``. A live
+        Every successful delete reparents its target into the trash,
+        and each observation's ``trash_path`` reports where its row now
+        lives. A covered target's address derives from its covering
+        root: restore accepts the covering root's ``trash_path``, and
+        covered rows ride back with it. What cannot be trashed — the
+        active trash chain — refuses ``invalid``. A live
         bind site is ``busy``: a bound path, or a region holding bound
         paths, must be unmounted before it can be deleted — the EBUSY
         rule.

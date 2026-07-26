@@ -139,7 +139,13 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         _USER,
     ),
     "sweep": (
-        ParamSpec("path", "path", doc="the trash root of the mount to sweep; defaults to /.vfs/trash"),
+        ParamSpec(
+            "path",
+            "path",
+            nullable=False,
+            default="/.vfs/trash",
+            doc="a trash-root address runs retention over expired buckets; any other address purges wholesale",
+        ),
         _USER,
     ),
     "mkdir": (

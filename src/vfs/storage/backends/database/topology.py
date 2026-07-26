@@ -181,8 +181,10 @@ async def delete_rows(
             errors.append(bucket_id)
             continue
         trash_path = f"{trash.bucket_path}/{_trash_name(row['entry_id'], row['name'])}"
-        rewrites = await _descendant_rewrites(session, entry, str(target), trash_path)
-        if any(byte_length(rewrite["b_path"]) > MAX_PATH_LENGTH for rewrite in rewrites):
+        # A file has no descendants — its LIKE select would be a wasted round trip.
+        is_directory = row["kind"] == "directory"
+        rewrites = await _descendant_rewrites(session, entry, str(target), trash_path) if is_directory else []
+        if any(byte_length(p) > MAX_PATH_LENGTH for p in (trash_path, *(r["b_path"] for r in rewrites))):
             message = f"Cannot delete {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
             errors.append(classified(VFSErrorKind.unaddressable, message, target))
             continue
@@ -694,9 +696,9 @@ async def _resolve_restore(
             return classified(
                 VFSErrorKind.wrong_kind, f"Not a directory: {parent['path']}", Path(parent["path"]), target=target
             )
-        # Strictly inside: the trash root itself is a lawful original
-        # site (a reclaimed bucket restores), a trashed parent is not.
-        if parent["path"].startswith(TRASH_ROOT + "/"):
+        # Trash status, not address: a live parent under the trash root
+        # (the hour bucket, a squatter) is an ordinary restore site.
+        if parent["deleted_at"] is not None:
             message = f"Cannot restore {target}: original parent is in the trash — restore {parent['path']} first"
             return classified(VFSErrorKind.invalid, message, target)
         prefix = "" if parent["path"] == "/" else parent["path"]
@@ -720,7 +722,8 @@ async def _point_restore_row(session: AsyncSession, entry: Table, path: str) -> 
 
 
 async def _row_by_id(session: AsyncSession, entry: Table, entry_id: str) -> RowMapping | None:
-    columns = [entry.c[name] for name in _SNAPSHOT_COLUMNS]
+    """Restore-column fetch by id — the parent gate keys on ``deleted_at``."""
+    columns = [entry.c[name] for name in _RESTORE_COLUMNS]
     return (await session.execute(select(*columns).where(entry.c.entry_id == entry_id))).mappings().first()
 
 

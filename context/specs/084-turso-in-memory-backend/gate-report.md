@@ -162,3 +162,19 @@ Per the coordinator's design amendment: because Turso failed its
 gate, **no `TursoStorage` class ships** — `InMemoryStorage` is a thin
 subclass of `DatabaseStorage` directly, pinning the aiosqlite
 in-memory URL. `TursoStorage` arrives when Turso clears the gate.
+
+## Correction (2026-07-25, post-review)
+
+Item 2's "access serializes" conclusion overclaimed: the probe
+verified one shared database across checkouts, not overlapping
+*transactions*. The commit-b16c38b review storm found overlapping ops
+colliding ("cannot start a transaction within a transaction"),
+event-loop hangs parked in `connection.close()`, and one
+total-data-loss arm (StaticPool re-minting a fresh empty `:memory:`
+database under a latched ready flag, so re-provisioning never fired).
+Fixed in-tree the same day: single-connection hosts serialize
+sessions behind a per-host lock (`engine.py` `_SerializedSessions`)
+and re-arm first touch when the pool re-mints its connection
+(`_rearm_on_fresh_connection`); `tests/test_backends_memory.py` pins
+the storm. When this gate re-runs for Turso, the probe must overlap
+transactions on the shared pool, not merely share the database.

@@ -589,7 +589,7 @@ class StorageContract:
         assert (await storage.stat(path=Path("/a/f.txt"))).success is False
 
     @needs("write", "delete", "read", "stat")
-    async def test_every_delete_observation_carries_a_restorable_trash_path(self, storage: ConformanceBackend) -> None:
+    async def test_a_single_target_delete_carries_a_restorable_trash_path(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="body")])
         result = await storage.delete(path=Path("/a.txt"))
         assert result.success is True
@@ -599,6 +599,31 @@ class StorageContract:
         assert (await storage.stat(path=Path("/a.txt"))).success is False
         assert (await storage.restore(path=obs.trash_path)).success is True
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "body"
+
+    @needs("write", "mkdir", "delete", "read", "stat")
+    async def test_a_covered_targets_trash_path_resolves_but_only_its_root_restores(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # Every observation names where its row now lives; only the
+        # covering root's address is a restore handle — covered rows
+        # ride back with it.
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="deep")])
+        targets = [Observation(path=Path("/d/f.txt")), Observation(path=Path("/d"))]
+        result = await storage.delete(observations=targets)
+        assert result.success is True
+        assert all(o.trash_path is not None for o in result.observations)
+        by_path = {str(o.path): o for o in result.observations}
+        root_trash = by_path["/d"].trash_path
+        covered_trash = by_path["/d/f.txt"].trash_path
+        assert root_trash is not None and covered_trash is not None
+        assert (await storage.stat(path=covered_trash)).success is True
+        assert (await storage.read(path=covered_trash)).observations[0].content == "deep"
+        refused = await storage.restore(path=covered_trash)
+        assert refused.success is False
+        assert refused.errors[0].kind == VFSErrorKind.invalid
+        assert (await storage.restore(path=root_trash)).success is True
+        assert (await storage.read(path=Path("/d/f.txt"))).observations[0].content == "deep"
 
     @needs("write", "delete", "stat")
     async def test_delete_of_the_trash_chain_refuses_naming_sweep(self, storage: ConformanceBackend) -> None:

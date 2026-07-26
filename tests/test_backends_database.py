@@ -2511,6 +2511,22 @@ class TestDeleteTrash:
         assert (await storage.stat(path=Path("/.vfs/trash"))).success is True
         await storage.close()
 
+    async def test_a_covered_chain_target_adds_no_second_error(self, tmp_path) -> None:
+        # /.vfs/trash rides inside /.vfs's cascade: the covering holder
+        # refuses exactly once; the covered target contributes no error.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])
+        trashed = (await storage.delete(path=Path("/x.txt"))).observations[0].trash_path
+        assert trashed is not None
+        targets = [Observation(path=Path("/.vfs/trash")), Observation(path=Path("/.vfs"))]
+        result = await storage.delete(observations=targets)
+        assert result.success is False
+        assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
+        assert result.errors[0].message == "Cannot delete /.vfs: contains the active trash chain — sweep reclaims trash"
+        # The refused batch never commits: the previously-trashed row survives.
+        assert (await storage.stat(path=trashed)).success is True
+        await storage.close()
+
     async def test_the_trash_name_truncates_at_the_tail_never_the_ulid(self, tmp_path) -> None:
         # 26-byte ULID + hyphen leaves 228 bytes of name tail; the
         # 4-byte emoji straddles the cut and must drop whole.
@@ -2645,6 +2661,35 @@ class TestRestore:
         assert "restore" in result.errors[0].message
         await storage.close()
 
+    async def test_restore_returns_a_row_to_the_live_hour_bucket(self, tmp_path) -> None:
+        # The bucket sits under /.vfs/trash but is live, never trashed:
+        # a trash row deleted in place restores back into it.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/g.txt"), content="payload")])
+        first = (await storage.delete(path=Path("/g.txt"))).observations[0].trash_path
+        assert first is not None
+        second = (await storage.delete(path=first)).observations[0].trash_path
+        assert second is not None
+        result = await storage.restore(path=second)
+        assert result.success is True
+        assert result.observations[0].path == str(first)
+        assert (await storage.read(path=first)).observations[0].content == "payload"
+        await storage.close()
+
+    async def test_restore_returns_a_row_to_a_live_squatter_under_trash(self, tmp_path) -> None:
+        # Trash is an ordinary subtree: a live user directory squatting
+        # inside it is a lawful original site, not a trashed parent.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/.vfs/trash/mystuff"), parents=True)
+        await storage.write(entries=[Entry(path=Path("/.vfs/trash/mystuff/a.txt"), content="squat")])
+        deleted = await storage.delete(path=Path("/.vfs/trash/mystuff/a.txt"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        result = await storage.restore(path=trash_path)
+        assert result.success is True
+        assert (await storage.read(path=Path("/.vfs/trash/mystuff/a.txt"))).observations[0].content == "squat"
+        await storage.close()
+
     async def test_restore_refuses_a_corrupted_non_directory_parent(self, tmp_path) -> None:
         # Foreign-state tolerance: a parent row whose kind was mangled
         # out from under the trash contract refuses, never mis-restores.
@@ -2758,6 +2803,8 @@ class TestSweep:
         old = (datetime.now(UTC) - timedelta(hours=2)).strftime("%Y-%m-%d-%H")
         await storage.mkdir(path=Path(f"/.vfs/trash/{old}"))
         result = await storage.sweep(path=Path("/.vfs/trash"))
+        if str(trash_path.parent_dir) != f"/.vfs/trash/{datetime.now(UTC).strftime('%Y-%m-%d-%H')}":
+            pytest.skip("hour boundary crossed between delete and sweep")
         assert result.success is True
         assert [str(o.path) for o in result.observations] == [f"/.vfs/trash/{old}"]
         assert (await storage.stat(path=trash_path)).success is True

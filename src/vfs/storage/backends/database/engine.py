@@ -40,12 +40,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 
 from sqlalchemy import Engine, event, func, insert, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 from ulid import ULID
 
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
@@ -116,7 +117,14 @@ class EngineHost:
         else:
             engine = create_async_engine(str(url), **_engine_kwargs(str(url)))
             self._engine = engine
-            self.session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            # One shared DBAPI connection cannot overlap transactions: ops
+            # serialize, and a re-minted connection re-arms first touch.
+            if isinstance(engine.sync_engine.pool, StaticPool):
+                self.session_factory = _SerializedSessions(factory)
+                _rearm_on_fresh_connection(engine.sync_engine, self)
+            else:
+                self.session_factory = factory
         # Dialect policy defers to first use: a borrowed host cannot
         # know its dialect before its first session exists.
         self._profile: DialectProfile | None = None
@@ -394,3 +402,68 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
             return
         mode = "BEGIN IMMEDIATE" if options.get("vfs_writer") else "BEGIN"
         conn.exec_driver_sql(mode)
+
+
+class _SerializedSession:
+    """One serialized session: the host lock spans enter to exit.
+
+    Attribute access proxies to the real session, so an un-entered
+    session (the loop-free policy probe) works lock-free.
+    """
+
+    def __init__(self, session: AsyncSession, lock: asyncio.Lock) -> None:
+        self._session = session
+        self._lock = lock
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._session, name)
+
+    async def __aenter__(self) -> AsyncSession:
+        await self._lock.acquire()
+        try:
+            return await self._session.__aenter__()
+        except BaseException:
+            self._lock.release()
+            raise
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        try:
+            await self._session.__aexit__(*exc_info)
+        finally:
+            self._lock.release()
+
+
+class _SerializedSessions:
+    """Session factory for a single-connection pool — one op at a time.
+
+    A ``StaticPool`` engine shares one DBAPI connection, and overlapping
+    asyncio tasks collide mid-transaction ("cannot start a transaction
+    within a transaction") or park the loop in the driver. Holding the
+    host lock for each session's whole context makes the declared
+    serialized posture true by construction.
+    """
+
+    def __init__(self, factory: async_sessionmaker[AsyncSession]) -> None:
+        self._factory = factory
+        self._lock = asyncio.Lock()
+
+    def __call__(self) -> AsyncSession:
+        return cast("AsyncSession", _SerializedSession(self._factory(), self._lock))
+
+
+def _rearm_on_fresh_connection(sync_engine: Engine, host: EngineHost) -> None:
+    """Drop the ready latch when a single-connection pool re-mints.
+
+    A ``:memory:`` database lives inside its one connection — a
+    replacement connection is a fresh, empty database. Re-arming first
+    touch makes the next op re-provision instead of serving misses off
+    a stale latch forever.
+    """
+    fresh = False
+
+    @event.listens_for(sync_engine, "connect")
+    def _on_connect(_dbapi_connection, _record) -> None:  # noqa: ANN001
+        nonlocal fresh
+        if fresh:
+            host._ready = False
+        fresh = True

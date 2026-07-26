@@ -227,3 +227,20 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 - **Blocking:** nothing — specs 084/085 land regardless; this decides
   whether the ADR 027 contract sentence gets a footnote or loses it.
 - **Status:** open.
+
+## Scattered 10k-target delete holds the topology lock for minutes — set-based batches or cross-transaction chunking?
+
+- **Asked:** 2026-07-25 by the b16c38b code review (scale lens)
+- **Context:** Trash-everything delete runs ~4 statements per target inside
+  one serialized transaction: a scattered 10k-target batch measured 52.9s
+  on Postgres while blocking a rival move for 51.9s, and ~2 minutes on
+  MSSQL. Not a regression — the commit made scattered batches 1.9-2.8x
+  *faster* than the removed permanent arm, and the set-based bulk escape
+  (cascade delete of one holding directory) is intact.
+- **Blocking:** nothing — bulk deletes have the documented escape; this is
+  latency under the topology lock, not a correctness defect
+- **Options considered:** set-based scattered execution (group targets per
+  bucket: one reparent executemany plus one rewrite pass); cross-transaction
+  chunking (weakens batch atomicity); leave as-is with the documented bulk
+  escape
+- **Status:** open
