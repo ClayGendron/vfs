@@ -127,12 +127,10 @@ include = ["src", "tests"]
 
 [tool.ty.environment]
 python-version = "3.13"
-# "tests" mirrors pytest's pythonpath so ty resolves base_doubles.
-root = ["src", "tests", "."]
+root = ["src", "."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tests"]
 asyncio_mode = "auto"
 norecursedirs = ["tests/fixtures/repos", "tests2", "src2"]
 markers = [

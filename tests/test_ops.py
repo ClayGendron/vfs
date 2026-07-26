@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import inspect
 
-from base_doubles import BindableStorage, RecorderFS, RecorderStorage
+from tests.support.base_doubles import BindableStorage, RecorderFS, RecorderStorage
 from vfs import ops, permissions
 from vfs.base import VirtualFileSystem
 from vfs.ops import ALL_OPS, DEVELOPER_OPS, EXEC_OPS, MUTATING_OPS, READ_OPS, TWO_PATH_OPS

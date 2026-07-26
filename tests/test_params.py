@@ -7,7 +7,7 @@ import inspect
 
 import pytest
 
-from base_doubles import RecorderFS, RecorderStorage
+from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.base import VirtualFileSystem
 from vfs.ops import ALL_OPS
 from vfs.params import PARAMS, RULES, param_violation

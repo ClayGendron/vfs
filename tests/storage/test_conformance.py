@@ -1,6 +1,6 @@
 """Conformance-suite instantiations — one subclass per backend.
 
-The contract itself lives in ``storage_conformance.StorageContract``;
+The contract itself lives in ``tests.support.storage_contract.StorageContract``;
 this file only wires backends in. The memory leg is ``InMemoryStorage``
 — ``DatabaseStorage`` over in-memory SQLite — so it runs the same
 families as the sqlite-file leg, trash arc included; capability gating
@@ -27,7 +27,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from storage_conformance import StorageContract
+from tests.support.storage_contract import StorageContract
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path

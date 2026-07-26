@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from base_doubles import (
+from tests.support.base_doubles import (
     BindableStorage,
     CapCountingStorage,
     RecorderFS,
