@@ -87,8 +87,19 @@ failure).
 Chunk sizes for multi-row statements derive from the compiled
 statement's actual bind registry (SQLAlchemy's insertmanyvalues
 formula: fixed overhead = total binds − per-row width), through one
-shared helper, with an execution-time budget assert so residual drift
-fails loudly in development rather than at row 1,049 in production.
+shared helper.
+
+*Amended 2026-07-26 (review of the landing):* the originally decided
+"execution-time budget assert" was superseded by the measurement
+itself before it ever landed — a fixed bind added later is *measured*
+and subtracted by the probe, so an assert re-checking compiled
+statements against the budget would guard against a drift the
+arithmetic already absorbs. The structural check that landed instead
+is narrower and sits inside the helper: probes compile a genuinely
+duplicated first row (so fixed overhead is exact, not estimated), and
+a compiled per-row bind count exceeding the declared width raises
+`AssertionError` at the first call, in development, never at row
+1,049 in production.
 
 ### 5. The path cache's fan-out cost is a documented contract
 

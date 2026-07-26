@@ -143,6 +143,7 @@ class _PendingTransfer(NamedTuple):
     version: int
     size_bytes: int
 
+
 # How old a content row with no entry must be before the retention sweep
 # reclaims it — the field's standard age fence, sized conservatively.
 _ORPHAN_AGE_FENCE: Final = timedelta(hours=24)
@@ -377,7 +378,9 @@ async def sweep_rows(
     skips: list[ResultError] = []
     root = await _point_row(session, entry, TRASH_ROOT)
     if root is not None and root["kind"] != "directory":
-        return Result(ops=("sweep",), errors=[_skipped(Path(TRASH_ROOT))])
+        # A squatter skips the bucket walk only — never the reclaim below.
+        skips.append(_skipped(Path(TRASH_ROOT)))
+        root = None
     if root is not None:
         columns = [entry.c[name] for name in _SNAPSHOT_COLUMNS]
         children = (await session.execute(select(*columns).where(entry.c.parent_id == root["entry_id"]))).mappings()

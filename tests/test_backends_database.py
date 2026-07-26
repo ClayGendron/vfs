@@ -15,7 +15,7 @@ import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 from sqlalchemy import Select, create_engine, delete, event, insert, select, text, update
@@ -82,6 +82,7 @@ from vfs.storage.backends.database.writes import (
     _update_materials,
     _upsert_constructor,
     _upsert_layer,
+    _values_update_stmt,
     edit_rows,
     write_rows,
 )
@@ -162,10 +163,13 @@ class _PgError(Exception):
 
 
 class _MySQLError(Exception):
-    """PyMySQL-shaped: args lead with the integer errno, no sqlstate attribute."""
+    """PyMySQL-shaped: args lead with the errno; the server's SQLSTATE rides on ``sqlstate``."""
+
+    _SQLSTATES: ClassVar[dict[int, str]] = {1213: "40001", 1205: "HY000", 1062: "23000"}
 
     def __init__(self, errno: int) -> None:
         super().__init__(errno, "deadlock found when trying to get lock")
+        self.sqlstate = self._SQLSTATES.get(errno, "HY000")
 
 
 class _OracleErrorValue:
@@ -218,11 +222,13 @@ class TestDialectPolicy:
 
     def test_mysql_deadlock_and_lock_wait_errnos_are_retryable(self) -> None:
         assert is_retryable(MYSQL, _MySQLError(1213)) is True
+        # 1205 ships under the HY000 catch-all: the sqlstate rung must
+        # defer to the errno, or the declared code set is dead on MySQL.
         assert is_retryable(MYSQL, _MySQLError(1205)) is True
         # Duplicate entry is a definite exists-outcome, never retried.
         assert is_retryable(MYSQL, _MySQLError(1062)) is False
         # The errno rung is profile-scoped: the floor declares no errnos.
-        assert is_retryable(GENERIC, _MySQLError(1213)) is False
+        assert is_retryable(GENERIC, _MySQLError(1205)) is False
 
     def test_oracle_is_tuned_for_retry_classification(self) -> None:
         # Budgets stay at the floor Oracle itself defines (ORA-01795);
@@ -609,9 +615,7 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
             )
             ids[path] = entry_key
             if content is not None:
-                await conn.execute(
-                    insert(tables.content).values(entry_id=entry_key, created_at=now, content=content)
-                )
+                await conn.execute(insert(tables.content).values(entry_id=entry_key, created_at=now, content=content))
 
         for path, kind, content in rows:
             await ensure(path, kind, content)
@@ -2005,9 +2009,7 @@ class TestGuardedAttribution:
         won = _staged_material("/won.txt", str(ULID()))
         lost = _staged_material("/lost.txt", str(ULID()))
         # The re-probe finds the lost row present: an honest conflict.
-        double = _ReturningSession(
-            [{"entry_id": won.entry_id, "version": 2}], probed=[{"entry_id": lost.entry_id}]
-        )
+        double = _ReturningSession([{"entry_id": won.entry_id, "version": 2}], probed=[{"entry_id": lost.entry_id}])
         errors = await _update_materials(
             cast("AsyncSession", double),
             tables.entry,
@@ -3296,9 +3298,7 @@ class TestTrashBucketBump:
 
     async def test_each_delete_bumps_the_bucket_it_lands_in(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.write(
-            entries=[Entry(path=Path("/a.txt"), content="x"), Entry(path=Path("/b.txt"), content="x")]
-        )
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x"), Entry(path=Path("/b.txt"), content="x")])
         assert (await storage.delete(path=Path("/a.txt"))).success
         assert (await storage.delete(path=Path("/b.txt"))).success
         buckets = (await storage.ls(path=Path("/.vfs/trash"))).observations
@@ -3690,6 +3690,35 @@ class TestWriteVsTopologyCoherence:
         assert remaining == {young_id}
         await storage.close()
 
+    async def test_a_trash_root_squatter_never_blocks_orphan_reclaim(self, tmp_path) -> None:
+        # The squatter skips the bucket walk; the reclaim pass is
+        # unconditional — sweep is the only drain for orphaned bodies.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/.vfs/trash"), content="squat")], parents=True)
+        host = storage._host
+        tables = host.tables
+        old_id = str(ULID())
+        async with host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            await conn.execute(
+                insert(tables.content).values(
+                    entry_id=old_id, created_at=datetime.now(UTC) - timedelta(hours=25), content="old orphan"
+                )
+            )
+            await session.commit()
+        result = await storage.sweep(path=Path("/.vfs/trash"))
+        assert result.success is True
+        assert result.observations == []
+        assert result.errors[0].path == "/.vfs/trash"  # the squatter skip still surfaces first
+        reclaims = [e for e in result.errors if e.data and "entry_id" in e.data]
+        assert [w.data["entry_id"] for w in reclaims if w.data] == [old_id]
+        async with host.session_factory() as session:
+            conn = await session.connection()
+            remaining = {row.entry_id for row in await conn.execute(select(tables.content.c.entry_id))}
+        assert old_id not in remaining
+        assert (await storage.read(path=Path("/.vfs/trash"))).observations[0].content == "squat"
+        await storage.close()
+
     async def test_bump_values_arm_is_a_guarded_join_and_verifies_the_count(self) -> None:
         # The set-based arm SQLite cannot execute (postgres/mssql): the
         # statement joins (entry_id, path) and the RETURNING count is the
@@ -4018,9 +4047,7 @@ class TestWriteVsTopologyCoherence:
 
         # The set-based arm: a guarded VALUES join, verified by RETURNING.
         values_double = _ReturningSession([{"entry_id": parent_id}])
-        errors = await _bump_parents(
-            cast("AsyncSession", values_double), tables.entry, POSTGRESQL, 32_000, 900, plan()
-        )
+        errors = await _bump_parents(cast("AsyncSession", values_double), tables.entry, POSTGRESQL, 32_000, 900, plan())
         assert errors == []
         assert "FROM (VALUES" in str(values_double.statements[0].compile(dialect=postgresql.dialect()))
         # The per-row floor: no sane aggregate, each statement's own rowcount.
@@ -4143,9 +4170,7 @@ class TestWriteVsTopologyCoherence:
             await session.connection(execution_options={"vfs_writer": True})
 
             async def rival() -> None:
-                sub_id = (
-                    await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d/sub"))
-                ).scalar_one()
+                sub_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d/sub"))).scalar_one()
                 await session.execute(
                     insert(entry).values(
                         entry_id=str(ULID()),
@@ -4173,12 +4198,8 @@ class TestWriteVsTopologyCoherence:
                     lock_key=host.topology_key,
                 )
             assert result.success is True, result.errors
-            stranded = (
-                await session.execute(select(entry.c.path).where(entry.c.path.like("/d/%")))
-            ).scalars().all()
-            moved = (
-                await session.execute(select(entry.c.path).where(entry.c.name == "new.txt"))
-            ).scalar_one()
+            stranded = (await session.execute(select(entry.c.path).where(entry.c.path.like("/d/%")))).scalars().all()
+            moved = (await session.execute(select(entry.c.path).where(entry.c.name == "new.txt"))).scalar_one()
             await session.rollback()
         # The late row rode the re-collection into trash with its subtree.
         assert stranded == []
@@ -4197,9 +4218,7 @@ class TestWriteVsTopologyCoherence:
             await session.connection(execution_options={"vfs_writer": True})
 
             async def rival() -> None:
-                sub_id = (
-                    await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d/sub"))
-                ).scalar_one()
+                sub_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d/sub"))).scalar_one()
                 await session.execute(
                     insert(entry).values(
                         entry_id=str(ULID()),
@@ -4241,9 +4260,7 @@ class TestWriteVsTopologyCoherence:
             await session.connection(execution_options={"vfs_writer": True})
 
             async def rival() -> None:
-                await session.execute(
-                    update(entry).where(entry.c.path == "/b").values(version=entry.c.version + 1)
-                )
+                await session.execute(update(entry).where(entry.c.path == "/b").values(version=entry.c.version + 1))
 
             with installed("transfer:post-collect", rival), pytest.raises(StaleSnapshot):
                 await transfer_rows(
@@ -4405,24 +4422,57 @@ class TestWriteVsTopologyCoherence:
         assert "outlived 3 attempts" in error.message
         await storage.close()
 
+    async def test_first_touch_retry_exhaustion_classifies_conflict(self, tmp_path, monkeypatch) -> None:
+        # The third with_retry caller: exhaustion during lazy first touch
+        # is the same classified conflict, never a raw internal raise.
+        storage = DatabaseStorage(url=_url(tmp_path))
+
+        async def exhausted(fn: object) -> Result:
+            raise StaleSnapshot("a retryable engine conflict outlived 3 attempts")
+
+        monkeypatch.setattr(storage._host, "with_retry", exhausted)
+        result = await storage.stat(path=Path("/"))
+        assert result.success is False
+        error = result.errors[0]
+        assert error.kind == VFSErrorKind.conflict
+        assert error.retryable is True
+        assert "First touch kept losing to concurrent changes" in error.message
+        assert "outlived 3 attempts" in error.message
+        monkeypatch.undo()
+        recovered = await storage.stat(path=Path("/"))
+        assert recovered.success is True  # exhaustion never wedged readiness
+        await storage.close()
+
     def test_statement_budget_measures_fixed_binds_and_caps_width(self) -> None:
         # The bump statement carries one fixed bind (the SQL-side
         # increment); the helper measures it off the compiled statement
         # and keeps the reserve clear of the engine cap.
         tables = build_vfs_tables(table_name="vfs")
         entry = tables.entry
-        pairs = [("A" * 26, "/a")]
+        pair = ("A" * 26, "/a")
         dialect = mssql.dialect()
         rows = statement_budget(
-            lambda n: _bump_values_stmt(entry, (pairs * 2)[:n]),
+            lambda probe: _bump_values_stmt(entry, probe),
+            pair,
             dialect,
             parameter_budget=2_099,
             row_width=2,
         )
         assert rows == (2_099 - 1 - 8) // 2
         assert rows * 2 + 1 <= 2_099 - 8
+        # An even budget distinguishes the fixed-bind subtraction the
+        # odd 2,099 pin arithmetically absorbs (1,045 vs 1,046).
+        even = statement_budget(
+            lambda probe: _bump_values_stmt(entry, probe),
+            pair,
+            dialect,
+            parameter_budget=2_100,
+            row_width=2,
+        )
+        assert even == (2_100 - 1 - 8) // 2
         capped = statement_budget(
-            lambda n: _bump_values_stmt(entry, (pairs * 2)[:n]),
+            lambda probe: _bump_values_stmt(entry, probe),
+            pair,
             dialect,
             parameter_budget=2_099,
             row_width=2,
@@ -4433,11 +4483,39 @@ class TestWriteVsTopologyCoherence:
         # helper, never at row N of a production batch.
         with pytest.raises(AssertionError, match="row width"):
             statement_budget(
-                lambda n: _bump_values_stmt(entry, (pairs * 2)[:n]),
+                lambda probe: _bump_values_stmt(entry, probe),
+                pair,
                 dialect,
                 parameter_budget=2_099,
                 row_width=1,
             )
+
+    def test_statement_budget_charges_sparse_rows_at_the_declared_width(self) -> None:
+        # NULL cells compile inline, so a sparse probe row measures a
+        # smaller delta; the chunk is charged at the declared ceiling
+        # regardless, or a mixed batch overflows the engine cap mid-run.
+        tables = build_vfs_tables(table_name="vfs")
+        entry = tables.entry
+        dialect = mssql.dialect()
+        width = len(_CLOBBER_COLUMNS) + 4
+        now = datetime.now(UTC)
+        full = (str(ULID()), 1, 2, "/full.txt", "file", "h" * 64, "text/plain", "txt", 1, 4, "O" * 26, now)
+        sparse = (str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, None, now)
+
+        def budget(row: tuple[object, ...]) -> int:
+            return statement_budget(
+                lambda probe: _values_update_stmt(entry, probe, guard=True),
+                row,
+                dialect,
+                parameter_budget=2_099,
+                row_width=width,
+            )
+
+        # The premise: the sparse probe really undershoots the ceiling.
+        one = len(_values_update_stmt(entry, [sparse], guard=True).compile(dialect=dialect).bind_names)
+        two = len(_values_update_stmt(entry, [sparse, sparse], guard=True).compile(dialect=dialect).bind_names)
+        assert two - one < width
+        assert budget(sparse) == budget(full)
 
     async def test_upsert_escape_that_classifies_keeps_the_chunk_loop_going(self) -> None:
         # An IntegrityError escaping ON CONFLICT re-drives row-wise; when
@@ -4482,4 +4560,5 @@ class TestWriteVsTopologyCoherence:
         assert error.kind == VFSErrorKind.conflict
         assert error.retryable is True
         assert "may not adopt" in error.message
+        assert error.data == {"target": "/d/late.txt"}  # distinct refusals stay distinct facts
         assert staged.persistence == "insert"  # the ghost was never absorbed

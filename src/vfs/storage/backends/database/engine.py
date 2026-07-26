@@ -188,6 +188,9 @@ class EngineHost:
                 return None
             try:
                 return await self.with_retry(self._first_touch)
+            except StaleSnapshot as exc:
+                message = f"First touch kept losing to concurrent changes: {exc.context}"
+                return ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)
             except (SQLAlchemyError, OSError) as exc:
                 # SQLAlchemyError, not just DBAPIError: pool exhaustion
                 # (TimeoutError) is an operating condition, never a raise.
@@ -198,11 +201,11 @@ class EngineHost:
 
         A :class:`StaleSnapshot` is always retryable: a guard proved the
         snapshot stale, and a fresh attempt re-derives everything from
-        current state. Exhaustion has one channel: whatever carried the
-        retryable outcome — the in-band signal or a native serialization
-        error — leaves as :class:`StaleSnapshot` with the native error as
-        its cause, so the caller classifies both identically. Only
-        non-retryable failures escape raw to the caller's classifier.
+        current state. Exhaustion has one channel: it always leaves as
+        :class:`StaleSnapshot` — the in-band signal as itself, a native
+        serialization error wrapped as the cause — so every caller
+        classifies both identically. Only non-retryable failures escape
+        raw to the caller's classifier.
         """
         delay = self._retry_base_delay
         for attempt in range(1, self._retry_attempts + 1):

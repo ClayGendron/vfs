@@ -53,9 +53,7 @@ ENGINE_LEGS = [
 
 # Kinds that may lawfully surface from a lost race; anything else — above
 # all ``unavailable`` with raw driver text — is a classification defect.
-_RACE_KINDS = frozenset(
-    {VFSErrorKind.not_found, VFSErrorKind.conflict, VFSErrorKind.exists, VFSErrorKind.invalid}
-)
+_RACE_KINDS = frozenset({VFSErrorKind.not_found, VFSErrorKind.conflict, VFSErrorKind.exists, VFSErrorKind.invalid})
 
 
 @asynccontextmanager
@@ -433,9 +431,7 @@ class TestGhostRefusal:
             assert all(e.kind == VFSErrorKind.conflict and e.retryable for e in victim.errors)
             async with host.session_factory() as session:
                 conn = await session.connection()
-                found = await conn.execute(
-                    select(entry.c.version, entry.c.path).where(entry.c.entry_id == ghost_id)
-                )
+                found = await conn.execute(select(entry.c.version, entry.c.path).where(entry.c.entry_id == ghost_id))
                 row = found.one()
             assert (row.version, row.path) == (5, "/elsewhere/late.txt")
 
@@ -632,11 +628,15 @@ class TestExhaustionClassification:
                     return outcomes
 
                 rounds = await asyncio.gather(*(hammer(instance, k) for k, instance in enumerate(instances)))
+                clean = ("kept losing to concurrent changes", "Concurrent modification", "missed their snapshot")
+                conflicts = 0
                 for result in (r for burst in rounds for r in burst):
                     for error in result.errors:
                         assert error.kind == VFSErrorKind.conflict, (error.kind, error.message)
                         assert error.retryable is True
-                        assert "asyncpg" not in error.message and "pyodbc" not in error.message
+                        assert any(template in error.message for template in clean), error.message
+                        conflicts += 1
+                assert conflicts >= 1  # a stormless storm pins nothing
                 await _audit(storage)
             finally:
                 for instance in instances:

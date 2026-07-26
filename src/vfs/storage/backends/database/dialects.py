@@ -173,8 +173,8 @@ MYSQL: Final = DialectProfile(
     # Topology reads must see post-rival state per statement; REPEATABLE
     # READ would pin a pre-lock snapshot. Mirrors the Postgres pin.
     topology_isolation="READ COMMITTED",
-    # Deadlock (1213) and lock-wait timeout (1205) surface as raw driver
-    # errnos; SQLAlchemy maps neither to a SQLSTATE.
+    # Deadlock (1213) also carries SQLSTATE 40001; lock-wait timeout
+    # (1205) ships under the HY000 catch-all, so only its errno classifies.
     retryable_driver_codes=frozenset({1213, 1205}),
 )
 
@@ -317,8 +317,9 @@ def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object
 _STATEMENT_BIND_RESERVE: Final = 8
 
 
-def statement_budget(
-    build: Callable[[int], ClauseElement[Any]],
+def statement_budget[R](
+    build: Callable[[Sequence[R]], ClauseElement[Any]],
+    probe_row: R,
     dialect: Dialect,
     *,
     parameter_budget: int,
@@ -327,20 +328,22 @@ def statement_budget(
 ) -> int:
     """Rows per multi-row statement, measured off the compiled bind registry.
 
-    *build(n)* returns the statement carrying its first *n* rows. One- and
-    two-row probes compile on the live dialect: the bind-count delta of
-    the duplicated row is that row's true per-row cost, and the remainder
-    of the one-row count is the statement's fixed overhead — a bind
-    outside the per-row tuple (a compiled literal, a fixed predicate) can
-    never escape the arithmetic. The declared *row_width* is the all-bind
-    ceiling the chunk is charged at (``NULL`` cells compile inline, so
-    the measured delta may undershoot it); a delta *exceeding* the
-    declaration is drift and fails loudly here, never at an engine's cap.
-    *row_cap* is an optional additional ceiling (the membership budget,
-    where a caller also bounds row count).
+    *build(rows)* returns the statement carrying *rows*; the helper
+    compiles it over one and two copies of *probe_row*, so duplication —
+    what makes the arithmetic exact — is owned here, never re-remembered
+    per caller: the bind-count delta of a duplicated row is that row's
+    true per-row cost, and the remainder of the one-row count is the
+    statement's fixed overhead — a bind outside the per-row tuple (a
+    compiled literal, a fixed predicate) can never escape the
+    arithmetic. The declared *row_width* is the all-bind ceiling the
+    chunk is charged at (``NULL`` cells compile inline, so the measured
+    delta may undershoot it); a delta *exceeding* the declaration is
+    drift and fails loudly here, never at an engine's cap. *row_cap* is
+    an optional additional ceiling (the membership budget, where a
+    caller also bounds row count).
     """
-    one = len(build(1).compile(dialect=dialect).bind_names)
-    two = len(build(2).compile(dialect=dialect).bind_names)
+    one = len(build([probe_row]).compile(dialect=dialect).bind_names)
+    two = len(build([probe_row, probe_row]).compile(dialect=dialect).bind_names)
     per_row = two - one
     if per_row > row_width:
         raise AssertionError(f"declared row width {row_width} < compiled per-row bind delta {per_row}")
@@ -366,12 +369,19 @@ def supports_values_update(profile: DialectProfile, dialect: Dialect) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# ISO 9075's vendor catch-all: it says "look elsewhere", so classification
+# falls through to the driver errno instead of judging by it.
+_SQLSTATE_GENERAL_ERROR: Final = "HY000"
+
+
 def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
     """Whether *exc* is a transient outcome a whole-method restart can clear.
 
     Classifies by SQLite extended error code, SQLSTATE, or integer driver
-    error number — never message text. Unique violations (23505) are
-    definite exists-outcomes after arbitration and are never in any
+    error number — never message text. A ``HY000`` SQLSTATE carries no
+    classification by definition and defers to the driver errno (MySQL
+    ships lock-wait timeout 1205 under it). Unique violations (23505)
+    are definite exists-outcomes after arbitration and are never in any
     profile's retryable set.
     """
     origin = getattr(exc, "orig", None) or exc
@@ -379,7 +389,7 @@ def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
     if sqlite_code is not None:
         return sqlite_code in profile.retryable_sqlite_codes
     state = _sqlstate_of(origin)
-    if state is not None:
+    if state is not None and state != _SQLSTATE_GENERAL_ERROR:
         return state in profile.retryable_sqlstates
     return _driver_code_of(origin) in profile.retryable_driver_codes
 

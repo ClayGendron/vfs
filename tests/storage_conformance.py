@@ -738,6 +738,24 @@ class StorageContract:
         assert [e.kind for e in result.errors] == [VFSErrorKind.not_empty] * 2
         assert {e.data["target"] for e in result.errors if e.data} == {"/s1", "/s2"}
 
+    @needs("move")
+    async def test_moving_the_root_carries_its_source_target(self, storage: ConformanceBackend) -> None:
+        result = await storage.move(operations=[ResolvedPair(src=Path("/"), dest=Path("/copy"))])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].data == {"target": "/"}
+
+    @needs("write", "move")
+    async def test_unaddressable_move_carries_its_source_target(self, storage: ConformanceBackend) -> None:
+        # A subtree whose deepest path fits only under its short root:
+        # rebasing under a longer destination overflows the path cap.
+        deep = Path("/s/" + "/".join(["a" * 200] * 5))
+        await storage.write(entries=[Entry(path=deep, content="x")], parents=True)
+        result = await storage.move(operations=[ResolvedPair(src=Path("/s"), dest=Path("/" + "d" * 30))])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unaddressable
+        assert result.errors[0].data == {"target": "/s"}
+
     @needs("write", "delete", "read")
     async def test_restore_occupied_site_is_exists_until_overwrite(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="old")])

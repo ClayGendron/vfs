@@ -686,10 +686,12 @@ async def _values_update(
         ordered = tuple(material[name] for name in _CLOBBER_COLUMNS)
         rows.append((entry_row.entry_id, entry_row.base_version, entry_row.version, str(entry_row.path), *ordered))
     per_statement = statement_budget(
-        lambda n: _values_update_stmt(entry, (rows * 2)[:n], guard=guard),
+        lambda probe: _values_update_stmt(entry, probe, guard=guard),
+        rows[0],
         session.get_bind().dialect,
         parameter_budget=parameter_budget,
-        row_width=len(_CLOBBER_COLUMNS) + 4,
+        # The ceiling is the row's own arity: every tuple element may bind.
+        row_width=len(rows[0]),
         row_cap=membership_budget,
     )
     matched: dict[str, int] = {}
@@ -923,10 +925,12 @@ async def _bump_by_values(
 ) -> None:
     """Set-based guarded bump over a VALUES join; RETURNING is the proof."""
     per_statement = statement_budget(
-        lambda n: _bump_values_stmt(entry, (pairs * 2)[:n]),
+        lambda probe: _bump_values_stmt(entry, probe),
+        pairs[0],
         session.get_bind().dialect,
         parameter_budget=parameter_budget,
-        row_width=2,
+        # The ceiling is the pair's own arity: every tuple element may bind.
+        row_width=len(pairs[0]),
         row_cap=membership_budget,
     )
     for chunk in chunked(pairs, per_statement):

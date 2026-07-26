@@ -1,9 +1,12 @@
 # 090 — Structural proof obligations: one chokepoint per coherence proof
 
-- **Status:** landed 2026-07-26 (uncommitted on `main`; all four engine
-  legs green, every acceptance repro re-run clean at campaign scale,
-  all four previously-surviving mutations now killed, throughput at
-  baseline) — awaiting the backward-flow mining pass, then deletion.
+- **Status:** round 1 landed 2026-07-26 as `0c200b4`; round 2 —
+  remediation of that landing's review (2 major, 8 minor, all
+  adversarially confirmed), owned by §Round 2 below — landed
+  2026-07-26 (uncommitted on `main`; all four engine legs green,
+  every named mutation killed, the first-touch real-lock repro
+  classifies and recovers, coverage at parity). Next: the
+  backward-flow mining pass, then deletion.
   One scope note: `_execute_copy`'s insert chunking stays on
   `rows_per_statement` under decision 3's executemany carve-out (it
   executes per-row dicts with no hidden binds; SQLAlchemy's
@@ -80,10 +83,13 @@ at exactly one site.
    and chunk at `(parameter_budget − fixed) // per_row_width` —
    SQLAlchemy's insertmanyvalues formula generalized. All three
    hand-arithmetic sites adopt it (`_bump_by_values`,
-   `_values_update`, `_execute_copy`'s insert chunking), and the
-   execution seam asserts every compiled multi-row statement fits the
-   dialect's budget, so any future fixed bind fails loudly in
-   development. `rows_per_statement` remains for executemany paths
+   `_values_update`, `_execute_copy`'s insert chunking). *(Amended in
+   round 2, matching ADR 029's amendment: the originally promised
+   execution-seam budget assert was superseded by the measurement
+   itself — a future fixed bind is measured and subtracted, not
+   predicted; the structural check that lands is the helper's own
+   width-drift `AssertionError` over a genuinely duplicated probe
+   row.)* `rows_per_statement` remains for executemany paths
    (per-row dicts carry no hidden binds); `_FILTER_BIND_RESERVE`
    stays for `IN`-list predicates, documented as serving that class
    only.
@@ -133,6 +139,81 @@ at exactly one site.
   legs green; 10k-batch write throughput within noise of the 089
   baseline (pg 2.33–2.37s / mysql 1.94–1.95s) — decision 1 adds no
   statement to the no-arbitration hot path.
+
+## Round 2 — remediation of the landing review (commit 0c200b4)
+
+The review of round 1 confirmed the central mechanisms but caught the
+meta-defect once more at the one call site round 1 did not touch, plus
+pin and prose gaps. Round 2 owns:
+
+1. **The exhaustion channel reaches its third caller** *(closes the
+   major regression).* `ensure_ready` — the one `with_retry` caller
+   round 1 left untouched — gains the same `except StaleSnapshot` arm
+   the backend seams carry, returning the same classification
+   (retryable `conflict`, clean text, `exc.context` in the message).
+   First-touch exhaustion is pinned end-to-end: a fresh host whose
+   provisioning exhausts retries returns a classified `Result` from a
+   public verb, never a raw exception, and its kind matches the other
+   two channels.
+2. **Probe duplication moves into the helper** *(closes the major pin
+   gap at its root and makes the helper's derivation true).*
+   `statement_budget` takes the statement builder plus the batch's
+   first row and compiles one- and two-copy probes itself — the
+   duplication that makes the arithmetic exact is owned structurally,
+   not re-remembered per call site — so fixed overhead can no longer
+   measure negative and the probe no longer copies the whole batch.
+   Two new
+   unit pins make the arithmetic's load-bearing terms observable: a
+   NULL-undershoot probe (compiled delta < declared width) pinning
+   the charge-at-declared-`row_width` divisor, and an even-budget
+   case (2,100) that distinguishes the `- fixed` subtraction the
+   2,099 pin arithmetically absorbs.
+3. **Orphan reclaim is unconditional in fact** *(minor).* The
+   retention arm's trash-root-squatter skip no longer returns early:
+   the squatter is surfaced as the same warning while the aged-orphan
+   reclaim still runs, making the round-1 docstrings true as written.
+   Pinned by a combined squatter-plus-orphan test.
+4. **The HY000 catch-all defers to the driver errno** *(closes the
+   review's MySQL retryable-codes lead, verified live).* pymysql
+   exposes the server's SQLSTATE on every error, and MySQL ships
+   lock-wait timeout 1205 under the vendor catch-all ``HY000`` — so
+   the SQLSTATE rung swallowed the classification and the profile's
+   declared ``retryable_driver_codes`` were dead on the whole MySQL
+   family (deadlock 1213 survived only because the server sends it as
+   40001). ``is_retryable`` now treats ``HY000`` — by ISO definition
+   "look elsewhere" — as non-informative and falls through to the
+   errno rung. Verified end-to-end on live MySQL: a lock-wait timeout
+   through the public write retries and exhausts as a retryable
+   ``conflict`` with clean text (previously: zero retries,
+   ``unavailable``). The pymysql test double gains the ``sqlstate``
+   attribute the real driver carries — the phantom that hid this.
+5. **Prose and pin riders.**
+   - `StagedEntry.adopt`'s docstring scopes its promise to material
+     columns (the bump pass may affirm an adopted parent and refresh
+     its version); the `version` field comment adds adopt to absorb
+     as post-execution learners.
+   - The remaining unpinned `target=` stamps get distinguishing
+     assertions: transfer's root-refusal and unaddressable rungs, and
+     `_incoherent_row`'s `data["target"]` — completing the round-1
+     acceptance criterion that every `target=` mutation dies.
+   - The hot-row storm asserts a non-vacuous floor (at least one
+     observed conflict) and matches error messages against the three
+     vfs-owned templates ("kept losing to concurrent changes",
+     "Concurrent modification", "missed their snapshot") instead of a
+     two-driver denylist.
+
+### Round-2 acceptance
+
+- The first-touch repro (rival holding the lock through every retry)
+  returns a classified retryable `conflict` from a public verb on a
+  fresh host; at round 1 it raised.
+- Each named mutation now fails at least one test: divisor
+  `// row_width` → `// per_row`; delete `- fixed`; drop `target=` at
+  the root rung, the unaddressable rung, and `_incoherent_row`;
+  revert the `HY000` fall-through.
+- A live MySQL 1205 classifies retryable at the unit seam and rides
+  the retry-then-exhaust channel through the public write.
+- Full suite, `ruff`, `ty` at zero; coverage held; engine legs green.
 
 ## Non-goals
 

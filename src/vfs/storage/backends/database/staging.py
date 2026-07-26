@@ -54,7 +54,7 @@ class StagedEntry:
     ext: str | None = None
     mime_type: str | None = None
     base_version: int | None = None  # the version the guarded arm compares against
-    version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb" learns its own post-execution
+    version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
 
     def refresh_material(
         self,
@@ -89,10 +89,12 @@ class StagedEntry:
     def adopt(self, entry_id: str, version: int) -> None:
         """Lose insert arbitration to an equivalent occupant and stand down.
 
-        Nothing remains to write: the occupant already is what this row
-        meant to create, so identity and version become the occupant's and
-        no execution pass touches the row — the mkdir-p forgiveness the
-        sequential gates grant, applied at arbitration.
+        No material remains to write: the occupant already is what this
+        row meant to create, so identity and version become the occupant's
+        — the mkdir-p forgiveness the sequential gates grant, applied at
+        arbitration. No pass writes its material columns; the bump pass
+        may still affirm the row as a parent of surviving inserts,
+        refreshing ``version`` from its read-back.
         """
         self.persistence = "adopt"
         self.entry_id = entry_id
