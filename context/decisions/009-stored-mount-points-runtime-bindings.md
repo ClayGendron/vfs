@@ -104,4 +104,4 @@ Recorded is the **landed** shape (056 Pass A, commit `d02b3ad`), not
   ordinary classified storage results (056 decision 22).
 
 Executed through story 055 (`context/specs/archive/055-posix-mounts-inmemory-default/`)
-and 056 Pass A (`context/specs/056-storage-mounts/`, commit `d02b3ad`).
+and 056 Pass A (`context/specs/active/056-storage-mounts/`, commit `d02b3ad`).

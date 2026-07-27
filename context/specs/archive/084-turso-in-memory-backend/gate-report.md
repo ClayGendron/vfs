@@ -121,11 +121,11 @@ dependency is present:
 
 ```sh
 uv add "pyturso[sqlalchemy]"                 # temporary, for the probe
-uv run python context/specs/084-turso-in-memory-backend/gate_probe.py
+uv run python context/specs/archive/084-turso-in-memory-backend/gate_probe.py
 # decisive check (f): the conformance contract on aioturso :memory: —
 # point a StorageContract subclass at sqlite+aioturso:///:memory: and
 # run it with gate_shims.py loaded as a pytest plugin (-p), e.g.
-#   PYTHONPATH=context/specs/084-turso-in-memory-backend \
+#   PYTHONPATH=context/specs/archive/084-turso-in-memory-backend \
 #   uv run pytest <the-temp-leg-file> -p gate_shims
 uv remove pyturso                            # the gate leaves no dependency
 ```

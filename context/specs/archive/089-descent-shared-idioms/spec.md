@@ -1,7 +1,8 @@
 # 089 — Descent shared idioms: name the bounded-SQL loops once
 
-- **Status:** landed 2026-07-26 (all four engine legs green including
-  the metachar pins; coverage held at 100% on every touched module) —
+- **Status:** landed 2026-07-26 (`5e311be`; all four engine legs green
+  including the metachar pins; coverage held at 100% on every touched
+  module) —
   awaiting the backward-flow mining pass, then deletion. One deviation
   from acceptance: the consuming modules are net negative as intended
   (reads −20, topology −16, writes −4), but the tree overall is +54

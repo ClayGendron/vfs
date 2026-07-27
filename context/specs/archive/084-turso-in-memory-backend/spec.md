@@ -1,10 +1,12 @@
 # 084 — Re-platform the in-memory backend onto Turso
 
-- **Status:** open — born 2026-07-25 from ADR 028. Lands **before**
-  spec 085 (the ADR 027 contract flip): once delete can never be
+- **Status:** landed 2026-07-25 (`b16c38b`, one landing with spec 085;
+  review minors `8fcd590`) — born 2026-07-25 from ADR 028. Landed
+  **with** the ADR 027 contract flip: once delete can never be
   permanent, a backend without trash cannot delete at all, so the
-  bespoke no-trash `memory.py` must be gone first to keep every
-  landing green.
+  bespoke no-trash `memory.py` left in the same commit that flipped
+  the contract, keeping the landing green. Awaiting the backward-flow
+  mining pass, then deletion.
 - **Evidence:**
   `context/decisions/028-turso-in-memory-backend.md`;
   `context/decisions/027-delete-never-destroys-sweep-only-destruction.md`

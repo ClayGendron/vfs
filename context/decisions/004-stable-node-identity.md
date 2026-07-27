@@ -136,6 +136,6 @@ Amendments absorbed from the reference review while confirming (c):
   keys dependent rows on path — or exposes the integer surrogate as a
   public name — is out of spec.
 
-Executes through story 072 (`context/specs/072-database-storage-backend/`).
+Executes through story 072 (`context/specs/active/072-database-storage-backend/`).
 Evidence: `context/research/2026-07-13-database-storage-backend.md` §1;
 `context/research/2026-07-08-stable-id-namespace-proposal.md` §§2–3.

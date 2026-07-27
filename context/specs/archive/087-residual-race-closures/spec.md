@@ -1,8 +1,8 @@
 # 087 — Residual race closures: redrive over probe, guard every destroy
 
-- **Status:** landed 2026-07-26 (uncommitted on `main`; all four engine
-  legs green, throughput at baseline) — awaiting the backward-flow
-  mining pass, then deletion.
+- **Status:** landed 2026-07-26 (`67aa7bd`, one landing with specs
+  086/088; all four engine legs green, throughput at baseline) —
+  awaiting the backward-flow mining pass, then deletion.
 - **Evidence:**
   `context/research/2026-07-26-writes-topology-review-verification.md`
   (§1 is the confirmed-defect list this spec answers; every defect

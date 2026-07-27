@@ -35,11 +35,11 @@ The directory names matter less than the flow contract between them:
 - **`decisions/`** — append-only ADRs. Each cites the research it stands on
   and names what it supersedes. Where "we studied X" becomes "we will do Y."
 - **`specs/`** — **ephemeral by design.** Born from decisions, small enough
-  for one developer, self-contained enough to leave the repo. When a spec
-  lands, its durable residue flows *backward* — decisions made during
+  for one developer, self-contained enough to leave the repo. Open specs
+  live in `specs/active/`; on landing a spec moves to `specs/archive/`,
+  its durable residue flows *backward* — decisions made during
   implementation → `decisions/`, research done along the way → `research/`
-  — and then the spec is deleted. Git history is the archive.
-  (`specs/archive/` holds pre-reorg landed stories pending that mining.)
+  — and then the spec is deleted. Git history is the permanent record.
 - **`standards/`** — versioned, rarely changed, and the only directory the
   other three must obey. Holds the constitution, mission, roadmap, the
   how-we-build standards, the quality rubric, and the `grades/` time series.

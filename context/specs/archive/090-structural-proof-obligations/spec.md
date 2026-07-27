@@ -3,10 +3,10 @@
 - **Status:** round 1 landed 2026-07-26 as `0c200b4`; round 2 —
   remediation of that landing's review (2 major, 8 minor, all
   adversarially confirmed), owned by §Round 2 below — landed
-  2026-07-26 (uncommitted on `main`; all four engine legs green,
-  every named mutation killed, the first-touch real-lock repro
-  classifies and recovers, coverage at parity). Next: the
-  backward-flow mining pass, then deletion.
+  2026-07-26 as `82f9754` (all four engine legs green, every named
+  mutation killed, the first-touch real-lock repro classifies and
+  recovers, coverage at parity). Next: the backward-flow mining
+  pass, then deletion.
   One scope note: `_execute_copy`'s insert chunking stays on
   `rows_per_statement` under decision 3's executemany carve-out (it
   executes per-row dicts with no hidden binds; SQLAlchemy's

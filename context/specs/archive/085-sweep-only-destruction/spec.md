@@ -1,6 +1,8 @@
 # 085 — Delete never destroys; sweep is the only destroyer
 
-- **Status:** open — born 2026-07-25 from ADR 027 (pins 1–4, 6).
+- **Status:** landed 2026-07-25 (`b16c38b`, one landing with spec 084;
+  review minors `8fcd590`) — born 2026-07-25 from ADR 027 (pins 1–4,
+  6). Awaiting the backward-flow mining pass, then deletion.
 - **Evidence:**
   `context/decisions/027-delete-never-destroys-sweep-only-destruction.md`;
   `context/decisions/014-trash-normal-fs-parity.md` (pins 3–5);

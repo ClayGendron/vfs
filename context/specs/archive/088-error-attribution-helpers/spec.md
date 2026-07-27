@@ -1,8 +1,8 @@
 # 088 — Error attribution: helpers carry the caller's target
 
-- **Status:** landed 2026-07-26 (uncommitted on `main`, with 087; all
-  four engine legs green) — awaiting the backward-flow mining pass,
-  then deletion. The hand-rolled `exists` site was already deleted by
+- **Status:** landed 2026-07-26 (`67aa7bd`, one landing with specs
+  086/087; all four engine legs green) — awaiting the backward-flow
+  mining pass, then deletion. The hand-rolled `exists` site was already deleted by
   087 decision 3; the helper extensions and site adoptions landed as
   specified.
 - **Evidence:**

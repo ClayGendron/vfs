@@ -3,96 +3,41 @@
 A periodic true-up of story specs against the code. **This is a
 snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
-open/seed/draft specs against `src/vfs/` and update both).
+`active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-07-23, in the slice-9 landing session
-  (uncommitted tree on `main` after `2dfaf46`). This pass trued up the
-  072 arc through slice 9 and the 077–080 line. Router-story entries
-  (051, 053, 056, 070, etc.) carry forward from the 2026-07-10/11
+- **Last reviewed:** 2026-07-26, in the specs-reorg session (tree at
+  `d616d75`). This pass verified the 084–090 line directly (code
+  spot-checks against each spec's decisions, full suite at 1873
+  passed / 744 skipped, `ruff`/`ty` at zero; the four Docker engine
+  legs were run green at each 07-26 landing and not re-run here) and
+  moved every landed spec into `archive/`. Router-era entries (039,
+  045, 051, 053, 054, 070) carry forward from the 2026-07-10/11
   review — not re-verified, and no commits since have claimed router
   work.
-- **Method (this pass):** the slice-9 work verified directly (all four
-  Docker engine legs run green in-session); 077–080 statuses read from
-  their spec.md lines and the git log; the rest carried forward.
+- **Layout (since 2026-07-26):** open specs live in `active/`; landed
+  specs move to `archive/` until their backward-flow mining pass, then
+  are deleted. See `README.md`.
 
-## The active line: 072 database backend and its rewrites
+## The active line: finishing the database backend's verb surface
 
-- **072 — database storage backend** (in progress). Landed: slice 6
-  skeleton (`5238324`), slice 7 read family + glob (`f69824a`),
-  slice 8 mutation core (`b488e25`), membership-predicate budget
-  bounding (`d9ca522`), **slice 9 topology verbs (2026-07-23, this
-  session, two landings)** — `topology.py` delete/move/copy under the
-  per-engine serialization point, trash reparent with hourly buckets,
-  the shared transfer ladder, plus the concurrency-seam module
-  (`seams.py`; code-owns-the-seam decision recorded in the slice-9
-  guide) and the torn-row pin refactored off its private mirror. Live
-  surface: read/stat/ls/tree/glob + write/edit/mkdir +
-  delete/move/copy; **grep and mkedge are the remaining classified
-  stubs.** The real-engine harness (four Docker legs + `db_test`
-  skill, `a5d4a3a`/`2d72260`) supersedes task 13's original CI-leg
-  framing. Task 17 (edges slice) is reshaped by ADR 018 and waits on
-  its wiring spec. The create-under-trashed-directory race is filed
-  in `open-questions.md` (own story, not inline).
-- **077 — ULID referential identity**: landed 2026-07-21 (`9b426f0`;
-  ADR 019 accepted same day).
-- **078 — persistence-state discriminator**: landed 2026-07-22
-  (`3c17e8f`).
-- **079 — guarded-update statement attribution**: landed 2026-07-23
-  (`d19d97b`); the MSSQL torn-row regression pin ran red on the old
-  code, green after; ADR 025 (whole-batch re-drive) accepted out of
-  its landing review.
-- **080 — mysql batch UPDATE statements**: draft 2026-07-23,
-  research-first; owns the per-row executemany cost question in
-  `open-questions.md`.
-- **081 — self-describing trash names**: landed 2026-07-24 (ADR 026
-  pins 1–2 executed): trash rows named `<ULID>-<original_name>`
-  (tail-truncated to the segment budget, UTF-8-whole), delete
-  observations report the trash address (`Observation.trash_path`
-  query field, mount-rebased, rendered on the one-liner). The restore
-  verb (pins 3–4) and sweep (pin 5) are the next specs; the restore
-  spec must add the missing `(original_parent_id, original_name)`
-  index — ADR 026's "indexed" claim is stale against
-  `models/rows.py`.
-- **082 — restore verb**: landed 2026-07-24 (ADR 014 pin 4, ADR 026
-  pins 3–4 executed): `restore` is a full routed verb — one `path`
-  argument with two address forms (exact trash-side path, or original
-  site matched on the now-indexed restore columns, newest
-  `deleted_at` winning), fail-and-keep on a dead original parent,
-  move-ladder occupant refusals, execution via the shared move
-  executor. `ix_<table>_restore` closes ADR 026 pin 3's stale
-  "indexed" claim (amended in place). Memory carves `restore` out of
-  its capabilities (permanent deletes, no trash) and refuses
-  `unsupported`; the conformance restore family gates on
-  `@needs("restore")` and is enforced on sqlite plus all four engine
-  legs.
-- **083 — trash sweep**: landed 2026-07-24 (ADR 014 pin 5, ADR 026
-  pin 5 executed; retention decided in session — 90-day default via
-  `DatabaseStorage(trash_days=90)`, size bound demand-gated). `sweep`
-  is a routed op addressed at `/.vfs/trash`; expired hour-buckets
-  (strict `%Y-%m-%d-%H` round-trip, hour fully aged) purge wholesale,
-  non-bucket rows skip and surface as warnings, memory refuses
-  `unsupported`. **The trash arc (081–083) is complete**: delete
-  reports where rows went, restore brings them back, sweep reclaims
-  them.
-- **Housekeeping owed:** 074–079 spec folders still exist despite
-  landing — each needs its residue-mining pass and deletion
-  (`specs/README.md` lifecycle rule).
-- **074 — per-entry revisions**: **landed 2026-07-17** (`7f152af`).
-  Ordered per-mount counter gone; revisions are per-entry monotone
-  values; ADR 013 executed in full.
-- **075 — trash normal-fs parity**: **landed 2026-07-18** (`44aa439`).
-  `/.vfs/trash` is an ordinary subtree under the meta scope; the
-  reserved-scope filters and gates of 072 §9 are retired (ADR 014).
-- **076 — entry model split**: **landed 2026-07-19** (`40408da`).
-  `Entry` + `Chunk` + `Version` + `Edge`; chunks/versions/edges off
-  the namespace; version numbers are revision values (ADR 017);
-  version history pinned content-only.
+- **072 — database storage backend** (in progress; the umbrella
+  story). Live surface: read/stat/ls/tree/glob + write/edit/mkdir +
+  delete/move/copy + restore/sweep, hardened by the 086–090
+  coherence campaign. **grep and mkedge are the only remaining
+  classified stubs** (`backend.py`). The real-engine harness (four
+  Docker legs + the `db_test` skill) supersedes task 13's original
+  CI-leg framing. Task 17 (edges slice) is reshaped by ADR 018 and
+  waits on its wiring spec.
 - **073 — glob segment semantics** (shaped, ready for plan.md).
   Owner decision and open questions resolved 2026-07-14; soundness
-  machine-verified. Land before or with Pass C grep (shared pattern
-  language).
+  machine-verified. Land before or with grep (shared pattern
+  language). **The most shovel-ready feature spec.**
+- **080 — mysql batch UPDATE statements** (draft 2026-07-23,
+  research-first; owns the per-row executemany cost question in
+  `../open-questions.md`). No implementation until its preconditions
+  are verified on real engines.
 
-## Decided but unspecified — the next spec to write
+## Decided but unspecified — the next specs to write
 
 - **ADR 018 — edge authoring** (accepted 2026-07-19, `2cf80b7`; docs
   only). Batch-native `mkedge`/`rmedge`, touch/upsert, materialized
@@ -103,6 +48,17 @@ open/seed/draft specs against `src/vfs/` and update both).
   are explicitly the wiring spec's to own. The live `mkedge`
   (`base.py`; stubbed in the database backend) predates the ADR.
   Feeds 067 (graph traversal-only).
+- **The multimodal ADR chain** — two research memos drafted
+  2026-07-25 and awaiting review
+  (`../research/2026-07-25-multimodal-storage-and-search.md`,
+  `../research/2026-07-25-multimodal-result-content.md`): the
+  storage-bytes ADR gates the content-channel ADR. Entries in
+  `../open-questions.md`.
+- **Open decision worth making soon:** move/copy `overwrite=True`
+  still permanently destroys the occupant — after ADR 027 it is the
+  only agent-reachable destruction left. Filed in
+  `../open-questions.md`; decides whether ADR 027's contract sentence
+  gains a footnote or loses the exception.
 
 ## Outstanding work that touches `base.py`
 
@@ -130,20 +86,48 @@ pass):
 - **056 Pass B and Pass C** — `VFSStorageAdapter` and the MCP trio
   (`backends/mcp.py`, `mcp_server.py`, `mcp` dep) unlanded (tasks
   19–27). All new-file work; carries 057 decision 13's inbound half.
+  The project's stated destination (MCP design).
 - **045 — verb wire contract** (draft; doc/contract artifact). No
   schema artifact yet; post-071 `ParamSpec` tables are the better
   drift-test substrate.
 - **054 — serve() locks topology** (policy decision; waits on
-  `serve()` existing; `allow_child_mounts` premise stale).
+  `serve()` existing; `allow_child_mounts` premise verified dead in
+  live `src/` 2026-07-22).
 - **058 — row-level grants** (seed; needs 070's `Principal`).
-- **067 — graph traversal-only** (seed; now downstream of ADR 018's
+- **067 — graph traversal-only** (seed; downstream of ADR 018's
   wiring spec — traversal reads the one edges table).
+
+## Landed and archived (the 074–090 line)
+
+All in `archive/`, each awaiting its backward-flow mining pass:
+
+- **074–079** — per-entry revisions (`7f152af`), trash normal-fs
+  parity (`44aa439`), entry model split (`40408da`), ULID referential
+  identity (`9b426f0`), persistence-state discriminator (`3c17e8f`),
+  guarded-update statement attribution (`d19d97b`).
+- **081–083 — the trash arc** (landed 2026-07-24): delete reports
+  where rows went, restore brings them back, sweep reclaims them
+  (90-day default via `DatabaseStorage(trash_days=90)`).
+- **084/085** — one landing (`b16c38b`, minors `8fcd590`,
+  2026-07-25): the bespoke in-memory backend retired for
+  `DatabaseStorage` over `:memory:` (ADR 028), then delete lost
+  `permanent=True` — delete always trashes, sweep is the only
+  destroyer (ADR 027).
+- **086–088 — the write-vs-topology coherence campaign** — one
+  landing (`67aa7bd`, 2026-07-26): two-sided guards on the parent
+  row, `StaleSnapshot` redrive-over-probe doctrine, the adopt/absorb
+  arbitration arms, guard-every-destroy, error-attribution helpers.
+- **089** — descent shared idioms (`5e311be`).
+- **090** — structural proof obligations (round 1 `0c200b4`, round 2
+  `82f9754`): derived parent bumps, one retry-exhaustion channel,
+  measured bind budgets (`statement_budget`), HY000 errno
+  fall-through. ADR 029 is the ratified doctrine.
 
 ## Fully landed and verified in code (recent line)
 
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
-075 → 076 → 077 → 078 → 079. ADRs 001–020 and 023–025 accepted (005
-superseded by 016); 021/022 proposed, awaiting ratification; 018
-awaiting its wiring spec. Tree green at 1734 passed, `ruff`/`ty` at
-zero, coverage 100%, all four Docker engine legs green (slice 9's
-landing verification, 2026-07-23).
+075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
+→ 089 → 090. ADRs 001–029 accepted (005 superseded by 016; 021/022
+proposed, awaiting ratification; 018 awaiting its wiring spec). Tree
+green at 1873 passed / 744 skipped, `ruff`/`ty` at zero, all four
+Docker engine legs green as of the 090 round-2 landing (2026-07-26).

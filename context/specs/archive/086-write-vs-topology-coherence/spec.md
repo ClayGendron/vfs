@@ -1,11 +1,11 @@
 # 086 — Write-vs-topology coherence: two-sided guards on the parent row
 
-- **Status:** landed 2026-07-26 (uncommitted on `main`; all four
-  engine legs green, throughput within noise) — awaiting the
-  backward-flow mining pass, then deletion. Decision 8's
+- **Status:** landed 2026-07-26 (`67aa7bd`, one landing with specs
+  087/088; all four engine legs green, throughput within noise) —
+  awaiting the backward-flow mining pass, then deletion. Decision 8's
   classify-at-the-seam arm is partially superseded by spec 087
   decision 3 (verification campaign,
-  `../../research/2026-07-26-writes-topology-review-verification.md`).
+  `../../../research/2026-07-26-writes-topology-review-verification.md`).
 - **Evidence:**
   `context/research/2026-07-25-write-vs-topology-adversarial-campaign.md`
   (executed repros; §7 is the decision list this spec answers);

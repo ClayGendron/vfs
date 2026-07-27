@@ -104,7 +104,7 @@ and to text encodings).
   documents which side of the locator/identity line it sits on.
 
 Executes through story 077
-(`context/specs/077-ulid-referential-identity/`). Evidence:
+(`context/specs/archive/077-ulid-referential-identity/`). Evidence:
 `context/research/2026-07-21-ulid-referential-identity.md`.
 
 ## Amendments (2026-07-21, from the post-landing five-lens review)
