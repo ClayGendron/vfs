@@ -3,7 +3,9 @@
 The construction XOR (built url vs borrowed session factory — never a bare
 engine), idempotent provisioning under the serialization point,
 schema-version verification, restart rebind, cross-loop first touch,
-borrowed-sessions close, and pool exhaustion classified rather than raised.
+borrowed-sessions close, the single-connection host (serialized sessions,
+re-minted connections re-arming first touch), and pool exhaustion
+classified rather than raised.
 """
 
 from __future__ import annotations
@@ -26,7 +28,12 @@ from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose,
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, profile_for
-from vfs.storage.backends.database.engine import EngineHost, _install_sqlite_transaction_control
+from vfs.storage.backends.database.engine import (
+    EngineHost,
+    _engine_kwargs,
+    _install_sqlite_transaction_control,
+    _SerializedSession,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
@@ -63,6 +70,12 @@ class TestConstruction:
         traits = DatabaseStorage(url=_url(tmp_path)).traits()
         assert set(traits) <= TRAIT_KEYS
         assert all(value in TRAIT_VALUES[key] for key, value in traits.items())
+
+    def test_an_mssql_url_disables_setinputsizes(self, tmp_path) -> None:
+        # pyodbc's ANSI setinputsizes mangles non-Latin1 bytes; only the
+        # mssql built path carries the lossless override.
+        assert _engine_kwargs("mssql+aioodbc://sa:pw@host/db") == {"use_setinputsizes": False}
+        assert _engine_kwargs(_url(tmp_path)) == {}
 
     def test_durability_full_is_declared_per_tuned_profile(self, tmp_path, monkeypatch) -> None:
         # Durability is a contract a caller must be able to read: every
@@ -334,6 +347,46 @@ class TestLifecycle:
         assert getattr(engine, "_vfs_sqlite_control", False) is True
         assert len(engine.pool.dispatch.checkout) == installed  # ty: ignore[unresolved-attribute]
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Single-connection host — serialized sessions, re-minted connections
+# ---------------------------------------------------------------------------
+
+
+class TestSingleConnectionHost:
+    async def test_failed_session_enter_releases_the_host_lock(self) -> None:
+        # A session whose enter fails must not leave the host lock held —
+        # that would deadlock every later op on the storage.
+        class _ExplodingSession:
+            async def __aenter__(self) -> AsyncSession:
+                raise RuntimeError("enter failed")
+
+            async def __aexit__(self, *exc_info: object) -> None: ...
+
+        lock = asyncio.Lock()
+        session = _SerializedSession(cast("AsyncSession", _ExplodingSession()), lock)
+        with pytest.raises(RuntimeError, match="enter failed"):
+            async with session:
+                pass
+        assert lock.locked() is False
+
+    async def test_replacement_connection_re_arms_first_touch(self) -> None:
+        # A :memory: database lives inside its one connection: a re-minted
+        # connection is empty, and serving off the stale latch is a lie.
+        storage = DatabaseStorage(url="sqlite+aiosqlite:///:memory:")
+        assert (await storage.first_touch()).success is True
+        host = storage._host
+        assert host._ready is True
+        async with host.engine.connect() as conn:
+            await conn.invalidate()
+        async with host.engine.connect() as conn:  # checkout mints the replacement
+            await conn.execute(text("SELECT 1"))
+        assert host._ready is False
+        result = await storage.stat(path=Path("/"))  # next op re-provisions
+        assert result.success is True
+        assert result.observations[0].kind == "directory"
+        await storage.close()
 
 
 # ---------------------------------------------------------------------------
