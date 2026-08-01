@@ -28,10 +28,21 @@ lines first; regenerate this file when the picture shifts (review the
   Docker legs + the `db_test` skill) supersedes task 13's original
   CI-leg framing. Task 17 (edges slice) is reshaped by ADR 018 and
   waits on its wiring spec.
-- **073 — glob segment semantics** (shaped, ready for plan.md).
-  Owner decision and open questions resolved 2026-07-14; soundness
-  machine-verified. Land before or with grep (shared pattern
-  language). **The most shovel-ready feature spec.**
+- **073 — glob segment semantics** — **landed 2026-08-01** (all four
+  slices in one session: LIKE fusion, `glob_patterns.py` chokepoint,
+  ext pushdowns with the stored-column agreement made structural,
+  py3.13 floor, conformance true-up; four Docker legs green; spike
+  re-pointed at the landed code, claims 2–5 pass). Awaiting its
+  backward-flow mining pass, then archive.
+- **091 — glob namespace routing** — **landed 2026-08-01**, same
+  session, test-first throughout (ADR 030: namespace-coordinate
+  patterns, residual routing at the seam, roots + root-anchored
+  filters). `effective_pattern`/`residuals` in `glob_patterns.py`,
+  the residual dispatch step in `base.py`, the placement-invariance
+  battery in `tests/base/test_glob_namespace.py`; residuation spike
+  re-pointed at the landed functions stays the permanent acceptance
+  harness. Four Docker legs green. Awaiting its backward-flow
+  mining pass, then archive.
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
@@ -127,7 +138,8 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
-→ 089 → 090. ADRs 001–029 accepted (005 superseded by 016; 021/022
-proposed, awaiting ratification; 018 awaiting its wiring spec). Tree
-green at 1873 passed / 744 skipped, `ruff`/`ty` at zero, all four
-Docker engine legs green as of the 090 round-2 landing (2026-07-26).
+→ 089 → 090 → 073 → 091. ADRs 001–030 accepted (005 superseded by
+016; 021/022 proposed, awaiting ratification; 018 awaiting its wiring
+spec). Tree green at 1972 passed / 780 skipped, `ruff`/`ty` at zero,
+all four Docker engine legs green as of the 073+091 landing
+(2026-08-01).

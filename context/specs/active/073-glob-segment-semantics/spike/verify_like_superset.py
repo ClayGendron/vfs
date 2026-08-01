@@ -1,7 +1,7 @@
 """Superset proof for the glob->LIKE prefilter under segment-aware semantics.
 
 The database glob is prefilter-then-verify: a LIKE narrows candidates,
-CPython's ``glob.translate`` regex is the authority. That structure is
+the compiled chokepoint regex is the authority. That structure is
 sound only if the LIKE is a *superset* of the authoritative matcher —
 over-matching costs wasted row fetches, under-matching silently loses
 results before the verifier ever sees them.
@@ -14,14 +14,21 @@ prefilter accepts it too — under BOTH evaluators the backends face:
   Postgres posture;
 - sqlite's builtin LIKE (ASCII-case-insensitive) — checked live.
 
-It proves three claims:
+Since 2026-08-01 (the 073 landing) it imports the LANDED functions —
+``reads._glob_like``, ``reads._literal_prefix``, ``glob_patterns
+.compile_filter``/``glob_defect``/``derive_ext``, ``descent
+.escape_like`` — so every run re-proves the shipped code, and patterns
+compile through the landed chokepoint: path-arm patterns are anchored
+gitignore-exact before translation, exactly as the backend sees them.
 
-1. The CURRENT char-by-char ``_glob_like`` translator VIOLATES the
-   property once ``**`` gains segment semantics (``/docs/**/*.txt``
-   translates to ``/docs/%%/%.txt``, which drops zero-depth matches).
-2. The PROPOSED segment-aware translator (whole ``**`` components fuse
-   with their separator into ``%``) satisfies the property everywhere,
-   on both the path arm and the name arm.
+It proves four claims (numbered 2–5 for continuity with the pre-landing
+runs; claim 1 — that the pre-073 char-by-char translator under-matched
+on ``**/`` — was the story's motivating bug, demonstrated 2026-07-14
+and retired with that translator when the fix landed):
+
+2. The landed segment-aware translator (whole ``**`` components fuse
+   with their separator into ``%``) satisfies the superset property
+   everywhere, on both the path arm and the name arm.
 3. sqlite LIKE accepts everything ANSI LIKE accepts on this corpus, so
    a translation proven against the ANSI reference is engine-agnostic:
    sqlite's only divergence (ASCII case folding) errs superset-ward,
@@ -37,7 +44,7 @@ It proves three claims:
    load-bearing: Postgres errors on a dangling-escape LIKE
    *data-dependently* (only for rows whose match reaches the trailing
    escape), so a violation would error on some rows and silently drop
-   others. The translators only emit ``\\`` in complete pairs and the
+   others. The translator only emits ``\\`` in complete pairs and the
    prefix fallback always ends in ``%`` — checked here explicitly.
 
 Scope notes (adversarially audited 2026-07-14; three-agent attack:
@@ -50,136 +57,43 @@ end-to-end — the ANSI reference agreed with Postgres on 100% of pairs):
   performance property the corpus cannot pin.
 - The corpus kills the known unsound mutants: backslash names/segments
   (escape handling), ``*.*`` (last-wildcard cut in ``derive_ext``),
-  and a >32-char extension (the ``lexical_ext`` cap).
+  and a >32-char extension (the ``normalize_extension`` cap).
 - ``standard_conforming_strings=off`` is an unsupported Postgres
   configuration: SQLAlchemy renders the ESCAPE char inline (the
   pattern itself is a bound parameter).
 
-Run:  uv run python context/specs/073-glob-segment-semantics/spike/verify_like_superset.py
+Run:  uv run python context/specs/active/073-glob-segment-semantics/spike/verify_like_superset.py
 Exit: nonzero on any property violation.
 """
 
 from __future__ import annotations
 
-import glob
 import itertools
 import re
 import sqlite3
 import sys
 
-LIKE_ESCAPE = "\\"
-
-# Whole-component ``**`` inside a pattern; anything else containing ``**``
-# is refused by the compile chokepoint and never reaches the translator.
-_GLOB_TRANSLATED = frozenset("*?")
-
-
-def escape_like(text: str) -> str:
-    """Copy of descent.escape_like — literal text safe inside a LIKE."""
-    return (
-        text.replace(LIKE_ESCAPE, LIKE_ESCAPE + LIKE_ESCAPE)
-        .replace("%", LIKE_ESCAPE + "%")
-        .replace("_", LIKE_ESCAPE + "_")
-    )
+from vfs.glob_patterns import compile_filter, derive_ext, glob_defect
+from vfs.paths import normalize_extension
+from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like
+from vfs.storage.backends.database.reads import _glob_like, _literal_prefix
 
 
-def literal_prefix(pattern: str) -> str:
-    """Copy of reads._literal_prefix — the pattern up to the first wildcard."""
-    index = min((i for i, ch in enumerate(pattern) if ch in "*?["), default=len(pattern))
-    return pattern[:index]
-
-
-# ---------------------------------------------------------------------------
-# The two translators under test
-# ---------------------------------------------------------------------------
-
-
-def glob_like_current(pattern: str) -> str | None:
-    """Copy of the live reads._glob_like — char-by-char, ``**`` -> ``%%``."""
-    if "[" in pattern:
-        return None
-    out: list[str] = []
-    for ch in pattern:
-        if ch in _GLOB_TRANSLATED:
-            out.append("%" if ch == "*" else "_")
-        elif ch in ("%", "_", LIKE_ESCAPE):
-            out.append(LIKE_ESCAPE + ch)
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def glob_like_fixed(pattern: str) -> str | None:
-    """Proposed segment-aware translator.
-
-    A whole ``**`` component fuses with its trailing separator into one
-    ``%`` (zero-or-more components); ``*`` -> ``%`` and ``?`` -> ``_``
-    stay deliberately loose (both cross ``/`` where the glob does not).
-    ``[`` classes and mid-component ``**`` are inexpressible -> None
-    (callers fall back to the escaped literal-prefix LIKE).
-    """
-    if "[" in pattern:
-        return None
-    segments = pattern.split("/")
-    if any("**" in seg and seg != "**" for seg in segments):
-        return None
-    out: list[str] = []
-    for index, seg in enumerate(segments):
-        if seg == "**":
-            out.append("%")
-            continue  # fuse: the following separator is inside the %
-        for ch in seg:
-            if ch in _GLOB_TRANSLATED:
-                out.append("%" if ch == "*" else "_")
-            elif ch in ("%", "_", LIKE_ESCAPE):
-                out.append(LIKE_ESCAPE + ch)
-            else:
-                out.append(ch)
-        if index < len(segments) - 1:
-            out.append("/")
-    return "".join(out)
-
-
-def prefilter_like(pattern: str, translator) -> str:
-    """The LIKE the backend actually applies: translation or prefix fallback."""
-    like = translator(pattern)
+def prefilter_like(pattern: str) -> str:
+    """The LIKE the backend actually applies: anchor, then translate or fall back."""
+    anchored = compile_filter(pattern, ()).pattern
+    like = _glob_like(anchored)
     if like is not None:
         return like
-    return escape_like(literal_prefix(pattern)) + "%"
-
-
-# ---------------------------------------------------------------------------
-# Extension pushdown — derivation and the lexical column it narrows against
-# ---------------------------------------------------------------------------
+    return escape_like(_literal_prefix(anchored)) + "%"
 
 
 def lexical_ext(name: str) -> str | None:
-    """Mirror of paths.extract_extension over a leaf name (lexical, any kind)."""
+    """Mirror of paths.extract_extension over a bare leaf name (lexical, any kind)."""
     dot = name.rfind(".")
     if dot <= 0:
         return None
-    ext = name[dot + 1 :].lower()
-    return ext if ext and len(ext) <= 32 else None
-
-
-def derive_ext(pattern: str) -> tuple[str, str] | None:
-    """(lowercased ext, literal dot-suffix) pinned by the pattern's tail, or None.
-
-    The tail is the literal run after the last segment's last wildcard
-    character; a dot inside it with characters after fixes the extension
-    of every possible match. The dot-suffix (original case) is the OR
-    arm for pure-dotfile names, which have no extension.
-    """
-    seg = pattern.rsplit("/", 1)[-1]
-    cut = max((i for i, ch in enumerate(seg) if ch in "*?]"), default=-1)
-    literal = seg[cut + 1 :]
-    dot = literal.rfind(".")
-    if dot < 0 or dot + 1 >= len(literal):
-        return None
-    ext = literal[dot + 1 :].lower()
-    if len(ext) > 32:
-        return None
-    return ext, literal[dot:]
+    return normalize_extension(name[dot + 1 :])
 
 
 # ---------------------------------------------------------------------------
@@ -212,10 +126,10 @@ def sqlite_like(subject: str, like: str) -> bool:
 
 
 def authoritative(pattern: str) -> re.Pattern[str] | None:
-    """The chokepoint semantics; None for patterns the chokepoint refuses."""
-    if any("**" in seg and seg != "**" for seg in pattern.split("/")):
+    """The landed chokepoint semantics; None for patterns the chokepoint refuses."""
+    if glob_defect(pattern) is not None:
         return None  # classifies invalid before any row is touched
-    return re.compile(glob.translate(pattern, recursive=True, include_hidden=True, seps="/"))
+    return compile_filter(pattern, ()).regex
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +170,7 @@ def build_patterns() -> list[str]:
             body = "/".join(combo)
             patterns.append("/" + body)  # absolute path-arm
             if depth > 1:
-                patterns.append(body)  # relative path-arm (only '**'-led can match)
+                patterns.append(body)  # relative path-arm (anchored at the root by the chokepoint)
     return patterns
 
 
@@ -265,7 +179,7 @@ def build_patterns() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def check_superset(translator, patterns: list[str], subjects: list[str], arm: str) -> tuple[int, list[str]]:
+def check_superset(patterns: list[str], subjects: list[str], arm: str) -> tuple[int, list[str]]:
     """Every authoritative match must pass the LIKE under both evaluators."""
     matches = 0
     violations: list[str] = []
@@ -273,7 +187,7 @@ def check_superset(translator, patterns: list[str], subjects: list[str], arm: st
         regex = authoritative(pattern)
         if regex is None:
             continue
-        like = prefilter_like(pattern, translator)
+        like = prefilter_like(pattern)
         ansi = ansi_like_regex(like)
         for subject in subjects:
             if regex.match(subject) is None:
@@ -321,17 +235,16 @@ def check_no_dangling_escape(patterns: list[str]) -> list[str]:
     """Every emitted LIKE must pair its escapes; none may end in a bare one."""
     violations: list[str] = []
     for pattern in patterns:
-        for translator in (glob_like_current, glob_like_fixed):
-            like = prefilter_like(pattern, translator)
-            i = 0
-            while i < len(like):
-                if like[i] == LIKE_ESCAPE:
-                    if i + 1 >= len(like):
-                        violations.append(f"glob {pattern!r} emits LIKE {like!r} with a dangling escape")
-                        break
-                    i += 2
-                else:
-                    i += 1
+        like = prefilter_like(pattern)
+        i = 0
+        while i < len(like):
+            if like[i] == LIKE_ESCAPE:
+                if i + 1 >= len(like):
+                    violations.append(f"glob {pattern!r} emits LIKE {like!r} with a dangling escape")
+                    break
+                i += 2
+            else:
+                i += 1
     return violations
 
 
@@ -339,7 +252,7 @@ def check_engine_agreement(patterns: list[str], subjects: list[str]) -> list[str
     """sqlite LIKE must accept everything ANSI LIKE accepts (agnostic claim)."""
     disagreements: list[str] = []
     for pattern in patterns:
-        like = prefilter_like(pattern, glob_like_fixed)
+        like = prefilter_like(pattern)
         ansi = ansi_like_regex(like)
         for subject in subjects:
             if ansi.match(subject) is not None and not sqlite_like(subject, like):
@@ -357,19 +270,9 @@ def main() -> int:
 
     failures = 0
 
-    # Claim 1: the current char-by-char translator under-matches on '**/'.
-    _, current_violations = check_superset(glob_like_current, patterns, paths, "path")
-    if current_violations:
-        print(f"\nclaim 1 CONFIRMED: current _glob_like violates superset ({len(current_violations)}+ cases), e.g.:")
-        for line in current_violations[:3]:
-            print(f"  {line}")
-    else:
-        print("\nclaim 1 FAILED: expected the current translator to under-match but it did not")
-        failures += 1
-
-    # Claim 2: the fixed translator is a superset on both arms, both engines.
-    path_matches, fixed_violations = check_superset(glob_like_fixed, patterns, paths, "path")
-    name_matches, name_violations = check_superset(glob_like_fixed, name_patterns, NAMES, "name")
+    # Claim 2: the landed translator is a superset on both arms, both engines.
+    path_matches, fixed_violations = check_superset(patterns, paths, "path")
+    name_matches, name_violations = check_superset(name_patterns, NAMES, "name")
     total = path_matches + name_matches
     bad = fixed_violations + name_violations
     if bad:

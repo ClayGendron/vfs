@@ -12,8 +12,9 @@ transaction.
 The shapes: point reads are ``path IN`` column selects, content joined
 from the content table; ``ls`` is ``parent_id`` equality only, never a
 prefix scan; ``tree`` and glob prefilter with sargable escaped ``LIKE``
-on the path cache, glob verified authoritatively by ``fnmatch`` over
-the candidates. Listings order by the binary-collated ``name`` column
+on the path cache, glob verified authoritatively by the compiled
+segment-aware pattern (``vfs.glob_patterns``) over the candidates.
+Listings order by the binary-collated ``name`` column
 and subtrees by ``path`` — byte-identical across engines.
 """
 
@@ -23,9 +24,10 @@ from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import func, or_, select
 
+from vfs.glob_patterns import compile_filter, derive_ext, glob_defect
 from vfs.models import CONTENT_KINDS, Observation
 from vfs.paths import ROOT, Path
-from vfs.results import Result, ResultError, wrong_kind
+from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     classify_misses,
@@ -37,7 +39,6 @@ from vfs.storage.backends.database.descent import (
     subtree_filter,
 )
 from vfs.storage.backends.database.dialects import chunked
-from vfs.storage.globbing import compile_glob
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,8 +60,8 @@ ENTRY_OBSERVATION_FIELDS: Final[frozenset[str]] = frozenset(
 # Identity fields every observation carries regardless of projection.
 ALWAYS_ON_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind", "version"})
 
-# fnmatch character classes have no LIKE equivalent; those patterns fall
-# back to a literal-prefix prefilter with fnmatch as the only filter.
+# Glob character classes have no LIKE equivalent; those patterns fall
+# back to a literal-prefix prefilter with the compiled glob as the filter.
 _GLOB_TRANSLATED: Final[frozenset[str]] = frozenset("*?")
 
 
@@ -178,7 +179,7 @@ async def tree_rows(
 
 
 # ---------------------------------------------------------------------------
-# Glob — sargable LIKE prefilter, fnmatch authority
+# Glob — sargable LIKE prefilter, compiled-pattern authority
 # ---------------------------------------------------------------------------
 
 
@@ -196,22 +197,40 @@ async def glob_rows(
 ) -> Result:
     """Glob under *scope*, anchors behaving like POSIX ``find`` operands.
 
-    A missing anchor classifies through the descent ladder beside the
-    healthy anchors' rows — partial results with per-anchor errors; an
-    existing file anchor is matched itself against the pattern.
+    A refusable pattern classifies ``invalid`` before any row is
+    touched. A missing anchor classifies through the descent ladder
+    beside the healthy anchors' rows — partial results with per-anchor
+    errors; an existing file anchor is matched itself against the
+    pattern.
     """
+    defect = glob_defect(pattern)
+    if defect is not None:
+        error = ResultError(kind=VFSErrorKind.invalid, message=f"glob pattern {pattern!r}: {defect}")
+        return Result(ops=("glob",), errors=[error])
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    glob = compile_glob(pattern, ext)
+    glob = compile_filter(pattern, ext)
     subject_column = entry.c.path if glob.by_path else entry.c.name
     # Liveness is per scope arm, not per query: _glob_candidates applies
     # the meta exclusion to every anchor except the meta-addressed ones.
+    # The prefilter translates the filter's anchored pattern — the same
+    # text the authoritative regex compiled.
     filters: list[ColumnElement[bool]] = [entry.c.path != "/"]
-    like = _glob_like(pattern)
+    like = _glob_like(glob.pattern)
     if like is not None:
         filters.append(subject_column.like(like, escape=LIKE_ESCAPE))
     else:
-        filters.append(subject_column.like(escape_like(_literal_prefix(pattern)) + "%", escape=LIKE_ESCAPE))
+        filters.append(subject_column.like(escape_like(_literal_prefix(glob.pattern)) + "%", escape=LIKE_ESCAPE))
+    # Ext narrowing is pure AND-ed prefilter: bounded membership on the
+    # indexed column, never chunked (a filter must not become a fan-out),
+    # and the empty extension is inexpressible (stored NULL) so it stands
+    # down. The dotfile OR arm rescues names like ".txt" whose ext is NULL.
+    if glob.wanted_ext and "" not in glob.wanted_ext and len(glob.wanted_ext) <= membership_budget:
+        filters.append(entry.c.ext.in_(sorted(glob.wanted_ext)))
+    derived = derive_ext(glob.pattern)
+    if derived is not None:
+        derived_ext, dot_suffix = derived
+        filters.append(or_(entry.c.ext == derived_ext, entry.c.name == dot_suffix))
     errors: list[ResultError] = []
     if scope:
         anchors = await _mappings_by_path(
@@ -387,17 +406,34 @@ def _slash_count(entry: Table) -> ColumnElement[int]:
 
 
 def _glob_like(pattern: str) -> str | None:
-    """Exact LIKE translation of a ``*``/``?`` glob; ``None`` when inexpressible."""
+    """Superset LIKE translation of the glob; ``None`` when inexpressible.
+
+    A whole ``**`` component fuses with its trailing separator into one
+    ``%`` (zero-or-more components — a separate ``/`` would demand a
+    depth the glob does not); ``*`` -> ``%`` and ``?`` -> ``_`` stay
+    deliberately loose (both cross ``/``). ``[`` classes and
+    mid-component ``**`` are inexpressible: callers fall back to the
+    escaped literal-prefix LIKE.
+    """
     if "[" in pattern:
         return None
+    segments = pattern.split("/")
+    if any("**" in segment and segment != "**" for segment in segments):
+        return None
     out: list[str] = []
-    for ch in pattern:
-        if ch in _GLOB_TRANSLATED:
-            out.append("%" if ch == "*" else "_")
-        elif ch in ("%", "_", LIKE_ESCAPE):
-            out.append(LIKE_ESCAPE + ch)
-        else:
-            out.append(ch)
+    for index, segment in enumerate(segments):
+        if segment == "**":
+            out.append("%")
+            continue  # fuse: the following separator lives inside the %
+        for ch in segment:
+            if ch in _GLOB_TRANSLATED:
+                out.append("%" if ch == "*" else "_")
+            elif ch in ("%", "_", LIKE_ESCAPE):
+                out.append(LIKE_ESCAPE + ch)
+            else:
+                out.append(ch)
+        if index < len(segments) - 1:
+            out.append("/")
     return "".join(out)
 
 

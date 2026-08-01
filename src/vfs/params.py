@@ -175,7 +175,9 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         _USER,
     ),
     "glob": (
-        ParamSpec("pattern", "str", required=True, doc="shell-style name pattern"),
+        ParamSpec(
+            "pattern", "str", required=True, doc="glob: * within a segment, ** across; a / anchors at each scope root"
+        ),
         _SCOPE_PATHS,
         _OBSERVATIONS,
         ParamSpec("ext", "str_seq", nullable=False, default=(), doc="keep only these extensions"),

@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 
 from tests.support.base_doubles import (
+    BindableEchoStorage,
+    BindableStorage,
     BuggyWriteStorage,
     CannedStorage,
     DeepRowStorage,
@@ -519,6 +521,161 @@ async def test_fanout_rebase_overflow_classifies_instead_of_raising() -> None:
     assert err.data == {"vfs.overflow": {"local_path": DeepRowStorage.DEEP}}
     # re-addressability: every surviving path is valid input to the next request
     assert all(len(p) <= MAX_PATH_LENGTH and Path(p) is p for p in result.paths)
+
+
+# ----------------------------------------------------------------------
+# glob residual routing — namespace patterns crossing the mount seam
+# ----------------------------------------------------------------------
+
+
+async def test_glob_residuates_the_pattern_per_mount() -> None:
+    # The worked example: the root entry sees the full pattern, the /data
+    # mount sees the derivative with its bind segment consumed; every
+    # non-pattern kwarg crosses the seam untouched.
+    fs = RecorderFS(BindableStorage())
+    data = RecorderStorage()
+    await fs.add_mount(data, "/data")
+    await fs.glob("/data/**/*.txt", ext=("txt",))
+    [(_, root_kwargs)] = [(op, kw) for op, kw in fs.calls if op == "glob"]
+    assert root_kwargs["pattern"] == "/data/**/*.txt"
+    [(op, kwargs)] = data.calls
+    assert op == "glob"
+    assert kwargs["pattern"] == "/**/*.txt"
+    assert kwargs["paths"] == ()
+    assert kwargs["ext"] == ("txt",)
+
+
+async def test_glob_dead_mount_is_never_dispatched_and_mints_no_record() -> None:
+    # Routing, not capability: a mount the pattern cannot reach gets no
+    # dispatch and no skip record — unlike a capability gap, which stays
+    # on record whenever the mount is reachable.
+    root = VirtualFileSystem()
+    other = RecorderStorage()
+    await root.add_mount(other, "/other")
+    result = await root.glob("/data/**/*.py")
+    assert result.success is True
+    assert other.calls == []
+    assert result.errors == []
+
+
+async def test_glob_capability_skip_still_records_when_the_mount_is_reachable() -> None:
+    root = VirtualFileSystem()
+    incapable = RecorderStorage(caps=frozenset({"read"}))
+    await root.add_mount(incapable, "/data")
+    reachable = await root.glob("/data/*.py")
+    assert incapable.calls == []
+    [skip] = reachable.errors
+    assert skip.kind is VFSErrorKind.unsupported and skip.severity is Severity.info
+    assert skip.path == "/data"
+    unreachable = await root.glob("/elsewhere/*.py")
+    assert unreachable.errors == []  # dead and incapable: routing wins, no record
+
+
+async def test_glob_multi_residual_dispatches_and_dedupes() -> None:
+    # ** can either span the nested bind segment or stop before it: both
+    # derivatives dispatch, in sorted order, and the overlap merges once.
+    root = VirtualFileSystem()
+    data, api = BindableEchoStorage(), EchoStorage()
+    await root.add_mount(data, "/data")
+    await root.add_mount(api, "/data/api")
+    result = await root.glob("/data/**/api/*.txt")
+    assert [kw["pattern"] for op, kw in data.calls if op == "glob"] == ["/**/api/*.txt"]
+    assert [kw["pattern"] for op, kw in api.calls if op == "glob"] == ["/**/api/*.txt", "/*.txt"]
+    assert result.paths.count("/data/api/hit.md") == 1  # value-identity dedup
+
+
+async def test_glob_scoped_composition_equals_the_absolute_idiom() -> None:
+    # glob("src/*.py", paths=("/data",)) and glob("/data/src/*.py")
+    # dispatch the same entry-local pattern; the scoped form additionally
+    # carries its root as the existence-asserting anchor.
+    for scope_paths, anchor in ((("/data",), ("/",)), ((), ())):
+        root = VirtualFileSystem()
+        data = RecorderStorage()
+        await root.add_mount(data, "/data")
+        pattern = "src/*.py" if scope_paths else "/data/src/*.py"
+        await root.glob(pattern, paths=scope_paths)
+        [(_, kwargs)] = data.calls
+        assert kwargs["pattern"] == "/src/*.py"
+        assert kwargs["paths"] == anchor
+
+
+async def test_glob_scope_root_inside_a_mount_reads_root_relative() -> None:
+    # The deliberate contract change: a leading slash anchors at the
+    # scope root, so "/x/*.py" scoped to /data means /data/x/*.py — and
+    # the anchor still flows for its existence assertion.
+    root = VirtualFileSystem()
+    data = RecorderStorage()
+    await root.add_mount(data, "/data")
+    await root.glob("/x/*.py", paths=("/data/sub",))
+    [(_, kwargs)] = data.calls
+    assert kwargs["pattern"] == "/sub/x/*.py"
+    assert kwargs["paths"] == ("/sub",)
+
+
+async def test_glob_disjoint_roots_dispatch_their_own_patterns() -> None:
+    # One batch, two roots: each mount receives the pattern anchored
+    # under its own root, never its sibling's.
+    root = VirtualFileSystem()
+    data, logs = RecorderStorage(), RecorderStorage()
+    await root.add_mount(data, "/data")
+    await root.add_mount(logs, "/logs")
+    await root.glob("src/*.py", paths=("/data", "/logs"))
+    [(_, data_kwargs)] = data.calls
+    [(_, logs_kwargs)] = logs.calls
+    assert data_kwargs["pattern"] == "/src/*.py"
+    assert logs_kwargs["pattern"] == "/src/*.py"
+
+
+async def test_glob_missing_scope_root_still_asserts() -> None:
+    # Roots are assertions: a pattern matching nothing is clean empty
+    # success, but a missing root is a loud per-anchor error.
+    root = VirtualFileSystem()
+    result = await root.glob("**/*.py", paths=("/missing",))
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.not_found
+
+
+async def test_glob_name_arm_broadcasts_verbatim() -> None:
+    # Slash-free patterns are coordinate-free: no anchoring, no
+    # residuation, every mount sees the same text.
+    root = VirtualFileSystem()
+    data = RecorderStorage()
+    await root.add_mount(data, "/data")
+    await root.glob("*.py")
+    [(_, kwargs)] = data.calls
+    assert kwargs["pattern"] == "*.py"
+
+
+async def test_glob_row_cap_applies_once_across_residual_dispatches() -> None:
+    root = VirtualFileSystem()
+    await root.add_mount(BindableEchoStorage(), "/data")
+    await root.add_mount(EchoStorage(), "/data/api")
+    result = await root.glob("/data/**/api/*", max_count=1)
+    assert len(result.observations) == 1
+
+
+async def test_glob_invalid_pattern_refuses_before_any_routing() -> None:
+    # The defect gate is the router's own: even a topology where every
+    # mount is residual-dead still refuses loudly, and nothing dispatches.
+    fs = RecorderFS(BindableStorage())
+    data = RecorderStorage()
+    await fs.add_mount(data, "/data")
+    result = await fs.glob("/data/a**b.txt")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert data.calls == []
+    assert all(op != "glob" for op, _ in fs.calls)
+
+
+async def test_glob_observations_shortcut_passes_the_pattern_verbatim() -> None:
+    # The chaining surface is untouched: rows carry the scope, and the
+    # pattern crosses as given.
+    root = VirtualFileSystem()
+    data = RecorderStorage()
+    await root.add_mount(data, "/data")
+    await root.glob("/data/*.txt", observations=[Observation(path=Path("/data/a.txt"))])
+    [(_, kwargs)] = data.calls
+    assert kwargs["pattern"] == "/data/*.txt"
 
 
 # ----------------------------------------------------------------------

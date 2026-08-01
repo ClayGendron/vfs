@@ -25,7 +25,7 @@ from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import StaleSnapshot
 from vfs.storage.backends.database.engine import EngineHost
-from vfs.storage.backends.database.reads import ENTRY_OBSERVATION_FIELDS
+from vfs.storage.backends.database.reads import ENTRY_OBSERVATION_FIELDS, _glob_like
 
 # ---------------------------------------------------------------------------
 # Read family + glob — seeded directly through Core (writes land later)
@@ -64,6 +64,7 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
                     path=path,
                     name=path.rsplit("/", 1)[1],
                     kind=kind,
+                    ext=Path(path).ext,
                     version=version,
                     size_bytes=len(content.encode()) if content is not None else 0,
                     lines=content.count("\n") + 1 if content else 0,
@@ -247,7 +248,9 @@ class TestReadFamily:
             "/top.txt",
         ]
         by_path = await storage.glob(pattern="/docs/*.txt")
-        assert [o.path for o in by_path.observations] == ["/docs/Zed.txt", "/docs/a.txt", "/docs/sub/c.txt"]
+        assert [o.path for o in by_path.observations] == ["/docs/Zed.txt", "/docs/a.txt"]
+        recursive = await storage.glob(pattern="/docs/**/*.txt")
+        assert [o.path for o in recursive.observations] == ["/docs/Zed.txt", "/docs/a.txt", "/docs/sub/c.txt"]
 
     async def test_glob_scope_ext_and_max_count(self, storage: DatabaseStorage) -> None:
         scoped = await storage.glob(pattern="*", paths=(Path("/docs"),))
@@ -300,6 +303,112 @@ class TestReadFamily:
         assert [str(o.path) for o in subtree.observations] == ["/da_a/x.txt"]
         scoped = await storage.glob(pattern="*", paths=(Path("/da_a"),))
         assert [str(o.path) for o in scoped.observations] == ["/da_a", "/da_a/x.txt"]
+        await storage.close()
+
+
+class TestGlobLikeTranslator:
+    """Unit rows on the LIKE prefilter translation — superset by construction.
+
+    The translation must never under-match the glob authority: a whole
+    ``**`` component fuses with its trailing separator into one ``%`` so
+    the zero-depth match survives; anything inexpressible returns None
+    and falls back to the escaped literal-prefix LIKE.
+    """
+
+    def test_whole_double_star_component_fuses_with_its_separator(self) -> None:
+        # The motivating row: /docs/%%/%.txt would demand a literal slash
+        # and silently drop the zero-depth match /docs/a.txt.
+        assert _glob_like("/docs/**/*.txt") == "/docs/%%.txt"
+
+    def test_double_star_at_the_edges(self) -> None:
+        assert _glob_like("/docs/**") == "/docs/%"
+        assert _glob_like("**/*.txt") == "%%.txt"
+        assert _glob_like("**") == "%"
+
+    def test_single_star_and_question_stay_deliberately_loose(self) -> None:
+        assert _glob_like("/docs/*.txt") == "/docs/%.txt"
+        assert _glob_like("/d?cs/a.txt") == "/d_cs/a.txt"
+
+    def test_mid_component_double_star_is_inexpressible(self) -> None:
+        assert _glob_like("/docs/a**b.txt") is None
+        assert _glob_like("/docs/***/x.txt") is None
+        assert _glob_like("a**b") is None
+
+    def test_character_class_is_inexpressible(self) -> None:
+        assert _glob_like("/docs/[ab].txt") is None
+
+    def test_like_metacharacters_escape_including_backslash(self) -> None:
+        assert _glob_like("/da_a/x%y.txt") == "/da\\_a/x\\%y.txt"
+        assert _glob_like("/a\\b/*.txt") == "/a\\\\b/%.txt"
+
+    def test_no_emitted_like_contains_a_dangling_escape(self) -> None:
+        # Postgres errors data-dependently on a dangling-escape LIKE, so
+        # the invariant is structural: every escape char starts a pair.
+        patterns = ["/a\\", "\\", "/docs/*\\", "/x%\\", "**/x\\", "/_%\\\\"]
+        for pattern in patterns:
+            like = _glob_like(pattern)
+            assert like is not None
+            i = 0
+            while i < len(like):
+                if like[i] == "\\":
+                    assert i + 1 < len(like), f"dangling escape in {like!r}"
+                    i += 2
+                else:
+                    i += 1
+
+
+class TestExtPushdown:
+    """The ext filters reach SQL as AND-ed narrowing; the verify stays on."""
+
+    @staticmethod
+    def _recorded(storage: DatabaseStorage) -> list[str]:
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        return statements
+
+    async def test_ext_parameter_pushes_down_as_membership(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a.py", "file", "x"), ("/b.txt", "file", "x")])
+        statements = self._recorded(storage)
+        result = await storage.glob(pattern="*", ext=("py",))
+        assert [str(o.path) for o in result.observations] == ["/a.py"]
+        assert any("ext IN" in s for s in statements), statements
+        await storage.close()
+
+    async def test_pattern_derived_ext_narrows_with_the_dotfile_arm(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a.txt", "file", "x"), ("/b.py", "file", "x")])
+        statements = self._recorded(storage)
+        result = await storage.glob(pattern="**/*.txt")
+        assert [str(o.path) for o in result.observations] == ["/a.txt"]
+        derived = [s for s in statements if "ext = " in s]
+        assert derived and all("name = " in s for s in derived), statements
+        await storage.close()
+
+    async def test_oversized_ext_tuple_skips_the_pushdown(self, tmp_path) -> None:
+        # A filter never becomes a fan-out: past the membership budget the
+        # Python gate alone narrows, and the result is identical.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a.py", "file", "x")])
+        oversized = (*(f"e{i}" for i in range(storage._host.membership_budget + 1)), "py")
+        statements = self._recorded(storage)
+        result = await storage.glob(pattern="*", ext=oversized)
+        assert [str(o.path) for o in result.observations] == ["/a.py"]
+        assert not any("ext IN" in s for s in statements), statements
+        await storage.close()
+
+    async def test_dot_only_ext_element_never_drops_extensionless_rows(self, tmp_path) -> None:
+        # ext=(".",) normalizes to the empty extension, which matches
+        # extensionless rows in the Python gate; SQL IN ('') would drop
+        # them (stored ext is NULL), so the pushdown must stand down.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/README", "file", "x"), ("/a.py", "file", "x")])
+        result = await storage.glob(pattern="*", ext=(".",))
+        assert [str(o.path) for o in result.observations] == ["/README"]
         await storage.close()
 
 

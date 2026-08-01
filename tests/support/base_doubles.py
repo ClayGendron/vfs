@@ -360,6 +360,10 @@ class EchoStorage(RecorderStorage):
         return Result(ops=(op,), observations=[Observation(path=Path(self._echo_path))])
 
 
+class BindableEchoStorage(EchoStorage, BindableStorage):
+    """Echo whose stat answers the bind probe — hosts nested mounts in tests."""
+
+
 class ScopeSpyStorage(EchoStorage):
     """Echo backend recording the scope its grep receives."""
 

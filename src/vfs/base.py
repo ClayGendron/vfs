@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
 from pydantic import ValidationError
 
 from vfs.exceptions import MountError, raise_lone_or_group
+from vfs.glob_patterns import effective_pattern, glob_defect, residuals
 from vfs.models import Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
@@ -194,6 +195,13 @@ class _FanoutPlan(NamedTuple):
     unscoped: dict[Path, Binding]
     skips: list[ResultError]
     refusal: Result | None = None
+
+
+def _path_covers(ancestor: Path, descendant: Path) -> bool:
+    """Whether *descendant* sits at or beneath *ancestor* in the namespace."""
+    if ancestor in (descendant, ROOT):
+        return True
+    return str(descendant).startswith(str(ancestor) + "/")
 
 
 class VirtualFileSystem:
@@ -1020,6 +1028,13 @@ class VirtualFileSystem:
     ) -> Result:
         """Match *pattern* against the namespace — unscoped calls reach every entry.
 
+        Segment-aware semantics: ``*`` matches within one path segment,
+        ``**`` spans segments; any ``/`` anchors the pattern at each
+        scope root (the namespace root when unscoped) while a slash-free
+        pattern matches leaf names at any depth. The router crosses the
+        mount seam by residuation: each entry receives the pattern in
+        its own coordinates, so results are invariant to mount placement.
+
         *max_count* (>= 1) bounds each entry's answer **and** the merged
         result: a fan-out over N entries still returns at most
         *max_count* rows, kept in merge order — entries named via *paths*
@@ -1037,6 +1052,9 @@ class VirtualFileSystem:
         )
         if refusal is not None:
             return refusal
+        defect = glob_defect(pattern)
+        if defect is not None:
+            return self._error(f"glob pattern {pattern!r}: {defect}", kind=VFSErrorKind.invalid, op="glob")
         return await self._route_fanout(
             "glob",
             paths=paths,
@@ -1072,6 +1090,10 @@ class VirtualFileSystem:
         user_id: str | None = None,
     ) -> Result:
         """Search content for *pattern* — unscoped calls reach every entry.
+
+        *globs*/*globs_not* use glob's segment-aware pattern language:
+        ``*`` within a segment, ``**`` across, any ``/`` anchors at the
+        root, slash-free patterns match leaf names.
 
         *max_count* caps matches **per file** (ripgrep's ``-m``), not the
         row count — a fan-out returns one row per matching file regardless.
@@ -1430,24 +1452,32 @@ class VirtualFileSystem:
             if plan.refusal is not None:
                 return plan.refusal
 
-            # An unscoped dispatch already covers its whole entry, so a
-            # narrower scope into the same entry is subsumed.
-            named_coros = [
-                self._dispatch_entry(binding, op, paths=tuple(rels), user_id=user_id, **kwargs)
-                for key, (binding, rels) in plan.scoped.items()
-                if key not in plan.unscoped
-            ]
-            branch_bindings = list(plan.unscoped.values())
-            branch_coros = [
-                self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs) for binding in branch_bindings
-            ]
-            if not named_coros and not branch_coros:
-                return self._with_skips(Result(ops=(op,)), plan.skips)
-            results = await self._gather_settled([*named_coros, *branch_coros])
+            pattern = kwargs.get("pattern")
+            if op == "glob" and isinstance(pattern, str) and "/" in pattern:
+                rest = {key: value for key, value in kwargs.items() if key != "pattern"}
+                named_coros, branches, skips = self._glob_residual_dispatches(
+                    plan, paths, pattern, user_id=user_id, **rest
+                )
+            else:
+                # An unscoped dispatch already covers its whole entry, so a
+                # narrower scope into the same entry is subsumed.
+                named_coros = [
+                    self._dispatch_entry(binding, op, paths=tuple(rels), user_id=user_id, **kwargs)
+                    for key, (binding, rels) in plan.scoped.items()
+                    if key not in plan.unscoped
+                ]
+                branches = [
+                    (binding.path, self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs))
+                    for binding in plan.unscoped.values()
+                ]
+                skips = plan.skips
+            if not named_coros and not branches:
+                return self._with_skips(Result(ops=(op,)), skips)
+            results = await self._gather_settled([*named_coros, *(coro for _, coro in branches)])
             named = results[: len(named_coros)]
-            branch_results = list(zip((b.path for b in branch_bindings), results[len(named_coros) :], strict=True))
+            branch_results = list(zip((path for path, _ in branches), results[len(named_coros) :], strict=True))
             merged = self._merge_fanout(named, branch_results, frozenset(plan.scoped), op)
-            return self._with_skips(self._cap_rows(merged, op, row_cap), plan.skips)
+            return self._with_skips(self._cap_rows(merged, op, row_cap), skips)
         finally:
             self._exit_hop(grant.token)
 
@@ -1502,6 +1532,71 @@ class VirtualFileSystem:
                     skipped.setdefault(binding.path, self._skip_entry(op, binding))
 
         return _FanoutPlan(scoped=scoped, unscoped=unscoped, skips=list(skipped.values()))
+
+    def _glob_residual_dispatches(
+        self,
+        plan: _FanoutPlan,
+        paths: tuple[str, ...],
+        pattern: str,
+        *,
+        user_id: str | None,
+        **kwargs: object,
+    ) -> tuple[
+        list[Coroutine[Any, Any, Result]],
+        list[tuple[Path, Coroutine[Any, Any, Result]]],
+        list[ResultError],
+    ]:
+        """Build glob's dispatches: the pattern crosses the seam by residuation.
+
+        A path-arm pattern is namespace-coordinate: it anchors under each
+        scope root, and every entry receives its derivative in entry-local
+        coordinates — one dispatch per live residual, sorted for
+        determinism. A dead residual set is routing, not a capability gap:
+        the entry is not dispatched and no skip is minted; capability
+        skips survive only where the pattern can reach the entry. Scope
+        anchors keep flowing to their owning entries unchanged (one
+        dispatch per anchor, since each root carries its own effective
+        pattern), so per-anchor assertions are untouched.
+        """
+        roots = tuple(root for raw in paths if (root := resolve_path(raw).path) is not None) if paths else (ROOT,)
+        named_coros: list[Coroutine[Any, Any, Result]] = []
+        for binding, rels in plan.scoped.values():
+            named_coros.extend(
+                self._dispatch_entry(
+                    binding, "glob", paths=(rel,), user_id=user_id, pattern=effective_pattern(rel, pattern), **kwargs
+                )
+                for rel in rels
+            )
+        branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = []
+        for binding in plan.unscoped.values():
+            for residual in self._glob_residual_patterns(binding.path, roots, pattern):
+                coro = self._dispatch_entry(binding, "glob", paths=(), user_id=user_id, pattern=residual, **kwargs)
+                branches.append((binding.path, coro))
+        skips = [skip for skip in plan.skips if skip.path is None or self._glob_reaches(skip.path, roots, pattern)]
+        return named_coros, branches, skips
+
+    @staticmethod
+    def _glob_residual_patterns(bind_path: Path, roots: tuple[Path, ...], pattern: str) -> list[str]:
+        """Sorted entry-local renders of every live residual the roots yield.
+
+        Empty-tuple residuals are dropped: the bind-point row is the
+        parent's stored directory, never a child dispatch.
+        """
+        rendered: set[str] = set()
+        for root in roots:
+            if not _path_covers(root, bind_path):
+                continue
+            for components in residuals(effective_pattern(root, pattern), bind_path):
+                if components:
+                    rendered.add("/" + "/".join(components))
+        return sorted(rendered)
+
+    @staticmethod
+    def _glob_reaches(bind_path: Path, roots: tuple[Path, ...], pattern: str) -> bool:
+        """Whether any scope root lets the pattern reach rows of this entry."""
+        if any(_path_covers(bind_path, root) for root in roots):
+            return True  # a root inside the entry names rows the entry holds
+        return bool(VirtualFileSystem._glob_residual_patterns(bind_path, roots, pattern))
 
     @staticmethod
     def _merge_fanout(

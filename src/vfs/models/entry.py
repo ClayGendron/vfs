@@ -198,13 +198,11 @@ class Entry(BaseModel):
         """Derive ``ext``, enforce content invariants, measure, stamp times.
 
         Reads the already-canonical ``self.path`` (gated by the ``Path`` field
-        type). ``model_fields_set`` preserves caller-provided values: an
-        explicit ``ext`` is kept. ``ext`` derives from the path for every kind
-        — a directory named ``foo.bar/`` carries ``ext = "bar"`` (POSIX
-        parity).
+        type). ``ext`` derives from the path unconditionally, for every kind —
+        a directory named ``foo.bar/`` carries ``ext = "bar"`` (POSIX parity),
+        and an explicit caller value is normalized away so the stored column
+        always agrees with the path-derived read gates.
         """
-        fields = self.model_fields_set
-
         if not self.name and self.path != "/":
             msg = f"name must not be empty (path={self.path!r})"
             raise ValueError(msg)
@@ -213,8 +211,7 @@ class Entry(BaseModel):
             msg = f"the root path is always a directory (kind={self.kind!r})"
             raise ValueError(msg)
 
-        if "ext" not in fields:
-            self.ext = self.path.ext
+        self.ext = self.path.ext
 
         # Content invariants. The directory null is pure normalization of
         # absence — presence conflicts raise in _derive_identity.

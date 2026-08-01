@@ -253,3 +253,65 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 - **Blocking:** nothing — both need a warm pool or land as latency, not corruption; spec 086 deliberately does not own them
 - **Options considered (unstudied):** classify the closed-connection failure retryable and redrive first touch; bound first-touch lock waits with a timeout + honest `unavailable`; document warm-up as a deployment requirement
 - **Status:** open
+
+## Glob path-arm patterns do not cross the mount seam — namespace patterns or entry-local patterns?
+
+- **Asked:** 2026-07-31 by Clay + Claude (surfaced in a teaching session on
+  glob routing; executed repro in-session, same day)
+- **Context:** The router rebases scope *anchors* at the mount seam
+  (`/data/src` → `/src`) but passes the *pattern* verbatim
+  (`base.py:_route_fanout` — pattern rides in `**kwargs`), so each mount
+  matches the pattern against its own entry-relative rows. Executed
+  repro (mount at `/data` holding `a.txt`, `deep/b.txt`): unscoped
+  `glob("/data/*.txt")` and `glob("/data/**/*.txt")` both return **empty
+  success** — the mount's rows never start with `/data/`, and the root
+  entry has no matching rows of its own. The working idiom today is
+  entry-local: `glob("/*.txt", paths=("/data",))`. **No ADR, spec, or
+  router test pins the seam behavior** — no router-level test globs an
+  absolute pattern at all — and the verb's own docstring ("match
+  *pattern* against the namespace", `base.py:1021`) contradicts the
+  emergent behavior. Discovered gap, not decided contract.
+- **Blocking:** nothing lands broken today, but spec 073 rewrites the
+  pattern chokepoint (`patterns.py`) and its surface docs — the seam
+  contract should be decided before or immediately after 073 lands, and
+  Pass C grep's `globs`/`globs_not` filters face the identical seam
+  question.
+- **Options considered:** **(a) entry-local patterns** — ratify today's
+  behavior, true up the docstring, likely refuse (or warn on) unscoped
+  path-arm patterns to kill the silent empty success; **(b) namespace
+  patterns** — the router derives each mount's residual pattern
+  (segment-wise derivative of the glob by the bind path: literal and
+  wildcard segments consume mount segments, `**` survives the boundary,
+  a dead residual skips the mount entirely — routing on the pattern's
+  literal prefix falls out for free), dispatches the residual set, and
+  merges as today; **(c) staged** — 073 lands (a) honestly (docstring +
+  loud refusal), a fast-follow story lands (b). Multi-residual dispatch
+  shape (N patterns per mount: N calls vs a protocol change) is an
+  undecided sub-fork of (b).
+- **Research (2026-07-31, same day):**
+  `research/2026-07-31-glob-pattern-seam-routing.md` (five prior-art
+  studies; no studied system pushes a pattern across a boundary; git
+  documents residuation as its missing primitive at `dir.c:472-489`)
+  plus an executed spike
+  (`research/studies/2026-07-31-glob-residuation/verify_residuation.py`:
+  5,590 cases, exact equality, mutation-audited, residual sets ≤ 2 —
+  no protocol change needed). Side effect already landed: the ripgrep
+  study corrected 073's unanchored-pattern rule to gitignore-exact
+  anchoring.
+- **Status:** resolved 2026-07-31 (Clay, in session) →
+  `decisions/030-namespace-patterns-residual-routing.md` (accepted):
+  namespace-coordinate patterns; residual routing at the seam
+  (N-dispatch merge, necessary-fact posture, dead residuals skip
+  silently); verb shape derived net-new — roots + root-anchored
+  filters, the find/rg shape ADR 023 started, with `paths` reframed
+  as the assertion mechanism (five recorded reasons it survives).
+  Spec 091 owns implementation, test-first, after 073 lands.
+- **Landed:** 2026-08-01, same session as 073 — residuation
+  primitives in `src/vfs/glob_patterns.py` (`effective_pattern`,
+  `residuals`), the glob-only residual dispatch step in `base.py`
+  (`_glob_residual_dispatches`), the invariance battery in
+  `tests/base/test_glob_namespace.py`, and the spike re-pointed at
+  the landed functions (5,590 cases, zero failures, identical
+  statistics). The headline repro now returns the mount's rows; all
+  four Docker engine legs green. This entry is the defect record;
+  spec 091 owns closure.

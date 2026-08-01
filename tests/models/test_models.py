@@ -130,6 +130,12 @@ class TestConstructionValidation:
         assert entry.ext == "bar"
         assert entry.content is None
 
+    def test_ext_always_derives_from_the_path(self) -> None:
+        # The stored column must agree with extract_extension on every
+        # row — the glob ext pushdowns are sound only under that law.
+        assert Entry(path=Path("/a/b.txt"), content="x", ext="png").ext == "txt"
+        assert Entry(path=Path("/notes/journal"), ext="md").ext is None
+
 
 # ---------------------------------------------------------------------------
 # Authoring intent — explicit content is never silently dropped

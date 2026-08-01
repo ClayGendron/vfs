@@ -691,7 +691,9 @@ def is_reserved_directory(path: Path) -> bool:
 def extract_extension(path: Path) -> str | None:
     """Return the lowercased trailing file extension, or ``None``.
 
-    Takes a canonical :class:`Path`; the return is an extension, not a path.
+    Takes a canonical :class:`Path`; the return is an extension, not a
+    path. A leading dot is not an extension marker: a pure dotfile name
+    (``.txt``) carries no extension.
     """
     _, name = split_path(path)
     if not name:
@@ -699,7 +701,16 @@ def extract_extension(path: Path) -> str | None:
     dot = name.rfind(".")
     if dot <= 0:
         return None
-    ext = name[dot + 1 :].lower()
+    return normalize_extension(name[dot + 1 :])
+
+
+def normalize_extension(text: str) -> str | None:
+    """The one extension law: lowercased *text*, or ``None`` when empty or >32 chars.
+
+    Every producer of a stored or derived extension value runs through
+    here, so comparisons against the ``ext`` column can never drift.
+    """
+    ext = text.lower()
     if not ext or len(ext) > 32:
         return None
     return ext

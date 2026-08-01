@@ -120,7 +120,6 @@ async def write_rows(
                 content_hash=entry.content_hash,
                 size_bytes=entry.size_bytes,
                 lines=entry.lines,
-                ext=entry.ext,
                 mime_type=entry.mime_type,
                 overwrite=overwrite,
                 parents=parents,
@@ -215,7 +214,6 @@ async def edit_rows(
             content_hash=edited.content_hash,
             size_bytes=edited.size_bytes,
             lines=edited.lines,
-            ext=row["ext"],
             mime_type=row["mime_type"],
         )
         plan.pending.append((target, "updated"))

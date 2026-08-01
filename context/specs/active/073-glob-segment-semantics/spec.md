@@ -1,6 +1,16 @@
 # 073 — Glob adopts segment-aware semantics (`*` stops at `/`, `**` recurses)
 
-- **Status:** shaped — drafted 2026-07-14 from the 072 slice-7
+- **Status: landed 2026-08-01.** All four slices green: the fused
+  LIKE translator, the `glob_patterns.py` chokepoint (renamed from
+  the drafted `patterns.py`), both ext pushdowns with the agreement
+  made structural (`Entry` derives `ext` unconditionally; the staging
+  layer derives it from the path; move/copy re-derive at renames;
+  `paths.normalize_extension` is the one tail law), the 3.13 floor,
+  and the conformance true-up. Full suite 1930 passed, `ruff`/`ty`
+  zero, all four Docker engine legs green, and the spike re-pointed
+  at the landed functions passes claims 2–5 over 523k authoritative
+  matches (claim 1 retired with the old translator). History below.
+- Previously: shaped — drafted 2026-07-14 from the 072 slice-7
   design-precedent review (four-agent reference sweep over fsspec,
   pyfilesystem2, CPython, SQLite/Postgres, zoekt/codesearch, JuiceFS,
   and the `src2` quarry). Owner decision 2026-07-14: adopt full
@@ -11,7 +21,10 @@
   prefilter drops; 50k matches kept by the derived-ext filter) and
   the spike itself survived a three-agent adversarial audit — fuzz,
   mutation, and differential testing against real PostgreSQL 18.0
-  (see *Verification evidence*). Ready for plan.md.
+  (see *Verification evidence*). Planned 2026-07-31 — see `plan.md`,
+  which also carries the tree-drift ledger (memory-backend touch
+  point retired by ADR 028; conformance home moved; ext-column
+  agreement pinned structurally).
 - **Date:** 2026-07-14
 - **Owner:** Clay Gendron
 - **Kind:** contract change (pattern-language semantics on the `glob`
@@ -71,12 +84,28 @@ at one chokepoint both backends and grep's glob filters share.**
    namespace, not an interactive shell; dotfiles are ordinary rows.
    The reserved `/.vfs` subtree stays invisible via the liveness
    scope (072 §9), which is namespace policy, not pattern policy.
-3. **One compile chokepoint.** A live `src/vfs/patterns.py`
+3. **One compile chokepoint.** A live `src/vfs/glob_patterns.py`
    (resurrecting the quarry's name) exposing
    `compile_glob(pattern) -> re.Pattern[str]`, wrapping
    `glob.translate(pattern, recursive=True, include_hidden=True,
    seps="/")`. Every consumer — memory glob, database glob, Pass C
    grep's `globs`/`globs_not` — compiles here and nowhere else.
+   **Path-arm patterns are root-anchored — gitignore-exact**
+   (resolved 2026-07-31, revised same day; below): any `/` in the
+   pattern anchors it, and the chokepoint prepends a bare `/` to a
+   path-arm pattern that lacks one before calling `translate`, so
+   `src/*.py` means root-level `/src/*.py`, `*/x.py` means depth
+   one, and the any-depth idiom is an explicit leading `**/`
+   (`**/x.py` ≡ `/**/x.py`, root level included). Slash-free
+   patterns already float by name via the name arm — together this
+   is exactly the `.gitignore`/ripgrep/VS Code convention. Without
+   the normalization an unanchored path-arm pattern is legal but can
+   never match an absolute subject (executed 2026-07-31: `*/x.py`
+   matches nothing; bare-translate `**/*.txt` misses every
+   root-level row because `**/` compiles to `(?:.+/)?`) — a silent
+   false friend of exactly the class this story exists to kill. The
+   normalization runs before the LIKE translation too, so the
+   prefilter only ever sees anchored patterns.
 4. **Compile-first classification.** Pattern compilation happens
    before any row is touched, and a refused pattern classifies
    `invalid` naming the defect, per the 071 never-raise canon and
@@ -204,7 +233,7 @@ is an unsupported configuration.
 
 ## Touch points
 
-- `src/vfs/patterns.py` — new module (mined from the quarry; the
+- `src/vfs/glob_patterns.py` — new module (mined from the quarry; the
   quarry keeps its escape-handling fixes noted in the 072 review).
 - `src/vfs/storage/backends/memory.py` — `glob` and grep's
   `globs`/`globs_not` filtering swap `fnmatch.fnmatchcase` for the
@@ -225,9 +254,12 @@ is an unsupported configuration.
   than vendoring a translator. (Runtime and `ty` already target 3.13;
   only the floor moves.)
 - `tests/storage_conformance.py` — rows pinning fnmatch behavior
-  update to pin the new contract (e.g. `*/x.py` matching `/a/b/x.py`
-  becomes `**/x.py`); new rows pin the demo table: direct-children
-  `*`, one-level `*/`, zero-depth `**`, dotfile matching, `a**b` →
+  update to pin the new contract (e.g. `*/x.py` matching
+  `/a/b/x.py` becomes `**/x.py` — correct under the anchoring rule,
+  since `**/x.py` ≡ `/**/x.py` reaches every depth including root);
+  new rows pin the demo table: direct-children `*`, one-level `*/`,
+  zero-depth `**`, implicit anchoring (`src/*.py` ≡ `/src/*.py`,
+  root-only; `*/x.py` depth-one), dotfile matching, `a**b` →
   `invalid`.
 - `src/vfs/ops.py` / `src/vfs/params.py` / skills docs — the `glob`
   and `grep` surface text states the semantics in one line.
@@ -241,9 +273,13 @@ behavior.
 ## Acceptance criteria
 
 - Over the tree `{/notes.txt, /docs/a.txt, /docs/deep/nested/b.txt}`:
-  `/docs/*.txt` → exactly `/docs/a.txt`; `*/b.txt` → nothing;
-  `/docs/**/*.txt` → both `.txt` rows under `/docs` including the
-  zero-depth one; `*.txt` (name arm) → all three.
+  `/docs/*.txt` → exactly `/docs/a.txt`; `*/b.txt` → nothing
+  (anchored at depth one); `docs/*.txt` → exactly `/docs/a.txt`
+  (implicit anchor); `/docs/**/*.txt` → both `.txt` rows under
+  `/docs` including the zero-depth one; `*.txt` (name arm) → all
+  three; `**/*.txt` (explicit float) → all three; `/*.txt` →
+  exactly `/notes.txt`. All six executed 2026-07-31 against
+  3.13 `glob.translate` under the prepend-`/` normalization.
 - A conformance row whose **only** match is zero-depth under `**`
   (the `/docs/**/*.txt` → `/docs/a.txt` case) — this is the row a
   broken prefilter loses, and byte-identical memory/sqlite legs are
@@ -269,7 +305,7 @@ behavior.
 - `requires-python >= 3.13`; `ruff`/`ty` at zero; no new
   suppressions.
 
-## Open questions — resolved 2026-07-14
+## Open questions — all resolved (2026-07-14; anchoring 2026-07-31)
 
 - **`**` inside a component** (`a**b`) → **classify `invalid`** (the
   fsspec/pyfilesystem2 posture — loud beats hiding a typo'd
@@ -287,6 +323,39 @@ behavior.
   (§5) instead of being retrofitted.
 - **`max_depth` budget on glob** → **out of scope.** This story
   changes the pattern language only.
+- **Unanchored path-arm patterns** (`*/x.py`, `**/*.txt`,
+  `src/*.py` — a `/` present but not leading; asked 2026-07-31,
+  Clay) → **anchor them at the root, gitignore-exact**: the
+  chokepoint prepends a bare `/`, so `src/*.py` ≡ `/src/*.py`
+  (root-only), `*/x.py` ≡ `/*/x.py` (depth one), and any-depth is
+  the explicit `**/` prefix — one law, "any `/` anchors; no `/`
+  floats by name," where the name arm already supplies the
+  slash-free float. Surfaced by an executed check: against absolute
+  subjects, bare `glob.translate` gives unanchored patterns no
+  matches at all (`*` is `[^/]+`, which cannot match the empty
+  segment before the leading slash) and a leading `**/` misses
+  every root-level row (`(?:.+/)?`'s zero branch drops the slash) —
+  legal patterns that silently match nothing.
+  **Decision trail:** first resolved same day as *float* (prepend
+  `/**/`, any-depth) on the claim that floating was the
+  ripgrep/VS Code/gitignore posture; the ripgrep prior-art study
+  then showed that claim wrong for slash-containing patterns — the
+  gitignore parser floats only slash-free patterns and leaves
+  anything containing a `/` root-anchored
+  (`ripgrep/crates/ignore/src/gitignore.rs:490-525`; its test table
+  pins `src/*.rs` not matching `src/grep/src/main.rs`) — and Clay
+  revised to gitignore-exact the same day. Refusing unanchored
+  patterns was also considered (loudest, zero normalization) and
+  rejected — it punishes the most reflexive agent idiom
+  (`src/**/*.py`); leaving them dead was rejected on its face.
+  Executed over the demo tree under the prepend-`/` rule: depth-one
+  `*/x.py`, root-anchored `src/*.py`, and root-inclusive `**/x.py`
+  all behave; the pre-073 any-depth idiom migrates from `*/x.py`
+  to `**/x.py`. Note the spike cannot catch this defect class: it
+  proves the prefilter drops no authoritative match, and a pattern
+  whose authoritative set is empty drops nothing — the anchoring
+  rows are tightness-side acceptance, owned by the conformance
+  suite.
 
 ## Deferred (recorded, not in scope)
 

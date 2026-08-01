@@ -18,7 +18,7 @@ beside the plan and not among the session-free models.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from ulid import ULID
@@ -40,7 +40,11 @@ PersistenceState = Literal["insert", "update", "absorb", "adopt"]
 
 @dataclass
 class StagedEntry:
-    """One path's planned final state: a create or a material update."""
+    """One path's planned final state: a create or a material update.
+
+    ``ext`` is derived from the path here, never accepted — the stored
+    column must agree with the path-derived read gates on every row.
+    """
 
     path: Path
     parent: Path
@@ -51,10 +55,13 @@ class StagedEntry:
     content_hash: str | None = None
     size_bytes: int = 0
     lines: int = 0
-    ext: str | None = None
+    ext: str | None = field(init=False, default=None)
     mime_type: str | None = None
     base_version: int | None = None  # the version the guarded arm compares against
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
+
+    def __post_init__(self) -> None:
+        self.ext = self.path.ext
 
     def refresh_material(
         self,
@@ -64,7 +71,6 @@ class StagedEntry:
         content_hash: str | None,
         size_bytes: int,
         lines: int,
-        ext: str | None,
         mime_type: str | None,
     ) -> None:
         """Replace material state, preserving identity and persistence bookkeeping."""
@@ -73,7 +79,6 @@ class StagedEntry:
         self.content_hash = content_hash
         self.size_bytes = size_bytes
         self.lines = lines
-        self.ext = ext
         self.mime_type = mime_type
 
     def absorb(self, entry_id: str) -> None:
@@ -199,7 +204,6 @@ class WritePlan:
         content_hash: str | None,
         size_bytes: int,
         lines: int,
-        ext: str | None,
         mime_type: str | None,
         overwrite: bool,
         parents: bool,
@@ -226,7 +230,6 @@ class WritePlan:
             content_hash=content_hash,
             size_bytes=size_bytes,
             lines=lines,
-            ext=ext,
             mime_type=mime_type,
         )
         return "created" if occupant is None else "updated"
@@ -262,7 +265,6 @@ class WritePlan:
         content_hash: str | None = None,
         size_bytes: int = 0,
         lines: int = 0,
-        ext: str | None = None,
         mime_type: str | None = None,
     ) -> None:
         prior = self.staged.get(path)
@@ -273,7 +275,6 @@ class WritePlan:
                 content_hash=content_hash,
                 size_bytes=size_bytes,
                 lines=lines,
-                ext=ext,
                 mime_type=mime_type,
             )
             return
@@ -287,7 +288,6 @@ class WritePlan:
             content_hash=content_hash,
             size_bytes=size_bytes,
             lines=lines,
-            ext=ext,
             mime_type=mime_type,
         )
 
@@ -300,7 +300,6 @@ class WritePlan:
         content_hash: str | None,
         size_bytes: int,
         lines: int,
-        ext: str | None,
         mime_type: str | None,
     ) -> None:
         prior = self.staged.get(path)
@@ -311,7 +310,6 @@ class WritePlan:
                 content_hash=content_hash,
                 size_bytes=size_bytes,
                 lines=lines,
-                ext=ext,
                 mime_type=mime_type,
             )
             return
@@ -326,7 +324,6 @@ class WritePlan:
             content_hash=content_hash,
             size_bytes=size_bytes,
             lines=lines,
-            ext=ext,
             mime_type=mime_type,
             base_version=row["version"],
             version=row["version"] + 1,

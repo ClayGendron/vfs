@@ -926,8 +926,111 @@ class StorageContract:
     async def test_glob_matches_full_path_when_pattern_has_a_slash(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a/b"), parents=True)
         await storage.write(entries=[Entry(path=Path("/a/b/x.py"), content="x")])
-        result = await storage.glob(pattern="*/x.py")
+        result = await storage.glob(pattern="**/x.py")
         assert [o.path for o in result.observations] == ["/a/b/x.py"]
+
+    @needs("write", "mkdir", "glob")
+    async def test_glob_segment_semantics_acceptance_table(self, storage: ConformanceBackend) -> None:
+        # The spec's demo tree: * within a segment, ** across segments,
+        # any / anchors at the root, no / floats by name.
+        await storage.mkdir(path=Path("/docs/deep/nested"), parents=True)
+        for path in ("/notes.txt", "/docs/a.txt", "/docs/deep/nested/b.txt"):
+            await storage.write(entries=[Entry(path=Path(path), content="x")])
+
+        async def paths(pattern: str) -> list[str]:
+            return [str(o.path) for o in (await storage.glob(pattern=pattern)).observations]
+
+        assert await paths("/docs/*.txt") == ["/docs/a.txt"]
+        assert await paths("*/b.txt") == []  # depth one, not any depth
+        assert await paths("*/a.txt") == ["/docs/a.txt"]
+        assert await paths("docs/*.txt") == ["/docs/a.txt"]  # implicit anchor
+        assert await paths("/docs/**/*.txt") == ["/docs/a.txt", "/docs/deep/nested/b.txt"]
+        assert await paths("*.txt") == ["/docs/a.txt", "/docs/deep/nested/b.txt", "/notes.txt"]
+        assert await paths("**/*.txt") == ["/docs/a.txt", "/docs/deep/nested/b.txt", "/notes.txt"]
+        assert await paths("/*.txt") == ["/notes.txt"]
+
+    @needs("write", "mkdir", "glob")
+    async def test_glob_double_star_zero_depth_match_is_not_lost(self, storage: ConformanceBackend) -> None:
+        # The only match sits at zero depth under ** — the row a broken
+        # prefilter silently loses before the verifier can see it.
+        await storage.mkdir(path=Path("/docs"))
+        await storage.write(entries=[Entry(path=Path("/docs/a.txt"), content="x")])
+        result = await storage.glob(pattern="/docs/**/*.txt")
+        assert [str(o.path) for o in result.observations] == ["/docs/a.txt"]
+
+    @needs("write", "glob")
+    async def test_glob_mid_component_double_star_classifies_invalid(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/axxb.txt"), content="x")])
+        for pattern in ("a**b.txt", "/x/a**b.txt", "***"):
+            result = await storage.glob(pattern=pattern)
+            assert result.success is False
+            assert result.errors[0].kind == VFSErrorKind.invalid
+            assert result.observations == []
+
+    @needs("write", "glob")
+    async def test_glob_bare_double_star_name_pattern_behaves_as_star(self, storage: ConformanceBackend) -> None:
+        for name in ("a.py", "b.txt"):
+            await storage.write(entries=[Entry(path=Path(f"/{name}"), content="x")])
+        starred = await storage.glob(pattern="*")
+        doubled = await storage.glob(pattern="**")
+        assert [o.path for o in doubled.observations] == [o.path for o in starred.observations]
+
+    @needs("write", "glob")
+    async def test_glob_dotfiles_match_wildcards(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/.env"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/real.txt"), content="x")])
+        result = await storage.glob(pattern="*")
+        assert [str(o.path) for o in result.observations] == ["/.env", "/real.txt"]
+
+    @needs("write", "glob")
+    async def test_glob_pure_dotfile_matches_the_pattern_but_not_the_ext_filter(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # A file literally named ".txt": the pattern matches it, while the
+        # ext filter drops it — its lexical extension is None, not "txt".
+        await storage.write(entries=[Entry(path=Path("/.txt"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        matched = await storage.glob(pattern="*.txt")
+        assert [str(o.path) for o in matched.observations] == ["/.txt", "/a.txt"]
+        filtered = await storage.glob(pattern="*.txt", ext=("txt",))
+        assert [str(o.path) for o in filtered.observations] == ["/a.txt"]
+
+    @needs("write", "glob")
+    async def test_glob_ext_filter_agrees_with_a_divergent_explicit_ext(self, storage: ConformanceBackend) -> None:
+        # The model normalizes ext to the lexical value, so the stored
+        # column and the path-derived gate agree on every row.
+        result = await storage.write(entries=[Entry(path=Path("/b.txt"), content="x", ext="png")])
+        assert result.success is True
+        kept = await storage.glob(pattern="*", ext=("txt",))
+        assert [str(o.path) for o in kept.observations] == ["/b.txt"]
+        dropped = await storage.glob(pattern="*", ext=("png",))
+        assert dropped.observations == []
+
+    @needs("write", "move", "glob")
+    async def test_move_rederives_the_stored_ext_at_the_new_name(self, storage: ConformanceBackend) -> None:
+        # A rename changes the lexical extension; the stored column must
+        # follow it or the ext filter silently loses the row.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        moved = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.png"))])
+        assert moved.success is True
+        kept = await storage.glob(pattern="*", ext=("png",))
+        assert [str(o.path) for o in kept.observations] == ["/b.png"]
+        assert (await storage.glob(pattern="*", ext=("txt",))).observations == []
+
+    @needs("write", "copy", "glob")
+    async def test_copy_rederives_the_stored_ext_at_the_new_name(self, storage: ConformanceBackend) -> None:
+        # Both copy arms rename the root: the fresh-row arm and the
+        # overwrite arm that clobbers an occupant's material in place.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        copied = await storage.copy(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.png"))])
+        assert copied.success is True
+        fresh = await storage.glob(pattern="*", ext=("png",))
+        assert [str(o.path) for o in fresh.observations] == ["/b.png"]
+        await storage.write(entries=[Entry(path=Path("/c.md"), content="y")])
+        clobber = await storage.copy(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/c.md"))], overwrite=True)
+        assert clobber.success is True
+        clobbered = await storage.glob(pattern="*", ext=("md",))
+        assert [str(o.path) for o in clobbered.observations] == ["/c.md"]
 
     @needs("write", "glob")
     async def test_glob_filters_by_extension(self, storage: ConformanceBackend) -> None:
