@@ -44,6 +44,17 @@ class TestGlobDefect:
         assert glob_defect("/docs/*.txt") is None
         assert glob_defect("[ab]*.py") is None
 
+    def test_empty_components_are_the_second_defect(self):
+        # No stored path has an empty segment: letting these through
+        # would be silent empty success (or, worse, a router-manufactured
+        # match the authority rejects) — the same false-friend class.
+        for pattern in ("/data/", "data/", "//data", "/data//x", "/*/", "**/", "/", ""):
+            assert glob_defect(pattern) is not None, pattern
+
+    def test_the_leading_anchor_slash_is_not_an_empty_component(self):
+        assert glob_defect("/data/*.txt") is None
+        assert glob_defect("/x") is None
+
     def test_the_defect_names_the_component(self):
         defect = glob_defect("/docs/a**b.txt")
         assert defect is not None
@@ -177,6 +188,12 @@ class TestDeriveExt:
         assert derive_ext("*rc") is None  # dotless tail
         assert derive_ext("*." + "x" * 33) is None  # past the column cap
 
+    def test_a_class_after_the_dot_kills_the_derivation(self):
+        # ']' must sit in the cut set: without it "*.[ch]" would derive
+        # the literal ext "[ch]" and the pushdown would drop every row.
+        assert derive_ext("*.[ch]") is None
+        assert derive_ext("[.a]x") is None
+
 
 # =========================================================================
 # effective_pattern — roots + root-anchored filters
@@ -247,8 +264,11 @@ class TestResiduals:
     def test_a_trailing_double_star_stays_live(self):
         assert residuals("/data/**", Path("/data")) == {("**",)}
 
-    def test_adjacent_double_stars_collapse_to_one_survivor(self):
-        assert residuals("/**/**/x.txt", Path("/data")) == {("**", "**", "x.txt")}
+    def test_adjacent_double_stars_canonicalize_to_one(self):
+        # ``**/**`` matches what one ``**`` matches; without the collapse
+        # the zero-match arm starves and mounted rows silently vanish.
+        assert residuals("/**/**/x.txt", Path("/data")) == residuals("/**/x.txt", Path("/data"))
+        assert residuals("/**/**/a/*", Path("/b/a")) == {("**", "a", "*"), ("*",)}
 
     def test_a_nested_mount_consumes_across_both_bind_segments(self):
         assert residuals("/deep/data/api/*.py", Path("/deep/data")) == {("api", "*.py")}

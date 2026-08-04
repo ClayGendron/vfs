@@ -225,8 +225,10 @@ async def glob_rows(
     # indexed column, never chunked (a filter must not become a fan-out),
     # and the empty extension is inexpressible (stored NULL) so it stands
     # down. The dotfile OR arm rescues names like ".txt" whose ext is NULL.
+    ext_binds = 0
     if glob.wanted_ext and "" not in glob.wanted_ext and len(glob.wanted_ext) <= membership_budget:
         filters.append(entry.c.ext.in_(sorted(glob.wanted_ext)))
+        ext_binds = len(glob.wanted_ext)
     derived = derive_ext(glob.pattern)
     if derived is not None:
         derived_ext, dot_suffix = derived
@@ -237,7 +239,10 @@ async def glob_rows(
             session, tables, membership_budget, scope, frozenset({"path", "kind"}), with_entry_id=False
         )
         errors = list((await miss_errors(session, tables.entry, scope, anchors, membership_budget)).values())
-    candidates = await _glob_candidates(session, entry, fan_budget, scope, filters, fetched)
+    # The ext membership rides in every fan statement, so its binds buy
+    # anchors out of each chunk (~2 binds per anchor on the fan side).
+    fan_chunk = max(1, fan_budget - (ext_binds + 1) // 2)
+    candidates = await _glob_candidates(session, entry, fan_chunk, scope, filters, fetched)
     rows: list[Observation] = []
     for mapping in candidates:
         if max_count is not None and len(rows) >= max_count:

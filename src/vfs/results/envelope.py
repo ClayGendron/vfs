@@ -494,7 +494,7 @@ class Result(BaseModel):
 
     @classmethod
     def merge(cls, results: Iterable[Result], *, op: str | None = None) -> Result:
-        """Plain fold of ``|`` over *results* — no policy, fully lawful.
+        """The ``|`` fold over *results* — no policy, fully lawful.
 
         For scoped and grouped dispatch, where every branch answers for an
         entry the caller named: any fatal entry fails the merged envelope.
@@ -504,12 +504,26 @@ class Result(BaseModel):
         rows are the same entry seen from both sides of the seam — their
         counters are unrelated, so the decorated row's version reads
         null) — bind paths are the one place branch row-sets are *not*
-        disjoint.
+        disjoint. Computed as one linear pass over a running path index,
+        equivalent to the pairwise fold without its quadratic rescans.
         """
-        merged = cls(ops=(op,) if op else ())
+        merged_ops: tuple[str, ...] = (op,) if op else ()
+        rows: list[Observation] = []
+        at: dict[str, list[int]] = {}
+        errors: list[ResultError] = []
         for r in results:
-            merged = merged | r
-        return merged
+            merged_ops += tuple(o for o in r.ops if o not in merged_ops)
+            fresh = [o for o in r.observations if o.path not in at]
+            for path, row in r._as_dict().items():
+                for index in at.get(path, ()):
+                    rows[index] = cls._merge_observation(rows[index], row)
+            for o in fresh:
+                at.setdefault(o.path, []).append(len(rows))
+                rows.append(o)
+            for e in r.errors:
+                if e not in errors:
+                    errors.append(e)
+        return cls(ops=merged_ops, observations=rows, errors=errors)
 
     @classmethod
     def merge_branches(cls, results: Iterable[Result], *, op: str | None = None) -> Result:

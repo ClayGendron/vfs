@@ -37,12 +37,12 @@ import asyncio
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NamedTuple, assert_never
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, assert_never
 
 from pydantic import ValidationError
 
 from vfs.exceptions import MountError, raise_lone_or_group
-from vfs.glob_patterns import effective_pattern, glob_defect, residuals
+from vfs.glob_patterns import effective_pattern, glob_defect, render_residual, residuals
 from vfs.models import Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
@@ -197,11 +197,22 @@ class _FanoutPlan(NamedTuple):
     refusal: Result | None = None
 
 
+# Per-anchor glob dispatches each hold a backend session; the bound keeps
+# one fan-out from draining a connection pool at large anchor counts.
+_GLOB_SESSION_BOUND: Final = 8
+
+
 def _path_covers(ancestor: Path, descendant: Path) -> bool:
     """Whether *descendant* sits at or beneath *ancestor* in the namespace."""
     if ancestor in (descendant, ROOT):
         return True
     return str(descendant).startswith(str(ancestor) + "/")
+
+
+async def _gated(gate: asyncio.Semaphore, coro: Coroutine[Any, Any, Result]) -> Result:
+    """Run one dispatch under the fan-out's session bound."""
+    async with gate:
+        return await coro
 
 
 class VirtualFileSystem:
@@ -1033,7 +1044,9 @@ class VirtualFileSystem:
         scope root (the namespace root when unscoped) while a slash-free
         pattern matches leaf names at any depth. The router crosses the
         mount seam by residuation: each entry receives the pattern in
-        its own coordinates, so results are invariant to mount placement.
+        its own coordinates, so the match *set* is invariant to mount
+        placement — row order is merge order, and a *max_count* prefix
+        of it can therefore differ across layouts.
 
         *max_count* (>= 1) bounds each entry's answer **and** the merged
         result: a fan-out over N entries still returns at most
@@ -1430,7 +1443,11 @@ class VirtualFileSystem:
         fails loudly whatever its siblings produced.  That pin survives
         subsumption: when a sibling region also covers a named entry, the
         entry dispatches once (unscoped) but its result still merges
-        plain.  *row_cap* re-applies the caller's result bound after the
+        plain — except glob, which dispatches on both arms (the path arm
+        because each root carries its own effective pattern, the name arm
+        so a covered root keeps its find-operand assertion) and dedups
+        the overlap in the merge.  *row_cap* re-applies the caller's
+        result bound after the
         merge on every input shape — ``glean`` trims by score, everything
         else keeps merge order — so it cannot multiply by entry count;
         the bound arrives gated (integer ``>= 1`` or ``None``).
@@ -1459,12 +1476,12 @@ class VirtualFileSystem:
                     plan, paths, pattern, user_id=user_id, **rest
                 )
             else:
-                # An unscoped dispatch already covers its whole entry, so a
-                # narrower scope into the same entry is subsumed.
+                # Unscoped subsumes a narrower scope into the same entry —
+                # except glob, whose scoped arm carries the root's assertion.
                 named_coros = [
-                    self._dispatch_entry(binding, op, paths=tuple(rels), user_id=user_id, **kwargs)
+                    self._dispatch_entry(binding, op, paths=tuple(dict.fromkeys(rels)), user_id=user_id, **kwargs)
                     for key, (binding, rels) in plan.scoped.items()
-                    if key not in plan.unscoped
+                    if op == "glob" or key not in plan.unscoped
                 ]
                 branches = [
                     (binding.path, self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs))
@@ -1553,25 +1570,37 @@ class VirtualFileSystem:
         coordinates — one dispatch per live residual, sorted for
         determinism. A dead residual set is routing, not a capability gap:
         the entry is not dispatched and no skip is minted; capability
-        skips survive only where the pattern can reach the entry. Scope
-        anchors keep flowing to their owning entries unchanged (one
-        dispatch per anchor, since each root carries its own effective
-        pattern), so per-anchor assertions are untouched.
+        skips survive only where the pattern can reach the entry. Each
+        scope anchor keeps its find-operand assertion, as one dispatch
+        per deduplicated anchor — each root carries its own effective
+        pattern, so anchors cannot share a dispatch and a named entry a
+        region also covers dispatches on both arms (the merge pins it
+        loud and dedups the overlap). The session gate bounds how many
+        of these dispatches hold a backend session at once.
         """
         roots = tuple(root for raw in paths if (root := resolve_path(raw).path) is not None) if paths else (ROOT,)
+        gate = asyncio.Semaphore(_GLOB_SESSION_BOUND)
         named_coros: list[Coroutine[Any, Any, Result]] = []
         for binding, rels in plan.scoped.values():
             named_coros.extend(
-                self._dispatch_entry(
-                    binding, "glob", paths=(rel,), user_id=user_id, pattern=effective_pattern(rel, pattern), **kwargs
+                _gated(
+                    gate,
+                    self._dispatch_entry(
+                        binding,
+                        "glob",
+                        paths=(rel,),
+                        user_id=user_id,
+                        pattern=effective_pattern(rel, pattern),
+                        **kwargs,
+                    ),
                 )
-                for rel in rels
+                for rel in dict.fromkeys(rels)
             )
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = []
         for binding in plan.unscoped.values():
             for residual in self._glob_residual_patterns(binding.path, roots, pattern):
                 coro = self._dispatch_entry(binding, "glob", paths=(), user_id=user_id, pattern=residual, **kwargs)
-                branches.append((binding.path, coro))
+                branches.append((binding.path, _gated(gate, coro)))
         skips = [skip for skip in plan.skips if skip.path is None or self._glob_reaches(skip.path, roots, pattern)]
         return named_coros, branches, skips
 
@@ -1588,7 +1617,7 @@ class VirtualFileSystem:
                 continue
             for components in residuals(effective_pattern(root, pattern), bind_path):
                 if components:
-                    rendered.add("/" + "/".join(components))
+                    rendered.add(render_residual(components))
         return sorted(rendered)
 
     @staticmethod

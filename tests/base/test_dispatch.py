@@ -571,6 +571,21 @@ async def test_glob_capability_skip_still_records_when_the_mount_is_reachable() 
     assert unreachable.errors == []  # dead and incapable: routing wins, no record
 
 
+async def test_glob_capability_skip_survives_a_root_inside_the_entry() -> None:
+    # A scope root strictly inside an incapable entry names rows that
+    # entry holds, so its skip record must survive even though no
+    # residual is ever computed for it.
+    root = VirtualFileSystem()
+    incapable = BindableStorage(caps=frozenset({"read", "stat", "ls", "mkdir"}))
+    deep = EchoStorage()
+    await root.add_mount(incapable, "/data")
+    await root.add_mount(deep, "/data/sub/deep", parents=True)
+    result = await root.glob("**/*.py", paths=("/data/sub",))
+    assert result.success is True
+    [skip] = [e for e in result.errors if e.kind is VFSErrorKind.unsupported]
+    assert skip.path == "/data"
+
+
 async def test_glob_multi_residual_dispatches_and_dedupes() -> None:
     # ** can either span the nested bind segment or stop before it: both
     # derivatives dispatch, in sorted order, and the overlap merges once.

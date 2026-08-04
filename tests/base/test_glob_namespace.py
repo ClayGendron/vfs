@@ -27,6 +27,7 @@ INVARIANCE_BATTERY = (
     "/data/**/*.txt",  # ** spanning the seam
     "**/*.txt",  # explicit any-depth
     "*/a.txt",  # depth pin across the seam
+    "**/**/*.txt",  # adjacent ** canonicalizes; the derivative stays exact
     "/docs/*.md",  # dead prefix: nothing anywhere
     "/d*",  # the bind-point / plain-directory row itself
 )
@@ -103,6 +104,40 @@ async def test_bind_point_row_is_served_by_the_parent() -> None:
     result = await fs.glob("/d*")
     assert result.paths == ("/data",)
     assert recorder.calls == []
+
+
+async def test_multiple_anchors_into_one_entry_all_dispatch() -> None:
+    # Every scope root must reach its dispatch: a regression that drops
+    # anchors after the first per entry loses rows, not duplicates them.
+    plain = await (await _plain_world()).glob("**/*.txt", paths=("/data", "/data/deep"))
+    mounted = await (await _mounted_world()).glob("**/*.txt", paths=("/data", "/data/deep"))
+    assert sorted(plain.paths) == sorted(mounted.paths) == ["/data/a.txt", "/data/deep/b.txt"]
+    assert len(mounted.paths) == len(set(mounted.paths))
+
+
+async def test_max_count_returns_a_merge_order_prefix_of_the_set() -> None:
+    # The invariance law binds the match *set*; a cap keeps merge order,
+    # which mount layout can reorder — pinned as prefix-of-set semantics.
+    for world in (await _plain_world(), await _mounted_world()):
+        full = await world.glob("**/*.txt")
+        capped = await world.glob("**/*.txt", max_count=2)
+        assert len(capped.paths) == 2
+        assert set(capped.paths) <= set(full.paths)
+
+
+async def test_name_arm_root_covered_by_a_region_keeps_its_assertion() -> None:
+    # A bogus root fails loud even when a sibling region covers its entry:
+    # subsumption must not drop the find-operand assertion with the dispatch.
+    fs = await _mounted_world()
+    await fs.add_mount(InMemoryStorage(), "/data/api")
+    await fs.write(path="/data/api/sub/z.txt", content="z", parents=True)
+    missing = await fs.glob("*.txt", paths=("/data", "/data/api/nope"))
+    assert missing.success is False
+    assert missing.errors[0].kind is VFSErrorKind.not_found
+    both = await fs.glob("*.txt", paths=("/data", "/data/api/sub"))
+    assert both.success is True
+    assert sorted(both.paths) == ["/data/a.txt", "/data/api/sub/z.txt", "/data/deep/b.txt"]
+    assert len(both.paths) == len(set(both.paths))  # both arms dispatch; the merge dedups
 
 
 async def test_roots_stay_assertions() -> None:

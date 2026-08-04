@@ -28,6 +28,13 @@ cases, zero failures; 5,766 dead-mount skips; 261 multi-residual
 dispatches; max residual-set size 2 — identical to the pre-landing
 reference run, as required.
 
+Corpus extended 2026-08-01 (review remediation): the adjacent-``**``
+family joined EXTRA_PATTERNS after the code review proved the original
+derivative dropped its zero-match arm there (the chokepoint now
+canonicalizes ``**/**`` to one ``**``). Post-fix record: 5,610 cases,
+zero failures; 5,770 dead-mount skips; 268 multi-residual dispatches;
+max residual-set size 2.
+
 Run:  uv run python context/research/studies/2026-07-31-glob-residuation/verify_residuation.py
 Exit 0 iff every case agrees; prints routing/fan-out statistics either way.
 """
@@ -37,17 +44,8 @@ from __future__ import annotations
 import itertools
 import sys
 
-from vfs.glob_patterns import compile_glob, residuals
+from vfs.glob_patterns import compile_glob, render_residual, residuals
 from vfs.paths import Path
-
-# ---------------------------------------------------------------------------
-# Rendering (router-side inline when 091 slice 2 lands)
-# ---------------------------------------------------------------------------
-
-
-def residual_pattern(comps: tuple[str, ...]) -> str:
-    """Render a residual back to an entry-local anchored pattern."""
-    return "/" + "/".join(comps)
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +83,12 @@ EXTRA_PATTERNS: list[str] = [
     "/data/**",
     "/**/api/*.txt",
     "/data/**/api/*.txt",
+    # Adjacent ** — the family the 2026-08-01 review caught: without
+    # canonicalization the zero-match arm starves and rows vanish.
+    "/**/**/api/*.txt",
+    "**/**/*.txt",
+    "/data/**/**/api/*.txt",
+    "/**/**/data/*.txt",
 ]
 
 
@@ -138,7 +142,7 @@ def check(pattern: str, table: list[str]) -> tuple[bool, dict[str, int]]:
             continue
         if len(live) > 1:
             stats["multi"] += 1
-        matchers = [compile_glob(residual_pattern(r)) for r in live]
+        matchers = [compile_glob(render_residual(r)) for r in live]
         for local in rows[mount]:
             if any(m.match(local) for m in matchers):
                 got.add("/".join([mount.rstrip("/"), local.lstrip("/")]) if mount != "/" else local)

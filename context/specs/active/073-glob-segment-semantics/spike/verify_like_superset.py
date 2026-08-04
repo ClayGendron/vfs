@@ -152,6 +152,8 @@ SEGMENTS = [
     "a\\b",  # backslash literal — must be escaped in the emitted LIKE
     "x\\y[ab]",  # backslash inside a class-fallback's literal prefix
     "*.*",  # two wildcards around a dot — ext derivation must cut at the LAST
+    "*.[ch]",  # class AFTER the dot — derivation must refuse, not derive "[ch]"
+    "[.a]x",  # class holding the only dot — same refusal family
 ]
 
 

@@ -141,9 +141,12 @@ re-pointed at the landed functions, claims must stay green.
   `glob("/data/**/*.txt")` returns both mount rows and
   `glob("/data/*.txt")` returns exactly `/data/a.txt`.
 - **Placement invariance:** the same logical tree built as plain
-  directories and as a mount returns byte-identical glob results for
-  a fixed pattern battery (name-arm, anchored, `**`-spanning,
-  dead-prefix).
+  directories and as a mount returns the identical match *set* for a
+  fixed pattern battery (name-arm, anchored, `**`-spanning,
+  dead-prefix); row order is merge order, and a `max_count` prefix of
+  it is therefore layout-dependent — pinned as prefix-of-set
+  semantics. (Originally written "byte-identical"; trued up at the
+  2026-08-01 review remediation.)
 - **Root-relative scoping:** `glob("src/*.py", paths=("/data",))` ≡
   unscoped `glob("/data/src/*.py")`; `glob("/x/*.py",
   paths=("/data",))` reads as `/data/x/*.py` (the deliberate

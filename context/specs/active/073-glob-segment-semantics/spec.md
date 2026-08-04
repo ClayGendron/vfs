@@ -191,7 +191,8 @@ at one chokepoint both backends and grep's glob filters share.**
    lexical**: `ext` stores `extract_extension` of the name for
    *every* kind (a directory named `docs.txt` has ext `txt`) —
    matching the live `ext`-parameter contract in both backends.
-   `Path.ext` (kind-gated to files) is presentation, not the write
+   `Path.ext` (lexical and kind-free in the live tree — this line
+   predated that true-up) is presentation, not the write
    rule; the 072 write path must populate the column through
    `extract_extension`, the same chokepoint the read side compares
    against.

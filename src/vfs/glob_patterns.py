@@ -56,27 +56,32 @@ class GlobFilter:
 def glob_defect(pattern: str) -> str | None:
     """The refusable defect in *pattern*, or ``None`` when compilable.
 
-    The one defect: ``**`` inside a component (``a**b``, ``***``). The
-    stdlib silently collapses it to ``*``, hiding a typo'd recursion —
-    loud refusal beats a false friend.
+    Two defects, both silent false friends if let through: ``**``
+    inside a component (``a**b``, ``***``) — the stdlib collapses it to
+    ``*``, hiding a typo'd recursion — and an empty component
+    (``/data/``, ``//x``, bare ``/``), which no stored path can ever
+    satisfy. Loud refusal beats a false friend.
     """
-    for component in pattern.split("/"):
+    components = pattern.split("/")
+    for index, component in enumerate(components):
         if "**" in component and component != "**":
             return f"'**' inside a component ({component!r}) — use '**' as a whole path segment"
+        if not component and not (index == 0 and len(components) > 1):
+            return "empty component — every '/' must separate non-empty segments"
     return None
 
 
 def compile_glob(pattern: str) -> re.Pattern[str]:
-    """Compile a defect-free pattern to its authoritative regex, anchoring first."""
-    return re.compile(translate(_anchor(pattern), recursive=True, include_hidden=True, seps="/"))
+    """Compile a defect-free pattern to its authoritative regex, canonicalized first."""
+    return re.compile(translate(_canonical(pattern), recursive=True, include_hidden=True, seps="/"))
 
 
 def compile_filter(pattern: str, ext: tuple[str, ...]) -> GlobFilter:
-    """Compile the shared filter: subject rule, anchored pattern, normalized ext set."""
-    anchored = _anchor(pattern)
+    """Compile the shared filter: subject rule, canonical pattern, normalized ext set."""
+    canonical = _canonical(pattern)
     return GlobFilter(
-        pattern=anchored,
-        by_path="/" in anchored,
+        pattern=canonical,
+        by_path="/" in canonical,
         regex=compile_glob(pattern),
         wanted_ext=frozenset(e.lstrip(".").lower() for e in ext),
     )
@@ -140,10 +145,10 @@ def residuals(pattern: str, mount_path: Path) -> frozenset[tuple[str, ...]]:
     live derivatives. The empty set is a dead mount — no dispatch. An
     empty tuple in the set is the bind point itself: that row is the
     parent's stored mount-point directory, never a child dispatch. A
-    live residual renders back to an entry-local pattern as
-    ``"/" + "/".join(components)``.
+    live residual renders back via :func:`render_residual`. Input is
+    canonicalized, so the zero-match arm never faces adjacent ``**``.
     """
-    state: set[tuple[str, ...]] = {tuple(_anchor(pattern).strip("/").split("/"))}
+    state: set[tuple[str, ...]] = {tuple(_canonical(pattern).strip("/").split("/"))}
     for segment in (part for part in str(mount_path).split("/") if part):
         advanced: set[tuple[str, ...]] = set()
         for candidate in state:
@@ -160,6 +165,11 @@ def residuals(pattern: str, mount_path: Path) -> frozenset[tuple[str, ...]]:
     return frozenset(state)
 
 
+def render_residual(components: tuple[str, ...]) -> str:
+    """Render a live residual back to an entry-local anchored pattern."""
+    return "/" + "/".join(components)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -170,6 +180,23 @@ def _anchor(pattern: str) -> str:
     if "/" in pattern and not pattern.startswith("/"):
         return "/" + pattern
     return pattern
+
+
+def _canonical(pattern: str) -> str:
+    """Anchored form with adjacent ``**`` components collapsed to one.
+
+    ``**/**`` matches exactly what one ``**`` matches, but the extra
+    component would starve the residuation derivative's zero-match arm.
+    """
+    anchored = _anchor(pattern)
+    if "/**/**" not in anchored:
+        return anchored
+    components: list[str] = []
+    for component in anchored.split("/"):
+        if component == "**" and components and components[-1] == "**":
+            continue
+        components.append(component)
+    return "/".join(components)
 
 
 def _component_matches(component: str, segment: str) -> bool:

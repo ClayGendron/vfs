@@ -944,6 +944,7 @@ class StorageContract:
         assert await paths("*/b.txt") == []  # depth one, not any depth
         assert await paths("*/a.txt") == ["/docs/a.txt"]
         assert await paths("docs/*.txt") == ["/docs/a.txt"]  # implicit anchor
+        assert await paths("docs/[ab].txt") == ["/docs/a.txt"]  # class fallback stays anchored
         assert await paths("/docs/**/*.txt") == ["/docs/a.txt", "/docs/deep/nested/b.txt"]
         assert await paths("*.txt") == ["/docs/a.txt", "/docs/deep/nested/b.txt", "/notes.txt"]
         assert await paths("**/*.txt") == ["/docs/a.txt", "/docs/deep/nested/b.txt", "/notes.txt"]
@@ -964,6 +965,17 @@ class StorageContract:
         for pattern in ("a**b.txt", "/x/a**b.txt", "***"):
             result = await storage.glob(pattern=pattern)
             assert result.success is False
+            assert result.errors[0].kind == VFSErrorKind.invalid
+            assert result.observations == []
+
+    @needs("write", "glob")
+    async def test_glob_empty_component_classifies_invalid(self, storage: ConformanceBackend) -> None:
+        # No stored path has an empty segment; silent empty success (or a
+        # normalized match the authority rejects) would be a false friend.
+        await storage.write(entries=[Entry(path=Path("/data.txt"), content="x")])
+        for pattern in ("/data/", "data/", "//x", "/*/", "/"):
+            result = await storage.glob(pattern=pattern)
+            assert result.success is False, pattern
             assert result.errors[0].kind == VFSErrorKind.invalid
             assert result.observations == []
 
@@ -1032,6 +1044,24 @@ class StorageContract:
         clobbered = await storage.glob(pattern="*", ext=("md",))
         assert [str(o.path) for o in clobbered.observations] == ["/c.md"]
 
+    @needs("write", "mkdir", "copy", "glob")
+    async def test_copy_keeps_interior_row_ext_under_a_renamed_root(self, storage: ConformanceBackend) -> None:
+        # Only the renamed root re-derives; interior rows keep their own
+        # names, and their stored ext must keep feeding the pushdown.
+        await storage.mkdir(path=Path("/src"))
+        await storage.write(entries=[Entry(path=Path("/src/x.py"), content="x")])
+        assert (await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/d.png"))])).success is True
+        kept = await storage.glob(pattern="**", ext=("py",))
+        assert [str(o.path) for o in kept.observations] == ["/d.png/x.py", "/src/x.py"]
+
+    @needs("write", "mkdir", "move", "glob")
+    async def test_move_keeps_interior_row_ext_under_a_renamed_root(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/src"))
+        await storage.write(entries=[Entry(path=Path("/src/x.py"), content="x")])
+        assert (await storage.move(operations=[ResolvedPair(src=Path("/src"), dest=Path("/d.png"))])).success is True
+        kept = await storage.glob(pattern="**", ext=("py",))
+        assert [str(o.path) for o in kept.observations] == ["/d.png/x.py"]
+
     @needs("write", "glob")
     async def test_glob_filters_by_extension(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.py"), content="x")])
@@ -1069,8 +1099,8 @@ class StorageContract:
 
     @needs("write", "mkdir", "glob")
     async def test_glob_ext_matches_the_path_derived_extension(self, storage: ConformanceBackend) -> None:
-        # The filter reads the path, not the stored column: a dot-named
-        # directory matches even though it stores no extension of its own.
+        # One lexical law for every kind: a dot-named directory stores
+        # ext "py" and the filter (gate and pushdown alike) honors it.
         await storage.mkdir(path=Path("/v1.py"))
         await storage.write(entries=[Entry(path=Path("/v1.py/a.py"), content="x")])
         result = await storage.glob(pattern="*", ext=("py",))

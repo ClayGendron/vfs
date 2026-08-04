@@ -19,9 +19,10 @@ from ulid import ULID
 from tests.support.database_helpers import _SqliteError, _url
 from vfs.models import Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
-from vfs.paths import Path
+from vfs.paths import Path, extract_extension
 from vfs.results import VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
+from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import StaleSnapshot
 from vfs.storage.backends.database.engine import EngineHost
@@ -399,6 +400,40 @@ class TestExtPushdown:
         result = await storage.glob(pattern="*", ext=oversized)
         assert [str(o.path) for o in result.observations] == ["/a.py"]
         assert not any("ext IN" in s for s in statements), statements
+        await storage.close()
+
+    async def test_ext_binds_shrink_the_anchor_fan_chunk(self, tmp_path, monkeypatch) -> None:
+        # The ext membership rides in every fan statement, so its binds
+        # buy anchors out of each chunk — the sum stays inside the
+        # engine's parameter budget instead of exceeding it.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/d0/a.py", "file", "x")])
+        monkeypatch.setattr(EngineHost, "fan_budget", property(lambda self: 5))
+        anchors = tuple(Path(f"/d{i}") for i in range(20))
+        statements = self._recorded(storage)
+        await storage.glob(pattern="*", paths=anchors, ext=("py", "e1", "e2", "e3", "e4", "e5", "e6", "e7"))
+        fanned = [s for s in statements if "ext IN" in s]
+        # 8 ext binds displace 4 of the 5 anchors per chunk: 20 chunks.
+        assert len(fanned) == 20, len(fanned)
+
+    async def test_stored_ext_agrees_with_the_path_law_on_every_row(self, tmp_path) -> None:
+        # One law, whole table: after writes, minted parents, renames on
+        # both transfer verbs, and a trash hop, every stored ext equals
+        # extract_extension of the row's own path.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.first_touch()).success is True
+        await storage.write(entries=[Entry(path=Path("/a/b.txt"), content="x")], parents=True)
+        await storage.mkdir(path=Path("/v1.py"))
+        await storage.write(entries=[Entry(path=Path("/v1.py/c.md"), content="x")])
+        assert (await storage.copy(operations=[ResolvedPair(src=Path("/a/b.txt"), dest=Path("/a/d.png"))])).success
+        assert (await storage.move(operations=[ResolvedPair(src=Path("/a/d.png"), dest=Path("/a/e"))])).success
+        assert (await storage.delete(path=Path("/v1.py/c.md"))).success is True
+        tables = storage._host.tables
+        async with storage._host.session_factory() as session:
+            rows = (await session.execute(select(tables.entry.c.path, tables.entry.c.ext))).all()
+        assert len(rows) >= 7
+        for path, ext in rows:
+            assert ext == extract_extension(Path(path)), (path, ext)
         await storage.close()
 
     async def test_dot_only_ext_element_never_drops_extensionless_rows(self, tmp_path) -> None:
