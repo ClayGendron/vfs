@@ -89,6 +89,12 @@ Consequences that bind design work:
   in `context/` (research, decisions, specs, standards) or this file, where
   it is versioned and visible to everyone. The pipeline is research →
   decide → specify → code, all under standards — see `context/README.md`.
+- **The research stage means new investigation, not transcription** (Clay,
+  2026-08-04): a research memo is produced by actually gathering new
+  findings — subagents studying the reference repos, executed experiments,
+  benchmarks — that inform a pending decision or spec. Never write a memo
+  that merely records in-session reasoning or restates an ADR; that is
+  bookkeeping, and it belongs in the ADR or spec itself.
 
 ## Reference repos for research
 

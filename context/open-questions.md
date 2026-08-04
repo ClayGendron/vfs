@@ -315,3 +315,43 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
   statistics). The headline repro now returns the mount's rows; all
   four Docker engine legs green. This entry is the defect record;
   spec 091 owns closure.
+- **Dispatch-shape sub-fork:** resolved 2026-08-04 →
+  `decisions/031-pattern-only-glob-seam.md` (accepted): pattern-only
+  seam, one `patterns`-tuple call per entry in one transaction and
+  snapshot, root assertions carried by a concurrent router-side
+  probe. Spec 092 (draft) owns implementation; the same-day
+  five-agent research pass is recorded in
+  `research/2026-08-04-batched-glob-seam-field-study.md` (both
+  precedent claims confirmed; batched fan measured ~1.4-2× ahead at
+  every scale with sweet spot ~200 arms/statement; sqlite
+  expression-depth wall at 997 arms; ext facts must render inside
+  arms — a call-level AND beside the fan measured ~350× slower) and
+  is folded into the spec.
+
+## Probe verb for glob roots into a stat-incapable entry
+
+- **Asked:** 2026-08-04 by spec 092 shaping (the spec's one
+  `[NEEDS CLARIFICATION]` marker)
+- **Context:** ADR 031 D4 moves scoped-glob root assertions to a
+  batched point-read per entry, concurrent with the pattern
+  dispatch. An entry whose backend answers `glob` but not the
+  probe's point-read shape could be globbed yet not probed — the
+  find-operand law must not silently degrade there.
+- **Blocking:** nothing until 092 slice B; must be resolved in that
+  slice.
+- **Options considered:** capability-skip posture (probe unavailable
+  → the root's assertion recorded as the existing `unsupported`
+  skip, never silent — shaping-time lean); fall back to another read
+  verb (`ls`); declare the point-read capability a prerequisite for
+  scoped glob into the entry.
+- **Research (2026-08-04):**
+  `research/2026-08-04-batched-glob-seam-field-study.md` §3 —
+  precedent supports the skip posture: opendal propagates
+  capability-missing through `exists` as its own outcome
+  (three-way: present / absent / undeterminable), never coercing to
+  "absent"; the precedented fallback is a bounded list used as a
+  weaker signal (opendal `check`'s limit-1 lister, fsspec HTTP's
+  ls-based existence), which cannot distinguish empty-from-missing
+  on prefix-semantics backends and should be opt-in if built.
+- **Status:** open — narrowed to skip-posture (lean) vs demand-gated
+  list fallback; Clay decides at 092 slice B.

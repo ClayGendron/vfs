@@ -41,8 +41,42 @@ lines first; regenerate this file when the picture shifts (review the
   the residual dispatch step in `base.py`, the placement-invariance
   battery in `tests/base/test_glob_namespace.py`; residuation spike
   re-pointed at the landed functions stays the permanent acceptance
-  harness. Four Docker legs green. Awaiting its backward-flow
-  mining pass, then archive.
+  harness. Four Docker legs green. **Review remediation same day**
+  (five-lens verified review): adjacent-`**` canonicalization, empty
+  components refuse `invalid`, ext binds charged against the anchor
+  fan, per-anchor dispatch session-bounded + anchors deduped, linear
+  fan-out merge, and the review's test-coverage gaps pinned. The
+  dispatch-shape decision is **ADR 031, accepted 2026-08-04** after
+  its confirm pass — pattern-only glob seam, `patterns` tuple batch,
+  probe-carried assertions; **spec 092 (draft)** owns implementation.
+  **Walkthrough remediation 2026-08-04**: the executable routing
+  walkthrough (notebook study, same-named dir under
+  `../research/studies/`) exposed name-arm subsumption silently
+  dropping a covered root's find-operand assertion — fixed (name arm
+  now dispatches both arms, pinned in the namespace battery), and
+  ADR 031 sharpened from its confirm pass: ext arity committed
+  (call-level `ext`, per-arm derived), probe concurrent-and-separate
+  with skew accepted, probe stated as the general fan-out assertion
+  law scoped to glob, MSSQL benchmark gate and two battery cases
+  added as spec obligations.
+  Awaiting its backward-flow mining pass, then archive.
+- **092 — pattern-only glob seam** (draft 2026-08-04, born from ADR
+  031's ratification; not started). The batched `patterns` storage
+  contract, backend OR-arm executor under the bind budgets, the
+  router root probe, interim-scaffolding deletion, differential
+  find/rg battery, MSSQL benchmark gate. Supersedes the 091 interim
+  dispatch shape at landing. The five-agent research pass completed
+  same day —
+  `../research/2026-08-04-batched-glob-seam-field-study.md` — and
+  is folded in: both ADR 031 precedent claims confirmed (zoekt's
+  set-atom rewrite is the batch shape in production; no studied
+  system fans per root), the sqlite benchmark puts the fan ~1.4-2×
+  ahead at every scale (sweet spot ~200 arms/statement, hard
+  expression-depth wall at 997 arms), and two rendering rules were
+  learned the hard way: ext facts must render inside arms (a
+  call-level AND beside the fan measured ~350×), and LIKE-prefix
+  seeks have collation preconditions the `DialectProfile` must
+  declare. Awaiting shaping review.
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
