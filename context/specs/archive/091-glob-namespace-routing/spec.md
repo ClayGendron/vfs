@@ -14,6 +14,12 @@
   holds on the row *set* (compared sorted); row *order* remains the
   pre-existing fan-out merge order (entries in table order), which
   this story deliberately did not change.
+  **Mined 2026-08-05:** every decision was already downstream — ADR
+  030 (semantics; decision 3's dispatch shape since amended by ADR
+  031), the 2026-07-31 seam-routing memo, and the residuation study
+  (`../../../research/studies/2026-07-31-glob-residuation/`), which
+  stays the permanent acceptance harness. This folder is the
+  historical record; nothing here governs current work.
 - Previously: shaped and planned 2026-07-31, same session as ADR 030
   (accepted) — all forks resolved there; see `plan.md`.
 - **Date:** 2026-07-31

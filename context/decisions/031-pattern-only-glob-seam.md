@@ -14,7 +14,12 @@
   (the stat-incapable corner resolved as honest "undeterminable" per
   Clay's confirm), and the interim dispatch shape is deleted. The
   MSSQL benchmark gate (decision 7) passed: the batched fan measured
-  3.8×/1.4× ahead of per-root dispatch at K=100/1,000.
+  3.8×/1.4× ahead of per-root dispatch at K=100/1,000. Spec 092 was
+  mined to `../specs/archive/` 2026-08-05; decision 8's differential
+  battery lives on at
+  `../research/studies/2026-08-05-glob-differential-battery/` (the
+  permanent acceptance harness) and the benchmark, result recorded,
+  at `../research/studies/2026-08-05-mssql-glob-fan-benchmark/`.
 - **Date:** 2026-08-01
 - **Deciders:** Clay Gendron
 - **Context source:** the five-lens verified review of commit

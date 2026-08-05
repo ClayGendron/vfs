@@ -10,7 +10,7 @@ enough to leave the repo as a handoff artifact.
 ```
 specs/
   active/     # open specs — seed, draft, shaped, or in progress
-  archive/    # landed specs awaiting their mining pass
+  archive/    # landed specs — permanent historical record
   README.md
   STATUS.md
 ```
@@ -18,9 +18,10 @@ specs/
 - **`active/`** holds every spec that is not yet landed, whatever its
   maturity (seed, draft, parked, in progress). If work is happening or
   could happen, the folder lives here.
-- **`archive/`** holds landed specs whose durable residue has not yet
-  flowed backward (see Lifecycle step 5). Nothing in `archive/` governs
-  current work; mine opportunistically and delete each folder once mined.
+- **`archive/`** holds landed specs permanently (policy since
+  2026-08-05; deletion-after-mining is rescinded). A spec arrives here
+  awaiting its mining pass and stays after it as a historical record.
+  Nothing in `archive/` governs current work.
 
 ## Naming
 
@@ -70,8 +71,9 @@ doesn't require them.
 5. **On landing, the folder moves to `archive/`** with its status line
    updated to name the landing commit. From there, durable residue flows
    backward — decisions made during implementation → `../decisions/`,
-   research and benchmark results → `../research/` — then the folder is
-   deleted. Git history is the permanent record.
+   research and benchmark results → `../research/` — and the mined
+   folder stays in `archive/`, its status line noting the mining date
+   and where the residue went.
 
 ## Status tracking
 

@@ -22,7 +22,17 @@ Deliberate divergences (the allowlist, asserted where demonstrable):
 - defective patterns refuse loudly in vfs (never silent-empty);
 - vfs never consults ignore files and matches dotfiles (rg -uu parity).
 
-Run:  uv run python context/specs/active/092-pattern-only-glob-seam/spike/differential_battery.py
+One portability find worth keeping: rg anchors leading-slash globs at
+its *cwd*, so the rg leg runs once per scope root with cwd set to that
+root — which reproduces vfs's root-relative anchoring rule exactly.
+
+Moved here 2026-08-05 at spec 092's mining pass (born as that spec's
+spike, per ADR 031 decision 8). Landed-run record (2026-08-05): 52
+case-checks green — find leg (name arms, operands, missing-root
+exit-1), rg -uu leg (segment-aware path arms from each root), the
+operand-exemption divergence, and loud refusals.
+
+Run:  uv run python context/research/studies/2026-08-05-glob-differential-battery/differential_battery.py
 """
 
 from __future__ import annotations

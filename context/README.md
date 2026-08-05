@@ -34,19 +34,22 @@ The directory names matter less than the flow contract between them:
   our own original implementation — memos cite and describe, nothing more.
 - **`decisions/`** — append-only ADRs. Each cites the research it stands on
   and names what it supersedes. Where "we studied X" becomes "we will do Y."
-- **`specs/`** — **ephemeral by design.** Born from decisions, small enough
-  for one developer, self-contained enough to leave the repo. Open specs
-  live in `specs/active/`; on landing a spec moves to `specs/archive/`,
-  its durable residue flows *backward* — decisions made during
-  implementation → `decisions/`, research done along the way → `research/`
-  — and then the spec is deleted. Git history is the permanent record.
+- **`specs/`** — **retired on landing, never authoritative afterward.**
+  Born from decisions, small enough for one developer, self-contained
+  enough to leave the repo. Open specs live in `specs/active/`; on
+  landing a spec moves to `specs/archive/`, and its durable residue
+  flows *backward* — decisions made during implementation →
+  `decisions/`, research done along the way → `research/`. The mined
+  folder stays in `archive/` as a historical record (policy since
+  2026-08-05 — archived specs were previously slated for deletion);
+  nothing there governs current work.
 - **`standards/`** — versioned, rarely changed, and the only directory the
   other three must obey. Holds the constitution, mission, roadmap, the
   how-we-build standards, the quality rubric, and the `grades/` time series.
 
-The backward-flow rule is the key design point: it is what makes specs
-safely deletable and keeps `decisions/` and `research/` as the permanent
-memory.
+The backward-flow rule is the key design point: it is what lets a
+landed spec safely go stale and keeps `decisions/` and `research/` as
+the permanent memory a reader can trust without opening the archive.
 
 ## Clarification over guessing
 

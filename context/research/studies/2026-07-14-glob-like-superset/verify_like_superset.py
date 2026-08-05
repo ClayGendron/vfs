@@ -62,7 +62,14 @@ end-to-end — the ANSI reference agreed with Postgres on 100% of pairs):
   configuration: SQLAlchemy renders the ESCAPE char inline (the
   pattern itself is a bound parameter).
 
-Run:  uv run python context/specs/active/073-glob-segment-semantics/spike/verify_like_superset.py
+Moved here 2026-08-05 at spec 073's mining pass (born 2026-07-14 as
+that spec's spike). Landed-run record (re-verified 2026-08-05, from
+this location): claims 2-5 green — 523,064 authoritative matches with
+zero prefilter drops; 6,636 derivable patterns, 81,260 matches kept
+by the derived-ext filter. The decision set this study underwrites is
+ADR 032.
+
+Run:  uv run python context/research/studies/2026-07-14-glob-like-superset/verify_like_superset.py
 Exit: nonzero on any property violation.
 """
 

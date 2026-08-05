@@ -7,10 +7,18 @@ an unexamined regression on one engine, so this gate measures both
 shapes through the live executor before the 200-arm default stands for
 the mssql dialect.
 
+Measured 2026-08-05 (live docker leg, 2,000 files under 1,000 roots,
+medians of 3, identical row sets verified): the batched fan wins at
+both scales — K=100: 166 ms vs 629 ms per-root (3.8x); K=1,000:
+4.72 s vs 6.57 s (1.4x). The review-era observation (per-root beating
+a batched fan on MSSQL) does not reproduce through the
+one-transaction executor; the 200-arm default stands for the mssql
+dialect. Moved here 2026-08-05 at spec 092's mining pass.
+
 Requires the docker MSSQL leg up (db_test skill) and the mssql extra:
 
     VFS_TEST_MSSQL_URL="mssql+aioodbc://sa:...@localhost:14330/master?..." \
-      uv run python context/specs/active/092-pattern-only-glob-seam/spike/mssql_fan_benchmark.py
+      uv run python context/research/studies/2026-08-05-mssql-glob-fan-benchmark/mssql_fan_benchmark.py
 
 Shape: K root directories of M files each; the batched leg is one
 glob call carrying K composed patterns (the executor chunks at the

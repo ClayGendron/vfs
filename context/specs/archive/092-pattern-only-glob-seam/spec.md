@@ -17,8 +17,15 @@
   (2026-08-05): probe posture (a) — a stat-incapable entry's roots
   are honestly **undeterminable** (warning on record, never coerced
   to absent) — with the bounded-list fallback demand-gated; "really
-  every storage backend should support read." Awaiting its
-  backward-flow mining pass, then archive.
+  every storage backend should support read."
+  **Mined 2026-08-05:** decisions were already ADR 031 (its status
+  carries the landing, the probe resolution, and the benchmark
+  verdict); the two spikes moved to
+  `../../../research/studies/2026-08-05-glob-differential-battery/`
+  (permanent acceptance harness) and
+  `../../../research/studies/2026-08-05-mssql-glob-fan-benchmark/`
+  (result recorded in its docstring). This folder is the historical
+  record; nothing here governs current work.
   Drafted 2026-08-04 in the ADR 031 ratification session, from the
   confirm pass, the executable routing walkthrough
   (`../../../research/studies/2026-08-04-adr-031-routing-walkthrough/`,

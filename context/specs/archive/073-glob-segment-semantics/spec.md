@@ -10,6 +10,12 @@
   zero, all four Docker engine legs green, and the spike re-pointed
   at the landed functions passes claims 2–5 over 523k authoritative
   matches (claim 1 retired with the old translator). History below.
+  **Mined 2026-08-05:** the decision set is recorded as ADR 032
+  (`../../../decisions/032-glob-segment-semantics-and-pushdown-doctrine.md`);
+  the spike moved to
+  `../../../research/studies/2026-07-14-glob-like-superset/` and stays
+  the translator's permanent acceptance harness. This folder is the
+  historical record; nothing here governs current work.
 - Previously: shaped — drafted 2026-07-14 from the 072 slice-7
   design-precedent review (four-agent reference sweep over fsspec,
   pyfilesystem2, CPython, SQLite/Postgres, zoekt/codesearch, JuiceFS,

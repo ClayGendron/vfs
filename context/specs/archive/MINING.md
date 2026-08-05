@@ -1,5 +1,10 @@
 # Archive mining catalog — 2026-07-16
 
+> **Policy note (2026-08-05, Clay):** archived specs are **not
+> deleted** — `archive/` is the permanent historical record. This
+> catalog's promote verdicts (which residue flows backward) stand;
+> its delete instructions are rescinded. See `../README.md`.
+
 Verdicts from the four-agent mining pass over all 55 archived stories
 (each spec read and cross-checked against `src/vfs/`, the four existing
 ADRs, and the `research/` corpus). Execution order: write the promoted
