@@ -81,6 +81,49 @@ contract-changing slices (C and D) via the `db_test` skill.
 9. **Traits**: `grep_tier="indexed"`, `grep_staleness="overlay"`;
    the protocol `Literal` vocabulary updates in slice C.
 
+## Slice B design (pinned at implementation, 2026-08-05)
+
+The live entries schema has **no** `chunked`/`encoded` columns — ADR
+013 D3 describes them as "already stamped," but they never landed.
+Slice B adds them, honoring ADR 013's letter (entry-level Boolean
+flags, version-guarded flips, flag-partitioned mutual exclusivity):
+
+1. **Two entry columns**: `chunked` (chunk rows reflect current
+   content) and `encoded` (the current epoch's postings cover this
+   entry), both `Boolean NOT NULL default False`. Content-writing
+   ops (write-overwrite, edit) reset both to False in the same
+   statement that writes the body; new rows get the defaults;
+   move/copy/restore never touch them (doc ids key on chunk id, so a
+   rename invalidates nothing; a copy's new entry starts unindexed
+   by default).
+2. **Eligibility is an entry property** (zoekt's gates are per-file):
+   body ≤ 2 MiB, no NUL byte, ≥ 3 bytes, ≤ 20,000 distinct grams.
+   An ineligible entry is marked `chunked=True` with **zero chunk
+   rows** and `encoded` stays False forever — scan-side residency is
+   derivable (`chunked AND NOT encoded AND NOT EXISTS chunks`), no
+   tri-state column needed. The per-chunk `encoded` column is
+   reserved for the incremental future ADR 013 envisions; this pass
+   drives entry-level flags only.
+3. **Grep's partition**: index side `WHERE encoded`; scan side
+   `WHERE NOT encoded`. Mutually exclusive by one column.
+4. **Reindex phases**: (a) chunk phase — per dirty entry
+   (`NOT chunked`): read content at version V, delete stale chunks,
+   insert new chunk rows (or none if ineligible), then
+   `SET chunked=true WHERE entry_id=:id AND version=:V`
+   (rows-affected checked; a raced entry stays dirty); (b) posting
+   build — full rebuild from all chunks of chunked-and-eligible
+   entries under epoch N+1, bulk-inserted sorted by
+   `(epoch, gram_key)` in byte-capped batches (invisible until the
+   flip); (c) **one publish transaction**: version-guarded
+   `SET encoded=true` for every covered entry **and** the CAS epoch
+   pointer flip together — flag flips outside that transaction would
+   open a false-negative window where a reader treats an entry as
+   index-side before its grams are queryable; (d) old-epoch
+   reclamation, separate and slower.
+5. **Idempotent-cheap no-op**: no `NOT chunked` rows, no
+   chunked-with-chunks-but-unencoded rows, and the current epoch's
+   two-part fingerprint matches → return without building.
+
 ## Slices
 
 - **A — codec.** Property tests red first: round-trip over random

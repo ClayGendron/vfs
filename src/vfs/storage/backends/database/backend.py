@@ -40,7 +40,15 @@ from vfs.storage.backends.database.dialects import (
     topology_execution_options,
 )
 from vfs.storage.backends.database.engine import EngineHost
+from vfs.storage.backends.database.indexing import (
+    ReindexState,
+    build_epoch,
+    chunk_dirty,
+    publish_epoch,
+    reclaim_epochs,
+)
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
+from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.topology import delete_rows, restore_rows, sweep_rows, transfer_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
 from vfs.storage.protocol import targets_of
@@ -403,6 +411,33 @@ class DatabaseStorage:
         if refusal is not None:
             return Result(ops=("first_touch",), errors=[refusal])
         return Result(ops=("first_touch",))
+
+    async def reindex(self) -> Result:
+        """Batch gram-index build: chunk, build the next epoch, publish, reclaim.
+
+        Idempotent-cheap when nothing is dirty and the epoch fingerprint
+        matches. Each phase runs in its own writer transaction; posting
+        rows are invisible until the publish transaction flips the
+        ``encoded`` flags and the epoch pointer together.
+        """
+        tables = self._host.tables
+        state = ReindexState()
+        result = await self._execute_write(
+            "reindex", lambda session: chunk_dirty(session, tables, self._host.membership_budget)
+        )
+        if not result.success:
+            return result
+        result = await self._execute_write(
+            "reindex", lambda session: build_epoch(session, tables, self._host.parameter_budget, state)
+        )
+        if not result.success or state.epoch is None:
+            return result
+        await seam("reindex:before-publish")
+        result = await self._execute_write("reindex", lambda session: publish_epoch(session, tables, state))
+        if not result.success:
+            return result
+        epoch = state.epoch
+        return await self._execute_write("reindex", lambda session: reclaim_epochs(session, tables, epoch))
 
     async def close(self) -> None:
         await self._host.close()

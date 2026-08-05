@@ -41,6 +41,7 @@ from vfs.storage.backends.database.writes import (
     _upsert_constructor,
     _upsert_layer,
 )
+from vfs.storage.protocol import ResolvedPair
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -174,6 +175,47 @@ class TestWriteMechanics:
         async with storage._host.engine.connect() as conn:
             rows = (await conn.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.path == "/f.txt"))).all()
         assert rows == [(minted, 2)]  # same row, only the version moved
+        await storage.close()
+
+    async def test_content_writes_reset_the_index_flags(self, tmp_path) -> None:
+        # The grep overlay's dirty set: new rows start unindexed, and
+        # every content write (overwrite, edit) resets both flags.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")])
+        entry = storage._host.tables.entry
+        flags = select(entry.c.chunked, entry.c.encoded).where(entry.c.path == "/f.txt")
+
+        async def flags_now() -> tuple[bool, bool]:
+            async with storage._host.engine.connect() as conn:
+                return (await conn.execute(flags)).one()._tuple()
+
+        async def mark_indexed() -> None:
+            async with storage._host.engine.begin() as conn:
+                await conn.execute(update(entry).values(chunked=True, encoded=True))
+
+        assert await flags_now() == (False, False)
+        await mark_indexed()
+        assert (await storage.write(entries=[Entry(path=Path("/f.txt"), content="b")])).success is True
+        assert await flags_now() == (False, False)
+        await mark_indexed()
+        edited = await storage.edit(edits=[EditOperation(old="b", new="c")], path=Path("/f.txt"))
+        assert edited.success is True
+        assert await flags_now() == (False, False)
+        await storage.close()
+
+    async def test_move_preserves_the_index_flags(self, tmp_path) -> None:
+        # Doc ids key on chunk identity, never path: a rename
+        # invalidates nothing and must not re-dirty the row.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        entry = storage._host.tables.entry
+        async with storage._host.engine.begin() as conn:
+            await conn.execute(update(entry).values(chunked=True, encoded=True))
+        moved = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))])
+        assert moved.success is True
+        async with storage._host.engine.connect() as conn:
+            row = (await conn.execute(select(entry.c.chunked, entry.c.encoded).where(entry.c.path == "/b.txt"))).one()
+        assert row._tuple() == (True, True)
         await storage.close()
 
     async def test_over_key_byte_budget_classifies_unaddressable(self, tmp_path) -> None:

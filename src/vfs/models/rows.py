@@ -58,7 +58,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
-from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 from sqlalchemy.dialects.oracle import RAW
 from ulid import ULID
 
@@ -76,7 +76,7 @@ if TYPE_CHECKING:
 # per-entry version — minted and guarded storage-side, reported on
 # observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
-    {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "version"},
+    {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "version", "chunked", "encoded"},
 )
 
 # The Entry field homed in the content table rather than the entries row —
@@ -349,6 +349,10 @@ def build_vfs_tables(
         Column("ext", _string(32), index=True),
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
+        # Grep-overlay dirty flags: chunk rows reflect this content /
+        # the current gram epoch covers it. Content writes reset both.
+        Column("chunked", Boolean, nullable=False, default=False),
+        Column("encoded", Boolean, nullable=False, default=False),
         Column("owner_id", _string(255), index=True),
         Column("original_parent_id", ULIDKey()),
         Column("original_name", BytewiseString(MAX_SEGMENT_LENGTH)),
@@ -478,7 +482,9 @@ def build_vfs_tables(
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("gram_key", Integer, primary_key=True, autoincrement=False),
-        Column("postings", LargeBinary, nullable=False),
+        # Mysql's bare BLOB silently truncates at 64KB; a hot gram's
+        # doclist blob routinely exceeds it.
+        Column("postings", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
         Column("encoding", SmallInteger, nullable=False, default=ENCODING_DELTA_VARINT),
         Column("doc_count", Integer, nullable=False),
         Column("byte_size", Integer, nullable=False),

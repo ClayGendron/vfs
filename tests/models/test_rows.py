@@ -366,6 +366,13 @@ class TestDDL:
         for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
             assert [column.type.compile(dialect=dialect) for column in bodies] == ["LONGTEXT"] * 4
 
+    def test_posting_blobs_compile_to_longblob_on_the_mysql_family(self, tables: VFSTables) -> None:
+        # Bare BLOB silently truncates at 64KB; a hot gram's doclist
+        # blob routinely exceeds it.
+        postings = tables.posting_list.c.postings
+        for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
+            assert postings.type.compile(dialect=dialect) == "LONGBLOB"
+
     def test_id_keys_declare_identity_in_ddl(self, tables: VFSTables) -> None:
         # Oracle generates nothing for a bare autoincrement PK (ORA-01400 on
         # insert); Postgres moved off BIGSERIAL — both must render IDENTITY.

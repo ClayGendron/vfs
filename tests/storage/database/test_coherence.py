@@ -1253,8 +1253,9 @@ class TestWriteVsTopologyCoherence:
         dialect = mssql.dialect()
         width = len(_CLOBBER_COLUMNS) + 4
         now = datetime.now(UTC)
-        full = (str(ULID()), 1, 2, "/full.txt", "file", "h" * 64, "text/plain", "txt", 1, 4, "O" * 26, now)
-        sparse = (str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, None, now)
+        owner = "O" * 26
+        full = (str(ULID()), 1, 2, "/full.txt", "file", "h" * 64, "text/plain", "txt", 1, 4, False, False, owner, now)
+        sparse = (str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, False, False, None, now)
 
         def budget(row: tuple[object, ...]) -> int:
             return statement_budget(

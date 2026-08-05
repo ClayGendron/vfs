@@ -13,6 +13,23 @@
   the int64-wrap sign check) with its 13-row property/corruption
   battery; numpy is a core dependency. Suite 2023 passed, coverage
   100%, `ruff`/`ty` zero.
+  **Slice B landed 2026-08-05**: the entries table gains the
+  `chunked`/`encoded` flag pair (ADR 013's letter — they had never
+  landed; content writes reset both via the clobber-column seam,
+  move preserves them, all pinned), and `indexing.py` +
+  `DatabaseStorage.reindex()` land the batch lifecycle — chunk phase
+  with entry-level eligibility gates (oversize/gram-saturation;
+  NUL needs no gate, the entry model refuses it at the write door;
+  ineligible = chunked with zero chunks, scan-side forever), full
+  posting build under a fresh epoch in byte-capped sorted batches,
+  one publish transaction (version-guarded unattributed `encoded`
+  flips + the epoch-pointer CAS — a flag miss just stays scan-side,
+  only the CAS checks rowcount), reclamation, and the two-part
+  fingerprint no-op. Posting blobs pin `LONGBLOB` on the mysql
+  family. 14 new rows (`test_indexing.py` incl. the
+  `reindex:before-publish` seam race; flag pins in
+  `test_writes.py`). Suite 2037 passed, coverage 100%, `ruff`/`ty`
+  zero; the four Docker legs run at slice C over the new schema.
 - **Date:** 2026-08-05
 - **Owner:** Clay Gendron
 - **Kind:** verb implementation (the last read-family stub) + index
