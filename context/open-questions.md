@@ -319,8 +319,10 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
   `decisions/031-pattern-only-glob-seam.md` (accepted): pattern-only
   seam, one `patterns`-tuple call per entry in one transaction and
   snapshot, root assertions carried by a concurrent router-side
-  probe. Spec 092 (draft) owns implementation; the same-day
-  five-agent research pass is recorded in
+  probe. Spec 092 owns implementation — **landed 2026-08-05** (all
+  four slices; four Docker legs green; MSSQL benchmark gate passed,
+  batched fan 3.8×/1.4× ahead of per-root at K=100/1,000); the
+  same-day five-agent research pass is recorded in
   `research/2026-08-04-batched-glob-seam-field-study.md` (both
   precedent claims confirmed; batched fan measured ~1.4-2× ahead at
   every scale with sweet spot ~200 arms/statement; sqlite
@@ -353,5 +355,14 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
   weaker signal (opendal `check`'s limit-1 lister, fsspec HTTP's
   ls-based existence), which cannot distinguish empty-from-missing
   on prefix-semantics backends and should be opt-in if built.
-- **Status:** open — narrowed to skip-posture (lean) vs demand-gated
-  list fallback; Clay decides at 092 slice B.
+- **Status:** resolved 2026-08-05 (Clay, in session, at the 092
+  implementation kickoff): the capability-skip posture — such roots
+  report honestly **undeterminable**, a warning-severity
+  `unsupported` record naming root and entry, never coerced to
+  "absent", never a silent pass; the bounded-list fallback stays
+  demand-gated. Clay's note: "really every storage backend should
+  support read" — the gap is a corner, not a designed-for path.
+  Landed in `_glob_probes` (`base.py`), pinned by
+  `test_glob_root_in_a_stat_incapable_entry_is_undeterminable`
+  (`tests/base/test_dispatch.py`). Recorded in spec 092's Open
+  questions; this entry is closed.

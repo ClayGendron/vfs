@@ -1,18 +1,32 @@
 # 092 — Pattern-only glob seam: batched patterns and the root probe
 
-- **Status: draft 2026-08-04** — shaped in the ADR 031 ratification
-  session, immediately after the confirm pass and the executable
-  routing walkthrough
-  (`../../../research/studies/2026-08-04-adr-031-routing-walkthrough/`).
-  Not started. **Research pass complete and folded** (same day):
-  the five-agent field study —
+- **Status: landed 2026-08-05** — all four slices in one session on
+  Clay's go-ahead ("can we work on implementing spec 92?"), which
+  stood in for the shaping review. Slice A: `composed_pattern` in
+  `glob_patterns.py`, unit-tabled. Slice B: the protocol flip,
+  backend pattern-fan executor, router batch dispatch + concurrent
+  probe, tests rewritten — the walkthrough gap test and
+  `test_roots_stay_assertions` passed **unchanged**. Slice C: interim
+  scaffolding deleted with the flip; anchor vocabulary retired.
+  Slice D: differential battery green (52 case-checks), scale rows
+  pinned (10k roots → one glob call + one probe; 10k patterns → 50
+  statements, one session), four Docker legs green (postgres 173 /
+  mysql 173 / mssql 174 / oracle 172 passed), **MSSQL benchmark gate
+  passed** (below). Suite 2010 passed, coverage 100%, `ruff`/`ty`
+  zero. The slice-B open question was resolved by Clay in-session
+  (2026-08-05): probe posture (a) — a stat-incapable entry's roots
+  are honestly **undeterminable** (warning on record, never coerced
+  to absent) — with the bounded-list fallback demand-gated; "really
+  every storage backend should support read." Awaiting its
+  backward-flow mining pass, then archive.
+  Drafted 2026-08-04 in the ADR 031 ratification session, from the
+  confirm pass, the executable routing walkthrough
+  (`../../../research/studies/2026-08-04-adr-031-routing-walkthrough/`,
+  which records the pre-092 interim dispatch shape — historical by
+  design), and the five-agent field study —
   `../../../research/2026-08-04-batched-glob-seam-field-study.md` —
-  confirmed both precedent claims, measured the sqlite fan
-  (batched wins ~1.4-2× at every scale, sweet spot ~200
-  arms/statement, expression-depth ceiling at 1000), and revised
-  the executor rendering rule (ext facts render inside arms; a
-  call-level AND beside the fan costs ~350× by killing the OR
-  optimization). Awaiting shaping review.
+  whose rendering rules the executor implements (ext facts inside
+  arms, ~200-arm chunks, expression-depth budget).
 - **Date:** 2026-08-04
 - **Owner:** Clay Gendron
 - **Kind:** storage-protocol signature change + backend batch
@@ -177,12 +191,29 @@ transactions, and no channel for an assertion to fall through.**
   name-arm hits **direct children** of its root (`**` matches zero
   segments), and composition-manufactured adjacent `**`
   canonicalizes.
+  **Landed** as `spike/differential_battery.py`: 52 case-checks
+  green (find leg over name arms and operands, rg `-uu` leg over the
+  segment-aware language run from each scope root — rg anchors
+  leading-slash globs at its cwd, which reproduces vfs's
+  root-relative rule exactly — plus the operand-exemption
+  divergence, the missing-root exit-1 shape, and loud refusals).
 - **Existing harnesses stay green unchanged:** the placement-
   invariance battery, `verify_residuation.py` (identical
   statistics), the conformance suite's glob rows as rewritten.
+  **Verified**: `verify_residuation.py` reports the recorded
+  statistics exactly (cases=5610, failures=0, dead-mount skips=5770,
+  multi-residual dispatches=268, max residual-set size=2); the
+  LIKE-superset spike stays green.
 - **MSSQL benchmark gate:** the batched OR fan measured against
   per-root dispatch on MSSQL before its chunk width becomes that
   dialect's default; result recorded in this spec before archive.
+  **Measured 2026-08-05** (`spike/mssql_fan_benchmark.py`, live
+  executor over the docker leg, 2,000 files under 1,000 roots,
+  medians of 3, identical row sets verified): batched fan **wins at
+  both scales** — K=100: 166 ms vs 629 ms per-root (3.8×); K=1,000:
+  4.72 s vs 6.57 s (1.4×). The review-era observation does not
+  reproduce through the one-transaction executor; the 200-arm
+  default stands for the mssql dialect.
 - **Scale row:** 10k roots into one entry → one storage call, one
   probe call, statements chunked within budget (recorded-statement
   assertion on sqlite with a pinned budget, per the 073 idiom).
@@ -260,16 +291,14 @@ transactions, and no channel for an assertion to fall through.**
 
 ## Open questions
 
-- [NEEDS CLARIFICATION: the probe verb for a glob-capable but
-  stat-incapable entry — capability-skip, or a bounded-list
-  fallback?] The field study narrowed this to two precedented
-  postures: (a) record the `unsupported` skip — opendal's shape,
-  where capability-missing propagates as its own outcome (present /
-  absent / undeterminable) and is never coerced to "absent"; (b)
-  degrade to a bounded list used as a weaker signal (opendal
-  `Operator::check`'s limit-1 lister, fsspec HTTP's ls-based
-  existence) — precedented, but it cannot distinguish
-  empty-from-missing on prefix-semantics backends and should be
-  opt-in and observable if built. Shaping-time lean remains (a),
-  with (b) demand-gated. Decision is Clay's; resolve in slice B.
-  Pointer in `../open-questions.md`.
+- ~~The probe verb for a glob-capable but stat-incapable entry~~ —
+  **resolved by Clay, 2026-08-05**: posture (a), the capability-skip.
+  The probe reports such roots as honestly undeterminable — a
+  warning-severity `unsupported` record naming root and entry, never
+  coerced to "absent", never a silent pass (opendal's shape:
+  capability-missing is its own outcome). The bounded-list fallback
+  (b) stays demand-gated. Clay's note: "really every storage backend
+  should support read" — the gap is a corner, not a designed-for
+  path. Landed in `_glob_probes` and pinned in
+  `tests/base/test_dispatch.py`
+  (`test_glob_root_in_a_stat_incapable_entry_is_undeterminable`).

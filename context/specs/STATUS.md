@@ -48,7 +48,8 @@ lines first; regenerate this file when the picture shifts (review the
   fan-out merge, and the review's test-coverage gaps pinned. The
   dispatch-shape decision is **ADR 031, accepted 2026-08-04** after
   its confirm pass — pattern-only glob seam, `patterns` tuple batch,
-  probe-carried assertions; **spec 092 (draft)** owns implementation.
+  probe-carried assertions; **spec 092 (landed 2026-08-05)** owned
+  implementation, and the interim dispatch shape is deleted.
   **Walkthrough remediation 2026-08-04**: the executable routing
   walkthrough (notebook study, same-named dir under
   `../research/studies/`) exposed name-arm subsumption silently
@@ -60,23 +61,33 @@ lines first; regenerate this file when the picture shifts (review the
   law scoped to glob, MSSQL benchmark gate and two battery cases
   added as spec obligations.
   Awaiting its backward-flow mining pass, then archive.
-- **092 — pattern-only glob seam** (draft 2026-08-04, born from ADR
-  031's ratification; not started). The batched `patterns` storage
-  contract, backend OR-arm executor under the bind budgets, the
-  router root probe, interim-scaffolding deletion, differential
-  find/rg battery, MSSQL benchmark gate. Supersedes the 091 interim
-  dispatch shape at landing. The five-agent research pass completed
-  same day —
-  `../research/2026-08-04-batched-glob-seam-field-study.md` — and
-  is folded in: both ADR 031 precedent claims confirmed (zoekt's
-  set-atom rewrite is the batch shape in production; no studied
-  system fans per root), the sqlite benchmark puts the fan ~1.4-2×
-  ahead at every scale (sweet spot ~200 arms/statement, hard
-  expression-depth wall at 997 arms), and two rendering rules were
-  learned the hard way: ext facts must render inside arms (a
-  call-level AND beside the fan measured ~350×), and LIKE-prefix
-  seeks have collation preconditions the `DialectProfile` must
-  declare. Awaiting shaping review.
+- **092 — pattern-only glob seam** — **landed 2026-08-05** (all four
+  slices in one session on Clay's go-ahead). The storage glob
+  contract is now `patterns: tuple[str, ...]` — scoping crosses the
+  seam only as pattern text (`composed_pattern` in
+  `glob_patterns.py`: name arm `root/**/pattern`, path arm via
+  `effective_pattern`, canonicalization downstream of composition),
+  one batched call per entry in one transaction/snapshot; the
+  backend executor renders one self-contained OR-arm per pattern
+  (all ext and liveness facts inside the arm — the multi-index OR
+  plan is pinned surviving them; a contradicted arm is dead before
+  SQL), chunked at ~200 arms by `arm_budget` (bind, IN-list, and
+  expression-depth caps); root assertions ride a concurrent
+  router-side `stat` probe per owning entry (three-way outcomes —
+  Clay resolved the stat-incapable corner 2026-08-05 as honest
+  "undeterminable" warnings; root rows served on a pattern hit, the
+  find-operand rule). Interim scaffolding (per-residual dispatches,
+  session bound, subsumption carve-out) deleted; storage-side
+  "anchor" vocabulary retired. Proof: differential find/rg battery
+  green (52 case-checks, `spike/differential_battery.py`), scale
+  rows pinned (10k roots → one glob + one probe call; 10k patterns
+  → 50 statements, one session), `verify_residuation.py` identical
+  statistics, four Docker legs green (postgres 173 / mysql 173 /
+  mssql 174 / oracle 172), MSSQL benchmark gate passed (batched fan
+  3.8× ahead at K=100, 1.4× at K=1,000 —
+  `spike/mssql_fan_benchmark.py`). Suite 2010 passed, coverage
+  100%, `ruff`/`ty` zero. Awaiting its backward-flow mining pass,
+  then archive.
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
@@ -172,8 +183,8 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
-→ 089 → 090 → 073 → 091. ADRs 001–030 accepted (005 superseded by
-016; 021/022 proposed, awaiting ratification; 018 awaiting its wiring
-spec). Tree green at 1972 passed / 780 skipped, `ruff`/`ty` at zero,
-all four Docker engine legs green as of the 073+091 landing
-(2026-08-01).
+→ 089 → 090 → 073 → 091 → 092. ADRs 001–031 accepted (005 superseded
+by 016; 021/022 proposed, awaiting ratification; 018 awaiting its
+wiring spec). Tree green at 2010 passed / 800 skipped, `ruff`/`ty` at
+zero, all four Docker engine legs green as of the 092 landing
+(2026-08-05).

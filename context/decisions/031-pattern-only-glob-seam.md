@@ -9,7 +9,12 @@
   "no protocol change" is withdrawn) and completes its §6; every
   ADR 030 *semantics* decision (namespace coordinates, residuation,
   roots as assertions, gitignore-exact anchoring) stands unchanged.
-  **Spec 092 owns implementation.**
+  **Spec 092 owns implementation** — landed 2026-08-05: the
+  pattern-only seam is live, the probe carries the find-operand law
+  (the stat-incapable corner resolved as honest "undeterminable" per
+  Clay's confirm), and the interim dispatch shape is deleted. The
+  MSSQL benchmark gate (decision 7) passed: the batched fan measured
+  3.8×/1.4× ahead of per-root dispatch at K=100/1,000.
 - **Date:** 2026-08-01
 - **Deciders:** Clay Gendron
 - **Context source:** the five-lens verified review of commit
