@@ -35,8 +35,9 @@ session inside these methods, and the router never sees it.
 Two read semantics every backend implements identically: **enumeration
 liveness** — default-scope enumeration (``ls``, ``tree``, ``glob``,
 ``grep``) hides the reserved ``/.vfs`` meta subtree, and direct meta
-addressing (a target inside it; for glob, a meta literal prefix in the
-pattern) serves its own subtree, never the whole scope; and **scope
+addressing (a target inside it; for the pattern-search verbs, a meta
+literal prefix in a pattern) serves its own subtree, never the whole
+scope; and **scope
 roots as POSIX ``find`` operands** — a missing root classifies through
 the descent ladder beside the healthy roots' rows (partial results,
 per-root errors), while an existing root's own row is matched against
@@ -89,7 +90,7 @@ TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
 
 TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
     "grep_tier": frozenset({"indexed", "scan"}),
-    "grep_staleness": frozenset({"none", "watermark"}),
+    "grep_staleness": frozenset({"none", "overlay"}),
     "version_encoding": frozenset({"per_entry64"}),
     "durability": frozenset({"full", "relaxed"}),
     "arbitration": frozenset({"upsert", "catch_retry"}),
@@ -147,14 +148,15 @@ class SupportsRead(Protocol):
 class SupportsPatternSearch(Protocol):
     """The pattern-search family: literal/regex matching over names and content.
 
-    Namespace-wide queries.  Glob's scoping crosses this seam only as
-    pattern text: the router composes scope roots into the *patterns*
-    batch, answered in one transaction and one snapshot per call —
-    rows matching **any** pattern, one refusable pattern refusing the
-    call whole.  Grep still carries scope ``paths`` (empty means
-    unscoped) until it adopts the same seam.  Split from ranked search
-    (:class:`SupportsGlean`) because a lexical scan needs no retrieval
-    index: partial backends routinely have one without the other.
+    Namespace-wide queries.  Scoping crosses this seam only as pattern
+    text: the router composes scope roots into glob's *patterns* batch
+    and into grep's ``globs``/``globs_not`` channels, answered in one
+    transaction and one snapshot per call.  Glob returns rows matching
+    **any** pattern, one refusable pattern refusing the call whole;
+    grep's ``pattern`` is content-only and never a path.  Split from
+    ranked search (:class:`SupportsGlean`) because a lexical scan needs
+    no retrieval index: partial backends routinely have one without the
+    other.
     """
 
     async def glob(
@@ -172,7 +174,6 @@ class SupportsPatternSearch(Protocol):
         self,
         *,
         pattern: str,
-        paths: tuple[Path, ...] = (),
         observations: list[Observation] | None = None,
         ext: tuple[str, ...] = (),
         ext_not: tuple[str, ...] = (),
@@ -394,11 +395,6 @@ def targets_of(
     if observations is not None:
         return [o.path for o in observations]
     return [default] if default is not None else []
-
-
-def scope_of(paths: tuple[Path, ...], observations: list[Observation] | None) -> tuple[Path, ...]:
-    """A search verb's scope roots: explicit paths, else the rows', else default scope."""
-    return paths or tuple(o.path for o in observations or [])
 
 
 # ---------------------------------------------------------------------------

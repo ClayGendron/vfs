@@ -30,6 +30,37 @@
   `reindex:before-publish` seam race; flag pins in
   `test_writes.py`). Suite 2037 passed, coverage 100%, `ruff`/`ty`
   zero; the four Docker legs run at slice C over the new schema.
+  **Slice C landed 2026-08-05**: the seam and the pipeline. Protocol:
+  grep loses `paths`, the family docstring trues up, dead `scope_of`
+  deleted, `grep_staleness` vocabulary `"watermark"` → `"overlay"`.
+  Kinds: `unindexable_pattern` lands as
+  `vfs.invalid.unindexable_pattern` (hierarchical child — old peers
+  degrade to `invalid`) and the budget truncation flag as
+  `vfs.budget_exhausted.truncated`, both with contract rows. Router:
+  the glob probe generalizes to op-agnostic `_root_probes` (a `keep`
+  predicate decides row service; grep serves none),
+  `_grep_dispatches` composes `globs`/`globs_not` per root through
+  `composed_pattern`/`residuals` with the root-literal operand member
+  gated on the caller's globs, and grep leaves the generic fan-out
+  branch; the verb refuses defective globs before dispatch. Backend:
+  `grep.py` — compile → plan folded → `unindexable_pattern` refusal
+  naming `allow_scan=True` → rarest-first k=4 intersection under the
+  posting-byte budget → chunk→entry dedupe → structural gates before
+  content fetch (shared `pattern_arm` LIKE fan promoted public in
+  `reads.py`) → unconditional `re` verify → `NOT encoded` overlay
+  union; one scan executor serves the overlay, `allow_scan`, and
+  scan-shaped `invert_match`; budgets (10k candidates / 4 MiB
+  posting bytes / 10 s wall) truncate with the warning naming refine
+  moves. Tests: the two `paths=` conformance rows move to the seam
+  (observations + meta-literal globs), `test_grep.py` (30 direct
+  pipeline rows incl. corrupt-blob → `internal`, stale-posting
+  non-resurrection, both-worlds gates), `test_grep_namespace.py`
+  (placement-invariance battery + seam-channel pins via a
+  grep-declaring test subclass — capabilities stay undeclared until
+  slice D). Suite 2087 passed, coverage 100%, `ruff`/`ty` zero; all
+  four Docker engine legs green (Postgres 173 / MySQL 173 / MSSQL
+  174 / Oracle 172, grep conformance rows still capability-skipped
+  by design).
 - **Date:** 2026-08-05
 - **Owner:** Clay Gendron
 - **Kind:** verb implementation (the last read-family stub) + index

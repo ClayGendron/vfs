@@ -102,8 +102,13 @@ lines first; regenerate this file when the picture shifts (review the
   (ADR 031 D4/D6, ADR 032 §5/§6 discharged). All three shaping forks
   resolved by Clay same day (staleness trait `"overlay"`; truncation
   flag with refine-guidance now, cursor deferred to the MCP pass as
-  a read-family question; planner upgrades deferred whole). In
-  progress.
+  a read-family question; planner upgrades deferred whole). Slices
+  A–C landed 2026-08-05: codec, reindex lifecycle, and the full seam
+  + read pipeline (protocol flip, router `_grep_dispatches` + shared
+  root probe, `grep.py` gate/ladder/overlay/budgets,
+  `unindexable_pattern` + `truncated` kinds) — all four engine legs
+  green. Slice D (capability/traits flip + proof battery) remains.
+  In progress.
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions

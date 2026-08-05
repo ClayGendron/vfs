@@ -706,19 +706,18 @@ class TestReadFailureHandling:
 
 
 class TestUnlandedVerbStubs:
-    """Every undeclared verb refuses classified; capabilities stay honest."""
+    """Undeclared verbs stay off the capability set; stubs refuse classified.
+
+    Grep's pipeline is implemented but undeclared until its conformance
+    flip — the set below pins that mid-story honesty.
+    """
 
     async def test_unlanded_verbs_refuse_as_unsupported(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        calls = [
-            storage.grep(pattern="x"),
-            storage.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports"),
-        ]
-        for call in calls:
-            result = await call
-            assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.unsupported
-        stubbed = {"grep", "mkedge"}
+        result = await storage.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports")
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unsupported
+        undeclared = {"grep", "mkedge"}
         assert storage.capabilities() == {
             "read",
             "stat",
@@ -734,7 +733,7 @@ class TestUnlandedVerbStubs:
             "move",
             "copy",
         }
-        assert storage.capabilities().isdisjoint(stubbed)
+        assert storage.capabilities().isdisjoint(undeclared)
         await storage.close()
 
     async def test_mutation_verbs_surface_the_first_touch_refusal(self, tmp_path) -> None:
@@ -745,8 +744,13 @@ class TestUnlandedVerbStubs:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
         stale = DatabaseStorage(url=_url(tmp_path))
-        result = await stale.write(entries=[Entry(path=Path("/a"), content="x")])
-        assert result.errors[0].kind == VFSErrorKind.schema_mismatch
+        for call in (
+            stale.write(entries=[Entry(path=Path("/a"), content="x")]),
+            stale.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports"),
+            stale.reindex(),
+        ):
+            result = await call
+            assert result.errors[0].kind == VFSErrorKind.schema_mismatch
         await stale.close()
 
     async def test_reads_with_no_targets_return_an_empty_success(self, tmp_path) -> None:

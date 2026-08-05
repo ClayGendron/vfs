@@ -781,7 +781,8 @@ async def test_scoped_fanout_expands_into_bindings_beneath_the_scope() -> None:
     result = await root.grep("g", paths=("/data",))
     assert result.success is True
     assert result.paths == ("/data/a/inside.txt",)
-    assert inside.scopes == [()]  # the covered binding runs unscoped
+    # The covered binding sees the scope as its whole-subtree residual.
+    assert inside.scopes == [("/**",)]
 
 
 async def test_scope_at_exact_bind_path_dispatches_scoped_not_expanded() -> None:
@@ -790,7 +791,9 @@ async def test_scope_at_exact_bind_path_dispatches_scoped_not_expanded() -> None
     await root.add_mount(spy, "/data/a", parents=True)
     result = await root.grep("g", paths=("/data/a",))
     assert result.paths == ("/data/a/hit.md",)
-    assert spy.scopes == [("/",)]  # scoped dispatch, not a region expansion
+    # A scope at the exact bind path residuates to the same whole-subtree
+    # glob — the seam payload is invariant to how the scope was named.
+    assert spy.scopes == [("/**",)]
 
 
 # ----------------------------------------------------------------------

@@ -187,7 +187,7 @@ async def tree_rows(
 
 # Ceiling of one arm's non-ext bind slots: the root-row exclusion, the
 # prefilter LIKE, the derived-ext pair, and the meta-liveness pair.
-_ARM_FIXED_BINDS: Final = 6
+ARM_FIXED_BINDS: Final = 6
 
 
 async def glob_rows(
@@ -234,9 +234,9 @@ async def glob_rows(
             if root != ROOT and mapping is not None and _root_row_matches(root, patterns, ext):
                 matched[str(root)] = mapping
     gates = [compile_filter(pattern, ext) for pattern in live]
-    arms = [arm for glob in gates if (arm := _pattern_arm(entry, glob, wanted, membership_budget)) is not None]
+    arms = [arm for glob in gates if (arm := pattern_arm(entry, glob, wanted, membership_budget)) is not None]
     ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
-    chunk = arm_budget(profile, parameter_budget, _ARM_FIXED_BINDS + ext_binds)
+    chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ext_binds)
     for mapping in await _pattern_candidates(session, entry, chunk, arms, fetched):
         if any(glob.matches(Path(mapping["path"])) for glob in gates):
             matched.setdefault(mapping["path"], mapping)
@@ -244,6 +244,50 @@ async def glob_rows(
     if max_count is not None:
         rows = rows[:max_count]
     return Result(ops=("glob",), observations=rows, errors=errors)
+
+
+# ---------------------------------------------------------------------------
+# Pattern-arm machinery — shared by the glob fan and grep's scan side
+# ---------------------------------------------------------------------------
+
+
+def pattern_arm(
+    entry: Table, glob: GlobFilter, wanted: frozenset[str], membership_budget: int
+) -> ColumnElement[bool] | None:
+    """One pattern's self-contained OR-arm, or ``None`` when provably empty.
+
+    Every fact rides inside the arm — the root-row exclusion, the
+    prefilter LIKE, both ext facts, the meta liveness scope — because
+    the fan's plan survives only as a pure OR of self-contained arms:
+    one conjunct beside the fan demotes every engine's multi-index OR
+    to a scan. The caller's ext membership stands down when the empty
+    extension (stored NULL) is wanted or the set outgrows one chunk; a
+    derived ext contradicting the caller's set makes the arm dead.
+    """
+    subject = entry.c.path if glob.by_path else entry.c.name
+    like = _glob_like(glob.pattern)
+    prefilter = like if like is not None else escape_like(_literal_prefix(glob.pattern)) + "%"
+    terms: list[ColumnElement[bool]] = [entry.c.path != "/", subject.like(prefilter, escape=LIKE_ESCAPE)]
+    if wanted and "" not in wanted and len(wanted) <= membership_budget:
+        terms.append(entry.c.ext.in_(sorted(wanted)))
+    derived = derive_ext(glob.pattern)
+    if derived is not None:
+        derived_ext, dot_suffix = derived
+        if wanted and "" not in wanted and derived_ext not in wanted:
+            return None
+        # The dotfile arm rescues names like ".txt", whose stored ext is NULL.
+        terms.append(or_(entry.c.ext == derived_ext, entry.c.name == dot_suffix))
+    terms.extend(liveness_filters(entry, include_meta=meta_scoped(glob.pattern)))
+    return and_(*terms)
+
+
+def meta_scoped(pattern: str) -> bool:
+    """Whether the pattern's literal prefix addresses the meta subtree.
+
+    Only a literal ``/.vfs`` head lifts the exclusion — a wildcard-headed
+    prefix (``/.v*``, ``/.vfs*``) never does.
+    """
+    return pattern == METADATA_ROOT or pattern.startswith(METADATA_ROOT + "/")
 
 
 # ---------------------------------------------------------------------------
@@ -303,36 +347,6 @@ def _root_row_matches(root: Path, patterns: Sequence[str], ext: tuple[str, ...])
     return any(compile_filter(effective_pattern(root, pattern), ext).matches(root) for pattern in patterns)
 
 
-def _pattern_arm(
-    entry: Table, glob: GlobFilter, wanted: frozenset[str], membership_budget: int
-) -> ColumnElement[bool] | None:
-    """One pattern's self-contained OR-arm, or ``None`` when provably empty.
-
-    Every fact rides inside the arm — the root-row exclusion, the
-    prefilter LIKE, both ext facts, the meta liveness scope — because
-    the fan's plan survives only as a pure OR of self-contained arms:
-    one conjunct beside the fan demotes every engine's multi-index OR
-    to a scan. The caller's ext membership stands down when the empty
-    extension (stored NULL) is wanted or the set outgrows one chunk; a
-    derived ext contradicting the caller's set makes the arm dead.
-    """
-    subject = entry.c.path if glob.by_path else entry.c.name
-    like = _glob_like(glob.pattern)
-    prefilter = like if like is not None else escape_like(_literal_prefix(glob.pattern)) + "%"
-    terms: list[ColumnElement[bool]] = [entry.c.path != "/", subject.like(prefilter, escape=LIKE_ESCAPE)]
-    if wanted and "" not in wanted and len(wanted) <= membership_budget:
-        terms.append(entry.c.ext.in_(sorted(wanted)))
-    derived = derive_ext(glob.pattern)
-    if derived is not None:
-        derived_ext, dot_suffix = derived
-        if wanted and "" not in wanted and derived_ext not in wanted:
-            return None
-        # The dotfile arm rescues names like ".txt", whose stored ext is NULL.
-        terms.append(or_(entry.c.ext == derived_ext, entry.c.name == dot_suffix))
-    terms.extend(liveness_filters(entry, include_meta=_meta_scoped(glob.pattern)))
-    return and_(*terms)
-
-
 async def _pattern_candidates(
     session: AsyncSession,
     entry: Table,
@@ -353,15 +367,6 @@ async def _pattern_candidates(
         result = await session.execute(select(*columns).where(or_(*chunk)))
         merged.update({mapping["path"]: mapping for mapping in result.mappings()})
     return [merged[path] for path in sorted(merged)]
-
-
-def _meta_scoped(pattern: str) -> bool:
-    """Whether the pattern's literal prefix addresses the meta subtree.
-
-    Only a literal ``/.vfs`` head lifts the exclusion — a wildcard-headed
-    prefix (``/.v*``, ``/.vfs*``) never does.
-    """
-    return pattern == METADATA_ROOT or pattern.startswith(METADATA_ROOT + "/")
 
 
 async def _children_by_parent(

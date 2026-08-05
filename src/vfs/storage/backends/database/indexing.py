@@ -134,7 +134,7 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, parameter_budget
     on the no-op path.
     """
     entry, chunks = tables.entry, tables.chunks
-    state.previous_epoch = await _current_epoch(session, tables)
+    state.previous_epoch = await current_epoch(session, tables)
     if not await _work_pending(session, tables, state.previous_epoch):
         return Result(ops=("reindex",))
     epoch = (state.previous_epoch or 0) + 1
@@ -171,6 +171,12 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, parameter_budget
     )
     state.epoch = epoch
     return Result(ops=("reindex",))
+
+
+async def current_epoch(session: AsyncSession, tables: VFSTables) -> int | None:
+    """The published epoch pointer; ``None`` before the first publish."""
+    pointer = select(tables.meta.c.current_gram_epoch).where(tables.meta.c.id == 1)
+    return (await session.execute(pointer)).scalar_one_or_none()
 
 
 # ---------------------------------------------------------------------------
@@ -224,11 +230,6 @@ def _indexable(content: str) -> bool:
     if len(content.encode("utf-8")) > MAX_INDEXABLE_BYTES:
         return False
     return len(unique_code_grams(content, folded=True)) <= MAX_DISTINCT_GRAMS
-
-
-async def _current_epoch(session: AsyncSession, tables: VFSTables) -> int | None:
-    pointer = select(tables.meta.c.current_gram_epoch).where(tables.meta.c.id == 1)
-    return (await session.execute(pointer)).scalar_one_or_none()
 
 
 async def _work_pending(session: AsyncSession, tables: VFSTables, current: int | None) -> bool:

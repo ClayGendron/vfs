@@ -69,6 +69,7 @@ class VFSErrorKind(StrEnum):
 
     # — request validity —
     invalid = "vfs.invalid"  # EINVAL / ENAMETOOLONG — caller-fixable, only
+    unindexable_pattern = "vfs.invalid.unindexable_pattern"  # no gram predicate; allow_scan overrides
     unaddressable = "vfs.unaddressable"  # a real row exceeds MAX_PATH_LENGTH through this mount
 
     # — concurrency / preconditions —
@@ -76,6 +77,7 @@ class VFSErrorKind(StrEnum):
     busy = "vfs.busy"  # EBUSY — a live bind site the data plane may not mutate
     cross_mount = "vfs.cross_mount"  # EXDEV
     budget_exhausted = "vfs.budget_exhausted"  # ELOOP — hop/TTL budget spent; not retryable
+    truncated = "vfs.budget_exhausted.truncated"  # a runtime budget cut the result; refine, don't retry
 
     # — runtime liveness —
     unavailable = "vfs.unavailable"  # EIO / ECONNREFUSED / ENOSPC
@@ -182,6 +184,11 @@ KIND_CONTRACTS: dict[VFSErrorKind, KindContract] = {
         "Fix the flagged parameter and retry.",
         "the entry the invalid input named, when one is implicated",
     ),
+    VFSErrorKind.unindexable_pattern: KindContract(
+        RetryClass.never,
+        "Include a literal of 3+ characters in the pattern, or pass allow_scan=True to run the scan tier.",
+        "None — source carries the locus",
+    ),
     VFSErrorKind.unaddressable: KindContract(
         RetryClass.never,
         "Access the entry through a shallower mount; its global path exceeds the limit here.",
@@ -205,6 +212,11 @@ KIND_CONTRACTS: dict[VFSErrorKind, KindContract] = {
     VFSErrorKind.budget_exhausted: KindContract(
         RetryClass.never,
         "Raise the hop budget or shorten the mount chain; a retry will exhaust it again.",
+        "None — source carries the locus",
+    ),
+    VFSErrorKind.truncated: KindContract(
+        RetryClass.never,
+        "Narrow the pattern, add filters, or scope the call; the result was cut at a runtime budget.",
         "None — source carries the locus",
     ),
     VFSErrorKind.unavailable: KindContract(

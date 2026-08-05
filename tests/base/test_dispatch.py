@@ -475,6 +475,13 @@ async def test_fanout_scoped_routes_only_the_target_terminal(op: str) -> None:
         [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == "glob"]
         assert kwargs["patterns"] == ("/src/**/*.py",)
         assert [o for o, _ in a.calls] == ["stat", "glob"]
+    elif op == "grep":
+        # Grep's scope crosses as glob text: the composed subtree plus
+        # the root's own literal path (find's operand law), probe beside.
+        [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == "grep"]
+        assert kwargs["globs"] == ("/src", "/src/**")
+        assert kwargs["globs_not"] == ()
+        assert [o for o, _ in a.calls] == ["stat", "grep"]
     else:
         assert a.calls[0][1]["paths"] == ("/src",)
     assert b.calls == []

@@ -365,15 +365,15 @@ class BindableEchoStorage(EchoStorage, BindableStorage):
 
 
 class ScopeSpyStorage(EchoStorage):
-    """Echo backend recording the scope its grep receives."""
+    """Echo backend recording the composed glob scope its grep receives."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.scopes: list[tuple[str, ...]] = []
 
-    async def grep(self, *, paths: tuple[Path, ...] = (), user_id: str | None = None, **kwargs: Any) -> Result:
-        self.scopes.append(tuple(str(p) for p in paths))
-        return self._answer("grep", {"paths": paths, **kwargs})
+    async def grep(self, *, globs: tuple[str, ...] = (), user_id: str | None = None, **kwargs: Any) -> Result:
+        self.scopes.append(tuple(globs))
+        return self._answer("grep", {"globs": globs, **kwargs})
 
 
 class RecorderFS(VirtualFileSystem):

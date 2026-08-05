@@ -1211,9 +1211,12 @@ class StorageContract:
         assert [str(o.path) for o in trashed.observations] == [f"{trash_path}/inner.txt"]
 
     @needs("write", "grep")
-    async def test_grep_missing_anchor_classifies_beside_served_anchors(self, storage: ConformanceBackend) -> None:
+    async def test_grep_missing_root_classifies_beside_served_roots(self, storage: ConformanceBackend) -> None:
+        # find parity: a missing operand errors while the healthy operand's
+        # own content is grepped — the root row rides the scan, not a probe.
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle here")])
-        result = await storage.grep(pattern="needle", paths=(Path("/a.txt"), Path("/nope")))
+        roots = [Observation(path=Path("/a.txt")), Observation(path=Path("/nope"))]
+        result = await storage.grep(pattern="needle", observations=roots)
         assert result.success is False
         assert [o.path for o in result.observations] == ["/a.txt"]
         assert [e.kind for e in result.errors] == [VFSErrorKind.not_found]
@@ -1248,12 +1251,20 @@ class StorageContract:
 
     @needs("write", "grep")
     async def test_default_grep_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
+        # The lift is a property of what the caller wrote: a scope root's
+        # composition or a meta-literal glob opens the subtree; a
+        # wildcard-headed glob never does.
         await storage.write(entries=[Entry(path=Path("/real.txt"), content="needle in the open")])
         await storage.write(entries=[Entry(path=Path("/.vfs/state/s.txt"), content="needle hidden")], parents=True)
         default = await storage.grep(pattern="needle")
         assert [o.path for o in default.observations] == ["/real.txt"]
-        anchored = await storage.grep(pattern="needle", paths=(Path("/.vfs/state"),))
+        anchored = await storage.grep(pattern="needle", observations=[Observation(path=Path("/.vfs/state"))])
         assert [o.path for o in anchored.observations] == ["/.vfs/state/s.txt"]
+        literal = await storage.grep(pattern="needle", globs=("/.vfs/state/**",))
+        assert [o.path for o in literal.observations] == ["/.vfs/state/s.txt"]
+        wildcard = await storage.grep(pattern="needle", globs=("/.v*/state/**",))
+        assert wildcard.success is True
+        assert wildcard.observations == []
 
     @needs("write", "grep")
     async def test_grep_default_case_mode_is_sensitive(self, storage: ConformanceBackend) -> None:

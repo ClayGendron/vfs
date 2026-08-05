@@ -78,7 +78,7 @@ from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Sequence
+    from collections.abc import Callable, Coroutine, Sequence
 
     from vfs.ops import Op
     from vfs.paths import ResolvedPath
@@ -1121,7 +1121,14 @@ class VirtualFileSystem:
 
         *globs*/*globs_not* use glob's segment-aware pattern language:
         ``*`` within a segment, ``**`` across, any ``/`` anchors at the
-        root, slash-free patterns match leaf names.
+        root, slash-free patterns match leaf names. Scoping crosses the
+        storage seam the way glob's does — as pattern text on the
+        ``globs`` channels, composed per scope root and residuated into
+        each entry's coordinates, with a concurrent probe asserting the
+        roots (a missing root is a loud per-root error beside the
+        healthy roots' rows; a root's own content joins the scan when
+        the caller's globs pass its path). *pattern* is content-only
+        and never composes with paths.
 
         *max_count* caps matches **per file** (ripgrep's ``-m``), not the
         row count — a fan-out returns one row per matching file regardless.
@@ -1151,6 +1158,10 @@ class VirtualFileSystem:
         )
         if refusal is not None:
             return refusal
+        for glob_pattern in (*globs, *globs_not):
+            defect = glob_defect(glob_pattern)
+            if defect is not None:
+                return self._error(f"grep glob {glob_pattern!r}: {defect}", kind=VFSErrorKind.invalid, op="grep")
         return await self._route_fanout(
             "grep",
             paths=paths,
@@ -1458,10 +1469,11 @@ class VirtualFileSystem:
         fails loudly whatever its siblings produced.  That pin survives
         subsumption: when a sibling region also covers a named entry, the
         entry dispatches once (unscoped) but its result still merges
-        plain.  Glob builds its dispatches apart
-        (:meth:`_glob_dispatches`): scoping crosses the seam as pattern
-        text, one batched call per entry, with root assertions on a
-        concurrent probe that no dispatch shape can drop.  *row_cap*
+        plain.  The pattern-search verbs build their dispatches apart
+        (:meth:`_glob_dispatches` / :meth:`_grep_dispatches`): scoping
+        crosses the seam as pattern text, one batched call per entry,
+        with root assertions on a concurrent probe that no dispatch
+        shape can drop.  *row_cap*
         re-applies the caller's result bound after the
         merge on every input shape — ``glean`` trims by score, everything
         else keeps merge order — so it cannot multiply by entry count;
@@ -1488,6 +1500,13 @@ class VirtualFileSystem:
             if op == "glob" and isinstance(pattern, str):
                 rest = {key: value for key, value in kwargs.items() if key != "pattern"}
                 named_coros, branches, skips = self._glob_dispatches(plan, paths, pattern, user_id=user_id, **rest)
+            elif op == "grep":
+                globs = cast("tuple[str, ...]", kwargs.get("globs", ()))
+                globs_not = cast("tuple[str, ...]", kwargs.get("globs_not", ()))
+                rest = {key: value for key, value in kwargs.items() if key not in ("globs", "globs_not")}
+                named_coros, branches, skips = self._grep_dispatches(
+                    plan, paths, globs, globs_not, user_id=user_id, **rest
+                )
             else:
                 # Unscoped subsumes a narrower scope into the same entry.
                 named_coros = [
@@ -1584,7 +1603,7 @@ class VirtualFileSystem:
         entry's members in entry-local coordinates, and each entry
         receives its whole deduped set as one batched call. Root
         assertions ride a separate concurrent probe grouped by owning
-        entry (:meth:`_glob_probe`), structurally immune to any dispatch
+        entry (:meth:`_root_probe`), structurally immune to any dispatch
         optimization. A dead residual set is routing, not a capability
         gap: the entry is not dispatched and no skip is minted;
         capability skips survive only where the pattern can reach the
@@ -1609,7 +1628,13 @@ class VirtualFileSystem:
                     if key != owner and not _path_covers(root, key):
                         continue
                     members.setdefault(key, set()).update(self._residual_renders(composed, key))
-        probes, unverifiable = self._glob_probes(roots, pattern, user_id=user_id, **kwargs)
+        ext = cast("tuple[str, ...]", kwargs.get("ext", ()))
+        columns = cast("frozenset[str] | None", kwargs.get("columns"))
+
+        def keep(row: Observation) -> bool:
+            return compile_filter(effective_pattern(row.path, pattern), ext).matches(row.path)
+
+        probes, unverifiable = self._root_probes(roots, keep, columns, user_id=user_id)
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = [
             (key, self._dispatch_entry(capable[key], "glob", patterns=tuple(sorted(live)), user_id=user_id, **kwargs))
             for key, live in members.items()
@@ -1619,13 +1644,111 @@ class VirtualFileSystem:
         skips = [skip for skip in plan.skips if skip.path is None or self._glob_reaches(skip.path, reach, pattern)]
         return probes, branches, [*skips, *unverifiable]
 
-    def _glob_probes(
+    def _grep_dispatches(
         self,
-        roots: tuple[Path, ...],
-        pattern: str,
+        plan: _FanoutPlan,
+        paths: tuple[str, ...],
+        globs: tuple[str, ...],
+        globs_not: tuple[str, ...],
         *,
         user_id: str | None,
         **kwargs: object,
+    ) -> tuple[
+        list[Coroutine[Any, Any, Result]],
+        list[tuple[Path, Coroutine[Any, Any, Result]]],
+        list[ResultError],
+    ]:
+        """Build grep's dispatches: scoping crosses the seam as glob text.
+
+        Glob's dispatch shape on grep's channels: each scope root
+        composes into the ``globs`` batch (no caller globs → the root
+        composes to ``root/**``), exclusions compose per root so one can
+        never reach another root's subtree, and a root whose path passes
+        the caller's globs rides the batch as its own literal path — the
+        content test can only happen at storage, so for grep the root
+        row joins the scan, not the probe. Residuation, the owner gate,
+        dead-entry skips, and the root probe are the glob machinery; the
+        probe serves no rows, only classifications.
+        """
+        roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
+        capable = {**plan.unscoped, **{key: binding for key, (binding, _rels) in plan.scoped.items()}}
+        branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = []
+        for key, binding in capable.items():
+            admissions = self._grep_admissions(key, roots, globs)
+            if admissions is not None and not admissions:
+                continue
+            branches.append(
+                (
+                    key,
+                    self._dispatch_entry(
+                        binding,
+                        "grep",
+                        globs=tuple(sorted(admissions)) if admissions else (),
+                        globs_not=tuple(sorted(self._composed_members(key, roots, globs_not))),
+                        user_id=user_id,
+                        **kwargs,
+                    ),
+                )
+            )
+        probes, unverifiable = self._root_probes(roots, lambda _row: False, None, user_id=user_id)
+        reach = roots or (ROOT,)
+        skips = [
+            skip
+            for skip in plan.skips
+            if skip.path is None or any(self._glob_reaches(skip.path, reach, glob) for glob in globs or ("**",))
+        ]
+        return probes, branches, [*skips, *unverifiable]
+
+    def _grep_admissions(self, key: Path, roots: tuple[Path, ...], globs: tuple[str, ...]) -> set[str] | None:
+        """One entry's admission globs in its own coordinates; ``None`` is unrestricted.
+
+        Unscoped with no globs restricts nothing; otherwise the composed
+        members decide, plus find's operand law — a scope root whose own
+        path passes the caller's globs (name-arm by name, path-arm by
+        namespace path; no globs is an automatic hit) joins its owning
+        entry's batch as a literal member. An empty set is a dead entry.
+        """
+        if not roots and not globs:
+            return None
+        members = self._composed_members(key, roots, (globs or ("**",)) if roots else globs)
+        for root in roots:
+            if root == ROOT or self._resolve_terminal(root).binding.path != key:
+                continue
+            if not globs or any(compile_filter(glob, ()).matches(root) for glob in globs):
+                members.update(self._residual_renders(str(root), key))
+        return members
+
+    def _composed_members(self, key: Path, roots: tuple[Path, ...], patterns: tuple[str, ...]) -> set[str]:
+        """Entry-local renders of *patterns* under the call's scope shape.
+
+        Unscoped: name-arm patterns broadcast verbatim (coordinate-free),
+        path-arm patterns residuate against the bind path. Scoped: each
+        pattern composes under each root reaching this entry, then
+        residuates; a dead residual set simply contributes nothing.
+        """
+        members: set[str] = set()
+        if not roots:
+            for pattern in patterns:
+                if "/" not in pattern:
+                    members.add(pattern)
+                else:
+                    members.update(self._residual_renders(pattern, key))
+            return members
+        for root in roots:
+            owner = self._resolve_terminal(root).binding.path
+            if key != owner and not _path_covers(root, key):
+                continue
+            for pattern in patterns:
+                members.update(self._residual_renders(composed_pattern(root, pattern), key))
+        return members
+
+    def _root_probes(
+        self,
+        roots: tuple[Path, ...],
+        keep: Callable[[Observation], bool],
+        columns: frozenset[str] | None,
+        *,
+        user_id: str | None,
     ) -> tuple[list[Coroutine[Any, Any, Result]], list[ResultError]]:
         """One point-read probe per owning entry, asserting its named roots.
 
@@ -1634,8 +1757,6 @@ class VirtualFileSystem:
         honestly undeterminable: a warning on record, never coerced to
         absent, never a silent pass.
         """
-        ext = cast("tuple[str, ...]", kwargs.get("ext", ()))
-        columns = cast("frozenset[str] | None", kwargs.get("columns"))
         grouped: dict[Path, tuple[Binding, list[Path]]] = {}
         unverifiable: list[ResultError] = []
         for root in roots:
@@ -1656,17 +1777,15 @@ class VirtualFileSystem:
             _b, rels = grouped.setdefault(terminal.binding.path, (terminal.binding, []))
             rels.append(terminal.rel)
         coros: list[Coroutine[Any, Any, Result]] = [
-            self._glob_probe(binding, rels, pattern, ext, columns, user_id=user_id)
-            for binding, rels in grouped.values()
+            self._root_probe(binding, rels, keep, columns, user_id=user_id) for binding, rels in grouped.values()
         ]
         return coros, unverifiable
 
-    async def _glob_probe(
+    async def _root_probe(
         self,
         binding: Binding,
         rels: list[Path],
-        pattern: str,
-        ext: tuple[str, ...],
+        keep: Callable[[Observation], bool],
         columns: frozenset[str] | None,
         *,
         user_id: str | None,
@@ -1674,17 +1793,14 @@ class VirtualFileSystem:
         """Assert scope roots with one batched point-read against their entry.
 
         A missing root classifies loud through the entry's own descent
-        ladder; a present root's row joins the result when the caller's
-        pattern matches it — name arm by name, path arm by its namespace
-        path (find semantics: operands are tested, never exempt).
+        ladder; *keep* decides whether a present root's row joins the
+        result — glob serves it on a pattern match (find semantics:
+        operands are tested, never exempt), grep serves none (a root's
+        content test can only happen at storage).
         """
         probe = [Observation(path=rel) for rel in dict.fromkeys(rels)]
         result = await self._dispatch_entry(binding, "stat", observations=probe, columns=columns, user_id=user_id)
-        kept = [
-            row
-            for row in result.observations
-            if compile_filter(effective_pattern(row.path, pattern), ext).matches(row.path)
-        ]
+        kept = [row for row in result.observations if keep(row)]
         if len(kept) == len(result.observations):
             return result
         return result.model_copy(update={"observations": kept})

@@ -8,7 +8,8 @@ the descent-ladder classification chokepoint (``descent.py`` /
 ``reads.py``) — as are the mutation core (write/edit/mkdir batches
 planned and executed as one transaction each, ``writes.py``) and the
 serialized topology verbs delete/restore/move/copy (``topology.py``).
-``mkedge`` and grep are stubbed to a classified refusal and
+``mkedge`` is stubbed to a classified refusal, grep's pipeline
+(``grep.py``) is implemented but not yet declared, and
 ``capabilities()`` is hand-declared per pass — capabilities stay honest
 mid-story, and the router never routes to an undeclared family.
 
@@ -40,6 +41,7 @@ from vfs.storage.backends.database.dialects import (
     topology_execution_options,
 )
 from vfs.storage.backends.database.engine import EngineHost
+from vfs.storage.backends.database.grep import grep_rows
 from vfs.storage.backends.database.indexing import (
     ReindexState,
     build_epoch,
@@ -64,8 +66,8 @@ if TYPE_CHECKING:
     from vfs.storage import ResolvedPair
     from vfs.storage.replace import EditOperation
 
-# Hand-declared per pass: family derivation would over-declare while
-# grep and mkedge are still classified stubs.
+# Hand-declared per pass: grep is implemented but undeclared until its
+# conformance flip, and mkedge is still a classified stub.
 _LANDED_OPS: Final[frozenset[Op]] = frozenset(
     {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir", "delete", "restore", "sweep", "move", "copy"}
 )
@@ -180,7 +182,7 @@ class DatabaseStorage:
         )
 
     # -------------------------------------------------------------------
-    # Pattern search — glob live, grep stubbed until its pass lands
+    # Pattern search
     # -------------------------------------------------------------------
 
     async def glob(
@@ -214,7 +216,6 @@ class DatabaseStorage:
         self,
         *,
         pattern: str,
-        paths: tuple[Path, ...] = (),
         observations: list[Observation] | None = None,
         ext: tuple[str, ...] = (),
         ext_not: tuple[str, ...] = (),
@@ -232,7 +233,33 @@ class DatabaseStorage:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        return await self._stub("grep")
+        roots = tuple(observation.path for observation in observations or [])
+        return await self._execute(
+            "grep",
+            lambda session: grep_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.parameter_budget,
+                self._host.membership_budget,
+                pattern=pattern,
+                roots=roots,
+                ext=ext,
+                ext_not=ext_not,
+                globs=globs,
+                globs_not=globs_not,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                invert_match=invert_match,
+                before_context=before_context,
+                after_context=after_context,
+                output_mode=output_mode,
+                max_count=max_count,
+                allow_scan=allow_scan,
+                columns=columns,
+            ),
+        )
 
     # -------------------------------------------------------------------
     # Mutation core — write / edit / mkdir and the topology verbs
