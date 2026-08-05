@@ -79,7 +79,7 @@ VFS_TEST_ORACLE_URL="oracle+oracledb_async://vfs:vfs@localhost:15210/?service_na
 ```
 
 A healthy leg matches the sqlite leg's pass count, with the same
-capability skips (grep and mkedge are classified stubs).
+capability skips (mkedge is the last classified stub).
 Keep `?charset=utf8mb4` on the MySQL URL — text bodies depend on it.
 Report failures as findings against the code, not the harness: a leg
 that fails on a real engine while sqlite passes is exactly the signal

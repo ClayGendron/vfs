@@ -708,8 +708,8 @@ class TestReadFailureHandling:
 class TestUnlandedVerbStubs:
     """Undeclared verbs stay off the capability set; stubs refuse classified.
 
-    Grep's pipeline is implemented but undeclared until its conformance
-    flip — the set below pins that mid-story honesty.
+    mkedge is the last classified stub — its subtraction from the
+    derived surface pins that mid-story honesty.
     """
 
     async def test_unlanded_verbs_refuse_as_unsupported(self, tmp_path) -> None:
@@ -717,13 +717,13 @@ class TestUnlandedVerbStubs:
         result = await storage.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports")
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.unsupported
-        undeclared = {"grep", "mkedge"}
         assert storage.capabilities() == {
             "read",
             "stat",
             "ls",
             "tree",
             "glob",
+            "grep",
             "write",
             "edit",
             "mkdir",
@@ -733,7 +733,7 @@ class TestUnlandedVerbStubs:
             "move",
             "copy",
         }
-        assert storage.capabilities().isdisjoint(undeclared)
+        assert "mkedge" not in storage.capabilities()
         await storage.close()
 
     async def test_mutation_verbs_surface_the_first_touch_refusal(self, tmp_path) -> None:

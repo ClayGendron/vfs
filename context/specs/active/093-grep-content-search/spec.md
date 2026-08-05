@@ -61,6 +61,36 @@
   four Docker engine legs green (Postgres 173 / MySQL 173 / MSSQL
   174 / Oracle 172, grep conformance rows still capability-skipped
   by design).
+  **Slice D landed 2026-08-05 — story complete.** The flip:
+  `DatabaseStorage.capabilities()` derives via `storage_ops(self)`
+  minus `mkedge` (the last stub satisfies the mutation family
+  structurally but stays subtracted — task 22 discharged), `traits()`
+  declares `grep_tier="indexed"` / `grep_staleness="overlay"`, the
+  memory-backend drift pin moves, the grep-declaring test subclass in
+  the namespace battery is deleted, and all grep conformance rows run
+  live on every leg. Proof battery: the pattern-class taxonomy rows
+  (fully / partially / unindexable + the fold-shortening `ẞ`→`ss`
+  edge) join the conformance harness gated on the declared tier;
+  epoch atomicity pinned through the `reindex:before-publish` seam
+  (mid-window readers answer identically to pre-build while the new
+  epoch's rows sit committed and unqueried); overlay exclusivity was
+  already pinned (dirty+encoded union, stale-posting
+  non-resurrection); scale rows — 10k roots reach storage as one
+  grep call + one probe (20k composed members), and no reindex
+  statement grows with entry count (IN-list deletes chunk by the
+  membership budget, inserts page by the parameter budget). The
+  differential battery grep edition
+  (`../../../research/studies/2026-08-05-grep-differential-battery/`)
+  runs 109 case-checks green — `grep -E` and `rg -uu` legs over four
+  vfs worlds (plain/mounted × scan/indexed), with the
+  refusal-not-silent and operand-exemption divergences asserted —
+  and the rerunnable query-ladder benchmark
+  (`../../../research/studies/2026-08-05-grep-query-ladder-benchmark/`)
+  re-measures the spike's ladder through the live pipeline (10K docs:
+  index tier 2.7–66 ms vs scan 243–442 ms; refusals ~0.1 ms). Suite
+  2126 passed, coverage 100%, `ruff`/`ty` zero; all four Docker
+  engine legs green with grep live (Postgres 191 / MySQL 191 /
+  MSSQL 192 / Oracle 190; only the mkedge rows remain skipped).
 - **Date:** 2026-08-05
 - **Owner:** Clay Gendron
 - **Kind:** verb implementation (the last read-family stub) + index

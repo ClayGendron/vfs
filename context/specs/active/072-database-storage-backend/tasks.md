@@ -202,20 +202,24 @@ Ordered; every task leaves the suite green (`uv run pytest tests/ -q`,
 
 ## Pass C — grep + gram index
 
-- [ ] 19. `models/postings.py`: delta+varint codec with
+Discharged by spec 093 (all four slices landed 2026-08-05; the
+watermark framing below was superseded by ADR 013's flag-partitioned
+overlay — see 093's *Corrections*).
+
+- [x] 19. `models/postings.py`: delta+varint codec with
       numpy-vectorized decode (`uv add numpy`), property tests.
-- [ ] 20. Slice 13 — `grep.py`: compile-first classification,
+- [x] 20. Slice 13 — `grep.py`: compile-first classification,
       folded-always planning, `unindexable_pattern` refusal naming
       `allow_scan`, scan/verify tier, rarest-first k=4 intersection,
       liveness/metadata join before content, unconditional `re`
       verification, runtime budgets + truncation flags, dirty
       overlay (`revision > watermark`, capped, visible); posting
       build path; capabilities + traits updated.
-- [ ] 21. Slice 14 — reindex admin verb: new-epoch build, one-
+- [x] 21. Slice 14 — reindex admin verb: new-epoch build, one-
       transaction compare-and-set pointer flip (expected-epoch guard;
       old-or-new harness row), three-part fingerprint, drop-and-rebuild on mismatch, idempotent-cheap
       watermark check, old-epoch reclamation step.
-- [ ] 22. Endgame: `capabilities()` → `storage_ops(self)`; full
+- [x] 22. Endgame: `capabilities()` → `storage_ops(self)`; full
       acceptance-criteria audit (zero new suppressions); spec status
       → landed; STATUS.md true-up; 013/014/030/059–066 supersede
       notes verified. Session end: pytest/ruff/ty.

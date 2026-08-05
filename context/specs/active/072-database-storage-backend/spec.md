@@ -33,13 +33,17 @@
   parity, `44aa439`), and 076 (entry model split, `40408da`) — §5's
   ordered revision counter and §9's reserved trash scope are
   superseded by ADRs 013/014 as recorded in those specs. Live
-  surface (trued up 2026-08-05): read/stat/ls/tree/glob +
-  write/edit/mkdir + delete/move/copy + restore/sweep; **grep and
-  mkedge are the only remaining classified stubs.** Pass C (grep,
-  tasks 19–22) is owned by spec 093
-  (`../093-grep-content-search/spec.md`), which also corrects §6's
-  since-superseded pieces (ADR 013's flag-partitioned overlay
-  replaces the watermark; see its *Corrections* section)
+  surface (trued up 2026-08-05): read/stat/ls/tree/glob/**grep** +
+  write/edit/mkdir + delete/move/copy + restore/sweep, plus the
+  `reindex()` admin verb; **mkedge is the only remaining classified
+  stub** (subtracted from the `storage_ops(self)`-derived
+  capability set; awaits ADR 018's wiring spec). Pass C (grep,
+  tasks 19–22) was owned by spec 093
+  (`../093-grep-content-search/spec.md`) and **landed in full
+  2026-08-05** — the byte-trigram index, batch reindex lifecycle,
+  the pattern-only seam, and the capability/traits flip; 093 also
+  corrects §6's since-superseded pieces (ADR 013's flag-partitioned
+  overlay replaces the watermark; see its *Corrections* section)
 - **Date:** 2026-07-12
 - **Owner:** Clay Gendron
 - **Kind:** feature (the database backend port that ADR 001 and ADR 002

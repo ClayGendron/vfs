@@ -2,16 +2,16 @@
 
 Runs on any SQLAlchemy-compatible database: known dialects carry tuned
 policy, everything else serves on the generic floor (``dialects.py``).
-The read family and glob are live — point reads with projection
-push-down, ``parent_id`` listings, glob's batched pattern fan, and
-the descent-ladder classification chokepoint (``descent.py`` /
-``reads.py``) — as are the mutation core (write/edit/mkdir batches
-planned and executed as one transaction each, ``writes.py``) and the
-serialized topology verbs delete/restore/move/copy (``topology.py``).
-``mkedge`` is stubbed to a classified refusal, grep's pipeline
-(``grep.py``) is implemented but not yet declared, and
-``capabilities()`` is hand-declared per pass — capabilities stay honest
-mid-story, and the router never routes to an undeclared family.
+The read family and both pattern verbs are live — point reads with
+projection push-down, ``parent_id`` listings, glob's batched pattern
+fan, grep's indexed pipeline (``grep.py``), and the descent-ladder
+classification chokepoint (``descent.py`` / ``reads.py``) — as are the
+mutation core (write/edit/mkdir batches planned and executed as one
+transaction each, ``writes.py``) and the serialized topology verbs
+delete/restore/move/copy (``topology.py``). ``mkedge`` is stubbed to a
+classified refusal and stays subtracted from the derived capability
+set — capabilities stay honest, and the router never routes to an
+undeclared verb.
 
     storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")     # built
     storage = DatabaseStorage(session_factory=app_sessionmaker)         # borrowed
@@ -28,7 +28,7 @@ classified ``Result`` — never a raw exception.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -53,7 +53,7 @@ from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, s
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.topology import delete_rows, restore_rows, sweep_rows, transfer_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
-from vfs.storage.protocol import targets_of
+from vfs.storage.protocol import storage_ops, targets_of
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -65,12 +65,6 @@ if TYPE_CHECKING:
     from vfs.paths import Path
     from vfs.storage import ResolvedPair
     from vfs.storage.replace import EditOperation
-
-# Hand-declared per pass: grep is implemented but undeclared until its
-# conformance flip, and mkedge is still a classified stub.
-_LANDED_OPS: Final[frozenset[Op]] = frozenset(
-    {"read", "stat", "ls", "tree", "glob", "write", "edit", "mkdir", "delete", "restore", "sweep", "move", "copy"}
-)
 
 
 class DatabaseStorage:
@@ -103,12 +97,16 @@ class DatabaseStorage:
         return self._host.mount_identity
 
     def capabilities(self) -> frozenset[Op]:
-        return _LANDED_OPS
+        # The method surface is the truth, minus mkedge: its classified
+        # stub satisfies the mutation family structurally but is not live.
+        return storage_ops(self) - {"mkedge"}
 
     def traits(self) -> Mapping[str, str]:
         declared = {
             "version_encoding": "per_entry64",
             "arbitration": self._host.profile.arbitration,
+            "grep_tier": "indexed",
+            "grep_staleness": "overlay",
         }
         # Tuned engines are the measured ones; only they may claim full
         # durability — unknown dialects resolve to GENERIC-renamed names.

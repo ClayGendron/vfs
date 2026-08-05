@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from tests.support.database_helpers import _url
 from vfs.models import Entry, Observation
@@ -20,6 +20,7 @@ from vfs.paths import Path
 from vfs.results import Result, Severity, VFSErrorKind
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
+from vfs.storage.backends.database.seams import installed
 
 
 async def _fresh(tmp_path, files: dict[str, str]) -> DatabaseStorage:
@@ -146,6 +147,32 @@ class TestOverlayPartition:
         result = await storage.grep(pattern="abc.*xyz")
         assert result.success is True
         assert result.observations == []
+        await storage.close()
+
+    async def test_readers_see_old_or_new_epoch_never_a_mix(self, tmp_path) -> None:
+        # Mid-rebuild — next epoch's posting rows committed, publish not
+        # yet run — grep answers exactly as before the build started.
+        storage = await _fresh(tmp_path, {"/a.txt": "alphaone body"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="betatwo body")])).success is True
+        posting = storage._host.tables.posting_list
+        mid_window: list[tuple[list[str], list[str], int]] = []
+
+        async def observe() -> None:
+            fresh = await storage.grep(pattern="betatwo")
+            stale = await storage.grep(pattern="alphaone")
+            async with storage._host.engine.connect() as conn:
+                staged = await conn.execute(select(func.count()).select_from(posting).where(posting.c.epoch == 2))
+            mid_window.append((_paths(fresh), _paths(stale), staged.scalar_one()))
+
+        with installed("reindex:before-publish", observe):
+            assert (await storage.reindex()).success is True
+        fresh_paths, stale_paths, staged_rows = mid_window[0]
+        assert fresh_paths == ["/a.txt"]  # the old world: served by the scan overlay
+        assert stale_paths == []
+        assert staged_rows > 0  # the new epoch already sits in the table, unqueried
+        published = await storage.grep(pattern="betatwo")
+        assert _paths(published) == ["/a.txt"]
         await storage.close()
 
     async def test_a_corrupt_posting_blob_classifies_internal(self, tmp_path) -> None:

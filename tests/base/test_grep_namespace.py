@@ -3,9 +3,7 @@
 Grep's analog of the glob namespace battery: the same logical tree
 answers the same call identically whether a subtree is plain
 directories or a mount, with scoping and the glob channels crossing the
-seam as composed pattern text. The backends declare grep through a
-test-local subclass until the capability flip lands; the rows
-themselves are already the durable contract.
+seam as composed pattern text.
 """
 
 from __future__ import annotations
@@ -16,7 +14,6 @@ import pytest
 
 from tests.support.base_doubles import RecorderStorage
 from vfs.base import VirtualFileSystem
-from vfs.ops import Op
 from vfs.results import VFSErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -24,24 +21,17 @@ from vfs.storage.backends.memory import InMemoryStorage
 TREE = (("/notes.txt", "needle root"), ("/data/a.txt", "needle a"), ("/data/deep/b.py", "needle b"))
 
 
-class _GrepMemory(InMemoryStorage):
-    """Memory backend declaring grep ahead of the capability flip."""
-
-    def capabilities(self) -> frozenset[Op]:
-        return super().capabilities() | frozenset[Op]({"grep"})
-
-
 async def _plain_world() -> VirtualFileSystem:
-    fs = VirtualFileSystem(storage=_GrepMemory())
+    fs = VirtualFileSystem(storage=InMemoryStorage())
     for path, content in TREE:
         await fs.write(path=path, content=content, parents=True)
     return fs
 
 
 async def _mounted_world() -> VirtualFileSystem:
-    fs = VirtualFileSystem(storage=_GrepMemory())
+    fs = VirtualFileSystem(storage=InMemoryStorage())
     await fs.write(path="/notes.txt", content="needle root")
-    await fs.add_mount(_GrepMemory(), "/data")
+    await fs.add_mount(InMemoryStorage(), "/data")
     await fs.write(path="/data/a.txt", content="needle a")
     await fs.write(path="/data/deep/b.py", content="needle b", parents=True)
     return fs
@@ -102,7 +92,7 @@ async def test_root_order_does_not_change_the_answer() -> None:
 
 
 async def test_defective_globs_refuse_before_any_dispatch() -> None:
-    fs = VirtualFileSystem(storage=_GrepMemory())
+    fs = VirtualFileSystem(storage=InMemoryStorage())
     channels: tuple[dict[str, Any], ...] = ({"globs": ("a**b",)}, {"globs_not": ("x/",)})
     for channel in channels:
         result = await fs.grep("needle", **channel)
@@ -113,7 +103,7 @@ async def test_defective_globs_refuse_before_any_dispatch() -> None:
 async def test_unscoped_glob_channels_cross_the_seam_composed() -> None:
     # Name-arm filters broadcast verbatim; path-arm filters residuate
     # into entry coordinates; exclusions ride the same composition.
-    fs = VirtualFileSystem(storage=_GrepMemory())
+    fs = VirtualFileSystem(storage=InMemoryStorage())
     recorder = RecorderStorage()
     await fs.add_mount(recorder, "/m")
     await fs.grep("needle", globs=("*.py", "/m/src/**"), globs_not=("*.log",))
@@ -127,7 +117,7 @@ async def test_unscoped_glob_channels_cross_the_seam_composed() -> None:
 async def test_a_dead_admission_set_is_routing_not_a_skip() -> None:
     # The path-arm glob cannot reach /m: the entry is simply not
     # dispatched, with no record minted — dead residuals are routing.
-    fs = VirtualFileSystem(storage=_GrepMemory())
+    fs = VirtualFileSystem(storage=InMemoryStorage())
     recorder = RecorderStorage()
     await fs.add_mount(recorder, "/m")
     result = await fs.grep("needle", globs=("/elsewhere/**",))
@@ -136,8 +126,23 @@ async def test_a_dead_admission_set_is_routing_not_a_skip() -> None:
     assert result.errors == []
 
 
+async def test_ten_thousand_roots_stay_two_calls() -> None:
+    # The ETL scale row: contract-scale root batches reach storage as
+    # exactly one grep call and one probe call — every root contributes
+    # its subtree member and its literal to the composed globs batch.
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    data = RecorderStorage()
+    await fs.add_mount(data, "/data")
+    await fs.grep("needle", paths=tuple(f"/data/part{i:05}" for i in range(10_000)))
+    assert [op for op, _ in data.calls] == ["stat", "grep"]
+    [grep_call] = [kw for op, kw in data.calls if op == "grep"]
+    assert len(grep_call["globs"]) == 20_000
+    [probe] = [kw for op, kw in data.calls if op == "stat"]
+    assert len(probe["observations"]) == 10_000
+
+
 async def test_capability_skips_survive_only_where_the_globs_reach() -> None:
-    fs = VirtualFileSystem(storage=_GrepMemory())
+    fs = VirtualFileSystem(storage=InMemoryStorage())
     await fs.add_mount(RecorderStorage(caps=frozenset({"read"})), "/thin")
     reached = await fs.grep("needle")
     assert [e.path for e in reached.errors] == ["/thin"]

@@ -9,7 +9,7 @@ gates' scan-side residency, and the publish CAS losing to a rival.
 from __future__ import annotations
 
 import numpy as np
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
 
 from tests.support.database_helpers import _url
 from vfs.models import Entry
@@ -18,6 +18,7 @@ from vfs.models.postings import decode_postings
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage.backends.database import DatabaseStorage, indexing
+from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import installed
 
 
@@ -184,4 +185,24 @@ class TestPostingBatches:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="abcd")])
         assert (await storage.reindex()).success is True  # every row its own statement
         assert await _count(storage, storage._host.tables.posting_list) > 1
+        await storage.close()
+
+    async def test_no_reindex_statement_grows_with_entry_count(self, tmp_path, monkeypatch) -> None:
+        # The scale law under a tightened budget: stale-chunk deletes
+        # chunk their IN-lists, and no statement's bind count exceeds it.
+        monkeypatch.setattr(EngineHost, "membership_budget", property(lambda self: 4))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
+        assert (await storage.write(entries=entries)).success is True
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        assert (await storage.reindex()).success is True
+        deletes = [s for s in statements if s.startswith("DELETE") and "chunks" in s]
+        assert len(deletes) == 3  # ten entries at a budget of four: 4 + 4 + 2
+        assert all(s.count("?") <= 4 for s in deletes)
+        assert all(s.count("?") <= storage._host.parameter_budget for s in statements)
         await storage.close()

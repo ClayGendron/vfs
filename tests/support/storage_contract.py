@@ -54,6 +54,11 @@ class ConformanceBackend(StorageBackend, SupportsPatternSearch, SupportsMutation
     """The full verb surface the suite may call; capability gating trims per test."""
 
 
+def _indexed_grep_tier(storage: ConformanceBackend) -> bool:
+    """Whether the backend declares the indexed grep tier (refusal gate)."""
+    return isinstance(storage, SupportsTraits) and storage.traits().get("grep_tier") == "indexed"
+
+
 async def _revision_of(storage: ConformanceBackend, path: str) -> int:
     result = await storage.stat(path=Path(path))
     version = result.observations[0].version
@@ -1346,6 +1351,64 @@ class StorageContract:
         result = await storage.grep(pattern="needle", allow_scan=True)
         assert result.success is True
         assert [o.path for o in result.observations] == ["/a.txt"]
+
+    # ------------------------------------------------------------------
+    # Grep pattern-class taxonomy — fully / partially / unindexable
+    # ------------------------------------------------------------------
+
+    @needs("write", "grep")
+    async def test_grep_fully_indexable_patterns_serve_under_the_default_gate(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # Long literals and alternations of long literals carry required
+        # grams — no opt-out needed on any tier.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha line")])
+        await storage.write(entries=[Entry(path=Path("/b.txt"), content="beta line")])
+        literal = await storage.grep(pattern="alpha")
+        assert [o.path for o in literal.observations] == ["/a.txt"]
+        alternation = await storage.grep(pattern="alpha|beta")
+        assert sorted(o.path for o in alternation.observations) == ["/a.txt", "/b.txt"]
+
+    @needs("write", "grep")
+    async def test_grep_partially_indexable_pattern_serves_under_the_default_gate(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # Literals embedded among match-anything runs still plan grams;
+        # the wildcard gap is verified, not planned.
+        await storage.write(entries=[Entry(path=Path("/hit.txt"), content="alpha bridge omega")])
+        await storage.write(entries=[Entry(path=Path("/half.txt"), content="alpha only")])
+        result = await storage.grep(pattern="alpha.*omega")
+        assert [o.path for o in result.observations] == ["/hit.txt"]
+
+    @needs("write", "grep")
+    async def test_grep_unindexable_patterns_refuse_loudly_on_the_indexed_tier(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # Sub-gram literals, match-all shapes, and an alternation with an
+        # unindexable branch: a classified refusal, never a silent [].
+        if not _indexed_grep_tier(storage):
+            pytest.skip("scan-tier backends serve every compilable pattern")
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="ab alpha")])
+        for pattern in ("ab", ".*", "alpha|ab"):
+            result = await storage.grep(pattern=pattern)
+            assert result.success is False, pattern
+            assert result.errors[0].kind == VFSErrorKind.unindexable_pattern
+            assert "allow_scan=True" in result.errors[0].message
+            assert result.observations == []
+
+    @needs("write", "grep")
+    async def test_grep_fold_shortening_flips_indexable_to_refused(self, storage: ConformanceBackend) -> None:
+        # 'ẞ' is three raw bytes but folds to two ('ss') — the folded
+        # index cannot serve it; the opt-out still answers sensitively.
+        if not _indexed_grep_tier(storage):
+            pytest.skip("scan-tier backends serve every compilable pattern")
+        await storage.write(entries=[Entry(path=Path("/sharp.txt"), content="GROẞE")])
+        await storage.write(entries=[Entry(path=Path("/fold.txt"), content="grosse")])
+        refused = await storage.grep(pattern="ẞ")
+        assert refused.success is False
+        assert refused.errors[0].kind == VFSErrorKind.unindexable_pattern
+        scanned = await storage.grep(pattern="ẞ", allow_scan=True)
+        assert [o.path for o in scanned.observations] == ["/sharp.txt"]
 
     # ------------------------------------------------------------------
     # mkedge

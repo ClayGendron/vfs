@@ -22,13 +22,16 @@ lines first; regenerate this file when the picture shifts (review the
 ## The active line: finishing the database backend's verb surface
 
 - **072 — database storage backend** (in progress; the umbrella
-  story). Live surface: read/stat/ls/tree/glob + write/edit/mkdir +
-  delete/move/copy + restore/sweep, hardened by the 086–090
-  coherence campaign. **grep and mkedge are the only remaining
-  classified stubs** (`backend.py`). The real-engine harness (four
-  Docker legs + the `db_test` skill) supersedes task 13's original
-  CI-leg framing. Task 17 (edges slice) is reshaped by ADR 018 and
-  waits on its wiring spec.
+  story). Live surface: read/stat/ls/tree/glob/grep +
+  write/edit/mkdir + delete/move/copy + restore/sweep + the
+  `reindex()` admin verb, hardened by the 086–090 coherence
+  campaign. **mkedge is the only remaining classified stub**
+  (`backend.py`; capabilities now derive via `storage_ops(self)`
+  minus mkedge). Pass C (grep, tasks 19–22) discharged by 093's
+  2026-08-05 landing. The real-engine harness (four Docker legs +
+  the `db_test` skill) supersedes task 13's original CI-leg framing.
+  Task 17 (edges slice) is reshaped by ADR 018 and waits on its
+  wiring spec.
 - **073 — glob segment semantics** — **landed 2026-08-01** (all four
   slices in one session: LIKE fusion, `glob_patterns.py` chokepoint,
   ext pushdowns with the stored-column agreement made structural,
@@ -93,22 +96,29 @@ lines first; regenerate this file when the picture shifts (review the
   decisions were already ADR 031; the differential battery and the
   MSSQL benchmark moved to `../research/studies/` (dated 2026-08-05)
   as the permanent harness and the recorded result.
-- **093 — grep content search** (shaped 2026-08-05; owns 072 Pass C
-  / tasks 19–22). The last read-family stub becomes live: the
-  byte-trigram index as core deliverable (refusal gate +
-  `allow_scan`, k=4 rarest-first, batch-only epoch lifecycle with
-  CAS flip), the ADR 013 flag-partitioned overlay superseding 072
-  §6's watermark, and grep born on the pattern-only seam + probe
-  (ADR 031 D4/D6, ADR 032 §5/§6 discharged). All three shaping forks
-  resolved by Clay same day (staleness trait `"overlay"`; truncation
-  flag with refine-guidance now, cursor deferred to the MCP pass as
-  a read-family question; planner upgrades deferred whole). Slices
-  A–C landed 2026-08-05: codec, reindex lifecycle, and the full seam
-  + read pipeline (protocol flip, router `_grep_dispatches` + shared
-  root probe, `grep.py` gate/ladder/overlay/budgets,
-  `unindexable_pattern` + `truncated` kinds) — all four engine legs
-  green. Slice D (capability/traits flip + proof battery) remains.
-  In progress.
+- **093 — grep content search** — **landed 2026-08-05** (all four
+  slices in one arc; owns 072 Pass C / tasks 19–22, discharged). The
+  last read-family stub is live: the byte-trigram index (refusal
+  gate + `allow_scan`, k=4 rarest-first under a posting-byte budget,
+  batch-only epoch lifecycle with CAS flip), the ADR 013
+  flag-partitioned overlay superseding 072 §6's watermark, and grep
+  born on the pattern-only seam + probe (ADR 031 D4/D6, ADR 032
+  §5/§6 discharged). All three shaping forks resolved by Clay same
+  day (staleness trait `"overlay"`; truncation flag with
+  refine-guidance now, cursor deferred to the MCP pass; planner
+  upgrades deferred whole). Slice D's flip: capabilities derive via
+  `storage_ops(self)` minus mkedge, traits declare
+  `grep_tier="indexed"` / `grep_staleness="overlay"`, every grep
+  conformance row (incl. the pattern-class taxonomy and
+  fold-shortening edge) live on every leg. Proof: epoch-atomicity
+  seam row, scale rows (10k roots → one call + one probe; budgeted
+  reindex statements), the grep differential battery (109
+  case-checks vs `grep -E`/`rg -uu` over four worlds) and the
+  rerunnable query-ladder benchmark, both under
+  `../research/studies/` (dated 2026-08-05). Suite 2126 passed,
+  coverage 100%, `ruff`/`ty` zero; four Docker legs green with grep
+  live (Postgres 191 / MySQL 191 / MSSQL 192 / Oracle 190). Awaits
+  its backward-flow mining pass, then archive.
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
@@ -204,10 +214,11 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
-→ 089 → 090 → 073 → 091 → 092. ADRs 001–032 accepted (005 superseded
-by 016; 021/022 proposed, awaiting ratification; 018 awaiting its
-wiring spec; 032 is the retroactive record of 073's decision set,
-written at its 2026-08-05 mining pass). The 073/091/092 glob arc is
-mined and archived. Tree green at 2010 passed / 800 skipped,
-`ruff`/`ty` at zero, all four Docker engine legs green as of the 092
+→ 089 → 090 → 073 → 091 → 092 → 093. ADRs 001–032 accepted (005
+superseded by 016; 021/022 proposed, awaiting ratification; 018
+awaiting its wiring spec; 032 is the retroactive record of 073's
+decision set, written at its 2026-08-05 mining pass). The
+073/091/092 glob arc is mined and archived; 093 awaits its mining
+pass. Tree green at 2126 passed / 788 skipped, `ruff`/`ty` at zero,
+all four Docker engine legs green with grep live as of the 093
 landing (2026-08-05).
