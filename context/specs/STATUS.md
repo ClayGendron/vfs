@@ -14,9 +14,10 @@ lines first; regenerate this file when the picture shifts (review the
   045, 051, 053, 054, 070) carry forward from the 2026-07-10/11
   review — not re-verified, and no commits since have claimed router
   work.
-- **Layout (since 2026-07-26):** open specs live in `active/`; landed
-  specs move to `archive/` until their backward-flow mining pass, then
-  are deleted. See `README.md`.
+- **Layout (since 2026-07-26; deletion rescinded 2026-08-05):** open
+  specs live in `active/`; landed specs move to `archive/`, get their
+  backward-flow mining pass, and stay there permanently as the
+  historical record. See `README.md`.
 
 ## The active line: finishing the database backend's verb surface
 
@@ -32,8 +33,9 @@ lines first; regenerate this file when the picture shifts (review the
   slices in one session: LIKE fusion, `glob_patterns.py` chokepoint,
   ext pushdowns with the stored-column agreement made structural,
   py3.13 floor, conformance true-up; four Docker legs green; spike
-  re-pointed at the landed code, claims 2–5 pass). Awaiting its
-  backward-flow mining pass, then archive.
+  re-pointed at the landed code, claims 2–5 pass). **Mined and
+  archived 2026-08-05**: decision set → ADR 032; spike →
+  `../research/studies/2026-07-14-glob-like-superset/`.
 - **091 — glob namespace routing** — **landed 2026-08-01**, same
   session, test-first throughout (ADR 030: namespace-coordinate
   patterns, residual routing at the seam, roots + root-anchored
@@ -60,7 +62,9 @@ lines first; regenerate this file when the picture shifts (review the
   with skew accepted, probe stated as the general fan-out assertion
   law scoped to glob, MSSQL benchmark gate and two battery cases
   added as spec obligations.
-  Awaiting its backward-flow mining pass, then archive.
+  **Mined and archived 2026-08-05**: all residue was already
+  downstream (ADR 030 as amended by ADR 031, the 2026-07-31 memo,
+  the residuation study).
 - **092 — pattern-only glob seam** — **landed 2026-08-05** (all four
   slices in one session on Clay's go-ahead). The storage glob
   contract is now `patterns: tuple[str, ...]` — scoping crosses the
@@ -79,15 +83,27 @@ lines first; regenerate this file when the picture shifts (review the
   find-operand rule). Interim scaffolding (per-residual dispatches,
   session bound, subsumption carve-out) deleted; storage-side
   "anchor" vocabulary retired. Proof: differential find/rg battery
-  green (52 case-checks, `spike/differential_battery.py`), scale
+  green (52 case-checks), scale
   rows pinned (10k roots → one glob + one probe call; 10k patterns
   → 50 statements, one session), `verify_residuation.py` identical
   statistics, four Docker legs green (postgres 173 / mysql 173 /
   mssql 174 / oracle 172), MSSQL benchmark gate passed (batched fan
-  3.8× ahead at K=100, 1.4× at K=1,000 —
-  `spike/mssql_fan_benchmark.py`). Suite 2010 passed, coverage
-  100%, `ruff`/`ty` zero. Awaiting its backward-flow mining pass,
-  then archive.
+  3.8× ahead at K=100, 1.4× at K=1,000). Suite 2010 passed, coverage
+  100%, `ruff`/`ty` zero. **Mined and archived 2026-08-05**:
+  decisions were already ADR 031; the differential battery and the
+  MSSQL benchmark moved to `../research/studies/` (dated 2026-08-05)
+  as the permanent harness and the recorded result.
+- **093 — grep content search** (shaped 2026-08-05; owns 072 Pass C
+  / tasks 19–22). The last read-family stub becomes live: the
+  byte-trigram index as core deliverable (refusal gate +
+  `allow_scan`, k=4 rarest-first, batch-only epoch lifecycle with
+  CAS flip), the ADR 013 flag-partitioned overlay superseding 072
+  §6's watermark, and grep born on the pattern-only seam + probe
+  (ADR 031 D4/D6, ADR 032 §5/§6 discharged). All three shaping forks
+  resolved by Clay same day (staleness trait `"overlay"`; truncation
+  flag with refine-guidance now, cursor deferred to the MCP pass as
+  a read-family question; planner upgrades deferred whole). In
+  progress.
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
@@ -183,8 +199,10 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
-→ 089 → 090 → 073 → 091 → 092. ADRs 001–031 accepted (005 superseded
+→ 089 → 090 → 073 → 091 → 092. ADRs 001–032 accepted (005 superseded
 by 016; 021/022 proposed, awaiting ratification; 018 awaiting its
-wiring spec). Tree green at 2010 passed / 800 skipped, `ruff`/`ty` at
-zero, all four Docker engine legs green as of the 092 landing
-(2026-08-05).
+wiring spec; 032 is the retroactive record of 073's decision set,
+written at its 2026-08-05 mining pass). The 073/091/092 glob arc is
+mined and archived. Tree green at 2010 passed / 800 skipped,
+`ruff`/`ty` at zero, all four Docker engine legs green as of the 092
+landing (2026-08-05).

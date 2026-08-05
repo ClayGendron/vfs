@@ -366,3 +366,27 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
   `test_glob_root_in_a_stat_incapable_entry_is_undeterminable`
   (`tests/base/test_dispatch.py`). Recorded in spec 092's Open
   questions; this entry is closed.
+
+## Grep staleness trait vocabulary: what replaces the dead `"watermark"` value?
+
+- **Asked:** 2026-08-05 (spec 093 shaping — the grep survey)
+- **Context:** `TraitKey` declares `grep_staleness ∈ {"none", "watermark"}`, but ADR 013 D3 replaced the watermark overlay with the flag-partitioned one (`WHERE encoded` / `WHERE NOT encoded`), so `"watermark"` names a mechanism that no longer exists. No backend declares the trait yet, so the rename is free today.
+- **Blocking:** `specs/active/093-grep-content-search/` (shape correction 3)
+- **Options considered:** `"overlay"` (recommended — staleness is bounded by the flag-partitioned scan side); keep `"watermark"` as a historical name (rejected in the spec draft: it would document a dead design); a numeric staleness bound (over-promises)
+- **Status:** resolved 2026-08-05 (Clay, at the 093 shaping review) → `"overlay"`; recorded in spec 093 correction 3
+
+## Grep's query-wide result bound: is the truncation flag enough for Article 2 §3?
+
+- **Asked:** 2026-08-05 (spec 093 shaping)
+- **Context:** Constitution Article 2 §3 requires every search verb to accept a limit and return a deterministic cap **with a refine-or-cursor mechanism**. Grep has per-file `max_count` (ripgrep `-m`) and 072's runtime budgets with a truncation flag, but no query-wide row limit and no cursor.
+- **Blocking:** `specs/active/093-grep-content-search/` (shape §3)
+- **Options considered:** ship the truncation flag as the deterministic cap and record the cursor as the MCP pass's question, where a cursor becomes wire-representable (recommended); add a router-level query-wide row cap parameter in 093; a full cursor mechanism now (premature — no wire surface exists to carry it)
+- **Status:** resolved 2026-08-05 (Clay, at the 093 shaping review) → truncation flag with refine-guidance now; the cursor is deferred to the MCP pass as a read-family-wide question (glob/ls/tree share the gap; keyset resumption over path-sorted results is the recorded sketch). Recorded in spec 093 shape §3.
+
+## Gram-planner upgrades: in 093 or a follow-up story?
+
+- **Asked:** 2026-08-05 (spec 093 shaping; defects catalogued in `research/2026-07-13-database-storage-grep-index.md` §5)
+- **Context:** Three planner upgrades would shrink the refusal set: bounded char-class expansion (`[fF]oo` refuses while `(?i)foo` indexes — the memo calls it the single highest-value upgrade), alternation cross-products (nested alternations refuse while pg_trgm answers them in milliseconds), and anchor-tolerant literal extraction.
+- **Blocking:** `specs/active/093-grep-content-search/` (shape §7 defers them)
+- **Options considered:** defer all three to a follow-up story once the refusal gate has live users (recommended — keeps Pass C bounded); pull char-class expansion into 093 (it is small and users will hit the asymmetry immediately)
+- **Status:** resolved 2026-08-05 (Clay, at the 093 shaping review) → all three deferred to a follow-up story; every refused pattern remains answerable under `allow_scan=True`. Recorded in spec 093 shape §7.

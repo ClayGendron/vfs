@@ -33,9 +33,13 @@
   parity, `44aa439`), and 076 (entry model split, `40408da`) — §5's
   ordered revision counter and §9's reserved trash scope are
   superseded by ADRs 013/014 as recorded in those specs. Live
-  surface: read/stat/ls/tree/glob + write/edit/mkdir; grep, delete,
-  move, copy, mkedge remain classified stubs. Next in sequence:
-  task 12 (slice 9, `topology.py` move/copy/delete)
+  surface (trued up 2026-08-05): read/stat/ls/tree/glob +
+  write/edit/mkdir + delete/move/copy + restore/sweep; **grep and
+  mkedge are the only remaining classified stubs.** Pass C (grep,
+  tasks 19–22) is owned by spec 093
+  (`../093-grep-content-search/spec.md`), which also corrects §6's
+  since-superseded pieces (ADR 013's flag-partitioned overlay
+  replaces the watermark; see its *Corrections* section)
 - **Date:** 2026-07-12
 - **Owner:** Clay Gendron
 - **Kind:** feature (the database backend port that ADR 001 and ADR 002
