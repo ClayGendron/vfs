@@ -273,26 +273,29 @@ _EXPRESSION_DEPTH_RESERVE: Final = 64
 def membership_budget(profile: DialectProfile, parameter_budget: int) -> int:
     """Elements per ``IN``-list chunk: the element cap net of fixed binds.
 
-    Every membership predicate (``path IN``, ``id IN``, glob's anchor
-    fan) chunks by this and merges results, so batch size never reaches
-    an engine limit — the ETL contract that 10,000+-entry batches serve
-    on every dialect.
+    Every membership predicate (``path IN``, ``id IN``) chunks by this
+    and merges results, so batch size never reaches an engine limit —
+    the ETL contract that 10,000+-entry batches serve on every dialect.
     """
     return max(1, min(profile.in_list_budget, parameter_budget - _FILTER_BIND_RESERVE))
 
 
-def fan_budget(profile: DialectProfile, parameter_budget: int) -> int:
-    """Anchors per ``OR``-fan chunk: the tighter of the bind and depth caps.
+# Measured OR-fan sweet spot: the win saturates by ~200 arms/statement,
+# and 200 clears every known engine's bind, IN-list, and depth caps.
+_PATTERN_ARM_CEILING: Final = 200
 
-    Each anchor costs two binds and two ``OR`` terms, and an ``OR``
-    chain parses left-deep, so its expression depth tracks its term
-    count — an ``IN`` list is depth-flat, an ``OR`` fan is not. On
-    SQLite's default depth cap the fan breaks at 499 anchors while the
-    bind budget alone would allow ~16,000.
+
+def arm_budget(profile: DialectProfile, parameter_budget: int, arm_binds: int) -> int:
+    """Pattern arms per glob OR-fan chunk: the tightest cap, floored at one.
+
+    Each arm spends *arm_binds* bind slots and roughly one depth unit in
+    the left-deep ``OR`` chain (the arm's own conjuncts ride under the
+    depth reserve). The measured ceiling binds before either engine cap
+    on every profiled dialect.
     """
-    by_binds = membership_budget(profile, parameter_budget) // 2
-    by_depth = (profile.expression_depth_budget - _EXPRESSION_DEPTH_RESERVE) // 2
-    return max(1, min(by_binds, by_depth))
+    by_binds = membership_budget(profile, parameter_budget) // max(1, arm_binds)
+    by_depth = profile.expression_depth_budget - _EXPRESSION_DEPTH_RESERVE
+    return max(1, min(_PATTERN_ARM_CEILING, by_binds, by_depth))
 
 
 def chunked[T](items: Sequence[T], size: int) -> Iterator[Sequence[T]]:

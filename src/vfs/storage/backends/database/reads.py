@@ -11,10 +11,13 @@ transaction.
 
 The shapes: point reads are ``path IN`` column selects, content joined
 from the content table; ``ls`` is ``parent_id`` equality only, never a
-prefix scan; ``tree`` and glob prefilter with sargable escaped ``LIKE``
-on the path cache, glob verified authoritatively by the compiled
-segment-aware pattern (``vfs.glob_patterns``) over the candidates.
-Listings order by the binary-collated ``name`` column
+prefix scan; ``tree`` prefilters with one sargable escaped ``LIKE`` on
+the path cache. Glob executes the batched pattern contract: every
+pattern contributes one self-contained OR-arm (its sargable ``LIKE``
+prefilter with all ext and liveness facts inside the arm), arms chunk
+by the dialect's budgets in one snapshot, and the compiled
+segment-aware patterns (``vfs.glob_patterns``) verify every candidate
+authoritatively. Listings order by the binary-collated ``name`` column
 and subtrees by ``path`` — byte-identical across engines.
 """
 
@@ -22,11 +25,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
-from vfs.glob_patterns import compile_filter, derive_ext, glob_defect
+from vfs.glob_patterns import GlobFilter, compile_filter, composed_pattern, derive_ext, effective_pattern, glob_defect
 from vfs.models import CONTENT_KINDS, Observation
-from vfs.paths import ROOT, Path
+from vfs.paths import METADATA_ROOT, ROOT, Path
 from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
@@ -36,9 +39,8 @@ from vfs.storage.backends.database.descent import (
     liveness_filters,
     miss_errors,
     rows_by_path,
-    subtree_filter,
 )
-from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.dialects import arm_budget, chunked
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,6 +50,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import VFSTables
+    from vfs.storage.backends.database.dialects import DialectProfile
 
 # Observation fields served directly by entries-table columns (the two
 # vocabularies share these names by construction). A file's current version
@@ -131,20 +134,20 @@ async def ls_rows(
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
-    anchors = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=True)
-    missing = await miss_errors(session, tables.entry, targets, anchors, membership_budget)
-    directories = [t for t in targets if (a := anchors.get(t)) is not None and a["kind"] == "directory"]
-    children = await _children_by_parent(session, tables.entry, membership_budget, directories, anchors, fetched)
+    found = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=True)
+    missing = await miss_errors(session, tables.entry, targets, found, membership_budget)
+    directories = [t for t in targets if (f := found.get(t)) is not None and f["kind"] == "directory"]
+    children = await _children_by_parent(session, tables.entry, membership_budget, directories, found, fetched)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
-        anchor = anchors.get(target)
-        if anchor is None:
+        mapping = found.get(target)
+        if mapping is None:
             errors.append(missing[target])
-        elif anchor["kind"] != "directory":
-            rows.append(_observe(anchor, fetched))
+        elif mapping["kind"] != "directory":
+            rows.append(_observe(mapping, fetched))
         else:
-            rows.extend(children.get(anchor["entry_id"], ()))
+            rows.extend(children.get(mapping["entry_id"], ()))
     return Result(ops=("ls",), observations=rows, errors=errors)
 
 
@@ -158,12 +161,12 @@ async def tree_rows(
 ) -> Result:
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    anchors = await _mappings_by_path(session, tables, membership_budget, [path], fetched, with_entry_id=False)
-    anchor = anchors.get(path)
-    if anchor is None:
+    found = await _mappings_by_path(session, tables, membership_budget, [path], fetched, with_entry_id=False)
+    target = found.get(path)
+    if target is None:
         return Result(ops=("tree",), errors=await classify_misses(session, entry, [path], membership_budget))
-    if anchor["kind"] != "directory":
-        return Result(ops=("tree",), observations=[_observe(anchor, fetched)])
+    if target["kind"] != "directory":
+        return Result(ops=("tree",), observations=[_observe(target, fetched)])
     stmt = (
         select(*_entry_columns(entry, fetched))
         .where(
@@ -179,77 +182,67 @@ async def tree_rows(
 
 
 # ---------------------------------------------------------------------------
-# Glob — sargable LIKE prefilter, compiled-pattern authority
+# Glob — one OR fan of self-contained pattern arms, compiled authority
 # ---------------------------------------------------------------------------
+
+# Ceiling of one arm's non-ext bind slots: the root-row exclusion, the
+# prefilter LIKE, the derived-ext pair, and the meta-liveness pair.
+_ARM_FIXED_BINDS: Final = 6
 
 
 async def glob_rows(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
+    parameter_budget: int,
     membership_budget: int,
-    fan_budget: int,
     *,
-    pattern: str,
-    scope: tuple[Path, ...],
+    patterns: tuple[str, ...],
+    roots: tuple[Path, ...],
     ext: tuple[str, ...],
     max_count: int | None,
     columns: frozenset[str] | None,
 ) -> Result:
-    """Glob under *scope*, anchors behaving like POSIX ``find`` operands.
+    """Rows matching **any** pattern, one snapshot, statements chunked by budget.
 
-    A refusable pattern classifies ``invalid`` before any row is
-    touched. A missing anchor classifies through the descent ladder
-    beside the healthy anchors' rows — partial results with per-anchor
-    errors; an existing file anchor is matched itself against the
-    pattern.
+    Scoping arrives as pattern text. *roots* are the observation-carried
+    scope claims: each is asserted with a point read (descent-ladder
+    classification beside the healthy roots' rows), composed into every
+    pattern, and its own row is served when the caller's pattern matches
+    it — find semantics: operands are tested, never exempt. One
+    refusable pattern refuses the whole call before any row is touched.
     """
-    defect = glob_defect(pattern)
-    if defect is not None:
-        error = ResultError(kind=VFSErrorKind.invalid, message=f"glob pattern {pattern!r}: {defect}")
-        return Result(ops=("glob",), errors=[error])
+    for pattern in patterns:
+        defect = glob_defect(pattern)
+        if defect is not None:
+            error = ResultError(kind=VFSErrorKind.invalid, message=f"glob pattern {pattern!r}: {defect}")
+            return Result(ops=("glob",), errors=[error])
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    glob = compile_filter(pattern, ext)
-    subject_column = entry.c.path if glob.by_path else entry.c.name
-    # Liveness is per scope arm, not per query: _glob_candidates applies
-    # the meta exclusion to every anchor except the meta-addressed ones.
-    # The prefilter translates the filter's anchored pattern — the same
-    # text the authoritative regex compiled.
-    filters: list[ColumnElement[bool]] = [entry.c.path != "/"]
-    like = _glob_like(glob.pattern)
-    if like is not None:
-        filters.append(subject_column.like(like, escape=LIKE_ESCAPE))
-    else:
-        filters.append(subject_column.like(escape_like(_literal_prefix(glob.pattern)) + "%", escape=LIKE_ESCAPE))
-    # Ext narrowing is pure AND-ed prefilter: bounded membership on the
-    # indexed column, never chunked (a filter must not become a fan-out),
-    # and the empty extension is inexpressible (stored NULL) so it stands
-    # down. The dotfile OR arm rescues names like ".txt" whose ext is NULL.
-    ext_binds = 0
-    if glob.wanted_ext and "" not in glob.wanted_ext and len(glob.wanted_ext) <= membership_budget:
-        filters.append(entry.c.ext.in_(sorted(glob.wanted_ext)))
-        ext_binds = len(glob.wanted_ext)
-    derived = derive_ext(glob.pattern)
-    if derived is not None:
-        derived_ext, dot_suffix = derived
-        filters.append(or_(entry.c.ext == derived_ext, entry.c.name == dot_suffix))
+    wanted = frozenset(e.lstrip(".").lower() for e in ext)
     errors: list[ResultError] = []
-    if scope:
-        anchors = await _mappings_by_path(
-            session, tables, membership_budget, scope, frozenset({"path", "kind"}), with_entry_id=False
-        )
-        errors = list((await miss_errors(session, tables.entry, scope, anchors, membership_budget)).values())
-    # The ext membership rides in every fan statement, so its binds buy
-    # anchors out of each chunk (~2 binds per anchor on the fan side).
-    fan_chunk = max(1, fan_budget - (ext_binds + 1) // 2)
-    candidates = await _glob_candidates(session, entry, fan_chunk, scope, filters, fetched)
-    rows: list[Observation] = []
-    for mapping in candidates:
-        if max_count is not None and len(rows) >= max_count:
-            break
-        if not glob.matches(Path(mapping["path"])):
-            continue
-        rows.append(_observe(mapping, fetched))
+    matched: dict[str, RowMapping] = {}
+    live = list(dict.fromkeys(patterns))
+    if roots:
+        scope = tuple(dict.fromkeys(roots))
+        live = sorted({composed_pattern(root, pattern) for root in scope for pattern in patterns})
+        found = await _mappings_by_path(session, tables, membership_budget, scope, fetched, with_entry_id=False)
+        errors = list((await miss_errors(session, entry, scope, found, membership_budget)).values())
+        for root in scope:
+            mapping = found.get(str(root))
+            # The entry's own root row is the entry itself, never served.
+            if root != ROOT and mapping is not None and _root_row_matches(root, patterns, ext):
+                matched[str(root)] = mapping
+    gates = [compile_filter(pattern, ext) for pattern in live]
+    arms = [arm for glob in gates if (arm := _pattern_arm(entry, glob, wanted, membership_budget)) is not None]
+    ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
+    chunk = arm_budget(profile, parameter_budget, _ARM_FIXED_BINDS + ext_binds)
+    for mapping in await _pattern_candidates(session, entry, chunk, arms, fetched):
+        if any(glob.matches(Path(mapping["path"])) for glob in gates):
+            matched.setdefault(mapping["path"], mapping)
+    rows = [_observe(matched[path], fetched) for path in sorted(matched)]
+    if max_count is not None:
+        rows = rows[:max_count]
     return Result(ops=("glob",), observations=rows, errors=errors)
 
 
@@ -300,57 +293,75 @@ async def _mappings_by_path(
     return await rows_by_path(session, tables.entry, paths, columns, membership_budget, source=source)
 
 
-async def _glob_candidates(
+def _root_row_matches(root: Path, patterns: Sequence[str], ext: tuple[str, ...]) -> bool:
+    """The find-operand rule: the root's own row is tested against the patterns.
+
+    Name-arm patterns judge the root by name, path-arm patterns by its
+    path anchored under the root — the same subject rule every candidate
+    faces, applied to the operand itself.
+    """
+    return any(compile_filter(effective_pattern(root, pattern), ext).matches(root) for pattern in patterns)
+
+
+def _pattern_arm(
+    entry: Table, glob: GlobFilter, wanted: frozenset[str], membership_budget: int
+) -> ColumnElement[bool] | None:
+    """One pattern's self-contained OR-arm, or ``None`` when provably empty.
+
+    Every fact rides inside the arm — the root-row exclusion, the
+    prefilter LIKE, both ext facts, the meta liveness scope — because
+    the fan's plan survives only as a pure OR of self-contained arms:
+    one conjunct beside the fan demotes every engine's multi-index OR
+    to a scan. The caller's ext membership stands down when the empty
+    extension (stored NULL) is wanted or the set outgrows one chunk; a
+    derived ext contradicting the caller's set makes the arm dead.
+    """
+    subject = entry.c.path if glob.by_path else entry.c.name
+    like = _glob_like(glob.pattern)
+    prefilter = like if like is not None else escape_like(_literal_prefix(glob.pattern)) + "%"
+    terms: list[ColumnElement[bool]] = [entry.c.path != "/", subject.like(prefilter, escape=LIKE_ESCAPE)]
+    if wanted and "" not in wanted and len(wanted) <= membership_budget:
+        terms.append(entry.c.ext.in_(sorted(wanted)))
+    derived = derive_ext(glob.pattern)
+    if derived is not None:
+        derived_ext, dot_suffix = derived
+        if wanted and "" not in wanted and derived_ext not in wanted:
+            return None
+        # The dotfile arm rescues names like ".txt", whose stored ext is NULL.
+        terms.append(or_(entry.c.ext == derived_ext, entry.c.name == dot_suffix))
+    terms.extend(liveness_filters(entry, include_meta=_meta_scoped(glob.pattern)))
+    return and_(*terms)
+
+
+async def _pattern_candidates(
     session: AsyncSession,
     entry: Table,
-    fan_budget: int,
-    scope: tuple[Path, ...],
-    filters: list[ColumnElement[bool]],
+    chunk_size: int,
+    arms: Sequence[ColumnElement[bool]],
     fetched: frozenset[str],
 ) -> list[RowMapping]:
-    """Prefiltered candidate rows in path order, one scope arm per liveness class.
+    """Prefiltered candidates from the chunked OR fan, in path order.
 
-    The meta bypass is per-anchor: a meta-addressed anchor fans with the
-    exclusion lifted, while the default scope and every other anchor
-    (ROOT included) keep the ``/.vfs`` subtree hidden. The merge dict
-    dedupes rows nested anchors both match, and one Python sort restores
+    Each chunk's WHERE is the pure OR of its arms — nothing rides
+    beside the fan. Overlapping arms yield a row once per statement;
+    the merge dict dedups across chunks, and one Python sort restores
     path order — codepoint order equals the binary-collated byte order.
     """
     columns = _entry_columns(entry, fetched)
-    live = [anchor for anchor in scope if not anchor.is_meta]
-    meta = [anchor for anchor in scope if anchor.is_meta]
-    hidden = [*filters, *liveness_filters(entry, include_meta=False)]
     merged: dict[str, RowMapping] = {}
-    if not scope or ROOT in live:
-        stmt = select(*columns).where(*hidden)
-        merged.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})
-    elif live:
-        await _anchor_fan(session, entry, fan_budget, columns, hidden, live, merged)
-    if meta:
-        await _anchor_fan(session, entry, fan_budget, columns, filters, meta, merged)
+    for chunk in chunked(list(arms), chunk_size):
+        result = await session.execute(select(*columns).where(or_(*chunk)))
+        merged.update({mapping["path"]: mapping for mapping in result.mappings()})
     return [merged[path] for path in sorted(merged)]
 
 
-async def _anchor_fan(
-    session: AsyncSession,
-    entry: Table,
-    fan_budget: int,
-    columns: list[Column[object]],
-    filters: list[ColumnElement[bool]],
-    anchors: Sequence[Path],
-    merged: dict[str, RowMapping],
-) -> None:
-    """One liveness class's chunked anchor fan, merged into *merged*.
+def _meta_scoped(pattern: str) -> bool:
+    """Whether the pattern's literal prefix addresses the meta subtree.
 
-    Chunks hold ``fan_budget`` anchors — the dialect's declared cap on
-    the tighter of bind count and ``OR``-chain expression depth. Simple
-    planners may scan the table once per chunk (Postgres builds a
-    bitmap-OR); bounded and correct either way.
+    Only a literal ``/.vfs`` head lifts the exclusion — a wildcard-headed
+    prefix (``/.v*``, ``/.vfs*``) never does.
     """
-    for chunk in chunked(sorted({str(anchor) for anchor in anchors}), fan_budget):
-        fan = or_(*(subtree_filter(entry, anchor) for anchor in chunk))
-        result = await session.execute(select(*columns).where(*filters, fan))
-        merged.update({mapping["path"]: mapping for mapping in result.mappings()})
+    return pattern == METADATA_ROOT or pattern.startswith(METADATA_ROOT + "/")
 
 
 async def _children_by_parent(
@@ -358,18 +369,18 @@ async def _children_by_parent(
     entry: Table,
     membership_budget: int,
     directories: Sequence[Path],
-    anchors: dict[str, RowMapping],
+    found: dict[str, RowMapping],
     fetched: frozenset[str],
 ) -> dict[str, list[Observation]]:
     """Chunked ``parent_id IN`` children selects, regrouped per parent.
 
-    One scope per liveness class (meta-anchored targets see meta rows).
+    One scope per liveness class (meta-addressed targets see meta rows).
     Chunks partition parents, so each parent's children arrive whole and
     name-ordered; the dict preserves that order per parent.
     """
     children: dict[str, list[Observation]] = {}
     for include_meta in (False, True):
-        scope = sorted({anchors[target]["entry_id"] for target in directories if target.is_meta == include_meta})
+        scope = sorted({found[target]["entry_id"] for target in directories if target.is_meta == include_meta})
         for chunk in chunked(scope, membership_budget):
             stmt = (
                 select(entry.c.parent_id, *_entry_columns(entry, fetched))

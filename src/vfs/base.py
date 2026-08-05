@@ -37,12 +37,19 @@ import asyncio
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final, NamedTuple, assert_never
+from typing import TYPE_CHECKING, Any, NamedTuple, assert_never, cast
 
 from pydantic import ValidationError
 
 from vfs.exceptions import MountError, raise_lone_or_group
-from vfs.glob_patterns import effective_pattern, glob_defect, render_residual, residuals
+from vfs.glob_patterns import (
+    compile_filter,
+    composed_pattern,
+    effective_pattern,
+    glob_defect,
+    render_residual,
+    residuals,
+)
 from vfs.models import Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
@@ -197,22 +204,11 @@ class _FanoutPlan(NamedTuple):
     refusal: Result | None = None
 
 
-# Per-anchor glob dispatches each hold a backend session; the bound keeps
-# one fan-out from draining a connection pool at large anchor counts.
-_GLOB_SESSION_BOUND: Final = 8
-
-
 def _path_covers(ancestor: Path, descendant: Path) -> bool:
     """Whether *descendant* sits at or beneath *ancestor* in the namespace."""
     if ancestor in (descendant, ROOT):
         return True
     return str(descendant).startswith(str(ancestor) + "/")
-
-
-async def _gated(gate: asyncio.Semaphore, coro: Coroutine[Any, Any, Result]) -> Result:
-    """Run one dispatch under the fan-out's session bound."""
-    async with gate:
-        return await coro
 
 
 class VirtualFileSystem:
@@ -1042,11 +1038,16 @@ class VirtualFileSystem:
         Segment-aware semantics: ``*`` matches within one path segment,
         ``**`` spans segments; any ``/`` anchors the pattern at each
         scope root (the namespace root when unscoped) while a slash-free
-        pattern matches leaf names at any depth. The router crosses the
-        mount seam by residuation: each entry receives the pattern in
-        its own coordinates, so the match *set* is invariant to mount
-        placement — row order is merge order, and a *max_count* prefix
-        of it can therefore differ across layouts.
+        pattern matches leaf names at any depth. Scoping crosses the
+        storage seam only as pattern text: each root composes into one
+        spatial pattern, residuation puts every entry's members in its
+        own coordinates, and each entry answers its whole set in one
+        call — so the match *set* is invariant to mount placement.
+        Roots are find operands: a concurrent probe asserts each one
+        (missing is a loud per-root error beside the healthy roots'
+        rows) and serves the root's own row when the pattern matches
+        it. Row order is merge order, and a *max_count* prefix of it
+        can therefore differ across layouts.
 
         *max_count* (>= 1) bounds each entry's answer **and** the merged
         result: a fan-out over N entries still returns at most
@@ -1068,10 +1069,24 @@ class VirtualFileSystem:
         defect = glob_defect(pattern)
         if defect is not None:
             return self._error(f"glob pattern {pattern!r}: {defect}", kind=VFSErrorKind.invalid, op="glob")
+        if observations is not None:
+            # The chaining shape: rows carry the scope, grouped per entry,
+            # and the backend composes those roots into the pattern batch.
+            if not self._bindings:
+                return self._closed_error("glob")
+            merged = await self._dispatch_grouped_observations(
+                "glob",
+                observations,
+                user_id=user_id,
+                patterns=(pattern,),
+                ext=ext,
+                max_count=max_count,
+                columns=columns,
+            )
+            return self._cap_rows(merged, "glob", max_count)
         return await self._route_fanout(
             "glob",
             paths=paths,
-            observations=observations,
             row_cap=max_count,
             pattern=pattern,
             ext=ext,
@@ -1443,11 +1458,11 @@ class VirtualFileSystem:
         fails loudly whatever its siblings produced.  That pin survives
         subsumption: when a sibling region also covers a named entry, the
         entry dispatches once (unscoped) but its result still merges
-        plain — except glob, which dispatches on both arms (the path arm
-        because each root carries its own effective pattern, the name arm
-        so a covered root keeps its find-operand assertion) and dedups
-        the overlap in the merge.  *row_cap* re-applies the caller's
-        result bound after the
+        plain.  Glob builds its dispatches apart
+        (:meth:`_glob_dispatches`): scoping crosses the seam as pattern
+        text, one batched call per entry, with root assertions on a
+        concurrent probe that no dispatch shape can drop.  *row_cap*
+        re-applies the caller's result bound after the
         merge on every input shape — ``glean`` trims by score, everything
         else keeps merge order — so it cannot multiply by entry count;
         the bound arrives gated (integer ``>= 1`` or ``None``).
@@ -1470,18 +1485,15 @@ class VirtualFileSystem:
                 return plan.refusal
 
             pattern = kwargs.get("pattern")
-            if op == "glob" and isinstance(pattern, str) and "/" in pattern:
+            if op == "glob" and isinstance(pattern, str):
                 rest = {key: value for key, value in kwargs.items() if key != "pattern"}
-                named_coros, branches, skips = self._glob_residual_dispatches(
-                    plan, paths, pattern, user_id=user_id, **rest
-                )
+                named_coros, branches, skips = self._glob_dispatches(plan, paths, pattern, user_id=user_id, **rest)
             else:
-                # Unscoped subsumes a narrower scope into the same entry —
-                # except glob, whose scoped arm carries the root's assertion.
+                # Unscoped subsumes a narrower scope into the same entry.
                 named_coros = [
                     self._dispatch_entry(binding, op, paths=tuple(dict.fromkeys(rels)), user_id=user_id, **kwargs)
                     for key, (binding, rels) in plan.scoped.items()
-                    if op == "glob" or key not in plan.unscoped
+                    if key not in plan.unscoped
                 ]
                 branches = [
                     (binding.path, self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs))
@@ -1550,7 +1562,7 @@ class VirtualFileSystem:
 
         return _FanoutPlan(scoped=scoped, unscoped=unscoped, skips=list(skipped.values()))
 
-    def _glob_residual_dispatches(
+    def _glob_dispatches(
         self,
         plan: _FanoutPlan,
         paths: tuple[str, ...],
@@ -1563,69 +1575,135 @@ class VirtualFileSystem:
         list[tuple[Path, Coroutine[Any, Any, Result]]],
         list[ResultError],
     ]:
-        """Build glob's dispatches: the pattern crosses the seam by residuation.
+        """Build glob's dispatches: scoping crosses the seam as pattern text.
 
-        A path-arm pattern is namespace-coordinate: it anchors under each
-        scope root, and every entry receives its derivative in entry-local
-        coordinates — one dispatch per live residual, sorted for
-        determinism. A dead residual set is routing, not a capability gap:
-        the entry is not dispatched and no skip is minted; capability
-        skips survive only where the pattern can reach the entry. Each
-        scope anchor keeps its find-operand assertion, as one dispatch
-        per deduplicated anchor — each root carries its own effective
-        pattern, so anchors cannot share a dispatch and a named entry a
-        region also covers dispatches on both arms (the merge pins it
-        loud and dedups the overlap). The session gate bounds how many
-        of these dispatches hold a backend session at once.
+        Each scope root composes into one spatial pattern (name arm goes
+        ``root/**/pattern``, path arm anchors under the root), but only
+        into its owning entry and the entries beneath the root — never
+        an ancestor's shadowed region. Residuation then derives every
+        entry's members in entry-local coordinates, and each entry
+        receives its whole deduped set as one batched call. Root
+        assertions ride a separate concurrent probe grouped by owning
+        entry (:meth:`_glob_probe`), structurally immune to any dispatch
+        optimization. A dead residual set is routing, not a capability
+        gap: the entry is not dispatched and no skip is minted;
+        capability skips survive only where the pattern can reach the
+        entry's rows.
         """
-        roots = tuple(root for raw in paths if (root := resolve_path(raw).path) is not None) if paths else (ROOT,)
-        gate = asyncio.Semaphore(_GLOB_SESSION_BOUND)
-        named_coros: list[Coroutine[Any, Any, Result]] = []
-        for binding, rels in plan.scoped.values():
-            named_coros.extend(
-                _gated(
-                    gate,
-                    self._dispatch_entry(
-                        binding,
-                        "glob",
-                        paths=(rel,),
-                        user_id=user_id,
-                        pattern=effective_pattern(rel, pattern),
-                        **kwargs,
-                    ),
+        roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
+        capable = {**plan.unscoped, **{key: binding for key, (binding, _rels) in plan.scoped.items()}}
+        members: dict[Path, set[str]] = {}
+        if not roots:
+            if "/" in pattern:
+                for key in capable:
+                    members[key] = set(self._residual_renders(pattern, key))
+            else:
+                # Unscoped name-arm patterns are coordinate-free: every
+                # entry sees the same text, floated by the storage layer.
+                members = {key: {pattern} for key in capable}
+        else:
+            for root in roots:
+                composed = composed_pattern(root, pattern)
+                owner = self._resolve_terminal(root).binding.path
+                for key in capable:
+                    if key != owner and not _path_covers(root, key):
+                        continue
+                    members.setdefault(key, set()).update(self._residual_renders(composed, key))
+        probes, unverifiable = self._glob_probes(roots, pattern, user_id=user_id, **kwargs)
+        branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = [
+            (key, self._dispatch_entry(capable[key], "glob", patterns=tuple(sorted(live)), user_id=user_id, **kwargs))
+            for key, live in members.items()
+            if live
+        ]
+        reach = roots or (ROOT,)
+        skips = [skip for skip in plan.skips if skip.path is None or self._glob_reaches(skip.path, reach, pattern)]
+        return probes, branches, [*skips, *unverifiable]
+
+    def _glob_probes(
+        self,
+        roots: tuple[Path, ...],
+        pattern: str,
+        *,
+        user_id: str | None,
+        **kwargs: object,
+    ) -> tuple[list[Coroutine[Any, Any, Result]], list[ResultError]]:
+        """One point-read probe per owning entry, asserting its named roots.
+
+        The namespace root is exempt — it is the namespace itself, never
+        a row. An entry that cannot answer ``stat`` leaves its roots
+        honestly undeterminable: a warning on record, never coerced to
+        absent, never a silent pass.
+        """
+        ext = cast("tuple[str, ...]", kwargs.get("ext", ()))
+        columns = cast("frozenset[str] | None", kwargs.get("columns"))
+        grouped: dict[Path, tuple[Binding, list[Path]]] = {}
+        unverifiable: list[ResultError] = []
+        for root in roots:
+            if root == ROOT:
+                continue
+            terminal = self._resolve_terminal(root)
+            if "stat" not in terminal.binding.meta.caps:
+                unverifiable.append(
+                    ResultError(
+                        kind=VFSErrorKind.unsupported,
+                        message=f"Root {root} is unverifiable: {terminal.binding.path} does not support stat",
+                        severity=Severity.warning,
+                        path=root,
+                        source=terminal.binding.path,
+                    )
                 )
-                for rel in dict.fromkeys(rels)
-            )
-        branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = []
-        for binding in plan.unscoped.values():
-            for residual in self._glob_residual_patterns(binding.path, roots, pattern):
-                coro = self._dispatch_entry(binding, "glob", paths=(), user_id=user_id, pattern=residual, **kwargs)
-                branches.append((binding.path, _gated(gate, coro)))
-        skips = [skip for skip in plan.skips if skip.path is None or self._glob_reaches(skip.path, roots, pattern)]
-        return named_coros, branches, skips
+                continue
+            _b, rels = grouped.setdefault(terminal.binding.path, (terminal.binding, []))
+            rels.append(terminal.rel)
+        coros: list[Coroutine[Any, Any, Result]] = [
+            self._glob_probe(binding, rels, pattern, ext, columns, user_id=user_id)
+            for binding, rels in grouped.values()
+        ]
+        return coros, unverifiable
+
+    async def _glob_probe(
+        self,
+        binding: Binding,
+        rels: list[Path],
+        pattern: str,
+        ext: tuple[str, ...],
+        columns: frozenset[str] | None,
+        *,
+        user_id: str | None,
+    ) -> Result:
+        """Assert scope roots with one batched point-read against their entry.
+
+        A missing root classifies loud through the entry's own descent
+        ladder; a present root's row joins the result when the caller's
+        pattern matches it — name arm by name, path arm by its namespace
+        path (find semantics: operands are tested, never exempt).
+        """
+        probe = [Observation(path=rel) for rel in dict.fromkeys(rels)]
+        result = await self._dispatch_entry(binding, "stat", observations=probe, columns=columns, user_id=user_id)
+        kept = [
+            row
+            for row in result.observations
+            if compile_filter(effective_pattern(row.path, pattern), ext).matches(row.path)
+        ]
+        if len(kept) == len(result.observations):
+            return result
+        return result.model_copy(update={"observations": kept})
 
     @staticmethod
-    def _glob_residual_patterns(bind_path: Path, roots: tuple[Path, ...], pattern: str) -> list[str]:
-        """Sorted entry-local renders of every live residual the roots yield.
+    def _residual_renders(pattern: str, bind_path: Path) -> list[str]:
+        """Sorted entry-local renders of the pattern's live residuals.
 
         Empty-tuple residuals are dropped: the bind-point row is the
         parent's stored directory, never a child dispatch.
         """
-        rendered: set[str] = set()
-        for root in roots:
-            if not _path_covers(root, bind_path):
-                continue
-            for components in residuals(effective_pattern(root, pattern), bind_path):
-                if components:
-                    rendered.add(render_residual(components))
-        return sorted(rendered)
+        return sorted(render_residual(components) for components in residuals(pattern, bind_path) if components)
 
     @staticmethod
     def _glob_reaches(bind_path: Path, roots: tuple[Path, ...], pattern: str) -> bool:
         """Whether any scope root lets the pattern reach rows of this entry."""
         if any(_path_covers(bind_path, root) for root in roots):
             return True  # a root inside the entry names rows the entry holds
-        return bool(VirtualFileSystem._glob_residual_patterns(bind_path, roots, pattern))
+        return any(components for root in roots for components in residuals(composed_pattern(root, pattern), bind_path))
 
     @staticmethod
     def _merge_fanout(

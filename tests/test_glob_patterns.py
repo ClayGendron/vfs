@@ -8,7 +8,15 @@ refused. The demo tree is the spec's acceptance table.
 
 from __future__ import annotations
 
-from vfs.glob_patterns import compile_filter, compile_glob, derive_ext, effective_pattern, glob_defect, residuals
+from vfs.glob_patterns import (
+    compile_filter,
+    compile_glob,
+    composed_pattern,
+    derive_ext,
+    effective_pattern,
+    glob_defect,
+    residuals,
+)
 from vfs.paths import ROOT, Path
 
 DEMO_TREE = [Path("/notes.txt"), Path("/docs/a.txt"), Path("/docs/deep/nested/b.txt")]
@@ -217,6 +225,47 @@ class TestEffectivePattern:
         assert effective_pattern(ROOT, "src/*.py") == "/src/*.py"
         assert effective_pattern(ROOT, "/docs/*.txt") == "/docs/*.txt"
         assert effective_pattern(ROOT, "*/x.py") == "/*/x.py"
+
+
+# =========================================================================
+# composed_pattern — one scope root folded into one spatial pattern
+# =========================================================================
+
+
+class TestComposedPattern:
+    def test_name_arm_goes_spatial_under_the_root(self):
+        assert composed_pattern(Path("/a/data"), "*.csv") == "/a/data/**/*.csv"
+        assert composed_pattern(Path("/data"), "b.txt") == "/data/**/b.txt"
+
+    def test_the_default_root_floats_from_the_namespace_root(self):
+        assert composed_pattern(ROOT, "*.csv") == "/**/*.csv"
+
+    def test_path_arm_delegates_to_effective_pattern(self):
+        assert composed_pattern(Path("/data"), "src/*.py") == "/data/src/*.py"
+        assert composed_pattern(Path("/data"), "**/*.txt") == "/data/**/*.txt"
+        assert composed_pattern(ROOT, "src/*.py") == "/src/*.py"
+
+    def test_a_leading_slash_keeps_the_direct_children_spelling(self):
+        assert composed_pattern(Path("/a"), "/*.csv") == "/a/*.csv"
+
+    def test_manufactured_adjacent_double_star_canonicalizes(self):
+        # Composition itself mints the adjacency; canonicalization must
+        # therefore sit downstream of composition, not only at parse.
+        assert composed_pattern(Path("/a"), "**") == "/a/**"
+        assert composed_pattern(ROOT, "**") == "/**"
+        assert composed_pattern(Path("/a"), "**/**/x") == "/a/**/x"
+
+    def test_a_composed_name_arm_still_hits_direct_children(self):
+        # The named battery case: ** spans zero segments, so the float
+        # made spatial loses no direct-child matches.
+        regex = compile_glob(composed_pattern(Path("/a/data"), "*.csv"))
+        assert regex.match("/a/data/x.csv")
+        assert regex.match("/a/data/sub/deep/y.csv")
+        assert regex.match("/a/other.csv") is None
+
+    def test_composition_preserves_well_formedness(self):
+        for root, pattern in ((Path("/a"), "*.csv"), (ROOT, "**"), (Path("/a/b"), "src/*.py")):
+            assert glob_defect(composed_pattern(root, pattern)) is None
 
 
 # =========================================================================

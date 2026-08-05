@@ -2,7 +2,7 @@
 
 The generic floor, retryable classification, and the budgets that keep
 every statement bounded — no membership predicate, bulk insert, or glob
-anchor fan may grow with batch size, on any engine.
+pattern fan may grow with batch size, on any engine.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from vfs.storage.backends.database.dialects import (
     POSTGRESQL,
     PROFILES,
     SQLITE,
-    fan_budget,
+    arm_budget,
     is_retryable,
     membership_budget,
     op_execution_options,
@@ -221,15 +221,17 @@ class TestMembershipChunking:
         # Degenerate budgets never chunk below one element.
         assert membership_budget(GENERIC, 8) == 1
 
-    def test_fan_budget_honors_bind_and_depth_caps(self) -> None:
-        # Depth-capped: an OR chain parses left-deep, so SQLite's huge
-        # bind budget still yields (1,000 - reserve) // 2 anchors.
-        assert fan_budget(SQLITE, 100_000) == 468
-        assert fan_budget(GENERIC, 100_000) == 468  # the unknown-engine floor
-        # Bind-capped: a squeezed parameter budget wins over depth.
-        assert fan_budget(SQLITE, 48) == 8
-        # Degenerate budgets never chunk below one anchor.
-        assert fan_budget(GENERIC, 0) == 1
+    def test_arm_budget_honors_bind_depth_and_ceiling_caps(self) -> None:
+        # The measured ceiling binds first on generous budgets: the
+        # OR-fan win saturates by ~200 arms and 200 clears every cap.
+        assert arm_budget(SQLITE, 100_000, 6) == 200
+        assert arm_budget(GENERIC, 100_000, 6) == 166  # 1,000-element IN floor // 6
+        # Bind-capped: a squeezed parameter budget wins over the ceiling.
+        assert arm_budget(SQLITE, 48, 6) == 2
+        # Depth-capped: a depth budget under the reserve still progresses.
+        assert arm_budget(replace(SQLITE, expression_depth_budget=70), 100_000, 6) == 6
+        # Degenerate budgets never chunk below one arm.
+        assert arm_budget(GENERIC, 0, 6) == 1
 
     def test_rows_per_statement_divides_by_the_widest_row(self) -> None:
         narrow = {"entry_id": "e1", "path": "/a"}
@@ -262,7 +264,7 @@ class TestMembershipChunking:
         misses = await storage.stat(observations=[Observation(path=Path(f"/ghost/g{i}.txt")) for i in range(40)])
         assert len(misses.errors) == 40
         assert {e.kind for e in misses.errors} == {VFSErrorKind.not_found}
-        scoped = await storage.glob(pattern="*.txt", paths=tuple(p.parent_dir for p in paths))
+        scoped = await storage.glob(patterns=("*.txt",), observations=[Observation(path=p.parent_dir) for p in paths])
         assert len(scoped.observations) == 60
         # Batch ls spans chunk boundaries: 60 anchors at 16 per statement,
         # each parent's single child arriving whole through the merge.
@@ -271,32 +273,33 @@ class TestMembershipChunking:
         assert sorted(str(o.path) for o in listing.observations) == sorted(str(p) for p in paths)
         await storage.close()
 
-    async def test_wide_scope_glob_survives_the_expression_depth_cap(self, tmp_path) -> None:
-        # 1,100 anchors: past the 499-anchor point where SQLite's default
-        # SQLITE_MAX_EXPR_DEPTH kills an unchunked fan, and enough to
-        # span multiple fan chunks at the depth-capped budget. Ghost
-        # anchors classify per-anchor (find parity), rows still serve.
+    async def test_wide_pattern_fan_survives_the_expression_depth_cap(self, tmp_path) -> None:
+        # 1,100 roots compose into 1,100 pattern arms — past the point
+        # where SQLite's default SQLITE_MAX_EXPR_DEPTH kills an unchunked
+        # OR fan — so the arms must chunk. Ghost roots classify per-root
+        # (find parity); the healthy root's row and rows still serve.
         storage = DatabaseStorage(url=_url(tmp_path))
         written = await storage.write(entries=[Entry(path=Path("/d/a.txt"), content="x")], parents=True)
         assert written.success is True
-        scope = (Path("/d"), *(Path(f"/ghost{i:04}") for i in range(1_099)))
-        result = await storage.glob(pattern="*", paths=scope)
+        roots = [Observation(path=Path("/d")), *(Observation(path=Path(f"/ghost{i:04}")) for i in range(1_099))]
+        result = await storage.glob(patterns=("*",), observations=roots)
         assert [str(o.path) for o in result.observations] == ["/d", "/d/a.txt"]
         assert result.success is False
         assert len(result.errors) == 1_099
         assert {e.kind for e in result.errors} == {VFSErrorKind.not_found}
         await storage.close()
 
-    async def test_nested_glob_anchors_dedupe_across_chunks(self, tmp_path, monkeypatch) -> None:
-        # Budget 48 → fan chunks of 8 anchors: /top lands in the first
-        # chunk and every nested anchor re-matches its rows in later
-        # chunks, so each row must appear exactly once after the merge.
+    async def test_nested_root_patterns_dedupe_across_chunks(self, tmp_path, monkeypatch) -> None:
+        # Budget 48 → tiny arm chunks: /top's composed pattern lands in
+        # the first chunk and every nested root re-matches its rows in
+        # later chunks, so each row must appear exactly once post-merge.
         monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
         storage = DatabaseStorage(url=_url(tmp_path))
         files = [Path(f"/top/d{i:02}/f.txt") for i in range(20)]
         written = await storage.write(entries=[Entry(path=p, content="x") for p in files], parents=True)
         assert written.success is True, written.errors
-        result = await storage.glob(pattern="*", paths=(Path("/top"), *(p.parent_dir for p in files)))
+        roots = [Observation(path=Path("/top")), *(Observation(path=p.parent_dir) for p in files)]
+        result = await storage.glob(patterns=("*",), observations=roots)
         expected = sorted(["/top", *(str(p.parent_dir) for p in files), *(str(p) for p in files)])
         assert [str(o.path) for o in result.observations] == expected
         await storage.close()

@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import event, insert, select, update
+from sqlalchemy import event, insert, select, text, update
 from sqlalchemy.exc import DBAPIError
 from ulid import ULID
 
@@ -241,34 +241,34 @@ class TestReadFamily:
         assert OBSERVATION_FIELDS & cols == ENTRY_OBSERVATION_FIELDS
 
     async def test_glob_matches_names_and_full_paths(self, storage: DatabaseStorage) -> None:
-        by_name = await storage.glob(pattern="*.txt")
+        by_name = await storage.glob(patterns=("*.txt",))
         assert [o.path for o in by_name.observations] == [
             "/docs/Zed.txt",
             "/docs/a.txt",
             "/docs/sub/c.txt",
             "/top.txt",
         ]
-        by_path = await storage.glob(pattern="/docs/*.txt")
+        by_path = await storage.glob(patterns=("/docs/*.txt",))
         assert [o.path for o in by_path.observations] == ["/docs/Zed.txt", "/docs/a.txt"]
-        recursive = await storage.glob(pattern="/docs/**/*.txt")
+        recursive = await storage.glob(patterns=("/docs/**/*.txt",))
         assert [o.path for o in recursive.observations] == ["/docs/Zed.txt", "/docs/a.txt", "/docs/sub/c.txt"]
 
     async def test_glob_scope_ext_and_max_count(self, storage: DatabaseStorage) -> None:
-        scoped = await storage.glob(pattern="*", paths=(Path("/docs"),))
+        scoped = await storage.glob(patterns=("*",), observations=[Observation(path=Path("/docs"))])
         assert all(str(o.path).startswith("/docs") for o in scoped.observations)
-        by_ext = await storage.glob(pattern="*", ext=("md",))
+        by_ext = await storage.glob(patterns=("*",), ext=("md",))
         assert [o.path for o in by_ext.observations] == ["/docs/b.md"]
-        capped = await storage.glob(pattern="*.txt", max_count=2)
+        capped = await storage.glob(patterns=("*.txt",), max_count=2)
         assert len(capped.observations) == 2
 
     async def test_glob_character_class_falls_back_to_fnmatch(self, storage: DatabaseStorage) -> None:
-        result = await storage.glob(pattern="[ab]*.txt")
+        result = await storage.glob(patterns=("[ab]*.txt",))
         assert [o.path for o in result.observations] == ["/docs/a.txt"]
 
     async def test_glob_escapes_like_metacharacters(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/da_a.txt", "file", "x"), ("/daxa.txt", "file", "x")])
-        result = await storage.glob(pattern="da_a.txt")
+        result = await storage.glob(patterns=("da_a.txt",))
         assert [o.path for o in result.observations] == ["/da_a.txt"]
         await storage.close()
 
@@ -288,21 +288,21 @@ class TestReadFamily:
         assert (await storage.stat(path=Path("/docs/a.txt"))).success is True
         assert (await storage.ls(path=Path("/docs"))).success is True
         assert (await storage.tree(path=Path("/"))).success is True
-        assert (await storage.glob(pattern="*.txt")).success is True
+        assert (await storage.glob(patterns=("*.txt",))).success is True
         queries = [s for s in statements if not s.startswith(("BEGIN", "COMMIT", "ROLLBACK", "PRAGMA"))]
         assert queries and all(s.lstrip().startswith("SELECT") for s in queries), queries
         children = [s for s in queries if "parent_id IN" in s]
         assert children, queries
         await storage.close()
 
-    async def test_anchor_escaping_bounds_tree_and_scoped_glob(self, tmp_path) -> None:
-        # The anchor-side LIKE is the sole subtree filter for both verbs:
-        # a metacharacter in a directory name must not widen the scope.
+    async def test_prefix_escaping_bounds_tree_and_scoped_glob(self, tmp_path) -> None:
+        # The escaped LIKE prefix is the sole subtree filter for both
+        # verbs: a metacharacter in a directory name must not widen it.
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/da_a/x.txt", "file", "in"), ("/daxa/y.txt", "file", "out")])
         subtree = await storage.tree(path=Path("/da_a"))
         assert [str(o.path) for o in subtree.observations] == ["/da_a/x.txt"]
-        scoped = await storage.glob(pattern="*", paths=(Path("/da_a"),))
+        scoped = await storage.glob(patterns=("*",), observations=[Observation(path=Path("/da_a"))])
         assert [str(o.path) for o in scoped.observations] == ["/da_a", "/da_a/x.txt"]
         await storage.close()
 
@@ -375,7 +375,7 @@ class TestExtPushdown:
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/a.py", "file", "x"), ("/b.txt", "file", "x")])
         statements = self._recorded(storage)
-        result = await storage.glob(pattern="*", ext=("py",))
+        result = await storage.glob(patterns=("*",), ext=("py",))
         assert [str(o.path) for o in result.observations] == ["/a.py"]
         assert any("ext IN" in s for s in statements), statements
         await storage.close()
@@ -384,7 +384,7 @@ class TestExtPushdown:
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/a.txt", "file", "x"), ("/b.py", "file", "x")])
         statements = self._recorded(storage)
-        result = await storage.glob(pattern="**/*.txt")
+        result = await storage.glob(patterns=("**/*.txt",))
         assert [str(o.path) for o in result.observations] == ["/a.txt"]
         derived = [s for s in statements if "ext = " in s]
         assert derived and all("name = " in s for s in derived), statements
@@ -397,23 +397,24 @@ class TestExtPushdown:
         await _seed(storage, [("/a.py", "file", "x")])
         oversized = (*(f"e{i}" for i in range(storage._host.membership_budget + 1)), "py")
         statements = self._recorded(storage)
-        result = await storage.glob(pattern="*", ext=oversized)
+        result = await storage.glob(patterns=("*",), ext=oversized)
         assert [str(o.path) for o in result.observations] == ["/a.py"]
         assert not any("ext IN" in s for s in statements), statements
         await storage.close()
 
-    async def test_ext_binds_shrink_the_anchor_fan_chunk(self, tmp_path, monkeypatch) -> None:
-        # The ext membership rides in every fan statement, so its binds
-        # buy anchors out of each chunk — the sum stays inside the
-        # engine's parameter budget instead of exceeding it.
+    async def test_ext_binds_shrink_the_pattern_fan_chunk(self, tmp_path, monkeypatch) -> None:
+        # The ext membership rides inside every arm, so its binds buy
+        # arms out of each chunk — the sum stays inside the engine's
+        # parameter budget instead of exceeding it.
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/d0/a.py", "file", "x")])
-        monkeypatch.setattr(EngineHost, "fan_budget", property(lambda self: 5))
-        anchors = tuple(Path(f"/d{i}") for i in range(20))
+        roots = [Observation(path=Path(f"/d{i}")) for i in range(20)]
         statements = self._recorded(storage)
-        await storage.glob(pattern="*", paths=anchors, ext=("py", "e1", "e2", "e3", "e4", "e5", "e6", "e7"))
+        await storage.glob(patterns=("*",), observations=roots, ext=("py", "e1", "e2", "e3", "e4", "e5"))
         fanned = [s for s in statements if "ext IN" in s]
-        # 8 ext binds displace 4 of the 5 anchors per chunk: 20 chunks.
+        # Budget 48 → membership 16: 6 ext binds beside 6 fixed arm
+        # binds leave one arm per chunk — 20 chunks for 20 roots.
         assert len(fanned) == 20, len(fanned)
 
     async def test_stored_ext_agrees_with_the_path_law_on_every_row(self, tmp_path) -> None:
@@ -442,8 +443,108 @@ class TestExtPushdown:
         # them (stored ext is NULL), so the pushdown must stand down.
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/README", "file", "x"), ("/a.py", "file", "x")])
-        result = await storage.glob(pattern="*", ext=(".",))
+        result = await storage.glob(patterns=("*",), ext=(".",))
         assert [str(o.path) for o in result.observations] == ["/README"]
+        await storage.close()
+
+
+class TestPatternFan:
+    """The batched executor: pure-OR arms, dead-arm drops, one session."""
+
+    async def test_a_contradicted_arm_is_dead_before_sql(self, tmp_path) -> None:
+        # A derived ext contradicting the caller's set is provably empty:
+        # the arm never reaches SQL, and the live arm still serves.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a/x.py", "file", "x"), ("/b/y.txt", "file", "x")])
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        result = await storage.glob(patterns=("/a/**/*.py", "/b/**/*.txt"), ext=("py",))
+        assert [str(o.path) for o in result.observations] == ["/a/x.py"]
+        [fan] = [s for s in statements if "LIKE" in s]
+        assert ".txt" not in fan
+        await storage.close()
+
+    async def test_multi_index_or_plan_survives_the_ext_facts(self, tmp_path) -> None:
+        # The measured ~350x cliff: one conjunct beside the fan demotes
+        # the whole WHERE to a scan. Every ext fact rides inside its
+        # arm, so the plan must keep the multi-index OR — no table scan.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a/x.py", "file", "x"), ("/b/y.txt", "file", "x")])
+        recorded: list[tuple[str, tuple[str, ...]]] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            recorded.append((statement, parameters))
+
+        result = await storage.glob(patterns=("/a/**/*.py", "/b/**/*.txt"), ext=("py", "txt"))
+        assert [str(o.path) for o in result.observations] == ["/a/x.py", "/b/y.txt"]
+        [(fan, params)] = [(s, p) for s, p in recorded if "LIKE" in s and s.startswith("SELECT")]
+        literal = fan
+        for value in params:
+            literal = literal.replace("?", f"'{value}'", 1)
+        async with storage._host.session_factory() as session:
+            plan = (await session.execute(text("EXPLAIN QUERY PLAN " + literal))).all()
+        details = [row[-1] for row in plan]
+        assert any("MULTI-INDEX OR" in detail for detail in details), details
+        assert not any("SCAN" in detail for detail in details), details
+        await storage.close()
+
+    async def test_contract_scale_pattern_batch_chunks_within_budget(self, tmp_path) -> None:
+        # The scale row: 10k patterns in one call chunk at the measured
+        # 200-arm width — 50 fan statements, every one inside the
+        # engine's bind and depth caps, one session throughout.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/part00000/a.parquet", "file", "x")])
+        checkouts = 0
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "checkout")
+        def checked_out(dbapi_conn, connection_record, connection_proxy) -> None:
+            nonlocal checkouts
+            checkouts += 1
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        patterns = tuple(f"/part{i:05}/**/*.parquet" for i in range(10_000))
+        result = await storage.glob(patterns=patterns)
+        assert [str(o.path) for o in result.observations] == ["/part00000/a.parquet"]
+        fan = [s for s in statements if "LIKE" in s and s.startswith("SELECT")]
+        assert len(fan) == 50
+        assert checkouts == 1
+        await storage.close()
+
+    async def test_chunked_fan_serves_in_one_session(self, tmp_path, monkeypatch) -> None:
+        # Many chunks, one snapshot: the whole batched call — root
+        # probes, fan chunks, miss classification — checks out exactly
+        # one connection, so no chunk can observe a different world.
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/d00/a.py", "file", "x")])
+        checkouts = 0
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "checkout")
+        def checked_out(dbapi_conn, connection_record, connection_proxy) -> None:
+            nonlocal checkouts
+            checkouts += 1
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        roots = [Observation(path=Path(f"/d{i:02}")) for i in range(12)]
+        result = await storage.glob(patterns=("*",), observations=roots)
+        assert result.success is False  # eleven ghost roots classify loudly
+        assert [str(o.path) for o in result.observations] == ["/d00", "/d00/a.py"]
+        fan = [s for s in statements if "LIKE" in s and s.startswith("SELECT")]
+        assert len(fan) > 1, fan  # the arms chunked across statements
+        assert checkouts == 1
         await storage.close()
 
 
@@ -467,7 +568,7 @@ class TestNamespaceScopes:
     async def test_enumeration_hides_the_meta_subtree(self, storage: DatabaseStorage) -> None:
         assert [o.path for o in (await storage.ls(path=Path("/"))).observations] == ["/real.txt"]
         assert [o.path for o in (await storage.tree(path=Path("/"))).observations] == ["/real.txt"]
-        assert [o.path for o in (await storage.glob(pattern="*")).observations] == ["/real.txt"]
+        assert [o.path for o in (await storage.glob(patterns=("*",))).observations] == ["/real.txt"]
 
     async def test_direct_meta_address_bypasses_the_meta_exclusion(self, storage: DatabaseStorage) -> None:
         doc = Path("/.vfs/docs/a.txt")
@@ -480,17 +581,18 @@ class TestNamespaceScopes:
         assert [o.path for o in listing.observations] == [str(doc)]
 
     async def test_batch_ls_keeps_liveness_scopes_apart(self, storage: DatabaseStorage) -> None:
-        # One batch, both liveness classes: the meta anchor serves its
+        # One batch, both liveness classes: the meta target serves its
         # children while the non-meta parent's listing stays meta-free.
         batch = [Observation(path=Path("/")), Observation(path=Path("/.vfs"))]
         listing = await storage.ls(observations=batch)
         assert listing.success is True
         assert [str(o.path) for o in listing.observations] == ["/real.txt", "/.vfs/docs", "/.vfs/trash"]
 
-    async def test_glob_meta_bypass_is_per_anchor_not_query_wide(self, storage: DatabaseStorage) -> None:
-        # ROOT plus a meta anchor: the meta arm serves only its own
-        # subtree — /.vfs itself and sibling meta trees stay hidden.
-        result = await storage.glob(pattern="*", paths=(Path("/"), Path("/.vfs/trash")))
+    async def test_glob_meta_bypass_is_per_pattern_not_query_wide(self, storage: DatabaseStorage) -> None:
+        # ROOT plus a meta root: only the meta-prefixed arm serves meta
+        # rows — /.vfs itself and sibling meta trees stay hidden.
+        roots = [Observation(path=Path("/")), Observation(path=Path("/.vfs/trash"))]
+        result = await storage.glob(patterns=("*",), observations=roots)
         assert [str(o.path) for o in result.observations] == [
             "/.vfs/trash",
             "/.vfs/trash/bucket",
@@ -511,7 +613,7 @@ class TestNamespaceScopes:
         assert (await storage.stat(path=trashed)).observations[0].kind == "file"
         listing = await storage.ls(path=trashed.parent_dir)
         assert [o.path for o in listing.observations] == [str(trashed)]
-        scoped = await storage.glob(pattern="*", paths=(Path("/.vfs/trash"),))
+        scoped = await storage.glob(patterns=("*",), observations=[Observation(path=Path("/.vfs/trash"))])
         assert str(trashed) in [str(o.path) for o in scoped.observations]
 
     async def test_descent_through_a_trash_side_file_takes_the_standard_ladder(self, storage: DatabaseStorage) -> None:
@@ -683,7 +785,7 @@ class TestUnicodeAndCollation:
     async def test_glob_stays_case_sensitive_through_the_pool(self, storage: DatabaseStorage) -> None:
         # The LIKE prefilter must not case-fold: case_sensitive_like=ON is
         # stamped per checkout, and fnmatchcase is the authority.
-        result = await storage.glob(pattern="A*")
+        result = await storage.glob(patterns=("A*",))
         assert [o.path.name for o in result.observations] == ["A.txt"]
 
     async def test_point_read_misses_on_case_difference(self, storage: DatabaseStorage) -> None:

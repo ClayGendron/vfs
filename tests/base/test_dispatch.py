@@ -436,7 +436,9 @@ async def test_fanout_reaches_every_mount_in_table_order(op: str) -> None:
     assert result.success is True
     assert result.paths == ("/a/hit.md", "/b/hit.md")  # rebased, mount-table order
     assert a.calls[0][0] == op and b.calls[0][0] == op
-    assert a.calls[0][1]["paths"] == ()  # child impl sees an unscoped call
+    # A child impl sees an unscoped call: no scope paths, and glob's
+    # pattern-only seam has no scope channel at all.
+    assert a.calls[0][1].get("paths", ()) == ()
 
 
 @pytest.mark.parametrize("op", ["glob", "grep", "glean"])
@@ -467,7 +469,14 @@ async def test_fanout_scoped_routes_only_the_target_terminal(op: str) -> None:
     await root.add_mount(b, "/b")
     result = await _fan(root, op, paths=("/a/src",))
     assert result.success is True
-    assert a.calls[0][1]["paths"] == ("/src",)
+    if op == "glob":
+        # The scope crosses as pattern text; the root's assertion rides
+        # a stat probe against the same entry, never a sibling's.
+        [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == "glob"]
+        assert kwargs["patterns"] == ("/src/**/*.py",)
+        assert [o for o, _ in a.calls] == ["stat", "glob"]
+    else:
+        assert a.calls[0][1]["paths"] == ("/src",)
     assert b.calls == []
 
 
@@ -537,11 +546,10 @@ async def test_glob_residuates_the_pattern_per_mount() -> None:
     await fs.add_mount(data, "/data")
     await fs.glob("/data/**/*.txt", ext=("txt",))
     [(_, root_kwargs)] = [(op, kw) for op, kw in fs.calls if op == "glob"]
-    assert root_kwargs["pattern"] == "/data/**/*.txt"
+    assert root_kwargs["patterns"] == ("/data/**/*.txt",)
     [(op, kwargs)] = data.calls
     assert op == "glob"
-    assert kwargs["pattern"] == "/**/*.txt"
-    assert kwargs["paths"] == ()
+    assert kwargs["patterns"] == ("/**/*.txt",)
     assert kwargs["ext"] == ("txt",)
 
 
@@ -586,45 +594,48 @@ async def test_glob_capability_skip_survives_a_root_inside_the_entry() -> None:
     assert skip.path == "/data"
 
 
-async def test_glob_multi_residual_dispatches_and_dedupes() -> None:
+async def test_glob_multi_residual_members_share_one_dispatch() -> None:
     # ** can either span the nested bind segment or stop before it: both
-    # derivatives dispatch, in sorted order, and the overlap merges once.
+    # derivatives are live, and they cross as one sorted batched call —
+    # never a dispatch per member.
     root = VirtualFileSystem()
     data, api = BindableEchoStorage(), EchoStorage()
     await root.add_mount(data, "/data")
     await root.add_mount(api, "/data/api")
     result = await root.glob("/data/**/api/*.txt")
-    assert [kw["pattern"] for op, kw in data.calls if op == "glob"] == ["/**/api/*.txt"]
-    assert [kw["pattern"] for op, kw in api.calls if op == "glob"] == ["/**/api/*.txt", "/*.txt"]
-    assert result.paths.count("/data/api/hit.md") == 1  # value-identity dedup
+    assert [kw["patterns"] for op, kw in data.calls if op == "glob"] == [("/**/api/*.txt",)]
+    assert [kw["patterns"] for op, kw in api.calls if op == "glob"] == [("/**/api/*.txt", "/*.txt")]
+    assert result.paths.count("/data/api/hit.md") == 1
 
 
 async def test_glob_scoped_composition_equals_the_absolute_idiom() -> None:
     # glob("src/*.py", paths=("/data",)) and glob("/data/src/*.py")
     # dispatch the same entry-local pattern; the scoped form additionally
-    # carries its root as the existence-asserting anchor.
-    for scope_paths, anchor in ((("/data",), ("/",)), ((), ())):
+    # probes its root for the existence assertion.
+    for scope_paths in (("/data",), ()):
         root = VirtualFileSystem()
         data = RecorderStorage()
         await root.add_mount(data, "/data")
         pattern = "src/*.py" if scope_paths else "/data/src/*.py"
         await root.glob(pattern, paths=scope_paths)
-        [(_, kwargs)] = data.calls
-        assert kwargs["pattern"] == "/src/*.py"
-        assert kwargs["paths"] == anchor
+        [(_, kwargs)] = [(op, kw) for op, kw in data.calls if op == "glob"]
+        assert kwargs["patterns"] == ("/src/*.py",)
+        probes = [kw for op, kw in data.calls if op == "stat"]
+        assert len(probes) == (1 if scope_paths else 0)
 
 
 async def test_glob_scope_root_inside_a_mount_reads_root_relative() -> None:
     # The deliberate contract change: a leading slash anchors at the
     # scope root, so "/x/*.py" scoped to /data means /data/x/*.py — and
-    # the anchor still flows for its existence assertion.
+    # the root's existence assertion rides the entry-local stat probe.
     root = VirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     await root.glob("/x/*.py", paths=("/data/sub",))
-    [(_, kwargs)] = data.calls
-    assert kwargs["pattern"] == "/sub/x/*.py"
-    assert kwargs["paths"] == ("/sub",)
+    [(_, kwargs)] = [(op, kw) for op, kw in data.calls if op == "glob"]
+    assert kwargs["patterns"] == ("/sub/x/*.py",)
+    [(_, probe)] = [(op, kw) for op, kw in data.calls if op == "stat"]
+    assert [str(o.path) for o in probe["observations"]] == ["/sub"]
 
 
 async def test_glob_disjoint_roots_dispatch_their_own_patterns() -> None:
@@ -635,15 +646,73 @@ async def test_glob_disjoint_roots_dispatch_their_own_patterns() -> None:
     await root.add_mount(data, "/data")
     await root.add_mount(logs, "/logs")
     await root.glob("src/*.py", paths=("/data", "/logs"))
-    [(_, data_kwargs)] = data.calls
-    [(_, logs_kwargs)] = logs.calls
-    assert data_kwargs["pattern"] == "/src/*.py"
-    assert logs_kwargs["pattern"] == "/src/*.py"
+    [(_, data_kwargs)] = [(op, kw) for op, kw in data.calls if op == "glob"]
+    [(_, logs_kwargs)] = [(op, kw) for op, kw in logs.calls if op == "glob"]
+    assert data_kwargs["patterns"] == ("/src/*.py",)
+    assert logs_kwargs["patterns"] == ("/src/*.py",)
+
+
+async def test_many_roots_into_one_entry_produce_one_batched_call() -> None:
+    # The scale shape: N roots resolving into one entry are one storage
+    # call carrying the deduped pattern tuple plus one grouped probe —
+    # zero per-root glob dispatches.
+    root = VirtualFileSystem()
+    data = RecorderStorage()
+    await root.add_mount(data, "/data")
+    roots = (*(f"/data/d{i}" for i in range(8)), "/data/d0")
+    await root.glob("*.py", paths=roots)
+    [glob_call] = [kw for op, kw in data.calls if op == "glob"]
+    assert glob_call["patterns"] == tuple(sorted(f"/d{i}/**/*.py" for i in range(8)))
+    [probe] = [kw for op, kw in data.calls if op == "stat"]
+    assert sorted(str(o.path) for o in probe["observations"]) == sorted(f"/d{i}" for i in range(8))
+
+
+async def test_ten_thousand_roots_stay_two_calls() -> None:
+    # The ETL scale row: contract-scale root batches reach storage as
+    # exactly one glob call and one probe call — dispatch count never
+    # grows with root count.
+    root = VirtualFileSystem()
+    data = RecorderStorage()
+    await root.add_mount(data, "/data")
+    await root.glob("*.parquet", paths=tuple(f"/data/part{i:05}" for i in range(10_000)))
+    assert [op for op, _ in data.calls] == ["stat", "glob"]
+    [glob_call] = [kw for op, kw in data.calls if op == "glob"]
+    assert len(glob_call["patterns"]) == 10_000
+    [probe] = [kw for op, kw in data.calls if op == "stat"]
+    assert len(probe["observations"]) == 10_000
+
+
+async def test_glob_scoped_to_the_namespace_root_reaches_every_entry() -> None:
+    # "/" is a region root covering every mount; it composes spatially
+    # like any other root but is exempt from the probe — the namespace
+    # root is the namespace itself, never a row to assert.
+    root = VirtualFileSystem()
+    data = RecorderStorage()
+    await root.add_mount(data, "/data")
+    await root.glob("*.py", paths=("/",))
+    [(op, kwargs)] = data.calls
+    assert op == "glob"
+    assert kwargs["patterns"] == ("/**/*.py",)
+
+
+async def test_glob_root_in_a_stat_incapable_entry_is_undeterminable() -> None:
+    # The probe's capability-skip posture: inability to answer is its
+    # own outcome — a warning on record, never coerced to absent, never
+    # a silent pass. The pattern dispatch still serves.
+    root = VirtualFileSystem()
+    incapable = RecorderStorage(caps=frozenset({"glob"}))
+    await root.add_mount(incapable, "/data")
+    result = await root.glob("*.py", paths=("/data/sub",))
+    assert result.success is True
+    [warning] = [e for e in result.errors if e.severity is Severity.warning]
+    assert warning.kind is VFSErrorKind.unsupported
+    assert warning.path == "/data/sub"
+    assert [op for op, _ in incapable.calls] == ["glob"]
 
 
 async def test_glob_missing_scope_root_still_asserts() -> None:
     # Roots are assertions: a pattern matching nothing is clean empty
-    # success, but a missing root is a loud per-anchor error.
+    # success, but a missing root is a loud per-root error.
     root = VirtualFileSystem()
     result = await root.glob("**/*.py", paths=("/missing",))
     assert result.success is False
@@ -658,7 +727,7 @@ async def test_glob_name_arm_broadcasts_verbatim() -> None:
     await root.add_mount(data, "/data")
     await root.glob("*.py")
     [(_, kwargs)] = data.calls
-    assert kwargs["pattern"] == "*.py"
+    assert kwargs["patterns"] == ("*.py",)
 
 
 async def test_glob_row_cap_applies_once_across_residual_dispatches() -> None:
@@ -690,7 +759,7 @@ async def test_glob_observations_shortcut_passes_the_pattern_verbatim() -> None:
     await root.add_mount(data, "/data")
     await root.glob("/data/*.txt", observations=[Observation(path=Path("/data/a.txt"))])
     [(_, kwargs)] = data.calls
-    assert kwargs["pattern"] == "/data/*.txt"
+    assert kwargs["patterns"] == ("/data/*.txt",)
 
 
 # ----------------------------------------------------------------------

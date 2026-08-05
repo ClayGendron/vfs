@@ -3,7 +3,7 @@
 Runs on any SQLAlchemy-compatible database: known dialects carry tuned
 policy, everything else serves on the generic floor (``dialects.py``).
 The read family and glob are live — point reads with projection
-push-down, ``parent_id`` listings, sargable prefix-LIKE subtrees, and
+push-down, ``parent_id`` listings, glob's batched pattern fan, and
 the descent-ladder classification chokepoint (``descent.py`` /
 ``reads.py``) — as are the mutation core (write/edit/mkdir batches
 planned and executed as one transaction each, ``writes.py``) and the
@@ -43,7 +43,7 @@ from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.topology import delete_rows, restore_rows, sweep_rows, transfer_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
-from vfs.storage.protocol import scope_of, targets_of
+from vfs.storage.protocol import targets_of
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -178,24 +178,24 @@ class DatabaseStorage:
     async def glob(
         self,
         *,
-        pattern: str,
-        paths: tuple[Path, ...] = (),
+        patterns: tuple[str, ...],
         observations: list[Observation] | None = None,
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        scope = scope_of(paths, observations)
+        roots = tuple(observation.path for observation in observations or [])
         return await self._execute(
             "glob",
             lambda session: glob_rows(
                 session,
                 self._host.tables,
+                self._host.profile,
+                self._host.parameter_budget,
                 self._host.membership_budget,
-                self._host.fan_budget,
-                pattern=pattern,
-                scope=scope,
+                patterns=patterns,
+                roots=roots,
                 ext=ext,
                 max_count=max_count,
                 columns=columns,

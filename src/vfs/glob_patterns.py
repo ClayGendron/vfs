@@ -136,6 +136,24 @@ def effective_pattern(root: Path, pattern: str) -> str:
     return anchored if base == "/" else base + anchored
 
 
+def composed_pattern(root: Path, pattern: str) -> str:
+    """Compose *pattern* under one scope *root* into one spatial pattern.
+
+    The whole scoping story as pattern text: a path-arm pattern anchors
+    under the root via :func:`effective_pattern`; a name-arm pattern —
+    coordinate-free on its own — goes spatial as ``root + /**/ +
+    pattern``, the gitignore float spelled out, so ``("/a/data",
+    "*.csv")`` composes to ``"/a/data/**/*.csv"`` (which still matches
+    direct children: ``**`` spans zero segments). Composition can
+    manufacture adjacent ``**`` (name-arm ``**`` composes to
+    ``root/**/**``), so canonicalization runs downstream, here.
+    """
+    if "/" not in pattern:
+        base = str(root)
+        return _canonical(("" if base == "/" else base) + "/**/" + pattern)
+    return _canonical(effective_pattern(root, pattern))
+
+
 def residuals(pattern: str, mount_path: Path) -> frozenset[tuple[str, ...]]:
     """Residual component-tuples of an anchored *pattern* against one bind path.
 

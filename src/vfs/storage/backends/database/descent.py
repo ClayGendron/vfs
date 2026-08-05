@@ -18,7 +18,7 @@ the ROOT branch, where naive prefix composition would produce ``//%``.
 
 :func:`liveness_filters` is the one-scope namespace filter enumeration
 verbs apply: the ``/.vfs`` meta subtree is excluded from default-scope
-enumeration, and a directly-addressed anchor inside it bypasses the
+enumeration, and a directly-addressed target inside it bypasses the
 exclusion. Trash is an ordinary subtree under that meta scope — a
 deleted file's original path reads as missing because the reparent
 rewrote its path cache (stable-node-identity), not because any filter

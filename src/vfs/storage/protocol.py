@@ -34,12 +34,13 @@ session inside these methods, and the router never sees it.
 
 Two read semantics every backend implements identically: **enumeration
 liveness** — default-scope enumeration (``ls``, ``tree``, ``glob``,
-``grep``) hides the reserved ``/.vfs`` meta subtree, and a
-meta-addressed anchor serves its own subtree (per-anchor, never
-query-wide); and **scope anchors as POSIX ``find`` operands** — a
-missing ``glob``/``grep`` anchor classifies through the descent ladder
-beside the healthy anchors' rows (partial results, per-anchor errors),
-while an existing file anchor is matched itself against the pattern.
+``grep``) hides the reserved ``/.vfs`` meta subtree, and direct meta
+addressing (a target inside it; for glob, a meta literal prefix in the
+pattern) serves its own subtree, never the whole scope; and **scope
+roots as POSIX ``find`` operands** — a missing root classifies through
+the descent ladder beside the healthy roots' rows (partial results,
+per-root errors), while an existing root's own row is matched against
+the pattern and served on a hit.
 """
 
 from __future__ import annotations
@@ -146,16 +147,20 @@ class SupportsRead(Protocol):
 class SupportsPatternSearch(Protocol):
     """The pattern-search family: literal/regex matching over names and content.
 
-    Namespace-wide queries — empty ``paths`` means unscoped.  Split from
-    ranked search (:class:`SupportsGlean`) because a lexical scan needs no
-    retrieval index: partial backends routinely have one without the other.
+    Namespace-wide queries.  Glob's scoping crosses this seam only as
+    pattern text: the router composes scope roots into the *patterns*
+    batch, answered in one transaction and one snapshot per call —
+    rows matching **any** pattern, one refusable pattern refusing the
+    call whole.  Grep still carries scope ``paths`` (empty means
+    unscoped) until it adopts the same seam.  Split from ranked search
+    (:class:`SupportsGlean`) because a lexical scan needs no retrieval
+    index: partial backends routinely have one without the other.
     """
 
     async def glob(
         self,
         *,
-        pattern: str,
-        paths: tuple[Path, ...] = (),
+        patterns: tuple[str, ...],
         observations: list[Observation] | None = None,
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
@@ -392,7 +397,7 @@ def targets_of(
 
 
 def scope_of(paths: tuple[Path, ...], observations: list[Observation] | None) -> tuple[Path, ...]:
-    """A search verb's scope anchors: explicit paths, else the rows', else default scope."""
+    """A search verb's scope roots: explicit paths, else the rows', else default scope."""
     return paths or tuple(o.path for o in observations or [])
 
 

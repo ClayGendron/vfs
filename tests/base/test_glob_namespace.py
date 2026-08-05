@@ -106,9 +106,9 @@ async def test_bind_point_row_is_served_by_the_parent() -> None:
     assert recorder.calls == []
 
 
-async def test_multiple_anchors_into_one_entry_all_dispatch() -> None:
-    # Every scope root must reach its dispatch: a regression that drops
-    # anchors after the first per entry loses rows, not duplicates them.
+async def test_multiple_roots_into_one_entry_all_serve() -> None:
+    # Every scope root must reach the batch: a regression that drops
+    # roots after the first per entry loses rows, not duplicates them.
     plain = await (await _plain_world()).glob("**/*.txt", paths=("/data", "/data/deep"))
     mounted = await (await _mounted_world()).glob("**/*.txt", paths=("/data", "/data/deep"))
     assert sorted(plain.paths) == sorted(mounted.paths) == ["/data/a.txt", "/data/deep/b.txt"]
@@ -137,12 +137,39 @@ async def test_name_arm_root_covered_by_a_region_keeps_its_assertion() -> None:
     both = await fs.glob("*.txt", paths=("/data", "/data/api/sub"))
     assert both.success is True
     assert sorted(both.paths) == ["/data/a.txt", "/data/api/sub/z.txt", "/data/deep/b.txt"]
-    assert len(both.paths) == len(set(both.paths))  # both arms dispatch; the merge dedups
+    assert len(both.paths) == len(set(both.paths))  # probe and batch overlap; the merge dedups
+
+
+async def test_scoped_name_arm_still_hits_direct_children() -> None:
+    # The float made spatial must lose nothing: root + /**/ + pattern
+    # matches direct children because ** spans zero segments.
+    for world in (await _plain_world(), await _mounted_world()):
+        result = await world.glob("*.txt", paths=("/data",))
+        assert sorted(result.paths) == ["/data/a.txt", "/data/deep/b.txt"]
+
+
+async def test_root_order_does_not_change_the_answer() -> None:
+    # The ripgrep multi-root regression class: the same call with roots
+    # in both orders returns the same set and the same per-root errors.
+    fs = await _mounted_world()
+    forward = await fs.glob("*.txt", paths=("/data", "/data/deep", "/missing"))
+    reverse = await fs.glob("*.txt", paths=("/missing", "/data/deep", "/data"))
+    assert sorted(forward.paths) == sorted(reverse.paths)
+    assert forward.success is False and reverse.success is False
+    assert [(e.kind, e.path) for e in forward.failures] == [(e.kind, e.path) for e in reverse.failures]
+
+
+async def test_a_matching_directory_root_row_is_served_from_the_probe() -> None:
+    # find parity the anchor channel missed: a directory operand whose
+    # own row matches the pattern appears, served by the probe.
+    fs = await _mounted_world()
+    result = await fs.glob("d*", paths=("/data/deep",))
+    assert result.paths == ("/data/deep",)
 
 
 async def test_roots_stay_assertions() -> None:
     # A pattern matching nothing is clean empty success; a missing root
-    # is a loud per-anchor error; a file anchor is matched itself.
+    # is a loud per-root error; a file root is matched itself.
     fs = await _mounted_world()
     empty = await fs.glob("/data/nothing/*.rs")
     assert empty.success is True and empty.paths == ()

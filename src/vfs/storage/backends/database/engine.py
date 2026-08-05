@@ -54,7 +54,6 @@ from vfs.results import ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
     DialectProfile,
     StaleSnapshot,
-    fan_budget,
     is_retryable,
     membership_budget,
     profile_for,
@@ -161,11 +160,6 @@ class EngineHost:
     def membership_budget(self) -> int:
         """Elements per ``IN``-list chunk under this dialect's budgets."""
         return membership_budget(self.profile, self.parameter_budget)
-
-    @property
-    def fan_budget(self) -> int:
-        """Anchors per ``OR``-fan chunk under this dialect's budgets."""
-        return fan_budget(self.profile, self.parameter_budget)
 
     @property
     def topology_key(self) -> int:
