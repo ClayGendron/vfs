@@ -39,7 +39,8 @@
   stub** (subtracted from the `storage_ops(self)`-derived
   capability set; awaits ADR 018's wiring spec). Pass C (grep,
   tasks 19–22) was owned by spec 093
-  (`../093-grep-content-search/spec.md`) and **landed in full
+  (`../../archive/093-grep-content-search/spec.md`, mined into
+  ADR 033) and **landed in full
   2026-08-05** — the byte-trigram index, batch reindex lifecycle,
   the pattern-only seam, and the capability/traits flip; 093 also
   corrects §6's since-superseded pieces (ADR 013's flag-partitioned

@@ -91,6 +91,17 @@
   2126 passed, coverage 100%, `ruff`/`ty` zero; all four Docker
   engine legs green with grep live (Postgres 191 / MySQL 191 /
   MSSQL 192 / Oracle 190; only the mkedge rows remain skipped).
+  **Mined and archived 2026-08-05**: the decision set →
+  `../../../decisions/033-indexed-grep-tier-refusal-gate-and-epoch-lifecycle.md`
+  (refusal gate + `allow_scan`, runtime budgets and the deferred
+  cursor, folded planning, chunk-grain corpus, batch epoch lifecycle
+  with the one-transaction publish, eligibility gates, the seam
+  inheritance with the root-row-on-pattern-batch refinement, the
+  capability derivation and trait vocabulary); the proof harnesses
+  were already downstream at the slice D landing
+  (`../../../research/studies/2026-08-05-grep-differential-battery/`,
+  `../../../research/studies/2026-08-05-grep-query-ladder-benchmark/`);
+  the three fork resolutions rest in `../../../open-questions.md`.
 - **Date:** 2026-08-05
 - **Owner:** Clay Gendron
 - **Kind:** verb implementation (the last read-family stub) + index

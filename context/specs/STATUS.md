@@ -117,8 +117,13 @@ lines first; regenerate this file when the picture shifts (review the
   rerunnable query-ladder benchmark, both under
   `../research/studies/` (dated 2026-08-05). Suite 2126 passed,
   coverage 100%, `ruff`/`ty` zero; four Docker legs green with grep
-  live (Postgres 191 / MySQL 191 / MSSQL 192 / Oracle 190). Awaits
-  its backward-flow mining pass, then archive.
+  live (Postgres 191 / MySQL 191 / MSSQL 192 / Oracle 190).
+  **Mined and archived 2026-08-05**: decision set → ADR 033
+  (refusal gate + `allow_scan`, budgets and the deferred cursor,
+  folded planning, chunk-grain corpus, batch epoch lifecycle,
+  seam inheritance, capability derivation and trait vocabulary);
+  the two studies were already downstream; fork resolutions rest
+  in `../open-questions.md`.
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
@@ -214,11 +219,11 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
-→ 089 → 090 → 073 → 091 → 092 → 093. ADRs 001–032 accepted (005
+→ 089 → 090 → 073 → 091 → 092 → 093. ADRs 001–033 accepted (005
 superseded by 016; 021/022 proposed, awaiting ratification; 018
-awaiting its wiring spec; 032 is the retroactive record of 073's
-decision set, written at its 2026-08-05 mining pass). The
-073/091/092 glob arc is mined and archived; 093 awaits its mining
-pass. Tree green at 2126 passed / 788 skipped, `ruff`/`ty` at zero,
-all four Docker engine legs green with grep live as of the 093
-landing (2026-08-05).
+awaiting its wiring spec; 032 and 033 are the retroactive records
+of 073's and 093's decision sets, written at their 2026-08-05
+mining passes). The 073/091/092 glob arc and 093 are mined and
+archived. Tree green at 2126 passed / 788 skipped, `ruff`/`ty` at
+zero, all four Docker engine legs green with grep live as of the
+093 landing (2026-08-05).
