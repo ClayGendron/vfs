@@ -2997,6 +2997,7 @@ version = "0.0.22"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
+    { name = "numpy" },
     { name = "pydantic" },
     { name = "python-ulid" },
     { name = "pyyaml" },
@@ -3088,6 +3089,7 @@ requires-dist = [
     { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.3" },
     { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=0.3" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2" },
+    { name = "numpy", specifier = ">=2.4.2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
     { name = "oracledb", marker = "extra == 'oracle'", specifier = ">=2.0" },
     { name = "pgvector", marker = "extra == 'postgres'", specifier = ">=0.3" },
