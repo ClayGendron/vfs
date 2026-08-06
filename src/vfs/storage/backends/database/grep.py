@@ -27,13 +27,13 @@ from typing import TYPE_CHECKING, Final
 import numpy as np
 from sqlalchemy import or_, select
 
-from vfs.glob_patterns import GlobFilter, compile_filter, composed_pattern, glob_defect
-from vfs.models import CONTENT_KINDS, Match, Observation
+from vfs.models import CONTENT_KINDS, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError, decode_postings
-from vfs.paths import ROOT, Path, extract_extension
+from vfs.paths import Path
+from vfs.pattern_matching import GlobFilter, compile_filter, compile_verifier, glob_defect, passes_filters, verify
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
-from vfs.storage.backends.database.descent import liveness_filters, miss_errors, rows_by_path
+from vfs.storage.backends.database.descent import liveness_filters
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.reads import ARM_FIXED_BINDS, effective_columns, meta_scoped, pattern_arm
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.models import Match
     from vfs.models.code_grams import GramQuery
     from vfs.models.rows import VFSTables
     from vfs.ops import CaseMode, GrepOutputMode
@@ -71,7 +72,6 @@ async def grep_rows(
     membership_budget: int,
     *,
     pattern: str,
-    roots: tuple[Path, ...],
     ext: tuple[str, ...],
     ext_not: tuple[str, ...],
     globs: tuple[str, ...],
@@ -89,11 +89,9 @@ async def grep_rows(
 ) -> Result:
     """One row per matching entry, index side unioned with the scan side.
 
-    *roots* are the observation-carried scope claims: each is asserted
-    with a point read (descent-ladder classification beside the healthy
-    roots' rows) and composed into the glob channels; a root whose path
-    passes the caller's globs joins the scan as its own literal path —
-    find semantics: operands are tested, never exempt.
+    Scoping arrives purely as pattern text on the ``globs`` channels —
+    the router composes and residuates scope upstream; no path channel
+    crosses this seam.
     """
     for glob_pattern in (*globs, *globs_not):
         defect = glob_defect(glob_pattern)
@@ -101,7 +99,7 @@ async def grep_rows(
             error = ResultError(kind=VFSErrorKind.invalid, message=f"grep glob {glob_pattern!r}: {defect}")
             return Result(ops=("grep",), errors=[error])
     try:
-        verifier = _compile_verifier(pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode)
+        verifier = compile_verifier(pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode)
     except re.error as exc:
         error = ResultError(kind=VFSErrorKind.invalid, message=f"grep pattern {pattern!r}: {exc}")
         return Result(ops=("grep",), errors=[error])
@@ -114,21 +112,9 @@ async def grep_rows(
         return Result(ops=("grep",), errors=[ResultError(kind=VFSErrorKind.unindexable_pattern, message=message)])
     scan_all = invert_match or plan.is_any()
 
-    entry = tables.entry
     errors: list[ResultError] = []
     admissions = list(dict.fromkeys(globs))
     exclusions = list(dict.fromkeys(globs_not))
-    if roots:
-        scope = tuple(dict.fromkeys(roots))
-        found = await rows_by_path(session, entry, (str(r) for r in scope), [entry.c.path], membership_budget)
-        errors = list((await miss_errors(session, entry, scope, found, membership_budget)).values())
-        composed = {composed_pattern(root, glob) for root in scope for glob in (globs or ("**",))}
-        for root in scope:
-            if root != ROOT and (not globs or any(compile_filter(glob, ()).matches(root) for glob in globs)):
-                composed.add(str(root))
-        admissions = sorted(composed)
-        exclusions = sorted({composed_pattern(root, glob) for root in scope for glob in globs_not})
-
     gates = [compile_filter(glob, ()) for glob in admissions]
     not_gates = [compile_filter(glob, ()) for glob in exclusions]
     wanted = frozenset(e.lstrip(".").lower() for e in ext)
@@ -190,7 +176,7 @@ async def grep_rows(
         text = contents.get(mapping["entry_id"])
         if text is None:
             continue
-        verified = _verify(
+        verified = verify(
             text,
             verifier,
             invert=invert_match,
@@ -207,66 +193,6 @@ async def grep_rows(
         message = f"grep result truncated at the {reason}; {_REFINE_GUIDANCE}"
         errors.append(ResultError(kind=VFSErrorKind.truncated, severity=Severity.warning, message=message))
     return Result(ops=("grep",), observations=rows, errors=errors)
-
-
-# ---------------------------------------------------------------------------
-# The verifier — Python re is the sole match authority
-# ---------------------------------------------------------------------------
-
-
-def _compile_verifier(pattern: str, *, fixed_strings: bool, word_regexp: bool, case_mode: CaseMode) -> re.Pattern[str]:
-    """The conformance-pinned modifier wrapping: escape, word-wrap, case flags.
-
-    Smart case is judged on the raw pattern — any uppercase letter makes
-    the search sensitive, ripgrep's rule.
-    """
-    text = re.escape(pattern) if fixed_strings else pattern
-    if word_regexp:
-        text = rf"\b(?:{text})\b"
-    insensitive = case_mode == "insensitive" or (case_mode == "smart" and not any(ch.isupper() for ch in pattern))
-    return re.compile(text, re.IGNORECASE if insensitive else 0)
-
-
-def _verify(
-    text: str,
-    verifier: re.Pattern[str],
-    *,
-    invert: bool,
-    before: int,
-    after: int,
-    mode: GrepOutputMode,
-    cap: int | None,
-) -> tuple[list[Match] | None, float | None] | None:
-    """Per-line verification: ``None`` drops the row, else (matches, score).
-
-    ``files`` short-circuits at the first verified hit and carries
-    neither matches nor score; ``count`` reports the (capped) hit count
-    on score; ``lines`` renders one region per hit line, context bounds
-    clamped to the file.
-    """
-    lines = text.splitlines()
-    hits: list[int] = []
-    for number, line in enumerate(lines, start=1):
-        if (verifier.search(line) is not None) is not invert:
-            hits.append(number)
-            if mode == "files" or (cap is not None and len(hits) >= cap):
-                break
-    if not hits:
-        return None
-    if mode == "files":
-        return None, None
-    if mode == "count":
-        return None, float(len(hits))
-    matches = [
-        Match(
-            start=(start := max(1, number - before)),
-            end=(end := min(len(lines), number + after)),
-            match=number,
-            content="\n".join(lines[start - 1 : end]),
-        )
-        for number in hits
-    ]
-    return matches, None
 
 
 # ---------------------------------------------------------------------------
@@ -455,19 +381,11 @@ def _passes_gates(
 
     A meta row is admitted only by a gate whose literal prefix addresses
     the meta subtree — default enumeration hides ``/.vfs`` even when a
-    wildcard gate would match it.
+    wildcard gate would match it. The rest is the shared filter law.
     """
-    if path.is_meta:
-        if not any(gate.matches(path) and meta_scoped(gate.pattern) for gate in gates):
-            return False
-    elif gates and not any(gate.matches(path) for gate in gates):
+    if path.is_meta and not any(gate.matches(path) and meta_scoped(gate.pattern) for gate in gates):
         return False
-    if any(gate.matches(path) for gate in not_gates):
-        return False
-    extension = extract_extension(path) or ""
-    if wanted and extension not in wanted:
-        return False
-    return not (unwanted and extension in unwanted)
+    return passes_filters(path, gates, not_gates, wanted, unwanted)
 
 
 async def _content_for(

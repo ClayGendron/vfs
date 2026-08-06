@@ -1,0 +1,178 @@
+"""The grep match authority — one compiled verifier for every surface.
+
+Python ``re`` is the sole authority on what a grep pattern matches:
+storage tiers verify their index/scan candidates through these
+functions, and the router filters chained rows through the same ones,
+so the two surfaces cannot drift. The posture mirrors
+:mod:`vfs.pattern_matching.glob` for path patterns: prefilters elsewhere are
+necessary facts; matching is decided here. Everything works on plain
+paths and text, never on result rows.
+
+    candidates = filter_candidates(paths, ext=("py",), ext_not=(),
+                                   globs=("src/**",), globs_not=())
+    verifier = compile_verifier("needle", fixed_strings=False,
+                                word_regexp=False, case_mode="smart")
+    hits = match_texts(texts, verifier, invert=False, before=0,
+                       after=0, mode="lines", cap=None)
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING, NamedTuple
+
+from vfs.models import Match
+from vfs.paths import extract_extension
+from vfs.pattern_matching.glob import compile_filter
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from vfs.ops import CaseMode, GrepOutputMode
+    from vfs.paths import Path
+    from vfs.pattern_matching.glob import GlobFilter
+
+
+class GrepHit(NamedTuple):
+    """One matched file: the mode-shaped match facts for its text.
+
+    ``lines`` mode carries ``matches`` regions; ``count`` carries the
+    (capped) hit count on ``score``; ``files`` carries neither.
+    """
+
+    path: Path
+    matches: list[Match] | None
+    score: float | None
+
+
+# ---------------------------------------------------------------------------
+# Structural filters — the path-shaped gates every grep surface applies
+# ---------------------------------------------------------------------------
+
+
+def passes_filters(
+    path: Path,
+    gates: list[GlobFilter],
+    not_gates: list[GlobFilter],
+    wanted: frozenset[str],
+    unwanted: frozenset[str],
+) -> bool:
+    """Glob admission/exclusion and the ext facts, per candidate path.
+
+    Carries no meta rule: enumeration liveness is the enumerating
+    surface's concern (storage layers it on top), and paths already in
+    a caller's hand are never hidden.
+    """
+    if gates and not any(gate.matches(path) for gate in gates):
+        return False
+    if any(gate.matches(path) for gate in not_gates):
+        return False
+    extension = extract_extension(path) or ""
+    if wanted and extension not in wanted:
+        return False
+    return not (unwanted and extension in unwanted)
+
+
+def filter_candidates(
+    paths: Sequence[Path],
+    *,
+    ext: tuple[str, ...] = (),
+    ext_not: tuple[str, ...] = (),
+    globs: tuple[str, ...] = (),
+    globs_not: tuple[str, ...] = (),
+) -> list[Path]:
+    """The paths that pass grep's structural gates, order preserved.
+
+    Compiles each glob channel once and applies :func:`passes_filters`
+    per path — the batch form for callers holding paths rather than
+    enumerating storage. Callers gate ``glob_defect`` on the glob
+    channels first.
+    """
+    gates = [compile_filter(glob, ()) for glob in dict.fromkeys(globs)]
+    not_gates = [compile_filter(glob, ()) for glob in dict.fromkeys(globs_not)]
+    wanted = frozenset(e.lstrip(".").lower() for e in ext)
+    unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
+    return [path for path in paths if passes_filters(path, gates, not_gates, wanted, unwanted)]
+
+
+# ---------------------------------------------------------------------------
+# The verifier — compile once, verify per file
+# ---------------------------------------------------------------------------
+
+
+def compile_verifier(pattern: str, *, fixed_strings: bool, word_regexp: bool, case_mode: CaseMode) -> re.Pattern[str]:
+    """The conformance-pinned modifier wrapping: escape, word-wrap, case flags.
+
+    Smart case is judged on the raw pattern — any uppercase letter makes
+    the search sensitive, ripgrep's rule.
+    """
+    text = re.escape(pattern) if fixed_strings else pattern
+    if word_regexp:
+        text = rf"\b(?:{text})\b"
+    insensitive = case_mode == "insensitive" or (case_mode == "smart" and not any(ch.isupper() for ch in pattern))
+    return re.compile(text, re.IGNORECASE if insensitive else 0)
+
+
+def verify(
+    text: str,
+    verifier: re.Pattern[str],
+    *,
+    invert: bool,
+    before: int,
+    after: int,
+    mode: GrepOutputMode,
+    cap: int | None,
+) -> tuple[list[Match] | None, float | None] | None:
+    """Per-line verification: ``None`` drops the row, else (matches, score).
+
+    ``files`` short-circuits at the first verified hit and carries
+    neither matches nor score; ``count`` reports the (capped) hit count
+    on score; ``lines`` renders one region per hit line, context bounds
+    clamped to the file.
+    """
+    lines = text.splitlines()
+    hits: list[int] = []
+    for number, line in enumerate(lines, start=1):
+        if (verifier.search(line) is not None) is not invert:
+            hits.append(number)
+            if mode == "files" or (cap is not None and len(hits) >= cap):
+                break
+    if not hits:
+        return None
+    if mode == "files":
+        return None, None
+    if mode == "count":
+        return None, float(len(hits))
+    matches = [
+        Match(
+            start=(start := max(1, number - before)),
+            end=(end := min(len(lines), number + after)),
+            match=number,
+            content="\n".join(lines[start - 1 : end]),
+        )
+        for number in hits
+    ]
+    return matches, None
+
+
+def match_texts(
+    texts: Sequence[tuple[Path, str]],
+    verifier: re.Pattern[str],
+    *,
+    invert: bool,
+    before: int,
+    after: int,
+    mode: GrepOutputMode,
+    cap: int | None,
+) -> list[GrepHit | None]:
+    """Verify each ``(path, text)`` pair; aligned with *texts*, ``None`` per miss.
+
+    The batch form of :func:`verify` for callers holding content rather
+    than enumerating storage. Alignment (not hits-only) is deliberate:
+    duplicate paths with differing texts stay unambiguous.
+    """
+    results: list[GrepHit | None] = []
+    for path, text in texts:
+        verified = verify(text, verifier, invert=invert, before=before, after=after, mode=mode, cap=cap)
+        results.append(None if verified is None else GrepHit(path, *verified))
+    return results

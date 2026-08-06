@@ -34,6 +34,7 @@ receives is already proven.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -42,18 +43,22 @@ from typing import TYPE_CHECKING, Any, NamedTuple, assert_never, cast
 from pydantic import ValidationError
 
 from vfs.exceptions import MountError, raise_lone_or_group
-from vfs.glob_patterns import (
-    compile_filter,
-    composed_pattern,
-    effective_pattern,
-    glob_defect,
-    render_residual,
-    residuals,
-)
-from vfs.models import Edge, Entry, Observation
+from vfs.models import CONTENT_KINDS, Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
 from vfs.paths import METADATA_ROOT, ROOT, Path, resolve_path
+from vfs.pattern_matching import (
+    compile_filter,
+    compile_verifier,
+    composed_pattern,
+    effective_pattern,
+    filter_candidates,
+    filter_paths,
+    glob_defect,
+    match_texts,
+    render_residual,
+    residuals,
+)
 from vfs.permissions import (
     Permission,
     PermissionLayer,
@@ -82,6 +87,7 @@ if TYPE_CHECKING:
 
     from vfs.ops import Op
     from vfs.paths import ResolvedPath
+    from vfs.pattern_matching import GrepHit
     from vfs.permissions import PermissionsPayload
 
 # Router-traversal depth budget for the current request: decremented once
@@ -1049,6 +1055,12 @@ class VirtualFileSystem:
         it. Row order is merge order, and a *max_count* prefix of it
         can therefore differ across layouts.
 
+        With *observations*, glob is a pure filter over the rows in
+        hand: kept rows serve exactly as held (columns, staleness, and
+        input order included) and storage is never touched — chain into
+        ``stat`` for fresh rows, or pass row paths to *paths* to search
+        under them.
+
         *max_count* (>= 1) bounds each entry's answer **and** the merged
         result: a fan-out over N entries still returns at most
         *max_count* rows, kept in merge order — entries named via *paths*
@@ -1070,20 +1082,16 @@ class VirtualFileSystem:
         if defect is not None:
             return self._error(f"glob pattern {pattern!r}: {defect}", kind=VFSErrorKind.invalid, op="glob")
         if observations is not None:
-            # The chaining shape: rows carry the scope, grouped per entry,
-            # and the backend composes those roots into the pattern batch.
+            # Chaining filters rows in hand: a pure in-memory predicate
+            # over the rows' paths — no storage call, rows serve as held.
             if not self._bindings:
                 return self._closed_error("glob")
-            merged = await self._dispatch_grouped_observations(
-                "glob",
-                observations,
-                user_id=user_id,
-                patterns=(pattern,),
-                ext=ext,
-                max_count=max_count,
-                columns=columns,
-            )
-            return self._cap_rows(merged, "glob", max_count)
+            rows, invalid = self._observation_rows("glob", observations)
+            if invalid is not None:
+                return invalid
+            keep = set(filter_paths([row.path for row in rows], pattern, ext))
+            kept = [row for row in rows if row.path in keep]
+            return self._cap_rows(Result(ops=("glob",), observations=kept), "glob", max_count)
         return await self._route_fanout(
             "glob",
             paths=paths,
@@ -1130,6 +1138,13 @@ class VirtualFileSystem:
         the caller's globs pass its path). *pattern* is content-only
         and never composes with paths.
 
+        With *observations*, grep is a filter over the rows in hand:
+        gates and matching run in memory, content is fetched (through
+        each row's own entry, classifying loudly) only for rows that
+        lack it, and a row whose known kind carries no content never
+        matches. The index tier is not involved, so *allow_scan* and
+        the refusal gate do not apply.
+
         *max_count* caps matches **per file** (ripgrep's ``-m``), not the
         row count — a fan-out returns one row per matching file regardless.
         *allow_scan* opts into an index-refusing backend's scan tier;
@@ -1162,10 +1177,30 @@ class VirtualFileSystem:
             defect = glob_defect(glob_pattern)
             if defect is not None:
                 return self._error(f"grep glob {glob_pattern!r}: {defect}", kind=VFSErrorKind.invalid, op="grep")
+        if observations is not None:
+            if not self._bindings:
+                return self._closed_error("grep")
+            return await self._grep_rows_in_hand(
+                observations,
+                pattern=pattern,
+                ext=ext,
+                ext_not=ext_not,
+                globs=globs,
+                globs_not=globs_not,
+                case_mode=case_mode,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                invert_match=invert_match,
+                before_context=before_context,
+                after_context=after_context,
+                output_mode=output_mode,
+                max_count=max_count,
+                columns=columns,
+                user_id=user_id,
+            )
         return await self._route_fanout(
             "grep",
             paths=paths,
-            observations=observations,
             pattern=pattern,
             ext=ext,
             ext_not=ext_not,
@@ -1342,21 +1377,11 @@ class VirtualFileSystem:
         resolves once: the validated path both routes to its entry and
         rebases the row into entry coordinates.
         """
-        rows = self._as_list(observations)
-        if rows is None:
-            return self._error(
-                f"observations must be an iterable of Observation, got {type(observations).__name__}",
-                kind=VFSErrorKind.invalid,
-                op=op,
-            )
+        rows, invalid = self._observation_rows(op, observations)
+        if invalid is not None:
+            return invalid
         groups: dict[Path, tuple[Binding, list[Observation]]] = {}
         for obs in rows:
-            if not isinstance(obs, Observation):
-                return self._error(
-                    f"observations must be Observation instances, got {type(obs).__name__}",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
             resolved = resolve_path(obs.path, mutation=op in MUTATING_OPS)
             if resolved.path is None:
                 return self._invalid_path(resolved, obs.path, op)
@@ -1382,6 +1407,126 @@ class VirtualFileSystem:
             for binding, group in groups.values()
         )
         return Result.merge(results, op=op)
+
+    def _observation_rows(self, op: Op, observations: object) -> tuple[list[Observation], Result | None]:
+        """Materialize and type-check an observations batch, or refuse it whole."""
+        rows = self._as_list(observations)
+        if rows is None:
+            return [], self._error(
+                f"observations must be an iterable of Observation, got {type(observations).__name__}",
+                kind=VFSErrorKind.invalid,
+                op=op,
+            )
+        for obs in rows:
+            if not isinstance(obs, Observation):
+                return [], self._error(
+                    f"observations must be Observation instances, got {type(obs).__name__}",
+                    kind=VFSErrorKind.invalid,
+                    op=op,
+                )
+        return rows, None
+
+    async def _grep_rows_in_hand(
+        self,
+        observations: list[Observation],
+        *,
+        pattern: str,
+        ext: tuple[str, ...],
+        ext_not: tuple[str, ...],
+        globs: tuple[str, ...],
+        globs_not: tuple[str, ...],
+        case_mode: CaseMode,
+        fixed_strings: bool,
+        word_regexp: bool,
+        invert_match: bool,
+        before_context: int,
+        after_context: int,
+        output_mode: GrepOutputMode,
+        max_count: int | None,
+        columns: frozenset[str] | None,
+        user_id: str | None,
+    ) -> Result:
+        """Chained grep: filter the rows in hand, fetching only absent content.
+
+        Path gates and the match run in memory over the rows as held. A
+        row without content is read through its own entry — a row that
+        cannot be read classifies loudly beside the healthy rows'
+        matches — while a row whose known kind carries no content never
+        matches and is skipped without error, a filter's non-match. The
+        index tier is never involved, so the refusal gate and
+        ``allow_scan`` have no meaning on this path.
+        """
+        rows, invalid = self._observation_rows("grep", observations)
+        if invalid is not None:
+            return invalid
+        try:
+            verifier = compile_verifier(
+                pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode
+            )
+        except re.error as exc:
+            return self._error(f"grep pattern {pattern!r}: {exc}", kind=VFSErrorKind.invalid, op="grep")
+        keep = set(
+            filter_candidates([row.path for row in rows], ext=ext, ext_not=ext_not, globs=globs, globs_not=globs_not)
+        )
+        candidates = [row for row in rows if row.path in keep]
+        absent = [row for row in candidates if row.content is None and (row.kind is None or row.kind in CONTENT_KINDS)]
+        errors: list[ResultError] = []
+        contents: dict[str, str] = {}
+        if absent:
+            read = await self.read(observations=absent, columns=frozenset({"content"}), user_id=user_id)
+            errors = list(read.errors)
+            contents = {str(row.path): row.content for row in read.observations if row.content is not None}
+        texted: list[tuple[Observation, str]] = []
+        for row in candidates:
+            text = row.content if row.content is not None else contents.get(str(row.path))
+            if text is not None:
+                texted.append((row, text))
+        hits = match_texts(
+            [(row.path, text) for row, text in texted],
+            verifier,
+            invert=invert_match,
+            before=before_context,
+            after=after_context,
+            mode=output_mode,
+            cap=max_count,
+        )
+        matched = [
+            self._hit_row(row, text, hit, mode=output_mode, columns=columns)
+            for (row, text), hit in zip(texted, hits, strict=True)
+            if hit is not None
+        ]
+        return Result(ops=("grep",), observations=matched, errors=errors)
+
+    @staticmethod
+    def _hit_row(
+        row: Observation,
+        text: str,
+        hit: GrepHit,
+        *,
+        mode: GrepOutputMode,
+        columns: frozenset[str] | None,
+    ) -> Observation:
+        """One chained-grep hit: the row as held, match facts attached.
+
+        ``files`` mode carries neither content nor matches; fetched
+        content attaches only when the caller projected it.
+        """
+        populated = set(row.populated)
+        update: dict[str, object] = {}
+        if mode == "files":
+            update["content"] = None
+            populated.discard("content")
+        elif row.content is None and columns is not None and "content" in columns:
+            update["content"] = text
+            populated.add("content")
+        if hit.matches is not None:
+            update["matches"] = hit.matches
+            populated.add("matches")
+        if hit.score is not None:
+            update["score"] = hit.score
+            populated.add("score")
+        update["populated"] = frozenset(populated)
+        return row.model_copy(update=update)
 
     async def _tree_region(
         self,

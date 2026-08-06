@@ -16,7 +16,7 @@ the path cache. Glob executes the batched pattern contract: every
 pattern contributes one self-contained OR-arm (its sargable ``LIKE``
 prefilter with all ext and liveness facts inside the arm), arms chunk
 by the dialect's budgets in one snapshot, and the compiled
-segment-aware patterns (``vfs.glob_patterns``) verify every candidate
+segment-aware patterns (``vfs.pattern_matching``) verify every candidate
 authoritatively. Listings order by the binary-collated ``name`` column
 and subtrees by ``path`` — byte-identical across engines.
 """
@@ -27,9 +27,9 @@ from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import and_, func, or_, select
 
-from vfs.glob_patterns import GlobFilter, compile_filter, composed_pattern, derive_ext, effective_pattern, glob_defect
 from vfs.models import CONTENT_KINDS, Observation
-from vfs.paths import METADATA_ROOT, ROOT, Path
+from vfs.paths import METADATA_ROOT, Path
+from vfs.pattern_matching import GlobFilter, compile_filter, derive_ext, glob_defect
 from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
@@ -198,18 +198,14 @@ async def glob_rows(
     membership_budget: int,
     *,
     patterns: tuple[str, ...],
-    roots: tuple[Path, ...],
     ext: tuple[str, ...],
     max_count: int | None,
     columns: frozenset[str] | None,
 ) -> Result:
     """Rows matching **any** pattern, one snapshot, statements chunked by budget.
 
-    Scoping arrives as pattern text. *roots* are the observation-carried
-    scope claims: each is asserted with a point read (descent-ladder
-    classification beside the healthy roots' rows), composed into every
-    pattern, and its own row is served when the caller's pattern matches
-    it — find semantics: operands are tested, never exempt. One
+    Scoping arrives purely as pattern text — the router composes and
+    residuates scope upstream; no path channel crosses this seam. One
     refusable pattern refuses the whole call before any row is touched.
     """
     for pattern in patterns:
@@ -220,19 +216,8 @@ async def glob_rows(
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
     wanted = frozenset(e.lstrip(".").lower() for e in ext)
-    errors: list[ResultError] = []
     matched: dict[str, RowMapping] = {}
     live = list(dict.fromkeys(patterns))
-    if roots:
-        scope = tuple(dict.fromkeys(roots))
-        live = sorted({composed_pattern(root, pattern) for root in scope for pattern in patterns})
-        found = await _mappings_by_path(session, tables, membership_budget, scope, fetched, with_entry_id=False)
-        errors = list((await miss_errors(session, entry, scope, found, membership_budget)).values())
-        for root in scope:
-            mapping = found.get(str(root))
-            # The entry's own root row is the entry itself, never served.
-            if root != ROOT and mapping is not None and _root_row_matches(root, patterns, ext):
-                matched[str(root)] = mapping
     gates = [compile_filter(pattern, ext) for pattern in live]
     arms = [arm for glob in gates if (arm := pattern_arm(entry, glob, wanted, membership_budget)) is not None]
     ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
@@ -243,7 +228,7 @@ async def glob_rows(
     rows = [_observe(matched[path], fetched) for path in sorted(matched)]
     if max_count is not None:
         rows = rows[:max_count]
-    return Result(ops=("glob",), observations=rows, errors=errors)
+    return Result(ops=("glob",), observations=rows)
 
 
 # ---------------------------------------------------------------------------
@@ -335,16 +320,6 @@ async def _mappings_by_path(
     columns, source = _entry_projection(tables, fetched, with_entry_id=with_entry_id)
     paths = (str(target) for target in targets)
     return await rows_by_path(session, tables.entry, paths, columns, membership_budget, source=source)
-
-
-def _root_row_matches(root: Path, patterns: Sequence[str], ext: tuple[str, ...]) -> bool:
-    """The find-operand rule: the root's own row is tested against the patterns.
-
-    Name-arm patterns judge the root by name, path-arm patterns by its
-    path anchored under the root — the same subject rule every candidate
-    faces, applied to the operand itself.
-    """
-    return any(compile_filter(effective_pattern(root, pattern), ext).matches(root) for pattern in patterns)
 
 
 async def _pattern_candidates(

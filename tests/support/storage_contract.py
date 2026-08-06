@@ -1129,37 +1129,6 @@ class StorageContract:
         assert result.observations == []
         assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
 
-    @needs("write", "mkdir", "glob")
-    async def test_scoped_glob_includes_the_root_row_itself(self, storage: ConformanceBackend) -> None:
-        await storage.mkdir(path=Path("/docs"))
-        await storage.write(entries=[Entry(path=Path("/docs/a.txt"), content="x")])
-        await storage.write(entries=[Entry(path=Path("/other.txt"), content="x")])
-        result = await storage.glob(patterns=("*",), observations=[Observation(path=Path("/docs"))])
-        assert [o.path for o in result.observations] == ["/docs", "/docs/a.txt"]
-
-    @needs("write", "mkdir", "glob")
-    async def test_glob_missing_root_classifies_beside_served_roots(self, storage: ConformanceBackend) -> None:
-        # POSIX find parity: a missing operand errors while the healthy
-        # operands still produce their results — partial output, exit 1.
-        await storage.mkdir(path=Path("/docs"))
-        await storage.write(entries=[Entry(path=Path("/docs/a.txt"), content="x")])
-        roots = [Observation(path=Path("/docs")), Observation(path=Path("/nope"))]
-        result = await storage.glob(patterns=("*",), observations=roots)
-        assert result.success is False
-        assert [o.path for o in result.observations] == ["/docs", "/docs/a.txt"]
-        assert [e.kind for e in result.errors] == [VFSErrorKind.not_found]
-
-    @needs("write", "glob")
-    async def test_glob_file_root_is_matched_itself(self, storage: ConformanceBackend) -> None:
-        # find parity: a file operand is matched against the pattern —
-        # served on a hit, an empty clean success on a miss, never an error.
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
-        hit = await storage.glob(patterns=("*.txt",), observations=[Observation(path=Path("/a.txt"))])
-        assert [o.path for o in hit.observations] == ["/a.txt"]
-        miss = await storage.glob(patterns=("*.py",), observations=[Observation(path=Path("/a.txt"))])
-        assert miss.success is True
-        assert miss.observations == []
-
     # ------------------------------------------------------------------
     # LIKE metacharacters in stored paths — near-miss decoys never leak
     # ------------------------------------------------------------------
@@ -1181,13 +1150,15 @@ class StorageContract:
             assert [str(o.path) for o in result.observations] == [f"/{name}/inner.txt"]
 
     @needs("write", "glob")
-    async def test_glob_root_with_metachars_stays_inside_its_subtree(self, storage: ConformanceBackend) -> None:
-        # The composed pattern's literal prefix must escape LIKE
-        # metachars, or the decoy siblings' children leak into the fan.
+    async def test_glob_pattern_prefix_with_metachars_stays_inside_its_subtree(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # The pattern's literal prefix must escape LIKE metachars, or
+        # the decoy siblings' children leak into the fan.
         await _mint_metachar_tree(storage)
         for name in METACHAR_DIRS:
-            result = await storage.glob(patterns=("*",), observations=[Observation(path=Path(f"/{name}"))])
-            assert [str(o.path) for o in result.observations] == [f"/{name}", f"/{name}/inner.txt"]
+            result = await storage.glob(patterns=(f"/{name}/**/*",))
+            assert [str(o.path) for o in result.observations] == [f"/{name}/inner.txt"]
 
     @needs("write", "glob")
     async def test_glob_pattern_with_literal_metachars_matches_literally(self, storage: ConformanceBackend) -> None:
@@ -1215,17 +1186,6 @@ class StorageContract:
         trashed = await storage.tree(path=trash_path)
         assert [str(o.path) for o in trashed.observations] == [f"{trash_path}/inner.txt"]
 
-    @needs("write", "grep")
-    async def test_grep_missing_root_classifies_beside_served_roots(self, storage: ConformanceBackend) -> None:
-        # find parity: a missing operand errors while the healthy operand's
-        # own content is grepped — the root row rides the scan, not a probe.
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle here")])
-        roots = [Observation(path=Path("/a.txt")), Observation(path=Path("/nope"))]
-        result = await storage.grep(pattern="needle", observations=roots)
-        assert result.success is False
-        assert [o.path for o in result.observations] == ["/a.txt"]
-        assert [e.kind for e in result.errors] == [VFSErrorKind.not_found]
-
     # ------------------------------------------------------------------
     # Enumeration liveness — the /.vfs meta scope
     # ------------------------------------------------------------------
@@ -1241,13 +1201,11 @@ class StorageContract:
     @needs("write", "ls", "glob")
     async def test_meta_addressing_serves_its_own_subtree(self, storage: ConformanceBackend) -> None:
         # The glob bypass is a property of what the caller wrote: a
-        # meta literal prefix lifts the exclusion — via a scope root's
-        # composition or as pattern text — a wildcard head never does.
+        # meta literal prefix lifts the exclusion; a wildcard head
+        # never does.
         await storage.write(entries=[Entry(path=Path("/.vfs/state/s.txt"), content="m")], parents=True)
         listing = await storage.ls(path=Path("/.vfs/state"))
         assert [o.path for o in listing.observations] == ["/.vfs/state/s.txt"]
-        scoped = await storage.glob(patterns=("*",), observations=[Observation(path=Path("/.vfs/state"))])
-        assert [o.path for o in scoped.observations] == ["/.vfs/state", "/.vfs/state/s.txt"]
         literal = await storage.glob(patterns=("/.vfs/state/**/*",))
         assert [o.path for o in literal.observations] == ["/.vfs/state/s.txt"]
         wildcard = await storage.glob(patterns=("/.v*/state/**/*",))
@@ -1256,15 +1214,12 @@ class StorageContract:
 
     @needs("write", "grep")
     async def test_default_grep_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
-        # The lift is a property of what the caller wrote: a scope root's
-        # composition or a meta-literal glob opens the subtree; a
-        # wildcard-headed glob never does.
+        # The lift is a property of what the caller wrote: a meta-literal
+        # glob opens the subtree; a wildcard-headed glob never does.
         await storage.write(entries=[Entry(path=Path("/real.txt"), content="needle in the open")])
         await storage.write(entries=[Entry(path=Path("/.vfs/state/s.txt"), content="needle hidden")], parents=True)
         default = await storage.grep(pattern="needle")
         assert [o.path for o in default.observations] == ["/real.txt"]
-        anchored = await storage.grep(pattern="needle", observations=[Observation(path=Path("/.vfs/state"))])
-        assert [o.path for o in anchored.observations] == ["/.vfs/state/s.txt"]
         literal = await storage.grep(pattern="needle", globs=("/.vfs/state/**",))
         assert [o.path for o in literal.observations] == ["/.vfs/state/s.txt"]
         wildcard = await storage.grep(pattern="needle", globs=("/.v*/state/**",))

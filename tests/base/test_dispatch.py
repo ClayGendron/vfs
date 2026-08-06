@@ -758,15 +758,17 @@ async def test_glob_invalid_pattern_refuses_before_any_routing() -> None:
     assert all(op != "glob" for op, _ in fs.calls)
 
 
-async def test_glob_observations_shortcut_passes_the_pattern_verbatim() -> None:
-    # The chaining surface is untouched: rows carry the scope, and the
-    # pattern crosses as given.
+async def test_glob_observations_filter_rows_in_memory_without_dispatch() -> None:
+    # Chaining filters rows in hand: the router applies the pattern to
+    # the rows' paths itself, and storage never sees a call.
     root = VirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
-    await root.glob("/data/*.txt", observations=[Observation(path=Path("/data/a.txt"))])
-    [(_, kwargs)] = data.calls
-    assert kwargs["patterns"] == ("/data/*.txt",)
+    rows = [Observation(path=Path("/data/a.txt")), Observation(path=Path("/data/b.md"))]
+    result = await root.glob("/data/*.txt", observations=rows)
+    assert result.success is True
+    assert result.paths == ("/data/a.txt",)
+    assert data.calls == []
 
 
 # ----------------------------------------------------------------------
@@ -843,8 +845,8 @@ async def test_glob_max_count_bounds_the_merged_result() -> None:
 
 
 async def test_observation_shaped_glob_obeys_max_count() -> None:
-    # The observations input shape is a fan-out too — the caller's bound
-    # holds after the grouped merge, not per entry.
+    # The observations input shape is a filter over rows in hand — the
+    # caller's bound caps the filtered sequence.
     root = VirtualFileSystem()
     a, b = EchoStorage(), EchoStorage()
     await root.add_mount(a, "/a")
@@ -912,16 +914,19 @@ async def test_glean_limit_trims_the_merge_by_score() -> None:
     assert result.paths == ("/high/h1", "/high/h2")
 
 
-async def test_grep_observations_use_grouped_dispatch() -> None:
+async def test_grep_observations_match_in_memory_fetching_absent_content() -> None:
+    # Chained grep never dispatches grep: content in hand matches in
+    # memory, and only a row lacking content reads through its entry.
     root = VirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
-    rows = [Observation(path=Path("/a/f.py")), Observation(path=Path("/b/g.py"))]
-    await root.grep("needle", observations=rows)
-    assert len(a.calls) == 1 and len(b.calls) == 1
-    (a_obs,) = a.calls[0][1]["observations"]
-    assert a_obs.path == "/f.py"  # rebased into the terminal's coordinates
+    held = Observation(path=Path("/a/f.py"), kind="file", content="a needle here")
+    absent = Observation(path=Path("/b/g.py"), kind="file")
+    result = await root.grep("needle", observations=[held, absent])
+    assert a.calls == []  # content in hand: no call at all
+    assert [op for op, _ in b.calls] == ["read"]  # fetch, never grep
+    assert [str(o.path) for o in result.observations] == ["/a/f.py"]
 
 
 # ----------------------------------------------------------------------

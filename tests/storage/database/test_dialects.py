@@ -260,11 +260,11 @@ class TestMembershipChunking:
         reread = await storage.read(path=paths[0])
         assert reread.observations[0].content == "line 0"
         # Misses beyond the budget still classify per-target, and glob's
-        # scope fan chunks: 60 anchors at 8 per statement.
+        # pattern fan chunks: 60 composed arms across many statements.
         misses = await storage.stat(observations=[Observation(path=Path(f"/ghost/g{i}.txt")) for i in range(40)])
         assert len(misses.errors) == 40
         assert {e.kind for e in misses.errors} == {VFSErrorKind.not_found}
-        scoped = await storage.glob(patterns=("*.txt",), observations=[Observation(path=p.parent_dir) for p in paths])
+        scoped = await storage.glob(patterns=tuple(f"{p.parent_dir}/**/*.txt" for p in paths))
         assert len(scoped.observations) == 60
         # Batch ls spans chunk boundaries: 60 anchors at 16 per statement,
         # each parent's single child arriving whole through the merge.
@@ -274,33 +274,31 @@ class TestMembershipChunking:
         await storage.close()
 
     async def test_wide_pattern_fan_survives_the_expression_depth_cap(self, tmp_path) -> None:
-        # 1,100 roots compose into 1,100 pattern arms — past the point
-        # where SQLite's default SQLITE_MAX_EXPR_DEPTH kills an unchunked
-        # OR fan — so the arms must chunk. Ghost roots classify per-root
-        # (find parity); the healthy root's row and rows still serve.
+        # 1,100 composed pattern arms — past the point where SQLite's
+        # default SQLITE_MAX_EXPR_DEPTH kills an unchunked OR fan — so
+        # the arms must chunk; dead arms match nothing and the healthy
+        # arm's rows still serve.
         storage = DatabaseStorage(url=_url(tmp_path))
         written = await storage.write(entries=[Entry(path=Path("/d/a.txt"), content="x")], parents=True)
         assert written.success is True
-        roots = [Observation(path=Path("/d")), *(Observation(path=Path(f"/ghost{i:04}")) for i in range(1_099))]
-        result = await storage.glob(patterns=("*",), observations=roots)
-        assert [str(o.path) for o in result.observations] == ["/d", "/d/a.txt"]
-        assert result.success is False
-        assert len(result.errors) == 1_099
-        assert {e.kind for e in result.errors} == {VFSErrorKind.not_found}
+        composed = ("/d/**/*", *(f"/ghost{i:04}/**/*" for i in range(1_099)))
+        result = await storage.glob(patterns=composed)
+        assert result.success is True
+        assert [str(o.path) for o in result.observations] == ["/d/a.txt"]
         await storage.close()
 
     async def test_nested_root_patterns_dedupe_across_chunks(self, tmp_path, monkeypatch) -> None:
         # Budget 48 → tiny arm chunks: /top's composed pattern lands in
-        # the first chunk and every nested root re-matches its rows in
+        # the first chunk and every nested pattern re-matches its rows in
         # later chunks, so each row must appear exactly once post-merge.
         monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
         storage = DatabaseStorage(url=_url(tmp_path))
         files = [Path(f"/top/d{i:02}/f.txt") for i in range(20)]
         written = await storage.write(entries=[Entry(path=p, content="x") for p in files], parents=True)
         assert written.success is True, written.errors
-        roots = [Observation(path=Path("/top")), *(Observation(path=p.parent_dir) for p in files)]
-        result = await storage.glob(patterns=("*",), observations=roots)
-        expected = sorted(["/top", *(str(p.parent_dir) for p in files), *(str(p) for p in files)])
+        composed = ("/top/**/*", *(f"{p.parent_dir}/**/*" for p in files))
+        result = await storage.glob(patterns=composed)
+        expected = sorted([*(str(p.parent_dir) for p in files), *(str(p) for p in files)])
         assert [str(o.path) for o in result.observations] == expected
         await storage.close()
 

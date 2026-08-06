@@ -187,13 +187,11 @@ class DatabaseStorage:
         self,
         *,
         patterns: tuple[str, ...],
-        observations: list[Observation] | None = None,
         ext: tuple[str, ...] = (),
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        roots = tuple(observation.path for observation in observations or [])
         return await self._execute(
             "glob",
             lambda session: glob_rows(
@@ -203,7 +201,6 @@ class DatabaseStorage:
                 self._host.parameter_budget,
                 self._host.membership_budget,
                 patterns=patterns,
-                roots=roots,
                 ext=ext,
                 max_count=max_count,
                 columns=columns,
@@ -214,7 +211,6 @@ class DatabaseStorage:
         self,
         *,
         pattern: str,
-        observations: list[Observation] | None = None,
         ext: tuple[str, ...] = (),
         ext_not: tuple[str, ...] = (),
         globs: tuple[str, ...] = (),
@@ -231,7 +227,6 @@ class DatabaseStorage:
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
-        roots = tuple(observation.path for observation in observations or [])
         return await self._execute(
             "grep",
             lambda session: grep_rows(
@@ -241,7 +236,6 @@ class DatabaseStorage:
                 self._host.parameter_budget,
                 self._host.membership_budget,
                 pattern=pattern,
-                roots=roots,
                 ext=ext,
                 ext_not=ext_not,
                 globs=globs,

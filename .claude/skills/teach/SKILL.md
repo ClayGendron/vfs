@@ -120,6 +120,19 @@ the user reports what landed or flopped; date each entry.
     idioms mined from `tests/` fixtures, PLAY exercises inline,
     database persisted for poking.
 
+- **2026-08-06** (reads.py glob-seam session): the journey ran one
+  Explanation step plus one learner-question step before the question
+  ("I want to understand this `if roots:` block") exposed a real
+  design tension — the observations channel was the last place scope
+  crossed the storage seam as paths, contradicting ADR 031's own
+  wording. Pivoting into the pipeline (soundness check against ADRs
+  030/031 → AskUserQuestion forks → ADR 034 → implementation) was the
+  right move, and the grounding pass for the *question* (reading
+  backend.py and base.py to learn who composes on which channel) is
+  what surfaced the contradiction — teaching an owner their own code
+  is design review in disguise, second confirmed instance. The
+  journey was parked mid-flight and should be resumed explicitly.
+
 ### What doesn't
 
 - **2026-07-25** (topology.py session): when the learner asked *why* a

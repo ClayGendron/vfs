@@ -8,7 +8,9 @@
   spec 091 (landed 2026-08-01; mined to `../specs/archive/`
   2026-08-05). Decision 3's dispatch shape is amended by ADR 031
   (pattern-only seam, landed via spec 092); every semantics decision
-  here stands. The pattern-language decisions this ADR leans on
+  here stands. Decision 6.4's chaining surface is fixed as pure row
+  filtering by ADR 034 — `observations=` no longer dispatches to
+  storage at all. The pattern-language decisions this ADR leans on
   ("073's anchoring rule", the chokepoint) are recorded as ADR 032.
 - **Date:** 2026-07-31
 - **Deciders:** Clay Gendron

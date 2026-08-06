@@ -14,6 +14,8 @@ import pytest
 
 from tests.support.base_doubles import RecorderStorage
 from vfs.base import VirtualFileSystem
+from vfs.models import Observation
+from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -180,3 +182,42 @@ async def test_roots_stay_assertions() -> None:
     assert hit.paths == ("/notes.txt",)
     miss = await fs.glob("*.py", paths=("/notes.txt",))
     assert miss.success is True and miss.paths == ()
+
+
+# ----------------------------------------------------------------------
+# Chaining — observations are rows in hand, filtered without dispatch
+# ----------------------------------------------------------------------
+
+
+async def test_chained_glob_filters_rows_in_hand_without_storage() -> None:
+    # Pure filter: rows pass or drop on their held paths alone — the
+    # rows here exist nowhere in storage, and duplicates survive.
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [
+        Observation(path=Path("/keep/a.txt")),
+        Observation(path=Path("/drop/b.md")),
+        Observation(path=Path("/keep/a.txt")),
+    ]
+    result = await fs.glob("*.txt", observations=rows)
+    assert result.success is True
+    assert [str(o.path) for o in result.observations] == ["/keep/a.txt", "/keep/a.txt"]
+
+
+async def test_chained_glob_path_arm_anchors_and_ext_applies() -> None:
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [
+        Observation(path=Path("/src/a.py")),
+        Observation(path=Path("/lib/b.py")),
+        Observation(path=Path("/src/c.txt")),
+    ]
+    anchored = await fs.glob("/src/*", observations=rows)
+    assert [str(o.path) for o in anchored.observations] == ["/src/a.py", "/src/c.txt"]
+    by_ext = await fs.glob("*", observations=rows, ext=("py",))
+    assert [str(o.path) for o in by_ext.observations] == ["/src/a.py", "/lib/b.py"]
+
+
+async def test_chained_glob_never_hides_meta_rows_in_hand() -> None:
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [Observation(path=Path("/.vfs/trash/x"))]
+    result = await fs.glob("*", observations=rows)
+    assert [str(o.path) for o in result.observations] == ["/.vfs/trash/x"]

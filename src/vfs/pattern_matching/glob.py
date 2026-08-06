@@ -23,8 +23,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from glob import translate
+from typing import TYPE_CHECKING
 
 from vfs.paths import Path, extract_extension, normalize_extension
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)
@@ -88,6 +92,23 @@ def compile_filter(pattern: str, ext: tuple[str, ...]) -> GlobFilter:
 
 
 # ---------------------------------------------------------------------------
+# Path filtering — glob as a pure predicate over paths in hand
+# ---------------------------------------------------------------------------
+
+
+def filter_paths(paths: Sequence[Path], pattern: str, ext: tuple[str, ...] = ()) -> list[Path]:
+    """The paths in *paths* the compiled *pattern* matches, order preserved.
+
+    A pure predicate over paths already in a caller's hand — duplicates
+    pass through, and no liveness rule applies (what a caller holds is
+    never hidden). Callers gate ``glob_defect`` first; searching *under*
+    paths is the scope channel's job, not this filter's.
+    """
+    gate = compile_filter(pattern, ext)
+    return [path for path in paths if gate.matches(path)]
+
+
+# ---------------------------------------------------------------------------
 # Derived pattern facts
 # ---------------------------------------------------------------------------
 
@@ -116,7 +137,7 @@ def derive_ext(pattern: str) -> tuple[str, str] | None:
 
 
 # ---------------------------------------------------------------------------
-# Mount-seam residuation
+# Composition and residuation — the router's pattern algebra
 # ---------------------------------------------------------------------------
 
 

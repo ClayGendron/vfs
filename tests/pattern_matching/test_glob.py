@@ -1,4 +1,4 @@
-"""Tests for vfs.glob_patterns — the one glob compile chokepoint.
+"""Tests for vfs.pattern_matching.glob — the one glob compile chokepoint.
 
 Pins the segment-aware contract: ``*`` within a segment, ``**`` across
 segments, gitignore-exact anchoring (any ``/`` anchors at the root,
@@ -8,16 +8,17 @@ refused. The demo tree is the spec's acceptance table.
 
 from __future__ import annotations
 
-from vfs.glob_patterns import (
+from vfs.paths import ROOT, Path
+from vfs.pattern_matching import (
     compile_filter,
     compile_glob,
     composed_pattern,
     derive_ext,
     effective_pattern,
+    filter_paths,
     glob_defect,
     residuals,
 )
-from vfs.paths import ROOT, Path
 
 DEMO_TREE = [Path("/notes.txt"), Path("/docs/a.txt"), Path("/docs/deep/nested/b.txt")]
 
@@ -326,3 +327,19 @@ class TestResiduals:
     def test_rendering_a_residual_is_an_anchored_entry_local_pattern(self):
         (residual,) = residuals("/data/deep/*.txt", Path("/data"))
         assert "/" + "/".join(residual) == "/deep/*.txt"
+
+
+class TestFilterPaths:
+    """The public path filter — a pure predicate over paths in hand."""
+
+    def test_keeps_matches_in_input_order_with_duplicates(self) -> None:
+        paths = [Path("/b.txt"), Path("/a.md"), Path("/a.txt"), Path("/b.txt")]
+        assert filter_paths(paths, "*.txt") == ["/b.txt", "/a.txt", "/b.txt"]
+
+    def test_ext_and_anchoring_apply_like_every_other_surface(self) -> None:
+        paths = [Path("/src/a.py"), Path("/lib/a.py"), Path("/src/b.txt")]
+        assert filter_paths(paths, "/src/*") == ["/src/a.py", "/src/b.txt"]
+        assert filter_paths(paths, "*", ("py",)) == ["/src/a.py", "/lib/a.py"]
+
+    def test_meta_paths_are_never_hidden(self) -> None:
+        assert filter_paths([Path("/.vfs/trash/x")], "*") == ["/.vfs/trash/x"]

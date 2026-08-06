@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import func, select, update
 
 from tests.support.database_helpers import _url
-from vfs.models import Entry, Observation
+from vfs.models import Entry
 from vfs.paths import Path
 from vfs.results import Result, Severity, VFSErrorKind
 from vfs.storage.backends.database import DatabaseStorage
@@ -234,29 +234,13 @@ class TestStructuralGates:
         await storage.close()
 
 
-class TestScopeRoots:
-    async def test_missing_root_classifies_beside_served_roots(self, tmp_path) -> None:
-        storage = await _fresh(tmp_path, {"/a.txt": "needle here"})
-        roots = [Observation(path=Path("/a.txt")), Observation(path=Path("/nope"))]
-        result = await storage.grep(pattern="needle", observations=roots)
-        assert result.success is False
-        assert _paths(result) == ["/a.txt"]
-        assert [e.kind for e in result.errors] == [VFSErrorKind.not_found]
-        await storage.close()
-
-    async def test_a_root_composes_to_its_subtree(self, tmp_path) -> None:
+class TestGlobChannelScoping:
+    async def test_a_composed_glob_confines_the_scan_to_its_subtree(self, tmp_path) -> None:
+        # Scope arrives purely as pattern text: the router's composed
+        # glob confines candidates exactly as the old root channel did.
         storage = await _fresh(tmp_path, {"/data/a.txt": "needle", "/other/b.txt": "needle"})
-        result = await storage.grep(pattern="needle", observations=[Observation(path=Path("/data"))])
+        result = await storage.grep(pattern="needle", globs=("/data/**",))
         assert _paths(result) == ["/data/a.txt"]
-        await storage.close()
-
-    async def test_the_root_literal_respects_the_caller_globs(self, tmp_path) -> None:
-        # find's operand law bows to the -g filter: a file root whose
-        # path fails the globs is not grepped, and that is clean success.
-        storage = await _fresh(tmp_path, {"/a.txt": "needle here"})
-        result = await storage.grep(pattern="needle", observations=[Observation(path=Path("/a.txt"))], globs=("*.py",))
-        assert result.success is True
-        assert result.observations == []
         await storage.close()
 
 

@@ -14,6 +14,8 @@ import pytest
 
 from tests.support.base_doubles import RecorderStorage
 from vfs.base import VirtualFileSystem
+from vfs.models import Observation
+from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -148,3 +150,92 @@ async def test_capability_skips_survive_only_where_the_globs_reach() -> None:
     assert [e.path for e in reached.errors] == ["/thin"]
     unreached = await fs.grep("needle", globs=("/elsewhere/**",))
     assert unreached.errors == []
+
+
+# ----------------------------------------------------------------------
+# Chaining — observations are rows in hand, filtered without dispatch
+# ----------------------------------------------------------------------
+
+
+async def test_chained_grep_matches_held_content_without_storage() -> None:
+    # Pure filter posture: the rows' paths exist nowhere in storage,
+    # and content in hand still matches — no call, no assertion.
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [
+        Observation(path=Path("/a.txt"), kind="file", content="a needle here"),
+        Observation(path=Path("/b.txt"), kind="file", content="nothing"),
+    ]
+    result = await fs.grep("needle", observations=rows)
+    assert result.success is True
+    assert [str(o.path) for o in result.observations] == ["/a.txt"]
+    [hit] = result.observations
+    assert hit.matches is not None
+
+
+async def test_chained_grep_fetches_absent_content_and_errors_loudly() -> None:
+    fs = await _plain_world()
+    rows = [Observation(path=Path("/data/a.txt"), kind="file"), Observation(path=Path("/ghost.txt"), kind="file")]
+    result = await fs.grep("needle", observations=rows)
+    assert result.success is False
+    assert [str(o.path) for o in result.observations] == ["/data/a.txt"]
+    assert [e.kind for e in result.errors] == [VFSErrorKind.not_found]
+
+
+async def test_chained_grep_skips_contentless_kinds_silently() -> None:
+    # A directory row is a filter non-match, never an error and never
+    # a fetch.
+    fs = await _plain_world()
+    rows = [Observation(path=Path("/data"), kind="directory"), Observation(path=Path("/data/a.txt"), kind="file")]
+    result = await fs.grep("needle", observations=rows)
+    assert result.success is True
+    assert [str(o.path) for o in result.observations] == ["/data/a.txt"]
+
+
+async def test_chained_grep_applies_the_glob_and_ext_gates_in_memory() -> None:
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [
+        Observation(path=Path("/x/a.py"), kind="file", content="needle"),
+        Observation(path=Path("/x/b.txt"), kind="file", content="needle"),
+    ]
+    by_glob = await fs.grep("needle", observations=rows, globs=("*.py",))
+    assert [str(o.path) for o in by_glob.observations] == ["/x/a.py"]
+    by_ext = await fs.grep("needle", observations=rows, ext_not=("py",))
+    assert [str(o.path) for o in by_ext.observations] == ["/x/b.txt"]
+
+
+async def test_chained_grep_never_refuses_on_indexability() -> None:
+    # The index tier is not involved: a pattern with no indexable
+    # literal matches rows in hand without allow_scan.
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [Observation(path=Path("/a.txt"), kind="file", content="alpha")]
+    result = await fs.grep(".*", observations=rows)
+    assert result.success is True
+    assert [str(o.path) for o in result.observations] == ["/a.txt"]
+
+
+async def test_chained_grep_never_hides_meta_rows_in_hand() -> None:
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [Observation(path=Path("/.vfs/state/s.txt"), kind="file", content="needle hidden")]
+    result = await fs.grep("needle", observations=rows)
+    assert [str(o.path) for o in result.observations] == ["/.vfs/state/s.txt"]
+
+
+async def test_chained_grep_attaches_fetched_content_only_when_projected() -> None:
+    fs = await _plain_world()
+    rows = [Observation(path=Path("/data/a.txt"), kind="file")]
+    bare = await fs.grep("needle", observations=rows)
+    assert bare.observations[0].content is None
+    projected = await fs.grep("needle", observations=rows, columns=frozenset({"content"}))
+    assert projected.observations[0].content == "needle a"
+
+
+async def test_chained_grep_output_modes_shape_the_held_row() -> None:
+    # files mode strips content even when held; count mode reports the
+    # hit count on score — same contract as the storage tiers.
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [Observation(path=Path("/a.txt"), kind="file", content="needle\nplain\nneedle")]
+    files = await fs.grep("needle", observations=rows, output_mode="files")
+    assert files.observations[0].content is None
+    assert files.observations[0].matches is None
+    counted = await fs.grep("needle", observations=rows, output_mode="count")
+    assert counted.observations[0].score == 2.0

@@ -76,7 +76,9 @@ crosses the seam only as pattern text — the composed, residuated,
 entry-local patterns whose literal prefixes confine candidates
 exactly as the anchor fan did. The storage glob contract loses
 `paths` and gains the batch form (decision 2); `observations=`
-grouped dispatch is untouched.
+grouped dispatch was left untouched here, and ADR 034 later removed
+it from the pattern-search seam entirely (chaining filters rows in
+hand; `observations` leaves the storage glob/grep signatures).
 
 ### 2. Storage glob takes a tuple of patterns — one call per entry
 

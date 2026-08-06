@@ -37,11 +37,13 @@ liveness** — default-scope enumeration (``ls``, ``tree``, ``glob``,
 ``grep``) hides the reserved ``/.vfs`` meta subtree, and direct meta
 addressing (a target inside it; for the pattern-search verbs, a meta
 literal prefix in a pattern) serves its own subtree, never the whole
-scope; and **scope
-roots as POSIX ``find`` operands** — a missing root classifies through
-the descent ladder beside the healthy roots' rows (partial results,
-per-root errors), while an existing root's own row is matched against
-the pattern and served on a hit.
+scope; and **per-target
+classification** — a missing target in a batch classifies through the
+descent ladder beside the healthy targets' rows (partial results,
+per-target errors, never all-or-nothing).  Scope never crosses this
+seam as paths: the pattern-search verbs receive scope only as
+composed pattern text, and chained rows are filtered by the router
+without reaching storage at all.
 """
 
 from __future__ import annotations
@@ -58,6 +60,22 @@ if TYPE_CHECKING:
     from vfs.paths import Path
     from vfs.results import Result
     from vfs.storage.replace import EditOperation
+
+
+# Declared operating-quality traits — how a backend serves its verbs, not
+# which verbs it serves (that is ``capabilities()``). An absent key means
+# the trait is not declared, never a default.
+TraitKey = Literal["grep_tier", "grep_staleness", "version_encoding", "durability", "arbitration"]
+TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
+
+TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
+    "grep_tier": frozenset({"indexed", "scan"}),
+    "grep_staleness": frozenset({"none", "overlay"}),
+    "version_encoding": frozenset({"per_entry64"}),
+    "durability": frozenset({"full", "relaxed"}),
+    "arbitration": frozenset({"upsert", "catch_retry"}),
+}
+"""Per-key value vocabulary; the traits drift test pins declarations to it."""
 
 
 class TransportError(Exception):
@@ -80,22 +98,6 @@ class ResolvedPair(NamedTuple):
 
     src: Path
     dest: Path
-
-
-# Declared operating-quality traits — how a backend serves its verbs, not
-# which verbs it serves (that is ``capabilities()``). An absent key means
-# the trait is not declared, never a default.
-TraitKey = Literal["grep_tier", "grep_staleness", "version_encoding", "durability", "arbitration"]
-TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
-
-TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
-    "grep_tier": frozenset({"indexed", "scan"}),
-    "grep_staleness": frozenset({"none", "overlay"}),
-    "version_encoding": frozenset({"per_entry64"}),
-    "durability": frozenset({"full", "relaxed"}),
-    "arbitration": frozenset({"upsert", "catch_retry"}),
-}
-"""Per-key value vocabulary; the traits drift test pins declarations to it."""
 
 
 # ---------------------------------------------------------------------------
@@ -139,75 +141,6 @@ class SupportsRead(Protocol):
         *,
         path: Path,
         max_depth: int | None = None,
-        columns: frozenset[str] | None = None,
-        user_id: str | None = None,
-    ) -> Result: ...
-
-
-@runtime_checkable
-class SupportsPatternSearch(Protocol):
-    """The pattern-search family: literal/regex matching over names and content.
-
-    Namespace-wide queries.  Scoping crosses this seam only as pattern
-    text: the router composes scope roots into glob's *patterns* batch
-    and into grep's ``globs``/``globs_not`` channels, answered in one
-    transaction and one snapshot per call.  Glob returns rows matching
-    **any** pattern, one refusable pattern refusing the call whole;
-    grep's ``pattern`` is content-only and never a path.  Split from
-    ranked search (:class:`SupportsGlean`) because a lexical scan needs
-    no retrieval index: partial backends routinely have one without the
-    other.
-    """
-
-    async def glob(
-        self,
-        *,
-        patterns: tuple[str, ...],
-        observations: list[Observation] | None = None,
-        ext: tuple[str, ...] = (),
-        max_count: int | None = None,
-        columns: frozenset[str] | None = None,
-        user_id: str | None = None,
-    ) -> Result: ...
-
-    async def grep(
-        self,
-        *,
-        pattern: str,
-        observations: list[Observation] | None = None,
-        ext: tuple[str, ...] = (),
-        ext_not: tuple[str, ...] = (),
-        globs: tuple[str, ...] = (),
-        globs_not: tuple[str, ...] = (),
-        case_mode: CaseMode = "sensitive",
-        fixed_strings: bool = False,
-        word_regexp: bool = False,
-        invert_match: bool = False,
-        before_context: int = 0,
-        after_context: int = 0,
-        output_mode: GrepOutputMode = "lines",
-        max_count: int | None = None,
-        allow_scan: bool = False,
-        columns: frozenset[str] | None = None,
-        user_id: str | None = None,
-    ) -> Result: ...
-
-
-@runtime_checkable
-class SupportsGlean(Protocol):
-    """The ranked-search family: text in, one fused ranked list out.
-
-    Its own family because it rides on retrieval indexes (vector, lexical,
-    graph) a backend may not have even when it can glob/grep.
-    """
-
-    async def glean(
-        self,
-        *,
-        query: str,
-        limit: int = 10,
-        paths: tuple[Path, ...] = (),
-        observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result: ...
@@ -295,6 +228,73 @@ class SupportsMutation(Protocol):
         source: Path,
         target: Path,
         edge_type: str,
+        user_id: str | None = None,
+    ) -> Result: ...
+
+
+@runtime_checkable
+class SupportsPatternSearch(Protocol):
+    """The pattern-search family: literal/regex matching over names and content.
+
+    Namespace-wide queries.  Scoping crosses this seam only as pattern
+    text: the router composes scope roots into glob's *patterns* batch
+    and into grep's ``globs``/``globs_not`` channels, answered in one
+    transaction and one snapshot per call.  Glob returns rows matching
+    **any** pattern, one refusable pattern refusing the call whole;
+    grep's ``pattern`` is content-only and never a path.  Split from
+    ranked search (:class:`SupportsGlean`) because a lexical scan needs
+    no retrieval index: partial backends routinely have one without the
+    other.
+    """
+
+    async def glob(
+        self,
+        *,
+        patterns: tuple[str, ...],
+        ext: tuple[str, ...] = (),
+        max_count: int | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result: ...
+
+    async def grep(
+        self,
+        *,
+        pattern: str,
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
+        case_mode: CaseMode = "sensitive",
+        fixed_strings: bool = False,
+        word_regexp: bool = False,
+        invert_match: bool = False,
+        before_context: int = 0,
+        after_context: int = 0,
+        output_mode: GrepOutputMode = "lines",
+        max_count: int | None = None,
+        allow_scan: bool = False,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result: ...
+
+
+@runtime_checkable
+class SupportsGlean(Protocol):
+    """The ranked-search family: text in, one fused ranked list out.
+
+    Its own family because it rides on retrieval indexes (vector, lexical,
+    graph) a backend may not have even when it can glob/grep.
+    """
+
+    async def glean(
+        self,
+        *,
+        query: str,
+        limit: int = 10,
+        paths: tuple[Path, ...] = (),
+        observations: list[Observation] | None = None,
+        columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result: ...
 

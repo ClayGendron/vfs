@@ -52,7 +52,8 @@ vendoring a translator.
 
 ### 2. One compile chokepoint
 
-`src/vfs/glob_patterns.py` owns the pattern language. Every
+`src/vfs/pattern_matching/glob.py` (originally
+`src/vfs/glob_patterns.py`) owns the pattern language. Every
 consumer — both backends' glob, grep's `globs`/`globs_not` when
 Pass C lands, the router's routing primitives (ADR 030) — compiles
 there and nowhere else. Compilation happens before any row is

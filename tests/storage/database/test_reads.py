@@ -254,7 +254,7 @@ class TestReadFamily:
         assert [o.path for o in recursive.observations] == ["/docs/Zed.txt", "/docs/a.txt", "/docs/sub/c.txt"]
 
     async def test_glob_scope_ext_and_max_count(self, storage: DatabaseStorage) -> None:
-        scoped = await storage.glob(patterns=("*",), observations=[Observation(path=Path("/docs"))])
+        scoped = await storage.glob(patterns=("/docs/**/*",))
         assert all(str(o.path).startswith("/docs") for o in scoped.observations)
         by_ext = await storage.glob(patterns=("*",), ext=("md",))
         assert [o.path for o in by_ext.observations] == ["/docs/b.md"]
@@ -302,8 +302,8 @@ class TestReadFamily:
         await _seed(storage, [("/da_a/x.txt", "file", "in"), ("/daxa/y.txt", "file", "out")])
         subtree = await storage.tree(path=Path("/da_a"))
         assert [str(o.path) for o in subtree.observations] == ["/da_a/x.txt"]
-        scoped = await storage.glob(patterns=("*",), observations=[Observation(path=Path("/da_a"))])
-        assert [str(o.path) for o in scoped.observations] == ["/da_a", "/da_a/x.txt"]
+        scoped = await storage.glob(patterns=("/da_a/**/*",))
+        assert [str(o.path) for o in scoped.observations] == ["/da_a/x.txt"]
         await storage.close()
 
 
@@ -409,12 +409,12 @@ class TestExtPushdown:
         monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 48))
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/d0/a.py", "file", "x")])
-        roots = [Observation(path=Path(f"/d{i}")) for i in range(20)]
+        composed = tuple(f"/d{i}/**/*" for i in range(20))
         statements = self._recorded(storage)
-        await storage.glob(patterns=("*",), observations=roots, ext=("py", "e1", "e2", "e3", "e4", "e5"))
+        await storage.glob(patterns=composed, ext=("py", "e1", "e2", "e3", "e4", "e5"))
         fanned = [s for s in statements if "ext IN" in s]
         # Budget 48 → membership 16: 6 ext binds beside 6 fixed arm
-        # binds leave one arm per chunk — 20 chunks for 20 roots.
+        # binds leave one arm per chunk — 20 chunks for 20 patterns.
         assert len(fanned) == 20, len(fanned)
 
     async def test_stored_ext_agrees_with_the_path_law_on_every_row(self, tmp_path) -> None:
@@ -538,10 +538,10 @@ class TestPatternFan:
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
             statements.append(statement)
 
-        roots = [Observation(path=Path(f"/d{i:02}")) for i in range(12)]
-        result = await storage.glob(patterns=("*",), observations=roots)
-        assert result.success is False  # eleven ghost roots classify loudly
-        assert [str(o.path) for o in result.observations] == ["/d00", "/d00/a.py"]
+        composed = tuple(f"/d{i:02}/**/*" for i in range(12))
+        result = await storage.glob(patterns=composed)
+        assert result.success is True  # dead patterns match nothing, loudness is the router's probe
+        assert [str(o.path) for o in result.observations] == ["/d00/a.py"]
         fan = [s for s in statements if "LIKE" in s and s.startswith("SELECT")]
         assert len(fan) > 1, fan  # the arms chunked across statements
         assert checkouts == 1
@@ -589,12 +589,10 @@ class TestNamespaceScopes:
         assert [str(o.path) for o in listing.observations] == ["/real.txt", "/.vfs/docs", "/.vfs/trash"]
 
     async def test_glob_meta_bypass_is_per_pattern_not_query_wide(self, storage: DatabaseStorage) -> None:
-        # ROOT plus a meta root: only the meta-prefixed arm serves meta
-        # rows — /.vfs itself and sibling meta trees stay hidden.
-        roots = [Observation(path=Path("/")), Observation(path=Path("/.vfs/trash"))]
-        result = await storage.glob(patterns=("*",), observations=roots)
+        # A broad arm plus a meta-prefixed arm: only the meta-prefixed
+        # arm serves meta rows — sibling meta trees stay hidden.
+        result = await storage.glob(patterns=("/**/*", "/.vfs/trash/**/*"))
         assert [str(o.path) for o in result.observations] == [
-            "/.vfs/trash",
             "/.vfs/trash/bucket",
             "/.vfs/trash/bucket/01ARZ",
             "/real.txt",
@@ -613,7 +611,7 @@ class TestNamespaceScopes:
         assert (await storage.stat(path=trashed)).observations[0].kind == "file"
         listing = await storage.ls(path=trashed.parent_dir)
         assert [o.path for o in listing.observations] == [str(trashed)]
-        scoped = await storage.glob(patterns=("*",), observations=[Observation(path=Path("/.vfs/trash"))])
+        scoped = await storage.glob(patterns=("/.vfs/trash/**/*",))
         assert str(trashed) in [str(o.path) for o in scoped.observations]
 
     async def test_descent_through_a_trash_side_file_takes_the_standard_ladder(self, storage: DatabaseStorage) -> None:
