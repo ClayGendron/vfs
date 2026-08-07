@@ -689,6 +689,24 @@ async def test_ten_thousand_roots_stay_two_calls() -> None:
     assert len(probe["observations"]) == 10_000
 
 
+async def test_cap_expansion_across_many_roots_stays_one_call() -> None:
+    # The scale pin for brace expansion: a cap-sized arm fan crossed
+    # with a large scope still reaches storage as one glob call plus
+    # one probe — the arms multiply members, never statements. The
+    # storage-side chunk math is pinned by the 1,100-arm dialect row;
+    # this row pins the dispatch shape.
+    root = VirtualFileSystem()
+    data = RecorderStorage()
+    await root.add_mount(data, "/data")
+    pattern = "*.{" + ",".join(f"e{i:02}" for i in range(64)) + "}"
+    await root.glob(pattern, paths=tuple(f"/data/part{i:04}" for i in range(1_000)))
+    assert [op for op, _ in data.calls] == ["stat", "glob"]
+    [glob_call] = [kw for op, kw in data.calls if op == "glob"]
+    assert len(glob_call["patterns"]) == 64 * 1_000
+    [probe] = [kw for op, kw in data.calls if op == "stat"]
+    assert len(probe["observations"]) == 1_000
+
+
 async def test_glob_scoped_to_the_namespace_root_reaches_every_entry() -> None:
     # "/" is a region root covering every mount; it composes spatially
     # like any other root but is exempt from the probe — the namespace

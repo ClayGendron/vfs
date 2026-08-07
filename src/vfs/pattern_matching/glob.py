@@ -23,12 +23,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from glob import translate
-from typing import TYPE_CHECKING
+from itertools import product
+from typing import TYPE_CHECKING, Final
 
 from vfs.paths import Path, extract_extension, normalize_extension
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+# Ceiling on the distinct arms one pattern may expand to; callers
+# refuse an over-cap expansion loudly rather than fan it out.
+MAX_PATTERN_ARMS: Final = 64
 
 
 @dataclass(frozen=True)
@@ -60,19 +65,45 @@ class GlobFilter:
 def glob_defect(pattern: str) -> str | None:
     """The refusable defect in *pattern*, or ``None`` when compilable.
 
-    Two defects, both silent false friends if let through: ``**``
-    inside a component (``a**b``, ``***``) — the stdlib collapses it to
-    ``*``, hiding a typo'd recursion — and an empty component
-    (``/data/``, ``//x``, bare ``/``), which no stored path can ever
-    satisfy. Loud refusal beats a false friend.
+    Three defect families, all silent false friends if let through:
+    ``**`` inside a component (``a**b``, ``***``) — the stdlib
+    collapses it to ``*``, hiding a typo'd recursion; an empty
+    component (``/data/``, ``//x``, bare ``/``), which no stored path
+    can ever satisfy; and malformed braces (unclosed ``{``, bare
+    ``}``, empty ``{}``, nesting) — a bare brace outside a character
+    class either alternates or refuses, never silently literal. A
+    brace pattern is gated twice: structure on the raw text, then the
+    component checks per expansion arm, the refusal naming the arm
+    expansion manufactured (``x/{a,}`` yields the empty-component arm
+    ``x/``). Loud refusal beats a false friend.
     """
-    components = pattern.split("/")
-    for index, component in enumerate(components):
-        if "**" in component and component != "**":
-            return f"'**' inside a component ({component!r}) — use '**' as a whole path segment"
-        if not component and not (index == 0 and len(components) > 1):
-            return "empty component — every '/' must separate non-empty segments"
-    return None
+    if "{" in pattern or "}" in pattern:
+        parts, brace_defect = _parse_braces(pattern)
+        if brace_defect is not None:
+            return brace_defect
+        if any(isinstance(part, tuple) for part in parts):
+            for arm in _cross_product(parts, MAX_PATTERN_ARMS):
+                if (defect := _component_defect(arm)) is not None:
+                    return f"{defect} (expansion arm {arm!r})"
+            return None
+    return _component_defect(pattern)
+
+
+def expand_pattern(pattern: str) -> tuple[str, ...]:
+    """The defect-free pattern's brace expansion — plain arms, order kept.
+
+    ``{a,b}`` alternates (each alternative is arbitrary brace-free
+    pattern text, ``/`` included), groups cross-product left to right,
+    and duplicates collapse to first appearance. A brace-free pattern
+    returns itself. Collection stops one arm past
+    :data:`MAX_PATTERN_ARMS`, so an over-cap expansion is detected
+    without being materialized — callers refuse at the cap. Input must
+    be defect-free, same contract as :func:`compile_glob`.
+    """
+    if "{" not in pattern:
+        return (pattern,)
+    parts, _defect = _parse_braces(pattern)
+    return tuple(_cross_product(parts, MAX_PATTERN_ARMS))
 
 
 def compile_glob(pattern: str) -> re.Pattern[str]:
@@ -212,6 +243,82 @@ def render_residual(components: tuple[str, ...]) -> str:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _component_defect(pattern: str) -> str | None:
+    """The component-shaped defect in a brace-free pattern, or ``None``."""
+    components = pattern.split("/")
+    for index, component in enumerate(components):
+        if "**" in component and component != "**":
+            return f"'**' inside a component ({component!r}) — use '**' as a whole path segment"
+        if not component and not (index == 0 and len(components) > 1):
+            return "empty component — every '/' must separate non-empty segments"
+    return None
+
+
+def _parse_braces(pattern: str) -> tuple[list[str | tuple[str, ...]], str | None]:
+    """Split *pattern* into literal runs and alternation groups.
+
+    Character classes are opaque — ``[{]`` never opens a group — and a
+    comma splits only at group top level. The second item is the brace
+    defect, or ``None``; a defect leaves the parse partial.
+    """
+    parts: list[str | tuple[str, ...]] = []
+    buffer: list[str] = []
+    alternatives: list[str] | None = None
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "[" and (end := _class_end(pattern, index)) is not None:
+            buffer.append(pattern[index : end + 1])
+            index = end + 1
+            continue
+        if char == "{":
+            if alternatives is not None:
+                return parts, "nested braces — a brace group cannot contain '{'"
+            parts.append("".join(buffer))
+            buffer, alternatives = [], []
+        elif char == "}":
+            if alternatives is None:
+                return parts, "unmatched '}' — no open brace group"
+            alternatives.append("".join(buffer))
+            buffer = []
+            if alternatives == [""]:
+                return parts, "empty brace group '{}' — a group needs an alternative"
+            parts.append(tuple(alternatives))
+            alternatives = None
+        elif char == "," and alternatives is not None:
+            alternatives.append("".join(buffer))
+            buffer = []
+        else:
+            buffer.append(char)
+        index += 1
+    if alternatives is not None:
+        return parts, "unclosed '{' — every brace group needs its '}'"
+    parts.append("".join(buffer))
+    return parts, None
+
+
+def _class_end(pattern: str, start: int) -> int | None:
+    """Index of the ``]`` closing the class opened at *start*, or ``None`` when literal."""
+    index = start + 1
+    if index < len(pattern) and pattern[index] in "!^":
+        index += 1
+    if index < len(pattern) and pattern[index] == "]":
+        index += 1
+    end = pattern.find("]", index)
+    return end if end != -1 else None
+
+
+def _cross_product(parts: Sequence[str | tuple[str, ...]], limit: int) -> list[str]:
+    """Deduped left-to-right cross-product, stopping one arm past *limit*."""
+    pools = [(part,) if isinstance(part, str) else tuple(dict.fromkeys(part)) for part in parts]
+    arms: dict[str, None] = {}
+    for combo in product(*pools):
+        arms["".join(combo)] = None
+        if len(arms) > limit:
+            break
+    return list(arms)
 
 
 def _anchor(pattern: str) -> str:

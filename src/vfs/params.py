@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 
 from vfs.ops import GRAPH_METHODS, CaseMode, GrepOutputMode
+from vfs.paths import ObjectKind
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -43,6 +44,7 @@ _MODEL_KINDS: Final[frozenset[str]] = frozenset({"observations", "entries", "edi
 
 CASE_MODES: Final[frozenset[str]] = frozenset(get_args(CaseMode))
 OUTPUT_MODES: Final[frozenset[str]] = frozenset(get_args(GrepOutputMode))
+OBJECT_KINDS: Final[frozenset[str]] = frozenset(get_args(ObjectKind))
 
 
 class ParamSpec(NamedTuple):
@@ -181,6 +183,9 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         _SCOPE_PATHS,
         _OBSERVATIONS,
         ParamSpec("ext", "str_seq", nullable=False, default=(), doc="keep only these extensions"),
+        ParamSpec("ext_not", "str_seq", nullable=False, default=(), doc="drop these extensions"),
+        ParamSpec("globs_not", "str_seq", nullable=False, default=(), doc="drop paths matching these globs"),
+        ParamSpec("kind", "str", choices=OBJECT_KINDS, doc="keep only rows of this kind; None keeps both"),
         ParamSpec("max_count", "int", minimum=1, doc="bound per entry and on the merged result"),
         _COLUMNS,
         _USER,

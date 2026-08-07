@@ -37,6 +37,11 @@ can silently return nothing under a sandboxed subprocess — the leg
 passes ``.`` explicitly and was verified non-vacuous against per-case
 hit counts.)
 
+Brace-alternation run (2026-08-07, with the 094 landing): three rg
+cases added — admission braces by name and by anchored path, exclusion
+braces — because rg's ``-g`` brace language is now vfs's brace
+language. 121 case-checks green across the same four worlds.
+
 Run:  uv run python context/research/studies/2026-08-05-grep-differential-battery/grep_differential_battery.py
 """
 
@@ -88,6 +93,10 @@ RG_CASES = (
     ("needle", (), {"globs_not": ("*.py",)}, ("-g", "!*.py")),
     ("needle", (), {"max_count": 1}, ("-m", "1")),
     ("needle", (), {"invert_match": True}, ("-v",)),
+    # Brace alternation (2026-08-07): rg's -g braces are vfs's braces.
+    ("needle", (), {"globs": ("*.{py,md}",)}, ("-g", "*.{py,md}")),
+    ("needle", (), {"globs": ("/data/{deep,api}/**",)}, ("-g", "/data/{deep,api}/**")),
+    ("needle", (), {"globs_not": ("*.{md,py}",)}, ("-g", "!*.{md,py}")),
 )
 
 failures: list[str] = []

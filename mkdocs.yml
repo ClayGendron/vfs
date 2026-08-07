@@ -45,10 +45,12 @@ nav:
     - Expose over MCP: how-to/expose-over-mcp.md
   - Reference:
     - API: reference/api.md
+    - Glob patterns: reference/glob-patterns.md
     - Metadata path format: reference/metadata-paths.md
     - Query engine: reference/query-engine.md
   - Explanation:
     - Architecture: explanation/architecture.md
+    - The glob language: explanation/glob-language.md
     - Why database-backed: explanation/why-database-backed.md
     - Filesystem internals: explanation/filesystem-internals.md
   - Contributing: contributing.md

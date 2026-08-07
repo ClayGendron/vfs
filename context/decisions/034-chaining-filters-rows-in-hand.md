@@ -43,7 +43,14 @@ in memory what it holds and fetches only what it lacks.
 `glob(pattern, observations=rows)` keeps exactly the rows whose path
 the compiled pattern matches — `compile_filter(pattern, ext)`, the
 same authority every other glob surface uses. No storage call, no
-root assertion, no dispatch. Consequences, chosen knowingly:
+root assertion, no dispatch. *(Annotation, 2026-08-07: spec 094's
+`kind=` parameter refines "no storage call" to the general law this
+ADR already stated for grep in decision 2 — a chained verb matches in
+memory the facts it holds and fetches only the facts the call's
+parameters make load-bearing and the rows lack. A `kind=` filter over
+a row that carries no kind stats exactly the lacking rows, loudly;
+without `kind=`, chained glob remains purely in-memory.)*
+Consequences, chosen knowingly:
 
 - **Rows serve as held.** Columns and staleness are the input's; the
   `populated` mask is unchanged. A vanished row still passes — the

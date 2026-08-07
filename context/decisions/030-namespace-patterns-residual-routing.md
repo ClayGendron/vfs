@@ -152,7 +152,12 @@ are *assertions*; patterns are *predicates*:
 2. Multiple disjoint roots compose in one batch call
    (`paths=("/data", "/logs")`); the pattern grammar has no
    alternation, so a pattern cannot express a root union. The ETL
-   batch contract makes this first-class.
+   batch contract makes this first-class. *(Annotation, 2026-08-07:
+   spec 094's brace alternation retires the "no alternation" premise
+   — `{/data,/logs}/**` now expresses the union as pattern text. The
+   decision stands on this rationale's ETL-batch half and on
+   rationales 1, 3, and 4: only `paths=` asserts roots, pins the
+   loud merge, and addresses metachar-named directories literally.)*
 3. Roots are literal and immune to glob metacharacters in names
    (glob has no escape syntax — the reason CPython ships
    `glob.escape`); a directory named `data [prod]` is addressable

@@ -32,6 +32,9 @@ INVARIANCE_BATTERY = (
     "**/**/*.txt",  # adjacent ** canonicalizes; the derivative stays exact
     "/docs/*.md",  # dead prefix: nothing anywhere
     "/d*",  # the bind-point / plain-directory row itself
+    "*.{txt,md}",  # brace alternation, name arms
+    "/data/{deep,api}/*.txt",  # brace alternation across the seam
+    "{/data/deep/*.txt,notes.*}",  # mixed-subject arms: one anchored, one floating
 )
 
 
@@ -185,8 +188,173 @@ async def test_roots_stay_assertions() -> None:
 
 
 # ----------------------------------------------------------------------
+# Brace alternation — arms expand at the chokepoint, results union
+# ----------------------------------------------------------------------
+
+
+async def test_brace_arms_union_across_the_namespace() -> None:
+    fs = await _mounted_world()
+    result = await fs.glob("/data/{a,deep/b}.txt")
+    assert sorted(result.paths) == ["/data/a.txt", "/data/deep/b.txt"]
+
+
+async def test_brace_expansion_past_the_cap_refuses_loudly() -> None:
+    fs = await _mounted_world()
+    result = await fs.glob("{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}")  # 128 arms
+    assert result.success is False
+    assert result.errors[0].kind == VFSErrorKind.invalid
+    assert "arm cap" in result.errors[0].message
+
+
+async def test_brace_defect_refuses_naming_the_manufactured_arm() -> None:
+    fs = await _mounted_world()
+    result = await fs.glob("/data/{deep,}/b.txt")
+    assert result.success is False
+    assert result.errors[0].kind == VFSErrorKind.invalid
+    assert "'/data//b.txt'" in result.errors[0].message
+
+
+async def test_grep_glob_channels_expand_braces() -> None:
+    # The subject is channel expansion; allow_scan sidesteps the index
+    # tier's refusal gate for the short unindexable pattern.
+    fs = await _mounted_world()
+    result = await fs.grep("a|b|root", globs=("*.{txt,md}",), allow_scan=True)
+    assert sorted(result.paths) == ["/data/a.txt", "/data/deep/b.txt", "/notes.txt"]
+    excluded = await fs.grep("a|b|root", globs_not=("{notes,b}.*",), allow_scan=True)
+    assert excluded.paths == ("/data/a.txt",)
+
+
+# ----------------------------------------------------------------------
+# Exclusion channels and the kind filter — rejection honors every gate
+# ----------------------------------------------------------------------
+
+
+async def test_globs_not_excludes_in_both_worlds() -> None:
+    for world in (await _plain_world(), await _mounted_world()):
+        by_path = await world.glob("**/*.txt", globs_not=("/data/deep/**",))
+        assert sorted(by_path.paths) == ["/data/a.txt", "/notes.txt"]
+        by_name = await world.glob("*.txt", globs_not=("{a,b}.txt",))
+        assert by_name.paths == ("/notes.txt",)
+
+
+async def test_scoped_exclusion_composes_under_its_root() -> None:
+    # "deep/**" is root-relative: it excludes /data/deep/** under the
+    # /data root, exactly as the admission pattern would anchor.
+    fs = await _mounted_world()
+    result = await fs.glob("**/*.txt", paths=("/data",), globs_not=("deep/**",))
+    assert result.paths == ("/data/a.txt",)
+
+
+async def test_ext_not_drops_extensions_normalized() -> None:
+    # ext_not drops only the named extensions — an extensionless row
+    # (the directory) is never its business.
+    fs = await _mounted_world()
+    await fs.write(path="/data/readme.md", content="m")
+    result = await fs.glob("/data/*", ext_not=(".TXT",))
+    assert sorted(result.paths) == ["/data/deep", "/data/readme.md"]
+
+
+async def test_kind_filters_files_and_directories() -> None:
+    fs = await _mounted_world()
+    directories = await fs.glob("**", kind="directory")
+    assert sorted(directories.paths) == ["/data", "/data/deep"]
+    files = await fs.glob("/data/**", kind="file")
+    assert sorted(files.paths) == ["/data/a.txt", "/data/deep/b.txt"]
+
+
+async def test_exclusion_never_reveals_meta() -> None:
+    fs = await _mounted_world()
+    result = await fs.glob("**", globs_not=("**/*.txt",))
+    assert not any(str(path).startswith("/.vfs") for path in result.paths)
+
+
+async def test_root_row_service_honors_every_channel() -> None:
+    # The find-operand law serves a matching root's own row — unless an
+    # exclusion glob, ext fact, or kind fact the caller stated rejects it.
+    fs = await _mounted_world()
+    served = await fs.glob("*.txt", paths=("/data/a.txt",))
+    assert "/data/a.txt" in served.paths
+    excluded = await fs.glob("*.txt", paths=("/data/a.txt",), globs_not=("a.*",))
+    assert "/data/a.txt" not in excluded.paths
+    wrong_ext = await fs.glob("*", paths=("/data/a.txt",), ext_not=("txt",))
+    assert "/data/a.txt" not in wrong_ext.paths
+    wrong_kind = await fs.glob("*", paths=("/data/a.txt",), kind="directory")
+    assert "/data/a.txt" not in wrong_kind.paths
+
+
+# ----------------------------------------------------------------------
 # Chaining — observations are rows in hand, filtered without dispatch
 # ----------------------------------------------------------------------
+
+
+async def test_chained_glob_applies_exclusions_and_ext_not_in_memory() -> None:
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [
+        Observation(path=Path("/src/a.py")),
+        Observation(path=Path("/src/tests/t.py")),
+        Observation(path=Path("/src/b.pyc")),
+    ]
+    excluded = await fs.glob("**/*", observations=rows, globs_not=("/src/tests/**",))
+    assert [str(o.path) for o in excluded.observations] == ["/src/a.py", "/src/b.pyc"]
+    by_ext = await fs.glob("**/*", observations=rows, ext_not=("pyc",))
+    assert [str(o.path) for o in by_ext.observations] == ["/src/a.py", "/src/tests/t.py"]
+
+
+async def test_chained_kind_filters_on_the_held_fact_without_storage() -> None:
+    # Rows that carry kind are judged as held — storage sees no call.
+    fs = VirtualFileSystem()
+    recorder = RecorderStorage()
+    await fs.add_mount(recorder, "/data")
+    rows = [
+        Observation(path=Path("/data/f.txt"), kind="file", populated=frozenset({"path", "kind"})),
+        Observation(path=Path("/data/d"), kind="directory", populated=frozenset({"path", "kind"})),
+    ]
+    result = await fs.glob("**", observations=rows, kind="file")
+    assert [str(o.path) for o in result.observations] == ["/data/f.txt"]
+    assert recorder.calls == []
+
+
+async def test_chained_kind_fetches_only_the_lacking_rows() -> None:
+    # A hand-built row carries no kind: the load-bearing fact is
+    # statted in one batch and the filter judges the fetched value.
+    fs = await _mounted_world()
+    rows = [Observation(path=Path("/data/a.txt")), Observation(path=Path("/data/deep"))]
+    files = await fs.glob("**", observations=rows, kind="file")
+    assert files.success is True
+    assert [str(o.path) for o in files.observations] == ["/data/a.txt"]
+    directories = await fs.glob("**", observations=rows, kind="directory")
+    assert [str(o.path) for o in directories.observations] == ["/data/deep"]
+
+
+async def test_chained_kind_on_a_vanished_row_classifies_loudly() -> None:
+    fs = await _mounted_world()
+    rows = [Observation(path=Path("/data/a.txt")), Observation(path=Path("/data/gone.txt"))]
+    result = await fs.glob("**", observations=rows, kind="file")
+    assert [str(o.path) for o in result.observations] == ["/data/a.txt"]
+    assert result.success is False
+    assert any(e.kind == VFSErrorKind.not_found for e in result.errors)
+
+
+async def test_chained_without_kind_never_touches_storage() -> None:
+    # The fetch exists only for the kind fact; plain chaining stays pure.
+    fs = VirtualFileSystem()
+    recorder = RecorderStorage()
+    await fs.add_mount(recorder, "/data")
+    rows = [Observation(path=Path("/data/a.txt"))]
+    result = await fs.glob("**", observations=rows, globs_not=("*.md",), ext_not=("py",))
+    assert [str(o.path) for o in result.observations] == ["/data/a.txt"]
+    assert recorder.calls == []
+
+
+async def test_chained_glob_matches_any_brace_arm() -> None:
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [
+        Observation(path=Path("/src/a.ts")),
+        Observation(path=Path("/src/b.tsx")),
+        Observation(path=Path("/src/c.css")),
+    ]
+    result = await fs.glob("*.{ts,tsx}", observations=rows)
+    assert [str(o.path) for o in result.observations] == ["/src/a.ts", "/src/b.tsx"]
 
 
 async def test_chained_glob_filters_rows_in_hand_without_storage() -> None:

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Final
 from sqlalchemy import and_, func, or_, select
 
 from vfs.models import CONTENT_KINDS, Observation
-from vfs.paths import METADATA_ROOT, Path
+from vfs.paths import METADATA_ROOT, Path, extract_extension
 from vfs.pattern_matching import GlobFilter, compile_filter, derive_ext, glob_defect
 from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
 from vfs.storage.backends.database.descent import (
@@ -186,8 +186,9 @@ async def tree_rows(
 # ---------------------------------------------------------------------------
 
 # Ceiling of one arm's non-ext bind slots: the root-row exclusion, the
-# prefilter LIKE, the derived-ext pair, and the meta-liveness pair.
-ARM_FIXED_BINDS: Final = 6
+# prefilter LIKE, the derived-ext pair, the meta-liveness pair, and the
+# kind fact.
+ARM_FIXED_BINDS: Final = 7
 
 
 async def glob_rows(
@@ -198,7 +199,10 @@ async def glob_rows(
     membership_budget: int,
     *,
     patterns: tuple[str, ...],
+    globs_not: tuple[str, ...],
     ext: tuple[str, ...],
+    ext_not: tuple[str, ...],
+    kind: str | None,
     max_count: int | None,
     columns: frozenset[str] | None,
 ) -> Result:
@@ -207,8 +211,12 @@ async def glob_rows(
     Scoping arrives purely as pattern text — the router composes and
     residuates scope upstream; no path channel crosses this seam. One
     refusable pattern refuses the whole call before any row is touched.
+    Exclusions never prefilter in SQL — an over-approximating ``NOT
+    LIKE`` would wrongly exclude, the forbidden false negative — so
+    ``globs_not`` and ``ext_not`` gate candidates beside the compiled
+    authority; ``kind`` is an exact fact and rides inside every arm.
     """
-    for pattern in patterns:
+    for pattern in (*patterns, *globs_not):
         defect = glob_defect(pattern)
         if defect is not None:
             error = ResultError(kind=VFSErrorKind.invalid, message=f"glob pattern {pattern!r}: {defect}")
@@ -216,15 +224,24 @@ async def glob_rows(
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
     wanted = frozenset(e.lstrip(".").lower() for e in ext)
+    unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
     matched: dict[str, RowMapping] = {}
     live = list(dict.fromkeys(patterns))
     gates = [compile_filter(pattern, ext) for pattern in live]
-    arms = [arm for glob in gates if (arm := pattern_arm(entry, glob, wanted, membership_budget)) is not None]
+    not_gates = [compile_filter(pattern, ()) for pattern in dict.fromkeys(globs_not)]
+    built = (pattern_arm(entry, glob, wanted, membership_budget, kind=kind) for glob in gates)
+    arms = [arm for arm in built if arm is not None]
     ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
     chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ext_binds)
     for mapping in await _pattern_candidates(session, entry, chunk, arms, fetched):
-        if any(glob.matches(Path(mapping["path"])) for glob in gates):
-            matched.setdefault(mapping["path"], mapping)
+        path = Path(mapping["path"])
+        if not any(glob.matches(path) for glob in gates):
+            continue
+        if any(gate.matches(path) for gate in not_gates):
+            continue
+        if unwanted and (extract_extension(path) or "") in unwanted:
+            continue
+        matched.setdefault(mapping["path"], mapping)
     rows = [_observe(matched[path], fetched) for path in sorted(matched)]
     if max_count is not None:
         rows = rows[:max_count]
@@ -237,22 +254,25 @@ async def glob_rows(
 
 
 def pattern_arm(
-    entry: Table, glob: GlobFilter, wanted: frozenset[str], membership_budget: int
+    entry: Table, glob: GlobFilter, wanted: frozenset[str], membership_budget: int, *, kind: str | None = None
 ) -> ColumnElement[bool] | None:
     """One pattern's self-contained OR-arm, or ``None`` when provably empty.
 
     Every fact rides inside the arm — the root-row exclusion, the
-    prefilter LIKE, both ext facts, the meta liveness scope — because
-    the fan's plan survives only as a pure OR of self-contained arms:
-    one conjunct beside the fan demotes every engine's multi-index OR
-    to a scan. The caller's ext membership stands down when the empty
-    extension (stored NULL) is wanted or the set outgrows one chunk; a
-    derived ext contradicting the caller's set makes the arm dead.
+    prefilter LIKE, both ext facts, the meta liveness scope, the kind
+    fact — because the fan's plan survives only as a pure OR of
+    self-contained arms: one conjunct beside the fan demotes every
+    engine's multi-index OR to a scan. The caller's ext membership
+    stands down when the empty extension (stored NULL) is wanted or
+    the set outgrows one chunk; a derived ext contradicting the
+    caller's set makes the arm dead.
     """
     subject = entry.c.path if glob.by_path else entry.c.name
     like = _glob_like(glob.pattern)
     prefilter = like if like is not None else escape_like(_literal_prefix(glob.pattern)) + "%"
     terms: list[ColumnElement[bool]] = [entry.c.path != "/", subject.like(prefilter, escape=LIKE_ESCAPE)]
+    if kind is not None:
+        terms.append(entry.c.kind == kind)
     if wanted and "" not in wanted and len(wanted) <= membership_budget:
         terms.append(entry.c.ext.in_(sorted(wanted)))
     derived = derive_ext(glob.pattern)

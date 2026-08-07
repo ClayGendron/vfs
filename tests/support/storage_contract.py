@@ -1129,6 +1129,42 @@ class StorageContract:
         assert result.observations == []
         assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
 
+    @needs("write", "mkdir", "glob")
+    async def test_glob_exclusions_gate_beside_the_authority(self, storage: ConformanceBackend) -> None:
+        # Exclusions never prefilter in SQL — an over-approximating NOT
+        # LIKE would wrongly exclude — so the compiled gates decide.
+        await storage.mkdir(path=Path("/src/tests"), parents=True)
+        await storage.write(entries=[Entry(path=Path("/src/a.py"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/src/tests/b.py"), content="x")])
+        result = await storage.glob(patterns=("/src/**/*.py",), globs_not=("/src/tests/**",))
+        assert [str(o.path) for o in result.observations] == ["/src/a.py"]
+        by_name = await storage.glob(patterns=("*.py",), globs_not=("b.*",))
+        assert [str(o.path) for o in by_name.observations] == ["/src/a.py"]
+
+    @needs("write", "glob")
+    async def test_glob_ext_not_drops_the_derived_extension(self, storage: ConformanceBackend) -> None:
+        for name in ("a.py", "b.txt"):
+            await storage.write(entries=[Entry(path=Path(f"/{name}"), content="x")])
+        result = await storage.glob(patterns=("*",), ext_not=(".PY",))
+        assert [str(o.path) for o in result.observations] == ["/b.txt"]
+
+    @needs("write", "mkdir", "glob")
+    async def test_glob_kind_filters_rows_exactly(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/dir"))
+        await storage.write(entries=[Entry(path=Path("/file.txt"), content="x")])
+        directories = await storage.glob(patterns=("*",), kind="directory")
+        assert [str(o.path) for o in directories.observations] == ["/dir"]
+        files = await storage.glob(patterns=("*",), kind="file")
+        assert [str(o.path) for o in files.observations] == ["/file.txt"]
+
+    @needs("write", "glob")
+    async def test_glob_defective_exclusion_refuses_the_call_whole(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        result = await storage.glob(patterns=("*.txt",), globs_not=("a**b",))
+        assert result.success is False
+        assert result.observations == []
+        assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
+
     # ------------------------------------------------------------------
     # LIKE metacharacters in stored paths — near-miss decoys never leak
     # ------------------------------------------------------------------

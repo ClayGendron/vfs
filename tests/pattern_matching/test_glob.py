@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from vfs.paths import ROOT, Path
 from vfs.pattern_matching import (
+    MAX_PATTERN_ARMS,
     compile_filter,
     compile_glob,
     composed_pattern,
     derive_ext,
     effective_pattern,
+    expand_pattern,
     filter_paths,
     glob_defect,
     residuals,
@@ -68,6 +70,82 @@ class TestGlobDefect:
         defect = glob_defect("/docs/a**b.txt")
         assert defect is not None
         assert "a**b.txt" in defect
+
+    def test_malformed_braces_are_the_third_defect(self):
+        assert glob_defect("{a,b") is not None  # unclosed
+        assert glob_defect("a}b") is not None  # bare close
+        assert glob_defect("x{}y") is not None  # empty group
+        assert glob_defect("{a,{b,c}}") is not None  # nested
+
+    def test_class_escaped_braces_are_not_brace_syntax(self):
+        assert glob_defect("/f[{]a,b[}].txt") is None
+        assert glob_defect("[{]") is None
+
+    def test_brace_arms_are_component_gated_naming_the_arm(self):
+        # Expansion can manufacture defects the raw text hides; the
+        # refusal names the arm so the caller sees what was built.
+        defect = glob_defect("x/{a,}")
+        assert defect is not None
+        assert "empty component" in defect
+        assert "'x/'" in defect
+        starred = glob_defect("{a**b,c}")
+        assert starred is not None
+        assert "'a**b'" in starred
+
+    def test_well_formed_braces_have_no_defect(self):
+        assert glob_defect("*.{ts,tsx}") is None
+        assert glob_defect("{src,docs}/**/*.md") is None
+        assert glob_defect("{a}") is None
+
+
+# =========================================================================
+# expand_pattern — brace alternation into plain arms
+# =========================================================================
+
+
+class TestExpandPattern:
+    def test_brace_free_patterns_pass_through(self):
+        assert expand_pattern("*.py") == ("*.py",)
+        assert expand_pattern("/src/**/*.md") == ("/src/**/*.md",)
+
+    def test_alternation_and_cross_product(self):
+        assert expand_pattern("*.{ts,tsx}") == ("*.ts", "*.tsx")
+        assert expand_pattern("{a,b}/{c,d}") == ("a/c", "a/d", "b/c", "b/d")
+
+    def test_single_and_empty_alternatives(self):
+        assert expand_pattern("{a}") == ("a",)
+        assert expand_pattern("x{a,}") == ("xa", "x")
+
+    def test_mixed_subject_arms_are_legal(self):
+        # One anchored arm, one floating arm — dispatch is per-pattern.
+        assert expand_pattern("{src/a,b}") == ("src/a", "b")
+
+    def test_duplicates_collapse_to_first_appearance(self):
+        assert expand_pattern("{a,a}") == ("a",)
+        assert expand_pattern("{a,ab}{b,}") == ("ab", "a", "abb")
+
+    def test_class_escaped_braces_stay_literal(self):
+        assert expand_pattern("/[{]a,b[}].txt") == ("/[{]a,b[}].txt",)
+
+    def test_commas_and_classes_inside_groups(self):
+        # A class inside an alternative may contain a comma or brace.
+        assert expand_pattern("{[a,]x,y}") == ("[a,]x", "y")
+
+    def test_class_edge_forms_stay_opaque_to_the_scanner(self):
+        # A negated class and a leading-literal-] class both span whole.
+        assert expand_pattern("[!,]{a,b}") == ("[!,]a", "[!,]b")
+        assert expand_pattern("[]]{a,b}") == ("[]]a", "[]]b")
+
+    def test_collection_stops_one_past_the_cap(self):
+        pattern = "{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}"  # 2**7 = 128 arms
+        arms = expand_pattern(pattern)
+        assert len(arms) == MAX_PATTERN_ARMS + 1
+
+    def test_a_cap_sized_expansion_is_exact(self):
+        pattern = "{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}"  # 2**6 = 64 arms
+        arms = expand_pattern(pattern)
+        assert len(arms) == MAX_PATTERN_ARMS
+        assert len(set(arms)) == MAX_PATTERN_ARMS
 
 
 # =========================================================================

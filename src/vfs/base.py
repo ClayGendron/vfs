@@ -46,16 +46,18 @@ from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import CONTENT_KINDS, Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
-from vfs.paths import METADATA_ROOT, ROOT, Path, resolve_path
+from vfs.paths import METADATA_ROOT, ROOT, Path, extract_extension, resolve_path
 from vfs.pattern_matching import (
+    MAX_PATTERN_ARMS,
     compile_filter,
     compile_verifier,
     composed_pattern,
     effective_pattern,
+    expand_pattern,
     filter_candidates,
-    filter_paths,
     glob_defect,
     match_texts,
+    passes_filters,
     render_residual,
     residuals,
 )
@@ -86,7 +88,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
 
     from vfs.ops import Op
-    from vfs.paths import ResolvedPath
+    from vfs.paths import ObjectKind, ResolvedPath
     from vfs.pattern_matching import GrepHit
     from vfs.permissions import PermissionsPayload
 
@@ -1035,6 +1037,9 @@ class VirtualFileSystem:
         paths: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
         ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
+        kind: ObjectKind | None = None,
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
@@ -1042,22 +1047,29 @@ class VirtualFileSystem:
         """Match *pattern* against the namespace — unscoped calls reach every entry.
 
         Segment-aware semantics: ``*`` matches within one path segment,
-        ``**`` spans segments; any ``/`` anchors the pattern at each
-        scope root (the namespace root when unscoped) while a slash-free
-        pattern matches leaf names at any depth. Scoping crosses the
-        storage seam only as pattern text: each root composes into one
-        spatial pattern, residuation puts every entry's members in its
-        own coordinates, and each entry answers its whole set in one
-        call — so the match *set* is invariant to mount placement.
+        ``**`` spans segments, ``{a,b}`` alternates (expanded before
+        anything else sees the pattern); any ``/`` anchors the pattern
+        at each scope root (the namespace root when unscoped) while a
+        slash-free pattern matches leaf names at any depth. A row is
+        admitted by *pattern* and rejected by any *globs_not* glob, the
+        *ext*/*ext_not* facts, and a *kind* mismatch. Scoping crosses
+        the storage seam only as pattern text: each root composes into
+        one spatial pattern, residuation puts every entry's members in
+        its own coordinates, and each entry answers its whole set in
+        one call — so the match *set* is invariant to mount placement.
         Roots are find operands: a concurrent probe asserts each one
         (missing is a loud per-root error beside the healthy roots'
-        rows) and serves the root's own row when the pattern matches
-        it. Row order is merge order, and a *max_count* prefix of it
-        can therefore differ across layouts.
+        rows) and serves the root's own row when the pattern matches it
+        and no exclusion, ext fact, or kind fact rejects it. Row order
+        is merge order, and a *max_count* prefix of it can therefore
+        differ across layouts.
 
-        With *observations*, glob is a pure filter over the rows in
-        hand: kept rows serve exactly as held (columns, staleness, and
-        input order included) and storage is never touched — chain into
+        With *observations*, glob is a filter over the rows in hand:
+        the path gates run in memory and rows serve exactly as held
+        (columns, staleness, and input order included). Storage is
+        touched only when *kind* is asked of a row that does not carry
+        it — those rows are statted in one batch, a row that cannot be
+        statted classifies loudly beside the healthy rows — chain into
         ``stat`` for fresh rows, or pass row paths to *paths* to search
         under them.
 
@@ -1072,32 +1084,43 @@ class VirtualFileSystem:
             paths=paths,
             observations=observations,
             ext=ext,
+            ext_not=ext_not,
+            globs_not=globs_not,
+            kind=kind,
             max_count=max_count,
             columns=columns,
             user_id=user_id,
         )
         if refusal is not None:
             return refusal
-        defect = glob_defect(pattern)
-        if defect is not None:
-            return self._error(f"glob pattern {pattern!r}: {defect}", kind=VFSErrorKind.invalid, op="glob")
+        arms, refused = self._expanded_arms("glob", "glob pattern", pattern)
+        if refused is not None:
+            return refused
+        globs_not, refused = self._expanded_channel("glob", "glob exclusion", globs_not)
+        if refused is not None:
+            return refused
         if observations is not None:
-            # Chaining filters rows in hand: a pure in-memory predicate
-            # over the rows' paths — no storage call, rows serve as held.
             if not self._bindings:
                 return self._closed_error("glob")
-            rows, invalid = self._observation_rows("glob", observations)
-            if invalid is not None:
-                return invalid
-            keep = set(filter_paths([row.path for row in rows], pattern, ext))
-            kept = [row for row in rows if row.path in keep]
-            return self._cap_rows(Result(ops=("glob",), observations=kept), "glob", max_count)
+            return await self._glob_rows_in_hand(
+                observations,
+                arms=arms,
+                ext=ext,
+                ext_not=ext_not,
+                globs_not=globs_not,
+                kind=kind,
+                max_count=max_count,
+                user_id=user_id,
+            )
         return await self._route_fanout(
             "glob",
             paths=paths,
             row_cap=max_count,
-            pattern=pattern,
+            patterns=arms,
+            not_arms=globs_not,
             ext=ext,
+            ext_not=ext_not,
+            kind=kind,
             max_count=max_count,
             columns=columns,
             user_id=user_id,
@@ -1173,10 +1196,12 @@ class VirtualFileSystem:
         )
         if refusal is not None:
             return refusal
-        for glob_pattern in (*globs, *globs_not):
-            defect = glob_defect(glob_pattern)
-            if defect is not None:
-                return self._error(f"grep glob {glob_pattern!r}: {defect}", kind=VFSErrorKind.invalid, op="grep")
+        globs, refused = self._expanded_channel("grep", "grep glob", globs)
+        if refused is not None:
+            return refused
+        globs_not, refused = self._expanded_channel("grep", "grep glob", globs_not)
+        if refused is not None:
+            return refused
         if observations is not None:
             if not self._bindings:
                 return self._closed_error("grep")
@@ -1426,6 +1451,76 @@ class VirtualFileSystem:
                 )
         return rows, None
 
+    def _expanded_arms(self, op: Op, label: str, pattern: str) -> tuple[tuple[str, ...], Result | None]:
+        """Defect-gate and brace-expand one pattern, or refuse the call.
+
+        Twice-gated: ``glob_defect`` covers raw brace structure and
+        every expansion arm's component defects; the cap refusal names
+        the fix instead of fanning out an oversized expansion.
+        """
+        defect = glob_defect(pattern)
+        if defect is not None:
+            return (), self._error(f"{label} {pattern!r}: {defect}", kind=VFSErrorKind.invalid, op=op)
+        arms = expand_pattern(pattern)
+        if len(arms) > MAX_PATTERN_ARMS:
+            message = (
+                f"{label} {pattern!r} expands past the arm cap ({MAX_PATTERN_ARMS}) — "
+                "narrow the alternation or split the call"
+            )
+            return (), self._error(message, kind=VFSErrorKind.invalid, op=op)
+        return arms, None
+
+    def _expanded_channel(self, op: Op, label: str, patterns: tuple[str, ...]) -> tuple[tuple[str, ...], Result | None]:
+        """Expand every pattern of a glob channel; the cap applies per pattern."""
+        expanded: list[str] = []
+        for pattern in patterns:
+            arms, refused = self._expanded_arms(op, label, pattern)
+            if refused is not None:
+                return (), refused
+            expanded.extend(arms)
+        return tuple(dict.fromkeys(expanded)), None
+
+    async def _glob_rows_in_hand(
+        self,
+        observations: list[Observation],
+        *,
+        arms: tuple[str, ...],
+        ext: tuple[str, ...],
+        ext_not: tuple[str, ...],
+        globs_not: tuple[str, ...],
+        kind: ObjectKind | None,
+        max_count: int | None,
+        user_id: str | None,
+    ) -> Result:
+        """Chained glob: filter rows in hand, fetching only a missing kind fact.
+
+        The path gates run in memory over the rows as held — admission
+        by any expanded arm, rejection by exclusion globs and the ext
+        facts, no meta rule, duplicates and order preserved. A *kind*
+        filter judged against a row that carries no kind stats exactly
+        those rows in one batch — the load-bearing fact is fetched,
+        never guessed — and a row that cannot be statted classifies
+        loudly beside the healthy rows.
+        """
+        rows, invalid = self._observation_rows("glob", observations)
+        if invalid is not None:
+            return invalid
+        gates = [compile_filter(arm, ()) for arm in arms]
+        not_gates = [compile_filter(glob, ()) for glob in globs_not]
+        wanted = frozenset(e.lstrip(".").lower() for e in ext)
+        unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
+        kept = [row for row in rows if passes_filters(row.path, gates, not_gates, wanted, unwanted)]
+        errors: list[ResultError] = []
+        if kind is not None:
+            lacking = [row for row in kept if row.kind is None]
+            fetched: dict[str, str | None] = {}
+            if lacking:
+                stat = await self.stat(observations=lacking, columns=frozenset(), user_id=user_id)
+                errors = list(stat.errors)
+                fetched = {str(row.path): row.kind for row in stat.observations}
+            kept = [row for row in kept if (row.kind if row.kind is not None else fetched.get(str(row.path))) == kind]
+        return self._cap_rows(Result(ops=("glob",), observations=kept, errors=errors), "glob", max_count)
+
     async def _grep_rows_in_hand(
         self,
         observations: list[Observation],
@@ -1641,10 +1736,14 @@ class VirtualFileSystem:
             if plan.refusal is not None:
                 return plan.refusal
 
-            pattern = kwargs.get("pattern")
-            if op == "glob" and isinstance(pattern, str):
-                rest = {key: value for key, value in kwargs.items() if key != "pattern"}
-                named_coros, branches, skips = self._glob_dispatches(plan, paths, pattern, user_id=user_id, **rest)
+            patterns = kwargs.get("patterns")
+            if op == "glob" and isinstance(patterns, tuple):
+                rest = {key: value for key, value in kwargs.items() if key not in ("patterns", "not_arms")}
+                arms = cast("tuple[str, ...]", patterns)
+                not_arms = cast("tuple[str, ...]", kwargs.get("not_arms", ()))
+                named_coros, branches, skips = self._glob_dispatches(
+                    plan, paths, arms, not_arms, user_id=user_id, **rest
+                )
             elif op == "grep":
                 globs = cast("tuple[str, ...]", kwargs.get("globs", ()))
                 globs_not = cast("tuple[str, ...]", kwargs.get("globs_not", ()))
@@ -1730,7 +1829,8 @@ class VirtualFileSystem:
         self,
         plan: _FanoutPlan,
         paths: tuple[str, ...],
-        pattern: str,
+        arms: tuple[str, ...],
+        not_arms: tuple[str, ...],
         *,
         user_id: str | None,
         **kwargs: object,
@@ -1741,52 +1841,66 @@ class VirtualFileSystem:
     ]:
         """Build glob's dispatches: scoping crosses the seam as pattern text.
 
-        Each scope root composes into one spatial pattern (name arm goes
+        The caller's pattern arrives brace-expanded as *arms* and the
+        exclusions as *not_arms*; every step below is per-arm with
+        any-arm admission and any-exclusion rejection. Each scope root
+        composes each arm into one spatial pattern (name arm goes
         ``root/**/pattern``, path arm anchors under the root), but only
         into its owning entry and the entries beneath the root — never
         an ancestor's shadowed region. Residuation then derives every
         entry's members in entry-local coordinates, and each entry
-        receives its whole deduped set as one batched call. Root
-        assertions ride a separate concurrent probe grouped by owning
-        entry (:meth:`_root_probe`), structurally immune to any dispatch
-        optimization. A dead residual set is routing, not a capability
-        gap: the entry is not dispatched and no skip is minted;
-        capability skips survive only where the pattern can reach the
-        entry's rows.
+        receives its whole deduped set as one batched call — exclusions
+        compose per root identically, so one can never reach another
+        root's subtree. Root assertions ride a separate concurrent
+        probe grouped by owning entry (:meth:`_root_probe`),
+        structurally immune to any dispatch optimization; its ``keep``
+        honors every channel, so a root row is never served past a
+        filter the caller stated. A dead residual set is routing, not a
+        capability gap: the entry is not dispatched and no skip is
+        minted; capability skips survive only where some arm can reach
+        the entry's rows.
         """
         roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
         capable = {**plan.unscoped, **{key: binding for key, (binding, _rels) in plan.scoped.items()}}
-        members: dict[Path, set[str]] = {}
-        if not roots:
-            if "/" in pattern:
-                for key in capable:
-                    members[key] = set(self._residual_renders(pattern, key))
-            else:
-                # Unscoped name-arm patterns are coordinate-free: every
-                # entry sees the same text, floated by the storage layer.
-                members = {key: {pattern} for key in capable}
-        else:
-            for root in roots:
-                composed = composed_pattern(root, pattern)
-                owner = self._resolve_terminal(root).binding.path
-                for key in capable:
-                    if key != owner and not _path_covers(root, key):
-                        continue
-                    members.setdefault(key, set()).update(self._residual_renders(composed, key))
+        members = {key: self._composed_members(key, roots, arms) for key in capable}
         ext = cast("tuple[str, ...]", kwargs.get("ext", ()))
+        ext_not = cast("tuple[str, ...]", kwargs.get("ext_not", ()))
+        kind = cast("str | None", kwargs.get("kind"))
         columns = cast("frozenset[str] | None", kwargs.get("columns"))
+        not_gates = [compile_filter(glob, ()) for glob in not_arms]
+        unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
 
         def keep(row: Observation) -> bool:
-            return compile_filter(effective_pattern(row.path, pattern), ext).matches(row.path)
+            if not any(compile_filter(effective_pattern(row.path, arm), ext).matches(row.path) for arm in arms):
+                return False
+            if any(gate.matches(row.path) for gate in not_gates):
+                return False
+            if unwanted and (extract_extension(row.path) or "") in unwanted:
+                return False
+            return kind is None or row.kind == kind
 
         probes, unverifiable = self._root_probes(roots, keep, columns, user_id=user_id)
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = [
-            (key, self._dispatch_entry(capable[key], "glob", patterns=tuple(sorted(live)), user_id=user_id, **kwargs))
+            (
+                key,
+                self._dispatch_entry(
+                    capable[key],
+                    "glob",
+                    patterns=tuple(sorted(live)),
+                    globs_not=tuple(sorted(self._composed_members(key, roots, not_arms))),
+                    user_id=user_id,
+                    **kwargs,
+                ),
+            )
             for key, live in members.items()
             if live
         ]
         reach = roots or (ROOT,)
-        skips = [skip for skip in plan.skips if skip.path is None or self._glob_reaches(skip.path, reach, pattern)]
+        skips = [
+            skip
+            for skip in plan.skips
+            if skip.path is None or any(self._glob_reaches(skip.path, reach, arm) for arm in arms)
+        ]
         return probes, branches, [*skips, *unverifiable]
 
     def _grep_dispatches(

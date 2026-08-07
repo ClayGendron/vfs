@@ -13,12 +13,14 @@ path gates; glob never looks back).
 """
 
 from vfs.pattern_matching.glob import (
+    MAX_PATTERN_ARMS,
     GlobFilter,
     compile_filter,
     compile_glob,
     composed_pattern,
     derive_ext,
     effective_pattern,
+    expand_pattern,
     filter_paths,
     glob_defect,
     render_residual,
@@ -34,6 +36,7 @@ from vfs.pattern_matching.grep import (
 )
 
 __all__ = [
+    "MAX_PATTERN_ARMS",
     "GlobFilter",
     "GrepHit",
     "compile_filter",
@@ -42,6 +45,7 @@ __all__ = [
     "composed_pattern",
     "derive_ext",
     "effective_pattern",
+    "expand_pattern",
     "filter_candidates",
     "filter_paths",
     "glob_defect",

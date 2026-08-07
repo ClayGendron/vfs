@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 
     from vfs.models import Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op
-    from vfs.paths import Path
+    from vfs.paths import ObjectKind, Path
     from vfs.storage import ResolvedPair
     from vfs.storage.replace import EditOperation
 
@@ -187,7 +187,10 @@ class DatabaseStorage:
         self,
         *,
         patterns: tuple[str, ...],
+        globs_not: tuple[str, ...] = (),
         ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        kind: ObjectKind | None = None,
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
@@ -201,7 +204,10 @@ class DatabaseStorage:
                 self._host.parameter_budget,
                 self._host.membership_budget,
                 patterns=patterns,
+                globs_not=globs_not,
                 ext=ext,
+                ext_not=ext_not,
+                kind=kind,
                 max_count=max_count,
                 columns=columns,
             ),
