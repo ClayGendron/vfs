@@ -4,7 +4,7 @@ How we install, lint, type-check, and run tests in this repo. These commands are
 
 ## Stack
 
-- **Python:** 3.12 minimum, 3.13 target (`.python-version`).
+- **Python:** 3.11 minimum, 3.13 target (`.python-version`).
 - **Package manager:** `uv` (the venv is already a `uv` environment).
 - **Build backend:** `hatchling`.
 - **Linter / formatter:** `ruff` — invoked via `uvx`, never installed as a pip package.

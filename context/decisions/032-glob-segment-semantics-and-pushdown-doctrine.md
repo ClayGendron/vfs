@@ -7,7 +7,11 @@
   carried by the spec until it landed (2026-08-01) and was mined;
   the spec rests in `../specs/archive/073-glob-segment-semantics/`.
   ADRs 030/031 build on this decision set and cite it as "073's
-  anchoring rule" / "the compile chokepoint."
+  anchoring rule" / "the compile chokepoint." Decision 1's translation
+  vehicle is annotated by ADR 035 (2026-08-11): the chokepoint compiles
+  through an in-house `_translate` rather than stdlib `glob.translate`
+  (3.13-only, above the recorded 3.11 floor) — semantics unchanged,
+  stdlib parity pinned by test.
 - **Date:** 2026-07-14
 - **Deciders:** Clay Gendron
 - **Context source:** every glob in the pre-073 tree used stdlib

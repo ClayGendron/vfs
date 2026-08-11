@@ -11,7 +11,7 @@ version = "0.0.22"
 description = "The agentic filesystem. Safe file operations, knowledge graphs, and semantic search — unified for AI agents."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 authors = [
     { name = "Clay Gendron" },
 ]
@@ -20,6 +20,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
@@ -78,7 +80,7 @@ docs = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py313"
+target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.format]
@@ -126,7 +128,7 @@ known-first-party = ["vfs"]
 include = ["src", "tests"]
 
 [tool.ty.environment]
-python-version = "3.13"
+python-version = "3.11"
 root = ["src", "."]
 
 [tool.pytest.ini_options]

@@ -24,7 +24,7 @@ integer driver error number — never by message text.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -298,7 +298,11 @@ def arm_budget(profile: DialectProfile, parameter_budget: int, arm_binds: int) -
     return max(1, min(_PATTERN_ARM_CEILING, by_binds, by_depth))
 
 
-def chunked[T](items: Sequence[T], size: int) -> Iterator[Sequence[T]]:
+# Spelled pre-PEP-695: type-parameter syntax is 3.12+, above the floor.
+T = TypeVar("T")
+
+
+def chunked(items: Sequence[T], size: int) -> Iterator[Sequence[T]]:
     """Slices of *items* at most *size* long, in order."""
     step = max(1, size)
     for index in range(0, len(items), step):
@@ -320,7 +324,10 @@ def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object
 _STATEMENT_BIND_RESERVE: Final = 8
 
 
-def statement_budget[R](
+R = TypeVar("R")
+
+
+def statement_budget(
     build: Callable[[Sequence[R]], ClauseElement[Any]],
     probe_row: R,
     dialect: Dialect,
