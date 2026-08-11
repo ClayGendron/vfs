@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from glob import translate
 from itertools import product
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from vfs.paths import Path, extract_extension, normalize_extension
 
@@ -144,16 +144,26 @@ def filter_paths(paths: Sequence[Path], pattern: str, ext: tuple[str, ...] = ())
 # ---------------------------------------------------------------------------
 
 
-def derive_ext(pattern: str) -> tuple[str, str] | None:
-    """(lowercased ext, literal dot-suffix) pinned by the pattern's tail, or ``None``.
+class DerivedExt(NamedTuple):
+    """The extension fact a pattern's tail pins; build via :func:`derive_ext`.
+
+    ``ext`` is normalized by the stored-extension law (lowercased);
+    ``dot_suffix`` keeps the original case — the arm for pure-dotfile
+    names, which carry no extension of their own.
+    """
+
+    ext: str
+    dot_suffix: str
+
+
+def derive_ext(pattern: str) -> DerivedExt | None:
+    """The extension fact pinned by the pattern's tail, or ``None``.
 
     The tail is the literal run after the last segment's last wildcard
     character; a dot inside it with characters after fixes the extension
     of every possible match, normalized by the same law stored
     extensions obey. The dot may open the tail — it marks a suffix of
-    matched names, not a whole name, so the dotfile rule does not apply;
-    the dot-suffix (original case) is the arm for pure-dotfile names,
-    which carry no extension of their own.
+    matched names, not a whole name, so the dotfile rule does not apply.
     """
     segment = pattern.rsplit("/", 1)[-1]
     cut = max((i for i, ch in enumerate(segment) if ch in "*?]"), default=-1)
@@ -164,7 +174,7 @@ def derive_ext(pattern: str) -> tuple[str, str] | None:
     ext = normalize_extension(literal[dot + 1 :])
     if ext is None:
         return None
-    return ext, literal[dot:]
+    return DerivedExt(ext=ext, dot_suffix=literal[dot:])
 
 
 # ---------------------------------------------------------------------------

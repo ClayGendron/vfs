@@ -11,6 +11,7 @@ from __future__ import annotations
 from vfs.paths import ROOT, Path
 from vfs.pattern_matching import (
     MAX_PATTERN_ARMS,
+    DerivedExt,
     compile_filter,
     compile_glob,
     composed_pattern,
@@ -265,7 +266,7 @@ class TestDeriveExt:
         assert derive_ext("/docs/a.txt") == ("txt", ".txt")
 
     def test_derived_ext_lowercases_but_the_suffix_keeps_case(self):
-        assert derive_ext("*.TXT") == ("txt", ".TXT")
+        assert derive_ext("*.TXT") == DerivedExt(ext="txt", dot_suffix=".TXT")
 
     def test_underivable_patterns_return_none(self):
         assert derive_ext("*") is None

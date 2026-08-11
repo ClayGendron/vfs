@@ -14,6 +14,7 @@ path gates; glob never looks back).
 
 from vfs.pattern_matching.glob import (
     MAX_PATTERN_ARMS,
+    DerivedExt,
     GlobFilter,
     compile_filter,
     compile_glob,
@@ -37,6 +38,7 @@ from vfs.pattern_matching.grep import (
 
 __all__ = [
     "MAX_PATTERN_ARMS",
+    "DerivedExt",
     "GlobFilter",
     "GrepHit",
     "compile_filter",

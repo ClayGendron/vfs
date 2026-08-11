@@ -277,11 +277,10 @@ def pattern_arm(
         terms.append(entry.c.ext.in_(sorted(wanted)))
     derived = derive_ext(glob.pattern)
     if derived is not None:
-        derived_ext, dot_suffix = derived
-        if wanted and "" not in wanted and derived_ext not in wanted:
+        if wanted and "" not in wanted and derived.ext not in wanted:
             return None
         # The dotfile arm rescues names like ".txt", whose stored ext is NULL.
-        terms.append(or_(entry.c.ext == derived_ext, entry.c.name == dot_suffix))
+        terms.append(or_(entry.c.ext == derived.ext, entry.c.name == derived.dot_suffix))
     terms.extend(liveness_filters(entry, include_meta=meta_scoped(glob.pattern)))
     return and_(*terms)
 
