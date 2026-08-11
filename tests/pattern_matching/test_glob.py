@@ -8,6 +8,10 @@ refused. The demo tree is the spec's acceptance table.
 
 from __future__ import annotations
 
+import glob as stdlib_glob
+
+import pytest
+
 from vfs.paths import ROOT, Path
 from vfs.pattern_matching import (
     MAX_PATTERN_ARMS,
@@ -422,3 +426,57 @@ class TestFilterPaths:
 
     def test_meta_paths_are_never_hidden(self) -> None:
         assert filter_paths([Path("/.vfs/trash/x")], "*") == ["/.vfs/trash/x"]
+
+
+# =========================================================================
+# Translation parity — the in-house translate against the stdlib's
+# =========================================================================
+
+# Defect-free patterns exercising every translation branch: wildcards,
+# classes (negation, ranges, inverted ranges, escapes), literals, braces
+# taken literally by the compile chokepoint, and the ``**`` forms.
+PARITY_PATTERNS = (
+    "*",
+    "**",
+    "?x",
+    "*.txt",
+    ".*",
+    "a*b",
+    "src/*.py",
+    "/a",
+    "**/x",
+    "a/**",
+    "a/**/b",
+    "/data/[ab]/**/*.csv",
+    "[a-z]",
+    "[!a-z]",
+    "[!]a",
+    "[]]",
+    "[^ab]",
+    "[[a]",
+    "[a-]",
+    "[-a]",
+    "[z-a]",
+    "[a-c-e]",
+    "[d-c-b-a]",
+    "[ab",
+    "[&~|]",
+    "[a\\-]",
+    "[\\\\]",
+    "x[!0-9]y",
+    "{a,b}",
+)
+
+
+@pytest.mark.skipif(not hasattr(stdlib_glob, "translate"), reason="stdlib glob.translate arrives in 3.13")
+class TestTranslateParity:
+    """The 3.12-floor translation must be the stdlib's, byte for byte."""
+
+    def test_compiled_source_matches_the_stdlib(self) -> None:
+        for pattern in PARITY_PATTERNS:
+            gate = compile_filter(pattern, ())
+            # The skipif above guards this 3.13+ attribute at runtime.
+            expected = stdlib_glob.translate(  # ty: ignore[unresolved-attribute]
+                gate.pattern, recursive=True, include_hidden=True, seps="/"
+            )
+            assert gate.regex.pattern == expected, pattern

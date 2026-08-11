@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from glob import translate
 from itertools import product
 from typing import TYPE_CHECKING, Final, NamedTuple
 
@@ -108,7 +107,7 @@ def expand_pattern(pattern: str) -> tuple[str, ...]:
 
 def compile_glob(pattern: str) -> re.Pattern[str]:
     """Compile a defect-free pattern to its authoritative regex, canonicalized first."""
-    return re.compile(translate(_canonical(pattern), recursive=True, include_hidden=True, seps="/"))
+    return re.compile(_translate(_canonical(pattern), recursive=True))
 
 
 def compile_filter(pattern: str, ext: tuple[str, ...]) -> GlobFilter:
@@ -357,4 +356,100 @@ def _canonical(pattern: str) -> str:
 
 def _component_matches(component: str, segment: str) -> bool:
     """One non-``**`` pattern component against one bind-path segment."""
-    return re.fullmatch(translate(component, recursive=False, include_hidden=True, seps="/"), segment) is not None
+    return re.fullmatch(_translate(component, recursive=False), segment) is not None
+
+
+def _translate(pattern: str, *, recursive: bool) -> str:
+    """Regex source for *pattern* — segment-aware, dotfiles ordinary, ``/`` seps.
+
+    An original implementation of the ``glob.translate`` contract (stdlib
+    3.13+, newer than the 3.12 floor), fixed to the one call shape every
+    consumer uses: hidden files included, ``/`` the only separator. Input
+    is defect-gated and canonical — no ``**`` inside a component, no
+    adjacent ``**`` — so the stdlib's collapses for both are omitted here.
+    Parity with the stdlib is pinned textually by the differential test
+    wherever the stdlib function exists. ``**`` as a whole component spans
+    zero or more segments only under *recursive*; a bare ``*`` component
+    requires a non-empty segment.
+    """
+    parts = pattern.split("/")
+    last = len(parts) - 1
+    pieces: list[str] = []
+    for index, part in enumerate(parts):
+        if recursive and part == "**":
+            pieces.append(".*" if index == last else "(?:.+/)?")
+            continue
+        if part == "*":
+            pieces.append("[^/]+")
+        elif part:
+            pieces.append(_translate_component(part))
+        if index < last:
+            pieces.append("/")
+    return "(?s:" + "".join(pieces) + ")\\Z"
+
+
+def _translate_component(component: str) -> str:
+    """One component's regex source: wildcards, classes, escaped literals."""
+    pieces: list[str] = []
+    index = 0
+    while index < len(component):
+        char = component[index]
+        index += 1
+        if char == "*":
+            pieces.append("[^/]*")
+        elif char == "?":
+            pieces.append("[^/]")
+        elif char == "[" and (end := _component_class_end(component, index)) is not None:
+            pieces.append(_translate_class(component[index:end]))
+            index = end + 1
+        else:
+            pieces.append(re.escape(char))
+    return "".join(pieces)
+
+
+def _component_class_end(component: str, start: int) -> int | None:
+    """Index of the ``]`` closing the class opened at *start*, or ``None`` when literal.
+
+    The fnmatch scan: only ``!`` negates (a leading ``^`` is an ordinary
+    member), unlike :func:`_class_end`, whose ``!^`` opacity serves the
+    brace parser.
+    """
+    index = start
+    if index < len(component) and component[index] == "!":
+        index += 1
+    if index < len(component) and component[index] == "]":
+        index += 1
+    end = component.find("]", index)
+    return end if end != -1 else None
+
+
+def _translate_class(stuff: str) -> str:
+    """One class interior's regex source, empty ranges pruned fnmatch-style."""
+    if "-" not in stuff:
+        body = stuff.replace("\\", r"\\")
+    else:
+        chunks: list[str] = []
+        start = 0
+        probe = 2 if stuff[0] == "!" else 1
+        while (hit := stuff.find("-", probe)) >= 0:
+            chunks.append(stuff[start:hit])
+            # A range consumes the dash and its bounds; probe past them.
+            start, probe = hit + 1, hit + 3
+        if rest := stuff[start:]:
+            chunks.append(rest)
+        else:
+            chunks[-1] += "-"
+        for k in range(len(chunks) - 1, 0, -1):
+            # An inverted range ([z-a]) is invalid regex; merge it away.
+            if chunks[k - 1][-1] > chunks[k][0]:
+                chunks[k - 1] = chunks[k - 1][:-1] + chunks[k][1:]
+                del chunks[k]
+        body = "-".join(s.replace("\\", r"\\").replace("-", r"\-") for s in chunks)
+    body = re.sub(r"([&~|])", r"\\\1", body)
+    if not body:
+        return "(?!)"
+    if body[0] == "!":
+        body = "^" + body[1:]
+    elif body[0] in "^[":
+        body = "\\" + body
+    return "[" + body + "]"
