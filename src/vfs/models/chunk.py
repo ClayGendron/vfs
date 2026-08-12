@@ -25,6 +25,7 @@ from vfs.models.chunking import (
     split_notebook,
     split_with_line_ranges,
 )
+from vfs.models.entry import ContentHash  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 from vfs.models.vector import Vector  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 from vfs.paths import Path  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 
@@ -43,7 +44,7 @@ class Chunk(BaseModel):
     line_start: int
     line_end: int
     content: str
-    content_hash: str | None = None
+    content_hash: ContentHash | None = None
     encoded: bool = False
     embedding: Vector | None = None
 

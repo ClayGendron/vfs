@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import re
 from time import monotonic
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
 import numpy as np
+from numpy.typing import NDArray
 from sqlalchemy import or_, select
 
 from vfs.models import CONTENT_KINDS, Observation
@@ -41,15 +42,15 @@ from vfs.storage.backends.database.reads import ARM_FIXED_BINDS, effective_colum
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from numpy.typing import NDArray
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models import Match
-    from vfs.models.code_grams import GramQuery
-    from vfs.models.rows import VFSTables
+    from vfs.models.code_grams import GramKey, GramQuery
+    from vfs.models.rows import EntryId, VFSTables
     from vfs.ops import CaseMode, GrepOutputMode
     from vfs.storage.backends.database.dialects import DialectProfile
+    from vfs.storage.backends.database.indexing import Epoch
 
 # Runtime budgets (the spike's numbers): candidates fetched and
 # verified, posting bytes decoded, and a wall-time deadline checked
@@ -62,6 +63,23 @@ WALL_TIME_BUDGET: Final = 10.0
 _INTERSECT_GRAMS: Final = 4
 
 _REFINE_GUIDANCE: Final = "narrow the pattern, add globs or ext filters, or scope with paths"
+
+
+ChunkIds = Annotated[NDArray[np.int64], "sorted chunk-table ids - the posting doc ids"]
+
+
+class PostingMeta(NamedTuple):
+    """One posting row's price-list facts: priced before any blob is fetched."""
+
+    doc_count: int
+    byte_size: int
+
+
+class ScanNominees(NamedTuple):
+    """Scan-tier entry rows in path order, and whether the cap cut them."""
+
+    rows: list[RowMapping]
+    overflow: bool
 
 
 async def grep_rows(
@@ -145,7 +163,7 @@ async def grep_rows(
             if "candidate budget" not in truncations:
                 truncations.append("candidate budget")
         else:
-            scanned, overflow = await _scan_candidates(
+            nominated, overflow = await _entries_for_scan(
                 session,
                 tables,
                 profile,
@@ -159,14 +177,14 @@ async def grep_rows(
             )
             if overflow:
                 truncations.append("candidate budget")
-            for mapping in scanned:
+            for mapping in nominated:
                 if _passes_gates(Path(mapping["path"]), gates, not_gates, wanted, unwanted):
                     candidates.setdefault(mapping["path"], mapping)
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
 
     ordered = [candidates[path] for path in sorted(candidates)]
-    contents = await _content_for(session, tables, membership_budget, [m["entry_id"] for m in ordered])
+    contents = await _content_for_entries(session, tables, membership_budget, [m["entry_id"] for m in ordered])
     rows: list[Observation] = []
     for mapping in ordered:
         if monotonic() > deadline:
@@ -202,7 +220,7 @@ async def grep_rows(
 
 async def _index_chunk_ids(
     session: AsyncSession, tables: VFSTables, membership_budget: int, plan: GramQuery
-) -> NDArray[np.int64]:
+) -> ChunkIds:
     """Candidate chunk ids for *plan* under the published epoch, sorted.
 
     No published epoch means no encoded entries: the index side is
@@ -213,21 +231,22 @@ async def _index_chunk_ids(
     if epoch is None:
         return np.empty(0, dtype=np.int64)
     budget = [POSTING_BYTE_BUDGET]
-    return await _plan_chunk_ids(session, tables, membership_budget, epoch, plan, budget)
+    return await _chunk_ids_for_plan(session, tables, membership_budget, epoch, plan, budget)
 
 
-async def _plan_chunk_ids(
+async def _chunk_ids_for_plan(
     session: AsyncSession,
     tables: VFSTables,
     membership_budget: int,
     epoch: int,
     plan: GramQuery,
     budget: list[int],
-) -> NDArray[np.int64]:
+) -> ChunkIds:
     """One plan node's candidates: OR unions branches, AND intersects grams."""
     if isinstance(plan, GramOr):
         parts = [
-            await _plan_chunk_ids(session, tables, membership_budget, epoch, branch, budget) for branch in plan.branches
+            await _chunk_ids_for_plan(session, tables, membership_budget, epoch, branch, budget)
+            for branch in plan.branches
         ]
         return np.unique(np.concatenate(parts))
     grams = sorted(plan.required_grams())
@@ -235,9 +254,9 @@ async def _plan_chunk_ids(
     if len(meta) < len(grams):
         # A required gram indexes nothing — no chunk can match.
         return np.empty(0, dtype=np.int64)
-    chosen: list[int] = []
-    for gram in sorted(meta, key=lambda key: meta[key][0]):
-        size = meta[gram][1]
+    chosen: list[GramKey] = []
+    for gram in sorted(meta, key=lambda key: meta[key].doc_count):
+        size = meta[gram].byte_size
         if chosen and (len(chosen) >= _INTERSECT_GRAMS or size > budget[0]):
             break
         chosen.append(gram)
@@ -253,25 +272,26 @@ async def _plan_chunk_ids(
 
 
 async def _posting_meta(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, epoch: int, grams: Sequence[int]
-) -> dict[int, tuple[int, int]]:
-    """``gram → (doc_count, byte_size)`` for the grams present in *epoch*."""
+    session: AsyncSession, tables: VFSTables, membership_budget: int, epoch: Epoch, grams: Sequence[GramKey]
+) -> dict[GramKey, PostingMeta]:
+    """``gram → PostingMeta`` for the grams present in *epoch*."""
     posting = tables.posting_list
-    meta: dict[int, tuple[int, int]] = {}
+    meta: dict[GramKey, PostingMeta] = {}
     for chunk in chunked(list(grams), membership_budget):
         stmt = select(posting.c.gram_key, posting.c.doc_count, posting.c.byte_size).where(
             posting.c.epoch == epoch, posting.c.gram_key.in_(chunk)
         )
         for row in await session.execute(stmt):
-            meta[row.gram_key] = (row.doc_count, row.byte_size)
+            meta[row.gram_key] = PostingMeta(row.doc_count, row.byte_size)
     return meta
 
 
 async def _posting_blobs(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, epoch: int, grams: Sequence[int]
-) -> dict[int, bytes]:
+    session: AsyncSession, tables: VFSTables, membership_budget: int, epoch: Epoch, grams: Sequence[GramKey]
+) -> dict[GramKey, bytes]:
+    """``gram → encoded posting blob`` — fetched only for the chosen grams."""
     posting = tables.posting_list
-    blobs: dict[int, bytes] = {}
+    blobs: dict[GramKey, bytes] = {}
     for chunk in chunked(list(grams), membership_budget):
         stmt = select(posting.c.gram_key, posting.c.postings).where(
             posting.c.epoch == epoch, posting.c.gram_key.in_(chunk)
@@ -285,7 +305,7 @@ async def _entries_for_chunks(
     session: AsyncSession,
     tables: VFSTables,
     membership_budget: int,
-    chunk_ids: NDArray[np.int64],
+    chunk_ids: ChunkIds,
     fetched: frozenset[str],
 ) -> list[RowMapping]:
     """Candidate chunk ids deduped to their live, encoded entry rows.
@@ -313,7 +333,7 @@ async def _entries_for_chunks(
 # ---------------------------------------------------------------------------
 
 
-async def _scan_candidates(
+async def _entries_for_scan(
     session: AsyncSession,
     tables: VFSTables,
     profile: DialectProfile,
@@ -325,7 +345,7 @@ async def _scan_candidates(
     everything: bool,
     fetched: frozenset[str],
     limit: int,
-) -> tuple[list[RowMapping], bool]:
+) -> ScanNominees:
     """Scan-tier candidate entry rows in path order, capped at *limit*.
 
     Serves three callers with one executor: the permanent ``NOT
@@ -345,7 +365,7 @@ async def _scan_candidates(
     if gates:
         arms = [arm for gate in gates if (arm := pattern_arm(entry, gate, wanted, membership_budget)) is not None]
         if not arms:
-            return [], False
+            return ScanNominees([], False)
         ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
         chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ext_binds + len(CONTENT_KINDS))
         for chunk in chunked(arms, chunk_size):
@@ -361,8 +381,8 @@ async def _scan_candidates(
         merged = {mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()}
     rows = [merged[path] for path in sorted(merged)]
     if len(rows) > limit:
-        return rows[:limit], True
-    return rows, overflow
+        return ScanNominees(rows[:limit], True)
+    return ScanNominees(rows, overflow)
 
 
 # ---------------------------------------------------------------------------
@@ -388,11 +408,12 @@ def _passes_gates(
     return passes_filters(path, gates, not_gates, wanted, unwanted)
 
 
-async def _content_for(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, entry_ids: Sequence[str]
-) -> dict[str, str]:
+async def _content_for_entries(
+    session: AsyncSession, tables: VFSTables, membership_budget: int, entry_ids: Sequence[EntryId]
+) -> dict[EntryId, str]:
+    """``entry_id → full body text`` for the final, gated candidate set."""
     content = tables.content
-    out: dict[str, str] = {}
+    out: dict[EntryId, str] = {}
     for chunk in chunked(sorted(set(entry_ids)), membership_budget):
         stmt = select(content.c.entry_id, content.c.content).where(content.c.entry_id.in_(chunk))
         out.update({row.entry_id: row.content for row in await session.execute(stmt)})

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from typing import Any, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationInfo, computed_field, field_validator, model_validator
 
@@ -41,6 +41,8 @@ from vfs.paths import ObjectKind, Path, is_reserved_directory
 # Stored kinds whose rows carry text content; everything else refuses
 # content reads and edits and surfaces no content metrics.
 CONTENT_KINDS: Final[frozenset[str]] = frozenset({"file", "chunk", "version"})
+
+ContentHash = Annotated[str, "sha-256 hex of the body, 64 lowercase chars"]
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +86,7 @@ class Entry(BaseModel):
     # --- Content ------------------------------------------------------------
 
     content: str | None = None
-    content_hash: str | None = None
+    content_hash: ContentHash | None = None
     mime_type: str | None = None
     ext: str | None = None
 
@@ -383,7 +385,7 @@ class Observation(BaseModel):
     path: Path
     kind: ObjectKind | None = None
     content: str | None = None
-    content_hash: str | None = None
+    content_hash: ContentHash | None = None
     mime_type: str | None = None
     size_bytes: int | None = None
     version: int | None = None

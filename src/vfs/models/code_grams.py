@@ -51,7 +51,7 @@ invariant is pinned by an exhaustive orbit-scan test.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Annotated, Final
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -62,6 +62,8 @@ from re import _constants as sre_constants  # ty: ignore[unresolved-import]
 from re import _parser as sre_parse  # ty: ignore[unresolved-import]
 
 GRAM_SIZE: Final = 3
+
+GramKey = Annotated[int, "packed 24-bit byte trigram: (b0 << 16) | (b1 << 8) | b2"]
 
 
 def normalize_content(content: str) -> bytes:
@@ -89,28 +91,28 @@ def fold_content(content: str) -> str:
     return content.casefold()
 
 
-def pack_gram(b0: int, b1: int, b2: int) -> int:
+def pack_gram(b0: int, b1: int, b2: int) -> GramKey:
     """Pack three bytes into a 24-bit integer key."""
     return (b0 << 16) | (b1 << 8) | b2
 
 
-def unpack_gram(gram: int) -> bytes:
+def unpack_gram(gram: GramKey) -> bytes:
     """Inverse of :func:`pack_gram`."""
     return bytes(((gram >> 16) & 0xFF, (gram >> 8) & 0xFF, gram & 0xFF))
 
 
-def _iter_byte_trigrams(data: bytes) -> Iterator[int]:
+def _iter_byte_trigrams(data: bytes) -> Iterator[GramKey]:
     if len(data) < GRAM_SIZE:
         return
     for i in range(len(data) - GRAM_SIZE + 1):
         yield pack_gram(data[i], data[i + 1], data[i + 2])
 
 
-def _grams_from_run(run: bytes) -> set[int]:
+def _grams_from_run(run: bytes) -> set[GramKey]:
     return set(_iter_byte_trigrams(run))
 
 
-def iter_code_grams(content: str, *, folded: bool = False) -> Iterator[int]:
+def iter_code_grams(content: str, *, folded: bool = False) -> Iterator[GramKey]:
     """Yield every sliding 3-byte UTF-8 trigram in *content*, in order.
 
     Duplicates are NOT collapsed; callers that want a set should use
@@ -121,12 +123,12 @@ def iter_code_grams(content: str, *, folded: bool = False) -> Iterator[int]:
     yield from _iter_byte_trigrams(normalize_content(source))
 
 
-def unique_code_grams(content: str, *, folded: bool = False) -> set[int]:
+def unique_code_grams(content: str, *, folded: bool = False) -> set[GramKey]:
     """Return the deduplicated set of byte trigrams in *content*."""
     return set(iter_code_grams(content, folded=folded))
 
 
-def grams_for_fixed_string(pattern: str) -> set[int]:
+def grams_for_fixed_string(pattern: str) -> set[GramKey]:
     """Return required byte trigrams for a fixed-string grep pattern, folded.
 
     Pattern-side extraction is always folded — the stored index is a single
@@ -146,7 +148,7 @@ def grams_for_fixed_string(pattern: str) -> set[int]:
 class GramAny:
     """Sentinel: no useful gram predicate. Caller must scan or use other filters."""
 
-    def required_grams(self) -> set[int]:
+    def required_grams(self) -> set[GramKey]:
         return set()
 
     def is_any(self) -> bool:
@@ -157,9 +159,9 @@ class GramAny:
 class GramAnd:
     """Conjunction: candidate chunks must contain ALL of these grams."""
 
-    grams: frozenset[int]
+    grams: frozenset[GramKey]
 
-    def required_grams(self) -> set[int]:
+    def required_grams(self) -> set[GramKey]:
         return set(self.grams)
 
     def is_any(self) -> bool:
@@ -177,8 +179,8 @@ class GramOr:
 
     branches: tuple[GramQuery, ...]
 
-    def required_grams(self) -> set[int]:
-        out: set[int] = set()
+    def required_grams(self) -> set[GramKey]:
+        out: set[GramKey] = set()
         for branch in self.branches:
             out |= branch.required_grams()
         return out
@@ -348,8 +350,8 @@ def _collect_runs(ast: list) -> list[str]:
     return runs
 
 
-def _grams_from_runs(runs: list[str]) -> set[int]:
-    out: set[int] = set()
+def _grams_from_runs(runs: list[str]) -> set[GramKey]:
+    out: set[GramKey] = set()
     for run in runs:
         out |= _grams_from_run(_encode_run(run))
     return out
@@ -439,6 +441,7 @@ __all__ = [
     "GRAM_SIZE",
     "GramAnd",
     "GramAny",
+    "GramKey",
     "GramOr",
     "GramQuery",
     "build_code_gram_query",

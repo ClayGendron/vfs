@@ -34,7 +34,7 @@ nicety.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final, NamedTuple
+from typing import TYPE_CHECKING, Annotated, Any, Final, NamedTuple
 
 from sqlalchemy import (
     BINARY,
@@ -229,6 +229,9 @@ def _uuid_native(dialect: Dialect) -> bool:
     both report support while forfeiting time-ordered index locality.
     """
     return dialect.name == "postgresql"
+
+
+EntryId = Annotated[str, "26-char ULID naming one entry row; minted at write, joined on everywhere"]
 
 
 class ULIDKey(TypeDecorator[str]):

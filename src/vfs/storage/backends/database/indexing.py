@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Annotated, Any, Final, cast
 
 from sqlalchemy import bindparam, delete, exists, insert, select, update
 
@@ -41,6 +41,8 @@ if TYPE_CHECKING:
 
 INDEX_FORMAT_VERSION: Final = 1
 
+Epoch = Annotated[int, "one published gram-index generation; a missing pointer means no index side"]
+
 # Zoekt's ingestion gates, entry-level: an ineligible body never chunks
 # and is served by the scan side forever — bloat bounds, not coverage.
 MAX_INDEXABLE_BYTES: Final = 2 * 1024 * 1024
@@ -60,8 +62,8 @@ def index_options_hash() -> str:
 class ReindexState:
     """Carry-over between the reindex phases' separate transactions."""
 
-    previous_epoch: int | None = None
-    epoch: int | None = None
+    previous_epoch: Epoch | None = None
+    epoch: Epoch | None = None
     covered: list[tuple[str, int]] = field(default_factory=list)
 
 
@@ -173,7 +175,7 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, parameter_budget
     return Result(ops=("reindex",))
 
 
-async def current_epoch(session: AsyncSession, tables: VFSTables) -> int | None:
+async def current_epoch(session: AsyncSession, tables: VFSTables) -> Epoch | None:
     """The published epoch pointer; ``None`` before the first publish."""
     pointer = select(tables.meta.c.current_gram_epoch).where(tables.meta.c.id == 1)
     return (await session.execute(pointer)).scalar_one_or_none()
@@ -214,7 +216,7 @@ async def publish_epoch(session: AsyncSession, tables: VFSTables, state: Reindex
     return Result(ops=("reindex",))
 
 
-async def reclaim_epochs(session: AsyncSession, tables: VFSTables, current: int) -> Result:
+async def reclaim_epochs(session: AsyncSession, tables: VFSTables, current: Epoch) -> Result:
     """Drop every posting and fingerprint row outside the current epoch."""
     await session.execute(delete(tables.posting_list).where(tables.posting_list.c.epoch != current))
     await session.execute(delete(tables.gram_epochs).where(tables.gram_epochs.c.epoch != current))
@@ -232,7 +234,7 @@ def _indexable(content: str) -> bool:
     return len(unique_code_grams(content, folded=True)) <= MAX_DISTINCT_GRAMS
 
 
-async def _work_pending(session: AsyncSession, tables: VFSTables, current: int | None) -> bool:
+async def _work_pending(session: AsyncSession, tables: VFSTables, current: Epoch | None) -> bool:
     entry, chunks = tables.entry, tables.chunks
     if current is None:
         return True
