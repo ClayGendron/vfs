@@ -1,6 +1,7 @@
 # 097 — Grep runtime: epoch consistency, resource bounds, contract pins
 
-- **Status: implemented 2026-08-13, uncommitted** — born from the
+- **Status: implemented and committed 2026-08-13** (`7880efe`
+  decisions, `db23271` landing) — born from the
   review campaign memo
   (`research/2026-08-13-glob-grep-indexing-review-campaign.md`,
   findings 7–9, 11, 15, 18, 20 + verified-adjacent leads). The §1 fork
