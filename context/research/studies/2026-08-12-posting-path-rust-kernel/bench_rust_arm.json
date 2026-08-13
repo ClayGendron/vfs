@@ -1,0 +1,90 @@
+[
+ {
+  "label": "zero_hit",
+  "numpy": 0.15045807231217623,
+  "py_fused": 0.2578339772298932,
+  "rust_fused": 0.023333006538450718,
+  "rust_dec+np": 0.12754194904118776,
+  "candidates": 11
+ },
+ {
+  "label": "rare_ident",
+  "numpy": 1.8237499753013253,
+  "py_fused": 6.31304201669991,
+  "rust_fused": 0.5434580380097032,
+  "rust_dec+np": 4.3180829379707575,
+  "candidates": 646
+ },
+ {
+  "label": "medium_ident",
+  "numpy": 9.744541952386498,
+  "py_fused": 31.15279192570597,
+  "rust_fused": 2.6394170708954334,
+  "rust_dec+np": 26.37487498577684,
+  "candidates": 6052
+ },
+ {
+  "label": "hot_ident",
+  "numpy": 38.734624977223575,
+  "py_fused": 106.55391600448638,
+  "rust_fused": 10.996000026352704,
+  "rust_dec+np": 87.73758402094245,
+  "candidates": 257360
+ },
+ {
+  "label": "hot_phrase",
+  "numpy": 3.743707900866866,
+  "py_fused": 13.503000023774803,
+  "rust_fused": 1.0785419726744294,
+  "rust_dec+np": 10.560124996118248,
+  "candidates": 1654
+ },
+ {
+  "label": "punct_arrow",
+  "numpy": 7.659959024749696,
+  "py_fused": 25.1762920524925,
+  "rust_fused": 2.088041976094246,
+  "rust_dec+np": 19.85779101960361,
+  "candidates": 7078
+ },
+ {
+  "label": "punct_neq_null",
+  "numpy": 13.552999938838184,
+  "py_fused": 45.650916057638824,
+  "rust_fused": 4.34254202991724,
+  "rust_dec+np": 33.9429589221254,
+  "candidates": 36779
+ },
+ {
+  "label": "regex_probe",
+  "numpy": 12.502833968028426,
+  "py_fused": 39.71837507560849,
+  "rust_fused": 3.489542054012418,
+  "rust_dec+np": 32.098124967888,
+  "candidates": 23306
+ },
+ {
+  "label": "regex_wrapped",
+  "numpy": 7.1909589460119605,
+  "py_fused": 25.499375071376562,
+  "rust_fused": 2.194250002503395,
+  "rust_dec+np": 19.597209058701992,
+  "candidates": 2939
+ },
+ {
+  "label": "case_insens",
+  "numpy": 6.006125011481345,
+  "py_fused": 20.57058399077505,
+  "rust_fused": 1.8042499432340264,
+  "rust_dec+np": 14.76612500846386,
+  "candidates": 14292
+ },
+ {
+  "label": "class_prefix",
+  "numpy": 2.6972920168191195,
+  "py_fused": 9.192541940137744,
+  "rust_fused": 0.7883340585976839,
+  "rust_dec+np": 7.364416029304266,
+  "candidates": 108
+ }
+]

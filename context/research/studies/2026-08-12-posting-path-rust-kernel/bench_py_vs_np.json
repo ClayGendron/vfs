@@ -1,0 +1,90 @@
+[
+ {
+  "label": "zero_hit",
+  "posting_bytes": 3490,
+  "numpy_ms": 0.16545900143682957,
+  "py_naive_ms": 0.29970810282975435,
+  "py_fused_ms": 0.25812501553446054,
+  "candidates": 11
+ },
+ {
+  "label": "rare_ident",
+  "posting_bytes": 84503,
+  "numpy_ms": 1.8398750107735395,
+  "py_naive_ms": 8.066790993325412,
+  "py_fused_ms": 6.251459009945393,
+  "candidates": 646
+ },
+ {
+  "label": "medium_ident",
+  "posting_bytes": 439002,
+  "numpy_ms": 9.467417025007308,
+  "py_naive_ms": 40.08449998218566,
+  "py_fused_ms": 31.81362501345575,
+  "candidates": 6052
+ },
+ {
+  "label": "hot_ident",
+  "posting_bytes": 1120000,
+  "numpy_ms": 38.50000002421439,
+  "py_naive_ms": 110.66712497267872,
+  "py_fused_ms": 107.75183397345245,
+  "candidates": 257360
+ },
+ {
+  "label": "hot_phrase",
+  "posting_bytes": 183888,
+  "numpy_ms": 3.8326249923557043,
+  "py_naive_ms": 17.272957949899137,
+  "py_fused_ms": 13.251249911263585,
+  "candidates": 1654
+ },
+ {
+  "label": "punct_arrow",
+  "posting_bytes": 330904,
+  "numpy_ms": 7.46429106220603,
+  "py_naive_ms": 29.95041699614376,
+  "py_fused_ms": 25.088207912631333,
+  "candidates": 7078
+ },
+ {
+  "label": "punct_neq_null",
+  "posting_bytes": 501755,
+  "numpy_ms": 13.439666014164686,
+  "py_naive_ms": 51.5331249916926,
+  "py_fused_ms": 47.075208043679595,
+  "candidates": 36779
+ },
+ {
+  "label": "regex_probe",
+  "posting_bytes": 501167,
+  "numpy_ms": 12.823916971683502,
+  "py_naive_ms": 47.32616594992578,
+  "py_fused_ms": 39.83583301305771,
+  "candidates": 23306
+ },
+ {
+  "label": "regex_wrapped",
+  "posting_bytes": 328867,
+  "numpy_ms": 7.273667026311159,
+  "py_naive_ms": 30.74420802295208,
+  "py_fused_ms": 26.030458975583315,
+  "candidates": 2939
+ },
+ {
+  "label": "case_insens",
+  "posting_bytes": 240510,
+  "numpy_ms": 5.900625023059547,
+  "py_naive_ms": 23.667457979172468,
+  "py_fused_ms": 21.028541959822178,
+  "candidates": 14292
+ },
+ {
+  "label": "class_prefix",
+  "posting_bytes": 134876,
+  "numpy_ms": 2.6992500061169267,
+  "py_naive_ms": 12.715250020846725,
+  "py_fused_ms": 9.171374957077205,
+  "candidates": 108
+ }
+]
