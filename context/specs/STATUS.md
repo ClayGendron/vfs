@@ -5,15 +5,22 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-07-26, in the specs-reorg session (tree at
-  `d616d75`). This pass verified the 084–090 line directly (code
-  spot-checks against each spec's decisions, full suite at 1873
-  passed / 744 skipped, `ruff`/`ty` at zero; the four Docker engine
-  legs were run green at each 07-26 landing and not re-run here) and
-  moved every landed spec into `archive/`. Router-era entries (039,
+- **Last reviewed:** 2026-08-13, at spec 094's mining pass (rides the
+  review campaign's decision 7). This true-up records the 094 landing
+  and mining (decision set → ADR 037) and the campaign arc — the
+  2026-08-13 five-lens review memo, ADR 036, and specs 095–099, all
+  landed and committed same day; suite at 2,276 passed / 838 skipped,
+  coverage 100%, `ruff`/`ty` zero, four Docker legs green as of the
+  098 landing. Entries older than the glob/grep arc carry forward
+  from the 2026-07-26 review unverified. Router-era entries (039,
   045, 051, 053, 054, 070) carry forward from the 2026-07-10/11
   review — not re-verified, and no commits since have claimed router
   work.
+- **Previous review:** 2026-07-26, the specs-reorg session (tree at
+  `d616d75`): verified the 084–090 line directly (code spot-checks
+  against each spec's decisions, full suite at 1873 passed / 744
+  skipped; four Docker legs green at each 07-26 landing) and moved
+  every landed spec into `archive/`.
 - **Layout (since 2026-07-26; deletion rescinded 2026-08-05):** open
   specs live in `active/`; landed specs move to `archive/`, get their
   backward-flow mining pass, and stay there permanently as the
@@ -35,7 +42,9 @@ lines first; regenerate this file when the picture shifts (review the
 - **073 — glob segment semantics** — **landed 2026-08-01** (all four
   slices in one session: LIKE fusion, `glob_patterns.py` chokepoint,
   ext pushdowns with the stored-column agreement made structural,
-  py3.13 floor, conformance true-up; four Docker legs green; spike
+  py3.13 floor (later lowered — floor 3.11, target 3.13, ADR 035,
+  with an in-house translator replacing the stdlib wrap),
+  conformance true-up; four Docker legs green; spike
   re-pointed at the landed code, claims 2–5 pass). **Mined and
   archived 2026-08-05**: decision set → ADR 032; spike →
   `../research/studies/2026-07-14-glob-like-superset/`.
@@ -124,6 +133,46 @@ lines first; regenerate this file when the picture shifts (review the
   seam inheritance, capability derivation and trait vocabulary);
   the two studies were already downstream; fork resolutions rest
   in `../open-questions.md`.
+- **094 — glob language field parity** — **landed 2026-08-07** (three
+  slices, same session as its shaping review; five forks resolved by
+  Clay same day). Brace alternation expansion-first at the chokepoint
+  (`expand_pattern`, twice-gated defects, `MAX_PATTERN_ARMS` 64,
+  nesting refused), `globs_not`/`ext_not`/`kind` on glob (the one
+  `SupportsPatternSearch.glob` signature change; exclusions
+  authority-side per the false-negative doctrine; `kind` inside every
+  arm), chained `kind=` fetch-to-populate. Proof: brace edition of
+  the differential battery (121 case-checks vs `rg -g`), the
+  cap-×-1k-roots scale row, four Docker legs green. **Mined and
+  archived 2026-08-13**: decision set → ADR 037; the ADR 030/034
+  annotations, docs flips, and battery were already downstream at
+  landing.
+- **The 095–099 review-campaign arc — all landed and committed
+  2026-08-13.** A 73-agent five-lens review of the 092/093/094 arc
+  (`f1ab5b3^..0359c8d`) produced the 2026-08-13 campaign memo (30
+  verified findings, 8-question decision pass resolved by Clay) and
+  five specs, each implemented same day:
+  - **095 — reindex integrity and engine parity** (`4de5878`):
+    flag-algebra closure (restore-after-rebuild blindness), the MSSQL
+    reindex break (`_pending_probe` reshaped legal-everywhere), and
+    the engine-marked reindex→indexed-grep conformance rows the four
+    legs were missing.
+  - **096 — gram coverage and chunk boundaries** (`1567619`, decision
+    record ADR 036): chunks are semantic-only, the gram index reads
+    whole entries — the boundary-straddle false negative closed at
+    the grain, pinned by the boundary battery and codec pin.
+  - **097 — grep runtime bounds and isolation** (`db23271`):
+    epoch-consistent reads, bounded runtime, the reindex lease.
+  - **098 — literal text and line semantics** (`a577c28`):
+    `escape_glob` quoting root text at every composition seam (the
+    ADR 030 rationale-3 regression repaired), the dialect-conditioned
+    `escape_like` bracket class (MSSQL), the `\n`-only line law
+    (`split_lines`), the bang-class arm; four legs green, control-
+    character differential battery 157 case-checks.
+  - **099 — ownership and vocabulary cleanup** (`810ff3d`): the
+    decision pass landed — `passes_filters` home, `ext_membership`
+    pair, `normalize_ext_channel`, `GLOB_CHANNEL_LABELS`,
+    `meta_scoped` delegation, posting row cap deleted, floor facts
+    trued. Behavior byte-identical (38,880-case differential).
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
@@ -219,11 +268,13 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
-→ 089 → 090 → 073 → 091 → 092 → 093. ADRs 001–033 accepted (005
-superseded by 016; 021/022 proposed, awaiting ratification; 018
-awaiting its wiring spec; 032 and 033 are the retroactive records
-of 073's and 093's decision sets, written at their 2026-08-05
-mining passes). The 073/091/092 glob arc and 093 are mined and
-archived. Tree green at 2126 passed / 788 skipped, `ruff`/`ty` at
-zero, all four Docker engine legs green with grep live as of the
-093 landing (2026-08-05).
+→ 089 → 090 → 073 → 091 → 092 → 093 → 094 → 095 → 096 → 097 → 098 →
+099. ADRs 001–037 accepted (005 superseded by 016; 021/022 proposed,
+awaiting ratification; 018 awaiting its wiring spec; 032, 033, and
+037 are the retroactive records of 073's, 093's, and 094's decision
+sets, written at their mining passes; 036 amends 033's chunk-grain
+clause). The 073/091/092 glob arc, 093, and 094 are mined and
+archived; 095–099 landed with their ledgers in `active/` and await
+their own mining passes. Tree green at 2,276 passed / 838 skipped,
+coverage 100%, `ruff`/`ty` at zero, all four Docker engine legs
+green as of the 098 landing (2026-08-13).

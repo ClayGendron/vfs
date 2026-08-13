@@ -49,6 +49,14 @@
   table, "where the language deliberately stops"); open-questions
   true-up; the ADR 030/034 annotations written in-place. The optional
   notebook cell is the one §4 item left undone, by choice.
+  **Mined and archived 2026-08-13**: decision set → ADR 037 (the
+  retroactive record — the five fork resolutions, the
+  exclusions-are-authority-side doctrine, kind-as-parameter,
+  fetch-to-populate, and the declined/deferred list); everything
+  else was already downstream at landing (the two docs pages, the
+  ADR 030/034 in-place annotations, the differential battery's
+  brace edition, the open-questions resolution). STATUS.md trued up
+  in the same pass per the campaign's decision 7.
 - **Date:** 2026-08-07
 - **Owner:** Clay Gendron
 - **Kind:** pattern-language extension (brace alternation at the
