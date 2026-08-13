@@ -21,6 +21,7 @@ from vfs.pattern_matching.glob import (
     composed_pattern,
     derive_ext,
     effective_pattern,
+    escape_glob,
     expand_pattern,
     filter_paths,
     glob_defect,
@@ -33,6 +34,7 @@ from vfs.pattern_matching.grep import (
     filter_candidates,
     match_texts,
     passes_filters,
+    split_lines,
     verify,
 )
 
@@ -47,6 +49,7 @@ __all__ = [
     "composed_pattern",
     "derive_ext",
     "effective_pattern",
+    "escape_glob",
     "expand_pattern",
     "filter_candidates",
     "filter_paths",
@@ -55,5 +58,6 @@ __all__ = [
     "passes_filters",
     "render_residual",
     "residuals",
+    "split_lines",
     "verify",
 ]

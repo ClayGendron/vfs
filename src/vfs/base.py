@@ -53,6 +53,7 @@ from vfs.pattern_matching import (
     compile_verifier,
     composed_pattern,
     effective_pattern,
+    escape_glob,
     expand_pattern,
     filter_candidates,
     glob_defect,
@@ -1974,7 +1975,7 @@ class VirtualFileSystem:
             if root == ROOT or self._resolve_terminal(root).binding.path != key:
                 continue
             if not globs or any(compile_filter(glob, ()).matches(root) for glob in globs):
-                members.update(self._residual_renders(str(root), key))
+                members.update(self._residual_renders(escape_glob(str(root)), key))
         return members
 
     def _composed_members(self, key: Path, roots: tuple[Path, ...], patterns: tuple[str, ...]) -> set[str]:

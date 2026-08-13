@@ -9,7 +9,7 @@ alignment guarantee.
 from __future__ import annotations
 
 from vfs.paths import Path
-from vfs.pattern_matching import compile_verifier, filter_candidates, match_texts, verify
+from vfs.pattern_matching import compile_verifier, filter_candidates, match_texts, split_lines, verify
 
 
 class TestFilterCandidates:
@@ -65,3 +65,50 @@ class TestVerifyAndMatchTexts:
         [hit] = match_texts([(Path("/a"), "x\nx\nx")], verifier, invert=False, before=0, after=0, mode="count", cap=2)
         assert hit is not None
         assert (hit.matches, hit.score) == (None, 2.0)
+
+
+class TestSplitLines:
+    def test_newline_is_the_only_line_break(self) -> None:
+        # str.splitlines would break on all of these; grep and ripgrep
+        # treat every one as an ordinary in-line byte.
+        for control in ("\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029", "\r"):
+            assert split_lines(f"a{control}b\nnext") == [f"a{control}b", "next"], repr(control)
+
+    def test_the_final_terminator_is_dropped_but_blank_lines_are_kept(self) -> None:
+        assert split_lines("a\nb\n") == ["a", "b"]
+        assert split_lines("a\n\nb") == ["a", "", "b"]
+        assert split_lines("") == []
+
+
+class TestControlCharacterLineSemantics:
+    def test_a_pattern_spans_a_form_feed_inside_one_line(self) -> None:
+        verifier = compile_verifier("end.start", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        verified = verify("end\x0cstart\n", verifier, invert=False, before=0, after=0, mode="lines", cap=None)
+        assert verified is not None
+
+    def test_line_numbers_after_a_control_byte_stay_true(self) -> None:
+        # With splitlines the \x85 minted a phantom line and every later
+        # match carried a wrong number — misdirecting downstream edits.
+        verifier = compile_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        text = "first\x85still first\nneedle\n"
+        verified = verify(text, verifier, invert=False, before=0, after=0, mode="lines", cap=None)
+        assert verified is not None
+        matches, _score = verified
+        assert matches is not None and [m.match for m in matches] == [2]
+
+    def test_count_mode_counts_newline_lines_only(self) -> None:
+        verifier = compile_verifier("x", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        verified = verify("x\u2028x\nx\n", verifier, invert=False, before=0, after=0, mode="count", cap=None)
+        assert verified is not None
+        assert verified[1] == 2.0
+
+    def test_crlf_content_keeps_grep_semantics(self) -> None:
+        # The \r stays in-line, so an end anchor rejects it — exactly
+        # what grep and rg (without --crlf) report on CRLF files.
+        anchored = compile_verifier("foo$", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        assert verify("foo\r\nbar\n", anchored, invert=False, before=0, after=0, mode="lines", cap=None) is None
+        plain = compile_verifier("foo", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        verified = verify("foo\r\nbar\n", plain, invert=False, before=0, after=0, mode="lines", cap=None)
+        assert verified is not None
+        matches, _score = verified
+        assert matches is not None and [m.match for m in matches] == [1]

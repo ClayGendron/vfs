@@ -161,7 +161,14 @@ are *assertions*; patterns are *predicates*:
 3. Roots are literal and immune to glob metacharacters in names
    (glob has no escape syntax — the reason CPython ships
    `glob.escape`); a directory named `data [prod]` is addressable
-   only literally.
+   only literally. *(Annotation, 2026-08-13: spec 098 §1 restored
+   this rationale after the 092/093 arc violated it — root text was
+   spliced raw into pattern text, so `data [prod]` served empty and
+   `[x]` captured its sibling. `escape_glob` (class notation, the
+   language's own expressible escape) now quotes root text at every
+   composition seam, pinned by unit, namespace, and conformance
+   rows including the property row: any legal root sees exactly its
+   own subtree.)*
 4. `observations=` — `paths`' mutually-exclusive sibling — is the
    chaining surface (glob over a prior result's rows); patterns
    cannot consume prior results.

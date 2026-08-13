@@ -49,6 +49,16 @@ class the entry-grain extraction closes; before it, the two index-side
 worlds lost the straddling match. 133 case-checks green across the
 same four worlds.
 
+Control-character run (2026-08-13, with the 098 landing): four corpus
+files carrying form feed, NEL (``\\x85``), U+2028/29, and CRLF, plus
+six rg cases — a pattern spanning the form feed, line-number parity
+after each in-line control byte, and the CRLF no-change control —
+the class ``str.splitlines`` line semantics silently broke; before
+the ``\\n``-only split, the span case matched nothing and every
+post-control line number was skewed. (Harness fix in the same pass:
+``parse_hits`` itself now splits rg output on ``\\n`` only.)
+157 case-checks green across the same four worlds.
+
 Run:  uv run python context/research/studies/2026-08-05-grep-differential-battery/grep_differential_battery.py
 """
 
@@ -86,6 +96,12 @@ FILES = {
     "data/long.txt": (
         "a" * 2036 + "bn_ending_at" + "c" * 2042 + "bn_across_cut" + " bn_after_cut end\n"
     ),
+    # Control-character edition (2026-08-13): bytes str.splitlines breaks
+    # on but grep/rg keep in-line, plus the CRLF no-change control.
+    "ctrl/formfeed.txt": "section one\x0cstill line one\nneedle after ff\n",
+    "ctrl/nel.txt": "first\x85still first\nneedle nel\n",
+    "ctrl/useps.txt": "u\u2028v\u2029w\nneedle usep\n",
+    "ctrl/crlf.txt": "needle crlf\r\nplain body\r\n",
 }
 
 # rg leg: (pattern, roots, vfs kwargs, rg flags) — line-level parity.
@@ -113,6 +129,15 @@ RG_CASES = (
     ("bn_ending_at", (), {}, ()),
     ("bn_across_cut", (), {}, ()),
     ("bn_after_cut", (), {}, ()),
+    # Control-character edition (2026-08-13): a pattern spans the form
+    # feed inside one line; line numbers after in-line control bytes and
+    # Unicode separators match rg; CRLF is the no-change control.
+    ("one.still", (), {}, ()),
+    ("still first", (), {}, ()),
+    ("needle after ff", (), {}, ()),
+    ("needle nel", (), {}, ()),
+    ("needle usep", (), {}, ()),
+    ("needle crlf", (), {}, ()),
 )
 
 failures: list[str] = []
@@ -124,8 +149,12 @@ def check(label: str, expected: object, got: object) -> None:
 
 
 def parse_hits(stdout: str, prefix: str) -> set[tuple[str, int]]:
+    # Split on \n only: matched bodies may carry \x0c/\x85/U+2028,
+    # which splitlines would break into phantom unparseable lines.
     hits = set()
-    for line in stdout.splitlines():
+    for line in stdout.split("\n"):
+        if not line:
+            continue
         path, num, _body = line.split(":", 2)
         hits.add((f"{prefix}/{path.removeprefix('./')}", int(num)))
     return hits

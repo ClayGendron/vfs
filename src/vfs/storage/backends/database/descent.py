@@ -42,6 +42,8 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.storage.backends.database.dialects import DialectProfile
+
 LIKE_ESCAPE: Final = "\\"
 
 
@@ -142,12 +144,12 @@ def targets_with_ancestors(targets: Iterable[Path]) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
-def subtree_filter(entry: Table, root: str) -> ColumnElement[bool]:
+def subtree_filter(entry: Table, root: str, profile: DialectProfile) -> ColumnElement[bool]:
     """*root* itself or any strict descendant, on the escaped path cache."""
-    return or_(entry.c.path == root, descendant_filter(entry, root))
+    return or_(entry.c.path == root, descendant_filter(entry, root, profile))
 
 
-def descendant_filter(entry: Table, root: str) -> ColumnElement[bool]:
+def descendant_filter(entry: Table, root: str, profile: DialectProfile) -> ColumnElement[bool]:
     """Strict descendants of *root*, on the escaped path cache.
 
     Owns the ROOT branch: naive prefix composition would produce
@@ -156,23 +158,31 @@ def descendant_filter(entry: Table, root: str) -> ColumnElement[bool]:
     """
     if root == ROOT:
         return entry.c.path != str(ROOT)
-    return entry.c.path.like(escape_like(root) + "/%", escape=LIKE_ESCAPE)
+    return entry.c.path.like(escape_like(root, profile) + "/%", escape=LIKE_ESCAPE)
 
 
-def liveness_filters(entry: Table, *, include_meta: bool) -> list[ColumnElement[bool]]:
+def liveness_filters(entry: Table, profile: DialectProfile, *, include_meta: bool) -> list[ColumnElement[bool]]:
     """Enumeration-scope predicates: meta hidden unless anchored inside it."""
     if include_meta:
         return []
     return [
         entry.c.path != METADATA_ROOT,
-        ~descendant_filter(entry, METADATA_ROOT),
+        ~descendant_filter(entry, METADATA_ROOT, profile),
     ]
 
 
-def escape_like(text: str) -> str:
-    """Escape LIKE metacharacters so *text* matches only itself as a prefix."""
-    return (
+def escape_like(text: str, profile: DialectProfile) -> str:
+    """Escape LIKE metacharacters so *text* matches only itself as a prefix.
+
+    The metachar set is the dialect's: ``[`` opens a class only where
+    the profile declares it (T-SQL), and escaping it elsewhere is
+    itself an error (ORA-01424) — so the bracket escape is conditional.
+    """
+    escaped = (
         text.replace(LIKE_ESCAPE, LIKE_ESCAPE + LIKE_ESCAPE)
         .replace("%", LIKE_ESCAPE + "%")
         .replace("_", LIKE_ESCAPE + "_")
     )
+    if profile.like_bracket_class:
+        escaped = escaped.replace("[", LIKE_ESCAPE + "[")
+    return escaped

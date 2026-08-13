@@ -100,6 +100,21 @@ def filter_candidates(
 # ---------------------------------------------------------------------------
 
 
+def split_lines(text: str) -> list[str]:
+    """Grep's line law: lines break on ``\\n`` only, final terminator dropped.
+
+    ``str.splitlines`` also breaks on ``\\x0b \\x0c \\x1c-\\x1e \\x85``
+    and U+2028/29 — bytes grep and ripgrep keep in-line — which would
+    skew matches and line numbers against the field tools. The index
+    fold normalizes ``\\r`` variants to ``\\n``; here ``\\r`` stays an
+    ordinary in-line byte, the same treatment the external tools apply.
+    """
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def compile_verifier(pattern: str, *, fixed_strings: bool, word_regexp: bool, case_mode: CaseMode) -> re.Pattern[str]:
     """The conformance-pinned modifier wrapping: escape, word-wrap, case flags.
 
@@ -130,7 +145,7 @@ def verify(
     on score; ``lines`` renders one region per hit line, context bounds
     clamped to the file.
     """
-    lines = text.splitlines()
+    lines = split_lines(text)
     hits: list[int] = []
     for number, line in enumerate(lines, start=1):
         if (verifier.search(line) is not None) is not invert:

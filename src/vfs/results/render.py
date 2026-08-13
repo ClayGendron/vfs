@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from vfs.models import Match
+from vfs.pattern_matching.grep import split_lines
 from vfs.results.kinds import KIND_CONTRACTS, Severity, kind_family
 from vfs.results.projection import ACTION_FUNCTIONS, OBSERVATION_FIELDS, resolve_projection, validate_projection
 
@@ -398,9 +399,9 @@ def _region_lines(
     numbers are 1-indexed file positions.
     """
     if region_text:
-        return list(enumerate(region_text.splitlines(), start=start))
+        return list(enumerate(split_lines(region_text), start=start))
     if full_content:
-        text_lines = full_content.splitlines()
+        text_lines = split_lines(full_content)
         return [(n, text_lines[n - 1]) for n in range(start, end + 1) if 0 < n <= len(text_lines)]
     if region_text is not None:
         return [(n, "") for n in range(start, end + 1)]

@@ -225,7 +225,7 @@ async def delete_rows(
         trash_path = f"{trash.bucket_path}/{_trash_name(row['entry_id'], row['name'])}"
         # A file has no descendants — its LIKE select would be a wasted round trip.
         is_directory = row["kind"] == "directory"
-        rewrites = await _descendant_rewrites(session, entry, str(target), trash_path) if is_directory else []
+        rewrites = await _descendant_rewrites(session, entry, profile, str(target), trash_path) if is_directory else []
         if any(byte_length(p) > MAX_PATH_LENGTH for p in (trash_path, *(r["b_path"] for r in rewrites))):
             message = f"Cannot delete {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
             errors.append(classified(VFSErrorKind.unaddressable, message, target))
@@ -241,7 +241,7 @@ async def delete_rows(
         # Rewrites re-collect post-claim: a deep child can land under an
         # unguarded descendant mid-window; the pre-claim list judged bytes.
         if is_directory:
-            await _rewrite_descendants(session, entry, str(target), trash_path)
+            await _rewrite_descendants(session, entry, profile, str(target), trash_path)
         await _bump(session, entry, bucket_id)
         await _bump(session, entry, row["parent_id"])
         local_bumps[bucket_id] += 1
@@ -303,7 +303,7 @@ async def restore_rows(
             if occupant["kind"] == "directory" and await _has_live_children(session, entry, occupant["entry_id"]):
                 errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest, target=target))
                 continue
-        subtree = await _fetch_subtree(session, tables, row["path"])
+        subtree = await _fetch_subtree(session, tables, profile, row["path"])
         new_paths = (str(dest) + r["path"][len(row["path"]) :] for r in subtree)
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths):
             message = f"Cannot restore {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
@@ -370,7 +370,7 @@ async def sweep_rows(
         if row is None:
             misses = await classify_misses(session, entry, [path], membership_budget)
             return Result(ops=("sweep",), errors=misses)
-        await _purge_subtree(session, tables, membership_budget, str(path))
+        await _purge_subtree(session, tables, profile, membership_budget, str(path))
         await _bump(session, entry, row["parent_id"])
         return Result(ops=("sweep",), observations=[_observe_deleted(path, row)])
     cutoff = datetime.now(UTC) - timedelta(days=trash_days)
@@ -391,7 +391,7 @@ async def sweep_rows(
                 continue
             if hour + timedelta(hours=1) > cutoff:
                 continue
-            await _purge_subtree(session, tables, membership_budget, child["path"])
+            await _purge_subtree(session, tables, profile, membership_budget, child["path"])
             await _bump(session, entry, root["entry_id"])
             rows.append(_observe_deleted(Path(child["path"]), child))
     skips.extend(await _reclaim_orphan_content(session, tables, membership_budget))
@@ -481,7 +481,7 @@ async def transfer_rows(
             if occupant["kind"] == "directory" and await _has_live_children(session, entry, occupant["entry_id"]):
                 errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest, target=src))
                 continue
-        subtree = await _fetch_subtree(session, tables, str(src), with_content=op == "copy")
+        subtree = await _fetch_subtree(session, tables, profile, str(src), with_content=op == "copy")
         new_paths = {row["entry_id"]: str(dest) + row["path"][len(str(src)) :] for row in subtree}
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths.values()):
             message = f"Cannot {op} {src}: Path too long (max {MAX_PATH_LENGTH} bytes)"
@@ -557,7 +557,9 @@ async def _has_live_children(session: AsyncSession, entry: Table, entry_id: str)
     return (await session.execute(stmt)).first() is not None
 
 
-async def _purge_subtree(session: AsyncSession, tables: VFSTables, membership_budget: int, target: str) -> None:
+async def _purge_subtree(
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, membership_budget: int, target: str
+) -> None:
     """Hard-delete the subtree's rows across every family table, chunked.
 
     Collection and deletion repeat until the subtree reads empty: writes
@@ -576,7 +578,7 @@ async def _purge_subtree(session: AsyncSession, tables: VFSTables, membership_bu
     """
     entry = tables.entry
     edges = tables.edges
-    subtree = subtree_filter(entry, target)
+    subtree = subtree_filter(entry, target, profile)
     while ids := [row.entry_id for row in await session.execute(select(entry.c.entry_id).where(subtree))]:
         await seam("purge:post-collect")
         for chunk in chunked(ids, membership_budget):
@@ -912,14 +914,14 @@ async def _reparent_to_trash(
 
 
 async def _descendant_rewrites(
-    session: AsyncSession, entry: Table, old_prefix: str, new_prefix: str
+    session: AsyncSession, entry: Table, profile: DialectProfile, old_prefix: str, new_prefix: str
 ) -> list[dict[str, str]]:
     """Each descendant's id and recomputed path cache under the new prefix.
 
     Raw ``str`` slicing, no ``Path`` minted — the caller may still refuse
     the whole set on the byte budget before anything is applied.
     """
-    like = descendant_filter(entry, old_prefix)
+    like = descendant_filter(entry, old_prefix, profile)
     found = await session.execute(select(entry.c.entry_id, entry.c.path).where(like))
     return [{"b_id": r.entry_id, "b_path": new_prefix + r.path[len(old_prefix) :]} for r in found]
 
@@ -936,7 +938,9 @@ async def _apply_rewrites(session: AsyncSession, entry: Table, rows: list[dict[s
     await session.execute(stmt, rows)
 
 
-async def _rewrite_descendants(session: AsyncSession, entry: Table, old_prefix: str, new_prefix: str) -> None:
+async def _rewrite_descendants(
+    session: AsyncSession, entry: Table, profile: DialectProfile, old_prefix: str, new_prefix: str
+) -> None:
     """Recompute descendant path caches under the moved prefix, collected live.
 
     Runs after the root claim, so a child committed inside the pre-claim
@@ -944,7 +948,7 @@ async def _rewrite_descendants(session: AsyncSession, entry: Table, old_prefix: 
     byte budget raises :class:`StaleSnapshot` instead of storing it —
     the redriven ladder then refuses the whole target honestly.
     """
-    rewrites = await _descendant_rewrites(session, entry, old_prefix, new_prefix)
+    rewrites = await _descendant_rewrites(session, entry, profile, old_prefix, new_prefix)
     if any(byte_length(r["b_path"]) > MAX_PATH_LENGTH for r in rewrites):
         raise StaleSnapshot(f"a late arrival under {old_prefix} overflows the path budget")
     await _apply_rewrites(session, entry, rewrites)
@@ -1003,7 +1007,7 @@ async def _dest_parent_id(session: AsyncSession, entry: Table, dest: Path, membe
 
 
 async def _fetch_subtree(
-    session: AsyncSession, tables: VFSTables, src: str, *, with_content: bool = False
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, src: str, *, with_content: bool = False
 ) -> list[RowMapping]:
     """The source row and every descendant, with the columns a copy reproduces.
 
@@ -1014,7 +1018,7 @@ async def _fetch_subtree(
     """
     entry = tables.entry
     columns: list[Any] = [entry.c[name] for name in _SUBTREE_COLUMNS]
-    subtree = subtree_filter(entry, src)
+    subtree = subtree_filter(entry, src, profile)
     stmt = select(*columns).where(subtree)
     if with_content:
         stmt = select(*columns, tables.content.c.content).select_from(tables.content_joined()).where(subtree)
@@ -1064,7 +1068,7 @@ async def _execute_move(
         refused = await _claim(session, profile, fence, entry.c.entry_id, miss=miss)
         if refused is not None:
             return refused
-        await _purge_subtree(session, tables, membership_budget, str(dest))
+        await _purge_subtree(session, tables, profile, membership_budget, str(dest))
     stmt = (
         update(entry)
         .where(entry.c.entry_id == src_row["entry_id"], entry.c.version == src_row["version"])
@@ -1089,7 +1093,7 @@ async def _execute_move(
         raise StaleSnapshot(f"a rival write took {dest} before this {op}'s claim") from exc
     if refused is not None:
         return refused
-    await _rewrite_descendants(session, entry, src_row["path"], str(dest))
+    await _rewrite_descendants(session, entry, profile, src_row["path"], str(dest))
     await _bump(session, entry, src_row["parent_id"])
     # Both parents bump even when identical — two increments, per the
     # conformance contract.

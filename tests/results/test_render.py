@@ -216,6 +216,15 @@ class TestGrepRendering:
         result = Result(ops=("grep",), observations=[obs("/a.py"), obs("/b.py")])
         assert str(result) == "/a.py\n/b.py"
 
+    def test_control_bytes_in_region_text_stay_inside_their_line(self) -> None:
+        # Rendering must split on the matcher's own line law — a form
+        # feed re-split here would skew line numbers the match fixed.
+        result = Result(
+            ops=("grep",),
+            observations=[obs("/a.py", matches=[Match(start=2, end=2, match=2, content="hit\x0cstill line 2")])],
+        )
+        assert str(result) == "/a.py:2:hit\x0cstill line 2"
+
     def test_duplicate_spans_merge_their_hits(self) -> None:
         result = Result(
             ops=("grep",),

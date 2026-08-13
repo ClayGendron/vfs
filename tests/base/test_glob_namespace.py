@@ -188,6 +188,41 @@ async def test_roots_stay_assertions() -> None:
 
 
 # ----------------------------------------------------------------------
+# Metachar roots — a scope root is a path, never glob syntax
+# ----------------------------------------------------------------------
+
+METACHAR_ROOT_NAMES = ("[x]", "{a}", "a*b", "c?d", "data [prod]")
+
+
+async def test_metachar_roots_serve_exactly_their_own_subtree() -> None:
+    # The regression class: an unquoted root spliced into pattern text
+    # captured siblings ([x] served /x) or refused whole calls ({a}).
+    for fs in (await _plain_world(), await _mounted_world()):
+        for name in METACHAR_ROOT_NAMES:
+            await fs.write(path=f"/data/{name}/hit.txt", content="hit", parents=True)
+        await fs.write(path="/data/x/decoy.txt", content="decoy", parents=True)
+        await fs.write(path="/data/ab/decoy.txt", content="decoy", parents=True)
+        for name in METACHAR_ROOT_NAMES:
+            result = await fs.glob("*.txt", paths=(f"/data/{name}",))
+            assert result.success is True, (name, result.errors)
+            assert result.paths == (f"/data/{name}/hit.txt",), name
+
+
+async def test_every_root_sees_exactly_its_prefix_subtree() -> None:
+    # Property shape: for any legal path p, glob("**", paths=(p,)) is
+    # exactly p's subtree — p's own row included, nothing beside it.
+    fs = await _plain_world()
+    for name in METACHAR_ROOT_NAMES:
+        await fs.write(path=f"/m/{name}/deep/d.txt", content="x", parents=True)
+    everything = sorted((await fs.glob("**")).paths)
+    for root in everything:
+        scoped = await fs.glob("**", paths=(root,))
+        assert scoped.success is True, root
+        expected = [p for p in everything if p == root or p.startswith(root + "/")]
+        assert sorted(scoped.paths) == expected, root
+
+
+# ----------------------------------------------------------------------
 # Brace alternation — arms expand at the chokepoint, results union
 # ----------------------------------------------------------------------
 

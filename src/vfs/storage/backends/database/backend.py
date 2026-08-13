@@ -171,7 +171,10 @@ class DatabaseStorage:
     ) -> Result:
         targets = targets_of(path, observations, default=ROOT)
         return await self._execute(
-            "ls", lambda session: ls_rows(session, self._host.tables, self._host.membership_budget, targets, columns)
+            "ls",
+            lambda session: ls_rows(
+                session, self._host.tables, self._host.profile, self._host.membership_budget, targets, columns
+            ),
         )
 
     async def tree(
@@ -190,7 +193,7 @@ class DatabaseStorage:
         return await self._execute(
             "tree",
             lambda session: tree_rows(
-                session, self._host.tables, self._host.membership_budget, path, max_depth, columns
+                session, self._host.tables, self._host.profile, self._host.membership_budget, path, max_depth, columns
             ),
         )
 

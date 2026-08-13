@@ -414,7 +414,8 @@ async def _entries_for_scan(
     merged: dict[str, RowMapping] = {}
     overflow = False
     if gates:
-        arms = [arm for gate in gates if (arm := pattern_arm(entry, gate, wanted, membership_budget)) is not None]
+        built = (pattern_arm(entry, gate, wanted, profile, membership_budget) for gate in gates)
+        arms = [arm for arm in built if arm is not None]
         if not arms:
             return ScanNominees([], False)
         ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
@@ -429,7 +430,7 @@ async def _entries_for_scan(
             if len(merged) > limit + 1:
                 merged = {path: merged[path] for path in sorted(merged)[: limit + 1]}
     else:
-        terms = [*base, entry.c.path != "/", *liveness_filters(entry, include_meta=False)]
+        terms = [*base, entry.c.path != "/", *liveness_filters(entry, profile, include_meta=False)]
         if wanted and "" not in wanted and len(wanted) <= membership_budget:
             terms.append(entry.c.ext.in_(sorted(wanted)))
         stmt = select(*columns).where(*terms).order_by(entry.c.path).limit(limit + 1)

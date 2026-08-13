@@ -33,6 +33,7 @@ import pytest
 
 from vfs.models import Entry, Observation
 from vfs.paths import Path
+from vfs.pattern_matching import escape_glob
 from vfs.results import Severity, VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import (
@@ -84,8 +85,8 @@ async def _revision_of(storage: ConformanceBackend, path: str) -> int:
 
 # Directory names holding a LIKE metacharacter, beside the near-miss
 # decoys an unescaped prefix pattern would erroneously match.
-METACHAR_DIRS = ("a%b", "a_b", "a\\b")
-DECOY_DIRS = ("aXb", "ab")
+METACHAR_DIRS = ("a%b", "a_b", "a\\b", "a[1]b")
+DECOY_DIRS = ("aXb", "ab", "a1b")
 
 
 async def _mint_metachar_tree(storage: ConformanceBackend) -> None:
@@ -1206,10 +1207,12 @@ class StorageContract:
         self, storage: ConformanceBackend
     ) -> None:
         # The pattern's literal prefix must escape LIKE metachars, or
-        # the decoy siblings' children leak into the fan.
+        # the decoy siblings' children leak into the fan. Glob metachars
+        # in the stored name cross as escaped pattern text — the form
+        # every composed scope root arrives in.
         await _mint_metachar_tree(storage)
         for name in METACHAR_DIRS:
-            result = await storage.glob(patterns=(f"/{name}/**/*",))
+            result = await storage.glob(patterns=(escape_glob(f"/{name}") + "/**/*",))
             assert [str(o.path) for o in result.observations] == [f"/{name}/inner.txt"]
 
     @needs("write", "glob")
@@ -1233,10 +1236,38 @@ class StorageContract:
         assert result.success is True
         trash_path = result.observations[0].trash_path
         assert trash_path is not None
-        for name in ("a_b", "a\\b", *DECOY_DIRS):
+        for name in (*(n for n in METACHAR_DIRS if n != "a%b"), *DECOY_DIRS):
             assert (await storage.stat(path=Path(f"/{name}/inner.txt"))).success is True
         trashed = await storage.tree(path=trash_path)
         assert [str(o.path) for o in trashed.observations] == [f"{trash_path}/inner.txt"]
+
+    @needs("write", "delete", "tree", "stat")
+    async def test_cascade_delete_of_a_bracket_directory_leaves_no_orphans(self, storage: ConformanceBackend) -> None:
+        # T-SQL LIKE reads [...] as a class: an unescaped bracket prefix
+        # trashes the root but strands its live descendants — the orphan
+        # shape. The subtree must travel to trash whole.
+        await _mint_metachar_tree(storage)
+        result = await storage.delete(path=Path("/a[1]b"))
+        assert result.success is True
+        assert (await storage.stat(path=Path("/a[1]b/inner.txt"))).success is False
+        trash_path = result.observations[0].trash_path
+        assert trash_path is not None
+        trashed = await storage.tree(path=trash_path)
+        assert [str(o.path) for o in trashed.observations] == [f"{trash_path}/inner.txt"]
+        for name in (*(n for n in METACHAR_DIRS if n != "a[1]b"), *DECOY_DIRS):
+            assert (await storage.stat(path=Path(f"/{name}/inner.txt"))).success is True
+
+    @needs("write", "move", "tree", "stat")
+    async def test_move_of_a_bracket_directory_carries_its_whole_subtree(self, storage: ConformanceBackend) -> None:
+        # Move composes the same descendant filter; the class miss would
+        # leave the child behind under a path that no longer exists.
+        await _mint_metachar_tree(storage)
+        result = await storage.move(operations=[ResolvedPair(src=Path("/a[1]b"), dest=Path("/moved"))])
+        assert result.success is True
+        assert (await storage.stat(path=Path("/a[1]b/inner.txt"))).success is False
+        assert (await storage.stat(path=Path("/moved/inner.txt"))).success is True
+        for name in DECOY_DIRS:
+            assert (await storage.stat(path=Path(f"/{name}/inner.txt"))).success is True
 
     # ------------------------------------------------------------------
     # Enumeration liveness — the /.vfs meta scope

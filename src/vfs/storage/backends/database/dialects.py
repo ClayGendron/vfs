@@ -96,6 +96,13 @@ class DialectProfile:
     the spelling) but takes no position on acceptance: T-SQL has no row
     constructors in ``IN``, and the generic floor claims nothing.
 
+    ``like_bracket_class`` declares that the engine's ``LIKE`` treats
+    ``[...]`` as a character class (the T-SQL family) — SQLAlchemy takes
+    no position, and the fix cannot be unconditional: escaping ``[`` on
+    engines without the class raises ORA-01424 on Oracle.
+    :func:`~vfs.storage.backends.database.descent.escape_like` escapes
+    ``[`` exactly where this is declared.
+
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
     reads and guarded updates judge the same committed state, so a
@@ -125,6 +132,7 @@ class DialectProfile:
     expression_depth_budget: int = 1_000
     values_join: bool = False
     tuple_in: bool = False
+    like_bracket_class: bool = False
 
 
 SQLITE: Final = DialectProfile(
@@ -168,6 +176,9 @@ MSSQL: Final = DialectProfile(
     arbitration="catch_retry",
     guard_miss="reprobe",
     values_join=True,
+    # T-SQL LIKE treats [...] as a character class; escape_like must
+    # quote "[" here or a bracketed path silently misses its subtree.
+    like_bracket_class=True,
 )
 
 # catch_retry, not upsert: ON DUPLICATE KEY UPDATE takes no conflict

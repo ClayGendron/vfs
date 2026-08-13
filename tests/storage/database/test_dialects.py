@@ -19,10 +19,12 @@ from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.results import VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database.descent import escape_like
 from vfs.storage.backends.database.dialects import (
     GENERIC,
     MSSQL,
     MYSQL,
+    ORACLE,
     POSTGRESQL,
     PROFILES,
     SQLITE,
@@ -149,6 +151,16 @@ class TestDialectPolicy:
         # MAX_PATH_LENGTH bytes — the budget↔DDL gap closes by construction.
         for profile in (*PROFILES.values(), GENERIC):
             assert profile.key_byte_budget >= MAX_PATH_LENGTH
+
+    def test_the_bracket_class_escape_is_mssql_only(self) -> None:
+        # T-SQL LIKE reads [...] as a class; escaping "[" anywhere else
+        # is itself an error (ORA-01424 on Oracle), so the escape is a
+        # declared profile fact, off on every other engine and the floor.
+        assert MSSQL.like_bracket_class is True
+        for profile in (SQLITE, POSTGRESQL, MYSQL, ORACLE, GENERIC):
+            assert profile.like_bracket_class is False
+        assert escape_like("/a[1]b_c%", MSSQL) == "/a\\[1]b\\_c\\%"
+        assert escape_like("/a[1]b_c%", ORACLE) == "/a[1]b\\_c\\%"
 
     def test_values_join_is_declared_only_where_proven(self) -> None:
         # SQLite rejects the column-aliased VALUES join despite declaring

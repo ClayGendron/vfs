@@ -129,6 +129,7 @@ async def stat_rows(
 async def ls_rows(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
@@ -137,7 +138,7 @@ async def ls_rows(
     found = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=True)
     missing = await miss_errors(session, tables.entry, targets, found, membership_budget)
     directories = [t for t in targets if (f := found.get(t)) is not None and f["kind"] == "directory"]
-    children = await _children_by_parent(session, tables.entry, membership_budget, directories, found, fetched)
+    children = await _children_by_parent(session, tables.entry, profile, membership_budget, directories, found, fetched)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
@@ -154,6 +155,7 @@ async def ls_rows(
 async def tree_rows(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     path: Path,
     max_depth: int | None,
@@ -170,8 +172,8 @@ async def tree_rows(
     stmt = (
         select(*_entry_columns(entry, fetched))
         .where(
-            descendant_filter(entry, str(path)),
-            *liveness_filters(entry, include_meta=path.is_meta),
+            descendant_filter(entry, str(path), profile),
+            *liveness_filters(entry, profile, include_meta=path.is_meta),
         )
         .order_by(entry.c.path)
     )
@@ -229,7 +231,7 @@ async def glob_rows(
     live = list(dict.fromkeys(patterns))
     gates = [compile_filter(pattern, ext) for pattern in live]
     not_gates = [compile_filter(pattern, ()) for pattern in dict.fromkeys(globs_not)]
-    built = (pattern_arm(entry, glob, wanted, membership_budget, kind=kind) for glob in gates)
+    built = (pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind) for glob in gates)
     arms = [arm for arm in built if arm is not None]
     ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
     chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ext_binds)
@@ -254,7 +256,13 @@ async def glob_rows(
 
 
 def pattern_arm(
-    entry: Table, glob: GlobFilter, wanted: frozenset[str], membership_budget: int, *, kind: str | None = None
+    entry: Table,
+    glob: GlobFilter,
+    wanted: frozenset[str],
+    profile: DialectProfile,
+    membership_budget: int,
+    *,
+    kind: str | None = None,
 ) -> ColumnElement[bool] | None:
     """One pattern's self-contained OR-arm, or ``None`` when provably empty.
 
@@ -269,7 +277,7 @@ def pattern_arm(
     """
     subject = entry.c.path if glob.by_path else entry.c.name
     like = _glob_like(glob.pattern)
-    prefilter = like if like is not None else escape_like(_literal_prefix(glob.pattern)) + "%"
+    prefilter = like if like is not None else escape_like(_literal_prefix(glob.pattern), profile) + "%"
     terms: list[ColumnElement[bool]] = [entry.c.path != "/", subject.like(prefilter, escape=LIKE_ESCAPE)]
     if kind is not None:
         terms.append(entry.c.kind == kind)
@@ -281,7 +289,7 @@ def pattern_arm(
             return None
         # The dotfile arm rescues names like ".txt", whose stored ext is NULL.
         terms.append(or_(entry.c.ext == derived.ext, entry.c.name == derived.dot_suffix))
-    terms.extend(liveness_filters(entry, include_meta=meta_scoped(glob.pattern)))
+    terms.extend(liveness_filters(entry, profile, include_meta=meta_scoped(glob.pattern)))
     return and_(*terms)
 
 
@@ -366,6 +374,7 @@ async def _pattern_candidates(
 async def _children_by_parent(
     session: AsyncSession,
     entry: Table,
+    profile: DialectProfile,
     membership_budget: int,
     directories: Sequence[Path],
     found: dict[str, RowMapping],
@@ -383,7 +392,7 @@ async def _children_by_parent(
         for chunk in chunked(scope, membership_budget):
             stmt = (
                 select(entry.c.parent_id, *_entry_columns(entry, fetched))
-                .where(entry.c.parent_id.in_(chunk), *liveness_filters(entry, include_meta=include_meta))
+                .where(entry.c.parent_id.in_(chunk), *liveness_filters(entry, profile, include_meta=include_meta))
                 .order_by(entry.c.parent_id, entry.c.name)
             )
             for mapping in (await session.execute(stmt)).mappings():

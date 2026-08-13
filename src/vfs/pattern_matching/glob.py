@@ -61,6 +61,22 @@ class GlobFilter:
 # ---------------------------------------------------------------------------
 
 
+_METACHARS: Final = re.compile(r"[*?\[\]{}]")
+
+
+def escape_glob(text: str) -> str:
+    """Quote *text* so the pattern language reads it as literal path text.
+
+    Class notation — ``[`` becomes ``[[]``, ``*`` becomes ``[*]`` — because
+    the language has no escape character, and a one-member class survives
+    every downstream parser (``[{]`` never opens a brace group, ``[]]``
+    closes correctly). Every seam that splices a caller's *path* into
+    pattern text routes it through here first: a path is addressed
+    literally, never reinterpreted as glob syntax.
+    """
+    return _METACHARS.sub(r"[\g<0>]", text)
+
+
 def glob_defect(pattern: str) -> str | None:
     """The refusable defect in *pattern*, or ``None`` when compilable.
 
@@ -188,12 +204,15 @@ def effective_pattern(root: Path, pattern: str) -> str:
     path-arm pattern anchors relative to the root — a leading ``/``
     means the root itself, per the find/rg shape — and joins under it:
     ``effective_pattern("/data", "src/*.py") == "/data/src/*.py"``. For
-    the root ``/`` this reduces to plain anchoring.
+    the root ``/`` this reduces to plain anchoring. The root is a
+    *path*, immune to glob syntax: its text crosses into the pattern
+    through :func:`escape_glob`, so ``/data/[x]`` addresses exactly the
+    directory named ``[x]``.
     """
     if "/" not in pattern:
         return pattern
     anchored = _anchor(pattern)
-    base = str(root)
+    base = escape_glob(str(root))
     return anchored if base == "/" else base + anchored
 
 
@@ -207,10 +226,11 @@ def composed_pattern(root: Path, pattern: str) -> str:
     "*.csv")`` composes to ``"/a/data/**/*.csv"`` (which still matches
     direct children: ``**`` spans zero segments). Composition can
     manufacture adjacent ``**`` (name-arm ``**`` composes to
-    ``root/**/**``), so canonicalization runs downstream, here.
+    ``root/**/**``), so canonicalization runs downstream, here. The
+    root's text is glob-escaped, same law as :func:`effective_pattern`.
     """
     if "/" not in pattern:
-        base = str(root)
+        base = escape_glob(str(root))
         return _canonical(("" if base == "/" else base) + "/**/" + pattern)
     return _canonical(effective_pattern(root, pattern))
 
@@ -448,6 +468,10 @@ def _translate_class(stuff: str) -> str:
     body = re.sub(r"([&~|])", r"\\\1", body)
     if not body:
         return "(?!)"
+    if body == "!":
+        # A negated empty range matches any character (fnmatch's rule);
+        # falling through would emit the invalid class [^].
+        return "."
     if body[0] == "!":
         body = "^" + body[1:]
     elif body[0] in "^[":

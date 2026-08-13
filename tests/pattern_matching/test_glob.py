@@ -9,6 +9,7 @@ refused. The demo tree is the spec's acceptance table.
 from __future__ import annotations
 
 import glob as stdlib_glob
+from itertools import product
 
 import pytest
 
@@ -21,6 +22,7 @@ from vfs.pattern_matching import (
     composed_pattern,
     derive_ext,
     effective_pattern,
+    escape_glob,
     expand_pattern,
     filter_paths,
     glob_defect,
@@ -101,6 +103,31 @@ class TestGlobDefect:
         assert glob_defect("*.{ts,tsx}") is None
         assert glob_defect("{src,docs}/**/*.md") is None
         assert glob_defect("{a}") is None
+
+
+# =========================================================================
+# escape_glob — literal path text quoted for the pattern language
+# =========================================================================
+
+
+class TestEscapeGlob:
+    def test_every_metachar_survives_the_round_trip(self):
+        # The escaped text must compile defect-free and match exactly
+        # itself — the literal-text law every composition seam leans on.
+        for text in ("[x]", "{a,b}", "a*b", "c?d", "data [prod]", "*?[]{}", "[!x]", "[]]"):
+            escaped = escape_glob(text)
+            assert glob_defect(escaped) is None, escaped
+            gate = compile_filter(escaped, ())
+            assert gate.matches(Path(f"/{text}")), escaped
+
+    def test_escaped_text_matches_nothing_else(self):
+        assert not compile_filter(escape_glob("a*b"), ()).matches(Path("/ab"))
+        assert not compile_filter(escape_glob("[x]"), ()).matches(Path("/x"))
+        assert not compile_filter(escape_glob("c?d"), ()).matches(Path("/cxd"))
+
+    def test_plain_text_is_untouched(self):
+        assert escape_glob("/data/plain.txt") == "/data/plain.txt"
+        assert escape_glob("a-b.c!d") == "a-b.c!d"
 
 
 # =========================================================================
@@ -195,6 +222,15 @@ class TestCompileGlob:
         regex = compile_glob("*.txt")
         assert regex.match("notes.txt")
         assert regex.match("notes.py") is None
+
+    def test_a_class_reducing_to_bare_bang_matches_any_character(self):
+        # Inverted-range pruning can leave "!" alone in the class body
+        # ([!z-a]); fnmatch's rule is "any character", never crash.
+        for pattern in ("[!z-a]", "x[!z-a]y"):
+            assert glob_defect(pattern) is None
+            regex = compile_glob(pattern)
+            assert regex.match(pattern.replace("[!z-a]", "q"))
+            assert regex.match(pattern.replace("[!z-a]", "")) is None
 
 
 # =========================================================================
@@ -310,6 +346,13 @@ class TestEffectivePattern:
         assert effective_pattern(ROOT, "/docs/*.txt") == "/docs/*.txt"
         assert effective_pattern(ROOT, "*/x.py") == "/*/x.py"
 
+    def test_a_metachar_root_splices_as_literal_text(self):
+        composed = effective_pattern(Path("/data/[x]"), "src/*.py")
+        assert composed == "/data/[[]x[]]/src/*.py"
+        regex = compile_glob(composed)
+        assert regex.match("/data/[x]/src/a.py")
+        assert regex.match("/data/x/src/a.py") is None
+
 
 # =========================================================================
 # composed_pattern — one scope root folded into one spatial pattern
@@ -350,6 +393,17 @@ class TestComposedPattern:
     def test_composition_preserves_well_formedness(self):
         for root, pattern in ((Path("/a"), "*.csv"), (ROOT, "**"), (Path("/a/b"), "src/*.py")):
             assert glob_defect(composed_pattern(root, pattern)) is None
+
+    def test_a_metachar_root_composes_defect_free_and_literal(self):
+        # ADR 030's worked example: the root is a path, never syntax —
+        # a brace or bracket in it must not refuse or capture siblings.
+        for name in ("data [prod]", "[x]", "{a,b}", "a*b", "c?d"):
+            root = Path(f"/{name}")
+            composed = composed_pattern(root, "*.csv")
+            assert glob_defect(composed) is None, composed
+            regex = compile_glob(composed)
+            assert regex.match(f"/{name}/x.csv")
+            assert regex.match("/ab/x.csv") is None
 
 
 # =========================================================================
@@ -459,6 +513,7 @@ PARITY_PATTERNS = (
     "[z-a]",
     "[a-c-e]",
     "[d-c-b-a]",
+    "[!z-a]",
     "[ab",
     "[&~|]",
     "[a\\-]",
@@ -480,3 +535,19 @@ class TestTranslateParity:
                 gate.pattern, recursive=True, include_hidden=True, seps="/"
             )
             assert gate.regex.pattern == expected, pattern
+
+    @pytest.mark.slow
+    def test_exhaustive_class_machinery_fuzz_stays_byte_identical(self) -> None:
+        # Every defect-free pattern up to depth 6 over the class-machinery
+        # alphabet: same bytes as the stdlib, and no pattern ever raises.
+        alphabet = "[]!-az*"
+        for length in range(1, 7):
+            for combo in product(alphabet, repeat=length):
+                pattern = "".join(combo)
+                if glob_defect(pattern) is not None:
+                    continue
+                gate = compile_filter(pattern, ())
+                expected = stdlib_glob.translate(  # ty: ignore[unresolved-attribute]
+                    gate.pattern, recursive=True, include_hidden=True, seps="/"
+                )
+                assert gate.regex.pattern == expected, pattern

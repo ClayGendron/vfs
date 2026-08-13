@@ -749,7 +749,7 @@ class TestPurgeHardening:
                 )
 
             with installed("purge:post-collect", straggler):
-                await _purge_subtree(session, tables, 1_000, "/d")
+                await _purge_subtree(session, tables, host.profile, 1_000, "/d")
             subtree = (entry.c.path == "/d") | entry.c.path.like("/d/%")
             remaining = (await session.execute(select(entry.c.path).where(subtree))).all()
             assert remaining == []

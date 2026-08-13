@@ -93,6 +93,19 @@ async def test_root_order_does_not_change_the_answer() -> None:
     assert [(e.kind, e.path) for e in forward.failures] == [(e.kind, e.path) for e in reverse.failures]
 
 
+async def test_metachar_roots_scope_grep_to_their_own_subtree() -> None:
+    # Roots are paths, never glob syntax — including the find-operand
+    # rule, where the root's own path rides the batch as a literal.
+    for fs in (await _plain_world(), await _mounted_world()):
+        await fs.write(path="/data/[x]/n.txt", content="needle bracket", parents=True)
+        await fs.write(path="/data/x/n.txt", content="needle sibling", parents=True)
+        scoped = await fs.grep("needle", paths=("/data/[x]",))
+        assert scoped.success is True
+        assert scoped.paths == ("/data/[x]/n.txt",)
+        operand = await fs.grep("needle", paths=("/data/[x]/n.txt",))
+        assert operand.paths == ("/data/[x]/n.txt",)
+
+
 async def test_defective_globs_refuse_before_any_dispatch() -> None:
     fs = VirtualFileSystem(storage=InMemoryStorage())
     channels: tuple[dict[str, Any], ...] = ({"globs": ("a**b",)}, {"globs_not": ("x/",)})
