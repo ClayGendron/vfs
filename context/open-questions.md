@@ -398,3 +398,47 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 - **Blocking:** nothing — candidates for future stories, not defects.
 - **Options considered:** per-gap options recorded in `docs/explanation/glob-language.md` §"Gaps worth closing"
 - **Status:** resolved 2026-08-07 (Clay, at the shaping review) → owned by `specs/active/094-glob-language-field-parity/`: gaps 1 (braces), 2 (glob exclusion channels), 4 (kind filter), and 5 (plural `patterns=` declined) close there; gap 3 (iglob) deferred to a research memo and gap 6 (backslash/POSIX classes) declined, recorded in the spec's shape §5. All five shaping forks resolved same day — notably fork 4 (chained `kind=` on unpopulated rows) resolved as fetch-to-populate, mirroring chained grep's absent-content law; the identity-projection guarantee (`kind` rides every projection via `ALWAYS_ON_FIELDS`) was verified live and is already test-pinned. **Landed 2026-08-07, same session** — all three slices in `spec.md`'s status ledger; four Docker engine legs green; differential battery extended to 121 case-checks.
+
+## OKF integration: frontmatter as a query surface, and where bundle ingestion lives
+
+- **Asked:** 2026-08-10 by Clay + Claude (OKF research pass — `research/2026-08-10-okf-open-knowledge-format.md`, cloned and surveyed `~/Git/Repos/knowledge-catalog`, Apache-2.0)
+- **Context:** Google's Open Knowledge Format (June 2026) is a markdown-plus-YAML-frontmatter bundle convention with no serving story — its frontmatter (`type`, `tags`, `status`, trust families) is queryable in principle and unqueried in practice, which is a vfs-shaped hole. Ingesting a bundle as plain files needs zero schema change today; the real design work is the memo's §7.2 fork. Three sub-questions: (1) is frontmatter-as-facets a **general** vfs capability (skills, MDX, Hugo, our own memos all carry frontmatter) with OKF as one profile, or OKF-specific ingestion? (2) storage shape — entry-keyed sidecar table (ADR 016 shape, also proposed by the multimodal question) vs facet columns on `entries` (the `ext` precedent, with the `SCHEMA_FORMAT_VERSION` bump)? (3) do `type=`/`tags=`/`status=` join the glob/grep filter channels the way `kind=` did in spec 094? Adjacent, smaller: dangling-link policy when minting edges from markdown links at ingestion (OKF §6.1 requires tolerating them; `mkedge` — the one unbuilt hinge — resolves endpoints), and whether bundle ingestion is a library helper (`skills.py` shape), a dev-plane verb, or a mount-type concern.
+- **Blocking:** nothing — the memo's §8 sequence starts with a zero-schema ingestion demo that needs none of these answered.
+- **Options considered:** per-fork options in the memo §7.2–7.3; recommended order of attack in §8.
+- **Status:** open
+
+## MCP 2026-07-28: long-batch execution model and serving-stack choice for serve()
+
+- **Asked:** 2026-08-10 by Clay + Claude (MCP revision research pass — `research/2026-08-10-mcp-2026-07-28-stateless-revision.md`; spec pages plus line-level studies of the freshly-pulled `modelcontextprotocol`, `python-sdk`, and `fastmcp` checkouts)
+- **Context:** The 2026-07-28 revision makes MCP stateless: a broken response stream *is* cancellation, the client re-issues the request fresh, and the protocol ships **no idempotency mechanism** — so a re-issued 10k-file `write` batch is a double-execution question the verb surface has never had to answer as a whole. The spec's designated durability answer is the optional tasks extension (`io.modelcontextprotocol/tasks`: poll-based, `completed` includes `isError: true` results — evidence-in/verdict-derived, matching ADR 010), which today only FastMCP 4 implements (Redis-backed) while python-sdk v2 has reserved seams but no implementation. The memo's §8.1 `[NEEDS CLARIFICATION]`: is task-backed execution in scope for the first serve() landing, or is the first landing synchronous-only with documented re-issue semantics? Entangled with it (§8.6): the stack choice — python-sdk v2 (official, disciplined wire pins, AEAD requestState, no tasks) vs FastMCP 4 (tasks today, heavier and faster-moving) vs implementing the tasks extension ourselves on python-sdk's open seams, backed by vfs's own storage.
+- **Blocking:** the serve() spec (056 Pass C's successor); also feeds spec 045's schema pinning (JSON Schema 2020-12, `inputResponses`/`requestState` as protocol-owned params) and the read-family cursor question, whose wire shape SEP-2567's handle etiquette now settles (memo §8.2).
+- **Options considered:** memo §8.1 and §8.6; ADR 022's refresh notes in §8.4 (stale fastmcp citation, "session state" wording).
+- **Status:** open
+
+## Does the grep index cover trash? (095 fork 1 — flag-algebra closure mechanics)
+- **Asked:** 2026-08-13 by Claude (review campaign — `research/2026-08-13-glob-grep-indexing-review-campaign.md`, finding 1)
+- **Context:** delete → reindex → restore leaves a live row invisible to both grep tiers (critical, verified). The invariant fix has two mechanics: demote `encoded` on entries leaving epoch coverage (index stays live-entries-only; restore repairs on next reindex), or keep deleted entries in the build (restores need no repair, trash-scoped grep regains index parity, index carries trash until sweep). The chooser is a behavior question: should indexed grep serve trash-scoped searches at parity, at the cost of index space proportional to trash volume?
+- **Blocking:** spec 095 §1 (slice B).
+- **Options considered:** demote-on-coverage-exit; deleted-entries-stay-in-build. Spec 095 §1.
+- **Status:** resolved 2026-08-13 (Clay, spec-095 kickoff) — **demote on coverage exit**, landed at the exit verb itself: the delete claim that stamps `deleted_at` on the trashed root also demotes `encoded` in the same guarded statement, so the invariant (`encoded=True` ⇒ grams in the current epoch) holds from the moment coverage is lost and restore needs no repair pass. Trash posture: the trashed root serves scan-side immediately; descendants of a trashed directory (whose `deleted_at` stays NULL) remain in builds and serve index-side under meta-scoped gates — trash-scoped grep works on both tiers, no index space grows with root-trash volume.
+
+## Reindex memory: declared corpus ceiling or gram-range partitioned build? (095 fork 2)
+- **Asked:** 2026-08-13 by Claude (review campaign, finding 16 — measured ≈3.6–4.3× live corpus bytes resident per rebuild, paid in full for one dirty entry)
+- **Context:** the whole-corpus posting dict is mandated by ADR 033 §6 ("build the full posting set"; incremental maintenance rejected), so the memory shape is designed-in but undeclared. Declaring a documented corpus ceiling is the smallest change; partitioning the build into gram-range passes bounds memory with more machinery and the same epoch semantics. `session.stream()` trims only 15–32% and is not the fix.
+- **Blocking:** spec 095 §8 (slice D).
+- **Options considered:** declare the ceiling now (partition later if a real corpus demands it); partition now. Spec 095 §8.
+- **Status:** resolved 2026-08-13 (Clay, spec-095 kickoff) — **neither: no designed ceiling, ever.** vfs is never designed toward an intentional scale cap; hard limits exist only where an external system (a SQL engine's own caps) imposes them — now a standing CLAUDE.md principle. The in-memory build stays and its ≈4× memory profile is documented as an acknowledged suboptimality in the module docstring (with gram-range partitioning named as the future direction), not converted into a declared supported-corpus limit.
+
+## Gram grain fix: boundary-overlap emission or per-entry extraction? (096 fork)
+- **Asked:** 2026-08-13 by Claude (review campaign, finding 3 — critical: matches straddling a chunk cut are silently lost on the indexed tier)
+- **Context:** overlap emission (GRAM_SIZE−1 across each cut, grams attributed to the preceding chunk id) closes the class without touching the posting doc-id grain — the memo's recommendation. Per-entry extraction states the invariant more cleanly but re-opens ADR 033 §4's doc-id grain decision (posting ids, dedupe, budget arithmetic). Either bumps `INDEX_FORMAT_VERSION` (095 §6).
+- **Blocking:** spec 096 §1 (slice A).
+- **Options considered:** overlap emission (recommended); per-entry grain. Spec 096 §1.
+- **Status:** open
+
+## Grep epoch consistency: per-profile isolation pins or the epoch-reread retry ladder? (097 fork)
+- **Asked:** 2026-08-13 by Claude (review campaign, finding 7 — MSSQL/Oracle/GENERIC silently lose matches when grep races a reindex publish+reclaim; reproduced live)
+- **Context:** pinning op isolation matches the Postgres/MySQL posture but costs Oracle SERIALIZABLE (its only option above READ COMMITTED, with ORA-08177 retry burden) and cannot promise anything for unknown GENERIC engines. The epoch-reread retry ladder (re-read the pointer after the last ladder read; retry on movement, bounded, then loud) is engine-independent and protects the GENERIC floor for one cheap statement per call — the memo leans this way.
+- **Blocking:** spec 097 §1 (slice C).
+- **Options considered:** isolation pins per profile; epoch-reread retry ladder (leaned). Spec 097 §1.
+- **Status:** open

@@ -55,6 +55,14 @@ Consequences that bind design work:
   exposes it.
 - **Unknown dialects are served, not refused** — they resolve to the
   conservative `GENERIC` floor stamped with their own name.
+- **Never design toward a hard scale cap** (Clay, 2026-08-13). Do not
+  intentionally limit vfs's scale capacity — no designed corpus
+  ceilings, row maximums, or "supported size" limits — unless an
+  external system (a SQL engine's own caps, a protocol constant)
+  imposes one. Where the current implementation is suboptimal at scale
+  (e.g. a whole-corpus in-memory build), acknowledge the profile
+  honestly in the docstring and name the future direction; never
+  convert the suboptimality into a declared limit.
 
 ### Live code vs archived reference: `src/`+`tests/` vs `src2/`+`tests2/`
 
