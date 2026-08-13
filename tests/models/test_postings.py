@@ -108,6 +108,12 @@ class TestCorruptionRefusals:
         with pytest.raises(PostingCorruptionError, match="over-wide"):
             decode_postings(b"\x01" + b"\x80" * 10 + b"\x01")
 
+    def test_the_minimal_over_wide_varint_refuses(self) -> None:
+        # Ten bytes is the first illegal width; a laxer cap decodes this
+        # blob silently as [5] via uint64 wrap instead of refusing.
+        with pytest.raises(PostingCorruptionError, match="over-wide"):
+            decode_postings(varint(1) + varint(2**64 + 5))
+
     def test_non_canonical_varint(self) -> None:
         # 1 encoded in two bytes: valid value, forbidden spelling.
         with pytest.raises(PostingCorruptionError, match="non-canonical"):

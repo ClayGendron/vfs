@@ -76,7 +76,8 @@ if TYPE_CHECKING:
 # per-entry version — minted and guarded storage-side, reported on
 # observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
-    {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "version", "chunked", "encoded"},
+    {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "version"}
+    | {"chunked", "encoded", "indexable"},
 )
 
 # The Entry field homed in the content table rather than the entries row —
@@ -352,10 +353,13 @@ def build_vfs_tables(
         Column("ext", _string(32), index=True),
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
-        # Grep-overlay dirty flags: chunk rows reflect this content /
+        # Grep-overlay dirty flags: derived state reflects this content /
         # the current gram epoch covers it. Content writes reset both.
         Column("chunked", Boolean, nullable=False, default=False),
         Column("encoded", Boolean, nullable=False, default=False),
+        # Gram eligibility: reset by content writes like its siblings,
+        # re-stamped with `chunked`; only read behind a true `chunked`.
+        Column("indexable", Boolean, nullable=False, default=False),
         Column("owner_id", _string(255), index=True),
         Column("original_parent_id", ULIDKey()),
         Column("original_name", BytewiseString(MAX_SEGMENT_LENGTH)),

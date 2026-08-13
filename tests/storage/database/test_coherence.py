@@ -1254,8 +1254,11 @@ class TestWriteVsTopologyCoherence:
         width = len(_CLOBBER_COLUMNS) + 4
         now = datetime.now(UTC)
         owner = "O" * 26
-        full = (str(ULID()), 1, 2, "/full.txt", "file", "h" * 64, "text/plain", "txt", 1, 4, False, False, owner, now)
-        sparse = (str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, False, False, None, now)
+        full = (
+            *(str(ULID()), 1, 2, "/full.txt", "file", "h" * 64, "text/plain", "txt", 1, 4),
+            *(False, False, False, owner, now),
+        )
+        sparse = (str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, False, False, False, None, now)
 
         def budget(row: tuple[object, ...]) -> int:
             return statement_budget(

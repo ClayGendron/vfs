@@ -1,16 +1,38 @@
 # 096 — Gram coverage: chunk boundaries stop eating matches
 
-- **Status: draft 2026-08-13** — born from the review campaign memo
+- **Status: implemented 2026-08-13, uncommitted** — born from the
+  review campaign memo
   (`research/2026-08-13-glob-grep-indexing-review-campaign.md`,
-  finding 3 critical + adjacent leads). One owner fork marked
-  `[NEEDS CLARIFICATION]` and pointered in `open-questions.md`.
+  finding 3 critical + adjacent leads). The §1 owner fork was resolved
+  by Clay at kickoff (2026-08-13) after an executed sweep refuted the
+  drafted option (a): the decision is **ADR 036** — the gram index
+  extracts over each entry's full folded body; chunks are
+  semantic-only. Landing ledger, all same day: suite 2,218 passed at
+  100% coverage, ruff/ty zero; **all four Docker legs green with the
+  three §3 boundary rows live** (Postgres 198, MySQL 199, MSSQL 200,
+  Oracle 197 passed — +3 over the 095 numbers on every leg); the
+  differential battery's boundary edition ran green (133 case-checks,
+  up from 121); the §4 codec pin's blob was verified by hand to decode
+  silently as ``[5]`` under the cap-10 mutant. **Measured index-size
+  delta (repo's own 45 src files):** entry-grain postings are ~2.8×
+  smaller — 111,760 blob bytes / 97,931 doc ids vs 311,567 / 288,779
+  at chunk grain — with 11 *more* distinct grams indexed (boundary and
+  whitespace-span grams the old grain lost). **Adjacent find, fixed
+  and pinned in this landing:** copy-onto-occupant replaced the
+  occupant's body without demoting its flags — a coverage exit
+  violating the 095 invariant (fresh body permanently invisible to
+  both tiers; executed repro at kickoff); the occupant's material
+  update now resets ``chunked``/``encoded``/``indexable`` like any
+  content write, pinned by a facade regression row.
 - **Date:** 2026-08-13
 - **Owner:** Clay Gendron
 - **Kind:** correctness repair of gram extraction at chunk boundaries
   + coverage-class test battery + one postings-codec boundary pin.
-- **Depends on:** ADR 033 (chunk-grain corpus, posting doc-id grain,
-  the no-false-negatives rule), spec 095 §6 (`INDEX_FORMAT_VERSION` —
-  this spec's change is its first mandatory bump).
+- **Depends on:** ADR 036 (entry-grain gram index, semantic-only
+  chunks — this spec is its landing vehicle), ADR 033 (refusal gate,
+  budgets, epoch lifecycle — §4/§7 as amended by 036), spec 095 §6
+  (`INDEX_FORMAT_VERSION` — this spec's change is its first mandatory
+  bump).
 - **Relates to:** spec 093 (the landed chunking/extraction machinery),
   `code_grams`'s own "must never introduce false negatives" contract.
 
@@ -37,34 +59,41 @@ it.**
 
 ## Shape
 
-### 1. The grain fix `[NEEDS CLARIFICATION — fork, pointered]`
+### 1. The grain fix — resolved: entry-grain extraction (ADR 036)
 
-Two mechanics close the class; both make every body trigram
-nominable:
+The drafted option (a) — overlap emission with the per-chunk
+intersection untouched — was **refuted by execution at kickoff**:
+grep's AND requires every chosen gram in the *same* chunk, so a
+needle straddling a cut with ≥ `GRAM_SIZE` chars on each side keeps
+its interior trigrams in two different chunks under any fixed-width
+overlap (sweep: splits 1/5, 2/4, 3/3 all stay lost). Every sound fix
+makes nomination entry-grain; Clay decided the coupling itself is the
+defect (full argument and rejected middle options in ADR 036).
 
-- **(a) Overlap emission (recommended by the memo):** chunk emission
-  carries `GRAM_SIZE − 1` characters of overlap — either by actually
-  overlapping stored chunks or (smaller) by extracting grams over each
-  boundary window and attributing them to the preceding chunk id. The
-  posting doc-id grain, the intersection, and the verify path are
-  untouched; index size grows by a boundary term only.
-- **(b) Per-entry extraction grain:** extract grams over the whole
-  entry and post at entry grain. Cleaner statement of the invariant,
-  but it re-opens ADR 033 §4's doc-id grain decision (posting ids,
-  dedupe, budget arithmetic all shift) — a materially bigger change.
+What lands:
 
-Whichever lands: `INDEX_FORMAT_VERSION` bumps (spec 095 §6), and the
-extraction docstring states the invariant: *every trigram of the
-entry's folded body appears in at least one chunk's gram set.*
+- **Extraction** runs once over each entry's full folded body;
+  postings carry the entry surrogate id (`entries.id`) as `doc_id`.
+  Codec, rarest-first budgeted intersection, and verify unchanged in
+  shape; candidate mapping drops the chunks-table hop.
+- **Eligibility** materializes as an `indexable` boolean on the entry
+  row, stamped by the chunking phase's version-guarded flip: within
+  the byte and distinct-gram bounds and ≥ `GRAM_SIZE` normalized
+  bytes. The pending-work probe reads `chunked AND NOT encoded AND
+  indexable` — the correlated-EXISTS-on-chunks probe retires.
+- **Chunks stay semantic-only**: reindex keeps refreshing them for
+  the future vector/BM25 pipeline; no grep-path code reads them.
+- `INDEX_FORMAT_VERSION` → 2 (spec 095 §6's first consumer), and the
+  extraction docstring states the invariant: *every trigram of the
+  entry's folded body is in the entry's posted gram set.*
 
 ### 2. Whitespace-only spans (verified adjacent lead)
 
-`split_code` drops whitespace-only spans entirely — a second
-extraction-coverage gap of the same class (a pattern spanning a
-dropped span can lose its bridging trigrams). Confirm the reach with
-the §3 battery shapes and close it with the same invariant; if it
-turns out unreachable (fold collapses the class first), record that in
-the extraction docstring instead of adding machinery.
+`split_code` drops whitespace-only spans entirely — under chunk-grain
+extraction, a second coverage gap of the same class. **Closed by
+construction under §1**: the full body is the extraction stream, so
+dropped spans are still bytes of it. The §3 battery keeps a
+whitespace-span shape as the pin.
 
 ### 3. The boundary battery
 
@@ -95,27 +124,29 @@ codec battery is this spec's test surface; no production code change.)
   shapes) re-expressed as tests and passing on sqlite + live Postgres.
 - Four Docker engine legs green with the boundary rows live (rides
   spec 095 §9's engine-marked reindex battery).
-- Index-size delta of the chosen grain fix measured and recorded in
-  the landing message (boundary term only for fork (a)).
+- Index-size delta of entry-grain postings measured and recorded in
+  the landing message (per-entry dedupe should shrink it).
 
 ## Touch points
 
-`src/vfs/models/chunk.py` / `src/vfs/models/code_grams.py` (grain
-fix), `src/vfs/storage/backends/database/indexing.py` (extraction
-call sites, knob bump), `tests/models/test_postings.py` (§4),
+`src/vfs/models/rows.py` (`indexable` column),
+`src/vfs/storage/backends/database/indexing.py` (entry-grain build,
+eligibility stamp, probe, knob bump),
+`src/vfs/storage/backends/database/grep.py` (entry-id candidates, no
+chunks hop), `tests/models/test_postings.py` (§4),
 `tests/storage/database/test_indexing.py` + conformance battery (§3),
 `context/research/studies/2026-08-05-grep-differential-battery/`
-(boundary edition rider).
+(boundary edition rider). ADR 033 status annotation + ADR 036 are
+written.
 
 ## Slices
 
-- **A** — §1 fork resolved and landed with the knob bump + minimal
-  straddle row.
-- **B** — §3 battery + §2 whitespace-span closure.
+- **A** — §1 landed per ADR 036 with the knob bump + minimal straddle
+  row.
+- **B** — §3 battery + the §2 whitespace-span pin.
 - **C** — §4 codec pin (independent; can land first).
 
 ## Open questions
 
-- The grain fork (§1): overlap emission vs per-entry grain — (a) is
-  the memo's recommendation; (b) re-opens ADR 033 §4.
-  `[NEEDS CLARIFICATION]`
+None — the §1 fork was resolved by Clay at the 2026-08-13 kickoff
+(ADR 036; recorded in `open-questions.md`).

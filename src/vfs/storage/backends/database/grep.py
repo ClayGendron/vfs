@@ -4,7 +4,7 @@ The read side of content search, one snapshot per call: compile the
 caller's pattern (uncompilable classifies invalid), plan folded grams
 unconditionally, refuse a pattern with no gram predicate unless
 ``allow_scan=True`` opts into the scan tier, intersect the rarest
-posting lists into candidate chunks, dedupe to entries, apply the
+posting lists into candidate entries, apply the
 structural gates before any content fetch, verify every candidate with
 Python ``re``, and union the flag-partitioned scan side (``NOT
 encoded``) so index staleness can never lose a match. ``invert_match``
@@ -65,7 +65,7 @@ _INTERSECT_GRAMS: Final = 4
 _REFINE_GUIDANCE: Final = "narrow the pattern, add globs or ext filters, or scope with paths"
 
 
-ChunkIds = Annotated[NDArray[np.int64], "sorted chunk-table ids - the posting doc ids"]
+DocIds = Annotated[NDArray[np.int64], "sorted entries-table surrogate ids - the posting doc ids"]
 
 
 class PostingMeta(NamedTuple):
@@ -144,14 +144,14 @@ async def grep_rows(
     truncations: list[str] = []
     if not scan_all:
         try:
-            chunk_ids = await _index_chunk_ids(session, tables, membership_budget, plan)
+            doc_ids = await _index_doc_ids(session, tables, membership_budget, plan)
         except PostingCorruptionError as exc:
             error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
             return Result(ops=("grep",), errors=[error])
-        if chunk_ids.size > CANDIDATE_BUDGET:
-            chunk_ids = chunk_ids[:CANDIDATE_BUDGET]
+        if doc_ids.size > CANDIDATE_BUDGET:
+            doc_ids = doc_ids[:CANDIDATE_BUDGET]
             truncations.append("candidate budget")
-        for mapping in await _entries_for_chunks(session, tables, membership_budget, chunk_ids, fetched):
+        for mapping in await _entries_for_docs(session, tables, membership_budget, doc_ids, fetched):
             if _passes_gates(Path(mapping["path"]), gates, not_gates, wanted, unwanted):
                 candidates[mapping["path"]] = mapping
     if monotonic() > deadline and "wall-time budget" not in truncations:
@@ -214,14 +214,12 @@ async def grep_rows(
 
 
 # ---------------------------------------------------------------------------
-# The ladder — posting metadata, rarest-first intersection, chunk→entry
+# The ladder — posting metadata, rarest-first intersection, doc→entry
 # ---------------------------------------------------------------------------
 
 
-async def _index_chunk_ids(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, plan: GramQuery
-) -> ChunkIds:
-    """Candidate chunk ids for *plan* under the published epoch, sorted.
+async def _index_doc_ids(session: AsyncSession, tables: VFSTables, membership_budget: int, plan: GramQuery) -> DocIds:
+    """Candidate entry doc ids for *plan* under the published epoch, sorted.
 
     No published epoch means no encoded entries: the index side is
     empty and the scan side owns everything. The posting-byte budget is
@@ -231,28 +229,28 @@ async def _index_chunk_ids(
     if epoch is None:
         return np.empty(0, dtype=np.int64)
     budget = [POSTING_BYTE_BUDGET]
-    return await _chunk_ids_for_plan(session, tables, membership_budget, epoch, plan, budget)
+    return await _doc_ids_for_plan(session, tables, membership_budget, epoch, plan, budget)
 
 
-async def _chunk_ids_for_plan(
+async def _doc_ids_for_plan(
     session: AsyncSession,
     tables: VFSTables,
     membership_budget: int,
     epoch: int,
     plan: GramQuery,
     budget: list[int],
-) -> ChunkIds:
+) -> DocIds:
     """One plan node's candidates: OR unions branches, AND intersects grams."""
     if isinstance(plan, GramOr):
         parts = [
-            await _chunk_ids_for_plan(session, tables, membership_budget, epoch, branch, budget)
+            await _doc_ids_for_plan(session, tables, membership_budget, epoch, branch, budget)
             for branch in plan.branches
         ]
         return np.unique(np.concatenate(parts))
     grams = sorted(plan.required_grams())
     meta = await _posting_meta(session, tables, membership_budget, epoch, grams)
     if len(meta) < len(grams):
-        # A required gram indexes nothing — no chunk can match.
+        # A required gram indexes nothing — no entry can match.
         return np.empty(0, dtype=np.int64)
     chosen: list[GramKey] = []
     for gram in sorted(meta, key=lambda key: meta[key].doc_count):
@@ -301,29 +299,23 @@ async def _posting_blobs(
     return blobs
 
 
-async def _entries_for_chunks(
+async def _entries_for_docs(
     session: AsyncSession,
     tables: VFSTables,
     membership_budget: int,
-    chunk_ids: ChunkIds,
+    doc_ids: DocIds,
     fetched: frozenset[str],
 ) -> list[RowMapping]:
-    """Candidate chunk ids deduped to their live, encoded entry rows.
+    """Candidate doc ids resolved to their live, encoded entry rows.
 
-    The two-stage id-first shape: entry rows come back without content —
-    the structural Python gates run before any content is fetched.
+    The id-first shape: entry rows come back without content — the
+    structural Python gates run before any content is fetched.
     """
-    entry, chunks = tables.entry, tables.chunks
-    entry_ids: set[str] = set()
-    for chunk in chunked(chunk_ids.tolist(), membership_budget):
-        stmt = select(chunks.c.entry_id).where(chunks.c.id.in_(chunk)).distinct()
-        entry_ids.update((await session.execute(stmt)).scalars())
+    entry = tables.entry
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted(fetched - {"content"}))]
     rows: list[RowMapping] = []
-    for chunk in chunked(sorted(entry_ids), membership_budget):
-        stmt = select(*columns).where(
-            entry.c.entry_id.in_(chunk), entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS))
-        )
+    for chunk in chunked(doc_ids.tolist(), membership_budget):
+        stmt = select(*columns).where(entry.c.id.in_(chunk), entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS)))
         rows.extend((await session.execute(stmt)).mappings())
     return rows
 

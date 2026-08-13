@@ -42,6 +42,13 @@ cases added — admission braces by name and by anchored path, exclusion
 braces — because rg's ``-g`` brace language is now vfs's brace
 language. 121 case-checks green across the same four worlds.
 
+Boundary-edition run (2026-08-13, with the 096 landing): one corpus
+line longer than the split budget with needles ending at, straddling,
+and beyond the 2048-char cuts, plus three rg cases over them — the
+class the entry-grain extraction closes; before it, the two index-side
+worlds lost the straddling match. 133 case-checks green across the
+same four worlds.
+
 Run:  uv run python context/research/studies/2026-08-05-grep-differential-battery/grep_differential_battery.py
 """
 
@@ -74,6 +81,11 @@ FILES = {
     "data/api/y.txt": "needle api\n",
     "code/x.py": "needle code\ncat alone\n",
     "m/100%.txt": "needle percent\n",
+    # Boundary edition (2026-08-13): one line longer than the 2048 split
+    # budget, needles ending at, straddling, and beyond the cuts.
+    "data/long.txt": (
+        "a" * 2036 + "bn_ending_at" + "c" * 2042 + "bn_across_cut" + " bn_after_cut end\n"
+    ),
 }
 
 # rg leg: (pattern, roots, vfs kwargs, rg flags) — line-level parity.
@@ -97,6 +109,10 @@ RG_CASES = (
     ("needle", (), {"globs": ("*.{py,md}",)}, ("-g", "*.{py,md}")),
     ("needle", (), {"globs": ("/data/{deep,api}/**",)}, ("-g", "/data/{deep,api}/**")),
     ("needle", (), {"globs_not": ("*.{md,py}",)}, ("-g", "!*.{md,py}")),
+    # Boundary edition (2026-08-13): matches at every split-cut posture.
+    ("bn_ending_at", (), {}, ()),
+    ("bn_across_cut", (), {}, ()),
+    ("bn_after_cut", (), {}, ()),
 )
 
 failures: list[str] = []

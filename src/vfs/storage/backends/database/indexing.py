@@ -1,17 +1,26 @@
-"""Batch gram-index maintenance: chunk the dirty, build postings, publish.
+"""Batch gram-index maintenance: assess the dirty, build postings, publish.
 
 The reindex verb's phases, each run by the backend in its own writer
-transaction: chunk entries whose rows no longer reflect their content,
-build the full posting set under a fresh epoch (invisible until
-published), publish by flipping per-entry ``encoded`` flags and the
-current-epoch pointer together, then reclaim dead epochs. Flag flips
-are version-guarded but never attributed — a miss just leaves the row
-on the scan side, which is always correct — while the epoch pointer
-flip is a compare-and-set so concurrent reindexers cannot publish over
-each other.
+transaction: re-derive per-entry state for entries whose rows no
+longer reflect their content (semantic chunk rows for the embedding
+pipeline, plus the ``indexable`` gram-eligibility stamp), build the
+full posting set under a fresh epoch (invisible until published),
+publish by flipping per-entry ``encoded`` flags and the current-epoch
+pointer together, then reclaim dead epochs. Flag flips are
+version-guarded but never attributed — a miss just leaves the row on
+the scan side, which is always correct — while the epoch pointer flip
+is a compare-and-set so concurrent reindexers cannot publish over each
+other.
 
-Eligibility gates bound index bloat, never coverage: an oversized or
-gram-saturated body is marked ``chunked`` with zero chunk rows and
+Gram extraction is entry-grain: one pass over each entry's full folded
+body, posted under the entry's surrogate row id. The extraction
+invariant: **every trigram of the entry's folded body is in the
+entry's posted gram set** — no split, cut, or dropped span can remove
+a trigram from the nomination stream. Chunk rows are semantic-only
+(vector/BM25 retrieval units) and no gram-path code reads them.
+
+Eligibility gates bound index bloat, never coverage: an oversized,
+gram-saturated, or sub-trigram body is stamped ``NOT indexable`` and
 stays scan-side forever. (Binary bodies need no gate here — the entry
 model refuses NUL content at the one write door.)
 
@@ -29,12 +38,12 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, Final, cast
 
-from sqlalchemy import bindparam, column, delete, exists, func, insert, literal, select, tuple_, update, values
+from sqlalchemy import bindparam, column, delete, func, insert, literal, select, tuple_, update, values
 from sqlalchemy.exc import IntegrityError
 
 from vfs.models import CONTENT_KINDS
 from vfs.models.chunk import Chunk
-from vfs.models.code_grams import GRAM_SIZE, unique_code_grams
+from vfs.models.code_grams import GRAM_SIZE, normalize_content, unique_code_grams
 from vfs.models.postings import encode_postings
 from vfs.models.rows import ENCODING_DELTA_VARINT
 from vfs.paths import Path
@@ -57,14 +66,14 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
 
-# The format half of the epoch fingerprint: every fold, chunk-grain, or
-# gram-extraction change must hand-bump this to force the rebuild.
-INDEX_FORMAT_VERSION: Final = 1
+# The format half of the epoch fingerprint: every fold, extraction-grain,
+# or gram-extraction change must hand-bump this to force the rebuild.
+INDEX_FORMAT_VERSION: Final = 2
 
 Epoch = Annotated[int, "one published gram-index generation; a missing pointer means no index side"]
 
-# Zoekt's ingestion gates, entry-level: an ineligible body never chunks
-# and is served by the scan side forever — bloat bounds, not coverage.
+# Zoekt's ingestion gates, entry-level: an ineligible body is stamped
+# NOT indexable and served by the scan side forever — bloat, not coverage.
 MAX_INDEXABLE_BYTES: Final = 2 * 1024 * 1024
 MAX_DISTINCT_GRAMS: Final = 20_000
 
@@ -95,12 +104,13 @@ class ReindexState:
 async def chunk_dirty(
     session: AsyncSession, tables: VFSTables, profile: DialectProfile, parameter_budget: int, membership_budget: int
 ) -> Result:
-    """Re-chunk every live content entry whose chunks are stale.
+    """Re-derive per-entry state for every live content entry that is stale.
 
-    Per entry: apply the eligibility gates, replace its chunk rows with
-    the fresh split (or none), and flip ``chunked`` guarded on the
-    version the content was read at — a guard miss leaves the entry
-    dirty for the next run, and its just-written chunks unused.
+    Per entry: replace its semantic chunk rows with the fresh split (or
+    none), stamp gram eligibility from the body just read, and flip
+    ``chunked`` guarded on the version the content was read at — a
+    guard miss leaves the entry dirty for the next run, and its
+    just-written state unused.
     """
     entry, content, chunks = tables.entry, tables.content, tables.chunks
     dirty = (
@@ -112,12 +122,14 @@ async def chunk_dirty(
     rows = (await session.execute(dirty)).all()
     if not rows:
         return Result(ops=("reindex",))
-    flips: list[tuple[str, int]] = []
+    eligible: list[tuple[str, int]] = []
+    ineligible: list[tuple[str, int]] = []
     chunk_rows: list[dict[str, object]] = []
     for row in rows:
-        flips.append((row.entry_id, row.version))
         if row.content is None or not _indexable(row.content):
+            ineligible.append((row.entry_id, row.version))
             continue
+        eligible.append((row.entry_id, row.version))
         chunk_rows.extend(
             {
                 "entry_id": row.entry_id,
@@ -130,12 +142,15 @@ async def chunk_dirty(
             }
             for piece in Chunk.split(file=Path(row.path), content=row.content, ext=row.ext)
         )
-    for ids in chunked([entry_id for entry_id, _ in flips], membership_budget):
+    for ids in chunked([entry_id for entry_id, _ in (*eligible, *ineligible)], membership_budget):
         await session.execute(delete(chunks).where(chunks.c.entry_id.in_(ids)))
     if chunk_rows:
         await session.execute(insert(chunks), chunk_rows)
     await seam("reindex:before-chunk-flip")
-    await _flip_flags(session, entry, profile, parameter_budget, membership_budget, flips, flag="chunked")
+    stamp = {"chunked": True, "indexable": True}
+    await _flip_flags(session, entry, profile, parameter_budget, membership_budget, eligible, assignments=stamp)
+    stamp = {"chunked": True, "indexable": False}
+    await _flip_flags(session, entry, profile, parameter_budget, membership_budget, ineligible, assignments=stamp)
     return Result(ops=("reindex",))
 
 
@@ -168,17 +183,17 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, parameter_budget
     designed corpus cap; gram-range partitioned passes are the future
     direction if a deployment ever needs the bound.
     """
-    entry, chunks = tables.entry, tables.chunks
+    entry = tables.entry
     state.previous_epoch = await current_epoch(session, tables)
     if not await _work_pending(session, tables, state.previous_epoch):
         return Result(ops=("reindex",))
     built = (await session.execute(select(func.max(tables.gram_epochs.c.epoch)))).scalar_one()
     epoch = max(built or 0, state.previous_epoch or 0) + 1
     scan = (
-        select(chunks.c.id, chunks.c.content, entry.c.entry_id, entry.c.version)
-        .select_from(chunks.join(entry, entry.c.entry_id == chunks.c.entry_id))
-        .where(entry.c.chunked, entry.c.deleted_at.is_(None))
-        .order_by(chunks.c.id)
+        select(entry.c.id, entry.c.entry_id, entry.c.version, tables.content.c.content)
+        .select_from(tables.content_joined())
+        .where(entry.c.chunked, entry.c.indexable, entry.c.deleted_at.is_(None), tables.content.c.content.isnot(None))
+        .order_by(entry.c.id)
     )
     postings: dict[int, list[int]] = {}
     covered: dict[str, int] = {}
@@ -240,7 +255,9 @@ async def publish_epoch(
     """
     entry, meta = tables.entry, tables.meta
     if state.covered:
-        await _flip_flags(session, entry, profile, parameter_budget, membership_budget, state.covered, flag="encoded")
+        await _flip_flags(
+            session, entry, profile, parameter_budget, membership_budget, state.covered, assignments={"encoded": True}
+        )
     cas = (
         update(meta).where(meta.c.id == 1, meta.c.current_gram_epoch.is_(None)).values(current_gram_epoch=state.epoch)
         if state.previous_epoch is None
@@ -289,13 +306,13 @@ async def reclaim_built_epoch(session: AsyncSession, tables: VFSTables, built: E
 
 
 def _indexable(content: str) -> bool:
-    if len(content.encode("utf-8")) > MAX_INDEXABLE_BYTES:
+    data = normalize_content(content)
+    if not (GRAM_SIZE <= len(data) <= MAX_INDEXABLE_BYTES):
         return False
     return len(unique_code_grams(content, folded=True)) <= MAX_DISTINCT_GRAMS
 
 
 async def _work_pending(session: AsyncSession, tables: VFSTables, current: Epoch | None) -> bool:
-    entry, chunks = tables.entry, tables.chunks
     if current is None:
         return True
     fingerprint = select(tables.gram_epochs.c.format_version, tables.gram_epochs.c.options_hash).where(
@@ -304,7 +321,7 @@ async def _work_pending(session: AsyncSession, tables: VFSTables, current: Epoch
     row = (await session.execute(fingerprint)).one_or_none()
     if row is None or row._tuple() != (INDEX_FORMAT_VERSION, index_options_hash()):
         return True
-    return (await session.execute(_pending_probe(entry, chunks))).first() is not None
+    return (await session.execute(_pending_probe(tables.entry))).first() is not None
 
 
 async def _flip_flags(
@@ -315,9 +332,9 @@ async def _flip_flags(
     membership_budget: int,
     pairs: list[tuple[str, int]],
     *,
-    flag: str,
+    assignments: dict[str, bool],
 ) -> None:
-    """Version-guarded set-based flag flip; a miss leaves rows scan-side.
+    """Version-guarded set-based flag stamp; a miss leaves rows scan-side.
 
     Set-based on every declared engine — a VALUES join where the profile
     proves it, a row-constructor IN where tuples are accepted — because
@@ -329,7 +346,7 @@ async def _flip_flags(
     dialect = session.get_bind().dialect
     if supports_values_update(profile, dialect):
         per_statement = statement_budget(
-            lambda rows: _values_flip_stmt(entry, rows, flag=flag),
+            lambda rows: _values_flip_stmt(entry, rows, assignments=assignments),
             pairs[0],
             dialect,
             parameter_budget=parameter_budget,
@@ -337,47 +354,41 @@ async def _flip_flags(
             row_cap=membership_budget,
         )
         for chunk in chunked(pairs, per_statement):
-            await session.execute(_values_flip_stmt(entry, chunk, flag=flag))
+            await session.execute(_values_flip_stmt(entry, chunk, assignments=assignments))
         return
     if profile.tuple_in:
         for chunk in chunked(pairs, max(1, membership_budget // 2)):
             guard = tuple_(entry.c.entry_id, entry.c.version).in_(chunk)
-            await session.execute(update(entry).where(guard).values(**{flag: True}))
+            await session.execute(update(entry).where(guard).values(**assignments))
         return
     stmt = (
         update(entry)
         .where(entry.c.entry_id == bindparam("b_id"), entry.c.version == bindparam("b_ver"))
-        .values(**{flag: True})
+        .values(**assignments)
     )
     await session.execute(stmt, [{"b_id": eid, "b_ver": ver} for eid, ver in pairs])
 
 
-def _values_flip_stmt(entry: Table, rows: Sequence[tuple[str, int]], *, flag: str) -> Update:
-    """One guarded flag flip over a VALUES join carrying *rows*."""
+def _values_flip_stmt(entry: Table, rows: Sequence[tuple[str, int]], *, assignments: dict[str, bool]) -> Update:
+    """One guarded flag stamp over a VALUES join carrying *rows*."""
     incoming = values(
         column("v_id", entry.c.entry_id.type),
         column("v_ver", entry.c.version.type),
         name="incoming",
     ).data(list(rows))
     where = [entry.c.entry_id == incoming.c.v_id, entry.c.version == incoming.c.v_ver]
-    return update(entry).where(*where).values(**{flag: True})
+    return update(entry).where(*where).values(**assignments)
 
 
-def _pending_probe(entry: Table, chunks: Table) -> Select[tuple[int]]:
+def _pending_probe(entry: Table) -> Select[tuple[int]]:
     """Row-presence probe for entries awaiting encoding, legal on every dialect.
 
-    A bare ``SELECT EXISTS (...)`` is invalid T-SQL — an EXISTS predicate
-    may only sit in a WHERE clause there — so pending work is probed as
-    row presence with the correlated EXISTS inside the WHERE.
+    Kept as row presence — a bare ``SELECT EXISTS (...)`` is invalid
+    T-SQL, where an EXISTS predicate may only sit inside a WHERE.
     """
     return (
         select(literal(1))
-        .where(
-            entry.c.chunked,
-            ~entry.c.encoded,
-            entry.c.deleted_at.is_(None),
-            exists().where(chunks.c.entry_id == entry.c.entry_id),
-        )
+        .where(entry.c.chunked, ~entry.c.encoded, entry.c.indexable, entry.c.deleted_at.is_(None))
         .limit(1)
     )
 

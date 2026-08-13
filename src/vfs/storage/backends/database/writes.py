@@ -76,6 +76,7 @@ _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
     "size_bytes",
     "chunked",
     "encoded",
+    "indexable",
     "owner_id",
     "updated_at",
 )
@@ -996,6 +997,7 @@ def _material_values(staged: StagedEntry, user_id: str | None, now: datetime) ->
         "size_bytes": staged.size_bytes,
         "chunked": False,
         "encoded": False,
+        "indexable": False,
         "owner_id": user_id,
         "updated_at": now,
     }

@@ -26,6 +26,7 @@ from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import installed
+from vfs.storage.protocol import ResolvedPair
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +37,12 @@ async def _flags(storage: DatabaseStorage, path: str) -> tuple[bool, bool]:
     async with storage._host.engine.connect() as conn:
         row = (await conn.execute(select(entry.c.chunked, entry.c.encoded).where(entry.c.path == path))).one()
     return row._tuple()
+
+
+async def _indexable_flag(storage: DatabaseStorage, path: str) -> bool:
+    entry = storage._host.tables.entry
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(select(entry.c.indexable).where(entry.c.path == path))).scalar_one()
 
 
 async def _epoch(storage: DatabaseStorage) -> int | None:
@@ -58,8 +65,11 @@ class TestReindex:
         assert await _flags(storage, "/a.py") == (True, True)
         assert await _epoch(storage) == 1
         async with storage._host.engine.connect() as conn:
+            doc_id = (
+                await conn.execute(select(tables.entry.c.id).where(tables.entry.c.path == "/a.py"))
+            ).scalar_one()
             chunk = (
-                await conn.execute(select(tables.chunks.c.id, tables.chunks.c.line_start, tables.chunks.c.line_end))
+                await conn.execute(select(tables.chunks.c.line_start, tables.chunks.c.line_end))
             ).one()
             posting = (
                 await conn.execute(
@@ -69,8 +79,8 @@ class TestReindex:
                 )
             ).one()
             fingerprint = (await conn.execute(select(tables.gram_epochs))).one()
-        assert (chunk.line_start, chunk.line_end) == (1, 2)
-        assert np.array_equal(decode_postings(posting.postings), np.array([chunk.id]))
+        assert (chunk.line_start, chunk.line_end) == (1, 2)  # semantic chunks still refresh
+        assert np.array_equal(decode_postings(posting.postings), np.array([doc_id]))
         assert posting.doc_count == 1
         assert posting.byte_size == len(posting.postings)
         assert (fingerprint.epoch, fingerprint.format_version) == (1, indexing.INDEX_FORMAT_VERSION)
@@ -132,6 +142,7 @@ class TestEligibilityGates:
         await storage.write(entries=[Entry(path=Path("/big.txt"), content="well past eight bytes")])
         assert (await storage.reindex()).success is True
         assert await _flags(storage, "/big.txt") == (True, False)
+        assert await _indexable_flag(storage, "/big.txt") is False
         assert await _count(storage, storage._host.tables.chunks) == 0
         epoch = await _epoch(storage)
         assert (await storage.reindex()).success is True  # ineligible ≠ pending
@@ -144,6 +155,29 @@ class TestEligibilityGates:
         await storage.write(entries=[Entry(path=Path("/wide.txt"), content="abcdefgh")])
         assert (await storage.reindex()).success is True
         assert await _flags(storage, "/wide.txt") == (True, False)
+        assert await _indexable_flag(storage, "/wide.txt") is False
+        await storage.close()
+
+    async def test_sub_trigram_content_stays_scan_side_and_findable(self, tmp_path) -> None:
+        # A body too short to form a trigram posts nothing; it must stay
+        # scan-side, where a gramless pattern's opt-out scan can serve it.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/tiny.txt"), content="ab")])
+        assert (await storage.reindex()).success is True
+        assert await _flags(storage, "/tiny.txt") == (True, False)
+        assert await _indexable_flag(storage, "/tiny.txt") is False
+        epoch = await _epoch(storage)
+        assert (await storage.reindex()).success is True  # ineligible ≠ pending
+        assert await _epoch(storage) == epoch
+        found = await storage.grep(pattern="ab", allow_scan=True)
+        assert [str(o.path) for o in found.observations] == ["/tiny.txt"]
+        await storage.close()
+
+    async def test_eligible_content_is_stamped_indexable(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/ok.txt"), content="plenty of body")])
+        assert (await storage.reindex()).success is True
+        assert await _indexable_flag(storage, "/ok.txt") is True
         await storage.close()
 
     async def test_options_drift_forces_a_rebuild_with_no_dirty_rows(self, tmp_path, monkeypatch) -> None:
@@ -196,9 +230,9 @@ class TestStatementLegality:
     async def test_pending_probe_is_row_presence_not_bare_exists_on_tsql(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         tables = storage._host.tables
-        sql = str(indexing._pending_probe(tables.entry, tables.chunks).compile(dialect=mssql.dialect())).upper()
+        sql = str(indexing._pending_probe(tables.entry).compile(dialect=mssql.dialect())).upper()
         assert not sql.startswith("SELECT EXISTS")
-        assert "WHERE" in sql and "EXISTS" in sql  # the correlated probe stays in the WHERE
+        assert "WHERE" in sql and "INDEXABLE" in sql
         await storage.close()
 
 
@@ -295,6 +329,26 @@ class TestFlagAlgebra:
         assert (await storage.grep(pattern="needle")).observations == []  # default scope hides trash
         found = await storage.grep(pattern="needle", globs=(str(trash_path),))
         assert [str(o.path) for o in found.observations] == [str(trash_path)]
+        await storage.close()
+
+    async def test_copy_overwrite_demotes_the_occupant_at_the_claim(self, tmp_path) -> None:
+        # A copy onto an occupant replaces its body — a coverage exit.
+        # Without the demote the occupant stays nominated by dead grams
+        # and its fresh body is permanently invisible to both tiers.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/src.txt"), content="alpha needle")])
+        await storage.write(entries=[Entry(path=Path("/dst.txt"), content="bravo body")])
+        assert (await storage.reindex()).success is True
+        pair = ResolvedPair(Path("/src.txt"), Path("/dst.txt"))
+        assert (await storage.copy(operations=[pair], overwrite=True)).success is True
+        assert await _flags(storage, "/dst.txt") == (False, False)
+        found = await storage.grep(pattern="alpha")
+        assert sorted(str(o.path) for o in found.observations) == ["/dst.txt", "/src.txt"]
+        assert (await storage.reindex()).success is True  # and the next build re-covers
+        assert await _flags(storage, "/dst.txt") == (True, True)
+        found = await storage.grep(pattern="alpha")
+        assert sorted(str(o.path) for o in found.observations) == ["/dst.txt", "/src.txt"]
+        assert (await storage.grep(pattern="bravo")).observations == []
         await storage.close()
 
     async def test_a_write_racing_the_publish_window_stays_scan_side(self, tmp_path) -> None:
@@ -408,7 +462,7 @@ class TestFlipArms:
         entry = build_vfs_tables(table_name="vfs").entry
         pairs = [("01A", 1), ("01B", 2)]
         await indexing._flip_flags(
-            cast("AsyncSession", session), entry, POSTGRESQL, 2_000, 1_000, pairs, flag="encoded"
+            cast("AsyncSession", session), entry, POSTGRESQL, 2_000, 1_000, pairs, assignments={"encoded": True}
         )
         ((stmt, params),) = session.calls
         assert params is None  # set-based, not executemany
@@ -419,7 +473,7 @@ class TestFlipArms:
         session = _RecordingSession(postgresql.dialect())
         entry = build_vfs_tables(table_name="vfs").entry
         await indexing._flip_flags(
-            cast("AsyncSession", session), entry, GENERIC, 2_000, 1_000, [("01A", 1)], flag="chunked"
+            cast("AsyncSession", session), entry, GENERIC, 2_000, 1_000, [("01A", 1)], assignments={"chunked": True}
         )
         ((_stmt, params),) = session.calls
         assert params == [{"b_id": "01A", "b_ver": 1}]
@@ -427,7 +481,9 @@ class TestFlipArms:
     async def test_no_pairs_is_a_no_op(self) -> None:
         session = _RecordingSession(postgresql.dialect())
         entry = build_vfs_tables(table_name="vfs").entry
-        await indexing._flip_flags(cast("AsyncSession", session), entry, POSTGRESQL, 2_000, 1_000, [], flag="encoded")
+        await indexing._flip_flags(
+            cast("AsyncSession", session), entry, POSTGRESQL, 2_000, 1_000, [], assignments={"encoded": True}
+        )
         assert session.calls == []
 
 

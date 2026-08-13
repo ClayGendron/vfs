@@ -1116,7 +1116,9 @@ async def _execute_copy(
     Fresh rows take new ULIDs at version 1, ownership follows the
     writer, and neither ``external_id`` nor any edge row is copied. An
     overwritten occupant keeps its identity — a material update with an
-    SQL-side increment — so rows referencing it stay wired. A rival
+    SQL-side increment — so rows referencing it stay wired; the update
+    resets ``chunked``/``encoded`` like any content write, because the
+    occupant's new body exits its old index coverage. A rival
     child committed under the destination mid-window merges rather than
     refusing: the outcome equals the legal serial history copy-then-
     write, and a copy destroys nothing, so the overwrite fence's
@@ -1146,6 +1148,9 @@ async def _execute_copy(
                 ext=dest.ext,
                 lines=root["lines"],
                 size_bytes=root["size_bytes"],
+                chunked=False,
+                encoded=False,
+                indexable=False,
                 owner_id=user_id,
                 updated_at=now,
                 version=entry.c.version + 1,

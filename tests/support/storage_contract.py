@@ -1471,6 +1471,41 @@ class StorageContract:
         found = await storage.grep(pattern="buried", globs=(str(trash_path),))
         assert [o.path for o in found.observations] == [trash_path]
 
+    @needs("write", "grep")
+    async def test_a_needle_straddling_the_split_cut_is_served_after_reindex(self, storage: ConformanceBackend) -> None:
+        # The minimal boundary shape: the needle's bytes sit on both
+        # sides of a 2048 split cut; nomination must be immune to it.
+        reindexer = _reindexer_of(storage)
+        body = "a" * 2045 + "straddle_needle" + "b" * 3000
+        await storage.write(entries=[Entry(path=Path("/cut.txt"), content=body)])
+        assert (await reindexer.reindex()).success is True
+        found = await storage.grep(pattern="straddle_needle")
+        assert [o.path for o in found.observations] == ["/cut.txt"]
+
+    @needs("write", "grep")
+    async def test_long_single_line_bodies_stay_greppable_after_reindex(self, storage: ConformanceBackend) -> None:
+        # The ETL corpus shape: lines longer than any split budget
+        # (minified JSON, long log lines) keep every match after a build.
+        reindexer = _reindexer_of(storage)
+        minified = "{" + ",".join(f'"key_{i}":"{"x" * 40}"' for i in range(60)) + "}"
+        log_line = "ts=17 level=info " + "f" * 4096 + " marker_after_4k trailer"
+        entries = [Entry(path=Path("/data.json"), content=minified), Entry(path=Path("/app.log"), content=log_line)]
+        await storage.write(entries=entries)
+        assert (await reindexer.reindex()).success is True
+        assert [o.path for o in (await storage.grep(pattern="key_59")).observations] == ["/data.json"]
+        assert [o.path for o in (await storage.grep(pattern="marker_after_4k")).observations] == ["/app.log"]
+
+    @needs("write", "grep")
+    async def test_a_needle_with_interior_whitespace_survives_a_rebuild(self, storage: ConformanceBackend) -> None:
+        # Splitters may drop whitespace-only spans; extraction must see
+        # every byte of the body, interior space runs included.
+        reindexer = _reindexer_of(storage)
+        body = "pad = '" + "p" * 2030 + "'\nleft_anchor      right_anchor\n"
+        await storage.write(entries=[Entry(path=Path("/mod.py"), content=body)])
+        assert (await reindexer.reindex()).success is True
+        found = await storage.grep(pattern="left_anchor      right_anchor")
+        assert [o.path for o in found.observations] == ["/mod.py"]
+
     # ------------------------------------------------------------------
     # mkedge
     # ------------------------------------------------------------------
