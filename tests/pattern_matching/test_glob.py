@@ -15,6 +15,7 @@ import pytest
 
 from vfs.paths import ROOT, Path
 from vfs.pattern_matching import (
+    GLOB_CHANNEL_LABELS,
     MAX_PATTERN_ARMS,
     DerivedExt,
     compile_filter,
@@ -482,6 +483,18 @@ class TestFilterPaths:
         assert filter_paths([Path("/.vfs/trash/x")], "*") == ["/.vfs/trash/x"]
 
 
+class TestChannelLabels:
+    """The frozen channel→label vocabulary every minting site shares."""
+
+    def test_one_label_per_channel(self) -> None:
+        expected = {"pattern": "glob pattern", "globs": "grep glob", "globs_not": "glob exclusion"}
+        assert dict(GLOB_CHANNEL_LABELS) == expected
+
+    def test_the_map_is_frozen(self) -> None:
+        with pytest.raises(TypeError):
+            GLOB_CHANNEL_LABELS["pattern"] = "drift"  # ty: ignore[invalid-assignment]
+
+
 # =========================================================================
 # Translation parity — the in-house translate against the stdlib's
 # =========================================================================
@@ -525,7 +538,7 @@ PARITY_PATTERNS = (
 
 @pytest.mark.skipif(not hasattr(stdlib_glob, "translate"), reason="stdlib glob.translate arrives in 3.13")
 class TestTranslateParity:
-    """The 3.12-floor translation must be the stdlib's, byte for byte."""
+    """The in-house translation must be the stdlib's, byte for byte."""
 
     def test_compiled_source_matches_the_stdlib(self) -> None:
         for pattern in PARITY_PATTERNS:

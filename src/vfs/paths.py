@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 from pydantic_core import core_schema
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from pydantic import GetCoreSchemaHandler
     from pydantic_core import CoreSchema
 
@@ -714,6 +716,19 @@ def normalize_extension(text: str) -> str | None:
     if not ext or len(ext) > 32:
         return None
     return ext
+
+
+def normalize_ext_channel(ext: Iterable[str]) -> frozenset[str]:
+    """The ext-channel law: each member dot-stripped, then lowercased.
+
+    Callers spell channel members as ``"py"``, ``".py"``, or ``".PY"``;
+    comparisons run against path-derived extensions, so members fold to
+    the same case law. Distinct from :func:`normalize_extension`, the
+    stored-column law: the channel keeps the empty member — ``("",)``
+    and ``(".",)`` select extensionless names — where the column law
+    refuses empties.
+    """
+    return frozenset(member.lstrip(".").lower() for member in ext)
 
 
 class SplitPath(NamedTuple):

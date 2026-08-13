@@ -22,15 +22,14 @@ import re
 from typing import TYPE_CHECKING, NamedTuple
 
 from vfs.models import Match
-from vfs.paths import extract_extension
-from vfs.pattern_matching.glob import compile_filter
+from vfs.paths import normalize_ext_channel
+from vfs.pattern_matching.glob import compile_filter, passes_filters
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from vfs.ops import CaseMode, GrepOutputMode
     from vfs.paths import Path
-    from vfs.pattern_matching.glob import GlobFilter
 
 
 class GrepHit(NamedTuple):
@@ -46,31 +45,8 @@ class GrepHit(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
-# Structural filters — the path-shaped gates every grep surface applies
+# Structural filters — grep's batch form of glob's path gates
 # ---------------------------------------------------------------------------
-
-
-def passes_filters(
-    path: Path,
-    gates: list[GlobFilter],
-    not_gates: list[GlobFilter],
-    wanted: frozenset[str],
-    unwanted: frozenset[str],
-) -> bool:
-    """Glob admission/exclusion and the ext facts, per candidate path.
-
-    Carries no meta rule: enumeration liveness is the enumerating
-    surface's concern (storage layers it on top), and paths already in
-    a caller's hand are never hidden.
-    """
-    if gates and not any(gate.matches(path) for gate in gates):
-        return False
-    if any(gate.matches(path) for gate in not_gates):
-        return False
-    extension = extract_extension(path) or ""
-    if wanted and extension not in wanted:
-        return False
-    return not (unwanted and extension in unwanted)
 
 
 def filter_candidates(
@@ -90,8 +66,8 @@ def filter_candidates(
     """
     gates = [compile_filter(glob, ()) for glob in dict.fromkeys(globs)]
     not_gates = [compile_filter(glob, ()) for glob in dict.fromkeys(globs_not)]
-    wanted = frozenset(e.lstrip(".").lower() for e in ext)
-    unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
+    wanted = normalize_ext_channel(ext)
+    unwanted = normalize_ext_channel(ext_not)
     return [path for path in paths if passes_filters(path, gates, not_gates, wanted, unwanted)]
 
 

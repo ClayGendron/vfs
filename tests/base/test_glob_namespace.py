@@ -241,6 +241,17 @@ async def test_brace_expansion_past_the_cap_refuses_loudly() -> None:
     assert "arm cap" in result.errors[0].message
 
 
+async def test_exclusion_refusals_share_one_label_across_verbs() -> None:
+    # One channel, one label: the exclusion channel's refusal vocabulary
+    # is verb-independent, minted from GLOB_CHANNEL_LABELS everywhere.
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    globbed = await fs.glob("*", globs_not=("{a",))
+    grepped = await fs.grep("x", globs_not=("{a",))
+    assert globbed.success is False and grepped.success is False
+    for result in (globbed, grepped):
+        assert result.errors[0].message.startswith("glob exclusion '{a'"), result.errors[0].message
+
+
 async def test_brace_defect_refuses_naming_the_manufactured_arm() -> None:
     fs = await _mounted_world()
     result = await fs.glob("/data/{deep,}/b.txt")
@@ -417,6 +428,15 @@ async def test_chained_glob_path_arm_anchors_and_ext_applies() -> None:
     assert [str(o.path) for o in anchored.observations] == ["/src/a.py", "/src/c.txt"]
     by_ext = await fs.glob("*", observations=rows, ext=("py",))
     assert [str(o.path) for o in by_ext.observations] == ["/src/a.py", "/lib/b.py"]
+
+
+async def test_chained_glob_ext_members_normalize_dots_and_case() -> None:
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [Observation(path=Path("/src/a.py")), Observation(path=Path("/src/c.txt"))]
+    dotted = await fs.glob("*", observations=rows, ext=(".PY",))
+    assert [str(o.path) for o in dotted.observations] == ["/src/a.py"]
+    dropped = await fs.glob("*", observations=rows, ext_not=(".PY",))
+    assert [str(o.path) for o in dropped.observations] == ["/src/c.txt"]
 
 
 async def test_chained_glob_never_hides_meta_rows_in_hand() -> None:

@@ -524,7 +524,7 @@ class DatabaseStorage:
         if lost.is_set():
             return lease_lost_result()
         result = await self._execute_write(
-            "reindex", lambda session: build_epoch(session, tables, self._host.parameter_budget, state)
+            "reindex", lambda session: build_epoch(session, tables, state)
         )
         if not result.success or state.epoch is None:
             return result

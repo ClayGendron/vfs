@@ -89,7 +89,6 @@ MAX_INDEXABLE_BYTES: Final = 2 * 1024 * 1024
 MAX_DISTINCT_GRAMS: Final = 20_000
 
 _POSTING_BATCH_BYTES: Final = 1 << 20
-_POSTING_ROW_BINDS: Final = 6
 
 # Lease staleness horizon and beat interval: the beat task pulses every
 # interval, so the TTL tolerates four missed beats plus clock skew.
@@ -236,7 +235,7 @@ async def chunk_dirty(
 # ---------------------------------------------------------------------------
 
 
-async def build_epoch(session: AsyncSession, tables: VFSTables, parameter_budget: int, state: ReindexState) -> Result:
+async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexState) -> Result:
     """Build the full posting set under a fresh epoch, or no-op.
 
     The no-op check: no live entry awaits encoding and the current
@@ -292,7 +291,7 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, parameter_budget
         }
         rows.append((values, len(blob)))
     try:
-        for batch in _byte_capped(rows, parameter_budget):
+        for batch in _byte_capped(rows):
             await session.execute(insert(tables.posting_list), batch)
         await session.execute(
             insert(tables.gram_epochs),
@@ -475,14 +474,19 @@ def _pending_probe(entry: Table) -> Select[tuple[int]]:
     )
 
 
-def _byte_capped(rows: list[tuple[dict[str, object], int]], parameter_budget: int) -> list[list[dict[str, object]]]:
-    """Slice posting rows by bind count and accumulated blob bytes."""
-    max_rows = max(1, parameter_budget // _POSTING_ROW_BINDS)
+def _byte_capped(rows: list[tuple[dict[str, object], int]]) -> list[list[dict[str, object]]]:
+    """Slice posting rows by accumulated blob bytes only.
+
+    Bind-count chunking is SQLAlchemy's job — ``insertmanyvalues``
+    splits each executemany by the dialect's own parameter ceiling —
+    but it takes no position on blob payload bytes, so the byte budget
+    bounds what one statement carries.
+    """
     batches: list[list[dict[str, object]]] = []
     batch: list[dict[str, object]] = []
     batch_bytes = 0
     for row_values, size in rows:
-        if batch and (len(batch) >= max_rows or batch_bytes + size > _POSTING_BATCH_BYTES):
+        if batch and batch_bytes + size > _POSTING_BATCH_BYTES:
             batches.append(batch)
             batch, batch_bytes = [], 0
         batch.append(row_values)

@@ -23,16 +23,23 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from itertools import product
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, NamedTuple
 
-from vfs.paths import Path, extract_extension, normalize_extension
+from vfs.paths import Path, extract_extension, normalize_ext_channel, normalize_extension
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 # Ceiling on the distinct arms one pattern may expand to; callers
 # refuse an over-cap expansion loudly rather than fan it out.
 MAX_PATTERN_ARMS: Final = 64
+
+# One label per glob-language channel, shared by every site that mints a
+# channel refusal — the vocabulary cannot drift per verb or per layer.
+GLOB_CHANNEL_LABELS: Final[Mapping[str, str]] = MappingProxyType(
+    {"pattern": "glob pattern", "globs": "grep glob", "globs_not": "glob exclusion"}
+)
 
 
 @dataclass(frozen=True)
@@ -133,13 +140,36 @@ def compile_filter(pattern: str, ext: tuple[str, ...]) -> GlobFilter:
         pattern=canonical,
         by_path="/" in canonical,
         regex=compile_glob(pattern),
-        wanted_ext=frozenset(e.lstrip(".").lower() for e in ext),
+        wanted_ext=normalize_ext_channel(ext),
     )
 
 
 # ---------------------------------------------------------------------------
 # Path filtering — glob as a pure predicate over paths in hand
 # ---------------------------------------------------------------------------
+
+
+def passes_filters(
+    path: Path,
+    gates: list[GlobFilter],
+    not_gates: list[GlobFilter],
+    wanted: frozenset[str],
+    unwanted: frozenset[str],
+) -> bool:
+    """Glob admission/exclusion and the ext facts, per candidate path.
+
+    Carries no meta rule: enumeration liveness is the enumerating
+    surface's concern (storage layers it on top), and paths already in
+    a caller's hand are never hidden.
+    """
+    if gates and not any(gate.matches(path) for gate in gates):
+        return False
+    if any(gate.matches(path) for gate in not_gates):
+        return False
+    extension = extract_extension(path) or ""
+    if wanted and extension not in wanted:
+        return False
+    return not (unwanted and extension in unwanted)
 
 
 def filter_paths(paths: Sequence[Path], pattern: str, ext: tuple[str, ...] = ()) -> list[Path]:
@@ -383,7 +413,7 @@ def _translate(pattern: str, *, recursive: bool) -> str:
     """Regex source for *pattern* — segment-aware, dotfiles ordinary, ``/`` seps.
 
     An original implementation of the ``glob.translate`` contract (stdlib
-    3.13+, newer than the 3.12 floor), fixed to the one call shape every
+    3.13+, newer than the project floor), fixed to the one call shape every
     consumer uses: hidden files included, ``/`` the only separator. Input
     is defect-gated and canonical — no ``**`` inside a component, no
     adjacent ``**`` — so the stdlib's collapses for both are omitted here.

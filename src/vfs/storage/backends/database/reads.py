@@ -23,13 +23,20 @@ and subtrees by ``path`` — byte-identical across engines.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from sqlalchemy import and_, func, or_, select
 
 from vfs.models import CONTENT_KINDS, Observation
-from vfs.paths import METADATA_ROOT, Path, extract_extension
-from vfs.pattern_matching import GlobFilter, compile_filter, derive_ext, glob_defect
+from vfs.paths import Path, _under_meta_root, normalize_ext_channel
+from vfs.pattern_matching import (
+    GLOB_CHANNEL_LABELS,
+    GlobFilter,
+    compile_filter,
+    derive_ext,
+    glob_defect,
+    passes_filters,
+)
 from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
@@ -218,32 +225,28 @@ async def glob_rows(
     ``globs_not`` and ``ext_not`` gate candidates beside the compiled
     authority; ``kind`` is an exact fact and rides inside every arm.
     """
-    for pattern in (*patterns, *globs_not):
-        defect = glob_defect(pattern)
-        if defect is not None:
-            error = ResultError(kind=VFSErrorKind.invalid, message=f"glob pattern {pattern!r}: {defect}")
-            return Result(ops=("glob",), errors=[error])
+    for label, channel in ((GLOB_CHANNEL_LABELS["pattern"], patterns), (GLOB_CHANNEL_LABELS["globs_not"], globs_not)):
+        for pattern in channel:
+            defect = glob_defect(pattern)
+            if defect is not None:
+                error = ResultError(kind=VFSErrorKind.invalid, message=f"{label} {pattern!r}: {defect}")
+                return Result(ops=("glob",), errors=[error])
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    wanted = frozenset(e.lstrip(".").lower() for e in ext)
-    unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
+    wanted = normalize_ext_channel(ext)
+    unwanted = normalize_ext_channel(ext_not)
     matched: dict[str, RowMapping] = {}
     live = list(dict.fromkeys(patterns))
     gates = [compile_filter(pattern, ext) for pattern in live]
     not_gates = [compile_filter(pattern, ()) for pattern in dict.fromkeys(globs_not)]
     built = (pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind) for glob in gates)
     arms = [arm for arm in built if arm is not None]
-    ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
-    chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ext_binds)
+    ride = ext_membership(entry, wanted, membership_budget)
+    chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds)
     for mapping in await _pattern_candidates(session, entry, chunk, arms, fetched):
-        path = Path(mapping["path"])
-        if not any(glob.matches(path) for glob in gates):
-            continue
-        if any(gate.matches(path) for gate in not_gates):
-            continue
-        if unwanted and (extract_extension(path) or "") in unwanted:
-            continue
-        matched.setdefault(mapping["path"], mapping)
+        # Wanted-ext admission rides inside the gates (compiled with *ext*).
+        if passes_filters(Path(mapping["path"]), gates, not_gates, frozenset(), unwanted):
+            matched.setdefault(mapping["path"], mapping)
     rows = [_observe(matched[path], fetched) for path in sorted(matched)]
     if max_count is not None:
         rows = rows[:max_count]
@@ -253,6 +256,27 @@ async def glob_rows(
 # ---------------------------------------------------------------------------
 # Pattern-arm machinery — shared by the glob fan and grep's scan side
 # ---------------------------------------------------------------------------
+
+
+class ExtMembership(NamedTuple):
+    """The rideable half of the caller's ext facts: predicate paired with its binds."""
+
+    predicate: ColumnElement[bool] | None
+    binds: int
+
+
+def ext_membership(entry: Table, wanted: frozenset[str], membership_budget: int) -> ExtMembership:
+    """The wanted-ext set as one SQL membership fact, or ``(None, 0)``.
+
+    Membership rides only when every member is a stored value — the
+    empty extension is stored ``NULL``, which ``IN`` can never admit —
+    and the set fits one membership chunk. Predicate and bind count
+    travel together so the fan's budget arithmetic can never drift from
+    the SQL the arms actually carry.
+    """
+    if wanted and "" not in wanted and len(wanted) <= membership_budget:
+        return ExtMembership(entry.c.ext.in_(sorted(wanted)), len(wanted))
+    return ExtMembership(None, 0)
 
 
 def pattern_arm(
@@ -281,8 +305,9 @@ def pattern_arm(
     terms: list[ColumnElement[bool]] = [entry.c.path != "/", subject.like(prefilter, escape=LIKE_ESCAPE)]
     if kind is not None:
         terms.append(entry.c.kind == kind)
-    if wanted and "" not in wanted and len(wanted) <= membership_budget:
-        terms.append(entry.c.ext.in_(sorted(wanted)))
+    ride = ext_membership(entry, wanted, membership_budget)
+    if ride.predicate is not None:
+        terms.append(ride.predicate)
     derived = derive_ext(glob.pattern)
     if derived is not None:
         if wanted and "" not in wanted and derived.ext not in wanted:
@@ -294,12 +319,15 @@ def pattern_arm(
 
 
 def meta_scoped(pattern: str) -> bool:
-    """Whether the pattern's literal prefix addresses the meta subtree.
+    """Whether the pattern's own head literally names the meta subtree.
 
-    Only a literal ``/.vfs`` head lifts the exclusion — a wildcard-headed
-    prefix (``/.v*``, ``/.vfs*``) never does.
+    Only a whole literal ``/.vfs`` head lifts the exclusion — a
+    wildcard-headed prefix (``/.v*``, ``/.vfs*``) never does, even
+    though its extracted literal prefix reaches the meta root. The
+    string law is the path layer's: a pattern with that head confines
+    itself exactly as a meta path does.
     """
-    return pattern == METADATA_ROOT or pattern.startswith(METADATA_ROOT + "/")
+    return _under_meta_root(pattern)
 
 
 # ---------------------------------------------------------------------------

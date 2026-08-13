@@ -49,13 +49,27 @@ from sqlalchemy import or_, select
 from vfs.models import CONTENT_KINDS, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError, decode_postings
-from vfs.paths import Path
-from vfs.pattern_matching import GlobFilter, compile_filter, compile_verifier, glob_defect, passes_filters, verify
+from vfs.paths import Path, normalize_ext_channel
+from vfs.pattern_matching import (
+    GLOB_CHANNEL_LABELS,
+    GlobFilter,
+    compile_filter,
+    compile_verifier,
+    glob_defect,
+    passes_filters,
+    verify,
+)
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.descent import liveness_filters
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.indexing import current_epoch
-from vfs.storage.backends.database.reads import ARM_FIXED_BINDS, effective_columns, meta_scoped, pattern_arm
+from vfs.storage.backends.database.reads import (
+    ARM_FIXED_BINDS,
+    effective_columns,
+    ext_membership,
+    meta_scoped,
+    pattern_arm,
+)
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
@@ -136,11 +150,12 @@ async def grep_rows(
     crosses this seam. *wall_seconds* is the caller-configured wall-clock
     budget; the declared default keeps direct callers honest.
     """
-    for glob_pattern in (*globs, *globs_not):
-        defect = glob_defect(glob_pattern)
-        if defect is not None:
-            error = ResultError(kind=VFSErrorKind.invalid, message=f"grep glob {glob_pattern!r}: {defect}")
-            return Result(ops=("grep",), errors=[error])
+    for label, channel in ((GLOB_CHANNEL_LABELS["globs"], globs), (GLOB_CHANNEL_LABELS["globs_not"], globs_not)):
+        for glob_pattern in channel:
+            defect = glob_defect(glob_pattern)
+            if defect is not None:
+                error = ResultError(kind=VFSErrorKind.invalid, message=f"{label} {glob_pattern!r}: {defect}")
+                return Result(ops=("grep",), errors=[error])
     try:
         verifier = compile_verifier(pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode)
     except re.error as exc:
@@ -160,8 +175,8 @@ async def grep_rows(
     exclusions = list(dict.fromkeys(globs_not))
     gates = [compile_filter(glob, ()) for glob in admissions]
     not_gates = [compile_filter(glob, ()) for glob in exclusions]
-    wanted = frozenset(e.lstrip(".").lower() for e in ext)
-    unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
+    wanted = normalize_ext_channel(ext)
+    unwanted = normalize_ext_channel(ext_not)
     fetched = effective_columns(columns, content=columns is not None)
     deadline = monotonic() + wall_seconds
 
@@ -418,8 +433,8 @@ async def _entries_for_scan(
         arms = [arm for arm in built if arm is not None]
         if not arms:
             return ScanNominees([], False)
-        ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
-        chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ext_binds + len(CONTENT_KINDS))
+        ride = ext_membership(entry, wanted, membership_budget)
+        chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds + len(CONTENT_KINDS))
         for chunk in chunked(arms, chunk_size):
             if monotonic() > deadline:
                 break
@@ -431,8 +446,9 @@ async def _entries_for_scan(
                 merged = {path: merged[path] for path in sorted(merged)[: limit + 1]}
     else:
         terms = [*base, entry.c.path != "/", *liveness_filters(entry, profile, include_meta=False)]
-        if wanted and "" not in wanted and len(wanted) <= membership_budget:
-            terms.append(entry.c.ext.in_(sorted(wanted)))
+        ride = ext_membership(entry, wanted, membership_budget)
+        if ride.predicate is not None:
+            terms.append(ride.predicate)
         stmt = select(*columns).where(*terms).order_by(entry.c.path).limit(limit + 1)
         merged = {mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()}
     rows = [merged[path] for path in sorted(merged)]

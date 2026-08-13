@@ -499,6 +499,30 @@ class TestPostingBatches:
         assert await _count(storage, storage._host.tables.posting_list) > 1
         await storage.close()
 
+    async def test_posting_insert_rides_uncapped_past_the_parameter_budget(self, tmp_path, monkeypatch) -> None:
+        # The lean-on behind the deleted row cap: a posting batch whose
+        # summed binds dwarf the parameter budget still lands whole, as
+        # one executemany whose statement carries a single row's binds —
+        # SQLAlchemy owns row chunking, and no statement text grows.
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: 42))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        content = " ".join(f"tok{i:02}" for i in range(40))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content=content)])).success is True
+        statements: list[tuple[str, bool]] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append((statement, executemany))
+
+        assert (await storage.reindex()).success is True
+        inserts = [(s, many) for s, many in statements if s.startswith("INSERT") and "posting" in s]
+        assert len(inserts) == 1, inserts  # no vfs-side row cap splits the batch
+        statement, many = inserts[0]
+        assert many is True and statement.count("?") == 6  # one row's binds per parameter set
+        grams = await _count(storage, storage._host.tables.posting_list)
+        assert grams * 6 > 42  # the batch genuinely outgrew the budget
+        await storage.close()
+
     async def test_no_reindex_statement_grows_with_entry_count(self, tmp_path, monkeypatch) -> None:
         # The scale law under a tightened budget: stale-chunk deletes
         # chunk their IN-lists, and no statement's bind count exceeds it.

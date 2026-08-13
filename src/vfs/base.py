@@ -46,8 +46,9 @@ from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import CONTENT_KINDS, Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
-from vfs.paths import METADATA_ROOT, ROOT, Path, extract_extension, resolve_path
+from vfs.paths import METADATA_ROOT, ROOT, Path, extract_extension, normalize_ext_channel, resolve_path
 from vfs.pattern_matching import (
+    GLOB_CHANNEL_LABELS,
     MAX_PATTERN_ARMS,
     compile_filter,
     compile_verifier,
@@ -1094,10 +1095,10 @@ class VirtualFileSystem:
         )
         if refusal is not None:
             return refusal
-        arms, refused = self._expanded_arms("glob", "glob pattern", pattern)
+        arms, refused = self._expanded_arms("glob", GLOB_CHANNEL_LABELS["pattern"], pattern)
         if refused is not None:
             return refused
-        globs_not, refused = self._expanded_channel("glob", "glob exclusion", globs_not)
+        globs_not, refused = self._expanded_channel("glob", GLOB_CHANNEL_LABELS["globs_not"], globs_not)
         if refused is not None:
             return refused
         if observations is not None:
@@ -1197,10 +1198,10 @@ class VirtualFileSystem:
         )
         if refusal is not None:
             return refusal
-        globs, refused = self._expanded_channel("grep", "grep glob", globs)
+        globs, refused = self._expanded_channel("grep", GLOB_CHANNEL_LABELS["globs"], globs)
         if refused is not None:
             return refused
-        globs_not, refused = self._expanded_channel("grep", "grep glob", globs_not)
+        globs_not, refused = self._expanded_channel("grep", GLOB_CHANNEL_LABELS["globs_not"], globs_not)
         if refused is not None:
             return refused
         if observations is not None:
@@ -1508,8 +1509,8 @@ class VirtualFileSystem:
             return invalid
         gates = [compile_filter(arm, ()) for arm in arms]
         not_gates = [compile_filter(glob, ()) for glob in globs_not]
-        wanted = frozenset(e.lstrip(".").lower() for e in ext)
-        unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
+        wanted = normalize_ext_channel(ext)
+        unwanted = normalize_ext_channel(ext_not)
         kept = [row for row in rows if passes_filters(row.path, gates, not_gates, wanted, unwanted)]
         errors: list[ResultError] = []
         if kind is not None:
@@ -1869,9 +1870,11 @@ class VirtualFileSystem:
         kind = cast("str | None", kwargs.get("kind"))
         columns = cast("frozenset[str] | None", kwargs.get("columns"))
         not_gates = [compile_filter(glob, ()) for glob in not_arms]
-        unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
+        unwanted = normalize_ext_channel(ext_not)
 
         def keep(row: Observation) -> bool:
+            # Re-spells passes_filters, its authority: each arm composes
+            # per row here, so the gates cannot be compiled once upfront.
             if not any(compile_filter(effective_pattern(row.path, arm), ext).matches(row.path) for arm in arms):
                 return False
             if any(gate.matches(row.path) for gate in not_gates):

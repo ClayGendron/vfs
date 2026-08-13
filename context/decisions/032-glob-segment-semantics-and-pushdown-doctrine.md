@@ -52,7 +52,11 @@ not an interactive shell; the reserved `/.vfs` subtree stays
 invisible via liveness scope (namespace policy, not pattern policy).
 Consequence: `requires-python` moved to `>=3.13`, where
 `glob.translate` lives — the chokepoint wraps stdlib rather than
-vendoring a translator.
+vendoring a translator. *(Annotation, 2026-08-13: superseded by
+ADR 035 — the floor returned to 3.11 and the chokepoint now carries
+an original in-house translation, pinned byte-identical to the
+stdlib's by the differential battery wherever `glob.translate`
+exists. The semantics decided here are unchanged.)*
 
 ### 2. One compile chokepoint
 

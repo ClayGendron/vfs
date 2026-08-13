@@ -153,8 +153,8 @@ Constructs from other glob dialects that are **plain literal text** here:
 
 `ext=` and `ext_not=` (both verbs carry both) filter by the **path-derived** extension — the text after the last dot of the leaf name, never a stored column. They combine with the pattern as an AND. Entries are normalized: a leading dot is dropped and case is folded, so `ext=("py", ".TXT")` accepts both `/a.py` and `/b.txt`:
 
-- `ext=("py", ".TXT")` with pattern `*`: matches `/a.py` and `/b.txt`; rejects `/c.rs` and `/noext` (an extensionless name never passes a non-empty ext filter).
-- `ext_not=(".TXT",)` drops `.txt` rows; an extensionless row is never `ext_not`'s business and passes.
+- `ext=("py", ".TXT")` with pattern `*`: matches `/a.py` and `/b.txt`; rejects `/c.rs` and `/noext`. The empty member is the extensionless arm: `ext=("",)` (or `(".",)`) selects exactly the extensionless names.
+- `ext_not=(".TXT",)` drops `.txt` rows; an extensionless row passes unless the empty member names it (`ext_not=("",)` drops extensionless rows).
 
 ## Differences from ripgrep globs at a glance
 

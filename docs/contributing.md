@@ -12,7 +12,7 @@ uv pip install -e ".[all]"
 uv pip install --group dev --group docs
 ```
 
-Requires Python 3.12+.
+Requires Python 3.11+.
 
 ## Day-to-Day Checks
 

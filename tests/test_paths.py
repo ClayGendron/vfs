@@ -26,6 +26,7 @@ from vfs.paths import (
     extract_extension,
     is_meta_path,
     is_reserved_directory,
+    normalize_ext_channel,
     normalize_path,
     normalize_relative_path,
     parse_kind,
@@ -970,6 +971,18 @@ class TestExtractExtension:
 
     def test_path_normalized_first(self):
         assert extract_extension("/src//auth.py") == "py"  # ty: ignore[invalid-argument-type]
+
+
+class TestNormalizeExtChannel:
+    def test_members_strip_dots_and_fold_case(self):
+        assert normalize_ext_channel((".PY", "Txt", "md")) == {"py", "txt", "md"}
+
+    def test_empty_member_survives_as_the_extensionless_arm(self):
+        # Unlike normalize_extension, the channel law keeps the empty member.
+        assert normalize_ext_channel(("", ".")) == {""}
+
+    def test_duplicates_collapse(self):
+        assert normalize_ext_channel(("py", ".py", ".PY")) == {"py"}
 
 
 # =========================================================================

@@ -170,7 +170,14 @@ lifts the exclusion for that subtree** (`_literal_prefix` already
 extracts it). `glob("/.vfs/trash/**")` — scoped or not — serves
 trash rows; patterns without a meta literal prefix keep the subtree
 hidden. This makes the bypass a property of what the caller wrote
-rather than of which argument carried it.
+rather than of which argument carried it. *(Annotation, 2026-08-13:
+the landed spelling — `meta_scoped`, now delegating to the path
+layer's `_under_meta_root` — is deliberately tighter than the
+`_literal_prefix` hint here: only a whole literal `/.vfs` head
+lifts. A wildcard-headed pattern such as `/.vfs*` has a
+meta-addressed extracted prefix yet also matches sibling names
+(`/.vfsx`), so it never lifts; the caller must write the meta root
+as a whole segment.)*
 
 ### 6. Grep inherits the seam at Pass C
 

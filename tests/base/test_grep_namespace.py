@@ -216,6 +216,18 @@ async def test_chained_grep_applies_the_glob_and_ext_gates_in_memory() -> None:
     assert [str(o.path) for o in by_ext.observations] == ["/x/b.txt"]
 
 
+async def test_chained_grep_ext_members_normalize_dots_and_case() -> None:
+    fs = VirtualFileSystem(storage=InMemoryStorage())
+    rows = [
+        Observation(path=Path("/x/a.py"), kind="file", content="needle"),
+        Observation(path=Path("/x/b.txt"), kind="file", content="needle"),
+    ]
+    dotted = await fs.grep("needle", observations=rows, ext=(".PY",))
+    assert [str(o.path) for o in dotted.observations] == ["/x/a.py"]
+    dropped = await fs.grep("needle", observations=rows, ext_not=(".PY",))
+    assert [str(o.path) for o in dropped.observations] == ["/x/b.txt"]
+
+
 async def test_chained_grep_never_refuses_on_indexability() -> None:
     # The index tier is not involved: a pattern with no indexable
     # literal matches rows in hand without allow_scan.

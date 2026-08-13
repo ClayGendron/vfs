@@ -1,11 +1,82 @@
 # 099 — Ownership and vocabulary cleanup: the review's decision pass lands
 
-- **Status: draft 2026-08-13** — born from the review campaign memo's
-  decision pass (`research/2026-08-13-glob-grep-indexing-review-campaign.md`,
+- **Status: implemented 2026-08-13, awaiting commit** — born from the
+  review campaign memo's decision pass
+  (`research/2026-08-13-glob-grep-indexing-review-campaign.md`,
   decisions 1–4, 6, 8, all resolved by Clay 2026-08-13) plus the two
   verified duplication/drift findings (memo 13, 14). No open forks —
   every item is decided; this spec is the work package that lands
   them.
+- **Landing ledger (2026-08-13):**
+  - Suite 2,276 passed at 100.00% coverage; `ruff`/`ty` zero. Four
+    Docker legs not required (nothing engine-shaped moved), per the
+    verification obligations.
+  - §1: `passes_filters` lives in `glob.py`'s path-filtering group;
+    grep imports it one-way and the package docstring's concern
+    assignment is true again. The move revealed no dead code:
+    `filter_paths` is the deliberate simple public form (plan 094),
+    exported and pinned — kept.
+  - §2: the `reads.py` glob-candidate loop routes through
+    `passes_filters` (wanted rides inside the gates, so the wanted
+    argument is empty by construction); the `base.py` keep closure
+    stays irreducible with a comment naming its authority. Landing
+    differential: 38,880 cases, 0 mismatches
+    (`differential_admission_law.py`, session scratchpad — old inline
+    spelling transcribed from `a577c28` vs the landed routing; the
+    empty-gates divergence is unreachable in `glob_rows`, and the
+    grid mirrors that precondition).
+  - §3: `ext_membership(entry, wanted, membership_budget) →
+    (predicate | None, binds)` lands in `reads.py` beside
+    `pattern_arm`/`ARM_FIXED_BINDS`; all four sites (glob fan budget
+    + arm, grep scan budget + bare-scan terms) route through it, and
+    a unit row pins the stand-down cases and the pairing.
+  - §4: `meta_scoped` delegates to `paths._under_meta_root`. The
+    ADR 031 one-glance check found the real edge: the docstring
+    claimed the "literal prefix" law while the code implements the
+    stricter whole-literal-head law (`/.vfs*` has a meta-addressed
+    extracted prefix yet never lifts — it also matches `/.vfsx`).
+    Docstring reworded to the implemented law; ADR 031 §5 annotated
+    recording the deliberate tightening.
+  - §5: `normalize_ext_channel()` lands in `vfs.paths` beside
+    `normalize_extension` (column law untouched); all six sites call
+    it — the only remaining `lstrip(".")` in `src/` is the helper
+    itself. The three formerly-unpinned consumers (batch
+    `filter_candidates`, chained glob, chained grep) each gained a
+    dotted/uppercase pin; hand-mutant proof: bypassing the law at
+    the grep-module and router sites fails exactly the three new
+    pins, and restoration re-verified. The `ext=("",)` lead was a
+    real docs contradiction: `docs/reference/glob-patterns.md`
+    claimed "an extensionless row is never `ext_not`'s business" —
+    behavior (pinned by the storage `ext=(".",)` row) deliberately
+    treats the empty member as the extensionless arm; docs aligned
+    to behavior.
+  - §6: `GLOB_CHANNEL_LABELS` (frozen `MappingProxyType`) with one
+    label per channel — pattern → "glob pattern", globs → "grep
+    glob", globs_not → "glob exclusion" — consumed by all four
+    minting sites (router glob/grep, backend glob/grep loops).
+    **Placement deviates from the spec's letter for a structural
+    reason:** the backend minting sites are among the four, and
+    `base.py` imports the backends package (memory), so
+    base.py-ownership would be a real import cycle; the map lives in
+    `pattern_matching/glob.py` — the language owns its channels'
+    names, and every minting site already imports the layer. Pinned
+    by a frozen-map unit row and a cross-verb row asserting glob and
+    grep mint the identical exclusion label.
+  - §7: `_byte_capped`'s `max_rows` branch and `_POSTING_ROW_BINDS`
+    deleted; `build_epoch` no longer takes `parameter_budget`. The
+    sqlite pin records the *actual* lean-on, spike-verified: a
+    non-RETURNING posting insert executes as one `executemany` whose
+    statement carries a single row's six binds — per-row parameter
+    sets, never an accumulated list — so no statement grows with
+    batch size (the multi-statement insertmanyvalues chunking the
+    campaign observed is MSSQL/Oracle's shape of the same
+    SQLAlchemy-owned law). Rides the 095 §9 battery on real engines
+    when 095 lands.
+  - §8: both "3.12 floor" mentions dropped the number (pyproject/ADR
+    035 own the fact); `docs/index.md` and `docs/contributing.md`
+    trued to Python 3.11+ (pyproject: `>=3.11`); ADR 032 §1's
+    `>=3.13` consequence annotated as superseded history rather than
+    edited. `STATUS.md` untouched — decision 7's territory.
 - **Date:** 2026-08-13
 - **Owner:** Clay Gendron
 - **Kind:** structural cleanup — placement moves, duplication

@@ -26,7 +26,7 @@ from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import StaleSnapshot
 from vfs.storage.backends.database.engine import EngineHost
-from vfs.storage.backends.database.reads import ENTRY_OBSERVATION_FIELDS, _glob_like
+from vfs.storage.backends.database.reads import ENTRY_OBSERVATION_FIELDS, _glob_like, ext_membership
 
 # ---------------------------------------------------------------------------
 # Read family + glob — seeded directly through Core (writes land later)
@@ -446,6 +446,17 @@ class TestExtPushdown:
         result = await storage.glob(patterns=("*",), ext=(".",))
         assert [str(o.path) for o in result.observations] == ["/README"]
         await storage.close()
+
+    def test_the_rideability_pair_travels_together(self) -> None:
+        # One owner for the ride condition: predicate and bind count come
+        # from the same call, so budget arithmetic cannot drift from SQL.
+        entry = build_vfs_tables(table_name="ext_pair_pin").entry
+        ride = ext_membership(entry, frozenset({"py", "txt"}), 16)
+        assert ride.binds == 2 and ride.predicate is not None
+        for stand_down in (frozenset(), frozenset({""}), frozenset({"py", ""})):
+            assert ext_membership(entry, stand_down, 16) == (None, 0)
+        oversized = frozenset(f"e{i}" for i in range(17))
+        assert ext_membership(entry, oversized, 16) == (None, 0)
 
 
 class TestPatternFan:

@@ -20,6 +20,11 @@ class TestFilterCandidates:
         assert filter_candidates(paths, ext=("py",)) == ["/src/a.py", "/lib/c.py"]
         assert filter_candidates(paths, ext_not=("py",)) == ["/src/b.txt"]
 
+    def test_ext_members_normalize_dots_and_case(self) -> None:
+        paths = [Path("/src/a.py"), Path("/src/b.txt")]
+        assert filter_candidates(paths, ext=(".PY",)) == ["/src/a.py"]
+        assert filter_candidates(paths, ext_not=(".PY",)) == ["/src/b.txt"]
+
     def test_no_gates_means_everything_passes(self) -> None:
         paths = [Path("/a"), Path("/.vfs/meta.txt")]
         assert filter_candidates(paths) == paths  # no meta rule: paths in hand are never hidden

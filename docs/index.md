@@ -13,7 +13,7 @@ The docs site is published on GitHub Pages at `https://claygendron.github.io/vfs
 pip install vfs-py
 ```
 
-Requires Python 3.12+.
+Requires Python 3.11+.
 
 ## Quick Start
 
