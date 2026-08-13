@@ -88,6 +88,22 @@ Consequences that bind design work:
 - Do **not** auto-create a branch before committing. Commit to the current
   branch as-is — including `main` — unless I explicitly ask for a new branch.
 - Commit or push only when I ask.
+- **Never run `git checkout -- <file>`, `git restore`, or `git stash` on a
+  file that carries uncommitted work without backing that file up first.**
+  These commands silently replace the working copy with the committed
+  version — on a file mid-implementation, that destroys the session's work
+  with no undo (this happened: a `git checkout` used to undo a temporary
+  test mutation wiped a day of uncommitted changes to `grep.py`, which had
+  to be re-applied edit by edit). The safe pattern:
+  1. `cp <file> <scratchpad>/<file>.bak` **before** any restore-shaped
+     command touches it — the session scratchpad, not `/tmp`.
+  2. For temporary mutations (mutation testing, quick experiments), prefer
+     never touching git at all: apply the mutation, run the check, then
+     restore **from the backup copy** (`cp <backup> <file>`), and verify
+     with `ruff`/a targeted test that the restored file is intact.
+  3. Reach for `git checkout`/`git restore` only on files that are clean in
+     `git status` — when the working copy genuinely holds nothing beyond
+     HEAD.
 
 ## Project memory
 
