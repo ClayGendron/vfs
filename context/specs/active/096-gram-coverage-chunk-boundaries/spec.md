@@ -1,6 +1,7 @@
 # 096 — Gram coverage: chunk boundaries stop eating matches
 
-- **Status: implemented 2026-08-13, uncommitted** — born from the
+- **Status: implemented and committed 2026-08-13** (`6b0d8f0` decisions,
+  `1567619` landing) — born from the
   review campaign memo
   (`research/2026-08-13-glob-grep-indexing-review-campaign.md`,
   finding 3 critical + adjacent leads). The §1 owner fork was resolved
