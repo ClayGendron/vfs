@@ -45,7 +45,7 @@ PATTERNS = [
     ("alt_short_branch", "unindexable", r"kmalloc|ab", 0),
 ]
 
-K_SWEEP = [1, 2, 3, 4, 8, 0]  # 0 = all required grams
+K_SWEEP = [1, 2, 3, 4, 8, 16, 0]  # 0 = all required grams
 
 
 def required_gram_sets(query) -> list[set[int]]:
@@ -153,7 +153,7 @@ def main() -> None:
     n_real = corpus.execute("SELECT count(*) FROM docs").fetchone()[0]
     for label, cls, pattern, flags in PATTERNS:
         entry = {"class": cls, "pattern": pattern}
-        q = build_code_gram_query(pattern, folded=True)
+        q = build_code_gram_query(pattern)
         if q.is_any():
             entry["plan"] = "GramAny -> REFUSED (allow_scan opt-out)"
             if do_scan and n_docs <= 100_000:
