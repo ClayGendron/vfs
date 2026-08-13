@@ -20,6 +20,7 @@ rivals is exercised on the server engine legs.
 from __future__ import annotations
 
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database.grep import WALL_TIME_BUDGET
 
 
 class InMemoryStorage(DatabaseStorage):
@@ -36,10 +37,12 @@ class InMemoryStorage(DatabaseStorage):
         name: str = "memory",
         description: str = "In-memory storage",
         trash_days: int = 90,
+        grep_wall_seconds: float = WALL_TIME_BUDGET,
     ) -> None:
         super().__init__(
             url="sqlite+aiosqlite:///:memory:",
             name=name,
             description=description,
             trash_days=trash_days,
+            grep_wall_seconds=grep_wall_seconds,
         )

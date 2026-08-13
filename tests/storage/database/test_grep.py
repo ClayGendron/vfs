@@ -10,13 +10,16 @@ worlds.
 
 from __future__ import annotations
 
+from time import monotonic
 from typing import Any
 
+import pytest
 from sqlalchemy import func, select, update
 
 from tests.support.database_helpers import _url
 from vfs.models import Entry
 from vfs.paths import Path
+from vfs.pattern_matching import compile_filter
 from vfs.results import Result, Severity, VFSErrorKind
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
@@ -108,6 +111,32 @@ class TestOverlayPartition:
         assert (await storage.write(entries=[Entry(path=Path("/dirty.txt"), content="needle three")])).success is True
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/clean.txt", "/dirty.txt"]
+        await storage.close()
+
+    async def test_invert_match_scans_everything_after_reindex(self, tmp_path) -> None:
+        # invert is scan-shaped by construction: encoded rows must still
+        # be scanned, so dropping invert from scan_all loses this row.
+        storage = await _fresh(tmp_path, {"/with.txt": "needle here", "/without.txt": "clean body"})
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="needle", invert_match=True)
+        assert result.success is True
+        assert _paths(result) == ["/without.txt"]
+        await storage.close()
+
+    async def test_fixed_strings_serves_encoded_rows_after_reindex(self, tmp_path) -> None:
+        # The literal plan must nominate encoded rows too — the regex
+        # metachar is literal text, and the index side owns the row now.
+        storage = await _fresh(tmp_path, {"/dot.txt": "call a.b here", "/x.txt": "call axb here"})
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="a.b", fixed_strings=True)
+        assert _paths(result) == ["/dot.txt"]
+        await storage.close()
+
+    async def test_word_regexp_serves_encoded_rows_after_reindex(self, tmp_path) -> None:
+        storage = await _fresh(tmp_path, {"/word.txt": "the needle word", "/sub.txt": "needles inside"})
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="needle", word_regexp=True)
+        assert _paths(result) == ["/word.txt"]
         await storage.close()
 
     async def test_stale_postings_cannot_resurrect_overwritten_content(self, tmp_path) -> None:
@@ -317,14 +346,20 @@ class TestBudgets:
         assert any(e.kind == VFSErrorKind.truncated for e in result.errors)
         await storage.close()
 
-    async def test_wall_time_budget_truncates_between_stages(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(grep_module, "WALL_TIME_BUDGET", -1.0)
-        storage = await _fresh(tmp_path, {"/a.txt": "needle"})
+    async def test_wall_time_budget_truncates_between_stages(self, tmp_path) -> None:
+        # The budget is a constructor knob (default WALL_TIME_BUDGET); a
+        # vanishing one expires before the first stage and truncates all.
+        storage = DatabaseStorage(url=_url(tmp_path), grep_wall_seconds=1e-9)
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle")], parents=True)).success
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert result.observations == []
         assert {e.kind for e in result.errors} == {VFSErrorKind.truncated}
         await storage.close()
+
+    def test_a_non_positive_wall_budget_refuses_at_construction(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match="grep_wall_seconds"):
+            DatabaseStorage(url=_url(tmp_path), grep_wall_seconds=0)
 
     async def test_posting_byte_budget_narrows_the_gram_choice_soundly(self, tmp_path, monkeypatch) -> None:
         # A budget too small for a second blob still intersects the
@@ -335,6 +370,156 @@ class TestBudgets:
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt"]
         assert result.errors == []
+        await storage.close()
+
+    async def test_every_or_branch_gets_its_exempt_rarest_blob(self, tmp_path, monkeypatch) -> None:
+        # The first-gram exemption is per branch: an exhausted byte
+        # budget must not silently drop a later branch's only blob.
+        monkeypatch.setattr(grep_module, "POSTING_BYTE_BUDGET", 1)
+        storage = await _fresh(tmp_path, {"/a.txt": "alpha_first body", "/b.txt": "omega_second body"})
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="alpha_first|omega_second")
+        assert _paths(result) == ["/a.txt", "/b.txt"]
+        assert result.errors == []
+        await storage.close()
+
+    async def test_an_expired_deadline_stops_the_branch_union(self, tmp_path) -> None:
+        # The deadline is consulted between OR branches: an expired
+        # union fetches nothing more and the call truncates loudly.
+        storage = DatabaseStorage(url=_url(tmp_path), grep_wall_seconds=1e-9)
+        entries = [
+            Entry(path=Path("/a.txt"), content="alpha_first"),
+            Entry(path=Path("/b.txt"), content="omega_second"),
+        ]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="alpha_first|omega_second")
+        assert result.success is True
+        assert result.observations == []
+        assert {e.kind for e in result.errors} == {VFSErrorKind.truncated}
+        await storage.close()
+
+    async def test_a_saturated_index_side_names_the_skipped_overlay(self, tmp_path, monkeypatch) -> None:
+        # Index candidates alone fill the budget: the scan overlay is
+        # never consulted, so the fresh dirty file is honestly absent
+        # and the truncation record names the skipped overlay.
+        monkeypatch.setattr(grep_module, "CANDIDATE_BUDGET", 2)
+        storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two", "/c.txt": "needle three"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle four")])).success is True
+        result = await storage.grep(pattern="needle")
+        assert result.success is True
+        assert "/fresh.txt" not in _paths(result)
+        [warning] = [e for e in result.errors if e.kind == VFSErrorKind.truncated]
+        assert "overlay not consulted" in warning.message
+        await storage.close()
+
+    async def test_content_is_fetched_in_byte_budgeted_batches(self, tmp_path, monkeypatch) -> None:
+        # Three ~30-byte bodies under a 64-byte budget: the fetch must
+        # split, and no batch may exceed the budget (singletons exempt).
+        monkeypatch.setattr(grep_module, "CONTENT_BYTE_BUDGET", 64)
+        batches: list[list[str]] = []
+        real = grep_module._content_for_entries
+
+        async def recording(session, tables, membership_budget, entry_ids):
+            batches.append(list(entry_ids))
+            return await real(session, tables, membership_budget, entry_ids)
+
+        monkeypatch.setattr(grep_module, "_content_for_entries", recording)
+        files = {f"/f{i}.txt": f"needle padding padding {i:04d}" for i in range(3)}
+        storage = await _fresh(tmp_path, files)
+        result = await storage.grep(pattern="needle")
+        assert len(result.observations) == 3
+        assert len(batches) > 1
+        assert all(len(batch) < 3 for batch in batches)
+        await storage.close()
+
+    async def test_an_expired_deadline_fetches_no_content_at_all(self, tmp_path, monkeypatch) -> None:
+        # The deadline is consulted before each fetch batch: an expired
+        # call must stop cold, never materialize one more body.
+        fetches: list[object] = []
+        real = grep_module._content_for_entries
+
+        async def counting(session, tables, membership_budget, entry_ids):
+            fetches.append(entry_ids)
+            return await real(session, tables, membership_budget, entry_ids)
+
+        monkeypatch.setattr(grep_module, "_content_for_entries", counting)
+        storage = DatabaseStorage(url=_url(tmp_path), grep_wall_seconds=1e-9)
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle")], parents=True)).success
+        result = await storage.grep(pattern="needle")
+        assert result.observations == []
+        assert fetches == []
+        await storage.close()
+
+    async def test_count_mode_verdicts_carry_no_body(self, tmp_path) -> None:
+        # files/count retain only the verdict: even an explicit content
+        # projection must not ship bodies the mode cannot report.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle\nneedle"})
+        result = await storage.grep(pattern="needle", output_mode="count", columns=frozenset({"content"}))
+        assert result.observations[0].score == 2.0
+        assert result.observations[0].content is None
+        await storage.close()
+
+
+class TestEpochLadder:
+    async def test_a_moved_pointer_redrives_the_call_once(self, tmp_path, monkeypatch) -> None:
+        # The re-read sees the pointer move on attempt one; the redrive
+        # re-reads everything from current state and serves correctly.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        assert (await storage.reindex()).success is True
+        real = grep_module.current_epoch
+        calls = {"n": 0}
+
+        async def moved_once(session, tables):
+            calls["n"] += 1
+            current = await real(session, tables)
+            if calls["n"] == 2:  # the first attempt's post-ladder re-read
+                return (current or 0) + 1
+            return current
+
+        monkeypatch.setattr(grep_module, "current_epoch", moved_once)
+        result = await storage.grep(pattern="needle")
+        assert result.success is True
+        assert _paths(result) == ["/a.txt"]
+        assert calls["n"] == 4  # two pointer reads per attempt: exactly one redrive
+        await storage.close()
+
+    async def test_a_pointer_that_never_settles_classifies_conflict(self, tmp_path, monkeypatch) -> None:
+        # Bounded retries, then loud: the exhausted redrive leaves as a
+        # retryable conflict, never a silent empty success.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        assert (await storage.reindex()).success is True
+        real = grep_module.current_epoch
+        calls = {"n": 0}
+
+        async def always_moving(session, tables):
+            calls["n"] += 1
+            return ((await real(session, tables)) or 0) + calls["n"]
+
+        monkeypatch.setattr(grep_module, "current_epoch", always_moving)
+        result = await storage.grep(pattern="needle")
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.conflict
+        assert result.errors[0].retryable is True
+        await storage.close()
+
+    async def test_scan_only_calls_never_touch_the_pointer(self, tmp_path, monkeypatch) -> None:
+        # scan_all reads no epoch-dependent partition: neither the
+        # initial pointer read nor the re-read should ever run.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        calls = {"n": 0}
+        real = grep_module.current_epoch
+
+        async def counting(session, tables):
+            calls["n"] += 1
+            return await real(session, tables)
+
+        monkeypatch.setattr(grep_module, "current_epoch", counting)
+        result = await storage.grep(pattern="needle", invert_match=True)
+        assert result.success is True
+        assert result.observations == []
+        assert calls["n"] == 0
         await storage.close()
 
 
@@ -367,4 +552,56 @@ class TestSnapshotState:
         assert (await storage.reindex()).success is True
         result = await storage.grep(pattern="Needle")
         assert _paths(result) == ["/a.txt"]
+        await storage.close()
+
+
+class TestScanMergeBounds:
+    async def test_an_expired_deadline_stops_the_arm_chunk_loop(self, tmp_path) -> None:
+        # The loop consults the deadline before each chunk: an expired
+        # scan issues no statements and nominates nothing.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two"})
+        host = storage._host
+        gates = [compile_filter("*.txt", ())]
+        async with host.session_factory() as session:
+            nominated, overflow = await grep_module._entries_for_scan(
+                session,
+                host.tables,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                gates,
+                frozenset(),
+                everything=True,
+                fetched=frozenset({"path"}),
+                limit=10,
+                deadline=-1.0,
+            )
+        assert nominated == []
+        assert overflow is False
+        await storage.close()
+
+    async def test_the_merge_prunes_to_the_lowest_paths_across_chunks(self, tmp_path, monkeypatch) -> None:
+        # Two arm chunks each return limit+1 rows: the merge must hold
+        # only the lowest limit+1 paths, and truncate with overflow.
+        monkeypatch.setattr(grep_module, "arm_budget", lambda profile, parameter_budget, arm_binds: 1)
+        files = dict.fromkeys(("/a1.txt", "/a2.txt", "/b1.log", "/b2.log"), "needle body")
+        storage = await _fresh(tmp_path, files)
+        host = storage._host
+        gates = [compile_filter("*.txt", ()), compile_filter("*.log", ())]
+        async with host.session_factory() as session:
+            nominated, overflow = await grep_module._entries_for_scan(
+                session,
+                host.tables,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
+                gates,
+                frozenset(),
+                everything=True,
+                fetched=frozenset({"path"}),
+                limit=1,
+                deadline=monotonic() + 60,
+            )
+        assert [m["path"] for m in nominated] == ["/a1.txt"]
+        assert overflow is True
         await storage.close()

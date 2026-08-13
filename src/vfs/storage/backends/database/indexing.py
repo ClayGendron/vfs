@@ -30,15 +30,26 @@ the flag — a content write resets both flags, and the delete claim
 demotes ``encoded`` as it stamps ``deleted_at`` — so no reachable state
 hides a live or trashed row from both tiers: an uncovered row is always
 ``NOT encoded``, which is exactly the scan side's partition.
+
+One reindex runs at a time, arbitrated by a crash-safe lease on the
+meta row: the verb claims it up front (a live rival refuses loudly,
+naming the running lease's age), heartbeats it between phases, and
+releases it best-effort at the end — a crashed run just stops
+heartbeating, and the lease frees itself after the TTL with nothing
+to clean up, because unpublished build rows are already inert. The
+lease is an arbiter, never a guard correctness depends on: if a phase
+outlives the TTL and a rival claims through, the epoch mint collision
+and the publish CAS still arbitrate exactly as they do today.
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from time import time
 from typing import TYPE_CHECKING, Annotated, Any, Final, cast
 
-from sqlalchemy import bindparam, column, delete, func, insert, literal, select, tuple_, update, values
+from sqlalchemy import bindparam, column, delete, func, insert, literal, or_, select, tuple_, update, values
 from sqlalchemy.exc import IntegrityError
 
 from vfs.models import CONTENT_KINDS
@@ -80,6 +91,11 @@ MAX_DISTINCT_GRAMS: Final = 20_000
 _POSTING_BATCH_BYTES: Final = 1 << 20
 _POSTING_ROW_BINDS: Final = 6
 
+# Lease staleness horizon and beat interval: the beat task pulses every
+# interval, so the TTL tolerates four missed beats plus clock skew.
+REINDEX_LEASE_TTL_MS: Final = 5 * 60 * 1000
+REINDEX_HEARTBEAT_SECONDS: Final = 60.0
+
 
 def index_options_hash() -> str:
     """The options half of the epoch fingerprint; any change forces rebuild."""
@@ -94,6 +110,67 @@ class ReindexState:
     previous_epoch: Epoch | None = None
     epoch: Epoch | None = None
     covered: list[tuple[str, int]] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# The single-runner lease — claim, heartbeat, release
+# ---------------------------------------------------------------------------
+
+
+async def claim_reindex_lease(session: AsyncSession, tables: VFSTables, token: str) -> Result:
+    """Claim the reindex lease for *token*, or refuse naming the live run.
+
+    One guarded UPDATE: the lease is free when the holder is NULL or the
+    heartbeat is older than the TTL, so a crashed run frees itself by
+    silence — there is no cleanup state. A zero-row claim means a rival
+    is running; the refusal is the "reindex in progress" signal, loud
+    and retryable, carrying the running lease's heartbeat age.
+    """
+    meta = tables.meta
+    now = _now_ms()
+    free = or_(meta.c.reindex_holder.is_(None), meta.c.reindex_heartbeat < now - REINDEX_LEASE_TTL_MS)
+    claim = update(meta).where(meta.c.id == 1, free).values(reindex_holder=token, reindex_heartbeat=now)
+    if cast("CursorResult[Any]", await session.execute(claim)).rowcount == 1:
+        return Result(ops=("reindex",))
+    held = (await session.execute(select(meta.c.reindex_heartbeat).where(meta.c.id == 1))).scalar_one_or_none()
+    age = max(0, now - held) // 1000 if held is not None else 0
+    message = f"a reindex is already running (lease heartbeat {age}s ago); retry after it finishes"
+    return Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)])
+
+
+async def heartbeat_reindex_lease(session: AsyncSession, tables: VFSTables, token: str) -> Result:
+    """Refresh *token*'s heartbeat; a miss means the lease was taken.
+
+    A zero-row refresh means the lease expired mid-run and a rival
+    claimed through. The beat task flags it and the run stops at the
+    next phase boundary — the rival is rebuilding everything this run
+    would have published, and the epoch machinery arbitrates whatever
+    already landed.
+    """
+    meta = tables.meta
+    beat = update(meta).where(meta.c.id == 1, meta.c.reindex_holder == token).values(reindex_heartbeat=_now_ms())
+    if cast("CursorResult[Any]", await session.execute(beat)).rowcount == 1:
+        return Result(ops=("reindex",))
+    return lease_lost_result()
+
+
+def lease_lost_result() -> Result:
+    """The one spelling of "a rival claimed through": conflict, retryable."""
+    message = "the reindex lease expired mid-run and was claimed by a rival; this run stopped"
+    return Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)])
+
+
+async def release_reindex_lease(session: AsyncSession, tables: VFSTables, token: str) -> Result:
+    """Release *token*'s lease, best-effort; a taken lease is left alone.
+
+    The TTL, not this release, is the liveness guarantee — a release
+    that never runs (crash, transport loss) costs one TTL of refused
+    rivals and nothing else.
+    """
+    meta = tables.meta
+    drop = update(meta).where(meta.c.id == 1, meta.c.reindex_holder == token)
+    await session.execute(drop.values(reindex_holder=None, reindex_heartbeat=None))
+    return Result(ops=("reindex",))
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +380,11 @@ async def reclaim_built_epoch(session: AsyncSession, tables: VFSTables, built: E
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _now_ms() -> int:
+    """Wall-clock epoch milliseconds — the lease's cross-instance currency."""
+    return int(time() * 1000)
 
 
 def _indexable(content: str) -> bool:

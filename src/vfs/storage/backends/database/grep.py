@@ -1,8 +1,8 @@
 """Grep over the gram index: refusal gate, posting ladder, overlay scan.
 
-The read side of content search, one snapshot per call: compile the
-caller's pattern (uncompilable classifies invalid), plan folded grams
-unconditionally, refuse a pattern with no gram predicate unless
+The read side of content search, one coherent epoch per call: compile
+the caller's pattern (uncompilable classifies invalid), plan folded
+grams unconditionally, refuse a pattern with no gram predicate unless
 ``allow_scan=True`` opts into the scan tier, intersect the rarest
 posting lists into candidate entries, apply the
 structural gates before any content fetch, verify every candidate with
@@ -12,8 +12,26 @@ is scan-shaped by construction — no occurrence index narrows
 non-matches — and runs the scan tier without ``allow_scan``; the
 refusal gate is pattern-shaped.
 
+Epoch coherence is detected, never assumed: engines without a
+repeatable-read pin read each statement at its own snapshot, so after
+the last epoch-dependent read the pointer is re-read — movement means
+a rival publish landed mid-call and the whole call redrives via
+:class:`StaleSnapshot` (reclaim commits strictly after the publish
+CAS, so every observable mix moves the pointer first). On pinned
+engines the re-read is a same-snapshot no-op.
+
 Runtime budgets bound work, never correctness silently: a capped call
 carries a warning-severity truncation record naming the refine moves.
+One declared exemption: the rarest gram of each AND-group is fetched
+even when it alone exceeds ``POSTING_BYTE_BUDGET`` — strict
+enforcement would silently lose index-side matches. The exemption is
+per OR branch, so a wide-alternation union's fetch cost grows with
+its branch count; that width is deliberately uncapped (bulk unions —
+IOC lists, symbol sweeps — are a supported shape) and is bounded by
+the wall-clock deadline instead, consulted between branches. When the
+index side alone saturates ``CANDIDATE_BUDGET`` the scan overlay is
+never consulted, and the truncation record says so by name.
+
 Every function takes the op's live session and only executes SELECTs;
 none begins or commits — ``backend.py`` owns the transaction.
 """
@@ -35,12 +53,13 @@ from vfs.paths import Path
 from vfs.pattern_matching import GlobFilter, compile_filter, compile_verifier, glob_defect, passes_filters, verify
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.descent import liveness_filters
-from vfs.storage.backends.database.dialects import arm_budget, chunked
+from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.reads import ARM_FIXED_BINDS, effective_columns, meta_scoped, pattern_arm
+from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,6 +77,10 @@ if TYPE_CHECKING:
 CANDIDATE_BUDGET: Final = 10_000
 POSTING_BYTE_BUDGET: Final = 4 * 1024 * 1024
 WALL_TIME_BUDGET: Final = 10.0
+
+# Bytes of candidate bodies resident at once: content is fetched,
+# verified, and released in batches sized by the entries' size_bytes.
+CONTENT_BYTE_BUDGET: Final = 32 * 1024 * 1024
 
 # Rarest-first intersection width — selectivity saturates by four grams.
 _INTERSECT_GRAMS: Final = 4
@@ -104,12 +127,14 @@ async def grep_rows(
     max_count: int | None,
     allow_scan: bool,
     columns: frozenset[str] | None,
+    wall_seconds: float = WALL_TIME_BUDGET,
 ) -> Result:
     """One row per matching entry, index side unioned with the scan side.
 
     Scoping arrives purely as pattern text on the ``globs`` channels —
     the router composes and residuates scope upstream; no path channel
-    crosses this seam.
+    crosses this seam. *wall_seconds* is the caller-configured wall-clock
+    budget; the declared default keeps direct callers honest.
     """
     for glob_pattern in (*globs, *globs_not):
         defect = glob_defect(glob_pattern)
@@ -138,13 +163,16 @@ async def grep_rows(
     wanted = frozenset(e.lstrip(".").lower() for e in ext)
     unwanted = frozenset(e.lstrip(".").lower() for e in ext_not)
     fetched = effective_columns(columns, content=columns is not None)
-    deadline = monotonic() + WALL_TIME_BUDGET
+    deadline = monotonic() + wall_seconds
 
     candidates: dict[str, RowMapping] = {}
     truncations: list[str] = []
+    epoch: Epoch | None = None
     if not scan_all:
+        epoch = await current_epoch(session, tables)
+        await seam("grep:after-pointer-read")
         try:
-            doc_ids = await _index_doc_ids(session, tables, membership_budget, plan)
+            doc_ids = await _index_doc_ids(session, tables, membership_budget, epoch, plan, deadline)
         except PostingCorruptionError as exc:
             error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
             return Result(ops=("grep",), errors=[error])
@@ -160,8 +188,11 @@ async def grep_rows(
     if not truncations or truncations == ["candidate budget"]:
         remaining = CANDIDATE_BUDGET - len(candidates)
         if remaining <= 0:
-            if "candidate budget" not in truncations:
-                truncations.append("candidate budget")
+            # The overlay was never consulted: freshly-written scan-side
+            # entries are absent, and the record must say so by name.
+            if "candidate budget" in truncations:
+                truncations.remove("candidate budget")
+            truncations.append("candidate budget, with the unindexed overlay not consulted")
         else:
             nominated, overflow = await _entries_for_scan(
                 session,
@@ -174,6 +205,7 @@ async def grep_rows(
                 everything=scan_all,
                 fetched=fetched,
                 limit=remaining,
+                deadline=deadline,
             )
             if overflow:
                 truncations.append("candidate budget")
@@ -182,31 +214,36 @@ async def grep_rows(
                     candidates.setdefault(mapping["path"], mapping)
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
+    if not scan_all and await current_epoch(session, tables) != epoch:
+        # A rival publish+reclaim landed mid-call: the tiers this call
+        # read are a mix of epochs. Redrive whole from a fresh session.
+        raise StaleSnapshot("the gram-index epoch pointer moved mid-grep")
 
     ordered = [candidates[path] for path in sorted(candidates)]
-    contents = await _content_for_entries(session, tables, membership_budget, [m["entry_id"] for m in ordered])
     rows: list[Observation] = []
-    for mapping in ordered:
+    for batch in _content_batches(ordered):
         if monotonic() > deadline:
             if "wall-time budget" not in truncations:
                 truncations.append("wall-time budget")
             break
-        text = contents.get(mapping["entry_id"])
-        if text is None:
-            continue
-        verified = verify(
-            text,
-            verifier,
-            invert=invert_match,
-            before=before_context,
-            after=after_context,
-            mode=output_mode,
-            cap=max_count,
-        )
-        if verified is None:
-            continue
-        matches, score = verified
-        rows.append(_observe_hit(mapping, fetched, text, matches, score, mode=output_mode))
+        contents = await _content_for_entries(session, tables, membership_budget, [m["entry_id"] for m in batch])
+        for mapping in batch:
+            text = contents.get(mapping["entry_id"])
+            if text is None:
+                continue
+            verified = verify(
+                text,
+                verifier,
+                invert=invert_match,
+                before=before_context,
+                after=after_context,
+                mode=output_mode,
+                cap=max_count,
+            )
+            if verified is None:
+                continue
+            matches, score = verified
+            rows.append(_observe_hit(mapping, fetched, text, matches, score, mode=output_mode))
     for reason in truncations:
         message = f"grep result truncated at the {reason}; {_REFINE_GUIDANCE}"
         errors.append(ResultError(kind=VFSErrorKind.truncated, severity=Severity.warning, message=message))
@@ -218,18 +255,26 @@ async def grep_rows(
 # ---------------------------------------------------------------------------
 
 
-async def _index_doc_ids(session: AsyncSession, tables: VFSTables, membership_budget: int, plan: GramQuery) -> DocIds:
-    """Candidate entry doc ids for *plan* under the published epoch, sorted.
+async def _index_doc_ids(
+    session: AsyncSession,
+    tables: VFSTables,
+    membership_budget: int,
+    epoch: Epoch | None,
+    plan: GramQuery,
+    deadline: float,
+) -> DocIds:
+    """Candidate entry doc ids for *plan* under the caller-read *epoch*, sorted.
 
     No published epoch means no encoded entries: the index side is
-    empty and the scan side owns everything. The posting-byte budget is
-    enforced before any blob fetch via the stored ``byte_size``.
+    empty and the scan side owns everything. The caller owns the epoch
+    read — its post-ladder re-read is what detects a mid-call publish.
+    The posting-byte budget is enforced before any blob fetch via the
+    stored ``byte_size``.
     """
-    epoch = await current_epoch(session, tables)
     if epoch is None:
         return np.empty(0, dtype=np.int64)
     budget = [POSTING_BYTE_BUDGET]
-    return await _doc_ids_for_plan(session, tables, membership_budget, epoch, plan, budget)
+    return await _doc_ids_for_plan(session, tables, membership_budget, epoch, plan, budget, deadline)
 
 
 async def _doc_ids_for_plan(
@@ -239,13 +284,21 @@ async def _doc_ids_for_plan(
     epoch: int,
     plan: GramQuery,
     budget: list[int],
+    deadline: float,
 ) -> DocIds:
-    """One plan node's candidates: OR unions branches, AND intersects grams."""
+    """One plan node's candidates: OR unions branches, AND intersects grams.
+
+    Branch width is deliberately uncapped (each branch fetches one
+    budget-exempt rarest blob), so the deadline is consulted between
+    branches: an expired union stops, and the caller's post-ladder
+    check records the truncation loudly.
+    """
     if isinstance(plan, GramOr):
-        parts = [
-            await _doc_ids_for_plan(session, tables, membership_budget, epoch, branch, budget)
-            for branch in plan.branches
-        ]
+        parts = [np.empty(0, dtype=np.int64)]
+        for branch in plan.branches:
+            if monotonic() > deadline:
+                break
+            parts.append(await _doc_ids_for_plan(session, tables, membership_budget, epoch, branch, budget, deadline))
         return np.unique(np.concatenate(parts))
     grams = sorted(plan.required_grams())
     meta = await _posting_meta(session, tables, membership_budget, epoch, grams)
@@ -310,9 +363,10 @@ async def _entries_for_docs(
 
     The id-first shape: entry rows come back without content — the
     structural Python gates run before any content is fetched.
+    ``size_bytes`` always rides along: it prices the content batches.
     """
     entry = tables.entry
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted(fetched - {"content"}))]
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | {"size_bytes"}) - {"content"}))]
     rows: list[RowMapping] = []
     for chunk in chunked(doc_ids.tolist(), membership_budget):
         stmt = select(*columns).where(entry.c.id.in_(chunk), entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS)))
@@ -337,6 +391,7 @@ async def _entries_for_scan(
     everything: bool,
     fetched: frozenset[str],
     limit: int,
+    deadline: float,
 ) -> ScanNominees:
     """Scan-tier candidate entry rows in path order, capped at *limit*.
 
@@ -345,13 +400,17 @@ async def _entries_for_scan(
     and ``invert_match`` (*everything* true). Structural narrowing rides
     the same LIKE-superset arms as glob; the flag partition and the
     content-kind gate ride beside the fan — the id-bounded fetch, not
-    the fan plan, is what the budget protects here.
+    the fan plan, is what the budget protects here. The merge is pruned
+    to the lowest ``limit + 1`` paths as arm chunks arrive (per-chunk
+    top-``limit + 1`` is a correct merge input), and the deadline is
+    consulted between chunks — an expired loop stops, and the caller's
+    post-scan check records the truncation loudly.
     """
     entry = tables.entry
     base = [entry.c.kind.in_(sorted(CONTENT_KINDS))]
     if not everything:
         base.append(~entry.c.encoded)
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted(fetched - {"content"}))]
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | {"size_bytes"}) - {"content"}))]
     merged: dict[str, RowMapping] = {}
     overflow = False
     if gates:
@@ -361,10 +420,14 @@ async def _entries_for_scan(
         ext_binds = len(wanted) if wanted and "" not in wanted and len(wanted) <= membership_budget else 0
         chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ext_binds + len(CONTENT_KINDS))
         for chunk in chunked(arms, chunk_size):
+            if monotonic() > deadline:
+                break
             stmt = select(*columns).where(*base, or_(*chunk)).order_by(entry.c.path).limit(limit + 1)
             fetched_rows = list((await session.execute(stmt)).mappings())
             overflow = overflow or len(fetched_rows) > limit
             merged.update({mapping["path"]: mapping for mapping in fetched_rows})
+            if len(merged) > limit + 1:
+                merged = {path: merged[path] for path in sorted(merged)[: limit + 1]}
     else:
         terms = [*base, entry.c.path != "/", *liveness_filters(entry, include_meta=False)]
         if wanted and "" not in wanted and len(wanted) <= membership_budget:
@@ -400,10 +463,29 @@ def _passes_gates(
     return passes_filters(path, gates, not_gates, wanted, unwanted)
 
 
+def _content_batches(ordered: Sequence[RowMapping]) -> Iterator[list[RowMapping]]:
+    """Path-ordered slices whose summed ``size_bytes`` fit the byte budget.
+
+    One oversized entry rides alone — the floor of one row per batch
+    keeps progress; the budget bounds residency, never eligibility.
+    """
+    batch: list[RowMapping] = []
+    total = 0
+    for mapping in ordered:
+        size = mapping["size_bytes"] or 0
+        if batch and total + size > CONTENT_BYTE_BUDGET:
+            yield batch
+            batch, total = [], 0
+        batch.append(mapping)
+        total += size
+    if batch:
+        yield batch
+
+
 async def _content_for_entries(
     session: AsyncSession, tables: VFSTables, membership_budget: int, entry_ids: Sequence[EntryId]
 ) -> dict[EntryId, str]:
-    """``entry_id → full body text`` for the final, gated candidate set."""
+    """``entry_id → full body text`` for one verification batch."""
     content = tables.content
     out: dict[EntryId, str] = {}
     for chunk in chunked(sorted(set(entry_ids)), membership_budget):
@@ -421,11 +503,15 @@ def _observe_hit(
     *,
     mode: GrepOutputMode,
 ) -> Observation:
-    """One result row; ``files`` mode carries neither content nor matches."""
+    """One result row; only ``lines`` mode may carry the body.
+
+    ``files`` and ``count`` verdicts retain no content — the body was
+    needed to verify, never to report.
+    """
     populated = set(fetched)
     values: dict[str, object] = {field: mapping[field] for field in fetched - {"content"}}
     values["path"] = Path(mapping["path"])
-    if "content" in fetched and mode != "files":
+    if "content" in fetched and mode == "lines":
         values["content"] = text
     else:
         populated.discard("content")

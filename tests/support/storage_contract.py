@@ -56,8 +56,16 @@ class ConformanceBackend(StorageBackend, SupportsPatternSearch, SupportsMutation
 
 
 def _indexed_grep_tier(storage: ConformanceBackend) -> bool:
-    """Whether the backend declares the indexed grep tier (refusal gate)."""
-    return isinstance(storage, SupportsTraits) and storage.traits().get("grep_tier") == "indexed"
+    """Whether the backend declares the indexed grep tier (refusal gate).
+
+    Absence fails loudly: dropping the trait would silently flip every
+    tier row to a skip, which is exactly the blind spot this guards.
+    Only an explicit ``"scan"`` opts a backend out of the tier rows.
+    """
+    tier = storage.traits().get("grep_tier") if isinstance(storage, SupportsTraits) else None
+    if tier not in ("indexed", "scan"):
+        pytest.fail(f"backend declares grep_tier={tier!r}; every backend must declare 'indexed' or 'scan'")
+    return tier == "indexed"
 
 
 def _reindexer_of(storage: ConformanceBackend) -> SupportsReindex:
@@ -2051,3 +2059,13 @@ class StorageContract:
         for key, value in storage.traits().items():
             assert key in TRAIT_KEYS, f"undeclared trait key {key!r}"
             assert value in TRAIT_VALUES[key], f"trait {key!r} value {value!r} outside the vocabulary"
+
+    @needs("grep")
+    async def test_grep_tier_traits_are_declared(self, storage: ConformanceBackend) -> None:
+        # The battery gates its tier rows on these traits: popping them
+        # must fail here, never silently flip those rows to skips.
+        if not isinstance(storage, SupportsTraits):
+            pytest.fail("a grep-capable backend must declare its tier traits")
+        traits = storage.traits()
+        assert traits.get("grep_tier") in ("indexed", "scan")
+        assert traits.get("grep_staleness") in ("overlay", "none")

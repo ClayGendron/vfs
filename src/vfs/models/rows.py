@@ -119,7 +119,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 2
+SCHEMA_FORMAT_VERSION: Final = 3
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -368,6 +368,9 @@ def build_vfs_tables(
         Column("deleted_at", DateTime(timezone=True)),
         UniqueConstraint("parent_id", "name", name=f"uq_{table_name}_parent_name"),
         Index(f"ix_{table_name}_ext_kind", "ext", "kind"),
+        # Serves grep's overlay and the pending probe (both filter NOT
+        # encoded); measured faster than an (encoded, kind) composite.
+        Index(f"ix_{table_name}_encoded", "encoded"),
         # Restore lookup by original site. Plain composite: a filtered
         # index over the mostly-NULL restore columns is not portable.
         Index(f"ix_{table_name}_restore", "original_parent_id", "original_name"),
@@ -460,6 +463,10 @@ def build_vfs_tables(
         Column("schema_format_version", Integer, nullable=False),
         Column("mount_identity", String(ULID_LENGTH), nullable=False),
         Column("current_gram_epoch", Integer),
+        # Reindex single-runner lease: holder token + last-heartbeat epoch
+        # millis. NULL holder or a stale heartbeat means the lease is free.
+        Column("reindex_holder", String(ULID_LENGTH)),
+        Column("reindex_heartbeat", BigInteger),
         Column("created_at", DateTime(timezone=True)),
         CheckConstraint("id = 1", name=f"ck_{table_name}_meta_single_row"),
         schema=schema,

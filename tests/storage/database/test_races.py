@@ -641,3 +641,48 @@ class TestExhaustionClassification:
             finally:
                 for instance in instances:
                     await instance.close()
+
+
+# ---------------------------------------------------------------------------
+# Grep epoch consistency — a mid-call publish+reclaim never empties a call
+# ---------------------------------------------------------------------------
+
+
+class TestGrepEpochConsistency:
+    """The epoch-reread ladder: old or new, never a mix, on every engine."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_grep_racing_a_publish_and_reclaim_serves_every_row(self, env_var: str) -> None:
+        # The pre-fix defect: grep reads pointer N, the rival publishes
+        # N+1 and reclaims N, and both tiers come back empty with
+        # success=True. The re-read must redrive instead.
+        async with _server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/old.txt"), content="needle old")])).success
+            assert (await storage.reindex()).success is True
+            assert (await storage.write(entries=[Entry(path=Path("/new.txt"), content="needle new")])).success
+
+            handler, rival_results = _self_clearing("grep:after-pointer-read", storage.reindex)
+            with seams.installed("grep:after-pointer-read", handler):
+                raced = await storage.grep(pattern="needle")
+            assert rival_results and rival_results[0].success is True
+            assert raced.success is True, raced.errors
+            assert sorted(str(o.path) for o in raced.observations) == ["/new.txt", "/old.txt"]
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_second_reindex_refuses_while_one_runs(self, env_var: str) -> None:
+        # The single-runner lease: the rival's claim misses while the
+        # first run holds it, and the refusal names the live run.
+        async with _server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])).success
+
+            handler, rival_results = _self_clearing("reindex:before-publish", storage.reindex)
+            with seams.installed("reindex:before-publish", handler):
+                first = await storage.reindex()
+            assert first.success is True, first.errors
+            assert rival_results and rival_results[0].success is False
+            [error] = rival_results[0].errors
+            assert error.kind == VFSErrorKind.conflict
+            assert error.retryable is True
+            assert "already running" in error.message
+            await _audit(storage)

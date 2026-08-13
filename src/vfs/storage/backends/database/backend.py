@@ -28,9 +28,12 @@ classified ``Result`` — never a raw exception.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy.exc import SQLAlchemyError
+from ulid import ULID
 
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
@@ -41,14 +44,19 @@ from vfs.storage.backends.database.dialects import (
     topology_execution_options,
 )
 from vfs.storage.backends.database.engine import EngineHost
-from vfs.storage.backends.database.grep import grep_rows
+from vfs.storage.backends.database.grep import WALL_TIME_BUDGET, grep_rows
 from vfs.storage.backends.database.indexing import (
+    REINDEX_HEARTBEAT_SECONDS,
     ReindexState,
     build_epoch,
     chunk_dirty,
+    claim_reindex_lease,
+    heartbeat_reindex_lease,
+    lease_lost_result,
     publish_epoch,
     reclaim_built_epoch,
     reclaim_epochs,
+    release_reindex_lease,
 )
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.seams import seam
@@ -57,11 +65,12 @@ from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_ro
 from vfs.storage.protocol import storage_ops, targets_of
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models import Entry, Observation
+    from vfs.models.rows import VFSTables
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind, Path
     from vfs.storage import ResolvedPair
@@ -81,12 +90,17 @@ class DatabaseStorage:
         name: str = "database",
         description: str | None = None,
         trash_days: int = 90,
+        grep_wall_seconds: float = WALL_TIME_BUDGET,
     ) -> None:
         if trash_days < 0:
             msg = f"trash_days must be non-negative, got {trash_days}"
             raise ValueError(msg)
+        if grep_wall_seconds <= 0:
+            msg = f"grep_wall_seconds must be positive, got {grep_wall_seconds}"
+            raise ValueError(msg)
         self._host = EngineHost(url=url, session_factory=session_factory, table_name=table_name, schema=schema)
         self._trash_days = trash_days
+        self._grep_wall_seconds = grep_wall_seconds
         self.name = name
         # Construction stays dialect-free: a borrowed host knows its
         # dialect only at first use, so the default names the tables.
@@ -257,6 +271,7 @@ class DatabaseStorage:
                 max_count=max_count,
                 allow_scan=allow_scan,
                 columns=columns,
+                wall_seconds=self._grep_wall_seconds,
             ),
         )
 
@@ -439,14 +454,61 @@ class DatabaseStorage:
         return Result(ops=("first_touch",))
 
     async def reindex(self) -> Result:
-        """Batch gram-index build: chunk, build the next epoch, publish, reclaim.
+        """Batch gram-index build: claim the lease, chunk, build, publish, reclaim.
 
-        Idempotent-cheap when nothing is dirty and the epoch fingerprint
-        matches. Each phase runs in its own writer transaction; posting
-        rows are invisible until the publish transaction flips the
-        ``encoded`` flags and the epoch pointer together.
+        One runner at a time: the verb claims the single-runner lease up
+        front — a live rival refuses loudly with a retryable conflict —
+        and releases it best-effort at the end; a crashed run frees the
+        lease by heartbeat expiry. Idempotent-cheap when nothing is
+        dirty and the epoch fingerprint matches. Each phase runs in its
+        own writer transaction; posting rows are invisible until the
+        publish transaction flips the ``encoded`` flags and the epoch
+        pointer together.
         """
         tables = self._host.tables
+        token = str(ULID())
+        claimed = await self._execute_write("reindex", lambda session: claim_reindex_lease(session, tables, token))
+        if not claimed.success:
+            return claimed
+        async with self._held_reindex_lease(tables, token) as lost:
+            return await self._reindex_phases(tables, lost)
+
+    @asynccontextmanager
+    async def _held_reindex_lease(self, tables: VFSTables, token: str) -> AsyncIterator[asyncio.Event]:
+        """Hold a claimed lease: beat underneath, then cancel and release.
+
+        The beat task is cancelled and awaited *before* the best-effort
+        release, so a stray beat can never resurrect a released lease.
+        The yielded event is set when a beat proves the lease taken.
+        """
+        lost = asyncio.Event()
+        beat = asyncio.create_task(self._beat_reindex_lease(tables, token, lost))
+        try:
+            yield lost
+        finally:
+            beat.cancel()
+            with suppress(asyncio.CancelledError):
+                await beat
+            await self._execute_write("reindex", lambda session: release_reindex_lease(session, tables, token))
+
+    async def _beat_reindex_lease(self, tables: VFSTables, token: str, lost: asyncio.Event) -> None:
+        """Pulse the lease heartbeat until cancelled or proven taken.
+
+        A transient beat failure is not a lost lease — the TTL absorbs
+        missed pulses; only a zero-row refresh (the ``conflict`` verdict)
+        means a rival claimed through, and then the run must stop.
+        """
+        while True:
+            await asyncio.sleep(REINDEX_HEARTBEAT_SECONDS)
+            beat = await self._execute_write(
+                "reindex", lambda session: heartbeat_reindex_lease(session, tables, token)
+            )
+            if any(error.kind == VFSErrorKind.conflict for error in beat.errors):
+                lost.set()
+                return
+
+    async def _reindex_phases(self, tables: VFSTables, lost: asyncio.Event) -> Result:
+        """The lease-held phases; a lost lease stops at the next boundary."""
         state = ReindexState()
         result = await self._execute_write(
             "reindex",
@@ -456,12 +518,16 @@ class DatabaseStorage:
         )
         if not result.success:
             return result
+        if lost.is_set():
+            return lease_lost_result()
         result = await self._execute_write(
             "reindex", lambda session: build_epoch(session, tables, self._host.parameter_budget, state)
         )
         if not result.success or state.epoch is None:
             return result
         await seam("reindex:before-publish")
+        if lost.is_set():
+            return lease_lost_result()
         epoch = state.epoch
         result = await self._execute_write(
             "reindex",

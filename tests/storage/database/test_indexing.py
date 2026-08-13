@@ -8,6 +8,8 @@ gates' scan-side residency, and the publish CAS losing to a rival.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -21,8 +23,9 @@ from vfs.models.code_grams import pack_gram
 from vfs.models.postings import decode_postings, encode_postings
 from vfs.models.rows import ENCODING_DELTA_VARINT, build_vfs_tables
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database import DatabaseStorage, indexing
+from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import installed
@@ -532,4 +535,141 @@ class TestPostingBatches:
         flips = [(s, many) for s, many in statements if s.startswith("UPDATE") and ("chunked" in s or "encoded" in s)]
         assert len(flips) == 2  # ten pairs fit one statement per flag
         assert all(many is False for _, many in flips)
+        await storage.close()
+
+
+class TestReindexLease:
+    async def _stamped(self, storage: DatabaseStorage, holder: str | None, heartbeat: int | None) -> None:
+        meta = storage._host.tables.meta
+        async with storage._host.engine.begin() as conn:
+            await conn.execute(update(meta).values(reindex_holder=holder, reindex_heartbeat=heartbeat))
+
+    async def _lease(self, storage: DatabaseStorage) -> tuple[str | None, int | None]:
+        meta = storage._host.tables.meta
+        async with storage._host.engine.connect() as conn:
+            row = (await conn.execute(select(meta.c.reindex_holder, meta.c.reindex_heartbeat))).one()
+        return row._tuple()
+
+    async def test_a_live_lease_refuses_a_second_reindex(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        await self._stamped(storage, "RIVAL", indexing._now_ms())
+        result = await storage.reindex()
+        assert result.success is False
+        [error] = result.errors
+        assert error.kind == VFSErrorKind.conflict
+        assert error.retryable is True
+        assert "already running" in error.message
+        holder, _ = await self._lease(storage)
+        assert holder == "RIVAL"  # the refused claimant released nothing
+        await storage.close()
+
+    async def test_an_expired_lease_is_claimed_through_and_released(self, tmp_path) -> None:
+        # A crashed run frees itself by silence: past the TTL the next
+        # claimant takes over, runs, and leaves the lease clear.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        stale = indexing._now_ms() - indexing.REINDEX_LEASE_TTL_MS - 1_000
+        await self._stamped(storage, "DEAD", stale)
+        assert (await storage.reindex()).success is True
+        assert await self._lease(storage) == (None, None)
+        await storage.close()
+
+    async def test_a_lost_publish_still_releases_the_lease(self, tmp_path) -> None:
+        # The release rides a finally: even a run that loses the CAS
+        # leaves the lease clear for the next claimant.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="raced body")])
+        meta = storage._host.tables.meta
+
+        async def rival() -> None:
+            async with storage._host.engine.begin() as conn:
+                await conn.execute(update(meta).values(current_gram_epoch=99))
+
+        with installed("reindex:before-publish", rival):
+            result = await storage.reindex()
+        assert result.success is False
+        assert await self._lease(storage) == (None, None)
+        await storage.close()
+
+    async def test_a_preset_lost_flag_stops_at_the_phase_boundary(self, tmp_path) -> None:
+        # The beat task cannot interrupt a phase mid-transaction: the
+        # committed chunk work stands, and the run stops honestly.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        lost = asyncio.Event()
+        lost.set()
+        result = await storage._reindex_phases(storage._host.tables, lost)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.conflict
+        assert "expired mid-run" in result.errors[0].message
+        assert await _flags(storage, "/a.txt") == (True, False)
+        await storage.close()
+
+    async def test_the_beat_task_flags_a_taken_lease(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.01)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        await self._stamped(storage, "RIVAL", indexing._now_ms())
+        lost = asyncio.Event()
+        task = asyncio.create_task(storage._beat_reindex_lease(storage._host.tables, "MINE", lost))
+        await asyncio.wait_for(lost.wait(), timeout=5)
+        await asyncio.wait_for(task, timeout=5)
+        await storage.close()
+
+    async def test_a_successful_beat_advances_the_heartbeat(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.01)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        backdated = indexing._now_ms() - 60_000
+        await self._stamped(storage, "MINE", backdated)
+        lost = asyncio.Event()
+        task = asyncio.create_task(storage._beat_reindex_lease(storage._host.tables, "MINE", lost))
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            _, heartbeat = await self._lease(storage)
+            if heartbeat is not None and heartbeat > backdated:
+                break
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        assert not lost.is_set()
+        _, heartbeat = await self._lease(storage)
+        assert heartbeat is not None and heartbeat > backdated
+        await storage.close()
+
+    async def test_a_failed_chunk_phase_returns_its_failure_and_releases(self, tmp_path, monkeypatch) -> None:
+        # The phase failure is the verb's result — and the finally still
+        # clears the lease for the next claimant.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        failure = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="chunk broke")])
+
+        async def broken(session, tables, profile, parameter_budget, membership_budget) -> Result:
+            return failure
+
+        monkeypatch.setattr(backend_module, "chunk_dirty", broken)
+        result = await storage.reindex()
+        assert result.success is False
+        assert result.errors[0].message == "chunk broke"
+        assert await self._lease(storage) == (None, None)
+        await storage.close()
+
+    async def test_a_lease_lost_after_build_stops_before_publish(self, tmp_path) -> None:
+        # The flag flips between the build and publish boundaries: the
+        # built epoch is abandoned unpublished, never CAS-raced.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+
+        class FlipsOnSecondCheck(asyncio.Event):
+            calls = 0
+
+            def is_set(self) -> bool:
+                type(self).calls += 1
+                return type(self).calls >= 2
+
+        result = await storage._reindex_phases(storage._host.tables, FlipsOnSecondCheck())
+        assert result.success is False
+        assert "expired mid-run" in result.errors[0].message
+        assert await _epoch(storage) is None  # the publish never ran
         await storage.close()
