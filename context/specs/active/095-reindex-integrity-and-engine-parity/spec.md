@@ -1,6 +1,6 @@
 # 095 — Reindex integrity: flag algebra, epoch safety, engine parity
 
-- **Status: implemented 2026-08-13, uncommitted** — born from the
+- **Status: implemented and committed 2026-08-13 (`4de5878`)** — born from the
   review campaign memo
   (`research/2026-08-13-glob-grep-indexing-review-campaign.md`),
   which carries the executed repro for every defect below. Both owner
