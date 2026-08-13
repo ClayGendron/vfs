@@ -1,6 +1,6 @@
 # 099 — Ownership and vocabulary cleanup: the review's decision pass lands
 
-- **Status: implemented 2026-08-13, awaiting commit** — born from the
+- **Status: implemented and committed 2026-08-13 (`810ff3d`)** — born from the
   review campaign memo's decision pass
   (`research/2026-08-13-glob-grep-indexing-review-campaign.md`,
   decisions 1–4, 6, 8, all resolved by Clay 2026-08-13) plus the two
