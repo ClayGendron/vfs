@@ -1,9 +1,57 @@
 # 098 — Literal text at the seams: root quoting, LIKE brackets, line semantics
 
-- **Status: draft 2026-08-13** — born from the review campaign memo
+- **Status: implemented and committed 2026-08-13 (`a577c28`)** — all
+  four slices landed in one pass. Born from the review campaign memo
   (`research/2026-08-13-glob-grep-indexing-review-campaign.md`,
   findings 4, 5, 12, 21). No open forks — every fix direction was
   verified in the campaign.
+- **Landing ledger (2026-08-13):**
+  - Suite 2,265 passed at 100.00% coverage; `ruff`/`ty` zero.
+  - Four Docker legs green: Postgres 203 / MySQL 204 / MSSQL 205 /
+    Oracle 202 (4 capability skips each). MSSQL proves §2 (the three
+    bracket rows pass with the escape live); Oracle proves the
+    ORA-01424 guard (brackets unescaped there, rows still green).
+  - Hand-verified mutant: flipping `like_bracket_class=False` fails
+    both new MSSQL bracket rows (orphaned delete, stranded move) —
+    the rows detect the defect they were written for.
+  - §1: `escape_glob` (class notation) lands public in
+    `pattern_matching/glob.py`; `effective_pattern` and
+    `composed_pattern` escape their base internally, so the keep
+    closure, composed exclusions, and mount skip-suppression are
+    covered at the seam; grep's root-literal member escapes at its
+    splice. Audit found no other path-into-pattern splice; ADR 034's
+    chained gating is a pure predicate (no row-path splicing exists
+    there — nothing to escape). Campaign repro shapes re-executed:
+    `[x]` serves its subtree, `{a}` no longer refuses, `data [prod]`
+    serves, no sibling capture. Property row
+    (`test_every_root_sees_exactly_its_prefix_subtree`) pins the
+    general law; ADR 030 rationale 3 annotated restored.
+  - §2: `like_bracket_class` profile fact (MSSQL only), conditional
+    escape in `escape_like(text, profile)`, profile threaded through
+    `descendant_filter`/`subtree_filter`/`liveness_filters`/
+    `pattern_arm` and the topology/reads callers. Conformance
+    battery: `a[1]b` joins `METACHAR_DIRS` (decoy `a1b`), plus the
+    no-orphan cascade-delete row and the subtree-carrying move row.
+  - §3: `split_lines` (\n-only, final terminator dropped) lands
+    public in `pattern_matching/grep.py`; `verify` and both
+    `results/render.py` sites use it. Control-character rows in
+    test_grep.py (form feed span, post-`\x85` line numbers, count
+    mode, CRLF control incl. the `$`-anchor law) and a render row.
+    Differential battery: control-character edition, 157 case-checks
+    green vs grep -E and rg -uu across four worlds (run record in the
+    study). The fold-vs-verify `\r` lead is **refuted by execution**:
+    both planner paths (`grams_for_fixed_string`, `_encode_run`)
+    route pattern literals through the same `normalize_content` the
+    indexer applies, so `\r` patterns plan the same `\n` grams the
+    postings carry — the indexed tier serves a `\r` pattern
+    end-to-end (verified live), no phantom grams.
+  - §4: the `body == "!"` arm returns `.` (fnmatch's rule); `[!z-a]`
+    joins the parity battery (stdlib byte-identical); the bounded
+    fuzz folds in as a marked-slow row — exhaustive depth ≤ 6 over
+    the class-machinery alphabet `[]!-az*`, 137,256 patterns,
+    125,378 byte-compared, ~2.7 s. Note: bare `[!]` never reaches
+    the class translator (fnmatch's scan reads it as literal `[`);
+    the reachable crash was the merged inverted-range reduction.
 - **Date:** 2026-08-13
 - **Owner:** Clay Gendron
 - **Kind:** correctness repairs where literal text (paths, content
