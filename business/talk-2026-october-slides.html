@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vfs · session proposal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=JetBrains+Mono:wght@100..800&family=Saira+Stencil+One&display=swap" rel="stylesheet">
+<style>
+  /* ── Pluto tokens (paper mode) ─────────────────────────────── */
+  :root {
+    --bg:          #f1f1ee;
+    --fg:          #0b0b0d;
+    --card:        #e4e4df;
+    --card-strong: #0f1012;
+    --accent:      #2f58cf;
+    --pressed:     #183988;
+    --muted:       rgba(11, 11, 13, 0.70);
+    --quiet:       rgba(11, 11, 13, 0.46);
+    --rule:        rgba(11, 11, 13, 0.14);
+    --font-display: "Space Grotesk", system-ui, sans-serif;
+    --font-mono:    "JetBrains Mono", ui-monospace, "Menlo", monospace;
+    --font-stencil: "Saira Stencil One", var(--font-display);
+    --gutter: 7vw;
+    --r: 2px;
+    --r2: 3px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-display);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+  ::selection { background: color-mix(in oklab, var(--accent) 70%, transparent); color: var(--bg); }
+
+  /* ── deck chrome ───────────────────────────────────────────── */
+  .deck { position: fixed; inset: 0; }
+
+  .chrome {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 18px var(--gutter);
+    border-bottom: 1px solid var(--rule);
+    background: color-mix(in oklab, var(--bg) 92%, transparent);
+  }
+  .wordmark {
+    height: 33px;
+    width: auto;
+    display: block;
+  }
+  .chrome .meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--quiet);
+  }
+
+  .baseline {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px var(--gutter);
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    background: color-mix(in oklab, var(--bg) 92%, transparent);
+  }
+  .baseline .counter b { color: var(--accent); font-weight: 500; }
+  .baseline .hint { opacity: 0.8; }
+
+  /* ── slides ────────────────────────────────────────────────── */
+  .slide {
+    position: absolute; inset: 0;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    padding: 96px var(--gutter) 84px;
+    opacity: 0;
+  }
+  .slide.active { display: flex; animation: rise 0.45s ease-out forwards; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .slide.active { animation: none; opacity: 1; }
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    margin: 0 0 26px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .eyebrow .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    display: inline-block;
+  }
+  .eyebrow .tick {
+    width: 18px; height: 3px;
+    background: var(--accent);
+    display: inline-block;
+  }
+
+  /* slide 1 · title */
+  .s-title { text-align: center; align-items: center; }
+  .s-title .headline {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: clamp(44px, 6.4vw, 88px);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    margin: 0 auto;
+    max-width: 16ch;
+    text-wrap: balance;
+  }
+  .s-title .headline em { color: var(--accent); font-style: normal; }
+  .s-title .lede {
+    max-width: 52ch;
+    margin: 26px auto 0;
+    color: var(--muted);
+    font-size: clamp(15px, 1.4vw, 19px);
+    line-height: 1.65;
+    font-weight: 400;
+  }
+  .s-title .speaker {
+    margin-top: 44px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--quiet);
+  }
+  .s-title .speaker b { color: var(--fg); font-weight: 500; }
+
+  /* slide 2 · the idea */
+  .tagline {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: clamp(26px, 3vw, 42px);
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+    max-width: 26ch;
+    text-wrap: balance;
+  }
+  .tagline em { color: var(--accent); font-style: normal; }
+  .sublede {
+    color: var(--muted);
+    font-size: clamp(14px, 1.2vw, 17px);
+    line-height: 1.6;
+    margin: 0 0 36px;
+    max-width: 62ch;
+  }
+  .sublede code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    color: var(--fg);
+  }
+
+  .values {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border: 1px solid var(--rule);
+    background: var(--bg);
+  }
+  .value {
+    padding: clamp(16px, 2vh, 28px) 24px;
+    border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .value:last-child { border-right: 0; }
+  .value .id {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    color: var(--accent);
+  }
+  .value h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: clamp(16px, 1.4vw, 20px);
+    letter-spacing: -0.01em;
+    margin: 2px 0 0;
+  }
+  .value p {
+    color: var(--muted);
+    font-size: clamp(12.5px, 1vw, 14.5px);
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  .sample {
+    margin-top: 22px;
+    border: 1px solid var(--rule);
+    background: var(--card-strong);
+    border-radius: var(--r2);
+    overflow: hidden;
+  }
+  .sample-body {
+    font-family: var(--font-mono);
+    font-size: clamp(12.5px, 1.05vw, 14.5px);
+    line-height: 1.7;
+    padding: 16px 22px;
+    white-space: pre;
+    overflow-x: auto;
+    margin: 0;
+    color: #d6d6d4;
+  }
+  .sample-body .prompt  { color: #79a4ff; user-select: none; }
+  .sample-body .path    { color: #f1f1ee; }
+  .sample-body .comment { color: rgba(214,214,212,0.45); font-style: italic; }
+
+  /* slide 3 · what you'll learn */
+  .learn { border-top: 1px solid var(--rule); }
+  .learn-row {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 28px;
+    align-items: baseline;
+    padding: clamp(18px, 3vh, 30px) 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .learn-row .num {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+  }
+  .learn-row h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: clamp(20px, 2.2vw, 30px);
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+    margin: 0 0 6px;
+  }
+  .learn-row p {
+    color: var(--muted);
+    font-size: clamp(13.5px, 1.15vw, 16px);
+    line-height: 1.6;
+    margin: 0;
+    max-width: 68ch;
+  }
+  .casestudy {
+    margin-top: 30px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--quiet);
+  }
+  .casestudy b { color: var(--accent); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="deck">
+
+  <header class="chrome">
+    <img class="wordmark" src="../logos/wordmark/vfs-logo-black-transparent.png" alt="vfs">
+    <span class="meta">session proposal · october 2026</span>
+  </header>
+
+  <!-- ── slide 1 · title ─────────────────────────────────────── -->
+  <section class="slide s-title active">
+    <h1 class="headline">Agentic Search is a <em>File System</em></h1>
+    <p class="lede">One open-source system your engineers build on and your agents
+    already know how to drive. Search, permissions, and persistence on the
+    SQL database you already have.</p>
+    <p class="speaker"><b>Clay Gendron</b> &nbsp;·&nbsp; developer of vfs</p>
+  </section>
+
+  <!-- ── slide 2 · the idea ──────────────────────────────────── -->
+  <section class="slide">
+    <h2 class="tagline">Agents inherit a fragmented ecosystem.
+    <em>VFS replaces it with one.</em></h2>
+    <p class="sublede">ETL pipelines, vector stores, graph databases, APIs, and
+    tools, each with its own access control. Hard for developers to build in,
+    hard for agents to operate in. The better way is an abstraction both
+    already understand deeply: the file system.</p>
+    <div class="values">
+      <div class="value">
+        <span class="id">01</span>
+        <h3>A CLI built for agents</h3>
+        <p>Agent-native search spanning pattern matching, semantic meaning, and graph traversal.</p>
+      </div>
+      <div class="value">
+        <span class="id">02</span>
+        <h3>Your SQL database</h3>
+        <p>Persists to the database you already have, exposed to agents as an MCP server.</p>
+      </div>
+      <div class="value">
+        <span class="id">03</span>
+        <h3>Versioned + reversible</h3>
+        <p>A wrong write is a restore, not an incident. Scripts run in a hermetic runtime.</p>
+      </div>
+      <div class="value">
+        <span class="id">04</span>
+        <h3>Shared-drive permissions</h3>
+        <p>Personal, department, and organization spaces are just directories with grants.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── slide 3 · what you'll learn ─────────────────────────── -->
+  <section class="slide">
+    <h2 class="tagline">Three things to take home.</h2>
+    <div class="learn">
+      <div class="learn-row">
+        <span class="num">/01</span>
+        <div>
+          <h3>A clear mental model for agentic search</h3>
+          <p>How to build it for your personal or enterprise agents, on one complete system instead of another layer.</p>
+        </div>
+      </div>
+      <div class="learn-row">
+        <span class="num">/02</span>
+        <div>
+          <h3>The design rules that make CLIs work for LLMs</h3>
+          <p>Why this design is the right one, from verb shape to reversible writes to permissioning.</p>
+        </div>
+      </div>
+      <div class="learn-row">
+        <span class="num">/03</span>
+        <div>
+          <h3>An open-source runtime you can put to work</h3>
+          <p>Everything shown is open source. Mount it on your own database the same week.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="baseline">
+    <span>vfs · agentic search on your database</span>
+    <span class="counter"><b id="cur">1</b> / 3</span>
+  </footer>
+
+</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const cur = document.getElementById('cur');
+  let i = 0;
+  function show(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    cur.textContent = i + 1;
+  }
+  addEventListener('keydown', (e) => {
+    if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { e.preventDefault(); show(i + 1); }
+    if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+  });
+  addEventListener('click', () => show(i + 1));
+</script>
+</body>
+</html>
