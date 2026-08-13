@@ -47,6 +47,7 @@ from vfs.storage.backends.database.indexing import (
     build_epoch,
     chunk_dirty,
     publish_epoch,
+    reclaim_built_epoch,
     reclaim_epochs,
 )
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
@@ -448,7 +449,10 @@ class DatabaseStorage:
         tables = self._host.tables
         state = ReindexState()
         result = await self._execute_write(
-            "reindex", lambda session: chunk_dirty(session, tables, self._host.membership_budget)
+            "reindex",
+            lambda session: chunk_dirty(
+                session, tables, self._host.profile, self._host.parameter_budget, self._host.membership_budget
+            ),
         )
         if not result.success:
             return result
@@ -458,11 +462,20 @@ class DatabaseStorage:
         if not result.success or state.epoch is None:
             return result
         await seam("reindex:before-publish")
-        result = await self._execute_write("reindex", lambda session: publish_epoch(session, tables, state))
-        if not result.success:
-            return result
         epoch = state.epoch
-        return await self._execute_write("reindex", lambda session: reclaim_epochs(session, tables, epoch))
+        result = await self._execute_write(
+            "reindex",
+            lambda session: publish_epoch(
+                session, tables, self._host.profile, self._host.parameter_budget, self._host.membership_budget, state
+            ),
+        )
+        if not result.success:
+            # The lost build's rows are unpublished residue — reclaim them
+            # so a rival's next mint is not forced past a dead number.
+            await self._execute_write("reindex", lambda session: reclaim_built_epoch(session, tables, epoch))
+            return result
+        await seam("reindex:before-reclaim")
+        return await self._execute_write("reindex", lambda session: reclaim_epochs(session, tables))
 
     async def close(self) -> None:
         await self._host.close()

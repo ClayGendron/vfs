@@ -368,6 +368,19 @@ class SupportsTraits(Protocol):
 
 
 @runtime_checkable
+class SupportsReindex(Protocol):
+    """Optional index maintenance: a backend with a built search tier exposes ``reindex``.
+
+    The contract: idempotent-cheap when nothing is dirty, safe under
+    rivals (concurrent calls converge; a loser classifies ``conflict``),
+    and never required for correctness — between builds the search verbs
+    must serve correct results from their scan tier.
+    """
+
+    async def reindex(self) -> Result: ...
+
+
+@runtime_checkable
 class SupportsClose(Protocol):
     """Optional disposal: a backend that owns an engine or session exposes ``close``.
 

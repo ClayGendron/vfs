@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.support.database_helpers import _SqliteError, _url
@@ -27,6 +27,7 @@ from vfs.storage.backends.database.dialects import (
     PROFILES,
     SQLITE,
     arm_budget,
+    is_permanent_defect,
     is_retryable,
     membership_budget,
     op_execution_options,
@@ -100,6 +101,17 @@ class TestDialectPolicy:
 
     def test_an_exception_with_no_sqlstate_is_not_retryable(self) -> None:
         assert is_retryable(GENERIC, Exception()) is False
+
+    def test_syntax_class_sqlstates_are_permanent_defects(self) -> None:
+        assert is_permanent_defect(DBAPIError("SELECT", None, Exception("42000", "bad syntax"))) is True
+        assert is_permanent_defect(DBAPIError("SELECT", None, _PgError("42601"))) is True
+
+    def test_programming_error_is_a_permanent_defect_without_a_sqlstate(self) -> None:
+        assert is_permanent_defect(ProgrammingError("SELECT", None, Exception(1064, "syntax"))) is True
+
+    def test_operational_faults_are_not_permanent_defects(self) -> None:
+        assert is_permanent_defect(DBAPIError("SELECT 1", None, _SqliteError(5))) is False
+        assert is_permanent_defect(DBAPIError("SELECT", None, _PgError("40001"))) is False
 
     def test_mysql_family_is_tuned_not_generic(self) -> None:
         for name in ("mysql", "mariadb"):
@@ -196,6 +208,25 @@ class TestDialectPolicy:
         error = host.classify_failure(DBAPIError("SELECT 1", None, _SqliteError(5)), context="stat")
         assert error.kind == VFSErrorKind.unavailable
         assert error.retryable is True
+        await storage.close()
+
+    async def test_a_disconnect_classifies_backend_unavailable(self, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        host = storage._host
+        monkeypatch.setattr(host._dialect, "is_disconnect", lambda *args: True)
+        error = host.classify_failure(DBAPIError("SELECT 1", None, _SqliteError(5)), context="stat")
+        assert error.kind == VFSErrorKind.backend_unavailable
+        assert error.retryable is True
+        await storage.close()
+
+    async def test_a_statement_defect_classifies_internal_and_not_retryable(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        exc = ProgrammingError("SELECT EXISTS (SELECT 1)", None, Exception("42000", "Incorrect syntax"))
+        error = storage._host.classify_failure(exc, context="reindex")
+        assert error.kind == VFSErrorKind.internal
+        assert error.retryable is False
         await storage.close()
 
 

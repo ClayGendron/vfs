@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.support.storage_contract import StorageContract
@@ -278,6 +278,54 @@ class TestOracleTopologyRivals:
 
     async def test_the_serialization_point_blocks_a_rival_topology_verb(self) -> None:
         await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_ORACLE_URL")
+
+
+@pytest.mark.mysql
+class TestMySQLFlagFlipRoundTrips:
+    async def test_flag_flips_are_one_statement_per_chunk_not_per_row(self) -> None:
+        """No UPDATE…RETURNING on this family: the flips must ride
+        row-constructor IN chunks — the per-row executemany fallback is
+        one driver round trip per entry, 20k of them at a 10k batch."""
+        async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
+            entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
+            assert (await storage.write(entries=entries)).success is True
+            flips: list[bool] = []
+
+            def record(conn, cursor, statement, parameters, context, executemany) -> None:
+                if statement.startswith("UPDATE") and ("chunked" in statement or "encoded" in statement):
+                    flips.append(executemany)
+
+            event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
+            assert (await storage.reindex()).success is True
+            assert len(flips) == 2  # ten pairs fit one statement per flag
+            assert all(many is False for many in flips)
+
+
+@pytest.mark.mssql
+class TestMSSQLChunkGuardRegression:
+    async def test_a_write_racing_the_chunk_window_keeps_the_entry_dirty(self) -> None:
+        """READ COMMITTED lets the flip current-read past the dirty scan.
+
+        Only the version guard keeps a raced entry pending: without it
+        the flip stamps ``chunked`` over the rival's fresh body, the
+        stale chunks encode at the next build, and the fresh content is
+        never searchable again — silently.
+        """
+        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/r.txt"), content="stale needle")])).success
+
+            async def rival() -> None:
+                seams.clear("reindex:before-chunk-flip")
+                fresh = Entry(path=Path("/r.txt"), content="fresh needle")
+                assert (await storage.write(entries=[fresh], overwrite=True)).success is True
+
+            with seams.installed("reindex:before-chunk-flip", rival):
+                assert (await storage.reindex()).success is True
+            found = await storage.grep(pattern="fresh")
+            assert [o.path for o in found.observations] == ["/r.txt"]
+            assert (await storage.reindex()).success is True
+            found = await storage.grep(pattern="fresh")
+            assert [o.path for o in found.observations] == ["/r.txt"]
 
 
 @pytest.mark.mysql

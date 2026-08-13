@@ -42,6 +42,7 @@ from vfs.storage import (
     StorageBackend,
     SupportsMutation,
     SupportsPatternSearch,
+    SupportsReindex,
     SupportsTraits,
 )
 from vfs.storage.replace import EditOperation
@@ -57,6 +58,13 @@ class ConformanceBackend(StorageBackend, SupportsPatternSearch, SupportsMutation
 def _indexed_grep_tier(storage: ConformanceBackend) -> bool:
     """Whether the backend declares the indexed grep tier (refusal gate)."""
     return isinstance(storage, SupportsTraits) and storage.traits().get("grep_tier") == "indexed"
+
+
+def _reindexer_of(storage: ConformanceBackend) -> SupportsReindex:
+    """The backend's reindex surface; backends without one skip these rows."""
+    if not isinstance(storage, SupportsReindex):
+        pytest.skip("backend does not expose reindex")
+    return storage
 
 
 async def _revision_of(storage: ConformanceBackend, path: str) -> int:
@@ -1400,6 +1408,68 @@ class StorageContract:
         assert refused.errors[0].kind == VFSErrorKind.unindexable_pattern
         scanned = await storage.grep(pattern="ẞ", allow_scan=True)
         assert [o.path for o in scanned.observations] == ["/sharp.txt"]
+
+    # ------------------------------------------------------------------
+    # Reindex — the index tier actually builds and serves, per engine
+    # ------------------------------------------------------------------
+
+    @needs("write", "grep")
+    async def test_reindex_builds_and_the_indexed_tier_serves(self, storage: ConformanceBackend) -> None:
+        # After a successful build the row is index-partitioned — the
+        # scan side excludes it, so only a live index can serve it.
+        reindexer = _reindexer_of(storage)
+        await storage.write(entries=[Entry(path=Path("/idx.txt"), content="magnet needle here")])
+        assert (await reindexer.reindex()).success is True
+        found = await storage.grep(pattern="magnet")
+        assert [o.path for o in found.observations] == ["/idx.txt"]
+
+    @needs("write", "grep")
+    async def test_reindex_twice_then_a_rewrite_advances_the_epoch(self, storage: ConformanceBackend) -> None:
+        # The second build runs the pending probe against a live epoch —
+        # a statement surface the first build never reaches.
+        reindexer = _reindexer_of(storage)
+        await storage.write(entries=[Entry(path=Path("/idx.txt"), content="first magnet")])
+        assert (await reindexer.reindex()).success is True
+        assert (await reindexer.reindex()).success is True
+        rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
+        assert (await storage.write(entries=[rewrite], overwrite=True)).success is True
+        assert (await reindexer.reindex()).success is True
+        stale = await storage.grep(pattern="magnet")
+        assert stale.success is True and stale.observations == []
+        fresh = await storage.grep(pattern="lodestone")
+        assert [o.path for o in fresh.observations] == ["/idx.txt"]
+
+    @needs("write", "grep", "delete", "restore")
+    async def test_restored_content_stays_greppable_after_a_rebuild(self, storage: ConformanceBackend) -> None:
+        # The forbidden state: delete → rebuild → restore leaving a live
+        # row invisible to both tiers. Coverage exit must demote.
+        reindexer = _reindexer_of(storage)
+        await storage.write(entries=[Entry(path=Path("/gone.txt"), content="buried needle")])
+        assert (await reindexer.reindex()).success is True
+        deleted = await storage.delete(path=Path("/gone.txt"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        await storage.write(entries=[Entry(path=Path("/other.txt"), content="steady text")])
+        assert (await reindexer.reindex()).success is True  # a rebuild without the trashed row
+        assert (await storage.restore(path=trash_path)).success is True
+        found = await storage.grep(pattern="buried")
+        assert [o.path for o in found.observations] == ["/gone.txt"]
+        assert (await reindexer.reindex()).success is True  # and the next build re-covers it
+        found = await storage.grep(pattern="buried")
+        assert [o.path for o in found.observations] == ["/gone.txt"]
+
+    @needs("write", "grep", "delete")
+    async def test_trash_scoped_grep_serves_a_trashed_root_after_a_rebuild(self, storage: ConformanceBackend) -> None:
+        reindexer = _reindexer_of(storage)
+        await storage.write(entries=[Entry(path=Path("/gone.txt"), content="buried needle")])
+        assert (await reindexer.reindex()).success is True
+        deleted = await storage.delete(path=Path("/gone.txt"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        assert (await reindexer.reindex()).success is True
+        assert (await storage.grep(pattern="buried")).observations == []  # default scope hides trash
+        found = await storage.grep(pattern="buried", globs=(str(trash_path),))
+        assert [o.path for o in found.observations] == [trash_path]
 
     # ------------------------------------------------------------------
     # mkedge

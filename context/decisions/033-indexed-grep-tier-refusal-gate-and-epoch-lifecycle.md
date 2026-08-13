@@ -120,6 +120,24 @@ idempotent-cheap no-op is the two-part fingerprint (format version +
 options hash) plus no-dirty-rows. Readers therefore see old or new,
 never a mix — pinned through the `reindex:before-publish` seam.
 
+*Amendment 2026-08-13 (spec 095, from the glob/grep/indexing review
+campaign):* three hardenings on this lifecycle. **(a) The flag
+algebra's invariant is explicit** — `encoded=True` implies the entry's
+grams are present in the current epoch — and every coverage exit
+demotes: writes reset both flags (unchanged), and the delete claim now
+demotes `encoded` as it stamps `deleted_at`, so delete → rebuild →
+restore can never leave a live row invisible to both tiers. **(b)
+Reclaim is strictly-below-the-live-pointer**, re-read inside the
+reclaim transaction (a stale `!= mine` sweep could destroy a rival's
+newer published epoch), and a CAS-losing publish reclaims its own
+built epoch's rows. Epochs are minted past every *built* number, not
+just the pointer, so a build that dies before publishing never poisons
+the number line. **(c) `INDEX_FORMAT_VERSION` is the one hand-bumped
+knob**: every fold, chunk-grain, or gram-extraction change must bump
+it — it folds into the epoch fingerprint and forces the
+drop-and-rebuild; deriving it automatically was examined and rejected
+(no derivation can see grain or algorithm changes).
+
 ### 7. Eligibility gates bound bloat, never coverage
 
 A chunk the indexer skips (NUL-bearing binary, > 2 MiB body,

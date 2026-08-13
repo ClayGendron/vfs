@@ -886,6 +886,12 @@ async def _reparent_to_trash(
     itself already issued against the row. The miss raises
     :class:`StaleSnapshot`; the verb redrives whole and re-collects,
     which is correctness by construction.
+
+    Stamping ``deleted_at`` also demotes ``encoded``: the next index
+    build excludes this row, so leaving the flag up would make the row
+    invisible to both grep tiers wherever it resurfaces. Demoted, it is
+    served scan-side immediately — trash-scoped grep included — and a
+    restore finds ``chunked & ~encoded``, already pending re-coverage.
     """
     stmt = (
         update(entry)
@@ -897,6 +903,7 @@ async def _reparent_to_trash(
             original_parent_id=row["parent_id"],
             original_name=row["name"],
             deleted_at=now,
+            encoded=False,
             version=entry.c.version + 1,
         )
     )

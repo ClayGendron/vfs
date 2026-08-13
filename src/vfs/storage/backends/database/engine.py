@@ -54,6 +54,7 @@ from vfs.results import ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
     DialectProfile,
     StaleSnapshot,
+    is_permanent_defect,
     is_retryable,
     membership_budget,
     profile_for,
@@ -217,7 +218,12 @@ class EngineHost:
         raise AssertionError("unreachable")  # pragma: no cover
 
     def classify_failure(self, exc: BaseException, *, context: str) -> ResultError:
-        """Classify a driver failure that escaped retry — always a Result, never a raise."""
+        """Classify a driver failure that escaped retry — always a Result, never a raise.
+
+        A statement defect (syntax class) is a vfs bug, classified
+        ``internal`` and never retryable — retrying a broken statement
+        forever would disguise the bug as an operating condition.
+        """
         origin = getattr(exc, "orig", None) or exc
         try:
             # The runtime contract takes any driver exception; the stub's
@@ -229,8 +235,14 @@ class EngineHost:
             )
         except Exception:
             disconnected = False
-        kind = VFSErrorKind.backend_unavailable if disconnected else VFSErrorKind.unavailable
-        return ResultError(kind=kind, message=f"{context} failed: {origin}", retryable=True)
+        if disconnected:
+            return ResultError(
+                kind=VFSErrorKind.backend_unavailable, message=f"{context} failed: {origin}", retryable=True
+            )
+        if is_permanent_defect(exc):
+            message = f"{context} hit a permanent statement defect: {origin}"
+            return ResultError(kind=VFSErrorKind.internal, message=message, retryable=False)
+        return ResultError(kind=VFSErrorKind.unavailable, message=f"{context} failed: {origin}", retryable=True)
 
     async def close(self) -> None:
         """Dispose iff built; idempotent; borrowed connectivity is never touched."""

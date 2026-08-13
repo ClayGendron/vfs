@@ -26,6 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, TypeVar
 
+from sqlalchemy.exc import ProgrammingError
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
 
@@ -88,6 +90,12 @@ class DialectProfile:
     rejects that alias syntax. Guarded updates take the set-based
     RETURNING arm only where this is declared.
 
+    ``tuple_in`` declares whether the engine accepts a row-value
+    constructor inside an ``IN`` list (``(a, b) IN ((:x, :y), ...)``) —
+    SQLAlchemy renders the form on request (``tuple_in_values`` picks
+    the spelling) but takes no position on acceptance: T-SQL has no row
+    constructors in ``IN``, and the generic floor claims nothing.
+
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
     reads and guarded updates judge the same committed state, so a
@@ -116,6 +124,7 @@ class DialectProfile:
     retryable_driver_codes: frozenset[int] = frozenset()
     expression_depth_budget: int = 1_000
     values_join: bool = False
+    tuple_in: bool = False
 
 
 SQLITE: Final = DialectProfile(
@@ -137,6 +146,7 @@ SQLITE: Final = DialectProfile(
     # SQLITE_BUSY (5) restarts the method; BUSY_SNAPSHOT (517) is a
     # discipline bug classified loudly, deliberately NOT retryable.
     retryable_sqlite_codes=frozenset({5}),
+    tuple_in=True,
 )
 
 POSTGRESQL: Final = DialectProfile(
@@ -148,6 +158,7 @@ POSTGRESQL: Final = DialectProfile(
     op_isolation="REPEATABLE READ",
     topology_isolation="READ COMMITTED",
     values_join=True,
+    tuple_in=True,
 )
 
 MSSQL: Final = DialectProfile(
@@ -176,6 +187,7 @@ MYSQL: Final = DialectProfile(
     # Deadlock (1213) also carries SQLSTATE 40001; lock-wait timeout
     # (1205) ships under the HY000 catch-all, so only its errno classifies.
     retryable_driver_codes=frozenset({1213, 1205}),
+    tuple_in=True,
 )
 
 MARIADB: Final = replace(MYSQL, name="mariadb")
@@ -192,6 +204,7 @@ ORACLE: Final = DialectProfile(
     arbitration="catch_retry",
     guard_miss="reprobe",
     retryable_driver_codes=frozenset({60, 8177}),
+    tuple_in=True,
 )
 
 # The floor for engines this project has not measured: the tightest known
@@ -404,9 +417,29 @@ def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
     return _driver_code_of(origin) in profile.retryable_driver_codes
 
 
+def is_permanent_defect(exc: BaseException) -> bool:
+    """Whether *exc* reports a statement defect no retry can clear.
+
+    SQLSTATE class 42 — syntax error or access rule violation — means
+    the statement itself is wrong: a vfs bug to surface loudly, never an
+    operating condition to keep retrying. DBAPI ``ProgrammingError``
+    carries the same verdict for drivers that expose no SQLSTATE.
+    Classification is by code and exception type — never message text.
+    """
+    origin = getattr(exc, "orig", None) or exc
+    state = _sqlstate_of(origin)
+    if state is not None and state.startswith(_SQLSTATE_SYNTAX_CLASS):
+        return True
+    return isinstance(exc, ProgrammingError)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+# ISO 9075 class 42: syntax error or access rule violation.
+_SQLSTATE_SYNTAX_CLASS: Final = "42"
 
 
 # SQLSTATE codes are exactly five characters (ISO/IEC 9075).
