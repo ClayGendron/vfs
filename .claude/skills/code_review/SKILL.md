@@ -93,11 +93,10 @@ the §1 checker and the §2 post-launch check both enforce this.
 2. **Verify** — verifiers follow
    `.claude/skills/verify_findings/SKILL.md`, on Opus (`model: 'opus'`),
    at high effort. Findings verify as soon as their reviewer finishes
-   (pipeline, no barrier between lenses). Verification depth scales
-   with the stakes: **three independent skeptics for `critical` and
-   `major`, one for `minor` and `question`.** A finding survives only
-   if fewer than half its verifiers refute it — ties refute, because a
-   split panel is not evidence a defect is real.
+   (pipeline, no barrier between lenses). **One independent skeptic per
+   finding, whatever its severity.** A finding survives only if its
+   verifier does not refute it; a verifier that died leaves the finding
+   UNVERIFIED, never clean.
 3. **Synthesize** — after all verification completes, one agent on
    Fable (`model: 'fable'`) merges the surviving findings: dedups
    across lenses, ranks by severity, and writes the report. **Skipped
@@ -244,8 +243,8 @@ decision, not an orchestrator reflex:
 
 ## Stopping, resuming, salvage — never pay for a finished agent twice
 
-The review's cost lives in its agents — five Fable reviewers and up to
-three Opus verifiers per major finding. Losing their finished work by
+The review's cost lives in its agents — five Fable reviewers and one
+Opus verifier per finding. Losing their finished work by
 restarting from the top is the most expensive mistake this skill can
 make, so these rules bind the orchestrator:
 

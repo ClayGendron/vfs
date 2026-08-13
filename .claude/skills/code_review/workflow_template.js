@@ -49,25 +49,19 @@ uv for everything; the repo is READ-ONLY (no edits, stash, checkout, commit);
 scratch scripts go only under ${scratch}.`
 
 const RANK = { critical: 0, major: 1, minor: 2, question: 3 }
-const votesFor = f => (f.severity === 'critical' || f.severity === 'major') ? 3 : 1
 
-// A finding is dropped only by a majority of independent skeptics; a
-// panel that all died is surfaced as UNVERIFIED, never as clean.
+// A finding is dropped when its skeptic refutes it; a verifier that
+// died is surfaced as UNVERIFIED, never as clean.
 async function adjudicate(f, lens) {
-  const n = votesFor(f)
-  const votes = (await parallel(Array.from({ length: n }, (_, i) => () =>
-    agent(`${RULES}
+  const vote = await agent(`${RULES}
 Verify exactly one finding per .claude/skills/verify_findings/SKILL.md — read it first and follow it exactly.
-You are verifier ${i + 1} of ${n}. Work independently and from the code itself; the reviewer's
+Work independently and from the code itself; the reviewer's
 reasoning chain is a claim to refute, not a premise to build on.
 Finding from ${lens}: ${JSON.stringify(f)}`,
-      { label: `verify:${f.title} #${i + 1}`, phase: 'Verify', schema: VERDICT, model: 'opus', effort: 'high' })
-  ))).filter(Boolean)
-  if (!votes.length) return { ...f, lens, verdict: 'UNVERIFIED', evidence: 'every verifier agent failed' }
-  if (votes.filter(v => v.verdict === 'REFUTED').length * 2 >= votes.length) return null
-  // Keep the most conservative surviving verdict.
-  const kept = votes.find(v => v.verdict === 'DOWNGRADED') ?? votes.find(v => v.verdict === 'CONFIRMED') ?? votes[0]
-  return { ...f, lens, ...kept, votes: votes.map(v => v.verdict) }
+    { label: `verify:${f.title}`, phase: 'Verify', schema: VERDICT, model: 'opus', effort: 'high' })
+  if (!vote) return { ...f, lens, verdict: 'UNVERIFIED', evidence: 'the verifier agent failed' }
+  if (vote.verdict === 'REFUTED') return null
+  return { ...f, lens, ...vote }
 }
 
 // A lens whose agent died is a hole in coverage, never a clean lens.
