@@ -434,7 +434,7 @@ Resolved questions stay in this file as a record; they are not deleted. If the l
 - **Context:** overlap emission (GRAM_SIZE−1 across each cut, grams attributed to the preceding chunk id) closes the class without touching the posting doc-id grain — the memo's recommendation. Per-entry extraction states the invariant more cleanly but re-opens ADR 033 §4's doc-id grain decision (posting ids, dedupe, budget arithmetic). Either bumps `INDEX_FORMAT_VERSION` (095 §6).
 - **Blocking:** spec 096 §1 (slice A).
 - **Options considered:** overlap emission (recommended); per-entry grain. Spec 096 §1.
-- **Status:** open
+- **Status:** resolved 2026-08-13 (Clay, spec-096 kickoff) — **per-entry extraction, recorded as ADR 036.** An executed sweep at kickoff refuted the memo's recommendation before the decision: grep's AND intersects posting lists per chunk id, so a needle with ≥ GRAM_SIZE chars on each side of a cut stays lost under any fixed-width overlap (splits 1/5, 2/4, 3/3 all missed). Clay decided the coupling itself is the defect: the gram index extracts over each entry's full folded body and posts under `entries.id`; chunks are semantic-only (vector/BM25 pipelines); eligibility is materialized as an `indexable` entry column; `INDEX_FORMAT_VERSION` → 2.
 
 ## Grep epoch consistency: per-profile isolation pins or the epoch-reread retry ladder? (097 fork)
 - **Asked:** 2026-08-13 by Claude (review campaign, finding 7 — MSSQL/Oracle/GENERIC silently lose matches when grep races a reindex publish+reclaim; reproduced live)

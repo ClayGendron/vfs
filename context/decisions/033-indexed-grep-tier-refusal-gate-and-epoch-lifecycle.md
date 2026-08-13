@@ -1,8 +1,11 @@
 # 033. Indexed Grep Tier: Refusal Gate, Runtime Budgets, Batch Epoch Lifecycle
 
-- **Status:** accepted 2026-08-05 (the shaping-review fork resolutions
+- **Status:** accepted 2026-08-05; §4's "documents are chunks" clause
+  and §7's zero-chunk-rows eligibility derivation superseded by
+  ADR 036 (2026-08-13 — the gram index reads whole entries; chunks
+  are semantic-only). Accepted with the shaping-review fork resolutions
   and the slice-pinned design calls of spec 093, all made or confirmed
-  by Clay that day). Recorded as an ADR 2026-08-05 at the spec's
+  by Clay that day. Recorded as an ADR 2026-08-05 at the spec's
   mining pass — the decisions were carried by the spec until it landed
   (same day) and was mined; the spec rests in
   `../specs/archive/093-grep-content-search/`. Builds on ADR 013
