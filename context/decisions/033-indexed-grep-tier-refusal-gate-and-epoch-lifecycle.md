@@ -3,7 +3,18 @@
 - **Status:** accepted 2026-08-05; §4's "documents are chunks" clause
   and §7's zero-chunk-rows eligibility derivation superseded by
   ADR 036 (2026-08-13 — the gram index reads whole entries; chunks
-  are semantic-only). Accepted with the shaping-review fork resolutions
+  are semantic-only). Annotated 2026-08-13 (spec 097, Clay's fork
+  resolutions): §5's posting byte budget carries a declared exemption —
+  each AND-group's rarest gram is fetched even over budget (strict
+  enforcement would silently lose index-side matches), per OR branch,
+  with branch width deliberately uncapped and bounded by the wall
+  clock instead; and §6's "old or new, never a mix" is enforced
+  engine-independently by the epoch-reread ladder (grep re-reads the
+  pointer after its last epoch-dependent read and redrives on
+  movement via ``StaleSnapshot``) plus a crash-safe single-runner
+  reindex lease — isolation pins were rejected (Oracle SERIALIZABLE
+  cost, MSSQL SNAPSHOT prerequisite, unpinnable GENERIC floor).
+  Accepted with the shaping-review fork resolutions
   and the slice-pinned design calls of spec 093, all made or confirmed
   by Clay that day. Recorded as an ADR 2026-08-05 at the spec's
   mining pass — the decisions were carried by the spec until it landed
