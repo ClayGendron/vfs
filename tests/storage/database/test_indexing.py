@@ -68,12 +68,8 @@ class TestReindex:
         assert await _flags(storage, "/a.py") == (True, True)
         assert await _epoch(storage) == 1
         async with storage._host.engine.connect() as conn:
-            doc_id = (
-                await conn.execute(select(tables.entry.c.id).where(tables.entry.c.path == "/a.py"))
-            ).scalar_one()
-            chunk = (
-                await conn.execute(select(tables.chunks.c.line_start, tables.chunks.c.line_end))
-            ).one()
+            doc_id = (await conn.execute(select(tables.entry.c.id).where(tables.entry.c.path == "/a.py"))).scalar_one()
+            chunk = (await conn.execute(select(tables.chunks.c.line_start, tables.chunks.c.line_end))).one()
             posting = (
                 await conn.execute(
                     select(tables.posting_list).where(

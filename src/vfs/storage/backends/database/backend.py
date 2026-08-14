@@ -503,9 +503,7 @@ class DatabaseStorage:
         """
         while True:
             await asyncio.sleep(REINDEX_HEARTBEAT_SECONDS)
-            beat = await self._execute_write(
-                "reindex", lambda session: heartbeat_reindex_lease(session, tables, token)
-            )
+            beat = await self._execute_write("reindex", lambda session: heartbeat_reindex_lease(session, tables, token))
             if any(error.kind == VFSErrorKind.conflict for error in beat.errors):
                 lost.set()
                 return
@@ -523,9 +521,7 @@ class DatabaseStorage:
             return result
         if lost.is_set():
             return lease_lost_result()
-        result = await self._execute_write(
-            "reindex", lambda session: build_epoch(session, tables, state)
-        )
+        result = await self._execute_write("reindex", lambda session: build_epoch(session, tables, state))
         if not result.success or state.epoch is None:
             return result
         await seam("reindex:before-publish")
