@@ -21,6 +21,7 @@ silent ``*``.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from itertools import product
 from types import MappingProxyType
@@ -409,6 +410,11 @@ def _component_matches(component: str, segment: str) -> bool:
     return re.fullmatch(_translate(component, recursive=False), segment) is not None
 
 
+# The stdlib translators switched their end-of-string anchor to \z in 3.14;
+# mirror them exactly (\z is a re.error before 3.14).
+_END_OF_STRING: Final = r"\z" if sys.version_info >= (3, 14) else r"\Z"
+
+
 def _translate(pattern: str, *, recursive: bool) -> str:
     """Regex source for *pattern* — segment-aware, dotfiles ordinary, ``/`` seps.
 
@@ -435,7 +441,7 @@ def _translate(pattern: str, *, recursive: bool) -> str:
             pieces.append(_translate_component(part))
         if index < last:
             pieces.append("/")
-    return "(?s:" + "".join(pieces) + ")\\Z"
+    return "(?s:" + "".join(pieces) + ")" + _END_OF_STRING
 
 
 def _translate_component(component: str) -> str:
