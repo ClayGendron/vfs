@@ -6,12 +6,18 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "pyproject.toml"
       - ".github/workflows/**"
   pull_request:
     paths:
       - "src/**"
       - "tests/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "pyproject.toml"
       - ".github/workflows/**"
 
@@ -46,6 +52,14 @@ jobs:
         run: >-
           uv run pytest --tb=short
           ${{ matrix.python-version == '3.13' && '--cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100' || '' }}
+
+      # The pendulum fallback is a first-class citizen: the same suite must
+      # pass with the Rust engine disabled, exercising the pure-Python path.
+      - name: Tests (pure-Python engine)
+        if: matrix.python-version == '3.13'
+        run: uv run pytest --tb=short
+        env:
+          VFS_PURE_PYTHON: "1"
 
       - name: Upload coverage
         if: matrix.python-version == '3.13'

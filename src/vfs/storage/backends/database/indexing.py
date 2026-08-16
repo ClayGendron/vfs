@@ -13,11 +13,14 @@ is a compare-and-set so concurrent reindexers cannot publish over each
 other.
 
 Gram extraction is entry-grain: one pass over each entry's full folded
-body, posted under the entry's surrogate row id. The extraction
-invariant: **every trigram of the entry's folded body is in the
-entry's posted gram set** — no split, cut, or dropped span can remove
-a trigram from the nomination stream. Chunk rows are semantic-only
-(vector/BM25 retrieval units) and no gram-path code reads them.
+body, posted under the entry's surrogate row id, run by the active
+engine behind the :mod:`vfs.native` seam (Rust where the extension is
+present, the pure reference otherwise — byte-identical output either
+way). The extraction invariant: **every trigram of the entry's folded
+body is in the entry's posted gram set** — no split, cut, or dropped
+span can remove a trigram from the nomination stream. Chunk rows are
+semantic-only (vector/BM25 retrieval units) and no gram-path code reads
+them.
 
 Eligibility gates bound index bloat, never coverage: an oversized,
 gram-saturated, or sub-trigram body is stamped ``NOT indexable`` and
@@ -54,9 +57,9 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.models import CONTENT_KINDS
 from vfs.models.chunk import Chunk
-from vfs.models.code_grams import GRAM_SIZE, normalize_content, unique_code_grams
-from vfs.models.postings import encode_postings
+from vfs.models.code_grams import GRAM_SIZE, normalize_content
 from vfs.models.rows import ENCODING_DELTA_VARINT
+from vfs.native import distinct_gram_count, folded_bytes, postings_builder
 from vfs.paths import Path
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
@@ -88,7 +91,15 @@ Epoch = Annotated[int, "one published gram-index generation; a missing pointer m
 MAX_INDEXABLE_BYTES: Final = 2 * 1024 * 1024
 MAX_DISTINCT_GRAMS: Final = 20_000
 
+# SQLAlchemy's insertmanyvalues splits by bind-parameter count but takes no
+# position on blob payload bytes; this budget bounds one insert's payload.
 _POSTING_BATCH_BYTES: Final = 1 << 20
+
+# One engine feed's content payload; bounds what a single extraction call
+# copies across the seam, independent of corpus size.
+_EXTRACT_BATCH_BYTES: Final = 32 * 1024 * 1024
+
+_SCAN_YIELD_ROWS: Final = 256
 
 # Lease staleness horizon and beat interval: the beat task pulses every
 # interval, so the TTL tolerates four missed beats plus clock skew.
@@ -253,11 +264,15 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     exhausted redrive leaves as a clean ``conflict`` — driver text never
     reaches a public ``Result``.
 
-    The build holds the whole corpus's postings resident — roughly four
-    times the live corpus bytes at peak, paid in full whenever any entry
+    Extraction and posting encode run in the active engine
+    (:mod:`vfs.native`): content streams through in bounded batches in
+    ascending row-id order, and the builder's gram-ordered drain feeds
+    byte-capped inserts. Peak build memory is the accumulated posting
+    set — compressed delta blobs in the Rust engine, raw id lists in the
+    pure fallback — held for the whole build and paid whenever any entry
     is dirty. A known suboptimality, deliberately not converted into a
     designed corpus cap; gram-range partitioned passes are the future
-    direction if a deployment ever needs the bound.
+    direction if a deployment ever needs a tighter bound.
     """
     entry = tables.entry
     state.previous_epoch = await current_epoch(session, tables)
@@ -271,28 +286,38 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
         .where(entry.c.chunked, entry.c.indexable, entry.c.deleted_at.is_(None), tables.content.c.content.isnot(None))
         .order_by(entry.c.id)
     )
-    postings: dict[int, list[int]] = {}
+    builder = postings_builder()
     covered: dict[str, int] = {}
-    for row in (await session.execute(scan)).all():
+    batch: list[tuple[int, bytes]] = []
+    batch_bytes = 0
+    rows = await session.stream(scan.execution_options(yield_per=_SCAN_YIELD_ROWS))
+    async for row in rows:
         covered[row.entry_id] = row.version
-        for gram in unique_code_grams(row.content, folded=True):
-            postings.setdefault(gram, []).append(row.id)
+        data = folded_bytes(row.content)
+        batch.append((row.id, data))
+        batch_bytes += len(data)
+        if batch_bytes >= _EXTRACT_BATCH_BYTES:
+            builder.add_docs(batch)
+            batch, batch_bytes = [], 0
+    if batch:
+        builder.add_docs(batch)
     state.covered = list(covered.items())
-    rows: list[tuple[dict[str, object], int]] = []
-    for gram, doc_ids in sorted(postings.items()):
-        blob = encode_postings(doc_ids)
-        values: dict[str, object] = {
-            "epoch": epoch,
-            "gram_key": gram,
-            "postings": blob,
-            "encoding": ENCODING_DELTA_VARINT,
-            "doc_count": len(doc_ids),
-            "byte_size": len(blob),
-        }
-        rows.append((values, len(blob)))
     try:
-        for batch in _byte_capped(rows):
-            await session.execute(insert(tables.posting_list), batch)
+        while (drained := builder.next_batch(_POSTING_BATCH_BYTES)) is not None:
+            await session.execute(
+                insert(tables.posting_list),
+                [
+                    {
+                        "epoch": epoch,
+                        "gram_key": gram,
+                        "postings": blob,
+                        "encoding": ENCODING_DELTA_VARINT,
+                        "doc_count": doc_count,
+                        "byte_size": len(blob),
+                    }
+                    for gram, blob, doc_count in drained
+                ],
+            )
         await session.execute(
             insert(tables.gram_epochs),
             [{"epoch": epoch, "format_version": INDEX_FORMAT_VERSION, "options_hash": index_options_hash()}],
@@ -390,7 +415,7 @@ def _indexable(content: str) -> bool:
     data = normalize_content(content)
     if not (GRAM_SIZE <= len(data) <= MAX_INDEXABLE_BYTES):
         return False
-    return len(unique_code_grams(content, folded=True)) <= MAX_DISTINCT_GRAMS
+    return distinct_gram_count(folded_bytes(content), MAX_DISTINCT_GRAMS) <= MAX_DISTINCT_GRAMS
 
 
 async def _work_pending(session: AsyncSession, tables: VFSTables, current: Epoch | None) -> bool:
@@ -472,25 +497,3 @@ def _pending_probe(entry: Table) -> Select[tuple[int]]:
         .where(entry.c.chunked, ~entry.c.encoded, entry.c.indexable, entry.c.deleted_at.is_(None))
         .limit(1)
     )
-
-
-def _byte_capped(rows: list[tuple[dict[str, object], int]]) -> list[list[dict[str, object]]]:
-    """Slice posting rows by accumulated blob bytes only.
-
-    Bind-count chunking is SQLAlchemy's job — ``insertmanyvalues``
-    splits each executemany by the dialect's own parameter ceiling —
-    but it takes no position on blob payload bytes, so the byte budget
-    bounds what one statement carries.
-    """
-    batches: list[list[dict[str, object]]] = []
-    batch: list[dict[str, object]] = []
-    batch_bytes = 0
-    for row_values, size in rows:
-        if batch and batch_bytes + size > _POSTING_BATCH_BYTES:
-            batches.append(batch)
-            batch, batch_bytes = [], 0
-        batch.append(row_values)
-        batch_bytes += size
-    if batch:
-        batches.append(batch)
-    return batches

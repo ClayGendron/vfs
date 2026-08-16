@@ -495,6 +495,19 @@ class TestPostingBatches:
         assert await _count(storage, storage._host.tables.posting_list) > 1
         await storage.close()
 
+    async def test_extraction_feeds_flush_mid_stream_at_the_byte_budget(self, tmp_path, monkeypatch) -> None:
+        # Several engine feeds, one build: the corpus outgrows a shrunken
+        # extract budget, and the flushed batches still index completely.
+        monkeypatch.setattr(indexing, "_EXTRACT_BATCH_BYTES", 8)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path(f"/f{i}.txt"), content=f"needle {i} padding") for i in range(5)]
+        assert (await storage.write(entries=entries)).success is True
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="needle")
+        assert result.success is True
+        assert sum(len(o.matches or ()) for o in result.observations) == 5
+        await storage.close()
+
     async def test_posting_insert_rides_uncapped_past_the_parameter_budget(self, tmp_path, monkeypatch) -> None:
         # The lean-on behind the deleted row cap: a posting batch whose
         # summed binds dwarf the parameter budget still lands whole, as

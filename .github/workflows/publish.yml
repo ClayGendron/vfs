@@ -1,27 +1,60 @@
 name: Publish to PyPI
 
+# Pendulum-model release: every wheel carries the full pure-Python tree plus
+# the compiled vfs._native (abi3-py311 — one wheel per platform, CPython
+# 3.11+). Installers never compile; the sdist is the wheel-less-platform
+# fallback, where maturin >= 1.8.4 self-bootstraps a Rust toolchain.
+
 on:
   release:
     types: [published]
 
 jobs:
-  build:
+  wheels:
+    name: wheel ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: linux-x86_64, runner: ubuntu-24.04, target: x86_64, manylinux: "2_28" }
+          - { name: linux-aarch64, runner: ubuntu-24.04-arm, target: aarch64, manylinux: "2_28" }
+          - { name: musllinux-x86_64, runner: ubuntu-24.04, target: x86_64, manylinux: musllinux_1_2 }
+          - { name: musllinux-aarch64, runner: ubuntu-24.04-arm, target: aarch64, manylinux: musllinux_1_2 }
+          - { name: macos-aarch64, runner: macos-15, target: aarch64, manylinux: "" }
+          - { name: macos-x86_64, runner: macos-13, target: x86_64, manylinux: "" }
+          - { name: windows-x64, runner: windows-latest, target: x64, manylinux: "" }
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --out dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.platform.name }}
+          path: dist/
+
+  sdist:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v7
-
-      - name: Build package
-        run: uv build
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
 
       - uses: actions/upload-artifact@v7
         with:
-          name: dist
+          name: dist-sdist
           path: dist/
 
   publish:
-    needs: build
+    needs: [wheels, sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -29,7 +62,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: dist
+          pattern: dist-*
+          merge-multiple: true
           path: dist/
 
       - uses: astral-sh/setup-uv@v7

@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/vfs-core"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,9 +1,14 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/vfs"]
+# Pendulum-model mixed layout: the complete pure-Python implementation under
+# src/vfs ships in every wheel; the Rust engine rides beside it as vfs._native.
+[tool.maturin]
+python-source = "src"
+module-name = "vfs._native"
+manifest-path = "crates/vfs-core/Cargo.toml"
+features = ["pyo3/extension-module", "python"]
 
 [project]
 name = "vfs-py"

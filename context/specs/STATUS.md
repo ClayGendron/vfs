@@ -220,20 +220,25 @@ lines first; regenerate this file when the picture shifts (review the
 - **102 — set-based scattered delete** (draft 2026-08-14,
   research-first) — owns the 10k-scattered-target topology-lock-hold
   question; research memo before any design.
-- **103 — grep pipeline Rust core** (draft 2026-08-16; slice A done
-  same day) — Clay's resolution at the linux-benchmark readout: the
-  measured-slow grep loops move to Rust behind unchanged contracts;
-  acceptance bar = beat rg on every row of the recorded 25-query
-  bench. Slice A's three memos landed 2026-08-16 (read-path profile:
-  verify is 82–99.7% of every query and the floor is the 366 MB
-  unindexable overlay tail; verify-stage prior art: lines are
-  presentation, not matching; accelerator packaging: two-package
-  psycopg shape recommendation, `abi3-py311`); the posture fork
-  resolved in two steps — pure-Python fallback stays, and the shape
-  is one package on the pendulum model (maturin mixed layout,
-  fallback inside every wheel), with the Rust workspace's
-  binding-free core crates shaped to seed the vfs-js / vfs-rs
-  roadmap. Slices B–D unblocked.
+- **103 — grep pipeline Rust core** (draft 2026-08-16; slices A and B
+  done same day) — Clay's resolution at the linux-benchmark readout:
+  the measured-slow grep loops move to Rust behind unchanged
+  contracts; acceptance bar = beat rg on every row of the recorded
+  25-query bench. Slice A's three memos landed 2026-08-16 (read-path
+  profile: verify is 82–99.7% of every query and the floor is the
+  366 MB unindexable overlay tail; verify-stage prior art: lines are
+  presentation, not matching; accelerator packaging); the posture
+  fork resolved in two steps — pure-Python fallback stays, one
+  package on the pendulum model (maturin mixed layout, fallback
+  inside every wheel), workspace shaped to seed the vfs-js / vfs-rs
+  roadmap. Slice B landed the build side: `crates/vfs-core` (one
+  crate, edition 2024, pyo3 behind a `python` feature), the
+  `vfs.native` seam with byte-for-byte parity pinned, maturin
+  replacing hatchling, the publish wheel matrix, and the pure-Python
+  CI leg; linux reindex 672 s → 191 s (`build_epoch` 272 s → ~6 s).
+  New fork from the measurement (open-questions): tree-sitter
+  chunking is now 84% of the verb (161 s, GIL-bound) — the grep-index
+  build proper is ~30 s. Slices C–D unblocked.
 
 ## Decided but unspecified — the next specs to write
 

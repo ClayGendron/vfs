@@ -70,6 +70,16 @@ Net: vfs answers selective queries 3–5× ahead of rg on this machine
 rows (4.9–5.9 s), and loses badly on the wrapped-wildcard pathology
 (102 s).
 
+Slice-B rebuild record (2026-08-16, same corpus and machine, Rust
+engine via the ``vfs.native`` seam): full reindex 672 s -> **191 s**.
+``build_epoch`` 272 s -> ~6 s and the ``_indexable`` gate's extraction
+pass ~192 s -> ~3 s; the remainder is tree-sitter ``Chunk.split`` at
+161 s (84% of the verb — semantic chunk rows for the embedding
+pipeline, not the grep index) plus ~19 s of chunk-row machinery. The
+grep-index build proper is ~30 s. The vfs query leg re-run on the
+Rust-built index returned row counts identical to this record on all
+25 queries (read-path times unchanged, as expected before slice C).
+
 Run:  WORKDIR=/path/to/scratch uv run python \
       context/research/studies/2026-08-16-linux-grep-benchmark/benchmark.py
 """

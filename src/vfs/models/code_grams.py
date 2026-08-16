@@ -116,7 +116,12 @@ def unpack_gram(gram: GramKey) -> bytes:
     return bytes(((gram >> 16) & 0xFF, (gram >> 8) & 0xFF, gram & 0xFF))
 
 
-def _iter_byte_trigrams(data: bytes) -> Iterator[GramKey]:
+def iter_byte_trigrams(data: bytes) -> Iterator[GramKey]:
+    """Yield every sliding 3-byte trigram of raw *data*, duplicates kept.
+
+    The byte-level primitive under :func:`iter_code_grams`; callers that
+    already hold the folded, normalized byte stream start here.
+    """
     if len(data) < GRAM_SIZE:
         return
     for i in range(len(data) - GRAM_SIZE + 1):
@@ -124,7 +129,7 @@ def _iter_byte_trigrams(data: bytes) -> Iterator[GramKey]:
 
 
 def _grams_from_run(run: bytes) -> set[GramKey]:
-    return set(_iter_byte_trigrams(run))
+    return set(iter_byte_trigrams(run))
 
 
 def iter_code_grams(content: str, *, folded: bool = False) -> Iterator[GramKey]:
@@ -135,7 +140,7 @@ def iter_code_grams(content: str, *, folded: bool = False) -> Iterator[GramKey]:
     intentionally preserved.
     """
     source = fold_content(content) if folded else content
-    yield from _iter_byte_trigrams(normalize_content(source))
+    yield from iter_byte_trigrams(normalize_content(source))
 
 
 def unique_code_grams(content: str, *, folded: bool = False) -> set[GramKey]:
@@ -484,6 +489,7 @@ __all__ = [
     "build_code_gram_query",
     "fold_content",
     "grams_for_fixed_string",
+    "iter_byte_trigrams",
     "iter_code_grams",
     "normalize_content",
     "pack_gram",

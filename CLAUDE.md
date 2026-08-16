@@ -82,6 +82,14 @@ Consequences that bind design work:
 - **`ruff` and `ty` must stay at zero across `src/` and `tests/`.** They
   currently pass clean; leave them that way after every change. `src2/` and
   `tests2/` are excluded in `pyproject.toml` — never chase errors there.
+- **The Rust engine** lives in `crates/vfs-core` (pyo3 binding behind its
+  `python` cargo feature; maturin builds it into the wheel as
+  `vfs._native`, fronted by the `vfs/native.py` seam with a pure-Python
+  fallback — `VFS_PURE_PYTHON=1` forces the fallback). Keep
+  `cargo test -p vfs-core` green, and keep the two engines byte-identical
+  (pinned by `tests/test_native.py`). **After editing Rust, run
+  `uv sync --reinstall-package vfs-py`** — uv caches the built wheel and
+  does not rebuild on Rust-only edits.
 
 ## Git workflow
 

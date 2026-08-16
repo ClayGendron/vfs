@@ -165,6 +165,14 @@
 - **Options considered:** memo §8.1 and §8.6; ADR 022's refresh notes in §8.4 (stale fastmcp citation, "session state" wording).
 - **Status:** open
 
+## Semantic chunking is 84% of the reindex wall — process pool, off-path, accept, or Rust tree-sitter?
+
+- **Asked:** 2026-08-16 by Claude (spec 103 slice B's full-corpus measurement; needs Clay)
+- **Context:** With the build side in Rust, the linux reindex fell 672 s → 191 s — and tree-sitter `Chunk.split` surfaced as 161 s of what remains (it was hiding inside the pure baseline's 672 s, unattributed). Chunk rows serve only the embedding pipeline; no gram-path code reads them, so the grep-index build proper is ~30 s and already inside spec 103's ≤60 s target — the *verb* misses it only because of chunking. In-process parallelism is measured dead: the tree_sitter pyo3 binding holds the GIL through `parse` and its `Parser` is thread-pinned (1.0× on 8 threads).
+- **Blocking:** spec 103 §2's ≤60 s reindex target as a *verb* claim; nothing else — the landing is correct and 3.5× faster as-is.
+- **Options considered:** (a) process-pool the splits inside `chunk_dirty` (~8× on typical laptops; but a library verb spawning worker processes is a posture question — daemonized hosts, uvicorn workers); (b) move chunking off the reindex path to its own verb or the embedding pipeline's schedule (contract change); (c) accept the verb wall and record the split honestly; (d) tree-sitter in Rust inside vfs-core (real threads, big grammar-parity scope).
+- **Status:** open
+
 ## vfs-js and vfs-rs sibling implementations
 
 - **Asked:** 2026-08-16 by Clay (at spec 103's packaging-fork review)

@@ -1,6 +1,6 @@
 # 103 — Grep pipeline performance: a Rust core for the index build and read path
 
-- **Status: slice A complete 2026-08-16** — born from the linux-tree
+- **Status: slices A and B complete 2026-08-16** — born from the linux-tree
   benchmark
   (`../../../research/studies/2026-08-16-linux-grep-benchmark/`),
   which put numbers on the pipeline's interpreted hot loops at real
@@ -16,8 +16,14 @@
   fallback stays, and — after rejecting the memo's two-package
   recommendation at review — **one package, the pendulum model**
   (maturin mixed layout, fallback inside every wheel; §1), with the
-  Rust workspace shaped for the vfs-js / vfs-rs future. Slices B–D
-  are unblocked.
+  Rust workspace shaped for the vfs-js / vfs-rs future. Slice B landed
+  the same day: the workspace (one `vfs-core` crate, edition 2024,
+  binding feature-gated — Clay simplified the two-crate shape in
+  review), the maturin mixed layout, the `vfs.native` seam with the
+  pure fallback, the build side in Rust, and the CI legs; the linux
+  reindex fell 672 s → 191 s, with the surviving 161 s attributed to
+  tree-sitter chunking — a new fork recorded in Open questions.
+  Slices C–D are unblocked.
 - **Date:** 2026-08-16
 - **Owner:** Clay Gendron
 - **Kind:** performance rewrite of the grep hot loops behind
@@ -86,12 +92,25 @@ optimization.
   per gram. The pure-Python implementations remain in-tree as the
   reference and fallback path, and the full suite runs green on
   both sides of the seam.
-- **§2 Build side.** Extraction parallelized across entries in Rust
-  (GIL released), postings grouped and varint-encoded in Rust, and
-  the build streamed in gram-range partitions — discharging the
-  whole-corpus-resident profile `build_epoch`'s docstring records as
-  a known suboptimality. Target: the linux corpus reindexes in
-  **≤ 60 s** (stretch: ≤ 15 s), from 672 s.
+- **§2 Build side — landed (slice B, 2026-08-16).** The shape that
+  landed: extraction, the distinct-gram eligibility gate, postings
+  grouping, and varint encode all run in the `vfs-core` engine behind
+  the `vfs.native` seam (GIL released per feed batch). The build
+  streams — content is fetched with a server-side cursor in bounded
+  batches, docs arrive in ascending row-id order, and each gram's
+  deltas are varint-encoded *incrementally on arrival*, so peak build
+  memory is the compressed posting set (what gram-range partitioned
+  re-scans would have bought, without paying P× content fetches); the
+  drain feeds gram-ordered, byte-capped inserts. Fold ownership
+  resolved: **Python folds** (`casefold` is C-speed; ~3 s of the
+  191 s run) and the engine receives pre-folded bytes — one fold
+  implementation, no orbit-parity burden on Rust; revisit only if a
+  measured need appears. Measured on the linux corpus: `build_epoch`
+  272 s → ~6 s, the gate's extraction pass ~192 s → ~3 s. **The ≤60 s
+  verb target was NOT met** — reindex is 191 s because tree-sitter
+  `Chunk.split` (161 s, GIL-bound, thread-unparallelizable) was hiding
+  inside the 672 s unattributed; the grep-index build proper is
+  ~30 s. The chunking fork is recorded in Open questions.
 - **§3 Read side.** The profile pins the target: verify is 82–99.7%
   of every query while all index stages together cost ≤ 25 ms — the
   read-side rewrite is the verify stage, full stop. The discipline
@@ -185,8 +204,18 @@ optimization.
 - **A** — **done 2026-08-16**: the three memos landed; posture fork
   resolved with Clay; targets confirmed against the profile (§3–§5
   updated from its attributions).
-- **B** — build side: extraction/grouping/encode in Rust behind the
-  import seam; partitioned build; reindex target met.
+- **B** — **done 2026-08-16**: `crates/vfs-core` (edition 2024, one
+  crate, pyo3 behind the `python` feature — engine stays binding-free
+  for the vfs-js/vfs-rs future), maturin mixed layout replacing
+  hatchling, the `vfs.native` seam (`vfs._native` extension, protocol
+  gate, `VFS_PURE_PYTHON` escape, `active_core()` diagnostics, pure
+  reference builder), `build_epoch`/`_indexable` rewired and
+  streaming, byte-for-byte parity suite (`tests/test_native.py`),
+  publish.yml wheel matrix (maturin-action, abi3-py311, manylinux_2_28
+  + musllinux + macOS both arches + Windows + sdist), pure-fallback CI
+  leg in test.yml and ci.sh. Reindex 672 s → 191 s; build-side numbers
+  and the surviving chunking cost recorded in §2 and the build-profile
+  study.
 - **C** — read side: literal-run prefilter with Confirmed/Candidate
   hits, line recovery around hits, parallel verify, in-loop
   deadline; wildcard and word rows beat rg; big-file cap decision
@@ -205,11 +234,27 @@ optimization.
   records. The bench gate binds the accelerated path; the resolved
   open-questions entry moved to
   `../../../open-questions-archive.md`.
-- **Fold ownership:** does the Rust core reproduce the fold (one
-  pass, pinned by the exhaustive orbit test) or receive pre-folded
-  bytes from Python (two passes over content, no duplication risk)?
-  The bytes-in seam makes the two shapes swappable — decide in
-  slice B on measured extraction throughput.
+- **Fold ownership — resolved 2026-08-16 (slice B):** Python folds and
+  the engine receives pre-folded bytes. Measured basis: the whole
+  Python-side fold+normalize pass costs ~3 s of a 191 s reindex, so
+  moving it to Rust buys nothing today, while reproducing
+  `str.casefold` in Rust would carry an exact-orbit parity burden
+  across CPython Unicode versions. The bytes-in seam keeps the shapes
+  swappable if that ever changes.
+- **Semantic chunking on the reindex path — new fork from slice B's
+  measurement (needs Clay):** tree-sitter `Chunk.split` is now 84% of
+  the reindex verb (161 s of 191 s on the linux corpus) and serves
+  only the embedding pipeline — no gram-path code reads chunk rows.
+  It cannot be thread-parallelized (the tree_sitter pyo3 binding holds
+  the GIL through `parse`; its `Parser` is thread-pinned — measured
+  1.0× on 8 threads). Options: (a) process-pool the splits inside
+  `chunk_dirty` (~8× on this machine, but a library verb spawning
+  worker processes is a real posture question); (b) move chunking off
+  the reindex path (own verb, or lazy on the embedding pipeline's
+  schedule) — a contract change; (c) accept the verb's wall and state
+  the grep-index build alone meets the target; (d) a Rust tree-sitter
+  path in vfs-core (real threads, but grammar-set parity is a big
+  scope). The ≤60 s verb target stands or falls on this choice.
 - **Bench-gate hardware:** the bar is pinned to the recorded
   machine and method (M-series laptop, rg-on-checkout, warm cache,
   median of 3). A different machine re-baselines rg first — the
