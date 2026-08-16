@@ -10,7 +10,12 @@
   §6 cap fork the same day (see §6); slices B–D landed together the
   same day as one planner rewrite (the three upgrades share the
   slice A prototype's fragment core), with the harness re-runs
-  recorded in the two study docstrings.
+  recorded in the two study docstrings. **Mined and archived
+  2026-08-16** — decision set recorded as ADR 038
+  (`../../decisions/038-gram-planner-expansion-upgrades.md`); the
+  research memo, the two study run records, and the ADR 033 true-up
+  were already downstream at landing. Nothing here governs current
+  work.
 - **Date:** 2026-08-14
 - **Owner:** Clay Gendron
 - **Kind:** planner capability extension — three upgrades to

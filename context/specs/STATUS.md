@@ -5,7 +5,19 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-14, at the 095–099 mining pass. That
+- **Last reviewed:** 2026-08-16, at spec 100's mining pass. That arc,
+  all in two days: slice A's expansion-caps research memo and
+  rerunnable study landed and the §6 cap fork resolved by Clay
+  (both caps, small values); slices B–D landed as one planner
+  rewrite (bounded variants, `MAX_CLASS_MEMBERS = 8` /
+  `MAX_VARIANT_WIDTH = 64`, degrade-never-refuse) with executed cap
+  mutants, the battery planner edition (181 case-checks), and the
+  ladder planner rows; spec 100 mined and archived (decision set →
+  ADR 038) and ADR 033's deferred item discharged. Suite re-verified
+  green same day (2,301 passed / 838 skipped, coverage 100%,
+  `ruff`/`ty` zero, full 3.11–3.14 matrix). Entries older than this
+  arc carry forward from the 2026-08-14 review unverified.
+- **Previous review:** 2026-08-14, at the 095–099 mining pass. That
   pass: all five campaign specs mined and archived (residue verified
   downstream — ADR amendments, `open-questions-archive.md`
   resolutions, battery editions); specs 100 (gram-planner upgrades),
@@ -16,15 +28,7 @@ lines first; regenerate this file when the picture shifts (review the
   `open-questions-archive.md`; the Grover-era references purged from
   live surfaces (src, standards, CONTRIBUTING, docs) and the two
   top-level relics deleted; suite re-verified green same day (2,276
-  passed / 838 skipped, `ruff`/`ty` zero).
-- **Previous review:** 2026-08-13, at spec 094's mining pass (rides the
-  review campaign's decision 7). This true-up records the 094 landing
-  and mining (decision set → ADR 037) and the campaign arc — the
-  2026-08-13 five-lens review memo, ADR 036, and specs 095–099, all
-  landed and committed same day; suite at 2,276 passed / 838 skipped,
-  coverage 100%, `ruff`/`ty` zero, four Docker legs green as of the
-  098 landing. Entries older than the glob/grep arc carry forward
-  from the 2026-07-26 review unverified. Router-era entries (039,
+  passed / 838 skipped, `ruff`/`ty` zero). Router-era entries (039,
   045, 051, 053, 054, 070) carry forward from the 2026-07-10/11
   review — not re-verified, and no commits since have claimed router
   work.
@@ -187,15 +191,27 @@ lines first; regenerate this file when the picture shifts (review the
     pair, `normalize_ext_channel`, `GLOB_CHANNEL_LABELS`,
     `meta_scoped` delegation, posting row cap deleted, floor facts
     trued. Behavior byte-identical (38,880-case differential).
+- **100 — gram-planner upgrades** — **landed 2026-08-16** (slice A
+  research 2026-08-16 morning, slices B–D the same day as one
+  planner rewrite). The ADR 033 successor story: the planner
+  compiles bounded guaranteed-literal variants — small classes fork
+  per post-fold member, alternations fork at any depth through
+  transparent groups, anchors are zero-width transparent — under two
+  declared caps (`MAX_CLASS_MEMBERS = 8`, `MAX_VARIANT_WIDTH = 64`,
+  the glob arm cap's value), over-cap nodes degrading to the flush.
+  Field-corpus refusal delta 28% → 22%; the collapse law and the
+  refusal gate unchanged. Proof: pinned rows (`min|max`,
+  `^(#|Using)`, the starvation guard, `[fF]oo`), executed cap
+  mutants, upgrade fuzz, battery planner edition (181 case-checks vs
+  `grep -E`/`rg -uu`, four worlds), ladder planner rows (rescued
+  classes 21–28 ms vs 272–318 ms scans). Suite 2,301 passed,
+  coverage 100%, `ruff`/`ty` zero, full 3.11–3.14 matrix. **Mined
+  and archived 2026-08-16**: decision set → ADR 038; the memo,
+  studies, and ADR 033 true-up were already downstream.
 - **080 — mysql batch UPDATE statements** (draft 2026-07-23,
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
   are verified on real engines.
-- **100 — gram-planner upgrades** (draft 2026-08-14) — the recorded
-  ADR 033 successor story: bounded char-class expansion, alternation
-  cross-products, anchor-tolerant extraction. Slice A is a bounded
-  research memo (prior-art caps + refusal-set delta); the §6 cap
-  fork is the one open question.
 - **101 — move/copy drop `overwrite`** (draft 2026-08-14) — Clay's
   resolution of the last agent-reachable destruction: the flag is
   removed entirely, occupied destinations refuse `exists`,
@@ -294,12 +310,13 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
 → 089 → 090 → 073 → 091 → 092 → 093 → 094 → 095 → 096 → 097 → 098 →
-099. ADRs 001–037 accepted (005 superseded by 016; 021/022 proposed,
-awaiting ratification; 018 awaiting its wiring spec; 032, 033, and
-037 are the retroactive records of 073's, 093's, and 094's decision
-sets, written at their mining passes; 036 amends 033's chunk-grain
-clause). The 073/091/092 glob arc, 093, 094, and the 095–099
-campaign arc are all mined and archived (095–099 on 2026-08-14).
-Tree green at 2,276 passed / 838 skipped,
-coverage 100%, `ruff`/`ty` at zero, all four Docker engine legs
-green as of the 098 landing (2026-08-13).
+099 → 100. ADRs 001–038 accepted (005 superseded by 016; 021/022
+proposed, awaiting ratification; 018 awaiting its wiring spec; 032,
+033, 037, and 038 are the retroactive records of 073's, 093's, 094's,
+and 100's decision sets, written at their mining passes; 036 amends
+033's chunk-grain clause). The 073/091/092 glob arc, 093, 094, the
+095–099 campaign arc, and 100 are all mined and archived (095–099 on
+2026-08-14; 100 on 2026-08-16). Tree green at 2,301 passed / 838
+skipped, coverage 100%, `ruff`/`ty` at zero (2026-08-16, full
+3.11–3.14 matrix), all four Docker engine legs green as of the 098
+landing (2026-08-13).

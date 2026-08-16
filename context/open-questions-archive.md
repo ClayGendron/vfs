@@ -341,5 +341,6 @@ resolve to this file.
   (width-1000 in-corpus). Evidence:
   `research/2026-08-16-gram-planner-expansion-caps.md` (rerunnable
   study in `research/studies/2026-08-16-gram-planner-expansion-caps/`);
-  decision recorded in `specs/active/100-gram-planner-upgrades/`
-  §6; slices B–D unblocked.
+  decision recorded in `specs/archive/100-gram-planner-upgrades/`
+  §6 and, since the 2026-08-16 mining pass, as ADR 038
+  (`decisions/038-gram-planner-expansion-upgrades.md`).
