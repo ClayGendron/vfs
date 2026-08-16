@@ -45,8 +45,10 @@ literals 1.8–2.4 s; verify-heavy rows (word mode, hot alternation)
 4.7–5.9 s; the wrapped wildcard ``.*alloc_page.*`` is the recorded
 outlier at 102 s (common-trigram conjunction admits a huge candidate
 set, then the leading-``.*`` Python verify pays per line). Nine hot
-rows truncated at the 4 MB candidate budget with the designed loud
-warning — every vfs/rg count divergence coincides with a truncation
+rows truncated at the candidate budget (``CANDIDATE_BUDGET`` =
+10,000 entries — attribution corrected by the companion profiling
+study; an earlier draft of this record blamed the 4 MB posting-byte
+budget) with the designed loud warning — every vfs/rg count divergence coincides with a truncation
 flag; all 16 untruncated rows match rg line-for-line. Also recorded:
 a ~700 ms fixed per-call floor at this corpus size (ladder's zero-hit
 was 1.7 ms at 10K docs) — second named improvement target,

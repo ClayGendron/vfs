@@ -220,13 +220,20 @@ lines first; regenerate this file when the picture shifts (review the
 - **102 — set-based scattered delete** (draft 2026-08-14,
   research-first) — owns the 10k-scattered-target topology-lock-hold
   question; research memo before any design.
-- **103 — grep pipeline Rust core** (draft 2026-08-16,
-  research-first) — Clay's resolution at the linux-benchmark readout:
-  the measured-slow grep loops (index build, read-side verify) move
-  to Rust behind unchanged contracts; acceptance bar = beat rg on
-  every row of the recorded 25-query bench. Owns the
-  dependency-posture fork in `../open-questions.md`; slice A memos
-  (packaging, profiling, prior art) gate any code.
+- **103 — grep pipeline Rust core** (draft 2026-08-16; slice A done
+  same day) — Clay's resolution at the linux-benchmark readout: the
+  measured-slow grep loops move to Rust behind unchanged contracts;
+  acceptance bar = beat rg on every row of the recorded 25-query
+  bench. Slice A's three memos landed 2026-08-16 (read-path profile:
+  verify is 82–99.7% of every query and the floor is the 366 MB
+  unindexable overlay tail; verify-stage prior art: lines are
+  presentation, not matching; accelerator packaging: two-package
+  psycopg shape recommendation, `abi3-py311`); the posture fork
+  resolved in two steps — pure-Python fallback stays, and the shape
+  is one package on the pendulum model (maturin mixed layout,
+  fallback inside every wheel), with the Rust workspace's
+  binding-free core crates shaped to seed the vfs-js / vfs-rs
+  roadmap. Slices B–D unblocked.
 
 ## Decided but unspecified — the next specs to write
 

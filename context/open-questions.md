@@ -165,10 +165,10 @@
 - **Options considered:** memo §8.1 and §8.6; ADR 022's refresh notes in §8.4 (stale fastmcp citation, "session state" wording).
 - **Status:** open
 
-## Rust extension posture for the grep pipeline
+## vfs-js and vfs-rs sibling implementations
 
-- **Asked:** 2026-08-16 by Clay (at the linux-tree benchmark readout — `research/studies/2026-08-16-linux-grep-benchmark/`)
-- **Context:** The benchmark named five interpreted-throughput costs (672 s reindex, ~700 ms per-call floor, verify-heavy rows losing to rg, the 102 s wrapped-wildcard row, the 4 MB budget truncating hot rows). Clay's directional resolution: the slow parts of the index build and read path move to Rust, acceptance bar = beat rg on every recorded bench row. The open fork is dependency posture: a required compiled dependency, or an optional accelerator behind an import seam with the pure-Python implementation as the always-installable fallback (wheels for the platform matrix either way). Downstream of the fork: fold ownership (Rust reproduces `fold_content` pinned by the exhaustive orbit test, vs receiving pre-folded bytes).
-- **Blocking:** spec 103 slices B–D (`specs/active/103-grep-pipeline-rust-core/`); resolved by slice A's packaging memo.
-- **Options considered:** required extension (one path, no drift risk, sdist needs a toolchain); optional accelerator + fallback seam (installs anywhere, CI runs both sides, bench gate binds the accelerated path); numpy-only vectorization (declined by Clay 2026-08-16 — clears one loop, not the class).
-- **Status:** open — owned by spec 103 slice A
+- **Asked:** 2026-08-16 by Clay (at spec 103's packaging-fork review)
+- **Context:** Roadmap intent, stated while picking the pendulum packaging model: vfs should eventually have full JavaScript and Rust implementations so devs build apps with vfs in those languages, not only Python. Spec 103's workspace is already shaped for it — engine logic in binding-free core crates under `crates/`, the pyo3 crate a thin binding — so the grep cores that land there become the first shared foundation. What a "full implementation" means (verb-surface parity, storage backends, MCP serving, result envelopes) is entirely undesigned.
+- **Blocking:** nothing current; it shaped spec 103 §1's crate layout (recorded there). Its own research → decide arc starts when Clay prioritizes it.
+- **Options considered:** none yet — the fork space (shared Rust core with bindings everywhere vs independent idiomatic implementations vs wasm-first) is the future research question.
+- **Status:** parked
