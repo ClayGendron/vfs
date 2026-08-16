@@ -18,8 +18,15 @@ Layers:
    Required byte trigrams for a fixed-string grep pattern.
 
 3. ``GramQuery`` + ``build_code_gram_query``
-   A small boolean algebra over required gram sets, derived from a traversal
-   of Python's ``sre_parse`` regex AST.
+   A small boolean algebra over required gram sets, derived by compiling
+   Python's ``sre_parse`` regex AST into a bounded set of guaranteed-literal
+   *variants*: small character classes fork one variant per post-fold
+   member, alternations at any depth fork one variant per arm composed
+   with their surrounding context, groups and zero-width anchors are
+   adjacency-transparent. Expansion is bounded by two declared caps
+   (``MAX_CLASS_MEMBERS``, ``MAX_VARIANT_WIDTH``); an over-cap expansion
+   degrades that node to a plain adjacency break — a weaker predicate,
+   never a refusal.
 
 The stored index is a **single folded stream**: index maintenance always
 extracts with ``folded=True``, and case sensitivity is enforced by the final
@@ -51,7 +58,7 @@ invariant is pinned by an exhaustive orbit-scan test.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Final
+from typing import TYPE_CHECKING, Annotated, Any, Final
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -62,6 +69,14 @@ from re import _constants as sre_constants  # ty: ignore[unresolved-import]
 from re import _parser as sre_parse  # ty: ignore[unresolved-import]
 
 GRAM_SIZE: Final = 3
+
+# A character class forks at most this many post-fold members; larger
+# classes keep their adjacency break (degrade, never refuse).
+MAX_CLASS_MEMBERS: Final = 8
+
+# Ceiling on the variant product, enforced at every cross step; deliberately
+# equal to the glob compiler's MAX_PATTERN_ARMS so both surfaces degrade alike.
+MAX_VARIANT_WIDTH: Final = 64
 
 GramKey = Annotated[int, "packed 24-bit byte trigram: (b0 << 16) | (b1 << 8) | b2"]
 
@@ -193,192 +208,8 @@ GramQuery = GramAny | GramAnd | GramOr
 
 
 # ---------------------------------------------------------------------------
-# AST walker — extract guaranteed literal byte runs from sre_parse output
+# Pattern planning — compile a regex into a conservative GramQuery
 # ---------------------------------------------------------------------------
-
-
-def _emit_literal(codepoint: int) -> str | None:
-    """Return the literal codepoint as run text, or ``None`` if unsafe.
-
-    Case sensitivity never blocks a literal: planning is always folded, so
-    the folded run covers every case the pattern could match. Folding
-    happens at flush time over the whole run, through the same pipeline the
-    indexer applies to content.
-    """
-    char = chr(codepoint)
-    try:
-        char.encode("utf-8")
-    except UnicodeEncodeError:
-        # Lone surrogates and other non-encodable code points cannot be
-        # required as bytes in the index. Treat as opaque and flush the run.
-        return None
-    return char
-
-
-def _encode_run(run: str) -> bytes:
-    """Encode one literal run exactly as the folded index stream is encoded."""
-    return normalize_content(fold_content(run))
-
-
-def _pure_literal_text(ast: list) -> str | None:
-    """Literal text of *ast* when every node is a guaranteed literal.
-
-    Descends through nested groups whose bodies are themselves pure
-    literal. Returns ``None`` as soon as any node could match bytes other
-    than one fixed sequence — including a lone-surrogate literal that
-    cannot be required as index bytes.
-    """
-    parts: list[str] = []
-    for op, arg in ast:
-        if op is sre_constants.LITERAL:
-            char = _emit_literal(arg)
-            if char is None:
-                return None
-            parts.append(char)
-            continue
-        if op is sre_constants.SUBPATTERN:
-            _group, _add_flags, _del_flags, subpattern = arg
-            inner = _pure_literal_text(list(subpattern))
-            if inner is None:
-                return None
-            parts.append(inner)
-            continue
-        return None
-    return "".join(parts)
-
-
-def _collect_runs(ast: list) -> list[str]:
-    """Walk a flat AST sequence and return its guaranteed-literal text runs.
-
-    Runs are kept as text so the shared fold applies to each whole run at
-    gram extraction. Each run is a maximal contiguous sequence every match
-    must contain.
-    """
-    runs: list[str] = []
-    buf: list[str] = []
-
-    def flush() -> None:
-        if buf:
-            runs.append("".join(buf))
-            buf.clear()
-
-    for op, arg in ast:
-        if op is sre_constants.LITERAL:
-            char = _emit_literal(arg)
-            if char is None:
-                flush()
-            else:
-                buf.append(char)
-            continue
-
-        if op is sre_constants.NOT_LITERAL:
-            flush()
-            continue
-
-        if op is sre_constants.ANY:
-            flush()
-            continue
-
-        if op is sre_constants.IN:
-            # Character class — contributes exactly one byte position but we
-            # don't know which byte, so it terminates the current run.
-            flush()
-            continue
-
-        if op is sre_constants.AT:
-            # Anchor (^, $, \A, \Z, \b, \B) — no byte contribution but it
-            # also doesn't break the literal run. However grep applies
-            # anchors line-by-line in Python, so we conservatively flush.
-            flush()
-            continue
-
-        if op is sre_constants.MAX_REPEAT or op is sre_constants.MIN_REPEAT:
-            min_repeat, _max_repeat, body = arg
-            if min_repeat == 0:
-                # Body may not appear at all — drop it.
-                flush()
-            else:
-                # Body appears at least once. Descend, but flush on either
-                # side so we don't claim adjacency that the repetition would
-                # break.
-                flush()
-                runs.extend(_collect_runs(list(body)))
-            continue
-
-        if op is sre_constants.SUBPATTERN:
-            # SUBPATTERN payload: (group_id, add_flags, del_flags, body).
-            # Scoped case flags are irrelevant to a folded-only planner.
-            _group_id, _add_flags, _del_flags, body = arg
-            literal = _pure_literal_text(list(body))
-            if literal is not None:
-                # Only a pure-literal (or empty) body is adjacency-
-                # transparent: the group matches exactly these bytes.
-                buf.append(literal)
-                continue
-            # Any other body may match bytes its inner runs don't cover, so
-            # adjacency breaks on both sides; the runs stand alone.
-            flush()
-            runs.extend(_collect_runs(list(body)))
-            continue
-
-        if op is sre_constants.BRANCH:
-            # Non-top-level BRANCH terminates the run conservatively.
-            # (Top-level alternation is handled by the caller via
-            # ``build_code_gram_query`` so each branch becomes its own
-            # ``GramAnd`` inside an ``OR``.)
-            flush()
-            continue
-
-        if op is sre_constants.GROUPREF:
-            # Backreference — content is determined dynamically. Drop.
-            flush()
-            continue
-
-        if op is sre_constants.ASSERT or op is sre_constants.ASSERT_NOT:
-            # Lookarounds. The matched span doesn't include their content
-            # so we cannot use their literals as required grams of the line.
-            flush()
-            continue
-
-        # Unknown / not-yet-supported op (ATOMIC_GROUP, POSSESSIVE_REPEAT,
-        # etc.). Conservative: terminate the run. We avoid descending into
-        # unknown structures because we cannot guarantee soundness without
-        # understanding their semantics.
-        flush()
-
-    flush()
-    return runs
-
-
-def _grams_from_runs(runs: list[str]) -> set[GramKey]:
-    out: set[GramKey] = set()
-    for run in runs:
-        out |= _grams_from_run(_encode_run(run))
-    return out
-
-
-def _query_from_ast(ast: list) -> GramQuery:
-    """Compile a flat AST sequence into a :class:`GramQuery`.
-
-    Top-level alternation is split here. Otherwise, required grams are
-    collected from guaranteed literal runs.
-    """
-    # A parsed BRANCH always holds two or more alternatives.
-    match ast:
-        case [(sre_constants.BRANCH, (None, branches))]:
-            compiled: list[GramQuery] = []
-            for branch in branches:
-                sub = _query_from_ast(list(branch))
-                if isinstance(sub, GramAny):
-                    # An OR with an unconstrained branch is unconstrained.
-                    return GramAny()
-                compiled.append(sub)
-            return GramOr(tuple(compiled))
-
-    grams = _grams_from_runs(_collect_runs(ast))
-    if not grams:
-        return GramAny()
-    return GramAnd(frozenset(grams))
 
 
 def build_code_gram_query(
@@ -386,7 +217,7 @@ def build_code_gram_query(
     *,
     fixed_strings: bool = False,
 ) -> GramQuery:
-    """Compile *pattern* into a conservative :class:`GramQuery`, always folded.
+    r"""Compile *pattern* into a conservative :class:`GramQuery`, always folded.
 
     There is no raw planning mode: the stored index is a single folded
     stream, so raw-pattern grams would silently miss (a false negative);
@@ -396,23 +227,36 @@ def build_code_gram_query(
 
     - ``fixed_strings=True`` → AND of every byte trigram in the literal
       pattern (the entire pattern is treated as a single literal run).
-    - Otherwise, parse with :mod:`sre_parse` and traverse the AST:
+    - Otherwise, parse with :mod:`sre_parse` and compile the AST into a
+      bounded set of guaranteed-literal variants — one ``GramAnd`` per
+      variant, ``GramOr`` across variants:
 
-      * Top-level alternation becomes an OR of per-branch queries; if any
-        branch is unconstrained the whole OR collapses to ANY.
-      * A group splices into the surrounding literal run only when its
-        body is pure literal (nested literal groups included); any other
-        body breaks adjacency on both sides and contributes its inner
-        runs standalone.
-      * Quantified bodies whose minimum repetition is zero are dropped.
+      * A character class whose members enumerate to at most
+        ``MAX_CLASS_MEMBERS`` after folding forks one variant per member;
+        negated classes, category escapes (``\w``, ``\d``), and larger
+        classes break the run instead.
+      * An alternation at any depth forks one variant per arm, composed
+        with the surrounding literal context; groups are adjacency-
+        transparent regardless of body.
+      * Zero-width anchors (``^``, ``$``, ``\b``, ...) contribute no bytes
+        and sever no adjacency (soundness argument at
+        :func:`_node_fragments`).
+      * The variant product is capped at ``MAX_VARIANT_WIDTH`` at every
+        cross step; an over-cap expansion degrades that node to a plain
+        adjacency break — a weaker predicate, never a refusal.
+      * Quantified bodies whose minimum repetition is zero are dropped;
+        bodies that appear at least once contribute their variants with
+        adjacency severed on both sides.
       * Case flags (``(?i)``, ``(?i:...)``) need no tracking — folding
-        already covers every case a literal could match.
-      * Lookarounds, anchors, character classes, backrefs, and unknown
-        constructs flush the current literal run.
-      * Each guaranteed-literal run is folded as a whole before encoding —
-        newline-normalized, Turkic-i-folded, casefolded; the same pipeline
-        the indexer applies to content, and deliberately no NFC (module
-        docstring) — so planner and indexer agree on the byte stream.
+        already covers every case a literal could match. Lookarounds,
+        backreferences, negations, and unknown constructs break the run.
+      * A variant with no required grams collapses the whole query to
+        ``GramAny`` — an OR with an unconstrained branch is unconstrained.
+      * Each guaranteed-literal segment is folded as a whole before
+        encoding — newline-normalized, Turkic-i-folded, casefolded; the
+        same pipeline the indexer applies to content, and deliberately no
+        NFC (module docstring) — so planner and indexer agree on the byte
+        stream.
 
     No false negatives. Weaker predicates are always acceptable; unsoundness
     is not.
@@ -434,11 +278,204 @@ def build_code_gram_query(
         # caller (compile-first discipline).
         return GramAny()
 
-    return _query_from_ast(list(parsed.data))
+    return _fragment_query(_compile_seq(list(parsed.data)))
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+# One variant's guaranteed-literal shape: text segments whose first/last
+# ends may still join adjacent literals; interior boundaries are severed.
+_Fragment = tuple[str, ...]
+
+# The give-up fragment: requires nothing, severs adjacency on both sides.
+_BREAK: Final[_Fragment] = ("", "")
+
+# The zero-width fragment: requires nothing, preserves adjacency.
+_IDENTITY: Final[_Fragment] = ("",)
+
+
+def _compile_seq(ast: list) -> list[_Fragment]:
+    """Compile a flat AST sequence into its guaranteed-literal variants."""
+    fragments: list[_Fragment] = [_IDENTITY]
+    for op, arg in ast:
+        fragments = _cross(fragments, _node_fragments(op, arg))
+    return fragments
+
+
+def _cross(fragments: list[_Fragment], node: list[_Fragment]) -> list[_Fragment]:
+    """Concatenate every variant with every node fragment, deduped.
+
+    The product is bounded at every step: if it would exceed
+    ``MAX_VARIANT_WIDTH``, the node degrades to ``_BREAK`` — the
+    accumulated variants survive, only the over-cap expansion is lost.
+    """
+    if len(fragments) * len(node) > MAX_VARIANT_WIDTH:
+        node = [_BREAK]
+    out: list[_Fragment] = []
+    seen: set[_Fragment] = set()
+    for fragment in fragments:
+        for tail in node:
+            joined = _concat(fragment, tail)
+            if joined not in seen:
+                seen.add(joined)
+                out.append(joined)
+    return out
+
+
+def _node_fragments(op: Any, arg: Any) -> list[_Fragment]:
+    """Variant fragments of one AST node; ``_BREAK`` is every conservative give-up.
+
+    Zero-width assertions (``AT``) are identity fragments: they contribute
+    no bytes and sever no adjacency. If a match exists, the literals
+    flanking the assertion are byte-adjacent in it; a pattern the assertion
+    makes unsatisfiable has no matches to lose, so requiring the joined
+    grams is vacuously sound.
+    """
+    if op is sre_constants.LITERAL:
+        char = _emit_literal(arg)
+        return [_BREAK] if char is None else [(char,)]
+
+    if op is sre_constants.IN:
+        members = _class_members(arg)
+        if members:
+            return [(member,) for member in members]
+        return [_BREAK]
+
+    if op is sre_constants.AT:
+        return [_IDENTITY]
+
+    if op is sre_constants.BRANCH:
+        _none, branches = arg
+        arms: list[_Fragment] = []
+        for branch in branches:
+            arms.extend(_compile_seq(list(branch)))
+            if len(arms) > MAX_VARIANT_WIDTH:
+                return [_BREAK]
+        return arms
+
+    if op is sre_constants.SUBPATTERN:
+        # SUBPATTERN payload: (group_id, add_flags, del_flags, body).
+        # Scoped case flags are irrelevant to a folded-only planner.
+        _group_id, _add_flags, _del_flags, body = arg
+        return _compile_seq(list(body))
+
+    if op is sre_constants.MAX_REPEAT or op is sre_constants.MIN_REPEAT:
+        min_repeat, _max_repeat, body = arg
+        if min_repeat == 0:
+            # Body may not appear at all — drop it.
+            return [_BREAK]
+        # Body appears at least once; adjacency severed on both sides so we
+        # never claim adjacency the repetition would break.
+        return [_close(fragment) for fragment in _compile_seq(list(body))]
+
+    # Everything else gives up conservatively: ANY and NOT_LITERAL match
+    # unknown bytes; lookarounds and backrefs contribute no matched bytes;
+    # unknown ops (ATOMIC_GROUP, POSSESSIVE_REPEAT, ...) are not descended
+    # into because soundness cannot be guaranteed without their semantics.
+    return [_BREAK]
+
+
+def _class_members(items: list) -> list[str] | None:
+    """Enumerate a class's members, deduped after folding; ``None`` = give up.
+
+    Negated classes, category escapes, and classes whose raw or post-fold
+    member count exceeds ``MAX_CLASS_MEMBERS`` all return ``None`` — the
+    caller keeps the adjacency break.
+    """
+    raw: list[str] = []
+    for op, arg in items:
+        if op is sre_constants.LITERAL:
+            char = _emit_literal(arg)
+            if char is None:
+                return None
+            raw.append(char)
+        elif op is sre_constants.RANGE:
+            low, high = arg
+            if high - low + 1 > MAX_CLASS_MEMBERS:
+                return None
+            for codepoint in range(low, high + 1):
+                char = _emit_literal(codepoint)
+                if char is None:
+                    return None
+                raw.append(char)
+        else:
+            # NEGATE, CATEGORY (\w, \d), nested set operations: give up.
+            return None
+    members: list[str] = []
+    seen: set[str] = set()
+    for char in raw:
+        key = fold_content(char)
+        if key not in seen:
+            seen.add(key)
+            members.append(char)
+    if len(members) > MAX_CLASS_MEMBERS:
+        return None
+    return members
+
+
+def _concat(head: _Fragment, tail: _Fragment) -> _Fragment:
+    return (*head[:-1], head[-1] + tail[0], *tail[1:])
+
+
+def _close(fragment: _Fragment) -> _Fragment:
+    """Sever both open ends: the fragment's segments stand alone."""
+    return ("", *fragment, "")
+
+
+def _emit_literal(codepoint: int) -> str | None:
+    """Return the literal codepoint as segment text, or ``None`` if unsafe.
+
+    Case sensitivity never blocks a literal: planning is always folded, so
+    the folded segment covers every case the pattern could match. Folding
+    happens at gram extraction over each whole segment, through the same
+    pipeline the indexer applies to content.
+    """
+    char = chr(codepoint)
+    try:
+        char.encode("utf-8")
+    except UnicodeEncodeError:
+        # Lone surrogates and other non-encodable code points cannot be
+        # required as bytes in the index. Treat as opaque and give up.
+        return None
+    return char
+
+
+def _encode_run(run: str) -> bytes:
+    """Encode one literal segment exactly as the folded index stream is."""
+    return normalize_content(fold_content(run))
+
+
+def _fragment_query(fragments: list[_Fragment]) -> GramQuery:
+    """Compile variants into the algebra: AND per variant, OR across variants.
+
+    A variant with no grams collapses the whole query to ``GramAny`` — the
+    collapse law: an OR with an unconstrained branch is unconstrained.
+    Variants with identical gram sets dedupe to one branch.
+    """
+    branches: list[GramQuery] = []
+    seen: set[frozenset[GramKey]] = set()
+    for fragment in fragments:
+        grams: set[GramKey] = set()
+        for segment in fragment:
+            if segment:
+                grams |= _grams_from_run(_encode_run(segment))
+        if not grams:
+            return GramAny()
+        key = frozenset(grams)
+        if key not in seen:
+            seen.add(key)
+            branches.append(GramAnd(key))
+    if len(branches) == 1:
+        return branches[0]
+    return GramOr(tuple(branches))
 
 
 __all__ = [
     "GRAM_SIZE",
+    "MAX_CLASS_MEMBERS",
+    "MAX_VARIANT_WIDTH",
     "GramAnd",
     "GramAny",
     "GramKey",

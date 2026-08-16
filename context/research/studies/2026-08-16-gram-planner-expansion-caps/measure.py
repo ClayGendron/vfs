@@ -1,5 +1,12 @@
 """Refusal-set delta measurement for the gram-planner expansion caps.
 
+Historical baseline: this study measured the PRE-upgrade planner (commit
+354a6f7). The upgrades landed in the live planner 2026-08-16, so the
+off-configuration validation and the "refused today" buckets no longer
+reproduce against the live tree — to rerun the measurement as recorded,
+check out that commit. The prototype and corpus remain the record of how
+the caps were chosen.
+
 Run:  uv run python context/research/studies/2026-08-16-gram-planner-expansion-caps/measure.py
 
 Loads the mined field corpus (field_corpus.json beside this script; regenerate

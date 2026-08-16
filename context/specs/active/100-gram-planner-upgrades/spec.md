@@ -1,14 +1,16 @@
 # 100 — Gram-planner upgrades: shrink the refusal set
 
-- **Status: slice A complete, §6 resolved 2026-08-16** — the recorded
+- **Status: complete — all slices landed 2026-08-16** — the recorded
   successor story of ADR 033 (planner upgrades deferred at 093's
   shaping fork 3, resolved by Clay 2026-08-05: "all three deferred to
   a follow-up story once the refusal gate has live users"). Slice A's
   research memo landed 2026-08-16
   (`../../research/2026-08-16-gram-planner-expansion-caps.md`, with
   the rerunnable study under `research/studies/`); Clay resolved the
-  §6 cap fork the same day (see §6). No code yet; slices B–D are
-  unblocked.
+  §6 cap fork the same day (see §6); slices B–D landed together the
+  same day as one planner rewrite (the three upgrades share the
+  slice A prototype's fragment core), with the harness re-runs
+  recorded in the two study docstrings.
 - **Date:** 2026-08-14
 - **Owner:** Clay Gendron
 - **Kind:** planner capability extension — three upgrades to
@@ -125,7 +127,15 @@ digit-class forks starve the gram-bearing branch); a post-fold member
 cap of 8 makes the sweep monotone, saturating at W=16 with widest
 real demand 12.
 
-## Verification obligations
+## Verification obligations — **all discharged 2026-08-16**
+
+Discharged by `tests/models/test_code_grams.py` (per-upgrade shape
+rows, the pinned rows below, cap-mutant rows, a match-preserving
+mutation fuzz), the battery planner edition (181 case-checks green),
+and the ladder planner edition (rescued classes serve at 21–28 ms vs
+272–318 ms scans). The cap mutants were executed: raising the member
+cap to 16, raising the width ceiling to 128, and dropping the
+over-cap collapse each fail a pinned row.
 
 - The grep differential battery re-runs green (ADR 033 names it the
   permanent harness whenever the planner changes) and gains a planner
@@ -171,11 +181,14 @@ real demand 12.
 
 - **A** — **done 2026-08-16**: research memo (prior-art caps +
   refusal-delta measurement) landed; §6 resolved with Clay.
-- **B** — char-class expansion (§1), the declared caps, planner rows.
-- **C** — alternation cross-products (§2), group transparency, and
-  composition (§4).
-- **D** — anchor transparency (§3); battery planner edition +
-  query-ladder re-run; true-up of ADR 033's deferred list.
+- **B** — **done 2026-08-16**: char-class expansion (§1), the declared
+  caps (`MAX_CLASS_MEMBERS = 8`, `MAX_VARIANT_WIDTH = 64`, module
+  constants beside `GRAM_SIZE`), planner rows.
+- **C** — **done 2026-08-16**: alternation cross-products (§2), group
+  transparency, and composition (§4).
+- **D** — **done 2026-08-16**: anchor transparency (§3); battery
+  planner edition + query-ladder re-run (records in the study
+  docstrings); ADR 033's deferred list trued up.
 
 ## Open questions
 
@@ -190,7 +203,7 @@ real demand 12.
   they are monotone with 4× headroom over measured saturation (W=16)
   and demand (12). The width constant deliberately matches glob's
   `MAX_PATTERN_ARMS = 64` so both pattern surfaces degrade at the
-  same declared width. Constant naming and placement (module
-  constants in `code_grams.py`, beside `GRAM_SIZE`) are slice B's
-  call; the resolved open-questions entry moved to
+  same declared width. Slice B named them `MAX_CLASS_MEMBERS` and
+  `MAX_VARIANT_WIDTH`, module constants beside `GRAM_SIZE`; the
+  resolved open-questions entry moved to
   `../../open-questions-archive.md`.

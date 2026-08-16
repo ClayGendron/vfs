@@ -59,6 +59,16 @@ post-control line number was skewed. (Harness fix in the same pass:
 ``parse_hits`` itself now splits rg output on ``\\n`` only.)
 157 case-checks green across the same four worlds.
 
+Planner-edition run (2026-08-16, with the 100 landing): one corpus file
+of upgrade targets plus six rg cases — a folded character class
+(``[nN]eedle``), a prefix-factored bare alternation (``min|max``, which
+sre parses as ``m(in|ax)``), anchored and grouped alternations, and a
+small class expansion (``ext[234]``) — the pattern classes the planner
+refused before the expansion upgrades, now served from the index and
+line-identical to rg -uu. The ``ab`` refusal divergence still holds
+(sub-3-byte patterns stay refused at every cap value). 181 case-checks
+green across the same four worlds.
+
 Run:  uv run python context/research/studies/2026-08-05-grep-differential-battery/grep_differential_battery.py
 """
 
@@ -102,6 +112,12 @@ FILES = {
     "ctrl/nel.txt": "first\x85still first\nneedle nel\n",
     "ctrl/useps.txt": "u\u2028v\u2029w\nneedle usep\n",
     "ctrl/crlf.txt": "needle crlf\r\nplain body\r\n",
+    # Planner edition (2026-08-16): targets for the pattern classes the
+    # expansion upgrades make indexable.
+    "planner/upgrades.txt": (
+        "min value\nmax value\nimport os\nfrom sys import path\n"
+        "call foo_bar()\ncall foo_baz(x)\nmount -t ext3 /dev/sda1\n"
+    ),
 }
 
 # rg leg: (pattern, roots, vfs kwargs, rg flags) — line-level parity.
@@ -138,6 +154,15 @@ RG_CASES = (
     ("needle nel", (), {}, ()),
     ("needle usep", (), {}, ()),
     ("needle crlf", (), {}, ()),
+    # Planner edition (2026-08-16): patterns the planner refused before
+    # the expansion upgrades — folded classes, nested and prefix-factored
+    # alternations, anchored groups — with rg -uu as the parity oracle.
+    ("[nN]eedle", (), {}, ()),
+    ("min|max", (), {}, ()),
+    ("^(import|from)", (), {}, ()),
+    ("foo_(bar|baz)", (), {}, ()),
+    ("ext[234]", (), {}, ()),
+    ("^(needle|alpha) ", (), {}, ()),
 )
 
 failures: list[str] = []

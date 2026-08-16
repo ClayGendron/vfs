@@ -206,7 +206,11 @@ rows gate their refusal assertions on the declared tier.
   alternation cross-products, anchor-tolerant literals) — deferred
   to a follow-up story once the refusal gate has live users (shaping
   fork 3); every refused pattern still runs correctly under
-  `allow_scan=True`.
+  `allow_scan=True`. **Landed 2026-08-16 by spec 100**: all three
+  upgrades, capped by two declared constants (post-fold class-member
+  cap 8, shared width ceiling 64); the gate, ladder, budgets, and
+  verifier are unchanged, and both harnesses re-ran green with
+  planner editions.
 
 ## Consequences
 
@@ -219,8 +223,9 @@ rows gate their refusal assertions on the declared tier.
   (`../research/studies/2026-08-05-grep-query-ladder-benchmark/`)
   are the permanent acceptance harnesses: re-run them when the
   planner, verifier, ladder, or budgets change.
-- The planner-upgrade follow-up story and the MCP-pass cursor are
-  the two recorded successors; reindex progress/cancellation also
-  waits on the MCP pass, where admin work becomes wire-visible.
+- The planner-upgrade follow-up story landed as spec 100
+  (2026-08-16); the MCP-pass cursor is the remaining recorded
+  successor, and reindex progress/cancellation also waits on the MCP
+  pass, where admin work becomes wire-visible.
 - `mkedge` is now the only classified stub between the live tree and
   a fully-derived capability surface (ADR 018's wiring spec owns it).

@@ -26,6 +26,15 @@ size (the spike measured 30–700x at the 990K tier). Refusals: ``ab``
 and ``medium_ident_a|ab`` refuse classified in ~0.1 ms; their
 ``allow_scan`` runs land in scan-tier territory (244 / 308 ms).
 
+Planner-edition run (2026-08-16, with the 100 landing, same corpus
+tier): three pattern classes the planner refused before the expansion
+upgrades now answer from the index — folded class ``[mM]utex_[lL]ock``
+27.8 ms / 500 rows, nested alternation ``(alloc|free)_page``
+20.8 ms / 334 rows, anchored group ``^(static|extern)``
+25.8 ms / 500 rows, against 272–318 ms scans (~10–15x). The refusal
+rows are unchanged: ``ab`` and ``medium_ident_a|ab`` (a gramless arm)
+still refuse in ~0.1 ms.
+
 Run:  uv run python context/research/studies/2026-08-05-grep-query-ladder-benchmark/grep_query_ladder.py
 """
 
@@ -60,6 +69,11 @@ LADDER = (
     ("wrapped regex", ".*alloc_page.*", {}),
     ("folded", "(?i)Mutex_Lock", {}),
     ("ultra-hot (budget)", "return", {}),
+    # Planner edition (2026-08-16): pattern classes the planner refused
+    # before the expansion upgrades — now answered from the index.
+    ("class fold", "[mM]utex_[lL]ock", {}),
+    ("nested alt", "(alloc|free)_page", {}),
+    ("anchored group", "^(static|extern)", {}),
 )
 
 REFUSED = (
